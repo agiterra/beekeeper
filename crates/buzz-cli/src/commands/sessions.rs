@@ -2348,6 +2348,31 @@ pub async fn dispatch(
             )
             .await
         }
+        SessionsCmd::Hire {
+            channel,
+            session_ref,
+            genesis,
+            role,
+            provider_instance,
+            model,
+            brief,
+            content,
+            no_wait,
+        } => {
+            crew_cmds::cmd_hire(
+                client,
+                &channel,
+                &session_ref,
+                genesis.as_deref(),
+                &role,
+                provider_instance.as_deref(),
+                model.as_deref(),
+                brief.as_deref(),
+                content.as_deref(),
+                no_wait,
+            )
+            .await
+        }
         SessionsCmd::Inbox { channel, since } => {
             crew_cmds::cmd_inbox(client, &channel, since.as_deref(), format).await
         }

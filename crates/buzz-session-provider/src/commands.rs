@@ -344,6 +344,12 @@ pub fn decide_lifecycle(
             provider_authority_pubkey,
             ..
         } => provider_authority_pubkey,
+        // A hire is addressed to the umbrella's *host*, not to a provider: it
+        // names no provider authority at all, and the seat it asks for reaches
+        // this provider later as an ordinary seated create.
+        CodingSessionLifecycleAction::SessionHire { .. } => {
+            return LifecycleDecision::Ignore(Ignored::NotAddressed)
+        }
     };
 
     // Addressing before dedupe: a command for another adapter must not consume
@@ -419,7 +425,9 @@ pub fn decide_lifecycle(
                 channel_id,
                 target: session.clone(),
             }),
-            CodingSessionLifecycleAction::SessionCreate { .. } => unreachable!(),
+            // Guarded by the `if let` above: only a resume or a stop reaches
+            // here.
+            _ => unreachable!(),
         };
     }
 

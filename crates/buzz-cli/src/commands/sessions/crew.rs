@@ -1440,3 +1440,485 @@ pub fn turn_load(
     }
     load
 }
+
+// ── Hire, as the host answered it (plan D14) ─────────────────────────────────
+
+/// How long `bee sessions hire` waits for the founder's host to answer.
+///
+/// A hire is not a write the relay can settle: the host has to read the
+/// request, apply its standing policy, pick an identity, cut a worktree, stage
+/// custody, and only then publish a seated create the provider answers. Sixty
+/// seconds is long enough for all of that on a cold host and short enough that
+/// a lead is not blocked for a minute per seat; past it the command reports
+/// that nothing answered, which is what happened.
+pub const HIRE_WAIT_SECONDS: u64 = 60;
+
+/// The seated create a host published in answer to a hire.
+///
+/// This is the whole of the hire's identity on the wire: the request itself
+/// carries no id the answer echoes, so the answer is recognized by *what it
+/// is* — a seated create, for this role, in this umbrella, published after the
+/// request went out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HiredSeat {
+    /// Event id of the seated create.
+    pub event_id: String,
+    /// Its `commandId` — the key the provider's receipt answers on, and the
+    /// id this command reports back as the hire's own receipt reference.
+    pub command_id: String,
+    /// Pubkey the host chose to seat. Never a key, always a name.
+    pub actor: String,
+    /// Role slug it seated.
+    pub role: String,
+    /// Umbrella it joined.
+    pub session_ref: String,
+    /// Provider instance the host ran it on — the request's, or the policy's.
+    pub provider_instance_ref: String,
+    /// Model the host chose, when the create named one.
+    pub model: Option<String>,
+    /// Event `created_at`, Unix seconds.
+    pub at: i64,
+}
+
+/// What a provider answered a seated create with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatReceipt {
+    /// The receipt's own status word.
+    pub status: ReceiptStatus,
+    /// `cs-target` key of the execution it minted, absent for a failure.
+    pub target_key: Option<String>,
+    /// `error.code`, when the receipt carried one.
+    pub error_code: Option<String>,
+    /// `error.message`, when the receipt carried one.
+    pub error_message: Option<String>,
+    /// Receipt `created_at`, Unix seconds.
+    pub at: i64,
+}
+
+/// A host's refusal of a hire, as it reached the requesting seat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HireRefusal {
+    /// Event id of the 44220 turn carrying it.
+    pub event_id: String,
+    /// Turn `created_at`, Unix seconds.
+    pub at: i64,
+    /// The machine-readable code, one of
+    /// [`buzz_core::coding_session_lifecycle_command::HIRE_REFUSAL_CODES`].
+    pub code: String,
+    /// The host's own sentence explaining it.
+    pub reason: String,
+}
+
+/// What became of a hire request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HireOutcome {
+    /// The host seated the role and the provider confirmed the execution.
+    Created {
+        /// The seated create.
+        seat: HiredSeat,
+        /// Its provider receipt.
+        receipt: SeatReceipt,
+    },
+    /// The host seated the role and the provider refused it.
+    Failed {
+        /// The seated create.
+        seat: HiredSeat,
+        /// Its provider receipt, carrying the code.
+        receipt: SeatReceipt,
+    },
+    /// The host published a seated create and no provider receipt answered it
+    /// inside the wait. Something exists; whether it runs is not yet known.
+    Seating {
+        /// The seated create.
+        seat: HiredSeat,
+    },
+    /// The host refused the hire itself.
+    Refused(HireRefusal),
+    /// Nothing answered: no seated create, no refusal. Never rendered as
+    /// either of the other two.
+    Unconfirmed,
+}
+
+/// Find the seated create that answers a hire for `role` in `umbrella`.
+///
+/// Earliest qualifying create wins: a host answers one hire once, and if a
+/// later hire seats the same role again, this call's `since` cutoff — taken
+/// before its own request was published — is what separates them.
+pub fn find_hired_seat(
+    events: &[Value],
+    umbrella: &str,
+    role: &str,
+    since: i64,
+) -> Option<HiredSeat> {
+    let mut best: Option<HiredSeat> = None;
+    for event in events {
+        if event.get("kind").and_then(Value::as_u64)
+            != Some(u64::from(KIND_CODING_SESSION_LIFECYCLE_COMMAND))
+        {
+            continue;
+        }
+        let (Some(content), Some(created_at), Some(event_id)) = (
+            content_of(event),
+            event_created_at(event),
+            event_str(event, "id"),
+        ) else {
+            continue;
+        };
+        if created_at < since {
+            continue;
+        }
+        let Ok(payload) =
+            buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                content,
+            )
+        else {
+            continue;
+        };
+        let CodingSessionLifecycleAction::SessionCreate {
+            session_ref: Some(session_ref),
+            provider_instance_ref,
+            model,
+            actor: Some(actor),
+            role: Some(seat_role),
+            ..
+        } = payload.action
+        else {
+            continue;
+        };
+        if session_ref != umbrella || seat_role != role {
+            continue;
+        }
+        let candidate = HiredSeat {
+            event_id,
+            command_id: payload.command_id,
+            actor,
+            role: seat_role,
+            session_ref,
+            provider_instance_ref,
+            model,
+            at: created_at,
+        };
+        match &best {
+            Some(held)
+                if (held.at, held.event_id.as_str())
+                    <= (candidate.at, candidate.event_id.as_str()) => {}
+            _ => best = Some(candidate),
+        }
+    }
+    best
+}
+
+/// The newest lifecycle (non-turn) receipt answering `command_id`.
+///
+/// Turn stages are excluded for the same reason [`newest_turn_stages`] excludes
+/// lifecycle outcomes: a turn receipt names a generation but never creates one,
+/// so it can never say whether a seat exists.
+pub fn newest_create_receipt(receipts: &[ReceiptRecord], command_id: &str) -> Option<SeatReceipt> {
+    let mut best: Option<(i64, String, SeatReceipt)> = None;
+    for record in receipts {
+        if record.is_turn_status {
+            continue;
+        }
+        let Some(content) = content_of(&record.raw) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(content) else {
+            continue;
+        };
+        if receipt.command_id != command_id || receipt.status.is_turn_stage() {
+            continue;
+        }
+        let event_id = event_str(&record.raw, "id").unwrap_or_default();
+        let seat_receipt = SeatReceipt {
+            status: receipt.status,
+            target_key: record.target_key.clone(),
+            error_code: receipt.error.as_ref().map(|error| error.code.clone()),
+            error_message: receipt.error.as_ref().map(|error| error.message.clone()),
+            at: record.created_at,
+        };
+        match &best {
+            Some((at, id, _)) if (*at, id.as_str()) >= (record.created_at, event_id.as_str()) => {}
+            _ => best = Some((record.created_at, event_id, seat_receipt)),
+        }
+    }
+    best.map(|(_, _, receipt)| receipt)
+}
+
+/// Split a host's refusal turn into its code and reason.
+///
+/// The shape is fixed — `hire refused: <CODE> — <reason>` — so a refusal is
+/// recognized structurally rather than by reading prose. The code must be
+/// `[A-Z0-9_]+` and a reason must follow, so an agent merely *talking* about a
+/// refused hire is not mistaken for one. Both an em dash and a hyphen separate
+/// the two, because a host that normalizes punctuation should not break this.
+pub fn parse_hire_refusal(text: &str) -> Option<(String, String)> {
+    let rest =
+        text.strip_prefix(buzz_core::coding_session_lifecycle_command::HIRE_REFUSAL_PREFIX)?;
+    let (code, reason) = rest.split_once(" — ").or_else(|| rest.split_once(" - "))?;
+    let code = code.trim();
+    let reason = reason.trim();
+    if code.is_empty()
+        || reason.is_empty()
+        || !code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return None;
+    }
+    Some((code.to_owned(), reason.to_owned()))
+}
+
+/// Find the refusal turn answering a hire into `umbrella`.
+///
+/// Scoped two ways, because a channel can carry several umbrellas at once: the
+/// turn must address an execution this channel says belongs to `umbrella`, and
+/// it must have been published after the request went out. Earliest qualifying
+/// turn wins.
+pub fn find_hire_refusal(
+    commands: &[TurnCommand],
+    executions: &[CrewExecution],
+    umbrella: &str,
+    since: i64,
+) -> Option<HireRefusal> {
+    let in_umbrella: HashSet<&str> = executions
+        .iter()
+        .filter(|execution| execution.session_ref.as_deref() == Some(umbrella))
+        .map(|execution| execution.target_key.as_str())
+        .collect();
+    let mut best: Option<HireRefusal> = None;
+    for command in commands {
+        if command.created_at < since || !in_umbrella.contains(command.target_key.as_str()) {
+            continue;
+        }
+        let Some((code, reason)) = command.text().and_then(parse_hire_refusal) else {
+            continue;
+        };
+        let candidate = HireRefusal {
+            event_id: command.event_id.clone(),
+            at: command.created_at,
+            code,
+            reason,
+        };
+        match &best {
+            Some(held)
+                if (held.at, held.event_id.as_str())
+                    <= (candidate.at, candidate.event_id.as_str()) => {}
+            _ => best = Some(candidate),
+        }
+    }
+    best
+}
+
+/// Fold what the channel said into one outcome.
+///
+/// A published seat outranks a refusal: if both are somehow present, something
+/// was actually created and reporting "refused" would be false. Pure so the
+/// wording of an unpleasant answer is testable without a relay.
+pub fn fold_hire(
+    seat: Option<HiredSeat>,
+    receipt: Option<SeatReceipt>,
+    refusal: Option<HireRefusal>,
+) -> HireOutcome {
+    match (seat, refusal) {
+        (Some(seat), _) => match receipt {
+            Some(receipt)
+                if matches!(
+                    receipt.status,
+                    ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
+                ) =>
+            {
+                HireOutcome::Created { seat, receipt }
+            }
+            Some(receipt) => HireOutcome::Failed { seat, receipt },
+            None => HireOutcome::Seating { seat },
+        },
+        (None, Some(refusal)) => HireOutcome::Refused(refusal),
+        (None, None) => HireOutcome::Unconfirmed,
+    }
+}
+
+/// One hire outcome, in the two forms a caller reads: a status word for a
+/// script and a sentence for a person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HireReport {
+    /// `created`, `failed`, `seating`, `refused`, or `unconfirmed`.
+    pub status: &'static str,
+    /// One sentence naming what happened, in the requester's terms.
+    pub detail: String,
+}
+
+/// Render a hire outcome.
+///
+/// `waited` distinguishes the two ways of having no answer — nobody answered,
+/// and nobody was asked — so `--no-wait` never reads as a silent host.
+pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
+    match outcome {
+        HireOutcome::Created { seat, receipt } => HireReport {
+            status: "created",
+            detail: format!(
+                "the host seated {} as {} on {}{}",
+                short_pubkey(&seat.actor),
+                seat.role,
+                seat.provider_instance_ref,
+                match receipt.target_key.as_deref() {
+                    Some(target) => format!(" — {target}"),
+                    None => String::new(),
+                }
+            ),
+        },
+        HireOutcome::Failed { seat, receipt } => HireReport {
+            status: "failed",
+            detail: format!(
+                "the host published a seat for {} and the provider refused it: {}{}",
+                seat.role,
+                receipt
+                    .error_code
+                    .as_deref()
+                    .unwrap_or(receipt.status.as_str()),
+                match receipt.error_message.as_deref() {
+                    Some(message) => format!(" — {message}"),
+                    None => String::new(),
+                }
+            ),
+        },
+        HireOutcome::Seating { seat } => HireReport {
+            status: "seating",
+            detail: format!(
+                "the host published a seat for {} ({}), but no provider receipt answered it \
+                 within {HIRE_WAIT_SECONDS}s — read `bee sessions status` for the umbrella",
+                seat.role, seat.command_id
+            ),
+        },
+        HireOutcome::Refused(refusal) => HireReport {
+            status: "refused",
+            detail: format!("hire refused: {} — {}", refusal.code, refusal.reason),
+        },
+        HireOutcome::Unconfirmed if waited => HireReport {
+            status: DELIVERY_UNCONFIRMED,
+            detail: format!(
+                "the relay stored the hire and nothing answered it within \
+                 {HIRE_WAIT_SECONDS}s — no seat was created and no refusal was published; \
+                 the founder's host may be offline"
+            ),
+        },
+        HireOutcome::Unconfirmed => HireReport {
+            status: DELIVERY_UNCONFIRMED,
+            detail: "the relay stored the hire; --no-wait means nothing was asked what became \
+                     of it"
+                .to_owned(),
+        },
+    }
+}
+
+/// The process exit code one hire outcome earns.
+///
+/// `0` created, `1` refused (by the host or by the provider), `5` unconfirmed
+/// — including a seat published but never answered, which is not a success.
+pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
+    match outcome {
+        HireOutcome::Created { .. } => 0,
+        HireOutcome::Failed { .. } | HireOutcome::Refused(_) => 1,
+        HireOutcome::Seating { .. } | HireOutcome::Unconfirmed => 5,
+    }
+}
+
+/// Build the exact `session.hire` payload `bee sessions hire` signs.
+///
+/// Separate from the command so the seven-key shape is asserted byte-for-byte
+/// in a unit test: the relay validates 44221 with `deny_unknown_fields`, so a
+/// key more or a key fewer is not a lint, it is a rejected request.
+#[allow(clippy::too_many_arguments)]
+pub fn hire_payload(
+    command_id: &str,
+    session_ref: &str,
+    genesis_ref: &str,
+    role: &str,
+    provider_instance_ref: Option<&str>,
+    model: Option<&str>,
+    brief: &str,
+) -> buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
+    buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
+        schema:
+            buzz_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA
+                .to_owned(),
+        command_id: command_id.to_owned(),
+        action: CodingSessionLifecycleAction::SessionHire {
+            session_ref: session_ref.to_owned(),
+            genesis_ref: genesis_ref.to_owned(),
+            role: role.to_owned(),
+            provider_instance_ref: provider_instance_ref.map(str::to_owned),
+            model: model.map(str::to_owned),
+            brief: brief.to_owned(),
+        },
+    }
+}
+
+/// Recognize a relay that predates `session.hire`, and say so in those words.
+///
+/// The relay validates 44221 with `deny_unknown_fields` and a closed action
+/// vocabulary, so a relay built before this action refuses a hire as a *shape*
+/// error. Passing that through unchanged would tell a lead its request was
+/// malformed when the request is fine and the relay is old. The relay's own
+/// sentence is kept on the end rather than replaced — an operator upgrading a
+/// relay needs it.
+pub fn hire_unsupported_by_relay(message: &str) -> Option<String> {
+    const SHAPE_ERRORS: &[&str] = &[
+        "action type is unsupported",
+        "action has missing or unsupported fields",
+        "malformed coding-session lifecycle command payload",
+    ];
+    if !SHAPE_ERRORS.iter().any(|needle| message.contains(needle)) {
+        return None;
+    }
+    Some(format!(
+        "this relay does not accept hire requests yet — it validates kind 44221 against a \
+         closed action list that has no `session.hire` in it, so the request never reached \
+         the founder's host. Upgrade the relay, or seat the role from the desktop. The relay \
+         said: {message}"
+    ))
+}
+
+/// Resolve the genesis event id founding `umbrella` from a channel's events.
+///
+/// A lead names an umbrella by its UUID; the wire needs the genesis *event
+/// id*, and the channel already carries it. Two geneses claiming one label is
+/// a contradiction NIP-CSG explicitly allows the relay to store, so it is
+/// reported with both ids rather than resolved by picking one.
+pub fn resolve_umbrella_genesis(events: &[Value], umbrella: &str) -> Result<String, CliError> {
+    let mut found: BTreeSet<String> = BTreeSet::new();
+    for event in events {
+        if event.get("kind").and_then(Value::as_u64) != Some(u64::from(KIND_CODING_SESSION_GENESIS))
+        {
+            continue;
+        }
+        let (Some(content), Some(event_id)) = (content_of(event), event_str(event, "id")) else {
+            continue;
+        };
+        let Ok(payload) = decode_coding_session_genesis(content) else {
+            continue;
+        };
+        if payload.session_ref == umbrella {
+            found.insert(event_id);
+        }
+    }
+    let mut found = found.into_iter();
+    let Some(first) = found.next() else {
+        return Err(CliError::NotFound(format!(
+            "no coding-session genesis in this channel founds umbrella {umbrella} — a hire is \
+             authorized against the genesis, so pass --genesis with the founding event id, or \
+             check the channel"
+        )));
+    };
+    let rest: Vec<String> = found.collect();
+    if rest.is_empty() {
+        return Ok(first);
+    }
+    let mut all = vec![first];
+    all.extend(rest);
+    Err(CliError::Usage(format!(
+        "{} geneses in this channel claim umbrella {umbrella}: {}. Pass --genesis to name the \
+         one this hire is authorized against.",
+        all.len(),
+        all.join(", ")
+    )))
+}

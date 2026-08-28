@@ -5797,6 +5797,61 @@ mod tests {
         );
     }
 
+    /// A hire signs through the same 44221 builder as every other lifecycle
+    /// action: three ordered tags, the seven-key action, and a brief that
+    /// round-trips through the strict decoder the relay runs.
+    #[test]
+    fn a_lifecycle_command_builder_signs_a_session_hire() {
+        use buzz_core::coding_session_lifecycle_command::{
+            decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
+            CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
+        };
+        let channel = Uuid::new_v4();
+        let payload = CodingSessionLifecycleCommandPayload {
+            schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
+            command_id: "hire-1".into(),
+            action: CodingSessionLifecycleAction::SessionHire {
+                session_ref: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into(),
+                genesis_ref: "12".repeat(32),
+                role: "builder".into(),
+                provider_instance_ref: None,
+                model: None,
+                brief: "Rebase the lane and run the gate.".into(),
+            },
+        };
+        let event = build_coding_session_lifecycle_command(channel, &payload)
+            .expect("a hire builds")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign the hire");
+        assert_eq!(
+            event
+                .tags
+                .iter()
+                .map(|tag| tag.as_slice().to_vec())
+                .collect::<Vec<_>>(),
+            vec![
+                vec!["h".to_string(), channel.to_string()],
+                vec![
+                    "csl-v".to_string(),
+                    CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION.to_string()
+                ],
+                vec!["csl-command".to_string(), "hire-1".to_string()],
+            ]
+        );
+        assert_eq!(
+            decode_coding_session_lifecycle_command(&event.content).expect("decodes"),
+            payload
+        );
+
+        // A role that is not a slug never reaches the wire.
+        let mut bad = payload.clone();
+        let CodingSessionLifecycleAction::SessionHire { role, .. } = &mut bad.action else {
+            panic!("expected a hire action")
+        };
+        *role = "Builder".into();
+        assert!(build_coding_session_lifecycle_command(channel, &bad).is_err());
+    }
+
     /// The founder record: three ordered tags, and a `csg-session` tag that is
     /// the payload's own reference so a filter lookup and the signed content can
     /// never name different umbrellas.

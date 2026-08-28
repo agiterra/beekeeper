@@ -865,6 +865,63 @@ bee sessions create --channel "$CHANNEL_ID" --provider-instance x \
 #             catalog authority (--provider-authority); the driver slug is
 #             minted by the provider into the target it returns."
 # exit: 1 for each.
+
+# ── hire (plan D14) ───────────────────────────────────────────────────────
+# Publishes one 44221 `session.hire`: a REQUEST to the umbrella's host, not a
+# create. The relay checks authority on ingest (founder-or-grant on the
+# umbrella, the same standing a steer needs); the host applies its own policy
+# and answers by publishing a seated create — whose receipts are this hire's
+# receipts — or by refusing with a 44220 turn.
+bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --role builder --brief ./briefs/lane-c.md | jq .
+# → {"event_id":"…","accepted":true,"message":"","commandId":"<uuid>",
+#    "sessionRef":"…","genesisRef":"…","role":"builder",
+#    "outcome":"created","detail":"the host seated 4f2c1ab9 as builder on
+#     claude-primary — <cs-target>",
+#    "seat":{"commandId":"…","actor":"…","seat":"4f2c1ab9\u00b7builder",
+#            "role":"builder","providerInstanceRef":"claude-primary",
+#            "model":"claude-sonnet-4-6","target":"…","status":"created"},
+#    "code":null,"reason":null}
+# exit: 0
+
+# --genesis is resolved from the channel when omitted. Two geneses claiming one
+# umbrella is an error listing both, never a coin flip:
+bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --role builder --content 'x' 2>&1; echo "exit: $?"
+# stderr (no genesis in channel): "no coding-session genesis in this channel
+#   founds umbrella …" → not_found, exit 1
+
+# The brief is required — a seat hired with nothing to do is a bug:
+bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role builder \
+  2>&1; echo "exit: $?"
+# stderr: "one of --brief <file> or --content <text> is required: a hired
+#          seat's first turn is the brief …" → user_error, exit 1
+
+# The four non-zero outcomes, and the exit code each earns:
+#   refused      → the host's policy refused; "code" is one of HIRE_OFF,
+#                  HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY,
+#                  HIRE_PROVIDER_NOT_ALLOWED; exit 1
+#   failed       → the host seated it and the PROVIDER refused the create;
+#                  "code" is the receipt's own (e.g. ACTOR_UNAVAILABLE); exit 1
+#   seating      → a seated create was published, no provider receipt inside
+#                  60 s; exit 5
+#   unconfirmed  → nothing answered at all, or --no-wait; exit 5
+bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --role builder --content 'x' --no-wait | jq '{outcome, detail}'
+# → {"outcome":"unconfirmed","detail":"the relay stored the hire; --no-wait
+#     means nothing was asked what became of it"}; exit 5
+
+# An unauthorised signer is refused BY THE RELAY, on ingest:
+# stderr: "relay rejected event: restricted: only the session founder or a
+#          granted operator may hire"
+
+# A relay that predates session.hire refuses the payload as MALFORMED. The CLI
+# must name the relay, never the request (WIRE RULE):
+# stderr: {"error":"relay_error","message":"this relay does not accept hire
+#          requests yet — it validates kind 44221 against a closed action list
+#          that has no `session.hire` in it … The relay said: relay rejected
+#          event: invalid: coding-session lifecycle command action type is
+#          unsupported"} → exit 2
 ```
 
 ##### Recorded live run
@@ -893,6 +950,7 @@ stand in for a provider here.
 | `sessions create --actor` | refused, exit 1, message names `ACTOR_UNAVAILABLE` |
 | `sessions create --role` | refused, exit 1, message names `ACTOR_ROLE_PAIR` |
 | `sessions create --driver` | refused, exit 1, message names `--provider-instance` |
+| `sessions hire` | added after this run; its own recorded live run is below |
 | `sessions send --to builder` (no `--session-ref`) | resolved through the caller's own seat to umbrella `f75b3f56…`, and to **generation 2** — the newest — event `5ce7e81f…`, `accepted:true` |
 | boundary payload on the wire | `{"type":"thread.turn.start","text":"rebase and re-run the gate"}` — **no `deliver` key**, read back out of Postgres |
 | `--deliver steer` on the wire | `{"type":"thread.turn.start","text":"…","deliver":"steer"}`, `accepted:true` |
@@ -905,6 +963,37 @@ stand in for a provider here.
 | `sessions inbox --since <last eventId>` | 0 turns |
 | `sessions inbox --since <unknown id>` | `not_found`, exit 1 |
 | `sessions send --reply-to` | refused, exit 1, message names the three-tag envelope and `deny_unknown_fields` |
+
+##### Recorded live run — `sessions hire` (2026-08-28 17:30–17:50 UTC)
+
+Against a local `buzz-relay` built from this branch (debug) on
+`http://127.0.0.1:3077`, backed by the docker `buzz-postgres` / `buzz-redis`
+dev services. Founder `88cfb21c…`, granted operator `8b2bd4e6…`, channel
+`ddcccba6-893b-4fcb-bf29-543ddecc260d`, umbrella
+`5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10`, genesis `b13cbd5f…`. The umbrella's
+genesis, the host's seated creates and the provider's receipts were published
+by throwaway seeders (there is no host implementation yet — that is another
+lane); **everything the CLI and the relay do is real.**
+
+| check | result |
+| --- | --- |
+| founder publishes a hire | `accepted:true`, event `3fe71e03…`; `--genesis` resolved from the channel automatically |
+| the stored bytes | read back from Postgres: `{"type":"session.hire","sessionRef":"5b7e1c2a…","genesisRef":"b13cbd5f…","role":"builder","providerInstanceRef":null,"model":null,"brief":"Rebase the lane and run the gate."}` — the seven keys, explicit nulls |
+| granted operator publishes a hire | `accepted:true`, event `3ad96681…` — a 44228 `collaborator` grant is enough |
+| a stranger publishes a hire | **relay** refuses on ingest: `relay error 400: restricted: only the session founder or a granted operator may hire`, exit 2 |
+| a hire naming an umbrella no genesis claims (`--genesis` forced) | **relay** refuses: `restricted: no coding-session genesis in this channel claims that sessionRef, so nothing here can authorize a hire into it`, exit 2 |
+| the same, with `--genesis` omitted | refused locally before publishing: `not_found`, exit 1, message names the umbrella |
+| host answers with a seated create + `created` receipt | `outcome:"created"`, `seat.seat:"8b2bd4e6·runner"`, `seat.target:"coding-session/v1\|16:claude-agent-acp10:instance-114:runner-session1:1"`, exit **0** |
+| host answers with a refusal turn | `outcome:"refused"`, `code:"HIRE_OFF"`, `reason:"hiring is switched off on this computer"`, exit **1** |
+| `--no-wait` | `outcome:"unconfirmed"`, detail says *nothing was asked*, exit **5** |
+| no brief / empty brief / `Builder` / non-UUID `--session-ref` | `user_error`, exit 1, each naming its own rule |
+
+**Not exercised live:** the `failed` outcome (a provider receipt refusing the
+seated create) and the `seating` outcome (a create with no receipt inside 60 s)
+— unit-tested only; and the *"this relay does not accept hire requests yet"*
+path, which needs a relay built before this branch. No real host implements
+`session.hire` yet, so the policy codes other than `HIRE_OFF` have never been
+produced by anything but a seeder.
 
 **Not exercised live, and why.** No real provider was attached, so no
 `turn_queued`/`turn_started` receipt, no lease, and no transcript existed:
@@ -1159,4 +1248,5 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 66 | `sessions export` | ☐ | Files + manifest.json; non-empty `--out` refused with exit 1 |
 | 67 | turn-stage receipts (kind 44224, §6.13.1) | ☐ | NOT YET RUN LIVE — `sessions list`/`transcript` unaffected by a turn receipt on an otherwise-known or unknown target |
 | 68 | `events query` | ☐ | `--kinds` required (verbatim refusal, exit 1); compact row survives non-JSON content; empty result → `[]`, exit 0 |
+| 70 | `sessions hire` (44221 `session.hire`) | ☑ | founder + granted-operator accepted, stranger and unknown-umbrella refused by the relay, host `created` (exit 0) and `refused`/HIRE_OFF (exit 1), `--no-wait` unconfirmed (exit 5). Open: the `failed`/`seating` outcomes and the old-relay sentence |
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on status; `null` when the channel holds no joined create; never the provider's key |

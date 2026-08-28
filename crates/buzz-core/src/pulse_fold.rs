@@ -655,6 +655,10 @@ fn lifecycle_status_succeeded(
             ReceiptStatus::Resumed | ReceiptStatus::ResumedWithoutContext
         ),
         CodingSessionLifecycleAction::SessionStop { .. } => false,
+        // A hire produces no receipt of its own: the host answers it by
+        // publishing a seated create, and *that* create's receipts are the
+        // hire's. Nothing here can ever confirm a generation.
+        CodingSessionLifecycleAction::SessionHire { .. } => false,
     }
 }
 
@@ -672,6 +676,10 @@ fn lifecycle_authority(action: &CodingSessionLifecycleAction) -> &str {
             provider_authority_pubkey,
             ..
         } => provider_authority_pubkey,
+        // A hire names no provider authority — it asks a *host* to choose one.
+        // The empty string matches no signer, which is the honest answer: no
+        // receipt can be attributed to a hire.
+        CodingSessionLifecycleAction::SessionHire { .. } => "",
     }
 }
 

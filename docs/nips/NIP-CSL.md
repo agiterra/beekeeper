@@ -68,7 +68,8 @@ an explicit `null`, and additional or missing fields are invalid:
 }
 ```
 
-The same v1 envelope also admits exactly these two lifecycle action shapes:
+The same v1 envelope also admits exactly these two lifecycle action shapes
+(and, per the fork amendment below, a fourth: `session.hire`):
 
 ```json
 {
@@ -90,7 +91,9 @@ The same v1 envelope also admits exactly these two lifecycle action shapes:
 `session.stop` has the identical three-key action with `type` set to
 `session.stop`. Adding a discriminated action is an additive v1 evolution:
 older consumers reject an unknown action and therefore fail closed; they must
-not reinterpret it as `session.create`.
+not reinterpret it as `session.create`. That fail-closed rule is what makes
+`session.hire` (fork amendment below) safe to add and what obliges a publisher
+to name an old relay as old rather than blame its own request.
 
 `session.resume` addresses the exact disconnected generation the operator
 observed. The provider resolves its persisted ACP cursor, working directory,
@@ -339,6 +342,82 @@ keys, and neither travels without the other.
 `bee sessions status` prints this as a `turnBudget` line per execution
 (`used/limit`, or absent when the key has never been seen) — see
 `crates/buzz-cli/TESTING.md` § Coding Sessions for the exact shape.
+
+### Fork amendment: `session.hire` — a fourth action, answered by a host
+
+A lead seat cannot create another seat: an agent never holds key material, and
+a create names an `actor` whose custody is host-local (see *actor custody is
+host-local* above). Plan D14 makes the lead's verb a **request** instead. A
+fourth action, `session.hire`, asks the umbrella's host to seat a role; the
+host decides, and the seat it produces is an ordinary seated `session.create`.
+
+```json
+{
+  "schema": "buzz-coding-session-lifecycle-command/v1",
+  "commandId": "client-idempotency-id",
+  "action": {
+    "type": "session.hire",
+    "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+    "genesisRef": "64-lowercase-hex-genesis-event-id",
+    "role": "builder",
+    "providerInstanceRef": "capability-advertised-instance",
+    "model": "provider-neutral-model-id",
+    "brief": "Rebase the lane and run the gate."
+  }
+}
+```
+
+Exactly these seven keys, no historical forms and nothing additive: the action
+is new with the relay that validates it, so there is no older signer whose
+shape must keep working. `providerInstanceRef` and `model` are nullable and
+**structurally required** — written as explicit `null` when the requester
+leaves the choice to the host — for the same reason `projectRef` is. The
+others are required non-null strings: `sessionRef` is a canonical lowercase
+UUID, `genesisRef` a lowercase 64-hex event id, `role` a
+`[a-z0-9-]{1,64}` slug (the same slug a seated create writes), and `brief`
+1..12288 bytes, the `initialTurn` ceiling — because the brief *becomes* the
+seat's first turn.
+
+`genesisRef` is required here although a create's is optional: a hire is
+authorized against the umbrella's genesis, so a hire that names none names
+nothing that can authorize it.
+
+**Authority is checked by the relay, on ingest.** Unlike every other lifecycle
+action — whose founder-onlyness the provider enforces — a hire never reaches a
+provider at all, so the relay resolves the umbrella `sessionRef` names against
+the genesis in the same channel and requires the signer to be its founder or
+to hold a live NIP-CSAT `operator` grant, exactly the standing a steer needs.
+Anything else is refused `restricted: only the session founder or a granted
+operator may hire`. An umbrella no genesis in that channel claims is refused
+by name rather than admitted on channel membership.
+
+**The host answers, two ways.** On acceptance it applies its own standing
+policy (hiring on/off, allowed roles, a maximum number of live seats per
+umbrella, allowed providers), chooses an installed identity whose home role is
+`role` and that is not already live in this umbrella, gives that seat its own
+worktree, stages custody exactly as a desktop-initiated seat does, and
+publishes a seated `session.create` — with `providerInstanceRef` from the
+request or the policy default, `model` from the request or the identity's, the
+umbrella's title inherited, and `initialTurn` set to the brief prefixed
+`"[From the lead] "`. **That create's receipts are the hire's receipts**; the
+hire itself is answered by no receipt of its own, and its `commandId` never
+appears in a `kind:44224`.
+
+On refusal the host answers the requesting seat with a `kind:44220` turn whose
+text is exactly `hire refused: <CODE> — <reason>`, where `<CODE>` is one of
+`HIRE_OFF`, `HIRE_ROLE_NOT_ALLOWED`, `HIRE_LIMIT`, `HIRE_NO_IDENTITY`, or
+`HIRE_PROVIDER_NOT_ALLOWED`, and shows the same line in the umbrella as a
+system row. The codes are the constants
+`HIRE_REFUSAL_CODES` in `crates/buzz-core/src/coding_session_lifecycle_command.rs`;
+the prefix is `HIRE_REFUSAL_PREFIX` in the same file.
+
+**Deployment order.** The relay validates 44221 with `deny_unknown_fields` and
+a closed action list, so a `session.hire` is only valid once the relay carrying
+it is deployed. A client that publishes one to an older relay is refused
+`invalid: coding-session lifecycle command action type is unsupported`, and it
+must say so — `bee sessions hire` renders that as *"this relay does not accept
+hire requests yet"* rather than passing a shape error through as if the request
+were malformed.
 
 ### Tags
 

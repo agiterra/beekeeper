@@ -39,6 +39,18 @@ pub enum CliError {
     #[error("delivery unknown: {0}")]
     DeliveryUnknown(String),
 
+    /// A request the relay accepted was answered with a refusal by whoever
+    /// had to act on it — used by `bee sessions hire`, where the relay
+    /// storing the request and the host agreeing to it are separate facts.
+    #[error("{0}")]
+    Refused(String),
+
+    /// A request the relay accepted was never answered inside its wait. Not a
+    /// failure and not a success: nothing is known, and the command says so
+    /// rather than guessing in either direction.
+    #[error("{0}")]
+    Unconfirmed(String),
+
     /// Catch-all for unexpected failures
     #[error("{0}")]
     Other(String),
@@ -103,6 +115,8 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::Conflict(_) => 5,
         CliError::NotFound(_) => 1,
         CliError::DeliveryUnknown(_) => 2,
+        CliError::Refused(_) => 1,
+        CliError::Unconfirmed(_) => 5,
         CliError::Other(_) => 4,
     }
 }
@@ -125,6 +139,8 @@ pub fn print_error(e: &CliError) {
         CliError::Conflict(_) => "conflict",
         CliError::NotFound(_) => "not_found",
         CliError::DeliveryUnknown(_) => "delivery_unknown",
+        CliError::Refused(_) => "refused",
+        CliError::Unconfirmed(_) => "unconfirmed",
         CliError::Other(_) => "error",
     };
     let obj = serde_json::json!({

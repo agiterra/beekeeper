@@ -24,7 +24,7 @@ use buzz_core::coding_session_command::{
     CodingSessionDelivery, CODING_SESSION_COMMAND_SCHEMA, CODING_SESSION_COMMAND_TAG_VERSION,
 };
 use buzz_core::coding_session_lifecycle_command::{
-    validate_event_id_hex, validate_session_ref, CodingSessionLifecycleAction,
+    validate_event_id_hex, validate_role_slug, validate_session_ref, CodingSessionLifecycleAction,
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
 use buzz_core::coding_session_payload::ACTOR_ROLE_PAIR;
@@ -40,14 +40,16 @@ use buzz_sdk::kind::{
 
 use super::crew::{
     build_executions, build_founder_index, build_inbox, caller_umbrella, decode_leases,
-    decode_resumes, decode_turn_commands, fold_delivery, format_age, newest_turn_stages,
-    plan_readdress, resolve_send_target, short_pubkey, turn_load, CrewExecution, FounderIndex,
-    ReaddressPlan, TurnCommand, TurnStage, DELIVERY_WAIT_SECONDS,
+    decode_resumes, decode_turn_commands, find_hire_refusal, find_hired_seat, fold_delivery,
+    fold_hire, format_age, hire_exit_code, hire_payload, hire_report, hire_unsupported_by_relay,
+    newest_create_receipt, newest_turn_stages, plan_readdress, resolve_send_target,
+    resolve_umbrella_genesis, short_pubkey, turn_load, CrewExecution, FounderIndex, HireOutcome,
+    ReaddressPlan, TurnCommand, TurnStage, DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
 use crate::client::BuzzClient;
 use crate::error::CliError;
-use crate::validate::{read_or_stdin, sdk_err, validate_uuid};
+use crate::validate::{read_file_or_stdin, read_or_stdin, sdk_err, validate_uuid};
 
 /// The exact substring serde writes for a default delivery class.
 const BOUNDARY_DELIVER_KEY: &str = r#","deliver":"boundary""#;
@@ -522,6 +524,254 @@ pub fn refuse_unsupported_create_flags(
         ));
     }
     Ok(())
+}
+
+/// How often the hire wait re-asks the relay whether the host has answered.
+///
+/// Longer than the turn poll: a hire's answer is a human-scale sequence of
+/// host-local work, not a queue push, and sixty seconds of half-second polls
+/// would be a hundred and twenty queries for one seat.
+const HIRE_POLL: std::time::Duration = std::time::Duration::from_millis(2_000);
+
+/// Every kind the hire wait reads: the host's seated create, the provider's
+/// receipt for it, the metadata that says which executions are in this
+/// umbrella, and the turn a refusal arrives as.
+const HIRE_ANSWER_KINDS: &[u32] = &[
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_COMMAND,
+];
+
+/// Read the channel once and fold whatever answers the hire so far.
+async fn read_hire_answer(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: &str,
+    role: &str,
+    since: i64,
+) -> Result<HireOutcome, CliError> {
+    let events = fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await?;
+    let (receipts, _) = decode_receipts(&events);
+    let seat = find_hired_seat(&events, session_ref, role, since);
+    let receipt = seat
+        .as_ref()
+        .and_then(|seat| newest_create_receipt(&receipts, &seat.command_id));
+    let refusal = if seat.is_some() {
+        None
+    } else {
+        let (metadata, _) = decode_metadata(&events);
+        let (transcripts, _) = decode_transcripts(&events);
+        let executions = build_executions(
+            &metadata,
+            &receipts,
+            &transcripts,
+            &HashMap::new(),
+            chrono::Utc::now().timestamp(),
+        );
+        let (commands, _) = decode_turn_commands(&events);
+        find_hire_refusal(&commands, &executions, session_ref, since)
+    };
+    Ok(fold_hire(seat, receipt, refusal))
+}
+
+/// `bee sessions hire` — ask an umbrella's host to seat a role (plan D14).
+///
+/// Two facts are printed, deliberately not collapsed. `accepted` is the
+/// relay's: it stored the request. `outcome` is the *host's*: it seated
+/// somebody, it refused, or it never answered. A hire's receipts are the
+/// seat's own create receipts — the request carries no id the answer echoes —
+/// so the wait recognizes the answer by what it is: a seated create for this
+/// role, in this umbrella, published after the request went out.
+///
+/// A relay that predates `session.hire` refuses the payload as malformed;
+/// that is reported as an old relay, never as a bad request.
+#[allow(clippy::too_many_arguments)]
+pub async fn cmd_hire(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: &str,
+    genesis: Option<&str>,
+    role: &str,
+    provider_instance: Option<&str>,
+    model: Option<&str>,
+    brief: Option<&str>,
+    content: Option<&str>,
+    no_wait: bool,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    let channel = Uuid::parse_str(channel_id)
+        .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
+    validate_session_ref(session_ref).map_err(CliError::Usage)?;
+    validate_role_slug(role).map_err(CliError::Usage)?;
+    if let Some(genesis) = genesis {
+        validate_event_id_hex("--genesis", genesis).map_err(CliError::Usage)?;
+    }
+    let brief_text = match (brief, content) {
+        (Some(path), None) => read_file_or_stdin(path)?,
+        (None, Some(text)) => read_or_stdin(text)?,
+        (Some(_), Some(_)) => {
+            return Err(CliError::Usage(
+                "--brief names a file and --content carries the text; pass one, not both"
+                    .to_owned(),
+            ))
+        }
+        (None, None) => {
+            return Err(CliError::Usage(
+                "one of --brief <file> or --content <text> is required: a hired seat's first \
+                 turn is the brief, so a hire with no brief would seat an agent with nothing \
+                 to do"
+                    .to_owned(),
+            ))
+        }
+    };
+    if brief_text.trim().is_empty() {
+        return Err(CliError::Usage(
+            "the brief is empty — a hired seat's first turn is the brief".to_owned(),
+        ));
+    }
+
+    let genesis_ref = match genesis {
+        Some(genesis) => genesis.to_owned(),
+        None => {
+            let events =
+                fetch_channel_events(client, channel_id, &[KIND_CODING_SESSION_GENESIS]).await?;
+            resolve_umbrella_genesis(&events, session_ref)?
+        }
+    };
+
+    let command_id = Uuid::new_v4().to_string();
+    let payload = hire_payload(
+        &command_id,
+        session_ref,
+        &genesis_ref,
+        role,
+        provider_instance,
+        model,
+        &brief_text,
+    );
+    let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
+    let event = client.sign_event_unchecked(builder)?;
+
+    // Taken before the write so a seated create published in the same second
+    // as the request cannot fall outside the window, with a second of slack
+    // for clock skew between this host and the founder's.
+    let since = chrono::Utc::now().timestamp() - 1;
+    let extra = json!({
+        "commandId": command_id,
+        "sessionRef": session_ref,
+        "genesisRef": genesis_ref,
+        "role": role,
+    });
+    let mut merged = match submit_with(client, event, "hire request already accepted", extra).await
+    {
+        Ok(merged) => merged,
+        Err(CliError::Other(message)) => {
+            return match hire_unsupported_by_relay(&message) {
+                // Deliberately a relay error, not a usage error: the request
+                // was well formed and this relay is old.
+                Some(named) => Err(CliError::Relay {
+                    status: 400,
+                    body: named,
+                }),
+                None => Err(CliError::Other(message)),
+            };
+        }
+        Err(error) => return Err(error),
+    };
+
+    let outcome = if no_wait {
+        HireOutcome::Unconfirmed
+    } else {
+        wait_for_hire(client, channel_id, session_ref, role, since).await?
+    };
+    let report = hire_report(&outcome, !no_wait);
+    if let Some(object) = merged.as_object_mut() {
+        object.insert("outcome".into(), json!(report.status));
+        object.insert("detail".into(), json!(report.detail));
+        object.insert(
+            "seat".into(),
+            match &outcome {
+                HireOutcome::Created { seat, receipt } | HireOutcome::Failed { seat, receipt } => {
+                    json!({
+                        "commandId": seat.command_id,
+                        "actor": seat.actor,
+                        "seat": format!("{}\u{b7}{}", short_pubkey(&seat.actor), seat.role),
+                        "role": seat.role,
+                        "providerInstanceRef": seat.provider_instance_ref,
+                        "model": seat.model,
+                        "target": receipt.target_key,
+                        "status": receipt.status.as_str(),
+                    })
+                }
+                HireOutcome::Seating { seat } => json!({
+                    "commandId": seat.command_id,
+                    "actor": seat.actor,
+                    "seat": format!("{}\u{b7}{}", short_pubkey(&seat.actor), seat.role),
+                    "role": seat.role,
+                    "providerInstanceRef": seat.provider_instance_ref,
+                    "model": seat.model,
+                    "target": Value::Null,
+                    "status": Value::Null,
+                }),
+                _ => Value::Null,
+            },
+        );
+        let (code, reason) = match &outcome {
+            HireOutcome::Refused(refusal) => (json!(refusal.code), json!(refusal.reason)),
+            HireOutcome::Failed { receipt, .. } => (
+                receipt
+                    .error_code
+                    .as_ref()
+                    .map_or(Value::Null, |code| json!(code)),
+                receipt
+                    .error_message
+                    .as_ref()
+                    .map_or(Value::Null, |message| json!(message)),
+            ),
+            _ => (Value::Null, Value::Null),
+        };
+        object.insert("code".into(), code);
+        object.insert("reason".into(), reason);
+    }
+    println!("{merged}");
+
+    match hire_exit_code(&outcome) {
+        0 => Ok(()),
+        1 => Err(CliError::Refused(report.detail)),
+        _ => Err(CliError::Unconfirmed(report.detail)),
+    }
+}
+
+/// Poll the channel until the host answers the hire, or the wait runs out.
+///
+/// Query failures inside the window are retried rather than raised: the
+/// request already landed, and turning a transient read error into a command
+/// failure would tell a lead its hire was never sent when it was.
+async fn wait_for_hire(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: &str,
+    role: &str,
+    since: i64,
+) -> Result<HireOutcome, CliError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(HIRE_WAIT_SECONDS);
+    let mut held = HireOutcome::Unconfirmed;
+    loop {
+        if let Ok(outcome) = read_hire_answer(client, channel_id, session_ref, role, since).await {
+            match outcome {
+                // A seat with no receipt yet is progress, not an answer: hold
+                // it and keep waiting for the provider to speak.
+                HireOutcome::Seating { .. } => held = outcome,
+                HireOutcome::Unconfirmed => {}
+                answered => return Ok(answered),
+            }
+        }
+        if std::time::Instant::now() + HIRE_POLL >= deadline {
+            return Ok(held);
+        }
+        tokio::time::sleep(HIRE_POLL).await;
+    }
 }
 
 /// `bee sessions inbox` — turns addressed to seats this identity holds.

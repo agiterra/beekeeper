@@ -129,6 +129,43 @@ pub enum CodingSessionLifecycleAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
     },
+    /// Ask this umbrella's host to seat a new agent on a role (plan D14).
+    ///
+    /// A hire is a *request*, not a create: the signer names the umbrella, the
+    /// role, and the brief, and the founder's host decides — under a standing
+    /// policy the operator set — whether to seat anything at all. Nothing here
+    /// names an identity, a working directory, or key material; choosing the
+    /// identity and staging its custody are host-local steps, exactly as they
+    /// are for a seated [`SessionCreate`](Self::SessionCreate). The seat that
+    /// results is published as an ordinary seated create, and *its* receipts
+    /// are this hire's receipts.
+    ///
+    /// A refusal is answered to the requesting seat as a kind:44220 turn
+    /// prefixed [`HIRE_REFUSAL_PREFIX`], carrying one of [`HIRE_REFUSAL_CODES`].
+    #[serde(rename = "session.hire")]
+    SessionHire {
+        /// Umbrella the hired seat joins; canonical lowercase UUID.
+        session_ref: String,
+        /// Event id of that umbrella's immutable genesis, lowercase 64-hex.
+        ///
+        /// Required, unlike the create's optional `genesisRef`: a hire is
+        /// answered by an authority check against the genesis, so a hire that
+        /// names no genesis names nothing that can authorize it.
+        genesis_ref: String,
+        /// Role slug the hired seat holds — `[a-z0-9-]+`, 1..=
+        /// [`MAX_ROLE_SLUG_BYTES`] bytes, the same slug a seated create writes.
+        role: String,
+        /// Provider instance the host should run the seat on, or `null` to
+        /// take the host policy's default. Written explicitly either way.
+        provider_instance_ref: Option<String>,
+        /// Model the host should run the seat on, or `null` to take the
+        /// chosen identity's own. Written explicitly either way.
+        model: Option<String>,
+        /// The brief. It becomes the seat's first turn verbatim (the host
+        /// prefixes it), so it is required and non-empty:
+        /// 1..=[`MAX_LIFECYCLE_INITIAL_TURN_BYTES`] bytes.
+        brief: String,
+    },
     /// Reattach a disconnected, non-stopped execution as a new generation.
     #[serde(rename = "session.resume")]
     SessionResume {
@@ -160,6 +197,19 @@ pub struct CodingSessionLifecycleCommandPayload {
 }
 
 impl CodingSessionLifecycleCommandPayload {
+    /// The umbrella a `session.hire` names, or `None` for every other action.
+    ///
+    /// The relay's ingest gate uses this to decide whether a 44221 needs the
+    /// founder-or-grant check: every other lifecycle action is authorized by
+    /// the provider, not by the relay, so returning `None` for them keeps
+    /// their gate exactly as it was.
+    pub fn hire_session_ref(&self) -> Option<&str> {
+        match &self.action {
+            CodingSessionLifecycleAction::SessionHire { session_ref, .. } => Some(session_ref),
+            _ => None,
+        }
+    }
+
     /// Validate all payload fields before signing a lifecycle command.
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA {
@@ -224,6 +274,25 @@ impl CodingSessionLifecycleCommandPayload {
                 if let Some(role) = role {
                     validate_role_slug(role)?;
                 }
+            }
+            CodingSessionLifecycleAction::SessionHire {
+                session_ref,
+                genesis_ref,
+                role,
+                provider_instance_ref,
+                model,
+                brief,
+            } => {
+                validate_session_ref(session_ref)?;
+                validate_event_id_hex("action.genesisRef", genesis_ref)?;
+                validate_role_slug(role)?;
+                validate_optional(
+                    provider_instance_ref,
+                    "action.providerInstanceRef",
+                    MAX_LIFECYCLE_REFERENCE_BYTES,
+                )?;
+                validate_optional(model, "action.model", MAX_LIFECYCLE_REFERENCE_BYTES)?;
+                validate_required(brief, "action.brief", MAX_LIFECYCLE_INITIAL_TURN_BYTES)?;
             }
             CodingSessionLifecycleAction::SessionResume {
                 session,
@@ -293,6 +362,7 @@ pub fn decode_coding_session_lifecycle_command(
                 );
             }
         }
+        Some("session.hire") => require_exact_fields(action, HIRE_ACTION_FORM, "action")?,
         Some("session.resume" | "session.stop") => require_exact_fields(
             action,
             &["type", "session", "providerAuthorityPubkey"],
@@ -387,6 +457,42 @@ pub fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The one accepted `session.hire` key set. Unlike the create, a hire has no
+/// historical forms to keep valid — it is new with the relay that validates
+/// it — so exactly these seven keys are accepted, nothing else.
+const HIRE_ACTION_FORM: &[&str] = &[
+    "type",
+    "sessionRef",
+    "genesisRef",
+    "role",
+    "providerInstanceRef",
+    "model",
+    "brief",
+];
+
+/// The exact prefix a host writes on the kind:44220 turn that answers a
+/// refused hire, so the requesting seat and `bee sessions hire` recognize a
+/// refusal without parsing prose: `"hire refused: <code> — <reason>"`.
+pub const HIRE_REFUSAL_PREFIX: &str = "hire refused: ";
+
+/// Every refusal code a host may answer a `session.hire` with.
+///
+/// A refusal names which standing policy stopped the hire, so the lead can
+/// act on it rather than retry blindly. `HIRE_NO_IDENTITY` is the one whose
+/// remedy is the operator's ("install team roles"); the rest are policy.
+pub const HIRE_REFUSAL_CODES: &[&str] = &[
+    // Hiring is switched off for this host.
+    "HIRE_OFF",
+    // The role is not on the host's allowed-roles list.
+    "HIRE_ROLE_NOT_ALLOWED",
+    // The umbrella already holds the host's maximum live seats.
+    "HIRE_LIMIT",
+    // No installed managed agent holds this home role and is free.
+    "HIRE_NO_IDENTITY",
+    // The requested provider instance is not on the host's allowed list.
+    "HIRE_PROVIDER_NOT_ALLOWED",
+];
 
 /// The three historical create key sets, oldest first, before the additive
 /// agent-seat pair. Each is accepted alone or with `actor` + `role` appended.
@@ -1198,5 +1304,226 @@ mod tests {
             "an unseated create wrote a seat key: {content}"
         );
         assert!(decode_coding_session_lifecycle_command(&content).is_ok());
+    }
+    // ── session.hire (plan D14) ───────────────────────────────────────────
+
+    /// The exact seven-key hire action a lead signs.
+    fn hire_content(
+        session_ref_json: &str,
+        genesis_ref_json: &str,
+        role_json: &str,
+        provider_json: &str,
+        model_json: &str,
+        brief_json: &str,
+    ) -> String {
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"hire-1","action":{{"type":"session.hire","sessionRef":{session_ref_json},"genesisRef":{genesis_ref_json},"role":{role_json},"providerInstanceRef":{provider_json},"model":{model_json},"brief":{brief_json}}}}}"#
+        )
+    }
+
+    fn valid_hire_content() -> String {
+        hire_content(
+            &format!("{:?}", session_reference()),
+            &format!("{:?}", "12".repeat(32)),
+            "\"builder\"",
+            "\"claude-primary\"",
+            "\"claude-sonnet-4-6\"",
+            "\"Rebase the lane and run the gate.\"",
+        )
+    }
+
+    /// A hire carries exactly these seven keys, `providerInstanceRef` and
+    /// `model` nullable but structurally present, and round-trips byte-exact.
+    #[test]
+    fn accepts_exactly_the_seven_key_hire_action() {
+        let decoded =
+            decode_coding_session_lifecycle_command(&valid_hire_content()).expect("a hire decodes");
+        let CodingSessionLifecycleAction::SessionHire {
+            session_ref,
+            genesis_ref,
+            role,
+            provider_instance_ref,
+            model,
+            brief,
+        } = &decoded.action
+        else {
+            panic!("expected a hire action")
+        };
+        assert_eq!(session_ref, &session_reference());
+        assert_eq!(genesis_ref, &"12".repeat(32));
+        assert_eq!(role, "builder");
+        assert_eq!(provider_instance_ref.as_deref(), Some("claude-primary"));
+        assert_eq!(model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(brief, "Rebase the lane and run the gate.");
+        assert_eq!(
+            decoded.hire_session_ref(),
+            Some(session_reference().as_str())
+        );
+
+        // The nullable pair is written explicitly, never skipped.
+        let reserialized = serde_json::to_string(&decoded).expect("serialize");
+        let null_pair = hire_content(
+            &format!("{:?}", session_reference()),
+            &format!("{:?}", "12".repeat(32)),
+            "\"builder\"",
+            "null",
+            "null",
+            "\"Rebase the lane and run the gate.\"",
+        );
+        assert!(decode_coding_session_lifecycle_command(&null_pair).is_ok());
+        assert!(
+            reserialized.contains(r#""type":"session.hire""#),
+            "{reserialized}"
+        );
+    }
+
+    /// Every other action reports no hire umbrella, so the relay's authority
+    /// gate can never mistake a create for a hire.
+    #[test]
+    fn only_a_hire_names_a_hire_session_ref() {
+        assert_eq!(valid_payload().hire_session_ref(), None);
+    }
+
+    /// One key more, one key fewer, or a null where a string is required is a
+    /// rejection — the same "no partial shape" discipline the create forms use.
+    #[test]
+    fn refuses_a_hire_with_extra_missing_or_null_required_keys() {
+        let session = format!("{:?}", session_reference());
+        let genesis = format!("{:?}", "12".repeat(32));
+        let brief = "\"Rebase the lane.\"";
+
+        let extra = valid_hire_content().replace(
+            r#""brief":"Rebase the lane and run the gate.""#,
+            r#""brief":"Rebase the lane and run the gate.","title":"nope""#,
+        );
+        assert!(
+            decode_coding_session_lifecycle_command(&extra).is_err(),
+            "an eighth key was accepted"
+        );
+
+        let missing = valid_hire_content().replace(r#""model":"claude-sonnet-4-6","#, "");
+        assert!(
+            decode_coding_session_lifecycle_command(&missing).is_err(),
+            "a six-key hire was accepted"
+        );
+
+        for (label, content) in [
+            (
+                "null sessionRef",
+                hire_content("null", &genesis, "\"builder\"", "null", "null", brief),
+            ),
+            (
+                "null genesisRef",
+                hire_content(&session, "null", "\"builder\"", "null", "null", brief),
+            ),
+            (
+                "null role",
+                hire_content(&session, &genesis, "null", "null", "null", brief),
+            ),
+            (
+                "null brief",
+                hire_content(&session, &genesis, "\"builder\"", "null", "null", "null"),
+            ),
+            (
+                "empty brief",
+                hire_content(&session, &genesis, "\"builder\"", "null", "null", "\"   \""),
+            ),
+            (
+                "uppercase sessionRef",
+                hire_content(
+                    &format!("{:?}", session_reference().to_uppercase()),
+                    &genesis,
+                    "\"builder\"",
+                    "null",
+                    "null",
+                    brief,
+                ),
+            ),
+            (
+                "short genesisRef",
+                hire_content(
+                    &session,
+                    &format!("{:?}", "12".repeat(31)),
+                    "\"builder\"",
+                    "null",
+                    "null",
+                    brief,
+                ),
+            ),
+        ] {
+            assert!(
+                decode_coding_session_lifecycle_command(&content).is_err(),
+                "{label} was accepted"
+            );
+        }
+    }
+
+    /// A role is the same slug the seat contract already validates: no
+    /// uppercase, no spaces, no underscores, never empty, never over
+    /// [`MAX_ROLE_SLUG_BYTES`].
+    #[test]
+    fn refuses_a_hire_whose_role_is_not_a_slug() {
+        let session = format!("{:?}", session_reference());
+        let genesis = format!("{:?}", "12".repeat(32));
+        for role in [
+            "Builder",
+            "build er",
+            "build_er",
+            "",
+            &"b".repeat(MAX_ROLE_SLUG_BYTES + 1),
+        ] {
+            let content = hire_content(
+                &session,
+                &genesis,
+                &format!("{role:?}"),
+                "null",
+                "null",
+                "\"Rebase the lane.\"",
+            );
+            assert!(
+                decode_coding_session_lifecycle_command(&content).is_err(),
+                "role {role:?} was accepted"
+            );
+        }
+        for role in ["lead", "verifier-secondary", "builder2"] {
+            let content = hire_content(
+                &session,
+                &genesis,
+                &format!("{role:?}"),
+                "null",
+                "null",
+                "\"Rebase the lane.\"",
+            );
+            assert!(
+                decode_coding_session_lifecycle_command(&content).is_ok(),
+                "role {role:?} was refused"
+            );
+        }
+    }
+
+    /// The brief is the seat's whole first turn, so it takes the same ceiling
+    /// an `initialTurn` does and one byte past it is refused.
+    #[test]
+    fn refuses_a_brief_past_the_initial_turn_ceiling() {
+        let session = format!("{:?}", session_reference());
+        let genesis = format!("{:?}", "12".repeat(32));
+        for (bytes, expected_ok) in [
+            (MAX_LIFECYCLE_INITIAL_TURN_BYTES, true),
+            (MAX_LIFECYCLE_INITIAL_TURN_BYTES + 1, false),
+        ] {
+            let content = hire_content(
+                &session,
+                &genesis,
+                "\"builder\"",
+                "null",
+                "null",
+                &format!("{:?}", "b".repeat(bytes)),
+            );
+            assert_eq!(
+                decode_coding_session_lifecycle_command(&content).is_ok(),
+                expected_ok,
+                "a {bytes}-byte brief"
+            );
+        }
     }
 }

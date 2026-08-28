@@ -2475,6 +2475,62 @@ pub enum SessionsCmd {
         #[arg(long)]
         driver: Option<String>,
     },
+    /// Ask an umbrella's host to seat a new agent on a role (kind 44221
+    /// `session.hire`).
+    ///
+    /// A hire is a *request*, not a create. The signer must be the umbrella's
+    /// founder or hold a live operator grant on it; the founder's host then
+    /// applies its own standing policy — hiring on/off, allowed roles, a
+    /// maximum number of live seats, allowed providers — chooses an installed
+    /// identity whose home role matches, cuts that seat its own worktree, and
+    /// publishes an ordinary seated create. That create's receipts are this
+    /// hire's receipts, and its `commandId` is reported back.
+    ///
+    /// The brief becomes the seat's first turn verbatim (the host prefixes
+    /// it), so it is required: a seat hired with nothing to do is a bug.
+    ///
+    /// `accepted` reports the relay storing the request. `outcome` is a
+    /// separate fact and reports the host: `created`, `failed` (the provider
+    /// refused the seat), `refused` (the host's own policy refused the hire,
+    /// with a `code`), `seating` (a seat was published but no provider
+    /// receipt answered inside the wait), or `unconfirmed` (nothing answered
+    /// at all). Exit codes follow: 0 created, 1 refused/failed, 2 relay
+    /// error, 5 seating/unconfirmed.
+    #[command(
+        after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request."
+    )]
+    Hire {
+        /// Channel UUID the umbrella lives in
+        #[arg(long)]
+        channel: String,
+        /// Umbrella session reference (lowercase UUID) to hire into
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Genesis event id (64-char hex) founding the umbrella. Resolved from
+        /// the channel when omitted; required when two geneses claim the label.
+        #[arg(long)]
+        genesis: Option<String>,
+        /// Role slug to seat: `[a-z0-9-]`, 1-64 bytes
+        #[arg(long)]
+        role: String,
+        /// Provider instance the seat should run on; the host's policy default
+        /// when omitted
+        #[arg(long = "provider-instance")]
+        provider_instance: Option<String>,
+        /// Model the seat should run; the chosen identity's own when omitted
+        #[arg(long)]
+        model: Option<String>,
+        /// File holding the brief, or `-` to read it from stdin
+        #[arg(long, conflicts_with = "content")]
+        brief: Option<String>,
+        /// The brief as literal text, or `-` to read it from stdin
+        #[arg(long)]
+        content: Option<String>,
+        /// Print the relay's acceptance without waiting for the host to
+        /// answer; the outcome is then reported as unconfirmed
+        #[arg(long = "no-wait")]
+        no_wait: bool,
+    },
     /// List turns addressed to executions this identity is seated on.
     ///
     /// Oldest first, each row carrying the newest receipt stage its command
@@ -3131,6 +3187,7 @@ mod tests {
                 "doctor",
                 "export",
                 "grant",
+                "hire",
                 "inbox",
                 "list",
                 "revoke",
@@ -3182,7 +3239,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 12),
+            ("sessions", 13),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

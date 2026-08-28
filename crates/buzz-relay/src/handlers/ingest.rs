@@ -811,10 +811,19 @@ fn coding_session_content_cap(kind: u32) -> Option<usize> {
 /// - **44227 (goal)**: resolved exactly via its `d` = sessionRef tag — the
 ///   named session's founder or operators only; an unclaimed label keeps the
 ///   base rule.
-/// - **Everything else** (lifecycle, genesis, provider kinds, 44228): the
-///   base rule. Lifecycle stop/resume founder-onlyness is enforced by the
-///   provider (`operator_owns_session`), and 44228 owner-signing by the
-///   storage transaction.
+/// - **44221 `session.hire`**: resolved exactly via the umbrella named in the
+///   action's own `sessionRef` — that umbrella's founder or a live operator
+///   grant only, the same standing a steer needs. A hire asks a *host* to
+///   spend a machine, a worktree and an identity, so unlike the other
+///   lifecycle actions it cannot be left to the provider: the provider never
+///   sees the hire, only the seated create the host publishes afterwards.
+///   An umbrella no genesis in this channel claims is refused rather than
+///   fallen back on — a hire is new with the relay that validates it, so
+///   there is no legacy signer to keep working.
+/// - **Everything else** (the other lifecycle actions, genesis, provider
+///   kinds, 44228): the base rule. Lifecycle stop/resume founder-onlyness is
+///   enforced by the provider (`operator_owns_session`), and 44228
+///   owner-signing by the storage transaction.
 pub(crate) async fn check_coding_session_membership(
     tenant: &TenantContext,
     state: &AppState,
@@ -879,6 +888,18 @@ pub(crate) async fn check_coding_session_membership(
                 }
             }
         }
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND => {
+            if let Some(session_ref) = hire_umbrella_of(event) {
+                return match state
+                    .db
+                    .session_authority_by_ref(tenant.community(), channel_id, &session_ref)
+                    .await
+                {
+                    Ok(authority) => hire_authority_verdict(authority.as_ref(), pubkey_bytes),
+                    Err(error) => Err(format!("error: database error: {error}")),
+                };
+            }
+        }
         _ => {}
     }
 
@@ -904,6 +925,46 @@ pub(crate) async fn check_coding_session_membership(
         Ok(Some(gate)) if gate.admits_write(pubkey_bytes) => Ok(()),
         Ok(_) => coding_session_membership_verdict(false),
         Err(error) => Err(format!("error: database error: {error}")),
+    }
+}
+
+/// The umbrella a 44221 asks to hire into, or `None` for every other action.
+///
+/// Reads the event's own content because the hire's umbrella rides in the
+/// action, not in a tag — the 44221 envelope is exactly `h` / `csl-v` /
+/// `csl-command` and cannot carry a fourth. Content that does not decode is
+/// not a hire: the envelope validator refuses it a few steps later, and
+/// guessing an umbrella out of malformed bytes would be the wrong kind of
+/// helpful.
+fn hire_umbrella_of(event: &Event) -> Option<String> {
+    buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+        &event.content,
+    )
+    .ok()?
+    .hire_session_ref()
+    .map(str::to_owned)
+}
+
+/// Decide a hire against the resolved authority of the umbrella it names.
+///
+/// Pure so the refusal wording is testable without a database: a viewer grant
+/// is read access and is refused here, and an umbrella this channel holds no
+/// genesis for is refused by name rather than admitted on channel membership.
+fn hire_authority_verdict(
+    authority: Option<&buzz_db::coding_session_acl::SessionAuthority>,
+    pubkey_bytes: &[u8],
+) -> Result<(), String> {
+    let Some(authority) = authority else {
+        return Err(
+            "restricted: no coding-session genesis in this channel claims that sessionRef, so \
+             nothing here can authorize a hire into it"
+                .into(),
+        );
+    };
+    if authority.may_steer(pubkey_bytes) {
+        Ok(())
+    } else {
+        Err("restricted: only the session founder or a granted operator may hire".into())
     }
 }
 
@@ -7688,6 +7749,80 @@ mod tests {
                 &["csl-command", "create-1"],
             ],
         )
+    }
+
+    fn hire_content(session_ref: &str) -> String {
+        serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.hire",
+                "sessionRef": session_ref,
+                "genesisRef": "12".repeat(32),
+                "role": "builder",
+                "providerInstanceRef": null,
+                "model": null,
+                "brief": "Rebase the lane and run the gate.",
+            },
+        })
+        .to_string()
+    }
+
+    /// The gate reads the umbrella out of a hire's own content, and reads
+    /// nothing out of any other lifecycle action — a create must keep the
+    /// provider-enforced rule it has always had.
+    #[test]
+    fn only_a_session_hire_names_an_umbrella_the_relay_must_authorize() {
+        let channel = Uuid::new_v4().to_string();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let hire = lifecycle_event(&hire_content(session_ref), &channel);
+        assert_eq!(
+            hire_umbrella_of(&hire).as_deref(),
+            Some(session_ref),
+            "a hire must name its umbrella to the gate"
+        );
+
+        let create = lifecycle_event(&lifecycle_content(serde_json::Value::Null), &channel);
+        assert_eq!(hire_umbrella_of(&create), None);
+
+        // Unparseable content is not a hire. The envelope validator refuses it
+        // a few lines later; the gate must not guess an umbrella from it.
+        let garbage = lifecycle_event("{", &channel);
+        assert_eq!(hire_umbrella_of(&garbage), None);
+    }
+
+    /// A hire is founder-or-grant, exactly like a steer, and an umbrella no
+    /// genesis in this channel claims is refused rather than fallen back on.
+    #[test]
+    fn a_hire_is_refused_unless_the_signer_founded_or_was_granted_the_umbrella() {
+        let founder = vec![0xaa; 32];
+        let operator = vec![0xbb; 32];
+        let viewer = vec![0xcc; 32];
+        let stranger = vec![0xdd; 32];
+        let authority = buzz_db::coding_session_acl::SessionAuthority {
+            founder: founder.clone(),
+            operators: vec![operator.clone()],
+            viewers: vec![viewer.clone()],
+        };
+
+        assert!(hire_authority_verdict(Some(&authority), &founder).is_ok());
+        assert!(hire_authority_verdict(Some(&authority), &operator).is_ok());
+
+        for refused in [&viewer, &stranger] {
+            let error = hire_authority_verdict(Some(&authority), refused)
+                .expect_err("a viewer or a stranger may not hire");
+            assert_eq!(
+                error,
+                "restricted: only the session founder or a granted operator may hire"
+            );
+        }
+
+        let unknown = hire_authority_verdict(None, &founder)
+            .expect_err("an umbrella with no genesis here cannot authorize a hire");
+        assert!(
+            unknown.starts_with("restricted: ") && unknown.contains("genesis"),
+            "got {unknown}"
+        );
     }
 
     #[test]

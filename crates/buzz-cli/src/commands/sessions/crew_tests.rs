@@ -1943,3 +1943,533 @@ fn no_wait_says_it_did_not_look_rather_than_that_nobody_answered() {
         skipped.detail
     );
 }
+
+// ── Hire (plan D14) ──────────────────────────────────────────────────────────
+
+const UMBRELLA_HIRE: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+/// The seated create a host publishes in answer to a hire.
+#[allow(clippy::too_many_arguments)]
+fn seated_create_event(
+    id: &str,
+    signer: &str,
+    created_at: i64,
+    command_id: &str,
+    session_ref: &str,
+    role: &str,
+    actor: &str,
+    model: Option<&str>,
+) -> Value {
+    let payload = CodingSessionLifecycleCommandPayload {
+        schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.to_owned(),
+        command_id: command_id.to_owned(),
+        action: CodingSessionLifecycleAction::SessionCreate {
+            project_ref: None,
+            repo_ref: None,
+            session_ref: Some(session_ref.to_owned()),
+            genesis_ref: Some("12".repeat(32)),
+            provider_instance_ref: "claude-primary".into(),
+            provider_authority_pubkey: pk(PROVIDER),
+            model: model.map(str::to_owned),
+            title: Some("a session".into()),
+            initial_turn: Some("[From the lead] Rebase the lane.".into()),
+            actor: Some(pk(actor)),
+            role: Some(role.to_owned()),
+        },
+    };
+    json!({
+        "id": id,
+        "pubkey": pk(signer),
+        "kind": KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        "created_at": created_at,
+        "sig": "0".repeat(128),
+        "tags": [["h", CHANNEL], ["csl-v", "csl1-1"], ["csl-command", command_id]],
+        "content": serde_json::to_string(&payload).expect("serialize"),
+    })
+}
+
+/// A host's seated create for this role in this umbrella, published after the
+/// hire went out, is the hire's answer — and one published before it, or for
+/// another role or umbrella, is not.
+#[test]
+fn a_hire_is_answered_by_the_seated_create_for_its_role_and_umbrella() {
+    let events = vec![
+        // Published before the hire: somebody else's seat.
+        seated_create_event(
+            "old",
+            ALICE,
+            900,
+            "create-old",
+            UMBRELLA_HIRE,
+            "builder",
+            BOB,
+            None,
+        ),
+        // Another umbrella.
+        seated_create_event(
+            "other-umbrella",
+            ALICE,
+            1_100,
+            "create-x",
+            "11111111-2222-3333-4444-555555555555",
+            "builder",
+            BOB,
+            None,
+        ),
+        // Another role.
+        seated_create_event(
+            "other-role",
+            ALICE,
+            1_100,
+            "create-y",
+            UMBRELLA_HIRE,
+            "verifier",
+            BOB,
+            None,
+        ),
+        // The answer.
+        seated_create_event(
+            "the-seat",
+            ALICE,
+            1_100,
+            "create-hired",
+            UMBRELLA_HIRE,
+            "builder",
+            BOB,
+            Some("claude-opus"),
+        ),
+        // An unseated create for the same umbrella is not a hire's answer.
+        create_event(
+            "unseated",
+            ALICE,
+            1_100,
+            "create-z",
+            Some(UMBRELLA_HIRE),
+            None,
+            PROVIDER,
+        ),
+    ];
+
+    let seat = find_hired_seat(&events, UMBRELLA_HIRE, "builder", 1_000).expect("finds the seat");
+    assert_eq!(seat.command_id, "create-hired");
+    assert_eq!(seat.event_id, "the-seat");
+    assert_eq!(seat.actor, pk(BOB));
+    assert_eq!(seat.role, "builder");
+    assert_eq!(seat.model.as_deref(), Some("claude-opus"));
+    assert_eq!(seat.provider_instance_ref, "claude-primary");
+
+    assert_eq!(
+        find_hired_seat(&events, UMBRELLA_HIRE, "runner", 1_000),
+        None
+    );
+    // Nothing after the cutoff: the old seat is not re-reported.
+    assert_eq!(
+        find_hired_seat(&events, UMBRELLA_HIRE, "builder", 2_000),
+        None
+    );
+}
+
+/// The seat's own create receipt is the hire's receipt: `created` is a hire
+/// that worked, `failed` is one that did not, and the provider's code is
+/// carried through rather than summarized.
+#[test]
+fn a_hires_outcome_is_the_seated_creates_receipt() {
+    let seat_target = target("s-hired", 1);
+    let seat = |id: &str| {
+        find_hired_seat(
+            &[seated_create_event(
+                id,
+                ALICE,
+                1_100,
+                "create-hired",
+                UMBRELLA_HIRE,
+                "builder",
+                BOB,
+                None,
+            )],
+            UMBRELLA_HIRE,
+            "builder",
+            1_000,
+        )
+        .expect("seat")
+    };
+
+    let created = vec![receipt_event(
+        "r-1",
+        1_200,
+        "create-hired",
+        ReceiptStatus::Created,
+        &seat_target,
+        None,
+        None,
+    )];
+    let (created_receipts, _) = decode_receipts(&created);
+    let outcome = fold_hire(
+        Some(seat("a")),
+        newest_create_receipt(&created_receipts, "create-hired"),
+        None,
+    );
+    let HireOutcome::Created { seat: row, receipt } = &outcome else {
+        panic!("expected a created hire, got {outcome:?}")
+    };
+    assert_eq!(row.command_id, "create-hired");
+    assert_eq!(
+        receipt.target_key.as_deref(),
+        Some(coding_session_target_key(&seat_target).as_str())
+    );
+
+    let failed = vec![receipt_event(
+        "r-2",
+        1_200,
+        "create-hired",
+        ReceiptStatus::Failed,
+        &seat_target,
+        Some(("ACTOR_UNAVAILABLE", "no key for that actor")),
+        None,
+    )];
+    let (failed_receipts, _) = decode_receipts(&failed);
+    let outcome = fold_hire(
+        Some(seat("b")),
+        newest_create_receipt(&failed_receipts, "create-hired"),
+        None,
+    );
+    let HireOutcome::Failed { receipt, .. } = &outcome else {
+        panic!("expected a failed hire, got {outcome:?}")
+    };
+    assert_eq!(receipt.error_code.as_deref(), Some("ACTOR_UNAVAILABLE"));
+
+    // A create published but not yet answered is neither created nor failed.
+    assert!(matches!(
+        fold_hire(Some(seat("c")), None, None),
+        HireOutcome::Seating { .. }
+    ));
+    // Nothing at all is unconfirmed — never a guess in either direction.
+    assert_eq!(fold_hire(None, None, None), HireOutcome::Unconfirmed);
+}
+
+/// The host's refusal is a turn whose text carries a machine-readable code,
+/// and only a turn inside this umbrella, after the request, counts.
+#[test]
+fn a_refusal_turn_is_parsed_into_its_code_and_reason() {
+    for (text, code, reason) in [
+        (
+            "hire refused: HIRE_OFF — hiring is switched off on this computer",
+            "HIRE_OFF",
+            "hiring is switched off on this computer",
+        ),
+        (
+            "hire refused: HIRE_NO_IDENTITY - install team roles",
+            "HIRE_NO_IDENTITY",
+            "install team roles",
+        ),
+    ] {
+        let parsed = parse_hire_refusal(text).expect("parses");
+        assert_eq!(parsed, (code.to_owned(), reason.to_owned()));
+    }
+    for text in [
+        "hiring is off",
+        "hire refused: not allowed",         // no uppercase code
+        "hire refused: HIRE_OFF",            // no reason
+        "please hire refused: HIRE_OFF — x", // prefix must start the text
+    ] {
+        assert_eq!(parse_hire_refusal(text), None, "text {text:?} parsed");
+    }
+}
+
+#[test]
+fn a_refusal_is_scoped_to_the_umbrella_and_to_this_request() {
+    let mine = target("s-lead", 1);
+    let theirs = target("s-elsewhere", 1);
+    let rows = vec![
+        CrewExecution {
+            session_ref: Some(UMBRELLA_HIRE.to_owned()),
+            ..execution(
+                "s-lead",
+                1,
+                Some(&pk(ALICE)),
+                Some("lead"),
+                Some(UMBRELLA_HIRE),
+            )
+        },
+        execution(
+            "s-elsewhere",
+            1,
+            Some(&pk(BOB)),
+            Some("lead"),
+            Some("other-umbrella"),
+        ),
+    ];
+    let events = vec![
+        // Before the request.
+        turn_event(
+            "t-old",
+            ALICE,
+            900,
+            "c-old",
+            &mine,
+            "hire refused: HIRE_OFF — hiring is switched off",
+        ),
+        // Another umbrella's refusal.
+        turn_event(
+            "t-other",
+            BOB,
+            1_100,
+            "c-other",
+            &theirs,
+            "hire refused: HIRE_LIMIT — too many seats",
+        ),
+        // Ordinary prose that merely mentions hiring.
+        turn_event(
+            "t-prose",
+            ALICE,
+            1_100,
+            "c-prose",
+            &mine,
+            "I would hire refused: nothing",
+        ),
+        // Ours.
+        turn_event(
+            "t-ours",
+            ALICE,
+            1_150,
+            "c-ours",
+            &mine,
+            "hire refused: HIRE_LIMIT — this session already runs 4 seats",
+        ),
+    ];
+    let (commands, _) = decode_turn_commands(&events);
+    let refusal = find_hire_refusal(&commands, &rows, UMBRELLA_HIRE, 1_000).expect("finds it");
+    assert_eq!(refusal.event_id, "t-ours");
+    assert_eq!(refusal.code, "HIRE_LIMIT");
+    assert_eq!(refusal.reason, "this session already runs 4 seats");
+
+    assert_eq!(
+        find_hire_refusal(&commands, &rows, UMBRELLA_HIRE, 2_000),
+        None
+    );
+
+    let outcome = fold_hire(None, None, Some(refusal));
+    assert!(
+        matches!(outcome, HireOutcome::Refused(_)),
+        "got {outcome:?}"
+    );
+}
+
+/// The four outcomes map onto the documented exit codes, and each says in one
+/// sentence what happened — an unconfirmed hire is never printed as a success.
+#[test]
+fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
+    let seat_target = target("s-hired", 1);
+    let seat = find_hired_seat(
+        &[seated_create_event(
+            "the-seat",
+            ALICE,
+            1_100,
+            "create-hired",
+            UMBRELLA_HIRE,
+            "builder",
+            BOB,
+            None,
+        )],
+        UMBRELLA_HIRE,
+        "builder",
+        1_000,
+    )
+    .expect("seat");
+    let receipt = |status, error| {
+        let events = vec![receipt_event(
+            "r",
+            1_200,
+            "create-hired",
+            status,
+            &seat_target,
+            error,
+            None,
+        )];
+        let (records, _) = decode_receipts(&events);
+        newest_create_receipt(&records, "create-hired")
+    };
+
+    let cases = [
+        (
+            fold_hire(
+                Some(seat.clone()),
+                receipt(ReceiptStatus::Created, None),
+                None,
+            ),
+            "created",
+            0,
+        ),
+        (
+            fold_hire(
+                Some(seat.clone()),
+                receipt(ReceiptStatus::Failed, Some(("ACTOR_UNAVAILABLE", "no key"))),
+                None,
+            ),
+            "failed",
+            1,
+        ),
+        (
+            fold_hire(
+                None,
+                None,
+                Some(HireRefusal {
+                    event_id: "t".into(),
+                    at: 1_100,
+                    code: "HIRE_OFF".into(),
+                    reason: "hiring is switched off".into(),
+                }),
+            ),
+            "refused",
+            1,
+        ),
+        (fold_hire(Some(seat), None, None), "seating", 5),
+        (fold_hire(None, None, None), "unconfirmed", 5),
+    ];
+    for (outcome, word, code) in cases {
+        let report = hire_report(&outcome, true);
+        assert_eq!(report.status, word, "{outcome:?}");
+        assert_eq!(hire_exit_code(&outcome), code, "{outcome:?}");
+        assert!(!report.detail.is_empty(), "{outcome:?} said nothing");
+    }
+
+    // Not waiting is its own sentence: nobody was asked, rather than nobody
+    // answered.
+    let unwaited = hire_report(&HireOutcome::Unconfirmed, false);
+    assert!(
+        unwaited.detail.contains("--no-wait"),
+        "got {}",
+        unwaited.detail
+    );
+}
+
+/// A relay that predates `session.hire` refuses the payload as malformed. The
+/// CLI must say so in those words rather than pass the relay's shape error
+/// through as if the request were wrong.
+#[test]
+fn a_relay_that_does_not_know_hire_is_named_as_such() {
+    for message in [
+        "relay rejected event: invalid: coding-session lifecycle command action type is unsupported",
+        "relay rejected event: invalid: coding-session lifecycle command action has missing or unsupported fields",
+        "relay rejected event: invalid: malformed coding-session lifecycle command payload",
+    ] {
+        let named = hire_unsupported_by_relay(message).expect("recognized");
+        assert!(
+            named.starts_with("this relay does not accept hire requests yet"),
+            "got {named}"
+        );
+        assert!(named.contains(message), "the relay's own words are dropped: {named}");
+    }
+    for message in [
+        "relay rejected event: restricted: only the session founder or a granted operator may hire",
+        "relay rejected event: restricted: coding-session events require channel membership",
+    ] {
+        assert_eq!(hire_unsupported_by_relay(message), None, "{message}");
+    }
+}
+
+/// The umbrella's genesis is resolved from the channel, so a lead does not
+/// have to carry a 64-hex id; two geneses claiming one label is an error that
+/// lists both rather than a coin flip.
+#[test]
+fn the_umbrella_genesis_is_resolved_or_refused_by_name() {
+    let one = genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_HIRE);
+    let two = genesis_event(&pk(GENESIS_TWO), BOB, UMBRELLA_HIRE);
+
+    assert_eq!(
+        resolve_umbrella_genesis(std::slice::from_ref(&one), UMBRELLA_HIRE).expect("resolves"),
+        pk(GENESIS_ONE)
+    );
+
+    let missing = usage_message(
+        resolve_umbrella_genesis(&[], UMBRELLA_HIRE).expect_err("no genesis is an error"),
+    );
+    assert!(missing.contains(UMBRELLA_HIRE), "got {missing}");
+
+    let ambiguous = usage_message(
+        resolve_umbrella_genesis(&[one, two], UMBRELLA_HIRE).expect_err("two geneses is an error"),
+    );
+    assert!(
+        ambiguous.contains(&pk(GENESIS_ONE)) && ambiguous.contains(&pk(GENESIS_TWO)),
+        "got {ambiguous}"
+    );
+}
+
+/// The signed bytes, exactly. The relay validates 44221 with
+/// `deny_unknown_fields` and a closed action list, so the seven keys, their
+/// order, and the explicit nulls are the contract — not a formatting
+/// preference.
+#[test]
+fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
+    let genesis = "12".repeat(32);
+    let payload = hire_payload(
+        "hire-1",
+        UMBRELLA_HIRE,
+        &genesis,
+        "builder",
+        Some("claude-primary"),
+        Some("claude-opus"),
+        "Rebase the lane.",
+    );
+    assert_eq!(
+        serde_json::to_string(&payload).expect("serialize"),
+        format!(
+            concat!(
+                r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"hire-1","#,
+                r#""action":{{"type":"session.hire","sessionRef":"{umbrella}","#,
+                r#""genesisRef":"{genesis}","role":"builder","#,
+                r#""providerInstanceRef":"claude-primary","model":"claude-opus","#,
+                r#""brief":"Rebase the lane."}}}}"#
+            ),
+            umbrella = UMBRELLA_HIRE,
+            genesis = genesis,
+        )
+    );
+
+    // The optional pair is written as explicit nulls, never skipped: a relay
+    // that expects seven keys refuses five.
+    let defaults = hire_payload(
+        "hire-2",
+        UMBRELLA_HIRE,
+        &genesis,
+        "builder",
+        None,
+        None,
+        "Rebase the lane.",
+    );
+    let content = serde_json::to_string(&defaults).expect("serialize");
+    assert!(
+        content.contains(r#""providerInstanceRef":null,"model":null"#),
+        "got {content}"
+    );
+    // And it survives the relay's own strict decoder.
+    assert_eq!(
+        buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+            &content
+        )
+        .expect("decodes"),
+        defaults
+    );
+}
+
+/// The exit-code table `bee sessions hire --help` prints is the one the
+/// process actually returns.
+#[test]
+fn hire_errors_carry_the_documented_exit_codes() {
+    use crate::error::exit_code;
+    assert_eq!(
+        exit_code(&CliError::Refused("hire refused: HIRE_OFF — x".into())),
+        1
+    );
+    assert_eq!(
+        exit_code(&CliError::Unconfirmed("nothing answered".into())),
+        5
+    );
+    assert_eq!(
+        exit_code(&CliError::Relay {
+            status: 400,
+            body: "this relay does not accept hire requests yet".into(),
+        }),
+        2
+    );
+}
