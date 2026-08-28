@@ -199,6 +199,62 @@ MCP and Pulse are the crew's shared memory for now; role craft lives in the
 pack as prose. amas's own measurements (88% empty recall, reflection killed)
 are the reason.
 
+### 3.1 Direction set 2026-08-28 morning — the team model (Brian; lead positions marked)
+
+Brian's direction after the first live team runs and the front-door review.
+These supersede the parts of D1/D8 and of `docs/CREW_FRONT_DOOR.md` they
+contradict; the designer briefs the next batch from here. "Crew" is now
+**team** in every user-facing string.
+
+**D11. Identities are durable and named; seats are ephemeral.** A lead is an
+identity a person names once ("Keystone"), minted once, never re-minted; its
+pubkey is what memories (NIP-AE), transcripts and reputation attach to, and it
+is how a person addresses it ("Keystone, have Levain do N"). Builders and
+other roles may be hired per task. *Lead position:* hire from a **roster of
+named identities per role** by default (Levain, the Codex architect) so a
+diff is signed by someone with continuity; a truly disposable identity is
+allowed for scratch work and is labelled as such. Custody is unchanged: an
+agent never holds keys — the lead *requests* a hire and the host mints/seats
+under a policy the operator pre-authorised.
+
+**D12. Role is fixed per identity; roles evolve.** An identity always holds
+its home role; seat role = home role, always — the "seat Builder as lead"
+mismatch path is removed. Role packs are versioned by project ref
+(`<repo>@<commit>:personas/roles/<role>`), so every seat runs the current
+pack and a new lead gets the evolved lead package. A role pack has a
+**project overlay**: base `lead` + the project's specialisation (a game
+studio's lead and a CRM's lead share most of the craft, not all of it).
+
+**D13. Model and thinking are chosen per seat, by a rubric.** The person picks
+the lead's provider, model and thinking level when starting a session
+(Keystone on Fable, Sonnet or Opus — a knob the person understands as
+"model power"). The lead picks each hire's model with a `choose-model` skill:
+task class → minimum model (no Haiku builder for a Sonnet task), modality →
+vendor (images → a Codex or Gemini builder), and it says why in the hire.
+
+**D14. The lead hires the team after hearing the mission.** The front door is:
+goal → the lead proposes a roster (identities, models, why) → the operator
+approves, or a policy auto-approves within budget → the host seats them.
+`bee sessions hire` is the lead's verb; the preset team launch stays as a
+shortcut. This replaces the folder-picker installer as the primary path.
+
+**D15. A "team" preset is a playbook, not a team.** "High-velocity SWAT",
+"Surgical" — an overlay on the lead's pack that adds and subtracts
+instructions (skip the verifier, one builder, ship / verifier mandatory,
+one file at a time). Implemented as a pack overlay on the persona, chosen at
+session start beside the model. Name provisional: **playbook**.
+
+**D16. The Agents screen is the hub; desktop first.** Roles (drill in →
+skills, tools, instructions, pack version, project overlay), named
+identities per role, playbooks, and teams all live on the existing Agents
+screen; the "Install crew roles" folder picker and its result dialog go
+away (roles come with the project). The pending screen's seat line is
+dogfooding scaffolding and later folds into the info popover. **Desktop
+first:** the twelve no-surface-by-decision calls in ledger 76 are accepted
+as written; mobile and web are notated and revisited once the desktop
+works. Open: whether D11's roster-by-default or per-task minting is the
+default the person sees first.
+
 ## 4. Slices
 
 Dependency graph: S1 → S2; S1 → S3; S3 → S4; S4 → S5; S5 → S6. S2 and S3

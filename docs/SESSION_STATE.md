@@ -2509,6 +2509,13 @@ written and `bash -n` clean but **was not executed** — that harness needs
       (d) Refuting is a role (`verifier` pack), not a wrapper: `crew/tooling`
       deleted; the two builder-seat branches deleted (lane C's landed column
       supersedes them). Review sheet: `/Users/brian/Projects/beekeeper/review-2026-08-28/index.html`.
+    - *Direction 2026-08-28 morning:* the team model — durable named
+      identities, ephemeral seats, fixed home roles with versioned packs and
+      project overlays, model + thinking per seat by rubric, the lead hires
+      after hearing the mission, presets are playbooks, the Agents screen is
+      the hub, desktop first — is written as `docs/CREW_SESSIONS_PLAN.md`
+      §3.1 (D11–D16). It supersedes the folder-picker installer and the seat
+      mismatch path from item 76; the next batch is briefed from it.
     Hand-edits on Brian's machine that these must replace: Fizz's record
     linked to `personas/roles/lead` by hand; `~/.local/bin/bee` repointed at
     `target/debug/bee`; `Application Support/Bee Keeper` copied to
