@@ -1,15 +1,10 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
 
-import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import { stageCodingSessionCreateHint } from "@/shared/api/tauriCodingSessionWorkdirs";
-import {
-  getCodingSessionProviderRuntimes,
-  getCodingSessionProviderStatus,
-} from "@/shared/api/tauriSessionProvider";
 import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
+import type { CodingSessionProviderRuntime } from "@/shared/api/tauriSessionProvider";
 import type { RelayEvent } from "@/shared/api/types";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
@@ -22,6 +17,7 @@ import {
   type CodingSessionCommandTarget,
 } from "../lib/codingSessionCommand";
 import {
+  codingSessionHireModelNoticeLine,
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
   type CodingSessionHireAnswer,
@@ -42,7 +38,10 @@ import {
 } from "../lib/codingSessionLifecycleCommand";
 import { subscribeToObservedCodingSessionEvents } from "../lib/codingSessionObservedEvents";
 import { fetchCodingSessionRosterFold } from "../lib/codingSessionRoster";
-import { publishSeatedCodingSessionCreate } from "../lib/codingSessionSeatedCreate";
+import {
+  publishSeatedCodingSessionCreate,
+  type SeatedCodingSessionCreateDeps,
+} from "../lib/codingSessionSeatedCreate";
 import type { CodingSessionUmbrellaRecord } from "../lib/codingSessionTypes";
 
 /**
@@ -70,6 +69,11 @@ import type { CodingSessionUmbrellaRecord } from "../lib/codingSessionTypes";
  *    umbrella, so the person who set the policy sees it enforced. A refusal
  *    only the refused agent can see is a silent drop as far as the person is
  *    concerned.
+ *
+ * Everything it touches outside itself — the event bus, the worktree, custody,
+ * the keystore, the relay, the clock — arrives through {@link
+ * CodingSessionHireDeps}, so the sequence this hook performs is a thing a test
+ * can watch rather than a thing a comment claims.
  */
 export type CodingSessionHireOutcome = {
   commandId: string;
@@ -84,6 +88,58 @@ export type CodingSessionHireOutcome = {
   seatCommandId: string | null;
 };
 
+/** A managed agent, narrowed to what seating one needs. */
+export type CodingSessionHireAgent = {
+  pubkey: string;
+  name: string;
+  homeRole: string | null;
+  hasRolePack?: boolean;
+  model: string | null;
+};
+
+type HirePublisher = {
+  publishEvent: (
+    event: RelayEvent,
+    timeoutMessage: string,
+    sendErrorMessage: string,
+  ) => Promise<RelayEvent>;
+};
+
+/** Everything outside this hook that answering a hire has to reach. */
+export type CodingSessionHireDeps = {
+  /** The observed-44221 fan-out bus. Never a second relay connection. */
+  subscribe: (listener: (events: readonly RelayEvent[]) => void) => () => void;
+  fetchRosterFold: typeof fetchCodingSessionRosterFold;
+  createWorktree: typeof createCodingSessionWorktree;
+  stageCreateHint: typeof stageCodingSessionCreateHint;
+  /** The three custody/membership steps `publishSeatedCodingSessionCreate` runs. */
+  seatDeps: SeatedCodingSessionCreateDeps;
+  signer: typeof signRelayEvent;
+  publisher: HirePublisher;
+  newSeatCommandId: () => string;
+  newTurnCommandId: () => string;
+  /** This host's clock, Unix seconds. The staleness window is read from it. */
+  now: () => number;
+};
+
+/** The real thing: this computer's bus, disk, keystore, relay and clock. */
+export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
+  subscribe: subscribeToObservedCodingSessionEvents,
+  fetchRosterFold: fetchCodingSessionRosterFold,
+  createWorktree: createCodingSessionWorktree,
+  stageCreateHint: stageCodingSessionCreateHint,
+  seatDeps: {
+    ensureMembership: ensureActorChannelMembership,
+    stageSeat: stageCodingSessionActorSeat,
+    clearSeat: clearCodingSessionActorSeat,
+  },
+  signer: signRelayEvent,
+  publisher: relayClient,
+  newSeatCommandId: createCodingSessionLifecycleCommandId,
+  newTurnCommandId: createCodingSessionCommandId,
+  now: () => Math.floor(Date.now() / 1000),
+};
+
 export type UseCodingSessionHireInput = {
   /** Session channels this operator is reading. */
   channelIds: readonly string[];
@@ -91,6 +147,12 @@ export type UseCodingSessionHireInput = {
   operatorPubkey: string | null;
   /** Umbrellas observed in those channels, with founder and executions. */
   umbrellas: readonly CodingSessionUmbrellaRecord[];
+  /** Every managed agent this computer holds, as seating candidates. */
+  agents: readonly CodingSessionHireAgent[];
+  /** The provider identity that will sign this host's seats, when there is one. */
+  providerAuthorityPubkey: string | null;
+  /** This computer's runtimes — their auth state and their model catalogs. */
+  runtimes: readonly CodingSessionProviderRuntime[];
   /** Where each seat's worktree is cut from, by channel. Host-local. */
   checkoutForChannel: (channelId: string) => string | null;
   /** Targets to answer a requesting seat's refusal turn to, by pubkey. */
@@ -98,8 +160,12 @@ export type UseCodingSessionHireInput = {
     channelId: string,
     actorPubkey: string,
   ) => CodingSessionCommandTarget | null;
+  /** The standing policy. Defaults to the one stored on this device. */
+  policy?: CodingSessionHirePolicy;
   /** Off by default in tests and pop-outs; the founder's shell turns it on. */
   enabled?: boolean;
+  /** Injected in tests; the real bus, disk, keystore, relay and clock by default. */
+  deps?: CodingSessionHireDeps;
 };
 
 /** Watch for hires and honour them. Returns what it has answered, newest last. */
@@ -110,34 +176,14 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
   const [outcomes, setOutcomes] = React.useState<CodingSessionHireOutcome[]>(
     [],
   );
-  const policy = readCodingSessionHirePolicy();
-  const managedAgents = useManagedAgentsQuery();
-  const providerStatus = useQuery({
-    queryKey: ["coding-session-provider-status"],
-    queryFn: getCodingSessionProviderStatus,
-  });
-  const runtimes = useQuery({
-    queryKey: ["coding-session-provider-runtimes"],
-    queryFn: getCodingSessionProviderRuntimes,
-  });
+  const policy = input.policy ?? readCodingSessionHirePolicy();
+  const deps = input.deps ?? DEFAULT_CODING_SESSION_HIRE_DEPS;
 
   // Read through a ref so the subscription stays mounted while the catalog,
   // the agent list and the policy all keep changing under it. A resubscribe
   // per keystroke would drop hires arriving in the gap.
-  const latest = React.useRef({
-    input,
-    policy,
-    agents: managedAgents.data ?? [],
-    providerPubkey: providerStatus.data?.providerPubkey ?? null,
-    runtimes: runtimes.data ?? [],
-  });
-  latest.current = {
-    input,
-    policy,
-    agents: managedAgents.data ?? [],
-    providerPubkey: providerStatus.data?.providerPubkey ?? null,
-    runtimes: runtimes.data ?? [],
-  };
+  const latest = React.useRef({ input, policy, deps });
+  latest.current = { input, policy, deps };
 
   const answered = React.useRef(new Set<string>());
   const enabled = input.enabled ?? true;
@@ -160,6 +206,8 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         if (classified.kind !== "hire") continue;
         requests.push(classified);
       }
+      // Newest first: a host that has been shut sees a whole backlog at once,
+      // and the seat ceiling is finite.
       for (const request of selectUnansweredCodingSessionHires(
         requests,
         answered.current,
@@ -181,7 +229,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       }
     };
 
-    const unsubscribe = subscribeToObservedCodingSessionEvents(receive);
+    const unsubscribe = latest.current.deps.subscribe(receive);
     return () => {
       cancelled = true;
       unsubscribe();
@@ -192,6 +240,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       report: (outcome: CodingSessionHireOutcome) => void,
     ): Promise<void> {
       const current = latest.current;
+      const hireDeps = current.deps;
       const operator = current.input.operatorPubkey;
       const umbrella =
         current.input.umbrellas.find(
@@ -207,7 +256,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         report(outcomeOf(request, "ignored", "not this operator's session"));
         return;
       }
-      const providerAuthorityPubkey = current.providerPubkey;
+      const providerAuthorityPubkey = current.input.providerAuthorityPubkey;
       if (providerAuthorityPubkey === null) {
         report(
           outcomeOf(
@@ -219,10 +268,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         return;
       }
       const fold = umbrella.genesisRef
-        ? await fetchCodingSessionRosterFold(
-            request.channelId,
-            umbrella.genesisRef,
-          )
+        ? await hireDeps.fetchRosterFold(request.channelId, umbrella.genesisRef)
         : null;
       const grantedOperators = fold
         ? [...fold.accepted.entries()]
@@ -238,7 +284,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           grantedOperators,
         },
         policy: current.policy,
-        candidates: current.agents.map((agent) => ({
+        candidates: current.input.agents.map((agent) => ({
           pubkey: agent.pubkey,
           name: agent.name,
           homeRole: agent.homeRole,
@@ -247,11 +293,21 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             : { hasRolePack: agent.hasRolePack }),
           model: agent.model,
         })),
-        availableProviderInstanceRefs: current.runtimes
+        availableProviderInstanceRefs: current.input.runtimes
           .filter((runtime) => runtime.authState === "ready")
           .map((runtime) => runtime.instanceRef),
+        // Every runtime's own catalog, including the ones that are not ready:
+        // a model is checked against the runtime that would run it, and an
+        // empty list means "not read", which refuses nothing.
+        modelCatalogs: new Map(
+          current.input.runtimes.map((runtime) => [
+            runtime.instanceRef,
+            runtime.allowedModels,
+          ]),
+        ),
         providerAuthorityPubkey,
-        commandId: createCodingSessionLifecycleCommandId(),
+        commandId: hireDeps.newSeatCommandId(),
+        now: hireDeps.now(),
       });
 
       if (answer.kind === "ignored") {
@@ -259,7 +315,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         return;
       }
       if (answer.kind === "refused") {
-        await publishRefusal(request, answer, current.input);
+        await publishRefusal(request, answer, current.input, hireDeps);
         report(outcomeOf(request, "refused", answer.code));
         return;
       }
@@ -271,12 +327,12 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       // own checkout (item 80a).
       const checkout = current.input.checkoutForChannel(request.channelId);
       if (checkout !== null) {
-        const created = await createCodingSessionWorktree({
+        const created = await hireDeps.createWorktree({
           workdir: checkout,
           name: plan.worktreeName,
           source: null,
         });
-        await stageCodingSessionCreateHint({
+        await hireDeps.stageCreateHint({
           commandId: plan.commandId,
           path: created.path,
         });
@@ -286,13 +342,9 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         commandId: plan.commandId,
         seat: { actor: plan.actor, role: plan.role },
         seatLabel: plan.seatLabel,
-        deps: {
-          ensureMembership: ensureActorChannelMembership,
-          stageSeat: stageCodingSessionActorSeat,
-          clearSeat: clearCodingSessionActorSeat,
-        },
+        deps: hireDeps.seatDeps,
         publish: async () => {
-          const event = await signRelayEvent(
+          const event = await hireDeps.signer(
             buildCodingSessionCreateEvent({
               channelId: plan.channelId,
               commandId: plan.commandId,
@@ -309,13 +361,30 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
               initialTurn: plan.initialTurn,
             }),
           );
-          await relayClient.publishEvent(
+          await hireDeps.publisher.publishEvent(
             event,
             "Timed out while seating the hired agent.",
             "Failed to seat the hired agent.",
           );
         },
       });
+      // A model this host substituted for the lead's words is said out loud in
+      // the umbrella, where both the lead and the person can read it. A
+      // translation nobody is told about is the host quietly running something
+      // other than what was asked for.
+      if (plan.modelNotice !== null) {
+        await publishCodingSessionLaneMessage(
+          {
+            channelId: plan.channelId,
+            sessionRef: plan.sessionRef,
+            content: codingSessionHireModelNoticeLine({
+              role: plan.role,
+              notice: plan.modelNotice,
+            }),
+          },
+          { publisher: hireDeps.publisher, signer: hireDeps.signer },
+        ).catch(() => {});
+      }
       report({
         ...outcomeOf(request, "seated", null),
         seatCommandId: plan.commandId,
@@ -330,6 +399,7 @@ async function publishRefusal(
   request: CodingSessionHireRequest,
   answer: Extract<CodingSessionHireAnswer, { kind: "refused" }>,
   input: UseCodingSessionHireInput,
+  deps: CodingSessionHireDeps,
 ): Promise<void> {
   // To the seat that asked, so it can act, and to the umbrella, so the person
   // who set the policy sees it enforced. Neither is allowed to fail the other:
@@ -339,23 +409,29 @@ async function publishRefusal(
     request.requesterPubkey,
   );
   if (target) {
-    await publishCodingSessionCommand({
-      channelId: request.channelId,
-      commandId: createCodingSessionCommandId(),
-      target,
-      text: answer.text,
-      deliver: "boundary",
-    }).catch(() => {});
+    await publishCodingSessionCommand(
+      {
+        channelId: request.channelId,
+        commandId: deps.newTurnCommandId(),
+        target,
+        text: answer.text,
+        deliver: "boundary",
+      },
+      { publisher: deps.publisher, signer: deps.signer },
+    ).catch(() => {});
   }
-  await publishCodingSessionLaneMessage({
-    channelId: request.channelId,
-    sessionRef: request.action.sessionRef,
-    content: codingSessionHireRefusalNotice({
-      role: request.action.role,
-      requesterLabel: "A seat",
-      text: answer.text,
-    }),
-  }).catch(() => {});
+  await publishCodingSessionLaneMessage(
+    {
+      channelId: request.channelId,
+      sessionRef: request.action.sessionRef,
+      content: codingSessionHireRefusalNotice({
+        role: request.action.role,
+        requesterLabel: "A seat",
+        text: answer.text,
+      }),
+    },
+    { publisher: deps.publisher, signer: deps.signer },
+  ).catch(() => {});
 }
 
 function outcomeOf(

@@ -51,6 +51,7 @@ import { useAutoRestartPolicy } from "@/features/agents/lib/useAutoRestartPolicy
 import { usePersonaSync } from "@/features/agents/lib/usePersonaSync";
 import { useAgentObserverIngestion } from "@/features/agents/useAgentObserverIngestion";
 import { AgentManagementDialogs } from "@/features/agents/ui/AgentManagementDialogs";
+import { CodingSessionHireHost } from "@/features/coding-sessions/ui/CodingSessionHireHost";
 import { NewCodingSessionDialogHost } from "@/features/coding-sessions/ui/NewCodingSessionDialogHost";
 import { RequestedAgentCreateDialogs } from "@/features/agents/ui/RequestedAgentCreateDialogs";
 import {
@@ -922,6 +923,10 @@ export function AppShell() {
                 <RequestedAgentCreateDialogs />
                 <AgentManagementDialogs />
                 <NewCodingSessionDialogHost />
+                {/* Renders nothing; answers `session.hire` for as long as the
+                    app is open. Here rather than on a session screen because a
+                    hire arrives whether or not anybody is looking at one. */}
+                <CodingSessionHireHost />
                 <AppShellOverlays
                   activeChannel={managedChannel}
                   browseDialogType={browseDialogType}
