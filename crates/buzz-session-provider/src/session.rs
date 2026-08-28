@@ -781,7 +781,25 @@ impl SessionManager {
 /// human's own `~/.agents/skills/<name>/SKILL.md` with a pack's. The desktop's
 /// managed-agent path refuses exactly this write; one contract with two call
 /// sites must not have two behaviours.
-fn materialize_seat_skills(skills: &SeatSkills, cwd: &Path) -> Result<(), CreateFailure> {
+/// What a seat's role pack says about itself, read once at create time so
+/// the briefing can carry it. The skills are files in the seat's workdir;
+/// the prompt is the persona's own body — without it the seat knows its
+/// role's *name* and nothing of its craft (found live 2026-08-27: a "lead"
+/// that could only say it was seated as lead).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatRoleBriefing {
+    /// The persona's display name, for the briefing to name the pack.
+    pub display_name: String,
+    /// The persona body — the role's own instructions, verbatim.
+    pub prompt: String,
+    /// Skill directory names materialized under `.agents/skills/`.
+    pub skills: Vec<String>,
+}
+
+fn materialize_seat_skills(
+    skills: &SeatSkills,
+    cwd: &Path,
+) -> Result<SeatRoleBriefing, CreateFailure> {
     materialize_seat_skills_outside(skills, cwd, &shared_workdir_roots())
 }
 
@@ -819,7 +837,7 @@ fn materialize_seat_skills_outside(
     skills: &SeatSkills,
     cwd: &Path,
     shared_roots: &[PathBuf],
-) -> Result<(), CreateFailure> {
+) -> Result<SeatRoleBriefing, CreateFailure> {
     if is_shared_workdir(cwd, shared_roots) {
         return Err(CreateFailure {
             code: PROVIDER_UNAVAILABLE,
@@ -856,7 +874,14 @@ fn materialize_seat_skills_outside(
         refreshed = written.iter().filter(|s| s.written).count(),
         "seat skills materialized"
     );
-    Ok(())
+    let mut names: Vec<String> = written.iter().map(|skill| skill.name.clone()).collect();
+    names.sort_unstable();
+    names.dedup();
+    Ok(SeatRoleBriefing {
+        display_name: persona.display_name.clone(),
+        prompt: persona.system_prompt.trim().to_owned(),
+        skills: names,
+    })
 }
 
 /// Spawn the adapter and open one ACP session in `request.cwd`.
@@ -866,9 +891,10 @@ async fn start_agent(
 ) -> Result<(AcpClient, SessionStartup), CreateFailure> {
     // Before the child exists, not after: a skill the agent cannot read on its
     // first turn is a skill it does not have.
-    if let Some(skills) = &request.seat_skills {
-        materialize_seat_skills(skills, &request.cwd)?;
-    }
+    let seat_role = match &request.seat_skills {
+        Some(skills) => Some(materialize_seat_skills(skills, &request.cwd)?),
+        None => None,
+    };
 
     // The adapter inherits this process's environment plus the descriptor's
     // per-runtime `agent_env` — that is how a runtime-specific CLI override
@@ -910,7 +936,7 @@ async fn start_agent(
     }
 
     let cwd = request.cwd.to_string_lossy().to_string();
-    let opened = open_agent_session(&mut client, request, &cwd).await;
+    let opened = open_agent_session(&mut client, request, &cwd, seat_role.as_ref()).await;
     let opened = match opened {
         Ok(opened) => opened,
         Err(error) => {
@@ -1046,23 +1072,50 @@ fn rehydrated_bootstrap(first_turn_brief: &str, access_note: &str, prior_context
 /// every execution has to be told what its shell cannot do
 /// ([`crate::agent_fence::FENCED_SESSION_BRIEFING`]). The rehydration bootstrap
 /// is appended after it only when there is prior context to declare.
-fn session_briefing(bootstrap: Option<&str>, seat: Option<&SeatIdentity>) -> String {
-    let fence_briefing = match seat {
+fn session_briefing(
+    bootstrap: Option<&str>,
+    seat: Option<&SeatIdentity>,
+    seat_role: Option<&SeatRoleBriefing>,
+) -> String {
+    let mut briefing = match seat {
         Some(seat) => {
             crate::agent_fence::actor_seat_briefing(&seat.actor_pubkey, &seat.role, &seat.relay_url)
         }
         None => crate::agent_fence::FENCED_SESSION_BRIEFING.to_owned(),
     };
-    match bootstrap {
-        Some(bootstrap) => format!("{fence_briefing}\n\n{bootstrap}"),
-        None => fence_briefing,
+    // The role pack rides with the seat that staged it: its persona body is
+    // the role's own instructions, and its skills are files the seat can
+    // open. A seat without a pack is told only its role's name, which is all
+    // anybody knows about it.
+    if let (Some(seat), Some(role)) = (seat, seat_role) {
+        briefing.push_str(&seat_role_briefing(&seat.role, role));
     }
+    match bootstrap {
+        Some(bootstrap) => format!("{briefing}\n\n{bootstrap}"),
+        None => briefing,
+    }
+}
+
+/// The role-pack paragraph appended to a seated execution's briefing.
+fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
+    let mut text = format!(
+        "\n\nYour role pack, \"{}\", defines what the \"{role}\" seat does. Its instructions, verbatim:\n\n{}",
+        pack.display_name, pack.prompt
+    );
+    if !pack.skills.is_empty() {
+        text.push_str(&format!(
+            "\n\nThe pack's skills are materialized in this working directory under .agents/skills/ ({}); read the SKILL.md of each before acting in this role.",
+            pack.skills.join(", ")
+        ));
+    }
+    text
 }
 
 async fn open_agent_session(
     client: &mut AcpClient,
     request: &CreateRequest,
     cwd: &str,
+    seat_role: Option<&SeatRoleBriefing>,
 ) -> Result<OpenedSession, AcpError> {
     let mcp_servers = rehydration_mcp_servers(request)?;
     let attached = request.rehydration_mcp.as_ref();
@@ -1084,7 +1137,7 @@ async fn open_agent_session(
     // one must additionally be told what it is, before either answers anyone.
     // The system prompt is the required transport when the adapter has one; the
     // first-turn preamble exists only for adapters that do not.
-    let briefing = session_briefing(bootstrap.as_deref(), request.seat.as_ref());
+    let briefing = session_briefing(bootstrap.as_deref(), request.seat.as_ref(), seat_role);
     let system_prompt = session_new_briefing_transport(client, &briefing);
     let bootstrap_transport = bootstrap.is_some().then(|| {
         if system_prompt.is_some() {
@@ -2453,6 +2506,77 @@ done
         );
     }
 
+    /// The seat's briefing carries the pack: the persona body verbatim and the
+    /// materialized skill names. Without this a seated execution knows its
+    /// role's name and nothing else about it (found live 2026-08-27).
+    #[tokio::test]
+    async fn a_seated_session_is_briefed_with_its_role_pack_prompt_and_skills() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief template");
+        let workdir = dir.path().join("work");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let log_path = dir.path().join("seated.requests");
+        let agent = fake_agent(dir.path(), "seated-recording-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, &workdir);
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                log_path.to_string_lossy().into_owned(),
+            ),
+            ("MCP_TEST_MODE".to_owned(), "fresh".to_owned()),
+            ("MCP_TEST_PROTOCOL".to_owned(), "2".to_owned()),
+            ("MCP_TEST_AGENT_NAME".to_owned(), "codex".to_owned()),
+        ];
+        create.seat = Some(SeatIdentity {
+            actor_pubkey: "d".repeat(64),
+            role: "builder".into(),
+            relay_url: "wss://relay.test".into(),
+        });
+        create.seat_skills = Some(SeatSkills {
+            pack_dir: pack.clone(),
+            persona_id: "builder".into(),
+        });
+        manager.create(create).await.expect("seated create");
+        manager.shutdown("s1");
+
+        let session_new = request_by_method(&log_path, "session/new");
+        let system_prompt = session_new["params"]["systemPrompt"]
+            .as_str()
+            .expect("systemPrompt field");
+        assert!(
+            system_prompt.contains("seated with the role \"builder\""),
+            "the seat briefing must still name the role"
+        );
+        assert!(
+            system_prompt.contains("Your role pack, \"Builder\""),
+            "the pack must be named: {system_prompt}"
+        );
+        assert!(
+            system_prompt.contains("You build."),
+            "the persona body must reach the adapter verbatim: {system_prompt}"
+        );
+        assert!(
+            system_prompt.contains(".agents/skills/ (brief)"),
+            "the materialized skill names must be listed: {system_prompt}"
+        );
+    }
+
+    /// A seat with no pack is briefed with its role's name and nothing more —
+    /// no invented instructions.
+    #[test]
+    fn a_seat_without_a_pack_gets_no_role_paragraph() {
+        let seat = SeatIdentity {
+            actor_pubkey: "d".repeat(64),
+            role: "lead".into(),
+            relay_url: "wss://relay.test".into(),
+        };
+        let briefing = session_briefing(None, Some(&seat), None);
+        assert!(briefing.contains("seated with the role \"lead\""));
+        assert!(!briefing.contains("Your role pack"));
+    }
+
     /// The materialization happens before the adapter is spawned: a create
     /// whose spawn fails outright still left the skills on disk, which is only
     /// possible if the write precedes the spawn.
@@ -2712,7 +2836,7 @@ done
     /// execution is told it does not.
     #[test]
     fn the_session_briefing_follows_the_seat() {
-        let unseated = session_briefing(None, None);
+        let unseated = session_briefing(None, None, None);
         assert!(unseated.contains("cannot authenticate"));
 
         let seat = SeatIdentity {
@@ -2720,14 +2844,14 @@ done
             role: "architect".into(),
             relay_url: "wss://seat.example".into(),
         };
-        let seated = session_briefing(None, Some(&seat));
+        let seated = session_briefing(None, Some(&seat), None);
         assert!(seated.contains(&seat.actor_pubkey));
         assert!(seated.contains("wss://seat.example"));
         assert!(seated.contains("architect"));
         assert!(!seated.contains("cannot authenticate"));
 
         // A rehydration bootstrap still rides behind whichever variant applies.
-        let with_bootstrap = session_briefing(Some("BOOTSTRAP"), Some(&seat));
+        let with_bootstrap = session_briefing(Some("BOOTSTRAP"), Some(&seat), None);
         assert!(with_bootstrap.ends_with("BOOTSTRAP"));
         assert!(with_bootstrap.contains(&seat.actor_pubkey));
     }
