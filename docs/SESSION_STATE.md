@@ -4441,6 +4441,213 @@ written and `bash -n` clean but **was not executed** — that harness needs
     build:e2e` plus Playwright `crew-front-door.spec.ts --project=smoke` 8
     passed / 0 failed.
 
+84. **Designer seat for the Singularity remodel (2026-08-28 18:0x).**
+    Brian's mock + design doc live at /Users/brian/Downloads/singularity/
+    (Singularity.png, Keystone.png, beekeeper-singularity-ui-remodel.md —
+    written by a design agent from Brian's description alone, no wire
+    knowledge). Decision: dogfood it — hire **Banksy** (persistent designer
+    identity, Codex gpt-5.6-sol) as `designer` to write the Surfaces spec
+    from the mock + doc, then builder lanes. Prerequisite pack lane:
+    designer gains `see-the-app` (the poker's drive skill by reference), a
+    `wire-sources-for-surfaces` table (44223 status/lease → liveness; 44224
+    → stages; 44240 types → dispositions; 44228 → authority; 44227 → goal;
+    44225 → story; 44226 → founder; write-report fields → changes/tests,
+    else "no report yet"), and a "from mock to spec" section; installer asks
+    a name per identity ("Name your team"). Naming ruling: Singularity is
+    the surface, sessions stay sessions.
+
+    Banksy persona direction (Brian, 18:1x): "like Banksy the artist —
+    outside the box; the artist literally made spray paint feel amazing, not
+    just look good." The designer persona body carries this: the surface
+    must *feel* right, not merely be correct — the stream tells the story,
+    the state is felt before it is read; bold simplification over
+    decoration; break a convention when the convention lies, never when it
+    merely bores; and every feeling is still built on a signed fact (the
+    wire table) — a beautiful lie is the one thing Banksy never ships.
+    Renamed on disk 18:1x (identity efefd4e5…, persona card, default Codex ·
+    gpt-5.6-sol); the relay profile republishes on the next Install team
+    roles refresh or a dialog rename.
+
+    **Shipped `d2706451`:**
+
+    - **Lane B — designer pack becomes Banksy** (`be381f7d`):
+
+      - designer.persona.md rewritten (89 lines, under the 90 cap): keeps
+        name: designer / role: designer, carries Brian's Banksy direction
+        verbatim in spirit — the artist made spray paint feel amazing, not
+        just look good; correct is the floor, the stream tells the story,
+        state is felt before it is read, bold simplification over
+        decoration, break a convention when it lies and never when it merely
+        bores, every feeling rests on a signed fact and a beautiful lie is
+        the one thing this seat never ships. The existing 'What you never
+        do' is kept intact (no feature code/tests/migrations, no invented
+        surfaces, no control that claims what it does not enforce, cite
+        file:line) plus a new line: never specify a state you have not seen.
+        Frontmatter skills list now names all three skills.
+      - NEW skills/see-the-app/SKILL.md (67 lines): references
+        personas/roles/poker/skills/drive-and-report by path rather than
+        copying it (stated reason: a copy drifts and the poker's is the one
+        that gets fixed), then names what a designer uses differently — a
+        mock bridge is legitimate for cataloguing states where a poker needs
+        the real build; reach every state you intend to specify (or write
+        'not reached: <state> — <why>'); crop to the subject; hash the set
+        before use because unscoped captures come out byte-identical; you
+        specify rather than report findings, and an honesty bug found while
+        driving goes to the lead as an anomaly. Mocks are read as images and
+        cited file + region + element (example: Singularity.png ->
+        participant status bar -> Keystone row); an element seen and not
+        carried is listed as deliberately dropped.
+      - NEW skills/wire-sources-for-surfaces/SKILL.md (62 lines, under the
+        120 cap): a 12-row table of UI fact -> signed source ->
+        empty/unknown copy, grounded in verified code. Rows: liveness (44223
+        status + CodingSessionLeaseState live/released -> 'live / quiet 3d /
+        released / no provider answering'); turn stages (44224
+        turn_queued/turn_started/turn_degraded/turn_dropped/turn_refused/interrupt_delivered
+        -> 'no receipt yet'); dispositions (44240 pu-type
+        plan|milestone|note|handoff|blocker, rendered as a claim by its
+        author); authority (44228 grant-operator -> 'seated, not yet
+        granted'); goal (44227); founder (44226 signer, identity is the
+        genesis event id not the csg-session tag); story (44225 -> 'no turn
+        observed'); seats (44223 agentRef + role, display name from the
+        kind-0 profile, never a pubkey); hires (44221 session.hire +
+        HIRE_MODEL_NOT_OFFERED / HIRE_STALE refusals, and a relay predating
+        session.hire says so rather than blaming the provider);
+        changes/tests (no kind today — the builder write-report fields
+        arrive as prose, so 'no report yet' is the only honest value, never
+        scrape a count out of prose); plan (no artifact — the lead brief's
+        'Acceptance:' line is prose, so 'no plan published'). Carries the
+        rule verbatim: a panel that cannot name its row shows the unknown
+        copy, never a number; plus absence/unknown/empty are three states
+        and claims are never painted as facts.
+      - specify-surfaces/SKILL.md gains '## 5. From a mock to a spec' (Hand
+        off renumbered to 6; file now 110 lines): the per-element walk
+        writes five lines each — cite the mock (file -> region -> element),
+        the surface it replaces (file:line or 'new surface'), the wire row
+        it reads, verbatim copy including empty/unknown, and the poker's
+        walk; dropped elements are written as dropped; a mock label loses to
+        the wire (mock 'Idle' over an unreachable provider becomes 'No
+        provider answering', recorded as an override); density and lifecycle
+        are split as separate axes. Includes the naming ruling: Singularity
+        is the surface, sessions (sessionRef, umbrella session, execution,
+        generation) stay sessions on the wire, in the CLI and in code, and
+        no copy may assume a lead exists.
+      - poker drive-and-report/SKILL.md: one blockquote note added under the
+        title saying the designer's see-the-app references this procedure
+        rather than copying it, so keep it general (32 lines, the permitted
+        one-line note).
+
+      Open from this lane:
+
+      - personas/roles/designer/.plugin/plugin.json still carries id
+        `com.beekeeper.crew.designer` and name 'Team Designer'. The id is
+        'crew'-flavoured but is an install key, not user-facing copy;
+        renaming it risks orphaning installed packs, so I left it. Someone
+        owning the installer should decide whether pack ids migrate.
+      - The wire table's 'changes/tests' and 'plan' rows name two facts with
+        no signed source today. Those are the next event kinds somebody has
+        to add if a Singularity panel is ever to show a test count or an
+        accepted plan; the skill states them as sign-off items rather than
+        resolving them.
+      - Not exercised: no designer seat was actually run against this pack,
+        so the skills are validated as a pack (pack validate Valid.) but not
+        yet proven in a live hire. Item 84's Banksy hire is the real test.
+
+    - **Lane N — installer asks a name per identity and republishes
+      the profiles it renames** (`abedb46d`, `d2706451`):
+
+      - (1) "Name the lead" is gone; the dialog now shows
+        INSTALL_CREW_ROLES_TEAM_NAMES_LABEL = "Name your team" with one text
+        field per role pack the folder scan found, in the scan's order (lead
+        first, then the roster, then the unseated roles).
+      - (1) The folder pick now carries a read-only scan:
+        pick_crew_role_packs_directory returns PickedCrewRolePacks {
+        directory, packs, skipped }, so the fields appear the moment a
+        folder is chosen. Each field defaults to the name that identity
+        already carries on this computer (Keystone, not lead) when a pack is
+        already installed, otherwise the pack's display name — so installing
+        without touching a field renames nobody.
+      - (1) The install request carries names: Record<role, name>;
+        install_role_packs takes &HashMap<String,String> instead of
+        lead_name: Option<&str>. A name over an already-installed identity
+        renames it in place — managed-agent record and persona card — and
+        mints nothing (D11 "minted once"). Rust reds:
+        every_named_role_is_minted_under_the_name_the_operator_gave,
+        a_new_name_renames_the_installed_identity_in_place_and_mints_nothing,
+        the_name_fields_come_off_the_scan_with_the_lead_first. TS reds:
+        field list renders from the scan and the submit carries the full
+        role→name map (installCrewRolesForm.test.mjs).
+      - (2) Verified role_profile_publishes already covers every installed
+        identity, not only the lead
+        (desktop/src-tauri/src/managed_agents/crew_roles.rs — it maps over
+        install.installed unconditionally, and commands/crew_roles.rs
+        publishes each). No extension needed; the gap was that no seat other
+        than the lead could be renamed. New red test
+        renaming_the_designer_owes_a_profile_publish_with_the_new_name pins
+        designer→Banksy owing a kind:0 publish with previous_name
+        Some("designer").
+      - (3) A renamed row reads "Designer — Banksy (renamed; profile
+        republished)" via the new crewRoleResultLine +
+        INSTALL_CREW_ROLES_RENAMED_NOTE; the rename note replaces the
+        refresh note rather than stacking on it. InstalledCrewRole gained a
+        renamed flag distinct from refreshed. All copy says "team".
+      - Honesty fix found on the way:
+        InstallCrewRolePacksResponse.profileSyncError existed in Rust but
+        was missing from the TS type, so a run whose kind:0 publishes failed
+        showed the operator nothing while rows still said "profile
+        republished". It is now in the type, rendered in the dialog
+        (data-testid install-crew-roles-profile-sync-error), and a renamed
+        row on such a run reads "renamed here; the relay may still know it
+        by the old name" instead.
+      - A folder that scans to zero packs now says so before anything is
+        installed and disables Install, rather than only after a write.
+
+      Deviations:
+
+      - No new Tauri command. Registering one requires
+        desktop/src-tauri/src/handlers.rs, which this lane does not own, so
+        the scan travels back on the already-registered
+        pick_crew_role_packs_directory (its return type changed from
+        Option<String> to Option<PickedCrewRolePacks>). Scanning is
+        read-only, so doing it at pick time writes nothing.
+      - crew_roles_tests.rs was already at the 1000-line ceiling, so the
+        naming tests live in a sibling module
+        desktop/src-tauri/src/managed_agents/crew_roles_naming_tests.rs
+        (declared #[path] mod naming inside the existing tests module). The
+        limit was not bumped.
+
+      Open from this lane:
+
+      - Not run in the live app — evidence is unit/DOM tests, typecheck,
+        clippy and the file-size gate only. No screenshot of the new field
+        list.
+      - Ledger item 85 (default the folder to <checkout>/personas/roles) is
+        untouched — different lane, and it would land in the same dialog's
+        folder row.
+      - The success toast in AgentsView.tsx (crewRolesInstalledToast) still
+        says "Installed N team roles into <team>: roles" and says nothing
+        about renames. AgentsView.tsx is not owned by this lane; the toast
+        helper is, if a follow-up wants it to mention renamed identities.
+      - profileSyncError is one sentence for the whole run, not one per
+        identity, so when it is set every renamed row hedges. Making the
+        hedge per-identity needs the backend to return the failures keyed by
+        pubkey.
+      - Two packs declaring the same role would share one map entry and one
+        field; the second identity would install as "<name> 2" via
+        mint_agent_name. Not exercised by any test — the repo's packs are
+        one role each.
+
+    Gates on this branch: `cargo test -p buzz-cli -p buzz-persona -p
+    buzz-core --lib` 589 + 447 + 157 = 1,193 passed / 0 failed; `cargo
+    clippy --workspace --all-targets -D warnings` 0 warnings; `cargo fmt
+    --all --check` clean; desktop `pnpm typecheck` clean and `pnpm test`
+    6,635 passed / 0 failed across 80 suites; `cargo test`
+    (desktop/src-tauri) 2,752 + 7 + 3 = 2,762 passed / 0 failed / 18
+    ignored; `pnpm check:px-text` clean; `just file-size-check` 9/9 node
+    subtests plus the desktop/web/mobile size checks clean; `pack validate`
+    for lead, architect, builder, runner, verifier, poker and designer — all
+    seven "Valid."; `pnpm build:e2e` plus Playwright
+    `crew-front-door.spec.ts --project=smoke` 8 passed / 0 failed in 17.8 s.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -4478,6 +4685,16 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**Read §2 item 84 first (2026-08-28 evening).** The designer seat is now
+Banksy — the pack carries Brian's Banksy direction, a `see-the-app` drive
+skill and a `wire-sources-for-surfaces` table that maps every UI fact to a
+signed event kind or to honest unknown copy, and the installer asks a name
+per identity ("Name your team") and republishes the kind:0 profile of any
+identity it renames. Unit/DOM-level evidence only. **Next: Brian relaunches,
+clicks Install team roles once** (renames plus the profile republish for
+Banksy), **then hires Banksy as `designer`** with the Singularity mock and
+design doc.
 
 **Read §2 item 83 first (2026-08-28 evening).** The first hire from inside
 Beekeeper seated a builder that could not report: the hire host granted it
