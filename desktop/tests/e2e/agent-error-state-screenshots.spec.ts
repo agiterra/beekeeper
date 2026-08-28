@@ -5,12 +5,10 @@
  *   - Agent card avatar badge (CircleAlert icon + tooltip) for stopped agents
  *     with a lastError / lastErrorCode.
  *
- * ManagedAgentRow (StatusBlock text) is also exercised here even though it is
- * not yet wired into a reachable route in the main app — it will be connected
- * in the follow-up config-bridge PR.  We render it in isolation by navigating
- * to the agents view and letting the mock bridge expose the row through the
- * unified section once that wiring lands; for now we capture the card badges
- * which ARE reachable in the current build.
+ * An earlier note here promised a second surface, `ManagedAgentRow`, once a
+ * follow-up wired it into a route. That never happened: the row and its only
+ * caller were never reachable and were deleted, so the card badge below is the
+ * whole of what this spec covers.
  */
 
 import { expect, test } from "@playwright/test";

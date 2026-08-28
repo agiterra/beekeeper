@@ -16,6 +16,7 @@ import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelConte
 import { useFeedbackToasts } from "@/shared/hooks/useToastEffect";
 import { Badge } from "@/shared/ui/badge";
 import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
+import { AgentHomeRoleBadges } from "./AgentHomeRoleBadges";
 import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
 import { CreateIdentityCard } from "./CreateIdentityCard";
@@ -325,15 +326,32 @@ function AgentPersonaCard({
         // explicit-pubkey path via the avatar control below.
         onOpenPersonaProfile(persona);
       }}
-      statusBadge={
-        agent?.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
-        ) : null
-      }
+      statusBadge={<AgentCardStatusBadges agent={agent} />}
     />
+  );
+}
+
+/**
+ * What the card says about the agent behind it, beyond its name and model.
+ *
+ * The role badges live here rather than on a row nothing renders: an agent
+ * carrying a home role with no pack installed on this computer has to disclose
+ * that on the surface the Agents view actually shows.
+ */
+function AgentCardStatusBadges({ agent }: { agent: ManagedAgent | undefined }) {
+  const isOrphaned = agent?.personaOrphaned === true;
+  const hasHomeRole = Boolean(agent?.homeRole?.trim());
+  if (!isOrphaned && !hasHomeRole) return null;
+  return (
+    <div className="flex flex-wrap items-start gap-1">
+      {isOrphaned ? (
+        <Badge className="gap-1" variant="warning">
+          <AlertTriangle className="h-3 w-3" />
+          Configuration missing
+        </Badge>
+      ) : null}
+      <AgentHomeRoleBadges agent={agent} />
+    </div>
   );
 }
 
@@ -406,14 +424,7 @@ function StandaloneAgentCard({
           opensRuntimeTab ? { tab: "runtime" } : undefined,
         );
       }}
-      statusBadge={
-        agent.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
-        ) : null
-      }
+      statusBadge={<AgentCardStatusBadges agent={agent} />}
     />
   );
 }

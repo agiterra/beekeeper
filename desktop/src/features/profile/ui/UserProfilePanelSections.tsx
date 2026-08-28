@@ -6,6 +6,7 @@ import {
   getManagedAgentPrimaryActionLabel,
   isManagedAgentActive,
 } from "@/features/agents/lib/managedAgentControlActions";
+import { AgentHomeRoleBadges } from "@/features/agents/ui/AgentHomeRoleBadges";
 import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
 import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
@@ -459,6 +460,16 @@ export function ProfileSummaryView({
           unfollowMutation={unfollowMutation}
           wavePending={isWavePending}
         />
+      ) : null}
+
+      {/* Tab-independent, like the restart badge below: the role an agent *is*
+          and the pack behind it are facts about the identity, not about a tab.
+          A panel that only showed them on Runtime would let an operator read
+          the whole profile of a packless agent and never learn it. */}
+      {managedAgent?.homeRole ? (
+        <div className="flex flex-wrap items-start justify-center gap-1 self-center">
+          <AgentHomeRoleBadges agent={managedAgent} />
+        </div>
       ) : null}
 
       {/* Tab-independent restart badge — visible on every tab so the user

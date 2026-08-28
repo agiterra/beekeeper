@@ -236,9 +236,10 @@ export type ManagedAgent = {
   /**
    * Whether this computer can stage a role pack for it. `false` means a seat
    * on this agent runs on its persona prompt alone — say so, never imply the
-   * role's craft is there.
+   * role's craft is there. `undefined` means the backend never answered, which
+   * is a different fact: render nothing rather than a missing pack.
    */
-  hasRolePack: boolean;
+  hasRolePack?: boolean;
   relayUrl: string;
   acpCommand: string;
   /** Resolved/effective harness command (persona-wins, override-honored). */

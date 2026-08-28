@@ -260,8 +260,9 @@ test("fromRawAcpRuntimeCatalogEntry omits maxParallelism when max_parallelism is
 // ── fromRawManagedAgent: home role + role pack ───────────────────────────────
 //
 // `homeRole` and `hasRolePack` answer two different questions, and an older
-// backend answers neither. Absent must degrade to "no home role, no pack" —
-// never to a comfortable "it has one".
+// backend answers neither. `home_role` absent is "no home role"; `has_role_pack`
+// absent is *unanswered* — neither "it has one" nor "it is missing one", because
+// a field nobody looked at is not a finding about the agent.
 
 const { fromRawManagedAgent } = await import("./tauri.ts");
 
@@ -320,10 +321,14 @@ test("fromRawManagedAgent reports a home role with no pack behind it", () => {
   );
 });
 
-test("fromRawManagedAgent degrades an older backend to no role, no pack", () => {
+test("fromRawManagedAgent leaves an unanswered pack field unanswered", () => {
   const agent = fromRawManagedAgent(rawAgent());
   assert.equal(agent.homeRole, null);
-  assert.equal(agent.hasRolePack, false);
+  assert.equal(
+    agent.hasRolePack,
+    undefined,
+    "a backend that never answered must not accuse the agent of a missing pack",
+  );
 });
 
 test("fromRawManagedAgent maps an explicit null home_role to null", () => {

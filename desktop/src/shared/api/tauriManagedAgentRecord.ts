@@ -11,8 +11,8 @@ export type RawManagedAgent = {
   /** Absent on an older backend — mapped to `null`, which is "no home role",
    *  not "no role pack". */
   home_role?: string | null;
-  /** Absent on an older backend — mapped to `false`, the honest floor: this
-   *  computer has shown no pack for the agent. */
+  /** Absent on an older backend — mapped to `undefined`, which is "nobody
+   *  asked", not "the pack is missing". Absence is not a claim. */
   has_role_pack?: boolean;
   relay_url: string;
   acp_command: string;
@@ -61,7 +61,10 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     runtime: agent.runtime ?? null,
     teamId: agent.team_id ?? null,
     homeRole: agent.home_role ?? null,
-    hasRolePack: agent.has_role_pack ?? false,
+    // NOT `?? false`: a backend that does not answer this field would then
+    // turn every agent into one whose role pack is missing, and every seat
+    // field would print that as fact.
+    hasRolePack: agent.has_role_pack,
     relayUrl: agent.relay_url,
     acpCommand: agent.acp_command,
     agentCommand: agent.agent_command,
