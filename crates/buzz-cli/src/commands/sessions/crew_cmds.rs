@@ -544,10 +544,16 @@ const HIRE_ANSWER_KINDS: &[u32] = &[
 ];
 
 /// Read the channel once and fold whatever answers the hire so far.
+///
+/// The authority chain is read only once a seat exists — a hire with no seat
+/// has nothing to be granted — and it is a separate query because the chain
+/// lives in kind:40099 acceptance receipts rather than in the lifecycle
+/// stream the rest of this reads.
 async fn read_hire_answer(
     client: &BuzzClient,
     channel_id: &str,
     session_ref: &str,
+    genesis_ref: &str,
     role: &str,
     since: i64,
 ) -> Result<HireOutcome, CliError> {
@@ -557,6 +563,17 @@ async fn read_hire_answer(
     let receipt = seat
         .as_ref()
         .and_then(|seat| newest_create_receipt(&receipts, &seat.command_id));
+    let granted = match seat.as_ref() {
+        Some(hired) => {
+            super::fetch_authority_state(client, channel_id, genesis_ref)
+                .await?
+                .grants
+                .get(&hired.actor)
+                .map(String::as_str)
+                == Some("collaborator")
+        }
+        None => false,
+    };
     let refusal = if seat.is_some() {
         None
     } else {
@@ -572,7 +589,7 @@ async fn read_hire_answer(
         let (commands, _) = decode_turn_commands(&events);
         find_hire_refusal(&commands, &executions, session_ref, since)
     };
-    Ok(fold_hire(seat, receipt, refusal))
+    Ok(fold_hire(seat, receipt, refusal, granted))
 }
 
 /// `bee sessions hire` — ask an umbrella's host to seat a role (plan D14).
@@ -683,7 +700,7 @@ pub async fn cmd_hire(
     let outcome = if no_wait {
         HireOutcome::Unconfirmed
     } else {
-        wait_for_hire(client, channel_id, session_ref, role, since).await?
+        wait_for_hire(client, channel_id, session_ref, &genesis_ref, role, since).await?
     };
     let report = hire_report(&outcome, !no_wait);
     if let Some(object) = merged.as_object_mut() {
@@ -692,7 +709,8 @@ pub async fn cmd_hire(
         object.insert(
             "seat".into(),
             match &outcome {
-                HireOutcome::Created { seat, receipt } | HireOutcome::Failed { seat, receipt } => {
+                HireOutcome::Created { seat, receipt, .. }
+                | HireOutcome::Failed { seat, receipt } => {
                     json!({
                         "commandId": seat.command_id,
                         "actor": seat.actor,
@@ -733,6 +751,16 @@ pub async fn cmd_hire(
         };
         object.insert("code".into(), code);
         object.insert("reason".into(), reason);
+        // Null when no seat was created at all: `false` there would read as
+        // "a seat exists and holds nothing", which is a different fact.
+        object.insert(
+            "granted".into(),
+            match &outcome {
+                HireOutcome::Created { granted, .. } => json!(granted),
+                HireOutcome::Failed { .. } | HireOutcome::Seating { .. } => json!(false),
+                HireOutcome::Refused(_) | HireOutcome::Unconfirmed => Value::Null,
+            },
+        );
     }
     println!("{merged}");
 
@@ -752,17 +780,25 @@ async fn wait_for_hire(
     client: &BuzzClient,
     channel_id: &str,
     session_ref: &str,
+    genesis_ref: &str,
     role: &str,
     since: i64,
 ) -> Result<HireOutcome, CliError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(HIRE_WAIT_SECONDS);
     let mut held = HireOutcome::Unconfirmed;
     loop {
-        if let Ok(outcome) = read_hire_answer(client, channel_id, session_ref, role, since).await {
+        if let Ok(outcome) =
+            read_hire_answer(client, channel_id, session_ref, genesis_ref, role, since).await
+        {
             match outcome {
                 // A seat with no receipt yet is progress, not an answer: hold
                 // it and keep waiting for the provider to speak.
                 HireOutcome::Seating { .. } => held = outcome,
+                // Nor is a confirmed seat nobody has granted. The host
+                // publishes the grant after the create's receipt, so it lands
+                // second; hold this and keep asking inside the same window
+                // rather than reporting a seat that cannot answer.
+                HireOutcome::Created { granted: false, .. } => held = outcome,
                 HireOutcome::Unconfirmed => {}
                 answered => return Ok(answered),
             }

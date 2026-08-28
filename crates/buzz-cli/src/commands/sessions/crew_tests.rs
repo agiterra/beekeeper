@@ -2108,8 +2108,12 @@ fn a_hires_outcome_is_the_seated_creates_receipt() {
         Some(seat("a")),
         newest_create_receipt(&created_receipts, "create-hired"),
         None,
+        true,
     );
-    let HireOutcome::Created { seat: row, receipt } = &outcome else {
+    let HireOutcome::Created {
+        seat: row, receipt, ..
+    } = &outcome
+    else {
         panic!("expected a created hire, got {outcome:?}")
     };
     assert_eq!(row.command_id, "create-hired");
@@ -2132,6 +2136,7 @@ fn a_hires_outcome_is_the_seated_creates_receipt() {
         Some(seat("b")),
         newest_create_receipt(&failed_receipts, "create-hired"),
         None,
+        false,
     );
     let HireOutcome::Failed { receipt, .. } = &outcome else {
         panic!("expected a failed hire, got {outcome:?}")
@@ -2140,11 +2145,88 @@ fn a_hires_outcome_is_the_seated_creates_receipt() {
 
     // A create published but not yet answered is neither created nor failed.
     assert!(matches!(
-        fold_hire(Some(seat("c")), None, None),
+        fold_hire(Some(seat("c")), None, None, false),
         HireOutcome::Seating { .. }
     ));
     // Nothing at all is unconfirmed — never a guess in either direction.
-    assert_eq!(fold_hire(None, None, None), HireOutcome::Unconfirmed);
+    assert_eq!(fold_hire(None, None, None, false), HireOutcome::Unconfirmed);
+}
+
+/// A seat the host created but never granted is still `created`, and says in
+/// the same breath that it cannot report.
+///
+/// Live break, 2026-08-28 (item 83): the hire host seated a builder and
+/// published no kind:44228 for it, so the relay refused the builder's report
+/// with "only a session founder or a granted operator may steer". The command
+/// printed `created` and nothing else, and the lead had no way to learn the
+/// seat it was waiting on was mute.
+#[test]
+fn a_seated_but_ungranted_hire_says_it_cannot_report_yet() {
+    let seat_target = target("s-hired", 1);
+    let seat = find_hired_seat(
+        &[seated_create_event(
+            "a",
+            ALICE,
+            1_100,
+            "create-hired",
+            UMBRELLA_HIRE,
+            "builder",
+            BOB,
+            None,
+        )],
+        UMBRELLA_HIRE,
+        "builder",
+        1_000,
+    )
+    .expect("seat");
+    let events = vec![receipt_event(
+        "r-1",
+        1_200,
+        "create-hired",
+        ReceiptStatus::Created,
+        &seat_target,
+        None,
+        None,
+    )];
+    let (records, _) = decode_receipts(&events);
+    let receipt = newest_create_receipt(&records, "create-hired");
+
+    let ungranted = fold_hire(Some(seat.clone()), receipt.clone(), None, false);
+    assert!(
+        matches!(ungranted, HireOutcome::Created { granted: false, .. }),
+        "{ungranted:?}"
+    );
+    // Still `created`, and still exit 0: a seat exists, and calling that a
+    // failure would be as false as calling it a success.
+    let report = hire_report(&ungranted, true);
+    assert_eq!(report.status, "created");
+    assert_eq!(hire_exit_code(&ungranted), 0);
+    assert!(
+        report.detail.contains("seated, but not granted"),
+        "got {}",
+        report.detail
+    );
+    assert!(
+        report
+            .detail
+            .contains("bee sessions grant --role collaborator"),
+        "got {}",
+        report.detail
+    );
+
+    let granted = fold_hire(Some(seat), receipt, None, true);
+    let report = hire_report(&granted, true);
+    assert_eq!(report.status, "created");
+    assert!(
+        report.detail.contains("can report back"),
+        "got {}",
+        report.detail
+    );
+    assert!(
+        !report.detail.contains("not granted"),
+        "got {}",
+        report.detail
+    );
 }
 
 /// The host's refusal is a turn whose text carries a machine-readable code,
@@ -2248,7 +2330,7 @@ fn a_refusal_is_scoped_to_the_umbrella_and_to_this_request() {
         None
     );
 
-    let outcome = fold_hire(None, None, Some(refusal));
+    let outcome = fold_hire(None, None, Some(refusal), false);
     assert!(
         matches!(outcome, HireOutcome::Refused(_)),
         "got {outcome:?}"
@@ -2296,6 +2378,7 @@ fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
                 Some(seat.clone()),
                 receipt(ReceiptStatus::Created, None),
                 None,
+                true,
             ),
             "created",
             0,
@@ -2305,6 +2388,7 @@ fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
                 Some(seat.clone()),
                 receipt(ReceiptStatus::Failed, Some(("ACTOR_UNAVAILABLE", "no key"))),
                 None,
+                false,
             ),
             "failed",
             1,
@@ -2319,12 +2403,13 @@ fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
                     code: "HIRE_OFF".into(),
                     reason: "hiring is switched off".into(),
                 }),
+                false,
             ),
             "refused",
             1,
         ),
-        (fold_hire(Some(seat), None, None), "seating", 5),
-        (fold_hire(None, None, None), "unconfirmed", 5),
+        (fold_hire(Some(seat), None, None, false), "seating", 5),
+        (fold_hire(None, None, None, false), "unconfirmed", 5),
     ];
     for (outcome, word, code) in cases {
         let report = hire_report(&outcome, true);

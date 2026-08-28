@@ -1518,6 +1518,16 @@ pub enum HireOutcome {
         seat: HiredSeat,
         /// Its provider receipt.
         receipt: SeatReceipt,
+        /// Whether a live `grant-operator` names the seat's actor.
+        ///
+        /// A seated agent with no grant is a mute one: the relay refuses its
+        /// `sessions send` with "only a session founder or a granted operator
+        /// may steer", so it can do the whole job and deliver none of it.
+        /// Carried separately from the receipt because the provider's `created`
+        /// says nothing about authority — on 2026-08-28 a hired builder had a
+        /// `created` receipt and no grant, worked for 1,009 s, and its report
+        /// bounced (item 83).
+        granted: bool,
     },
     /// The host seated the role and the provider refused it.
     Failed {
@@ -1754,10 +1764,15 @@ pub fn find_hire_refusal(
 /// A published seat outranks a refusal: if both are somehow present, something
 /// was actually created and reporting "refused" would be false. Pure so the
 /// wording of an unpleasant answer is testable without a relay.
+///
+/// `granted` is whether the seat's actor holds a live `grant-operator` on the
+/// umbrella's authority chain. It does not change what happened — the seat is
+/// created either way — only what the seat can do next.
 pub fn fold_hire(
     seat: Option<HiredSeat>,
     receipt: Option<SeatReceipt>,
     refusal: Option<HireRefusal>,
+    granted: bool,
 ) -> HireOutcome {
     match (seat, refusal) {
         (Some(seat), _) => match receipt {
@@ -1767,7 +1782,11 @@ pub fn fold_hire(
                     ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
                 ) =>
             {
-                HireOutcome::Created { seat, receipt }
+                HireOutcome::Created {
+                    seat,
+                    receipt,
+                    granted,
+                }
             }
             Some(receipt) => HireOutcome::Failed { seat, receipt },
             None => HireOutcome::Seating { seat },
@@ -1793,16 +1812,33 @@ pub struct HireReport {
 /// and nobody was asked — so `--no-wait` never reads as a silent host.
 pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
     match outcome {
-        HireOutcome::Created { seat, receipt } => HireReport {
+        HireOutcome::Created {
+            seat,
+            receipt,
+            granted,
+        } => HireReport {
             status: "created",
+            // Seated and granted are two facts, and the second is the one that
+            // decides whether an answer is ever coming back. Said in the same
+            // sentence so `created` is never read as "and it can report".
             detail: format!(
-                "the host seated {} as {} on {}{}",
+                "the host seated {} as {} on {}{}. {}",
                 short_pubkey(&seat.actor),
                 seat.role,
                 seat.provider_instance_ref,
                 match receipt.target_key.as_deref() {
                     Some(target) => format!(" — {target}"),
                     None => String::new(),
+                },
+                if *granted {
+                    "It holds operator authority, so it can report back to you".to_owned()
+                } else {
+                    format!(
+                        "It is seated, but not granted: no grant-operator named it within \
+                         {HIRE_WAIT_SECONDS}s, and the relay refuses an ungranted seat's report \
+                         — ask the operator to run `bee sessions grant --role collaborator` for \
+                         it. Do not hire again"
+                    )
                 }
             ),
         },
@@ -1865,6 +1901,9 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
 ///
 /// `0` created, `1` refused (by the host or by the provider), `5` unconfirmed
 /// — including a seat published but never answered, which is not a success.
+///
+/// A created-but-ungranted seat is still `0`: the hire did what it says on the
+/// tin and a seat exists. What it cannot do is in the detail, not the code.
 pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
     match outcome {
         HireOutcome::Created { .. } => 0,
