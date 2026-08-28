@@ -2491,6 +2491,24 @@ written and `bash -n` clean but **was not executed** — that harness needs
       than chosen by folder; the folder picker is this week's form. Agents
       stay per-owner (owner-attested keys; no shared custody) — same roles,
       same packs, different signers.
+    - *Rulings 2026-08-28 morning (Brian).* (a) **"Crew" is renamed "Team"**
+      everywhere a person reads it — the Crew tab, "Install crew roles…",
+      "Crew · n seats", dialog copy; a team of agents is the thing you launch.
+      Internal identifiers follow when touched. (b) *Pending turn:* S1's row
+      stays as landed; carry Brian's forbidden-caption test ("thinking",
+      "working", "generating" never appear in a live pending caption) as a
+      small item; his silence-on-accept rule is parked until more dogfooding;
+      `wip/pending-turn-brian` deleted (its other patches are on main via S1;
+      ledger 51/52 are on main). (c) **F7, found on the review sheet:** the
+      roster the installer writes is unlaunchable as installed — every seat
+      reads "vendor not declared · sonnet" and the D8 family check refuses the
+      launch with "change the seat in this computer's teams.json"; the
+      installer must write the vendor it minted each seat on, and Claude
+      aliases (`sonnet`, `opus`, `haiku`, `default` on claude-primary) must
+      resolve to anthropic. Until then the front door opens onto a wall.
+      (d) Refuting is a role (`verifier` pack), not a wrapper: `crew/tooling`
+      deleted; the two builder-seat branches deleted (lane C's landed column
+      supersedes them). Review sheet: `/Users/brian/Projects/beekeeper/review-2026-08-28/index.html`.
     Hand-edits on Brian's machine that these must replace: Fizz's record
     linked to `personas/roles/lead` by hand; `~/.local/bin/bee` repointed at
     `target/debug/bee`; `Application Support/Bee Keeper` copied to
