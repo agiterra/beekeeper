@@ -35,6 +35,18 @@ export type CodingSessionSeatCustody = {
   clearSeat: (commandId: string) => Promise<void>;
 };
 
+/**
+ * Told what staging actually put on disk, before the publish.
+ *
+ * Only called when a seat was staged. A create with no seat, and one refused
+ * before staging, report nothing at all — and neither does a backend too old
+ * to answer, because "unknown" and "no role pack" are different facts and
+ * only one of them is worth putting on a screen.
+ */
+export type CodingSessionSeatStagedReporter = (staged: {
+  packStaged: boolean;
+}) => void;
+
 export type SeatedCodingSessionCreateDeps = CodingSessionSeatCustody & {
   /** Add the actor to the channel; throws with actionable copy on failure. */
   ensureMembership: (input: {
@@ -59,11 +71,13 @@ async function publishWithStagedSeat<T>(input: {
   actorPubkey: string;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
+  onSeatStaged?: CodingSessionSeatStagedReporter;
 }): Promise<T> {
-  await input.deps.stageSeat({
+  const staged = await input.deps.stageSeat({
     commandId: input.commandId,
     agentPubkey: input.actorPubkey,
   });
+  if (staged) input.onSeatStaged?.({ packStaged: staged.packStaged });
   try {
     return await input.publish();
   } catch (error) {
@@ -86,6 +100,8 @@ export async function publishSeatedCodingSessionResume<T>(input: {
   actorPubkey: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
+  /** Called with what staging actually put on disk, before the publish. */
+  onSeatStaged?: CodingSessionSeatStagedReporter;
 }): Promise<T> {
   if (!input.actorPubkey) return input.publish();
   return publishWithStagedSeat({
@@ -93,6 +109,7 @@ export async function publishSeatedCodingSessionResume<T>(input: {
     actorPubkey: input.actorPubkey,
     publish: input.publish,
     deps: input.deps,
+    ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),
   });
 }
 
@@ -109,6 +126,8 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
   seatLabel?: string | null;
   publish: () => Promise<T>;
   deps: SeatedCodingSessionCreateDeps;
+  /** Called with what staging actually put on disk, before the publish. */
+  onSeatStaged?: CodingSessionSeatStagedReporter;
 }): Promise<T> {
   if (!input.seat) return input.publish();
 
@@ -122,5 +141,6 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
     actorPubkey: input.seat.actor,
     publish: input.publish,
     deps: input.deps,
+    ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),
   });
 }

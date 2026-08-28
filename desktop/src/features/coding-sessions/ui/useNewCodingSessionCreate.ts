@@ -117,6 +117,12 @@ export function useNewCodingSessionCreate({
   );
   const [publishError, setPublishError] = React.useState<string | null>(null);
   const [isPublishing, setIsPublishing] = React.useState(false);
+  // `null` is not `false`: it means no seat was staged *in this process* —
+  // an unseated create, or a durable one rehydrated after a restart. Only a
+  // staging call that actually answered turns this into a claim.
+  const [seatPackStaged, setSeatPackStaged] = React.useState<boolean | null>(
+    null,
+  );
   const [hostPhase, setHostPhase] =
     React.useState<NewCodingSessionHostPhase>("idle");
   const [providerStatus, setProviderStatus] =
@@ -146,6 +152,7 @@ export function useNewCodingSessionCreate({
     setPublishError(null);
     setIsPublishing(false);
     setHostPhase("idle");
+    setSeatPackStaged(null);
   }, [scopeId]);
 
   React.useEffect(() => {
@@ -519,6 +526,9 @@ export function useNewCodingSessionCreate({
           seat: input.seat ?? null,
           seatLabel: input.seatLabel ?? null,
           deps: seatDeps,
+          // What custody actually wrote, so the pending screen can say a seat
+          // is running without its role pack instead of implying it has one.
+          onSeatStaged: ({ packStaged }) => setSeatPackStaged(packStaged),
           publish: async () => {
             setHostPhase("publishing");
             // Genesis-publishing wrapper (founding publishes a genesis;
@@ -599,8 +609,18 @@ export function useNewCodingSessionCreate({
     setPublishError(null);
     setDurabilityError(null);
     setHostPhase("idle");
+    setSeatPackStaged(null);
     settledCommandRef.current = null;
   }, [scoped, scopeId]);
+
+  // The seat as the *signed* create carries it, not as the form holds it: a
+  // rehydrated transaction has no form state left, and this is the pair that
+  // actually went out.
+  const seat = React.useMemo(() => {
+    const actor = scoped?.input.actor ?? null;
+    const role = scoped?.input.role ?? null;
+    return actor && role ? { actor, role } : null;
+  }, [scoped?.input.actor, scoped?.input.role]);
 
   return {
     beginLoginWatch,
@@ -617,6 +637,9 @@ export function useNewCodingSessionCreate({
     refreshProviderRuntimes,
     resolvedGenerationId,
     retryExact,
+    seat,
+    /** What staging wrote for {@link seat}, or null when it never ran here. */
+    seatPackStaged,
     stalled,
     startFresh,
     submit,

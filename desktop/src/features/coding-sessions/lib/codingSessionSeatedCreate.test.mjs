@@ -190,3 +190,107 @@ test("a resume that never went out takes its staged key back", async () => {
     ["clearSeat", "csl-resume-3"],
   ]);
 });
+
+/**
+ * What staging actually put on disk is the only place the one-session path
+ * can learn that a seat is about to run without its role pack. Discarding it
+ * is how the pending screen ended up quieter than the crew tab.
+ */
+test("staging reports what it wrote, before the publish runs", async () => {
+  const order = [];
+  const staged = [];
+  await publishSeatedCodingSessionCreate({
+    channelId: "channel-1",
+    commandId: "csl-9",
+    seat: SEAT,
+    seatLabel: "Ada",
+    onSeatStaged: (result) => {
+      order.push("onSeatStaged");
+      staged.push(result);
+    },
+    deps: {
+      ensureMembership: async () => {},
+      stageSeat: async () => {
+        order.push("stageSeat");
+        return { packStaged: false };
+      },
+      clearSeat: async () => {},
+    },
+    publish: async () => {
+      order.push("publish");
+      return "ok";
+    },
+  });
+  assert.deepEqual(order, ["stageSeat", "onSeatStaged", "publish"]);
+  assert.deepEqual(staged, [{ packStaged: false }]);
+});
+
+test("a resume reports its own staging too", async () => {
+  const staged = [];
+  await publishSeatedCodingSessionResume({
+    commandId: "csl-10",
+    actorPubkey: SEAT.actor,
+    onSeatStaged: (result) => staged.push(result),
+    deps: {
+      ensureMembership: async () => {},
+      stageSeat: async () => ({ packStaged: true }),
+      clearSeat: async () => {},
+    },
+    publish: async () => "ok",
+  });
+  assert.deepEqual(staged, [{ packStaged: true }]);
+});
+
+test("nothing is reported when the create never reaches staging", async () => {
+  const staged = [];
+  await assert.rejects(
+    publishSeatedCodingSessionCreate({
+      channelId: "channel-1",
+      commandId: "csl-11",
+      seat: SEAT,
+      onSeatStaged: (result) => staged.push(result),
+      deps: {
+        ensureMembership: async () => {
+          throw new Error("not a member");
+        },
+        stageSeat: async () => ({ packStaged: true }),
+        clearSeat: async () => {},
+      },
+      publish: async () => "ok",
+    }),
+    /not a member/,
+  );
+  assert.deepEqual(staged, []);
+  // An unseated create stages nothing, so it has nothing to report either.
+  await publishSeatedCodingSessionCreate({
+    channelId: "channel-1",
+    commandId: "csl-12",
+    seat: null,
+    onSeatStaged: (result) => staged.push(result),
+    deps: {
+      ensureMembership: async () => {},
+      stageSeat: async () => ({ packStaged: true }),
+      clearSeat: async () => {},
+    },
+    publish: async () => "ok",
+  });
+  assert.deepEqual(staged, []);
+});
+
+test("a backend that answers nothing is reported as unknown, not as no pack", async () => {
+  const staged = [];
+  await publishSeatedCodingSessionCreate({
+    channelId: "channel-1",
+    commandId: "csl-13",
+    seat: SEAT,
+    onSeatStaged: (result) => staged.push(result),
+    deps: {
+      ensureMembership: async () => {},
+      // An older desktop backend resolves undefined from `stage_actor_seat`.
+      stageSeat: async () => undefined,
+      clearSeat: async () => {},
+    },
+    publish: async () => "ok",
+  });
+  assert.deepEqual(staged, []);
+});

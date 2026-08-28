@@ -186,7 +186,7 @@ export function codingSessionSeatRoleNotice(input: {
 export function codingSessionSeatPackNotice(
   agent: CodingSessionSeatAgent | null,
 ): string | null {
-  if (!agent || agent.hasRolePack !== false) return null;
+  if (agent?.hasRolePack !== false) return null;
   return (
     `${agent.name} has no role pack on this computer, so this seat carries ` +
     `no role skills and runs on its persona prompt alone.`
