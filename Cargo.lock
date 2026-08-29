@@ -983,6 +983,7 @@ dependencies = [
  "clap",
  "diffy",
  "dirs",
+ "git-credential-nostr",
  "hex",
  "infer",
  "nostr 0.44.7",

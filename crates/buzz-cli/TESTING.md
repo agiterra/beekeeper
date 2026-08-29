@@ -1303,3 +1303,46 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 68 | `events query` | ☐ | `--kinds` required (verbatim refusal, exit 1); compact row survives non-JSON content; empty result → `[]`, exit 0 |
 | 70 | `sessions hire` (44221 `session.hire`) | ☑ | founder + granted-operator accepted, stranger and unknown-umbrella refused by the relay, host `created` (exit 0) and `refused`/HIRE_OFF (exit 1), `--no-wait` unconfirmed (exit 5). Open: the `failed`/`seating` outcomes and the old-relay sentence |
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
+
+---
+
+## Terminal git access (`bee git setup` / `status` / `check`)
+
+`bee git check` asks the **git transport** — the same
+`GET <repo>/info/refs?service=git-upload-pack` `git clone` makes, signed by
+`git-credential-nostr`'s own key resolution, attestation reader and signing
+function. Its exit code is that transport's answer: **0 accepted, 3 denied.**
+
+```bash
+bee git status                    # local config only; never says "ready"
+bee git check                     # clone/fetch authorization
+bee git check --push              # also probes git-receive-pack
+bee --format compact git check    # git_transport / relay_http_membership / remedy
+```
+
+What to check, on a seat (`NOSTR_PRIVATE_KEY` + `BUZZ_AUTH_TAG` set by the ACP
+harness) and on the operator's own shell:
+
+1. The `key` line names the key **git** will present and where it came from. In
+   a seat's shell that is `NOSTR_PRIVATE_KEY`, not the operator's key file; when
+   both hold different identities, the `note` line says so in one sentence.
+2. The `owner` line reports the attestation as present / absent / invalid. When
+   it is present the owner hex is the operator, not the seat.
+3. The `git` line is the verdict. Cross-check it against reality in the same
+   shell — this is the check the command exists to be honest about:
+
+   ```bash
+   bee git check --push; echo "check exit $?"
+   git push origin HEAD:refs/heads/proof/seat-git-push; echo "push exit $?"
+   ```
+
+   **The two exit codes must agree.** They disagreed on 2026-08-29: the check
+   exited 3 over `relay_membership_required` while the push from the same key
+   succeeded seconds later.
+4. `relay HTTP membership:` is a **secondary** line for a different gate. It may
+   refuse while git accepts. It must never change the exit code, and no output
+   anywhere may advise unsetting `BUZZ_AUTH_TAG` — dropping the attestation
+   removes the owner grant a seat's push rides on.
+
+Not runnable from a seat without a relay-known key; say so rather than
+reporting a guess.

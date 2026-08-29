@@ -2186,16 +2186,20 @@ pub enum GitCmd {
         #[arg(long)]
         keyfile: Option<PathBuf>,
     },
-    /// Ask the relay what this key can actually do: relay membership, and
-    /// which repositories it can read over git.
+    /// Ask the relay's git transport whether it accepts this key — the same
+    /// request `git clone` makes, signed the same way.
     ///
     /// Uses the key `git-credential-nostr` itself would use
     /// (`$NOSTR_PRIVATE_KEY`, else `git config nostr.keyfile`) — not
     /// `BUZZ_PRIVATE_KEY` — so the verdict is about the identity git presents.
+    /// Exit 0 when the transport accepts, 3 when it denies.
     Check {
         /// Key file to test. Defaults to whatever `nostr.keyfile` names.
         #[arg(long)]
         keyfile: Option<PathBuf>,
+        /// Also probe `git-receive-pack` — the request `git push` makes first.
+        #[arg(long)]
+        push: bool,
     },
 }
 
@@ -2877,10 +2881,11 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             GitCmd::Status { keyfile } => {
                 commands::git_setup::cmd_status(&relay_url, keyfile.clone())
             }
-            GitCmd::Check { keyfile } => {
+            GitCmd::Check { keyfile, push } => {
                 commands::git_setup::cmd_check(
                     &relay_url,
                     keyfile.clone(),
+                    *push,
                     matches!(cli.format, OutputFormat::Compact),
                 )
                 .await
