@@ -3,7 +3,11 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { NewCodingSessionProviderPicker } from "./NewCodingSessionProviderPicker.tsx";
+import {
+  NewCodingSessionModelDisclosure,
+  NewCodingSessionProviderPicker,
+  resolveNewCodingSessionSeatModel,
+} from "./NewCodingSessionProviderPicker.tsx";
 
 /** The shape the screen builds from a provider catalog entry. */
 function target(allowedModels) {
@@ -116,4 +120,94 @@ test("the access row states full access instead of offering a choice", () => {
   assert.match(markup, /Full access/);
   // Not a control: no select, no options, nothing to change.
   assert.equal(optionValues(markup, "coding-session-access-notice"), null);
+});
+
+// Live twice — DogFood2 21:38 and BanksyTest 06:07 — a seat was created with
+// model `default` and nothing on screen said the record would not name the
+// weights that ran. The sentence exists (item 89a); this is it on screen.
+test("the disclosure is rendered when the create will carry `default`", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(NewCodingSessionModelDisclosure, {
+      model: "default",
+      catalog: { defaultModel: "default", allowedModels: ["default", "opus"] },
+    }),
+  );
+  assert.match(html, /data-testid="new-coding-session-model-disclosure"/);
+  assert.match(
+    html,
+    /Runs the runtime&#x27;s default model — the record will not name it\./,
+  );
+});
+
+test("a create that names a model says nothing extra", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(NewCodingSessionModelDisclosure, {
+      model: "opus[1m]",
+      catalog: {
+        defaultModel: "default",
+        allowedModels: ["default", "opus[1m]"],
+      },
+    }),
+  );
+  assert.equal(html, "");
+});
+
+// Seating an identity used to change nothing about the model: the picker kept
+// the adapter default (`default` on claude-primary), so a record that named
+// `claude-fable-5[1m]` produced a create that named nothing.
+test("seating an identity preselects the model its record names", () => {
+  assert.deepEqual(
+    resolveNewCodingSessionSeatModel({
+      agentModel: "opus[1m]",
+      allowedModels: ["default", "opus[1m]", "sonnet"],
+      selectionExplicit: false,
+    }),
+    { model: "opus[1m]", note: null },
+  );
+});
+
+test("a model the person picked outranks the identity's record", () => {
+  assert.deepEqual(
+    resolveNewCodingSessionSeatModel({
+      agentModel: "opus[1m]",
+      allowedModels: ["default", "opus[1m]", "sonnet"],
+      selectionExplicit: true,
+    }),
+    { model: null, note: null },
+  );
+});
+
+test("an identity whose model this runtime cannot run is said out loud", () => {
+  const resolved = resolveNewCodingSessionSeatModel({
+    agentModel: "gpt-5.6-terra",
+    allowedModels: ["default", "opus[1m]"],
+    selectionExplicit: false,
+  });
+  assert.equal(resolved.model, null);
+  assert.match(resolved.note ?? "", /gpt-5\.6-terra/);
+  assert.match(resolved.note ?? "", /does not offer/);
+});
+
+test("an identity with no model on its record asks for nothing", () => {
+  assert.deepEqual(
+    resolveNewCodingSessionSeatModel({
+      agentModel: null,
+      allowedModels: ["default", "opus[1m]"],
+      selectionExplicit: false,
+    }),
+    { model: null, note: null },
+  );
+});
+
+test("a record naming a model this runtime lacks is said, not swallowed", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(NewCodingSessionModelDisclosure, {
+      model: "sonnet",
+      catalog: { defaultModel: "sonnet", allowedModels: ["sonnet"] },
+      note: "This agent's record names gpt-5.6-terra, which the selected provider does not offer.",
+    }),
+  );
+  assert.match(html, /data-testid="new-coding-session-seat-model-note"/);
+  assert.match(html, /gpt-5\.6-terra/);
+  assert.doesNotMatch(html, /new-coding-session-model-disclosure/);
 });

@@ -24,6 +24,10 @@ import { CodingSessionAccessNotice } from "./CodingSessionAccessNotice";
 import { CodingSessionModelPicker } from "./CodingSessionModelPicker";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { CodingSessionTraitsPicker } from "./CodingSessionTraitsPicker";
+import {
+  codingSessionCreateModelDisclosure,
+  type CodingSessionCreateModelCatalog,
+} from "./useNewCodingSessionCreate";
 
 /**
  * Which provider runs the session, on which model, with how much thinking.
@@ -232,6 +236,93 @@ export function NewCodingSessionProviderPicker({
       </div>
     </div>
   );
+}
+
+/**
+ * What the create is about to record about the model, when that is not a model.
+ *
+ * Rendered directly under the picker on every surface that founds a session.
+ * Twice on 2026-08-28 a seat was created carrying the id `default` — a label,
+ * not a model — and no screen said so, so the record of which weights ran the
+ * session simply does not exist. Nothing here changes what is written; it
+ * stops the screen from implying something else was.
+ */
+export function NewCodingSessionModelDisclosure({
+  catalog,
+  model,
+  note = null,
+}: {
+  /** The runtime's published list, when it has been read. */
+  catalog?: CodingSessionCreateModelCatalog | null;
+  /** The id the create would carry right now. */
+  model: string | null;
+  /**
+   * One more thing this surface owes the person about the model — today, a
+   * seated identity whose record names one the runtime cannot run.
+   */
+  note?: string | null;
+}) {
+  const disclosure = codingSessionCreateModelDisclosure({ catalog, model });
+  if (disclosure === null && note === null) return null;
+  return (
+    <>
+      {disclosure === null ? null : (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-model-disclosure"
+        >
+          {disclosure}
+        </p>
+      )}
+      {note === null ? null : (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-seat-model-note"
+        >
+          {note}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * The model a seated identity asks this create to run on, if any.
+ *
+ * A managed agent's record names a model; the create dialog used to ignore it
+ * and preselect the adapter's own default, which on claude-primary is the id
+ * `default` — so seating an identity produced a session that named no model at
+ * all (item 89a, live twice on 2026-08-28).
+ *
+ * Three answers, all of them said out loud rather than guessed at: the
+ * record's model when this runtime publishes it, nothing when the person has
+ * chosen a model by hand (their pick outranks the record), and nothing *plus a
+ * note* when the record names a model this runtime does not offer — a silent
+ * downgrade to the runtime default is the same class of lie as the id it would
+ * replace.
+ */
+export function resolveNewCodingSessionSeatModel(input: {
+  /** The seated identity's own model id, or null when it names none. */
+  agentModel: string | null;
+  /** Model ids the selected runtime actually publishes. */
+  allowedModels: readonly string[];
+  /** Whether the person has picked a model by hand. */
+  selectionExplicit: boolean;
+}): { model: string | null; note: string | null } {
+  const agentModel = input.agentModel?.trim() ?? "";
+  if (input.selectionExplicit || agentModel.length === 0) {
+    return { model: null, note: null };
+  }
+  if (input.allowedModels.includes(agentModel)) {
+    return { model: agentModel, note: null };
+  }
+  if (input.allowedModels.length === 0) return { model: null, note: null };
+  return {
+    model: null,
+    note:
+      `This agent's record names ${agentModel}, which the selected provider ` +
+      "does not offer. The session runs on the model above instead.",
+  };
 }
 
 /** The remediation a failed receipt asks for: which runtime, and how to fix it. */

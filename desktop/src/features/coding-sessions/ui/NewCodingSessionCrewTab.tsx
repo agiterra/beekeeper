@@ -27,9 +27,11 @@ import {
   resolveCodingSessionCrewSeats,
   type CodingSessionCrewTeam,
 } from "../lib/codingSessionCrewTeams";
+import { NewCodingSessionModelDisclosure } from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
 import { useCodingSessionCrewLaunch } from "./useCodingSessionCrewLaunch";
+import { codingSessionCreateModelLabel } from "./useNewCodingSessionCreate";
 
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 
@@ -45,6 +47,40 @@ export const CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE =
   "Launching seats the lead only. The roles below are who it may hire — it " +
   "hires them with `bee sessions hire` once it knows what the work is, each " +
   "one on whatever provider that seat needs.";
+
+/**
+ * The sentence under the team select: which runtime the lead runs on, and on
+ * which model.
+ *
+ * The team tab has no model picker of its own (item 87c), so this line is the
+ * only place the model appears before the launch — which made it the place
+ * where `default` was printed as if it were one. When the runtime's own
+ * default is that id, the sentence says what it is instead of repeating the
+ * token, and {@link NewCodingSessionModelDisclosure} beneath it says what the
+ * record will therefore not contain.
+ */
+export function codingSessionCrewProviderNote(input: {
+  providerLabel: string | null;
+  model: string | null;
+  allowedModels: readonly string[];
+}): string {
+  const label = codingSessionCreateModelLabel({
+    model: input.model,
+    catalog: {
+      // The tab is handed the model the dialog already resolved from this
+      // runtime's catalog, so it *is* that catalog's default.
+      defaultModel: input.model ?? "",
+      allowedModels: [...input.allowedModels],
+    },
+  });
+  return (
+    `${CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE} The lead runs on ${
+      input.providerLabel ?? "this computer's provider"
+    }` +
+    `${label ? `, on ${label} unless its seat names its own` : ""}, ` +
+    "in the directory below."
+  );
+}
 
 /**
  * Launch a team into one session: pick the team, the repo, and the goal.
@@ -308,12 +344,21 @@ export function NewCodingSessionCrewTab({
               // roster (item 79c/79e) applies to the lead alone now, because
               // the lead is the only seat this launch creates. Each later seat
               // picks its own runtime when the lead hires it.
-              `${CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE} The lead runs on ${
-                providerLabel ?? "this computer's provider"
-              }` +
-              `${model ? `, on ${model} unless its seat names its own` : ""}, ` +
-              "in the directory below."}
+              codingSessionCrewProviderNote({
+                allowedModels: providerAllowedModels,
+                model,
+                providerLabel,
+              })}
         </p>
+        {crewTeams.length === 0 ? null : (
+          <NewCodingSessionModelDisclosure
+            catalog={{
+              defaultModel: model ?? "",
+              allowedModels: [...providerAllowedModels],
+            }}
+            model={model}
+          />
+        )}
       </div>
 
       <p

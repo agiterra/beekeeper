@@ -37,8 +37,10 @@ import {
   type NewCodingSessionTarget,
 } from "../lib/newCodingSessionModel";
 import {
+  NewCodingSessionModelDisclosure,
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
+  resolveNewCodingSessionSeatModel,
 } from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionAgentSeatField } from "./NewCodingSessionAgentSeatField";
 import { NewCodingSessionCrewTab } from "./NewCodingSessionCrewTab";
@@ -265,7 +267,7 @@ export function NewCodingSessionForm({
     value: string | null;
     explicit: boolean;
   }>({ value: null, explicit: false });
-  const effectiveModel = resolveSelectedNewCodingSessionModel({
+  const providerModel = resolveSelectedNewCodingSessionModel({
     provider: selectedTarget?.provider ?? null,
     selectedModel: modelSelection.value,
     selectionExplicit: modelSelection.explicit,
@@ -309,6 +311,27 @@ export function NewCodingSessionForm({
     managedAgents,
     seatDraft.actor,
   ]);
+  // What the create will record: the runtime's own list when it answered.
+  const modelCatalog = selectedTarget
+    ? (providerModelsByInstanceRef.get(
+        selectedTarget.provider.providerInstanceRef,
+      ) ?? {
+        defaultModel: selectedTarget.provider.defaultModel,
+        allowedModels: selectedTarget.provider.allowedModels,
+      })
+    : null;
+  // A seated identity carries a model on its own record, and preselecting the
+  // adapter default over it is how a seat was created naming `default` (item
+  // 89a): the picker starts on the identity's model when the runtime has it.
+  const seatedModel = resolveNewCodingSessionSeatModel({
+    agentModel:
+      managedAgents.find((agent) => agent.pubkey === seatDraft.actor)?.model ??
+      null,
+    allowedModels: modelCatalog?.allowedModels ?? [],
+    selectionExplicit: modelSelection.explicit,
+  });
+  const effectiveModel = seatedModel.model ?? providerModel;
+
   const [workdir, setWorkdir] = React.useState("");
   const [useWorktree, setUseWorktree] = React.useState(true);
   const [worktreeName, setWorktreeName] = React.useState("");
@@ -677,20 +700,28 @@ export function NewCodingSessionForm({
           ) : null}
         </div>
 
-        <NewCodingSessionProviderPicker
-          disabled={transaction !== null}
-          model={effectiveModel}
-          onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
-          onModelChange={(value) =>
-            setModelSelection({ value, explicit: true })
-          }
-          onTargetChange={(key) => {
-            setTargetSelection({ key, explicit: true });
-            setModelSelection({ value: null, explicit: false });
-          }}
-          selectedTarget={selectedTarget}
-          targets={targets}
-        />
+        <div className="flex flex-col gap-2">
+          <NewCodingSessionProviderPicker
+            disabled={transaction !== null}
+            model={effectiveModel}
+            onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
+            onModelChange={(value) =>
+              setModelSelection({ value, explicit: true })
+            }
+            onTargetChange={(key) => {
+              setTargetSelection({ key, explicit: true });
+              setModelSelection({ value: null, explicit: false });
+            }}
+            selectedTarget={selectedTarget}
+            targets={targets}
+          />
+
+          <NewCodingSessionModelDisclosure
+            catalog={modelCatalog}
+            model={effectiveModel}
+            note={seatedModel.note}
+          />
+        </div>
 
         <NewCodingSessionAgentSeatField
           actor={seatDraft.actor}

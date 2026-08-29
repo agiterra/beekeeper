@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   CODING_SESSION_CREATE_UNNAMED_MODEL_DISCLOSURE,
+  CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL,
   clearAbandonedCodingSessionCreate,
   codingSessionCreateModelDisclosure,
+  codingSessionCreateModelLabel,
   loadCodingSessionProviderRuntimes,
   loadOrProvisionCodingSessionProvider,
   resolveCodingSessionCreateModel,
@@ -478,4 +480,35 @@ test("a resolved model needs no disclosure, and an unread catalog still disclose
     codingSessionCreateModelDisclosure({ model: "default" }),
     CODING_SESSION_CREATE_UNNAMED_MODEL_DISCLOSURE,
   );
+});
+
+test("the label for an unnameable model says so instead of reading `default`", () => {
+  // The one string a person picks from must not be the wire token that names
+  // nothing: `default` on the row and `default` on the record together read as
+  // a model someone chose.
+  const catalog = {
+    defaultModel: "default",
+    allowedModels: ["default", "sonnet"],
+  };
+  assert.equal(
+    codingSessionCreateModelLabel({ model: "default", catalog }),
+    CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL,
+  );
+  assert.equal(
+    CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL,
+    "Runtime default (not named on the record)",
+  );
+  // A catalog with a concrete default resolves, so the label is that id.
+  assert.equal(
+    codingSessionCreateModelLabel({
+      model: "default",
+      catalog: { defaultModel: "sonnet", allowedModels: ["default", "sonnet"] },
+    }),
+    "sonnet",
+  );
+  assert.equal(
+    codingSessionCreateModelLabel({ model: "claude-fable-5[1m]" }),
+    "claude-fable-5[1m]",
+  );
+  assert.equal(codingSessionCreateModelLabel({ model: null }), null);
 });

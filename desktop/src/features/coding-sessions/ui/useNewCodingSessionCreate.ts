@@ -832,6 +832,34 @@ export function resolveCodingSessionCreateModel(input: {
 }
 
 /**
+ * What a control may call the model when the record cannot name it.
+ *
+ * The adapter's own id for that entry is the word `default`, and a row reading
+ * `default` next to a record reading `default` looks like a model someone
+ * chose. This says which of the two it is.
+ */
+export const CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL =
+  "Runtime default (not named on the record)";
+
+/**
+ * The model id a surface should *print*, for the id it will write.
+ *
+ * Identical to {@link resolveCodingSessionCreateModel} except in the one case
+ * that has no id to print: a catalog whose own default is `default`, where the
+ * honest label replaces the wire token.
+ */
+export function codingSessionCreateModelLabel(input: {
+  model: string | null;
+  catalog?: CodingSessionCreateModelCatalog | null;
+}): string | null {
+  const resolved = resolveCodingSessionCreateModel(input);
+  if (resolved === null) return null;
+  return resolved === CODING_SESSION_ADAPTER_DEFAULT_MODEL
+    ? CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL
+    : resolved;
+}
+
+/**
  * The sentence the dialog owes the person next to the model picker, or null.
  *
  * Non-null exactly when the create will carry `default` — the one case where

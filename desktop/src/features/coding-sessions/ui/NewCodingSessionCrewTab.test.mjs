@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE,
+  codingSessionCrewProviderNote,
   CodingSessionCrewLaunchSteps,
   CodingSessionCrewRoster,
   CodingSessionCrewSkillNotice,
@@ -162,4 +163,38 @@ test("the tab says a launch seats the lead only", () => {
     /Launching seats the lead only/,
   );
   assert.match(CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE, /bee sessions hire/);
+});
+
+// The team tab has no model picker yet (item 87c), so the sentence under the
+// team select is the only thing that says which model the lead runs on. On
+// claude-primary that model id is literally `default`, and ", on default"
+// reads as a model somebody chose.
+test("the team tab never says the lead runs on `default`", () => {
+  const note = codingSessionCrewProviderNote({
+    providerLabel: "Claude Code",
+    model: "default",
+    allowedModels: ["default", "sonnet"],
+  });
+  assert.match(note, /Runtime default \(not named on the record\)/);
+  assert.doesNotMatch(note, /on default/);
+  assert.match(note, /Claude Code/);
+});
+
+test("a concrete model is named exactly as it goes on the wire", () => {
+  const note = codingSessionCrewProviderNote({
+    providerLabel: "Claude Code",
+    model: "claude-fable-5[1m]",
+    allowedModels: ["default", "claude-fable-5[1m]"],
+  });
+  assert.match(note, /on claude-fable-5\[1m\]/);
+});
+
+test("no model resolved yet says nothing about one", () => {
+  const note = codingSessionCrewProviderNote({
+    providerLabel: null,
+    model: null,
+    allowedModels: [],
+  });
+  assert.match(note, /this computer&#x27;s provider|this computer's provider/);
+  assert.doesNotMatch(note, /, on /);
 });
