@@ -10,12 +10,20 @@ import {
 
 export function ProjectsListScopeDropdown<T extends string>({
   label,
+  modal = true,
   onChange,
   options,
   triggerTestId,
   value,
 }: {
   label: string;
+  /**
+   * Radix's modal menu puts `pointer-events: none` on the body while it is
+   * open, which keeps swallowing clicks for a beat after a selection closes
+   * it. Callers embedded in a page the operator keeps clicking (rather than a
+   * toolbar) pass `false`, as every other menu in the agents library does.
+   */
+  modal?: boolean;
   onChange: (value: T) => void;
   options: Array<{ label: string; value: T }>;
   /** Set by callers a test has to drive the trigger of. */
@@ -27,7 +35,7 @@ export function ProjectsListScopeDropdown<T extends string>({
     options[0]?.label;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={modal}>
       <DropdownMenuTrigger asChild>
         <Button
           aria-label={label}

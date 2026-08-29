@@ -32,6 +32,7 @@ export default defineConfig({
         "**/search-scope-screenshots.spec.ts",
         "**/coding-sessions.spec.ts",
         "**/crew-front-door.spec.ts",
+        "**/role-packs-project.spec.ts",
         "**/coding-session-reachability.spec.ts",
         "**/coding-session-model-picker.spec.ts",
         "**/coding-session-capacity.spec.ts",

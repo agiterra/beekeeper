@@ -44,6 +44,7 @@ export function RolePacksProjectSelector({
       <span>{ROLE_PACKS_PROJECT_SELECTOR_LABEL}</span>
       <ProjectsListScopeDropdown
         label={ROLE_PACKS_PROJECT_SELECTOR_ARIA}
+        modal={false}
         onChange={onSelect}
         options={projects.map((candidate) => ({
           label: candidate.name,
