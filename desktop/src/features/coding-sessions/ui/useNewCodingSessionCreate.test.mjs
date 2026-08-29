@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CODING_SESSION_CREATE_UNNAMED_MODEL_DISCLOSURE,
   clearAbandonedCodingSessionCreate,
+  codingSessionCreateModelDisclosure,
   loadCodingSessionProviderRuntimes,
   loadOrProvisionCodingSessionProvider,
+  resolveCodingSessionCreateModel,
 } from "./useNewCodingSessionCreate.ts";
 
 const provisioned = {
@@ -402,4 +405,77 @@ test("a custody clear that fails does not stop the screen from resetting", async
       throw new Error("seat file is read-only");
     },
   });
+});
+
+// --- item 88(b): the One-session create wrote the picker's label ------------
+
+test("the picker's `default` label is resolved to the catalog's own model id", () => {
+  // Live 2026-08-28: the lead's create carried model "default" — the label the
+  // picker shows when nothing is chosen, not the model the runtime ran.
+  assert.equal(
+    resolveCodingSessionCreateModel({
+      model: "default",
+      catalog: {
+        defaultModel: "claude-fable-5[1m]",
+        allowedModels: ["default", "claude-fable-5[1m]", "sonnet"],
+      },
+    }),
+    "claude-fable-5[1m]",
+  );
+});
+
+test("a model the person actually chose is written byte for byte", () => {
+  assert.equal(
+    resolveCodingSessionCreateModel({
+      model: "sonnet",
+      catalog: {
+        defaultModel: "claude-fable-5[1m]",
+        allowedModels: ["default", "sonnet"],
+      },
+    }),
+    "sonnet",
+  );
+  assert.equal(resolveCodingSessionCreateModel({ model: null }), null);
+  assert.equal(resolveCodingSessionCreateModel({ model: "   " }), null);
+});
+
+test("a catalog whose own default is `default` writes `default` and says so", () => {
+  // The Claude adapter really does publish an id called `default`, so there is
+  // nothing concrete to resolve to. The record then cannot name the model —
+  // and the dialog has to admit that rather than imply it did.
+  const catalog = {
+    defaultModel: "default",
+    allowedModels: ["default", "sonnet"],
+  };
+  assert.equal(
+    resolveCodingSessionCreateModel({ model: "default", catalog }),
+    "default",
+  );
+  assert.equal(
+    codingSessionCreateModelDisclosure({ model: "default", catalog }),
+    CODING_SESSION_CREATE_UNNAMED_MODEL_DISCLOSURE,
+  );
+  assert.equal(
+    CODING_SESSION_CREATE_UNNAMED_MODEL_DISCLOSURE,
+    "Runs the runtime's default model — the record will not name it.",
+  );
+});
+
+test("a resolved model needs no disclosure, and an unread catalog still discloses", () => {
+  assert.equal(
+    codingSessionCreateModelDisclosure({
+      model: "default",
+      catalog: {
+        defaultModel: "claude-fable-5[1m]",
+        allowedModels: ["default", "claude-fable-5[1m]"],
+      },
+    }),
+    null,
+  );
+  assert.equal(codingSessionCreateModelDisclosure({ model: "sonnet" }), null);
+  // No catalog read: `default` is still all the record will carry.
+  assert.equal(
+    codingSessionCreateModelDisclosure({ model: "default" }),
+    CODING_SESSION_CREATE_UNNAMED_MODEL_DISCLOSURE,
+  );
 });

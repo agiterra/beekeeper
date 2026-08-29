@@ -21,11 +21,15 @@
  * event.
  */
 
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
+  codingSessionHireIdentityModelNotice,
   codingSessionHireModelNotice,
   codingSessionHireModelOf,
+  describeCodingSessionHireIdentityModelRefusal,
   describeCodingSessionHireModelRefusal,
   resolveCodingSessionHireModel,
+  type CodingSessionHireModelResolution,
 } from "./codingSessionHireModel";
 
 /** The stored policy, exactly as the settings panel edits it. */
@@ -91,6 +95,25 @@ export type CodingSessionHireCandidate = {
   hasRolePack?: boolean;
   /** The identity's own model, used when the hire names none. */
   model?: string | null;
+  /**
+   * The runtime this identity's own record pins — `claude`, `codex`, `goose`
+   * — or `null` when it inherits one.
+   *
+   * This is what decides the seat's runtime, not the umbrella's: on
+   * 2026-08-28 a codex identity (`gpt-5.6-sol`) was seated on the
+   * claude-agent-acp driver because the host took the umbrella's runtime and
+   * passed the identity's model through it, so an OpenAI model id was handed
+   * to Claude (item 88(i)).
+   */
+  runtime?: string | null;
+  /**
+   * The record's inference provider, when it names one.
+   *
+   * Read only as a fallback for {@link runtime}: every managed-agent record
+   * this repo has been observed to hold leaves `provider` null and pins the
+   * vendor in `runtime` instead.
+   */
+  provider?: string | null;
 };
 
 /** A seat already sitting in the umbrella a hire is aimed at. */
@@ -99,6 +122,14 @@ export type CodingSessionHireLiveSeat = {
   actor: string;
   /** Its role slug. */
   role: string;
+  /**
+   * The seat's execution generation id, when this host has observed one.
+   *
+   * Carried only so a busy-role refusal can name the seat the lead should
+   * address instead. Absent is normal — the refusal names the actor and role
+   * either way, and never invents an id.
+   */
+  generationId?: string | null;
 };
 
 export type CodingSessionHireDecision =
@@ -119,6 +150,12 @@ export type CodingSessionHireDecision =
        * a real disclosure gets skipped.
        */
       modelNotice: string | null;
+      /**
+       * What the host substituted for the runtime the hire named, when it
+       * substituted anything — an identity's own runtime overriding the
+       * request's. Null when the seat runs exactly where the hire asked.
+       */
+      providerNotice: string | null;
     }
   | { ok: false; code: CodingSessionHireRefusalCode; reason: string };
 
@@ -145,6 +182,13 @@ export type CodingSessionHireDecisionInput = {
    * exist. See `codingSessionHireModel.ts`.
    */
   modelCatalogs?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Runtime slug (`claude`, `codex`, `goose`) by instance ref, so an
+   * identity's own runtime can be matched to a runtime this computer runs.
+   * Absent means no mapping was read, and an identity's runtime then matches
+   * only an instance ref equal to it — never a guess.
+   */
+  providerRuntimeSlugs?: ReadonlyMap<string, string>;
 };
 
 /**
@@ -174,10 +218,17 @@ export function codingSessionHireAllowedRoles(
 /**
  * Answer one hire request against the standing policy.
  *
- * Order matters and is deliberate: the operator's own switches are read
- * before this computer's inventory, so a lead is told "you may not" before it
- * is told "there is nobody", and a refusal on a role the operator disallowed
- * never discloses which identities exist behind it.
+ * Order matters and is deliberate. The operator's own switches — hiring on,
+ * this role, this seat ceiling — are read before this computer's inventory,
+ * so a lead is told "you may not" before it is told "there is nobody", and a
+ * refusal on a role the operator disallowed never discloses which identities
+ * exist behind it.
+ *
+ * The identity is then chosen **before** the runtime and the model, because
+ * it decides both: a codex identity's runtime is the seat's runtime, and the
+ * catalog a model is checked against is that runtime's. Choosing the runtime
+ * first is what seated an OpenAI model id on the Claude adapter on
+ * 2026-08-28 (item 88(i)).
  */
 export function decideCodingSessionHire(
   input: CodingSessionHireDecisionInput,
@@ -216,52 +267,75 @@ export function decideCodingSessionHire(
     };
   }
 
-  const provider = chooseProvider(input);
-  if (provider === null) {
-    return {
-      ok: false,
-      code: "HIRE_PROVIDER_NOT_ALLOWED",
-      reason: describeProviderRefusal(input),
-    };
-  }
-
-  // Against the runtime's own catalog, and only for the model the *lead*
-  // named: an identity's stored model is this computer's own record and is
-  // not the lead's request to be refused over.
-  const resolution = resolveCodingSessionHireModel(
-    request.model,
-    input.modelCatalogs?.get(provider) ?? [],
-  );
-  if (resolution?.kind === "not-offered") {
-    return {
-      ok: false,
-      code: "HIRE_MODEL_NOT_OFFERED",
-      reason: describeCodingSessionHireModelRefusal(provider, resolution),
-    };
-  }
-
+  // Identity before runtime, because the identity decides the runtime: a
+  // codex identity does not run on the Claude adapter whatever the hire said.
   const identity = chooseIdentity(role, input);
   if (identity === null) {
     return {
       ok: false,
       code: "HIRE_NO_IDENTITY",
-      reason:
-        `this computer holds no ${role} identity that is free — every ` +
-        `installed ${role} is already seated in this session, or none is ` +
-        "installed. Install team roles on the Agents screen, then ask again.",
+      reason: describeIdentityRefusal(role, input),
     };
+  }
+
+  const provider = chooseProvider(input, identity);
+  if (provider.ok === false) {
+    return {
+      ok: false,
+      code: "HIRE_PROVIDER_NOT_ALLOWED",
+      reason: provider.reason,
+    };
+  }
+
+  const offered = input.modelCatalogs?.get(provider.ref) ?? [];
+  // The lead's model against the runtime's own catalog.
+  const requested = resolveCodingSessionHireModel(request.model, offered);
+  if (requested?.kind === "not-offered") {
+    return {
+      ok: false,
+      code: "HIRE_MODEL_NOT_OFFERED",
+      reason: describeCodingSessionHireModelRefusal(provider.ref, requested),
+    };
+  }
+  // And the identity's own through the same check, when the hire named none.
+  // Skipping it is what let `opus[1m]` seat itself on 2026-08-28 one line
+  // after the host refused it (item 88(a)).
+  let inherited: CodingSessionHireModelResolution | null = null;
+  if (requested === null) {
+    inherited = resolveCodingSessionHireModel(identity.model ?? null, offered);
+    if (inherited?.kind === "not-offered") {
+      return {
+        ok: false,
+        code: "HIRE_MODEL_NOT_OFFERED",
+        reason: describeCodingSessionHireIdentityModelRefusal(
+          provider.ref,
+          identity.name,
+          inherited,
+        ),
+      };
+    }
   }
 
   return {
     ok: true,
     identity,
     role,
-    providerInstanceRef: provider,
+    providerInstanceRef: provider.ref,
     // The lead's choice first (D13 makes the model the lead's call), then the
     // identity's own. Never a guess: null means "let the runtime decide", and
     // that is a different statement from naming a model nobody chose.
-    model: codingSessionHireModelOf(resolution) ?? identity.model ?? null,
-    modelNotice: codingSessionHireModelNotice(provider, resolution),
+    model:
+      codingSessionHireModelOf(requested) ??
+      codingSessionHireModelOf(inherited) ??
+      null,
+    modelNotice:
+      codingSessionHireModelNotice(provider.ref, requested) ??
+      codingSessionHireIdentityModelNotice(
+        provider.ref,
+        identity.name,
+        inherited,
+      ),
+    providerNotice: provider.notice,
   };
 }
 
@@ -369,18 +443,76 @@ export function parseCodingSessionHireMaxSeatsInput(
   return Math.min(parsed, CODING_SESSION_HIRE_MAX_SEATS_CEILING);
 }
 
-/** The runtime a hire lands on, or null when there is none it may have. */
-function chooseProvider(input: CodingSessionHireDecisionInput): string | null {
+/** The runtime a hire lands on, and whether the host chose it for the lead. */
+type CodingSessionHireProviderChoice =
+  | { ok: true; ref: string; notice: string | null }
+  | { ok: false; reason: string };
+
+/**
+ * The runtime a hire lands on.
+ *
+ * Order: **the identity's own runtime**, then the hire's, then this
+ * computer's first allowed one. The identity comes first because its runtime
+ * is a fact about the agent, while the hire's is a preference of the lead's —
+ * and running a codex identity's model on the Claude adapter is not a
+ * degraded seat, it is a seat that cannot work (item 88(i), live).
+ *
+ * An identity naming a runtime this computer does not run is refused rather
+ * than re-homed: seating it somewhere else would hand its model id to an
+ * adapter that has never heard of it.
+ */
+function chooseProvider(
+  input: CodingSessionHireDecisionInput,
+  identity: CodingSessionHireCandidate,
+): CodingSessionHireProviderChoice {
   const allowed = input.policy.allowedProviderInstanceRefs;
   const permitted = (ref: string) => allowed === null || allowed.includes(ref);
   const requested = input.request.providerInstanceRef;
+
+  const own = (identity.runtime ?? identity.provider ?? "")
+    .trim()
+    .toLowerCase();
+  if (own.length > 0) {
+    const match = input.availableProviderInstanceRefs.find(
+      (ref) =>
+        permitted(ref) &&
+        (ref.trim().toLowerCase() === own ||
+          input.providerRuntimeSlugs?.get(ref)?.trim().toLowerCase() === own),
+    );
+    if (match === undefined) {
+      return {
+        ok: false,
+        reason:
+          `${identity.name} runs on ${own}, and this computer seats hires on ` +
+          `${
+            input.availableProviderInstanceRefs.length > 0
+              ? input.availableProviderInstanceRefs.join(", ")
+              : "no runtime at all"
+          }. Install or sign in to ${own} here, or hire a role whose identity ` +
+          "runs on one of those.",
+      };
+    }
+    return {
+      ok: true,
+      ref: match,
+      notice:
+        requested !== null && requested !== match
+          ? `The hire asked for ${requested}; ${identity.name} runs on ` +
+            `${own}, so the seat runs on ${match} instead.`
+          : null,
+    };
+  }
+
   if (requested !== null) {
     return input.availableProviderInstanceRefs.includes(requested) &&
       permitted(requested)
-      ? requested
-      : null;
+      ? { ok: true, ref: requested, notice: null }
+      : { ok: false, reason: describeProviderRefusal(input) };
   }
-  return input.availableProviderInstanceRefs.find(permitted) ?? null;
+  const fallback = input.availableProviderInstanceRefs.find(permitted);
+  return fallback === undefined
+    ? { ok: false, reason: describeProviderRefusal(input) }
+    : { ok: true, ref: fallback, notice: null };
 }
 
 function describeProviderRefusal(
@@ -405,6 +537,47 @@ function describeProviderRefusal(
         : input.policy.allowedProviderInstanceRefs.join(", ")
     }.`
   );
+}
+
+/**
+ * Why no identity took the seat — busy here, or not installed at all.
+ *
+ * Two different facts with two different remedies, and until 2026-08-28 they
+ * shared one sentence: a lead whose only builder was seated *and idle* was
+ * told to "install team roles", which was both wrong and unactionable (item
+ * 88(h)). The busy sentence names the seat and the one thing that works —
+ * addressing the seat that already exists. It never invents an identity.
+ */
+function describeIdentityRefusal(
+  role: string,
+  input: CodingSessionHireDecisionInput,
+): string {
+  const seated = input.liveSeats.filter((seat) => {
+    const actor = seat.actor.trim().toLowerCase();
+    return input.candidates.some(
+      (candidate) =>
+        candidate.homeRole?.trim() === role &&
+        candidate.pubkey.trim().toLowerCase() === actor,
+    );
+  });
+  if (seated.length === 0) {
+    return (
+      `this computer holds no ${role} identity. Install team roles on the ` +
+      "Agents screen, then ask again."
+    );
+  }
+  return (
+    `every ${role} identity this computer holds is already seated in this ` +
+    `session: ${seated.map(describeLiveSeat).join(", ")}. Send your brief to ` +
+    `that seat instead of hiring: bee sessions send --to ${role}`
+  );
+}
+
+/** `abcd1234…wxyz·builder (execution gen-7)` — the seat, as a lead addresses it. */
+function describeLiveSeat(seat: CodingSessionHireLiveSeat): string {
+  const label = `${truncatePubkey(seat.actor.trim())}·${seat.role}`;
+  const generation = seat.generationId?.trim();
+  return generation ? `${label} (execution ${generation})` : label;
 }
 
 /**

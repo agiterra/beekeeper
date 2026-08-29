@@ -20,7 +20,7 @@ import { awaitCodingSessionCreateReceipt } from "../lib/codingSessionCrewReceipt
 import {
   codingSessionHireGrantFailureNotice,
   codingSessionHireGrantFailureText,
-  codingSessionHireModelNoticeLine,
+  codingSessionHireNoticeLine,
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
   type CodingSessionHireAnswer,
@@ -123,6 +123,14 @@ export type CodingSessionHireAgent = {
   homeRole: string | null;
   hasRolePack?: boolean;
   model: string | null;
+  /**
+   * The runtime the record pins (`claude`, `codex`, `goose`), or null when it
+   * inherits one. This decides the seat's runtime — see
+   * `codingSessionHirePolicy.chooseProvider`.
+   */
+  runtime?: string | null;
+  /** The record's inference provider, read only as a fallback for `runtime`. */
+  provider?: string | null;
 };
 
 type HirePublisher = {
@@ -205,8 +213,29 @@ export type UseCodingSessionHireInput = {
   agents: readonly CodingSessionHireAgent[];
   /** The provider identity that will sign this host's seats, when there is one. */
   providerAuthorityPubkey: string | null;
-  /** This computer's runtimes — their auth state and their model catalogs. */
+  /**
+   * This computer's runtimes: which exist, which are signed in, and which
+   * runtime slug each instance ref is.
+   *
+   * **Not** a model catalog. `list_runtimes()` hardcodes every row's
+   * `allowedModels` to `["default"]`
+   * (`desktop/src-tauri/src/session_provider/runtimes.rs:269`), so reading a
+   * catalog off this table is reading a placeholder — which is exactly how a
+   * hire for `sonnet` was refused with "It offers default" while the
+   * runtime's published catalog held five ids (item 88(a), live 2026-08-28).
+   * The catalogs arrive separately, in {@link modelCatalogs}.
+   */
   runtimes: readonly CodingSessionProviderRuntime[];
+  /**
+   * What each runtime actually offers, by instance ref — the
+   * `coding_session_provider_models` answer, which is the same catalog the
+   * create dialog's model picker is built from.
+   *
+   * A ref with no entry is a catalog this host never read, and refuses
+   * nothing: a refusal built on a list nobody loaded would be a claim about
+   * the model dressed up as a claim about the catalog.
+   */
+  modelCatalogs?: ReadonlyMap<string, readonly string[]>;
   /** Where each seat's worktree is cut from, by channel. Host-local. */
   checkoutForChannel: (channelId: string) => string | null;
   /** Targets to answer a requesting seat's refusal turn to, by pubkey. */
@@ -347,17 +376,22 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             ? {}
             : { hasRolePack: agent.hasRolePack }),
           model: agent.model,
+          runtime: agent.runtime ?? null,
+          provider: agent.provider ?? null,
         })),
         availableProviderInstanceRefs: current.input.runtimes
           .filter((runtime) => runtime.authState === "ready")
           .map((runtime) => runtime.instanceRef),
-        // Every runtime's own catalog, including the ones that are not ready:
-        // a model is checked against the runtime that would run it, and an
-        // empty list means "not read", which refuses nothing.
-        modelCatalogs: new Map(
+        // The provider's own catalogs, never the runtime table's placeholder
+        // list. An instance ref missing from this map is a catalog nobody
+        // read, and refuses nothing.
+        modelCatalogs: current.input.modelCatalogs ?? new Map(),
+        // Which runtime slug each instance ref is, so an identity that runs
+        // on codex is seated on codex.
+        providerRuntimeSlugs: new Map(
           current.input.runtimes.map((runtime) => [
             runtime.instanceRef,
-            runtime.allowedModels,
+            runtime.runtime,
           ]),
         ),
         providerAuthorityPubkey,
@@ -423,18 +457,19 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           );
         },
       });
-      // A model this host substituted for the lead's words is said out loud in
-      // the umbrella, where both the lead and the person can read it. A
-      // translation nobody is told about is the host quietly running something
-      // other than what was asked for.
-      if (plan.modelNotice !== null) {
+      // Anything this host substituted for the lead's words — the runtime, the
+      // model, or both — is said out loud in the umbrella, where both the lead
+      // and the person can read it. A substitution nobody is told about is the
+      // host quietly running something other than what was asked for.
+      for (const notice of [plan.providerNotice, plan.modelNotice]) {
+        if (notice === null) continue;
         await publishCodingSessionLaneMessage(
           {
             channelId: plan.channelId,
             sessionRef: plan.sessionRef,
-            content: codingSessionHireModelNoticeLine({
+            content: codingSessionHireNoticeLine({
               role: plan.role,
-              notice: plan.modelNotice,
+              notice,
             }),
           },
           { publisher: hireDeps.publisher, signer: hireDeps.signer },

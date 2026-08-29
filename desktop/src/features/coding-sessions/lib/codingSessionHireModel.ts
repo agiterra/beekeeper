@@ -104,6 +104,49 @@ export function describeCodingSessionHireModelRefusal(
 }
 
 /**
+ * The sentence an *identity's own* refused model earns.
+ *
+ * Split from the request's sentence because the two are different facts and
+ * different remedies. A refused `--model` is the lead's word to take back; a
+ * refused identity model is this computer's own record naming something its
+ * runtime does not run, so the sentence names the identity — otherwise the
+ * operator is told a model was refused and has nowhere to go and fix it.
+ *
+ * Live evidence: on 2026-08-28 a hire naming no model fell back to the
+ * identity's `opus[1m]` and skipped this check entirely, so the host seated a
+ * model its own refusal had said one line earlier was not offered.
+ */
+export function describeCodingSessionHireIdentityModelRefusal(
+  providerInstanceRef: string,
+  identityName: string,
+  resolution: Extract<
+    CodingSessionHireModelResolution,
+    { kind: "not-offered" }
+  >,
+): string {
+  return (
+    `${identityName}'s own model ${resolution.requested} is not one this ` +
+    `computer's ${providerInstanceRef} runtime offers. It offers ` +
+    `${resolution.offered.join(", ")}. Name one of them with --model, or fix ` +
+    `${identityName}'s record on the Agents screen.`
+  );
+}
+
+/** The identity-model counterpart of {@link codingSessionHireModelNotice}. */
+export function codingSessionHireIdentityModelNotice(
+  providerInstanceRef: string,
+  identityName: string,
+  resolution: CodingSessionHireModelResolution | null,
+): string | null {
+  if (resolution === null || resolution.kind !== "translated") return null;
+  return (
+    `The hire named no model, so the seat took ${identityName}'s own ` +
+    `${resolution.requested}; this computer's ${providerInstanceRef} runtime ` +
+    `does not offer that id, so the seat runs ${resolution.model} instead.`
+  );
+}
+
+/**
  * What the host says out loud when it seated a model nobody asked for.
  *
  * A translation is the host substituting its own judgement for the lead's

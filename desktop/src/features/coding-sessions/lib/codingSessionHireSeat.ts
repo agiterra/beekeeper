@@ -61,6 +61,11 @@ export type CodingSessionHireSeatPlan = {
    * out loud in the umbrella when the seat is published.
    */
   modelNotice: string | null;
+  /**
+   * What the host substituted for the lead's requested runtime, or null. Said
+   * out loud alongside {@link modelNotice}.
+   */
+  providerNotice: string | null;
   /** Display name for the seat, used in membership and failure copy. */
   seatLabel: string;
   /** `<session-slug>-<role>-<n>`; the host re-slugs and disambiguates it. */
@@ -84,6 +89,8 @@ export function buildCodingSessionHireSeatPlan(input: {
   model: string | null;
   /** The host's model substitution, disclosed with the seat. */
   modelNotice?: string | null;
+  /** The host's runtime substitution, disclosed with the seat. */
+  providerNotice?: string | null;
   /** Which seat of this role this is, 1-based; names the worktree. */
   seatOrdinal: number;
 }): CodingSessionHireSeatPlan {
@@ -101,6 +108,7 @@ export function buildCodingSessionHireSeatPlan(input: {
     model: input.model,
     title: input.title,
     modelNotice: input.modelNotice ?? null,
+    providerNotice: input.providerNotice ?? null,
     // A brief that already opens with the prefix keeps one, not two: the lead
     // writing the sentence itself must not produce "[From the lead] [From the
     // lead] …".
@@ -143,16 +151,47 @@ export function codingSessionHireSeatOrdinal(
   return liveSeats.filter((seat) => seat.role === role).length + 1;
 }
 
-/** The minimal umbrella shape the live-seat read needs. */
+/** The minimal umbrella shape the live-seat and project reads need. */
 export type CodingSessionHireUmbrellaLike = {
   executions: ReadonlyArray<{
     activeGeneration: {
       agentRef: string | null;
       role: string | null;
       status: CodingSessionStatus;
+      /** The execution's own generation id, when the catalog carries one. */
+      generationId?: string | null;
+      /** The project this execution's create signed, when it named one. */
+      projectRef?: string | null;
     };
   }>;
 };
+
+/**
+ * The project a hired seat inherits.
+ *
+ * Read off the umbrella's own executions rather than off the umbrella,
+ * because the umbrella record has no project of its own:
+ * `groupCodingSessionCatalog` folds executions into
+ * `CodingSessionUmbrellaRecord`, and that type carries no `projectRef` field
+ * at all (`codingSessionTypes.ts:101-136`). So `umbrella.projectRef` was
+ * always `undefined` and every hired seat's create went out with
+ * `projectRef: null` while the lead's carried the project — item 88(c), live
+ * 2026-08-28. The project the lead signed lives on each execution's active
+ * generation, which is the same value the projects sidebar reads back.
+ *
+ * The first execution that names one wins, and `null` when none does: an
+ * umbrella genuinely outside every project seats a hire outside every
+ * project, never in a guessed one.
+ */
+export function codingSessionHireUmbrellaProjectRef(
+  umbrella: CodingSessionHireUmbrellaLike,
+): string | null {
+  for (const execution of umbrella.executions) {
+    const projectRef = execution.activeGeneration.projectRef?.trim();
+    if (projectRef) return projectRef;
+  }
+  return null;
+}
 
 /**
  * The seats an umbrella is holding right now.
@@ -169,7 +208,12 @@ export function listCodingSessionHireLiveSeats(
     const { agentRef, role, status } = execution.activeGeneration;
     if (!agentRef || !role) continue;
     if (CODING_SESSION_HIRE_ENDED_STATUSES.includes(status)) continue;
-    seats.push({ actor: agentRef, role });
+    const generationId = execution.activeGeneration.generationId?.trim();
+    seats.push({
+      actor: agentRef,
+      role,
+      ...(generationId ? { generationId } : {}),
+    });
   }
   return seats;
 }
