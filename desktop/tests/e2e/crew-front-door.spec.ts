@@ -897,7 +897,7 @@ test.describe("crew front door", () => {
     });
   });
 
-  test("03 — the Team tab lists the minted team's seats, and can launch them", async ({
+  test("03 — the Team tab names its project, seats a worktree, and can launch", async ({
     page,
   }) => {
     await openApp(page);
@@ -950,6 +950,30 @@ test.describe("crew front door", () => {
     await expect(crewTab).toContainText(
       "The roles below are who it may hire — it hires them with " +
         "`bee sessions hire`",
+    );
+
+    // Item 87(a), found live: a team launched from inside the Bee Keeper
+    // project signed `projectRef: None`, so the session was founded into a
+    // channel nobody was looking at and the project's session list never
+    // showed it. This dialog was opened from a channel, so the honest answer
+    // is that there is no project — said out loud rather than left to be
+    // discovered afterwards.
+    await expect(
+      page.getByTestId("new-coding-session-crew-project"),
+    ).toContainText(
+      "This session will not belong to a project — it lives in the channel " +
+        "above, not in a project's sessions.",
+    );
+
+    // Item 87(d): the tab had no worktree field at all, so the lead ran in the
+    // checkout the tab named — the operator's own — while every seat it hired
+    // got a worktree. Same field as the one-session path, on by default,
+    // prefilled for the seat it belongs to.
+    const worktreeToggle = page.getByTestId("coding-session-worktree-toggle");
+    await expect(worktreeToggle).toBeVisible();
+    await expect(worktreeToggle).toHaveAttribute("data-state", "checked");
+    await expect(page.getByTestId("coding-session-worktree-name")).toHaveValue(
+      "team-roles-lead",
     );
 
     // …and with a goal typed, the front door actually opens.
