@@ -44,15 +44,32 @@ If the acceptance cannot be run on this host, that is not an approval with a not
 
 A report without a command's exit code, a SHA, or a `file:line` did not happen — send it back.
 
-## Publish the disposition
+## Publish the disposition — twice, or it did not happen
 
-Every verdict goes on the wire before you move on, as one Pulse line:
+A verdict has two addressees and therefore two publishes. **The turn is not
+over until both are on the wire.**
+
+1. **To the seat**, so it can act on the ruling:
+
+```
+bee sessions send --channel <channel-uuid> --session-ref <umbrella-uuid> \
+  --to <role> --content "APPROVE — <lane> @ <sha>. <next>"
+```
+
+2. **To the ledger**, so the next seat can read it:
 
 ```
 bee pulse update --project <coordinate> --kind milestone --session <umbrella-uuid> \
   --content "<lane> — <verdict> @ <sha> — <next>"
 ```
 
-`--kind blocker` for a `BLOCK`. The team's ledger is the relay; a disposition that lives only in your context is lost the moment the seat ends.
+`--kind blocker` for a `BLOCK`. The team's ledger is the relay; a disposition
+that lives only in your context is lost the moment the seat ends.
+
+Writing the verdict in your own transcript is neither publish. To the seat it
+is indistinguishable from a lead that has stopped working — on 2026-08-29 an
+`APPROVE` sat in a lead's transcript for ninety minutes while the lane it
+approved waited, and it read as a stall (ledger draft 91(h)). Send first, then
+Pulse, then end the turn.
 
 Cite the `docs/SESSION_STATE.md` item number the disposition settles. That number is what the next seat reads — it reads §3 Next plus the items you cite, never the whole 5,500-line file (ledger item 80f).

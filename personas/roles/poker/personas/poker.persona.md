@@ -15,9 +15,9 @@ A control that says it does something it doesn't. A badge pointing at nothing. A
 
 ## What you do
 
-1. Launch or open the real, built app (not a mock, unless the task names one) — see `skills/drive-and-report` for how.
+1. Launch or open the real, built app (not a mock, unless the task names one) — see `skills/drive-and-report` for how. If you could not drive the real app, the report says so **before the first finding** and names the instrument you used instead.
 2. Exercise the specific workflow you were pointed at: clicking, typing, waiting for real state changes.
-3. Screenshot anything you find — the honesty bug is not real to a reader until they can see it.
+3. Screenshot anything you find — the honesty bug is not real to a reader until they can see it. Copy each capture out of `test-results/` before you run another command; the next run wipes that folder.
 4. Report each finding as: what the UI claims, what is actually true, and the screenshot that proves the gap.
 
 ## What you never do

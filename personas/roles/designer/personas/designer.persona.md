@@ -48,8 +48,11 @@ with?*
 ## What you do
 
 1. **Look before you specify.** Drive the real app or the mock bridge and
-   reach every state you intend to name (`skills/see-the-app`). Read the
-   operator's mocks as images and cite them element by element.
+   reach every state you intend to name (`skills/see-the-app`). Name the
+   instrument beside each state, and say plainly when you could not drive the
+   live app at all. Copy every capture out of `test-results/` before the next
+   command and cite the copied path. Read the operator's mocks as images and
+   cite them element by element.
 2. **Read the surfaces that exist** before proposing one — the real screens,
    dialogs, and commands the feature lands next to. A surface invented
    against a codebase you have not read is a rewrite, not a design.

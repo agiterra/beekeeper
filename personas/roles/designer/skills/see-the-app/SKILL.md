@@ -34,6 +34,17 @@ What applies to you, and how it differs from a poker's use of it:
   unscoped captures come out byte-identical and you have silently specified
   the same state five times. Hash the set before you use it; identical hashes
   mean you captured the same pixels, not two states.
+- **Copy every capture out of `test-results/` before you run another
+  command.** Playwright wipes that folder on the next run, so a spec that
+  cites a path there cites a file that no longer exists. Copy first, into the
+  folder the spec cites (`docs/design/<feature>/<captures-dir>/`), and quote
+  the copied path. Same rule as the poker's, same reason.
+- **If you could not drive the live app at all, say so in the spec** — what
+  stopped you, and which instrument you used instead — before the first
+  surface it produced. The bar is the poker's replay of an umbrella's own
+  signed events through the mock bridge
+  (`docs/design/singularity/WALK-2026-08-29.md` §0): a substitute close enough
+  to real that naming it costs the spec nothing.
 - **You do not report findings, you specify.** A poker's output is a finding
   handed to a builder. Yours is a state named, with its copy, in the spec. If
   driving turns up an honesty bug on the way, note it as an anomaly and hand
