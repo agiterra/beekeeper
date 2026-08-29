@@ -29,7 +29,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import {
   codingSessionWorkspaceStatusDetail,
-  deriveCodingSessionWorkspaceStatus,
+  deriveCodingSessionExecutionStatus,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -574,12 +574,18 @@ function uniqueNonemptyLabels(
  */
 export function CodingSessionDispositionStrip({
   actorNames,
+  canSteer = false,
   nowMs,
   resolveReachability,
   umbrella,
 }: {
   /** Resolves a seat's actor pubkey to a display name, when one is known. */
   actorNames?: CodingSessionActorNameResolver;
+  /**
+   * Whether this viewer may prompt executions. It chooses which of W1's two
+   * waiting strings a waiting seat reads, and nothing else.
+   */
+  canSteer?: boolean;
   /** Fixed clock for tests; defaults to now at render time. */
   nowMs?: number;
   resolveReachability: CodingSessionReachabilityResolver;
@@ -590,15 +596,14 @@ export function CodingSessionDispositionStrip({
       listCodingSessionUmbrellaDispositions(
         umbrella,
         (execution) =>
-          deriveCodingSessionWorkspaceStatus(
-            execution.activeGeneration.transcript,
-            execution.activeGeneration.status,
-            execution.activeGeneration.statusAt,
+          deriveCodingSessionExecutionStatus(
+            execution,
             resolveReachability(execution.activeGeneration.commandTarget),
           ),
         actorNames,
+        canSteer,
       ),
-    [actorNames, resolveReachability, umbrella],
+    [actorNames, canSteer, resolveReachability, umbrella],
   );
   if (items.length === 0) return null;
   const at = nowMs ?? Date.now();

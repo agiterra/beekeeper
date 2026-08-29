@@ -232,6 +232,7 @@ export function UmbrellaCodingSessionWorkspace({
         content: (
           <CodingSessionExecutionRail
             actorNames={workspaceActorName}
+            resolveReachability={resolveReachability}
             umbrella={umbrella}
           />
         ),
@@ -243,7 +244,7 @@ export function UmbrellaCodingSessionWorkspace({
         content: <CodingSessionChangesRail files={changedFiles} />,
       },
     ],
-    [changedFiles, umbrella, workspaceActorName],
+    [changedFiles, resolveReachability, umbrella, workspaceActorName],
   );
   const surfaceIds = React.useMemo(
     () => surfaces.map((surfaceEntry) => surfaceEntry.id),

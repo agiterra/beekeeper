@@ -173,7 +173,10 @@ test("execution rail offers a consolidated overview and one tab per execution", 
   assert.match(markup, />All agents</);
   assert.match(markup, />Claude</);
   assert.match(markup, />Codex</);
-  assert.match(markup, /All idle/);
+  // The footer tallies W1's words for the rows above it — never a second
+  // read of the raw status, and never "All idle" beside a row that is not.
+  assert.match(markup, /2 idle/);
+  assert.doesNotMatch(markup, /All idle/);
   assert.equal(
     markup.match(/data-testid="coding-session-execution-card"/g)?.length,
     2,

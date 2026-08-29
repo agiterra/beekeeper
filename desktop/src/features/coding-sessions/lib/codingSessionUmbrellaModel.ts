@@ -580,18 +580,31 @@ export type CodingSessionUmbrellaDisposition = {
 };
 
 /**
- * The team word for a resolved workspace status.
+ * The team word for a resolved workspace status — W1's whole vocabulary.
  *
- * Only three states have a team word: `live`, `idle`, `released`. Everything
- * else keeps the status's own sentence — a provider nobody is answering for
- * reads "no provider answering", never the comfortable "idle" it is not.
+ * Five words, one place (SURFACES §2a). Four states have a team word —
+ * `live`, the waiting pair, `idle`, `released` — and everything else keeps
+ * the status's own sentence, so a provider nobody is answering for reads
+ * "no provider answering", never the comfortable "idle" it is not.
+ *
+ * `canSteer` chooses between the two waiting strings and nothing else. The
+ * word has to name who is waited on — that is the actionable half — but
+ * "waiting for you" is false for a reader who cannot answer: prompting is
+ * gated by authority, and a view-only observer told "waiting for you" will
+ * try, and be refused by the composer. It defaults to `false` because
+ * under-claiming is the safe direction: a reader who can in fact steer loses
+ * a little precision, where the reverse invites a person to type into
+ * something that will not read it.
  */
 export function codingSessionDispositionWord(
   status: CodingSessionWorkspaceStatus,
+  canSteer: boolean = false,
 ): string {
   switch (status.kind) {
     case "working":
       return "live";
+    case "waiting":
+      return canSteer ? "waiting for you" : "waiting for an operator";
     case "idle":
       return "idle";
     case "ended":
@@ -615,12 +628,16 @@ export function listCodingSessionUmbrellaDispositions(
     execution: CodingSessionExecution,
   ) => CodingSessionWorkspaceStatus,
   resolveActorName?: CodingSessionActorNameResolver,
+  canSteer: boolean = false,
 ): CodingSessionUmbrellaDisposition[] {
   const entries = umbrella.executions.map((execution) => ({
     executionKey: execution.executionKey,
     label: executionLabel(execution, resolveActorName),
     role: execution.activeGeneration.role,
-    disposition: codingSessionDispositionWord(resolveStatus(execution)),
+    disposition: codingSessionDispositionWord(
+      resolveStatus(execution),
+      canSteer,
+    ),
     lastTurnAt: executionLastTurnAt(execution),
   }));
   // Stable partition, not a sort: the umbrella's own attach order is the only

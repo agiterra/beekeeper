@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   codingSessionUmbrellaGenerationLabel,
+  codingSessionWireWorkspaceStatus,
   codingSessionWorkspaceStatusDetail,
+  deriveCodingSessionExecutionStatus,
   deriveCodingSessionWorkspaceStatus,
   resolveCodingSessionWorkspace,
   umbrellaHasCollapsedHistory,
@@ -285,9 +287,10 @@ test("empty transcript falls back to the provider's wire status", () => {
     kind: "unknown",
     label: "Status unknown",
   });
+  // `waiting_for_input` is its own tier, not a shade of idle (SURFACES §2a).
   assert.deepEqual(
     deriveCodingSessionWorkspaceStatus([], "waiting_for_input"),
-    { kind: "idle", label: "Idle" },
+    { kind: "waiting", label: "Waiting" },
   );
 });
 
@@ -745,5 +748,169 @@ test("a report from seconds ago reads as English, not 'just now ago'", () => {
   assert.equal(
     codingSessionWorkspaceStatusDetail(status),
     "last reported Idle just now",
+  );
+});
+
+// --- W1: one liveness word, from the wire (SURFACES §15(b), §2a) -------------
+
+test("a completed execution with an unterminated transcript is idle, not working", () => {
+  // Walk finding 2: the promotion path discarded the signed status before it
+  // ever read it, and the strip printed that inference as the word `live`.
+  const openTurn = [
+    {
+      id: "result-1",
+      type: "lifecycle",
+      renderClass: "status",
+      title: "Turn result",
+      text: "Done",
+      timestamp: "2026-08-12T10:00:00.000Z",
+      turnId: "turn-1",
+    },
+    {
+      id: "msg-2",
+      type: "message",
+      renderClass: "message",
+      role: "user",
+      title: "Prompt",
+      text: "next task",
+      timestamp: "2026-08-12T10:05:00.000Z",
+      turnId: "turn-2",
+    },
+  ];
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus(openTurn, "completed"), {
+    kind: "idle",
+    label: "Idle",
+  });
+  // The same shape a killed seat leaves: a resting `idle`, no terminator.
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus(openTurn, "idle"), {
+    kind: "idle",
+    label: "Idle",
+  });
+});
+
+test("a live seat with an open turn still narrows to working", () => {
+  const openTurn = [
+    {
+      id: "msg-1",
+      type: "message",
+      renderClass: "message",
+      role: "user",
+      title: "Prompt",
+      text: "go",
+      timestamp: "2026-08-12T10:05:00.000Z",
+      turnId: "turn-2",
+    },
+  ];
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus(openTurn, "running"), {
+    kind: "working",
+    label: "Working",
+  });
+});
+
+test("a waiting_for_input seat reads the waiting word, not idle", () => {
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus([], "waiting_for_input"),
+    { kind: "waiting", label: "Waiting" },
+  );
+  assert.deepEqual(codingSessionWireWorkspaceStatus("waiting_for_input"), {
+    kind: "waiting",
+    label: "Waiting",
+  });
+});
+
+test("the transcript heuristic never produces the waiting word — and never hides one", () => {
+  const openTurn = [
+    {
+      id: "msg-1",
+      type: "message",
+      renderClass: "message",
+      role: "user",
+      title: "Prompt",
+      text: "go",
+      timestamp: "2026-08-12T10:05:00.000Z",
+      turnId: "turn-2",
+    },
+  ];
+  // An open turn on a waiting seat does not invent activity.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(openTurn, "waiting_for_input"),
+    { kind: "waiting", label: "Waiting" },
+  );
+  // And no transcript row can mint the waiting kind on its own.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      [
+        {
+          id: "status-1",
+          type: "lifecycle",
+          renderClass: "status",
+          title: "Status",
+          text: "waiting_for_input",
+          timestamp: "2026-08-12T10:05:00.000Z",
+        },
+      ],
+      "running",
+    ),
+    { kind: "working", label: "Working" },
+  );
+});
+
+test("an unreachable waiting seat is demoted exactly as a working one is", () => {
+  const status = deriveCodingSessionWorkspaceStatus(
+    [],
+    "waiting_for_input",
+    Date.parse("2026-08-12T10:00:00.000Z"),
+    { known: true, reachable: false },
+    Date.parse("2026-08-12T10:04:00.000Z"),
+  );
+  assert.deepEqual(status, {
+    kind: "unknown",
+    label: "No provider answering",
+    attention: "unreachable",
+    lastReported: { label: "Waiting", ageSeconds: 240 },
+  });
+});
+
+test("one execution, one status: the rail and the strip read the same function", () => {
+  const openTurn = [
+    {
+      id: "msg-1",
+      type: "message",
+      renderClass: "message",
+      role: "user",
+      title: "Prompt",
+      text: "go",
+      timestamp: "2026-08-12T10:05:00.000Z",
+      turnId: "turn-2",
+    },
+  ];
+  const built = {
+    executionKey: "execution-poker",
+    signerPubkey: "a".repeat(64),
+    operatorPubkey: null,
+    priorGenerations: [],
+    activeGeneration: {
+      ...session,
+      status: "running",
+      statusAt: Date.parse("2026-08-12T10:00:00.000Z"),
+      transcript: openTurn,
+    },
+  };
+  assert.deepEqual(
+    deriveCodingSessionExecutionStatus(
+      built,
+      { known: true, reachable: false },
+      Date.parse("2026-08-12T10:04:00.000Z"),
+    ),
+    {
+      kind: "unknown",
+      label: "No provider answering",
+      attention: "unreachable",
+      lastReported: { label: "Working", ageSeconds: 240 },
+    },
+  );
+  assert.deepEqual(
+    deriveCodingSessionExecutionStatus(built, { known: false }),
+    { kind: "working", label: "Working" },
   );
 });

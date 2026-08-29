@@ -19,6 +19,7 @@ import {
 } from "./codingSessionTrustedIngress.ts";
 import {
   buildCodingSessionExecutionKey,
+  codingSessionDispositionWord,
   formatCodingSessionDispositionLine,
   groupCodingSessionCatalog,
   listCodingSessionUmbrellaDispositions,
@@ -843,4 +844,61 @@ test("disposition line: says how old the last turn is, or that there is none", (
     ),
     "Ada · Lead · live · last turn just now",
   );
+});
+
+// --- W1's fifth word (SURFACES §2a) -----------------------------------------
+
+test("the waiting word names who is waited on, and only when the viewer can steer", () => {
+  const waiting = { kind: "waiting", label: "Waiting" };
+  assert.equal(codingSessionDispositionWord(waiting, true), "waiting for you");
+  assert.equal(
+    codingSessionDispositionWord(waiting, false),
+    "waiting for an operator",
+  );
+  // The safe default: never claim a reader can answer without being told so.
+  assert.equal(
+    codingSessionDispositionWord(waiting),
+    "waiting for an operator",
+  );
+});
+
+test("the word mapper is one vocabulary — every kind has exactly one word", () => {
+  assert.equal(
+    codingSessionDispositionWord({ kind: "working", label: "Working" }),
+    "live",
+  );
+  assert.equal(
+    codingSessionDispositionWord({ kind: "idle", label: "Idle" }),
+    "idle",
+  );
+  assert.equal(
+    codingSessionDispositionWord({ kind: "ended", label: "Ended" }),
+    "released",
+  );
+  assert.equal(
+    codingSessionDispositionWord({
+      kind: "unknown",
+      label: "No provider answering",
+      attention: "unreachable",
+    }),
+    "no provider answering",
+  );
+  // The steer flag changes the waiting word and nothing else.
+  assert.equal(
+    codingSessionDispositionWord({ kind: "working", label: "Working" }, true),
+    "live",
+  );
+});
+
+test("disposition strip: a waiting seat is not folded into idle", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "lead" }),
+  ]);
+  const [entry] = listCodingSessionUmbrellaDispositions(
+    umbrella,
+    () => ({ kind: "waiting", label: "Waiting" }),
+    undefined,
+    true,
+  );
+  assert.equal(entry.disposition, "waiting for you");
 });

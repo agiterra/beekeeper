@@ -189,6 +189,9 @@ export function codingSessionWireWorkspaceStatus(
   if (status === "running" || status === "starting") {
     return { kind: "working", label: "Working" };
   }
+  if (status === "waiting_for_input") {
+    return { kind: "waiting", label: "Waiting" };
+  }
   if (status === "stopped") {
     return { kind: "ended", label: "Ended" };
   }
@@ -237,6 +240,10 @@ export type CodingSessionProviderReachability =
  * two attention states already describe the execution correctly on their own
  * and are left alone — replacing "Disconnected" with "No provider answering"
  * would lose the more specific signed fact.
+ *
+ * `waiting` is demoted exactly as `working` is: reachability outranks stage
+ * (SURFACES §2a). Telling an operator that a dead seat is waiting on them
+ * invites them to type into something nobody will read.
  */
 function demoteUnreachable(
   status: CodingSessionWorkspaceStatus,
@@ -289,6 +296,19 @@ export function codingSessionWorkspaceStatusDetail(
     : `last reported ${label} ${age} ago`;
 }
 
+/**
+ * **W1 — the one liveness word for an execution.** Every surface calls this.
+ *
+ * Its source is the provider's signed 44223 status, demoted by the ephemeral
+ * lease. The transcript is never the source: it may *narrow* a seat the wire
+ * already says is live, and it may *settle* one back to rest when the
+ * provider signed a turn terminator — but it may never raise a resting signed
+ * status to `working`. That promotion is what printed `live` over an
+ * execution whose signed status was `completed` while the rail beside it read
+ * `All idle` (SURFACES §15(b), WALK-2026-08-29 finding 2), and it is exactly
+ * the shape a killed seat leaves behind: a resting last status, no
+ * terminator, a transcript that looks open.
+ */
 export function deriveCodingSessionWorkspaceStatus(
   transcript: CodingSessionCatalogRecord["transcript"],
   lifecycleStatus?: CodingSessionCatalogRecord["status"],
@@ -300,6 +320,29 @@ export function deriveCodingSessionWorkspaceStatus(
     deriveReportedWorkspaceStatus(transcript, lifecycleStatus, statusAt),
     reachability,
     statusAt,
+    nowMs,
+  );
+}
+
+/**
+ * {@link deriveCodingSessionWorkspaceStatus} for one member execution.
+ *
+ * The rail, the disposition strip and the rail's footer tally all resolve a
+ * seat's status through this, so the three of them cannot answer W1
+ * differently for the same execution in the same window — which is what walk
+ * findings 1 and 2 both were.
+ */
+export function deriveCodingSessionExecutionStatus(
+  execution: CodingSessionExecution,
+  reachability?: CodingSessionProviderReachability,
+  nowMs: number = Date.now(),
+): CodingSessionWorkspaceStatus {
+  const record = execution.activeGeneration;
+  return deriveCodingSessionWorkspaceStatus(
+    record.transcript,
+    record.status,
+    record.statusAt,
+    reachability,
     nowMs,
   );
 }
@@ -339,41 +382,20 @@ function deriveReportedWorkspaceStatus(
   ) {
     return codingSessionWireWorkspaceStatus(lifecycleStatus);
   }
-  // Open-turn test: normal turns emit NO lifecycle "Status" items — a turn
-  // is user/assistant/tool items closed by one "Turn result". So while a
-  // turn streams, the newest LIFECYCLE item is still the previous turn's
-  // terminator and a lifecycle-only scan would report Idle forever. A newest
-  // item that is not itself a terminator and belongs to a different turn
-  // than the last terminator (or precedes any terminator at all) means a
-  // turn is in flight.
-  // Session-scoped lifecycle facts (continuity disclosures, and any other
-  // status the provider publishes with no turn) carry no `turnId`. They are
-  // not turn activity and must never be read as one: `session_fresh` is the
-  // first item a brand-new session ever has, and without this guard its
-  // presence alone — a non-terminator with no terminator before it — reads
-  // as a turn streaming forever.
-  if (
-    newest !== undefined &&
-    !isTurnTerminator(newest) &&
-    (newest.turnId ?? null) !== null
-  ) {
-    let lastTerminator:
-      | CodingSessionCatalogRecord["transcript"][number]
-      | null = null;
-    for (let index = transcript.length - 1; index >= 0; index -= 1) {
-      if (isTurnTerminator(transcript[index])) {
-        lastTerminator = transcript[index];
-        break;
-      }
-    }
-    const newestTurnId = newest.turnId ?? null;
-    if (
-      lastTerminator === null ||
-      (newestTurnId !== null &&
-        newestTurnId !== (lastTerminator.turnId ?? null))
-    ) {
-      return { kind: "working", label: "Working" };
-    }
+  const signed = codingSessionWireWorkspaceStatus(lifecycleStatus);
+  // Two different gates, because the transcript holds two different kinds of
+  // thing. A lifecycle "Status" row is something the provider *signed*, so it
+  // stands whenever the 44223 status makes no claim of its own. The open-turn
+  // test is an *inference* drawn from item ordering, so it may only narrow a
+  // seat the wire already calls live — never raise a resting one. That
+  // promotion is walk finding 2: `live` printed over a signed `completed`.
+  const wireMakesNoClaim =
+    signed.kind === "unknown" && signed.attention === undefined;
+  const mayInferWorking = signed.kind === "working";
+  const mayReadSignedWorking = mayInferWorking || wireMakesNoClaim;
+  if (turnInFlight(transcript, newest)) {
+    if (mayInferWorking) return { kind: "working", label: "Working" };
+    return signed;
   }
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const item = transcript[index];
@@ -386,7 +408,9 @@ function deriveReportedWorkspaceStatus(
 
     const normalized = item.text.trim().toLowerCase();
     if (WORKING_STATUSES.has(normalized)) {
-      return { kind: "working", label: "Working" };
+      return mayReadSignedWorking
+        ? { kind: "working", label: "Working" }
+        : signed;
     }
     if (IDLE_STATUSES.has(normalized)) {
       return { kind: "idle", label: "Idle" };
@@ -394,5 +418,51 @@ function deriveReportedWorkspaceStatus(
   }
   // The transcript said nothing decisive — fall back to the provider's
   // signed metadata status (published `idle`/`running` at create time).
-  return codingSessionWireWorkspaceStatus(lifecycleStatus);
+  return signed;
+}
+
+/**
+ * Whether the newest transcript items describe a turn still in flight.
+ *
+ * Normal turns emit NO lifecycle "Status" items — a turn is
+ * user/assistant/tool items closed by one "Turn result". So while a turn
+ * streams, the newest LIFECYCLE item is still the previous turn's terminator
+ * and a lifecycle-only scan would report Idle forever. A newest item that is
+ * not itself a terminator and belongs to a different turn than the last
+ * terminator (or precedes any terminator at all) means a turn is in flight.
+ *
+ * Session-scoped lifecycle facts (continuity disclosures, and any other
+ * status the provider publishes with no turn) carry no `turnId`. They are not
+ * turn activity and must never be read as one: `session_fresh` is the first
+ * item a brand-new session ever has, and without this guard its presence
+ * alone — a non-terminator with no terminator before it — reads as a turn
+ * streaming forever.
+ *
+ * This is an *inference*, not a signed statement, which is why its caller may
+ * only use it to narrow a status the wire already established.
+ */
+function turnInFlight(
+  transcript: CodingSessionCatalogRecord["transcript"],
+  newest: CodingSessionCatalogRecord["transcript"][number] | undefined,
+): boolean {
+  if (
+    newest === undefined ||
+    isTurnTerminator(newest) ||
+    (newest.turnId ?? null) === null
+  ) {
+    return false;
+  }
+  let lastTerminator: CodingSessionCatalogRecord["transcript"][number] | null =
+    null;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    if (isTurnTerminator(transcript[index])) {
+      lastTerminator = transcript[index];
+      break;
+    }
+  }
+  const newestTurnId = newest.turnId ?? null;
+  return (
+    lastTerminator === null ||
+    (newestTurnId !== null && newestTurnId !== (lastTerminator.turnId ?? null))
+  );
 }
