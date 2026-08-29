@@ -1482,6 +1482,171 @@ pub fn nullable(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Cap on the total serialized size of one tool item's `edit` payload.
+///
+/// 16 KiB, half the 32 KiB CST envelope cap, so an edit payload can never be
+/// the reason an item has to be elided whole: the surrounding item —
+/// `toolName`, `toolId`, `input`, the result's own `content` — still has room.
+/// The cap is documented rather than implicit because a reader who sees
+/// `truncated: true` is owed the number it was measured against.
+pub const MAX_TOOL_EDIT_PAYLOAD_BYTES: usize = 16 * 1024;
+
+/// One file change an ACP adapter reported for an `edit`-kind tool call.
+///
+/// This is ACP's own `ToolCallContent::Diff` block, not something the provider
+/// derived: `path` is the adapter's path, `old_text` and `new_text` are the
+/// adapter's texts. A missing `old_text` means the adapter reported a new file,
+/// which is different from an empty one, so it stays `None` rather than `""`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolEditChange {
+    /// The file the adapter named for this change, already redacted/relativized
+    /// by the caller.
+    pub path: Option<String>,
+    /// The text before the edit, when the adapter sent one.
+    pub old_text: Option<String>,
+    /// The text after the edit, when the adapter sent one.
+    pub new_text: Option<String>,
+}
+
+/// Build the `edit` payload published beside an `edit`-kind tool item.
+///
+/// The payload answers the one question the Observed-changes surface asks —
+/// *which files did this call touch, and what did it do to them* — from the two
+/// ACP fields that carry it: `ToolCall.locations` and the `ToolCallContent`
+/// diff blocks. Before this existed the provider published only `rawInput`,
+/// which claude-agent-acp leaves empty on an edit while the tool's arguments
+/// are still streaming, so every edit reached the wire as `"input": {}` and the
+/// consumer rendered presence as absence.
+///
+/// Shape:
+///
+/// ```json
+/// {
+///   "paths": ["desktop/src/App.tsx"],
+///   "changes": [
+///     { "path": "desktop/src/App.tsx", "oldText": "…", "newText": "…", "truncated": true }
+///   ],
+///   "truncated": true
+/// }
+/// ```
+///
+/// Every field is optional and additive; a consumer that does not know this
+/// payload ignores it. `paths` is deduplicated and order-preserving.
+///
+/// **Truncation is never silent.** The payload is bounded by
+/// [`MAX_TOOL_EDIT_PAYLOAD_BYTES`]: change texts are shortened first — each
+/// shortened change carries its own `"truncated": true` — and whole changes are
+/// dropped only after that, which sets the payload-level `"truncated": true`.
+/// `paths` is never dropped, because naming the file is the payload's point;
+/// a path list that alone exceeds the cap is itself truncated and flagged.
+///
+/// Returns `None` when the adapter reported neither a path nor any change text,
+/// so an empty object never travels claiming an observation nobody made.
+pub fn tool_edit_payload(
+    paths: &[String],
+    changes: &[ToolEditChange],
+) -> Option<serde_json::Value> {
+    /// Room for `{"paths":[],"changes":[],"truncated":true}` and its commas.
+    const WRAPPER_BYTES: usize = 64;
+    /// Shortest text worth keeping; below this a change says nothing anyway.
+    const MIN_KEPT_TEXT_BYTES: usize = 64;
+    /// Room for one change's keys, its path, and the escaping of its texts.
+    const PER_CHANGE_OVERHEAD_BYTES: usize = 512;
+
+    let mut unique_paths: Vec<String> = Vec::new();
+    let mut budget = MAX_TOOL_EDIT_PAYLOAD_BYTES.saturating_sub(WRAPPER_BYTES);
+    let mut truncated = false;
+    for path in paths {
+        let path = path.trim();
+        if path.is_empty() || unique_paths.iter().any(|kept| kept == path) {
+            continue;
+        }
+        // A path list that alone would blow the cap is truncated too — flagged,
+        // never silently short.
+        let cost = path.len() + 3;
+        if cost > budget {
+            truncated = true;
+            break;
+        }
+        budget -= cost;
+        unique_paths.push(path.to_owned());
+    }
+
+    // Every change gets an equal share of what is left, so one enormous file
+    // cannot starve the rest. Sizes are computed on the *truncated* texts, so
+    // this never serializes a multi-megabyte diff to find out it is too big.
+    let share = if changes.is_empty() {
+        0
+    } else {
+        // Two texts per change, plus room for the keys, the path and the JSON
+        // escaping of what is kept.
+        ((budget / changes.len()).saturating_sub(PER_CHANGE_OVERHEAD_BYTES) / 2)
+            .max(MIN_KEPT_TEXT_BYTES)
+    };
+    let mut encoded: Vec<serde_json::Value> = Vec::new();
+    for change in changes {
+        let mut object = serde_json::Map::new();
+        if let Some(path) = change.path.as_deref().map(str::trim) {
+            if !path.is_empty() {
+                object.insert("path".into(), serde_json::json!(path));
+            }
+        }
+        let mut cut = false;
+        for (key, text) in [("oldText", &change.old_text), ("newText", &change.new_text)] {
+            let Some(text) = text.as_deref() else {
+                continue;
+            };
+            let kept = clamp_to_char_boundary(text, share);
+            cut |= kept.len() < text.len();
+            object.insert(key.into(), serde_json::json!(kept));
+        }
+        if object.is_empty() {
+            continue;
+        }
+        if cut {
+            object.insert("truncated".into(), serde_json::json!(true));
+        }
+        let encoded_change = serde_json::Value::Object(object);
+        let cost = encoded_change.to_string().len() + 1;
+        if cost > budget {
+            // No room for this change or any after it: say so rather than
+            // letting a reader mistake a dropped change for one that never
+            // happened.
+            truncated = true;
+            break;
+        }
+        budget -= cost;
+        encoded.push(encoded_change);
+    }
+
+    let mut payload = serde_json::Map::new();
+    if !unique_paths.is_empty() {
+        payload.insert("paths".into(), serde_json::json!(unique_paths));
+    }
+    if !encoded.is_empty() {
+        payload.insert("changes".into(), serde_json::Value::Array(encoded));
+    }
+    if payload.is_empty() {
+        return None;
+    }
+    if truncated {
+        payload.insert("truncated".into(), serde_json::json!(true));
+    }
+    Some(serde_json::Value::Object(payload))
+}
+
+/// Keep at most `max_bytes` of `text`, never splitting a multibyte character.
+fn clamp_to_char_boundary(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 /// Clamp an error message to something the 16 KiB receipt cap can always hold.
 fn bounded_message(message: &str) -> String {
     const MAX_MESSAGE_BYTES: usize = 1024;
@@ -2709,5 +2874,85 @@ mod tests {
     fn context_window_usage_ignores_other_item_kinds() {
         let item = serde_json::json!({ "kind": "result", "usage": { "used": 9 } });
         assert_eq!(context_window_usage(&item), None);
+    }
+
+    fn change(path: &str, old_text: Option<&str>, new_text: Option<&str>) -> ToolEditChange {
+        ToolEditChange {
+            path: Some(path.to_owned()),
+            old_text: old_text.map(str::to_owned),
+            new_text: new_text.map(str::to_owned),
+        }
+    }
+
+    /// The payload names the files and carries the adapter's own texts.
+    #[test]
+    fn an_edit_payload_names_its_files_and_keeps_the_adapters_texts() {
+        let payload = tool_edit_payload(
+            &["a.rs".to_owned(), "a.rs".to_owned(), " b.rs ".to_owned()],
+            &[change("a.rs", Some("one"), Some("two"))],
+        )
+        .expect("payload");
+        assert_eq!(payload["paths"], serde_json::json!(["a.rs", "b.rs"]));
+        assert_eq!(payload["changes"][0]["path"], "a.rs");
+        assert_eq!(payload["changes"][0]["oldText"], "one");
+        assert_eq!(payload["changes"][0]["newText"], "two");
+        assert!(payload.get("truncated").is_none());
+    }
+
+    /// A new file has no previous text — that is different from an empty one,
+    /// so the key is absent rather than `""`.
+    #[test]
+    fn a_new_file_reports_no_old_text_rather_than_an_empty_one() {
+        let payload =
+            tool_edit_payload(&[], &[change("a.rs", None, Some("hello"))]).expect("payload");
+        assert!(payload["changes"][0].get("oldText").is_none());
+        assert_eq!(payload["changes"][0]["newText"], "hello");
+    }
+
+    /// Nothing observed publishes nothing — an empty object would claim an
+    /// observation nobody made.
+    #[test]
+    fn an_edit_payload_with_nothing_in_it_is_none() {
+        assert!(tool_edit_payload(&[], &[]).is_none());
+        assert!(tool_edit_payload(
+            &["   ".to_owned()],
+            &[ToolEditChange {
+                path: Some("  ".to_owned()),
+                old_text: None,
+                new_text: None,
+            }],
+        )
+        .is_none());
+    }
+
+    /// Over the cap, texts are shortened first and each shortened change says
+    /// so; the file names survive, because naming the file is the point.
+    #[test]
+    fn an_oversized_edit_payload_shrinks_texts_before_dropping_changes() {
+        let huge = "x".repeat(MAX_TOOL_EDIT_PAYLOAD_BYTES);
+        let payload = tool_edit_payload(
+            &["big.rs".to_owned()],
+            &[change("big.rs", Some(&huge), Some(&huge))],
+        )
+        .expect("payload");
+        assert!(payload.to_string().len() <= MAX_TOOL_EDIT_PAYLOAD_BYTES);
+        assert_eq!(payload["paths"], serde_json::json!(["big.rs"]));
+        assert_eq!(payload["changes"][0]["truncated"], true);
+    }
+
+    /// When shortening is not enough, whole changes are dropped — and the
+    /// payload itself is flagged, so a reader never mistakes a dropped change
+    /// for a change that never happened.
+    #[test]
+    fn dropping_a_whole_change_is_flagged_on_the_payload() {
+        let huge = "x".repeat(MAX_TOOL_EDIT_PAYLOAD_BYTES);
+        let changes: Vec<ToolEditChange> = (0..512)
+            .map(|index| change(&format!("f{index}.rs"), Some(&huge), Some(&huge)))
+            .collect();
+        let payload = tool_edit_payload(&[], &changes).expect("payload");
+        assert!(payload.to_string().len() <= MAX_TOOL_EDIT_PAYLOAD_BYTES);
+        assert_eq!(payload["truncated"], true);
+        let kept = payload["changes"].as_array().expect("changes").len();
+        assert!(kept < changes.len(), "kept {kept} of {}", changes.len());
     }
 }

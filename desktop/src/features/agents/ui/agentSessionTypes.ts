@@ -193,6 +193,23 @@ export type TranscriptItem =
       args: Record<string, unknown>;
       result: string;
       isError: boolean;
+      /**
+       * ACP's own tool *discriminant* (`"edit"`, `"read"`, `"execute"`, …) as
+       * the producer published it, kept distinct from the display `toolName`.
+       *
+       * Authoritative where the name is not: claude-agent-acp calls its editor
+       * `Edit` and, while the arguments are still streaming, `Preparing file…`
+       * — neither of which any name rule in the classifier matches. Absent when
+       * the adapter sent no discriminant; never guessed.
+       */
+      toolKind?: string | null;
+      /**
+       * Files the producer said this call touched, from ACP's `locations` and
+       * diff blocks. Empty when the producer reported none — which is not the
+       * same as the call touching none, and the Observed-changes surface says
+       * so rather than reporting zero changes.
+       */
+      editPaths?: string[];
       timestamp: string;
       startedAt: string;
       completedAt: string | null;

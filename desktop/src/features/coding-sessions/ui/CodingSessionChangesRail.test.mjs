@@ -73,3 +73,41 @@ test("renders an honest empty state", () => {
   assert.match(markup, /No observed changes yet/);
   assert.match(markup, /File edits observed in this session/);
 });
+
+test("says how many edits were observed when none named a file", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionChangesRail, {
+      files: [],
+      unreportedEditCount: 16,
+    }),
+  );
+
+  assert.match(markup, /16 edits observed · files not reported/);
+  assert.match(
+    markup,
+    /This session&#x27;s provider published the edits without their file paths, so they cannot be listed here\./,
+  );
+  assert.doesNotMatch(markup, /No observed changes yet/);
+});
+
+test("uses the singular for one unnamed edit", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionChangesRail, {
+      files: [],
+      unreportedEditCount: 1,
+    }),
+  );
+
+  assert.match(markup, /1 edit observed · files not reported/);
+});
+
+test("keeps the empty state when nothing was observed at all", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionChangesRail, {
+      files: [],
+      unreportedEditCount: 0,
+    }),
+  );
+
+  assert.match(markup, /No observed changes yet/);
+});

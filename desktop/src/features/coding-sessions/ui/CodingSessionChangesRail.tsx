@@ -14,14 +14,23 @@ import {
  * The copy is deliberately epistemically honest: this is not necessarily a
  * complete workspace diff. A shell command or external process can change
  * files without surfacing here.
+ *
+ * Three states, not two. `unreportedEditCount` is the count of edits the
+ * transcript records for which no producer published a path; with no files to
+ * list, saying "no observed changes" over them would render presence as
+ * absence. Defaults to `0`, so a caller that cannot count them still gets the
+ * old two states rather than a wrong claim.
  */
 export function CodingSessionChangesRail({
   files,
+  unreportedEditCount = 0,
 }: {
   files: CodingSessionChangedFile[];
+  unreportedEditCount?: number;
 }) {
   const additions = sumKnown(files, "additions");
   const deletions = sumKnown(files, "deletions");
+  const unreported = Math.max(0, Math.trunc(unreportedEditCount));
 
   return (
     <div
@@ -32,11 +41,28 @@ export function CodingSessionChangesRail({
         {files.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
             <FileDiff className="size-5 text-muted-foreground/60" />
-            <p className="mt-3 text-sm font-medium">No observed changes yet</p>
-            <p className="mt-1 max-w-56 text-xs leading-5 text-muted-foreground">
-              File edits observed in this session&apos;s transcript will collect
-              here.
-            </p>
+            {unreported > 0 ? (
+              <>
+                <p className="mt-3 text-sm font-medium">
+                  {unreported} {unreported === 1 ? "edit" : "edits"} observed
+                  &middot; files not reported
+                </p>
+                <p className="mt-1 max-w-64 text-xs leading-5 text-muted-foreground">
+                  This session&apos;s provider published the edits without their
+                  file paths, so they cannot be listed here.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm font-medium">
+                  No observed changes yet
+                </p>
+                <p className="mt-1 max-w-56 text-xs leading-5 text-muted-foreground">
+                  File edits observed in this session&apos;s transcript will
+                  collect here.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-2 p-3">
@@ -49,7 +75,12 @@ export function CodingSessionChangesRail({
 
       {files.length > 0 ? (
         <div className="flex shrink-0 items-center justify-between border-t border-border/60 px-4 py-3 text-2xs text-muted-foreground">
-          <span>Observed in transcript activity</span>
+          <span>
+            Observed in transcript activity
+            {unreported > 0
+              ? ` · ${unreported} more ${unreported === 1 ? "edit" : "edits"} named no file`
+              : ""}
+          </span>
           {additions !== null && deletions !== null ? (
             <DiffStats additions={additions} deletions={deletions} />
           ) : null}

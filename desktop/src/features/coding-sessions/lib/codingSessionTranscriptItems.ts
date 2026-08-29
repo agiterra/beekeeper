@@ -242,6 +242,36 @@ function buildAssistantTextMessage(
   };
 }
 
+/**
+ * ACP's tool discriminant as published, or `null` when none was sent.
+ *
+ * Never invented: the producer omits it when the adapter sent none, and a
+ * guessed discriminant is worse than an absent one.
+ */
+function readToolKind(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? safeString(value, MAX_METADATA_FIELD_LENGTH)
+    : null;
+}
+
+/**
+ * The file paths the producer published for an edit-kind call, from the `edit`
+ * payload's `paths` (ACP `locations` plus its diff blocks).
+ *
+ * Defensive by contract: the union is permissive, so a malformed payload
+ * degrades to no paths rather than throwing.
+ */
+function readEditPaths(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.paths)) return [];
+  const paths: string[] = [];
+  for (const entry of value.paths) {
+    if (typeof entry !== "string") continue;
+    const path = safeString(entry, MAX_METADATA_FIELD_LENGTH).trim();
+    if (path.length > 0 && !paths.includes(path)) paths.push(path);
+  }
+  return paths;
+}
+
 export function buildToolCallItem(
   item: Record<string, unknown>,
   ctx: Identity,
@@ -252,6 +282,8 @@ export function buildToolCallItem(
       ? safeString(tool.toolName, MAX_METADATA_FIELD_LENGTH)
       : "unknown_tool";
   const args = isRecord(tool.input) ? tool.input : {};
+  const toolKind = readToolKind(tool.toolKind);
+  const editPaths = readEditPaths(tool.edit);
   const descriptor = classifyTool({
     title: toolName,
     toolName,
@@ -273,6 +305,8 @@ export function buildToolCallItem(
     args,
     result: "",
     isError: false,
+    toolKind,
+    editPaths,
     timestamp: ctx.timestamp,
     startedAt: ctx.timestamp,
     completedAt: null,
@@ -295,6 +329,8 @@ export function buildToolResultItem(
       ? safeString(item.toolName, MAX_METADATA_FIELD_LENGTH)
       : toolId;
   const args = isRecord(item.input) ? item.input : {};
+  const toolKind = readToolKind(item.toolKind);
+  const editPaths = readEditPaths(item.edit);
   const isError = item.isError === true;
   const result = stringifyToolResultContent(
     normalizeToolResultContent(item.content, args),
@@ -320,6 +356,8 @@ export function buildToolResultItem(
     args,
     result,
     isError,
+    toolKind,
+    editPaths,
     timestamp: ctx.timestamp,
     startedAt: ctx.timestamp,
     completedAt: ctx.timestamp,

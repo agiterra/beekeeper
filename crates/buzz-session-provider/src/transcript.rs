@@ -30,9 +30,10 @@
 //!
 //! # Truncation
 //!
-//! Two independent caps. Tool inputs and outputs are bounded on the way in
-//! ([`MAX_TOOL_INPUT_BYTES`] / [`MAX_TOOL_CONTENT_BYTES`]) so one enormous file
-//! read cannot dominate an item. The envelope is then bounded on the way out by
+//! Two independent caps. Tool inputs, outputs and edit payloads are bounded on
+//! the way in ([`MAX_TOOL_INPUT_BYTES`] / [`MAX_TOOL_CONTENT_BYTES`] /
+//! [`buzz_core::coding_session_payload::MAX_TOOL_EDIT_PAYLOAD_BYTES`]) so one
+//! enormous file read cannot dominate an item. The envelope is then bounded on the way out by
 //! [`fit_item`], which shrinks the largest string it can find and, if even that
 //! is not enough, replaces the item with an `elided` marker. Every elision
 //! carries a byte count and a SHA-256 of what was dropped, so a reader can tell
@@ -47,6 +48,7 @@ use buzz_core::coding_session_context::{
     sanitize_coding_session_context_content_recording,
     sanitize_coding_session_context_content_recording_for_workspace, Redaction,
 };
+use buzz_core::coding_session_payload::{tool_edit_payload, ToolEditChange};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -79,8 +81,97 @@ pub struct TranscriptTranslator {
     thoughts: String,
     usage: Option<Value>,
     tool_calls: u64,
-    tool_names: HashMap<String, String>,
-    tool_kinds: HashMap<String, String>,
+    tools: HashMap<String, ToolMemo>,
+    /// Memo for a frame that carried no `toolCallId`, rebuilt per frame.
+    anonymous: ToolMemo,
+}
+
+/// What the adapter has told us about one open tool call so far.
+///
+/// ACP delivers a tool call in pieces: the opening `tool_call` frame often
+/// carries only a placeholder title and an empty `rawInput`, and the arguments,
+/// the `locations` and the diff blocks arrive on later `tool_call_update`s —
+/// including non-terminal ones, which publish nothing of their own. Without a
+/// memo those frames were simply discarded, which is how every edit in the
+/// 2026-08-29 walk reached the wire as `"input": {}`.
+#[derive(Debug, Default)]
+struct ToolMemo {
+    name: Option<String>,
+    kind: Option<String>,
+    input: Option<Value>,
+    paths: Vec<String>,
+    changes: Vec<ToolEditChange>,
+}
+
+impl ToolMemo {
+    /// Fold one frame's tool fields in. Later frames win on the scalar fields
+    /// — the adapter is correcting itself — while paths and changes accumulate,
+    /// because a call can touch more than one file.
+    fn absorb(&mut self, update: &Value) {
+        if let Some(name) =
+            string_field(update, "toolName").or_else(|| string_field(update, "title"))
+        {
+            self.name = Some(name);
+        }
+        if let Some(kind) = string_field(update, "kind") {
+            self.kind = Some(kind);
+        }
+        let input = tool_input(update);
+        if input.as_object().is_some_and(|object| !object.is_empty()) {
+            self.input = Some(input);
+        }
+        for path in update
+            .get("locations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|location| string_field(location, "path"))
+        {
+            self.paths.push(path);
+        }
+        for block in update
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if block.get("type").and_then(Value::as_str) != Some("diff") {
+                continue;
+            }
+            let path = string_field(block, "path");
+            if let Some(path) = path.clone() {
+                self.paths.push(path);
+            }
+            self.changes.push(ToolEditChange {
+                path,
+                old_text: block
+                    .get("oldText")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                new_text: block
+                    .get("newText")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            });
+        }
+    }
+
+    /// The display name, falling back to whatever the frame in hand offers.
+    fn display_name(&self, update: &Value) -> String {
+        self.name.clone().unwrap_or_else(|| tool_name(update))
+    }
+
+    /// Forget the bulky half once the call is closed.
+    ///
+    /// The name and the discriminant stay for the rest of the turn, so a second
+    /// terminal frame for the same call cannot publish an unlabelled result;
+    /// the input and the diff texts go, so a long turn's memo cannot grow with
+    /// every file the agent touched.
+    fn shed_payload(&mut self) {
+        self.input = None;
+        self.paths = Vec::new();
+        self.changes = Vec::new();
+    }
 }
 
 impl TranscriptTranslator {
@@ -92,8 +183,8 @@ impl TranscriptTranslator {
             thoughts: String::new(),
             usage: None,
             tool_calls: 0,
-            tool_names: HashMap::new(),
-            tool_kinds: HashMap::new(),
+            tools: HashMap::new(),
+            anonymous: ToolMemo::default(),
         }
     }
 
@@ -191,7 +282,14 @@ impl TranscriptTranslator {
                 items
             }
             "tool_call_update" => match terminal_status(update) {
-                None => Vec::new(),
+                None => {
+                    // Publishes nothing, but is where claude-agent-acp fills in
+                    // the arguments, the `locations` and the diff blocks it had
+                    // not finished streaming when the call opened. Dropping the
+                    // frame whole is what stripped every edit payload.
+                    self.absorb(update);
+                    Vec::new()
+                }
                 Some(status) => {
                     let mut items = self.flush_all();
                     items.push(self.tool_result_item(update, status));
@@ -224,8 +322,8 @@ impl TranscriptTranslator {
         if let Some(usage) = self.usage.take() {
             items.push(json!({ "kind": "context_window_updated", "usage": usage }));
         }
-        self.tool_names.clear();
-        self.tool_kinds.clear();
+        self.tools.clear();
+        self.anonymous = ToolMemo::default();
         items
     }
 
@@ -261,20 +359,36 @@ impl TranscriptTranslator {
         vec![json!({ "kind": "reasoning", "text": text })]
     }
 
+    /// Fold one frame into the memo for the call it names, and return it.
+    ///
+    /// A frame with no `toolCallId` — which ACP does not allow, but a sloppy
+    /// adapter can still send — has nothing to pair across frames, so it gets a
+    /// memo rebuilt from that frame alone. Sharing one bucket between every
+    /// anonymous call would let one call's path be published on another's.
+    fn absorb(&mut self, update: &Value) -> &mut ToolMemo {
+        let tool_id = string_field(update, "toolCallId").unwrap_or_default();
+        if tool_id.is_empty() {
+            self.anonymous = ToolMemo::default();
+            self.anonymous.absorb(update);
+            return &mut self.anonymous;
+        }
+        let memo = self.tools.entry(tool_id).or_default();
+        memo.absorb(update);
+        memo
+    }
+
     fn tool_call_item(&mut self, update: &Value) -> Value {
         let tool_id = string_field(update, "toolCallId").unwrap_or_default();
-        let tool_name = tool_name(update);
-        let tool_kind = string_field(update, "kind");
-        if !tool_id.is_empty() {
-            self.tool_names.insert(tool_id.clone(), tool_name.clone());
-            if let Some(kind) = tool_kind.clone() {
-                self.tool_kinds.insert(tool_id.clone(), kind);
-            }
-        }
+        let memo = self.absorb(update);
+        let tool_name = memo.display_name(update);
+        let tool_kind = memo.kind.clone();
+        let input = memo.input.clone().unwrap_or_else(|| json!({}));
+        let edit = tool_edit_payload(&memo.paths, &memo.changes);
+
         let mut tool = Map::new();
         tool.insert("toolName".into(), json!(tool_name));
         tool.insert("toolId".into(), json!(tool_id));
-        tool.insert("input".into(), bounded_input(tool_input(update)));
+        tool.insert("input".into(), bounded_input(input));
         // ACP's `kind` is a *discriminant* ("read", "execute", "think"), not a
         // name, and it is optional in the spec. It gets its own key so a tool
         // that also sent a `title` cannot suppress it — and it is written only
@@ -283,22 +397,24 @@ impl TranscriptTranslator {
         if let Some(kind) = tool_kind {
             tool.insert("toolKind".into(), Value::String(kind));
         }
+        if let Some(edit) = edit {
+            tool.insert("edit".into(), edit);
+        }
         json!({ "kind": "tool_call", "tool": Value::Object(tool) })
     }
 
     fn tool_result_item(&mut self, update: &Value, status: &str) -> Value {
         let tool_id = string_field(update, "toolCallId").unwrap_or_default();
-        let tool_name = self
-            .tool_names
-            .remove(&tool_id)
-            .unwrap_or_else(|| tool_name(update));
+        let memo = self.absorb(update);
+        let tool_name = memo.display_name(update);
         // The pairing is what carries the discriminant onto the result: a
         // `tool_call_update` rarely repeats `kind`, so it is recalled from the
         // opening call and only read off the update as a fallback.
-        let tool_kind = self
-            .tool_kinds
-            .remove(&tool_id)
-            .or_else(|| string_field(update, "kind"));
+        let tool_kind = memo.kind.clone();
+        let input = memo.input.clone();
+        let edit = tool_edit_payload(&memo.paths, &memo.changes);
+        memo.shed_payload();
+
         let content = content_text(update.get("content"));
         let content = if content.is_empty() {
             raw_output_text(update)
@@ -311,6 +427,15 @@ impl TranscriptTranslator {
         item.insert("toolName".into(), json!(tool_name));
         if let Some(kind) = tool_kind {
             item.insert("toolKind".into(), Value::String(kind));
+        }
+        // The arguments the adapter finished streaming after the opening frame.
+        // The consumer already reads `input` off a result; the provider simply
+        // never sent one, so an edit arrived with nothing to name its file.
+        if let Some(input) = input {
+            item.insert("input".into(), bounded_input(input));
+        }
+        if let Some(edit) = edit {
+            item.insert("edit".into(), edit);
         }
         item.insert(
             "content".into(),
@@ -1260,6 +1385,162 @@ mod tests {
         let done = translator.on_update(&tool_done("t1", "completed", "ok"));
         assert_eq!(done[0]["toolName"], "Run the test suite");
         assert_eq!(done[0]["toolKind"], "execute");
+    }
+
+    /// claude-agent-acp opens an edit with an empty `rawInput` and a
+    /// placeholder title, then fills both in on later `tool_call_update`s. The
+    /// provider used to read only the opening frame, so 19 of 19 edits in the
+    /// 2026-08-29 walk reached the wire as `"input": {}` with no path and no
+    /// diff — presence published as absence.
+    #[test]
+    fn an_edits_path_and_diff_reach_the_wire_not_an_empty_input() {
+        let mut translator = TranscriptTranslator::new(true);
+        let call = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Preparing file…",
+            "kind": "edit",
+            "status": "pending",
+            "rawInput": {},
+        })));
+        assert_eq!(call[0]["tool"]["toolKind"], "edit");
+
+        // The arguments, the locations and the diff all arrive later, on a
+        // non-terminal update. That frame still publishes nothing of its own.
+        let quiet = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "title": "Edit",
+            "status": "in_progress",
+            "rawInput": { "file_path": "desktop/src/App.tsx" },
+            "locations": [{ "path": "desktop/src/App.tsx", "line": 42 }],
+            "content": [{
+                "type": "diff",
+                "path": "desktop/src/App.tsx",
+                "oldText": "const a = 1;",
+                "newText": "const a = 2;",
+            }],
+        })));
+        assert!(quiet.is_empty(), "{quiet:?}");
+
+        let done = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "status": "completed",
+        })));
+        assert_eq!(done[0]["toolKind"], "edit");
+        assert_eq!(done[0]["toolName"], "Edit");
+        assert_eq!(done[0]["input"]["file_path"], "desktop/src/App.tsx");
+        assert_eq!(done[0]["edit"]["paths"][0], "desktop/src/App.tsx");
+        assert_eq!(done[0]["edit"]["changes"][0]["path"], "desktop/src/App.tsx");
+        assert_eq!(done[0]["edit"]["changes"][0]["oldText"], "const a = 1;");
+        assert_eq!(done[0]["edit"]["changes"][0]["newText"], "const a = 2;");
+        assert!(done[0]["edit"].get("truncated").is_none());
+    }
+
+    /// The opening frame publishes whatever the adapter already had, so an
+    /// adapter that sends the edit up front is not made to wait for the result.
+    #[test]
+    fn an_edit_that_arrives_complete_is_published_on_the_call_itself() {
+        let mut translator = TranscriptTranslator::new(true);
+        let call = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Write",
+            "kind": "edit",
+            "status": "pending",
+            "locations": [{ "path": "docs/NOTES.md" }],
+            "content": [{ "type": "diff", "path": "docs/NOTES.md", "newText": "hello" }],
+        })));
+        assert_eq!(call[0]["tool"]["edit"]["paths"][0], "docs/NOTES.md");
+        assert_eq!(call[0]["tool"]["edit"]["changes"][0]["newText"], "hello");
+        assert!(call[0]["tool"]["edit"]["changes"][0]
+            .get("oldText")
+            .is_none());
+    }
+
+    /// A tool with no locations and no diff blocks publishes no `edit` key at
+    /// all — an empty object would claim an observation nobody made.
+    #[test]
+    fn a_tool_with_nothing_to_report_publishes_no_edit_payload() {
+        let mut translator = TranscriptTranslator::new(true);
+        let call = translator.on_update(&tool_call("t1", "read_file", json!({ "path": "a.rs" })));
+        assert!(call[0]["tool"].get("edit").is_none());
+        let done = translator.on_update(&tool_done("t1", "completed", "ok"));
+        assert!(done[0].get("edit").is_none());
+    }
+
+    /// An enormous edit is bounded, and the reader is told it was bounded.
+    #[test]
+    fn an_oversized_edit_payload_is_truncated_out_loud() {
+        let mut translator = TranscriptTranslator::new(true);
+        let huge = "x".repeat(64 * 1024);
+        translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Edit",
+            "kind": "edit",
+            "status": "pending",
+        })));
+        let done = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "status": "completed",
+            "locations": [{ "path": "big.txt" }],
+            "content": [{ "type": "diff", "path": "big.txt", "oldText": huge, "newText": huge }],
+        })));
+        let payload = &done[0]["edit"];
+        assert_eq!(payload["paths"][0], "big.txt");
+        let serialized = payload.to_string();
+        assert!(
+            serialized.len() <= buzz_core::coding_session_payload::MAX_TOOL_EDIT_PAYLOAD_BYTES,
+            "{} bytes",
+            serialized.len()
+        );
+        assert_eq!(payload["changes"][0]["truncated"], true);
+    }
+
+    /// A second terminal update for the same call still names the kind: the
+    /// memo is kept for the whole turn rather than consumed by the first
+    /// result, so a repeated `completed` frame cannot publish an unlabelled
+    /// result.
+    #[test]
+    fn a_repeated_terminal_update_still_carries_the_discriminant() {
+        let mut translator = TranscriptTranslator::new(true);
+        translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Edit",
+            "kind": "edit",
+            "status": "pending",
+        })));
+        let first = translator.on_update(&tool_done("t1", "completed", "ok"));
+        assert_eq!(first[0]["toolKind"], "edit");
+        let second = translator.on_update(&tool_done("t1", "completed", "ok"));
+        assert_eq!(second[0]["toolKind"], "edit");
+        assert_eq!(second[0]["toolName"], "Edit");
+    }
+
+    /// Two calls that both arrived without a `toolCallId` cannot be paired, so
+    /// neither may borrow the other's file.
+    #[test]
+    fn an_anonymous_call_never_borrows_another_anonymous_calls_path() {
+        let mut translator = TranscriptTranslator::new(true);
+        let first = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "title": "Edit",
+            "kind": "edit",
+            "status": "pending",
+            "locations": [{ "path": "first.rs" }],
+        })));
+        assert_eq!(first[0]["tool"]["edit"]["paths"][0], "first.rs");
+        let second = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "title": "Bash",
+            "status": "pending",
+        })));
+        assert!(second[0]["tool"].get("edit").is_none());
+        assert_eq!(second[0]["tool"]["toolName"], "Bash");
     }
 
     /// ACP marks `kind` optional, so an absent one stays absent — the provider

@@ -318,9 +318,50 @@ function deriveTurn(
   };
 }
 
+/**
+ * What the Observed-changes surface learned from a transcript.
+ *
+ * `files` is what can be named. `unreportedEditCount` is the honest remainder:
+ * edits the transcript *does* record, for which no producer published a path.
+ * The two are kept apart deliberately — folding the remainder into `files`
+ * would invent a filename, and dropping it renders presence as absence, which
+ * is what the 2026-08-29 walk found the surface doing over sixteen real edits.
+ */
+export type CodingSessionObservedChanges = {
+  files: CodingSessionChangedFile[];
+  unreportedEditCount: number;
+};
+
+/**
+ * Fold a transcript's completed edits into per-file changes.
+ *
+ * The files half of {@link deriveCodingSessionObservedChanges}; kept as its own
+ * export because the per-turn model only ever renders named files.
+ */
 export function deriveCodingSessionChangedFiles(
   items: TranscriptItem[],
 ): CodingSessionChangedFile[] {
+  return deriveCodingSessionObservedChanges(items).files;
+}
+
+/**
+ * Fold a transcript's completed edits into per-file changes *and* a count of
+ * the edits that named no file.
+ *
+ * An item counts as an edit when the classifier recognized it as a file edit
+ * **or** when the producer published ACP's own `edit` discriminant. The second
+ * test is what makes real sessions work: claude-agent-acp names its editor
+ * `Edit` — and, while the tool's arguments are still streaming, `Preparing
+ * file…` — and no name rule in the classifier matches either, so a session's
+ * every edit classified as "generic" and the fold never saw it.
+ *
+ * A path is taken from the diff, then the tool's arguments, then the
+ * producer's published `edit.paths`, then the descriptor's object. An edit that
+ * yields none is counted in `unreportedEditCount` rather than dropped.
+ */
+export function deriveCodingSessionObservedChanges(
+  items: TranscriptItem[],
+): CodingSessionObservedChanges {
   type MutableChangedFile = {
     path: string;
     filename: string;
@@ -329,13 +370,14 @@ export function deriveCodingSessionChangedFiles(
     countedEditCount: number;
   };
   const files = new Map<string, MutableChangedFile>();
+  let unreportedEditCount = 0;
 
   for (const item of items) {
     if (
       item.type !== "tool" ||
       item.isError ||
       item.status !== "completed" ||
-      item.descriptor.renderClass !== "file-edit"
+      !isObservedFileEdit(item)
     ) {
       continue;
     }
@@ -350,12 +392,14 @@ export function deriveCodingSessionChangedFiles(
         "filePath",
         "target_file",
       ]) ??
+      item.editPaths?.[0] ??
       item.descriptor.object ??
       null;
-    if (!path) continue;
-
-    const normalizedPath = normalizeChangedFilePath(path);
-    if (!normalizedPath) continue;
+    const normalizedPath = path ? normalizeChangedFilePath(path) : "";
+    if (!normalizedPath) {
+      unreportedEditCount += 1;
+      continue;
+    }
     const key = normalizedPath;
     const existing = files.get(key) ?? {
       path: normalizedPath,
@@ -372,22 +416,37 @@ export function deriveCodingSessionChangedFiles(
     files.set(key, existing);
   }
 
-  return [...files.values()].map((file) => {
-    const allEditsCounted =
-      file.editCount > 0 && file.countedEditCount === file.editCount;
-    return {
-      path: file.path,
-      filename: file.filename,
-      additions: allEditsCounted
-        ? file.diffs.reduce((total, diff) => total + diff.additions, 0)
-        : null,
-      deletions: allEditsCounted
-        ? file.diffs.reduce((total, diff) => total + diff.deletions, 0)
-        : null,
-      diffs: file.diffs,
-      editCount: file.editCount,
-    };
-  });
+  return {
+    files: [...files.values()].map((file) => {
+      const allEditsCounted =
+        file.editCount > 0 && file.countedEditCount === file.editCount;
+      return {
+        path: file.path,
+        filename: file.filename,
+        additions: allEditsCounted
+          ? file.diffs.reduce((total, diff) => total + diff.additions, 0)
+          : null,
+        deletions: allEditsCounted
+          ? file.diffs.reduce((total, diff) => total + diff.deletions, 0)
+          : null,
+        diffs: file.diffs,
+        editCount: file.editCount,
+      };
+    }),
+    unreportedEditCount,
+  };
+}
+
+/**
+ * Whether a completed tool item is a file edit — by classification, or by the
+ * producer's published ACP discriminant.
+ */
+function isObservedFileEdit(
+  item: Extract<TranscriptItem, { type: "tool" }>,
+): boolean {
+  return (
+    item.descriptor.renderClass === "file-edit" || item.toolKind === "edit"
+  );
 }
 
 function normalizeChangedFilePath(path: string): string {
