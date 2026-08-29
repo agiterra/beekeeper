@@ -6,11 +6,12 @@
 //!   Authorization: Nostr <credential>
 
 use std::io::{self, BufRead, Read, Write};
+use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use nostr::nips::nip98::{HttpData, HttpMethod};
 use nostr::types::Url;
-use nostr::{EventBuilder, Keys, Tag};
+use nostr::{EventBuilder, Keys, PublicKey, Tag};
 use zeroize::Zeroize;
 
 fn git_config(key: &str) -> Option<String> {
@@ -26,56 +27,273 @@ fn git_config(key: &str) -> Option<String> {
 }
 
 #[cfg(unix)]
-fn check_keyfile_permissions(path: &str) -> Result<(), String> {
+fn check_keyfile_permissions(path: &Path) -> Result<(), KeyError> {
     use std::os::unix::fs::PermissionsExt;
-    let meta = std::fs::metadata(path).map_err(|e| format!("cannot stat keyfile {path}: {e}"))?;
+    let meta = std::fs::metadata(path)
+        .map_err(|e| KeyError::Access(format!("cannot stat keyfile {}: {e}", path.display())))?;
     let mode = meta.permissions().mode() & 0o777;
     if mode & 0o177 != 0 {
-        return Err(format!(
-            "keyfile {path} has insecure permissions (expected 0600)"
-        ));
+        return Err(KeyError::Access(format!(
+            "keyfile {} has insecure permissions (mode {:o}); git-credential-nostr requires 0600. \
+             Run: chmod 600 {}",
+            path.display(),
+            mode,
+            path.display()
+        )));
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn check_keyfile_permissions(path: &str) -> Result<(), String> {
-    eprintln!("warning: cannot check keyfile permissions on this platform ({path})");
+fn check_keyfile_permissions(path: &Path) -> Result<(), KeyError> {
+    eprintln!(
+        "warning: cannot check keyfile permissions on this platform ({})",
+        path.display()
+    );
     Ok(())
 }
 
 /// Max keyfile size — nsec1 is 63 bytes; hex keys are 64 bytes. 256 is generous.
 const MAX_KEYFILE_BYTES: u64 = 256;
 
-fn load_key() -> Result<String, String> {
-    if let Ok(val) = std::env::var("NOSTR_PRIVATE_KEY") {
-        if !val.is_empty() {
-            return Ok(val);
+/// Why the key git would present could not be resolved.
+///
+/// Two variants, not one string, because callers keep different policies for
+/// them: a key file with the wrong mode is an environment problem the user can
+/// fix in place, while material that is not a secret key is a key problem. `bee`
+/// maps the two onto different exit codes.
+#[derive(Debug)]
+pub enum KeyError {
+    /// The key file exists but cannot be read as it stands — permissions, file
+    /// type, or size.
+    Access(String),
+    /// What was found is not a usable Nostr secret key.
+    Material(String),
+}
+
+impl std::fmt::Display for KeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Access(message) | Self::Material(message) => f.write_str(message),
         }
     }
-    let path = git_config("nostr.keyfile").ok_or_else(|| {
-        "no nostr key configured. Set $NOSTR_PRIVATE_KEY or git config nostr.keyfile".to_string()
-    })?;
-    check_keyfile_permissions(&path)?;
-    let meta = std::fs::metadata(&path).map_err(|e| format!("cannot stat keyfile {path}: {e}"))?;
+}
+
+impl std::error::Error for KeyError {}
+
+/// Where the key git will present came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeySource {
+    /// `$NOSTR_PRIVATE_KEY` — what the ACP harness injects into a managed seat,
+    /// and what therefore wins over anything on disk.
+    Env,
+    /// The key file, named by `git config nostr.keyfile` or by the caller.
+    Keyfile(PathBuf),
+}
+
+/// The identity git will actually present, and the one it will not.
+#[derive(Debug, Clone)]
+pub struct ResolvedKey {
+    /// The key the helper signs with.
+    pub keys: Keys,
+    /// Which of the two sources it came from.
+    pub source: KeySource,
+    /// A *different* identity sitting in the key file that git will not use.
+    ///
+    /// A seat runs with `NOSTR_PRIVATE_KEY` set to its own key while the
+    /// operator's key file sits in the same shell. Both are real; only one is
+    /// used, and any report that names the unused one is naming the wrong
+    /// identity.
+    pub shadowed: Option<(PathBuf, PublicKey)>,
+}
+
+/// `$NOSTR_PRIVATE_KEY`, or `None` when it is unset or empty.
+pub fn env_key() -> Result<Option<Keys>, KeyError> {
+    let Ok(mut raw) = std::env::var("NOSTR_PRIVATE_KEY") else {
+        return Ok(None);
+    };
+    if raw.trim().is_empty() {
+        raw.zeroize();
+        return Ok(None);
+    }
+    let parsed = Keys::parse(raw.trim())
+        .map_err(|e| KeyError::Material(format!("NOSTR_PRIVATE_KEY is not a key: {e}")));
+    raw.zeroize();
+    parsed.map(Some)
+}
+
+/// The key file `git config nostr.keyfile` names, if any.
+pub fn configured_keyfile() -> Option<PathBuf> {
+    git_config("nostr.keyfile")
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// Read a key file the way the helper reads it: 0600, a regular file, at most
+/// [`MAX_KEYFILE_BYTES`], and an `npub1…` rejected by name.
+///
+/// `Ok(None)` means the file is not there — which is a state, not a failure:
+/// `$NOSTR_PRIVATE_KEY` may still supply the key.
+pub fn read_keyfile(path: &Path) -> Result<Option<Keys>, KeyError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    check_keyfile_permissions(path)?;
+    let meta = std::fs::metadata(path)
+        .map_err(|e| KeyError::Access(format!("cannot stat keyfile {}: {e}", path.display())))?;
     if !meta.is_file() {
-        return Err(format!("keyfile {path} is not a regular file"));
+        return Err(KeyError::Access(format!(
+            "keyfile {} is not a regular file",
+            path.display()
+        )));
     }
     if meta.len() > MAX_KEYFILE_BYTES {
-        return Err(format!(
-            "keyfile {path} exceeds {MAX_KEYFILE_BYTES}-byte size limit"
-        ));
+        return Err(KeyError::Access(format!(
+            "keyfile {} exceeds {MAX_KEYFILE_BYTES}-byte size limit",
+            path.display()
+        )));
     }
-    let raw =
-        std::fs::read_to_string(&path).map_err(|e| format!("cannot read keyfile {path}: {e}"))?;
-    Ok(raw.trim().to_string())
+    let mut raw = std::fs::read_to_string(path)
+        .map_err(|e| KeyError::Access(format!("cannot read keyfile {}: {e}", path.display())))?;
+    let trimmed = raw.trim().to_string();
+    raw.zeroize();
+    // A pasted `npub1…` is a public key where a secret was wanted. It is the one
+    // shape of that mistake which is decidable locally, so it gets a real
+    // message instead of a parse error further down.
+    if trimmed.starts_with("npub1") {
+        return Err(KeyError::Material(format!(
+            "{} holds an npub, which is a *public* key. The key file needs the matching nsec.",
+            path.display()
+        )));
+    }
+    let parsed = Keys::parse(&trimmed).map_err(|e| {
+        KeyError::Material(format!(
+            "{} does not hold a usable key: {e}",
+            path.display()
+        ))
+    });
+    let mut trimmed = trimmed;
+    trimmed.zeroize();
+    parsed.map(Some)
+}
+
+/// Decide, from what each source holds, which key git will present.
+///
+/// Split from the IO so the precedence itself is testable without touching
+/// process environment or the filesystem — the precedence is the part that has
+/// been wrong.
+pub fn choose_key(
+    env: Option<Keys>,
+    keyfile_path: &Path,
+    keyfile_key: Option<Keys>,
+) -> Option<ResolvedKey> {
+    match (env, keyfile_key) {
+        (Some(env), file) => {
+            let shadowed = file
+                .filter(|file| file.public_key() != env.public_key())
+                .map(|file| (keyfile_path.to_path_buf(), file.public_key()));
+            Some(ResolvedKey {
+                keys: env,
+                source: KeySource::Env,
+                shadowed,
+            })
+        }
+        (None, Some(file)) => Some(ResolvedKey {
+            keys: file,
+            source: KeySource::Keyfile(keyfile_path.to_path_buf()),
+            shadowed: None,
+        }),
+        (None, None) => None,
+    }
+}
+
+/// Resolve the key git will present: `$NOSTR_PRIVATE_KEY` first, then `keyfile`.
+///
+/// This is the resolution every Buzz caller must use — a check that read
+/// `BUZZ_PRIVATE_KEY` instead would test a different identity than the one git
+/// presents, and could report success while every push failed.
+///
+/// `Ok(None)` means neither source holds a key. A key file that cannot be read
+/// is *not* an error when the environment supplies a key: the helper would
+/// never open it.
+pub fn resolve_key(keyfile: &Path) -> Result<Option<ResolvedKey>, KeyError> {
+    let env = env_key()?;
+    let file = match read_keyfile(keyfile) {
+        Ok(found) => found,
+        Err(_) if env.is_some() => None,
+        Err(error) => return Err(error),
+    };
+    Ok(choose_key(env, keyfile, file))
+}
+
+/// The key the *helper* signs with, resolved from the environment it runs in.
+fn helper_key() -> Result<Keys, String> {
+    if let Some(keys) = env_key().map_err(|e| e.to_string())? {
+        return Ok(keys);
+    }
+    let path = configured_keyfile().ok_or_else(|| {
+        "no nostr key configured. Set $NOSTR_PRIVATE_KEY or git config nostr.keyfile".to_string()
+    })?;
+    read_keyfile(&path)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("cannot stat keyfile {}: no such file", path.display()))
+}
+
+/// Strip git's service suffix so the signed URL is the repo root.
+///
+/// git invokes a credential helper once per challenge and reuses the header
+/// across the `GET /info/refs` and the `POST /git-upload-pack`, so the NIP-98
+/// `u` tag has to name the repo root. A request signed for the exact path is
+/// rejected where real git succeeds — see docs/git-nip98-method-binding.md.
+pub fn repo_root_url(request_url: &str) -> String {
+    let without_query = request_url.split('?').next().unwrap_or(request_url);
+    for suffix in ["/info/refs", "/git-upload-pack", "/git-receive-pack"] {
+        if let Some(root) = without_query.strip_suffix(suffix) {
+            return root.to_string();
+        }
+    }
+    without_query.to_string()
+}
+
+/// Build the `Authorization: Nostr <base64 kind:27235>` value git sends.
+///
+/// `auth_tag` is the NIP-OA owner attestation, which must ride *inside* the
+/// signed event: git's credential protocol can return an Authorization value
+/// but cannot add a second header. Any caller that asks the relay what git can
+/// do has to sign the same event, attestation included, or it is asking a
+/// different question.
+pub fn authorization_header(
+    keys: &Keys,
+    method: HttpMethod,
+    repo_root: &str,
+    auth_tag: Option<Tag>,
+) -> Result<String, String> {
+    let url = Url::parse(repo_root).map_err(|e| format!("invalid URL {repo_root:?}: {e}"))?;
+    let builder = EventBuilder::http_auth(HttpData::new(url, method));
+    let builder = match auth_tag {
+        Some(tag) => builder.tag(tag),
+        None => builder,
+    };
+    let event = builder
+        .sign_with_keys(keys)
+        .map_err(|e| format!("failed to sign NIP-98 event: {e}"))?;
+    let json =
+        serde_json::to_string(&event).map_err(|e| format!("failed to serialize event: {e}"))?;
+    Ok(format!(
+        "Nostr {}",
+        base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
+    ))
 }
 
 /// Load the NIP-OA owner attestation injected by Beekeeper Desktop/ACP.
 ///
 /// The tag must be part of the signed NIP-98 event: Git's credential protocol
 /// can return an Authorization value, but it cannot add a separate HTTP header.
-fn load_auth_tag() -> Result<Option<Tag>, String> {
+///
+/// A malformed tag is an error, not a shrug — the helper fails closed on it, so
+/// every git request fails, and a caller that quietly dropped it would report a
+/// success git will never have.
+pub fn resolve_auth_tag() -> Result<Option<Tag>, String> {
     let raw = std::env::var("BUZZ_AUTH_TAG")
         .ok()
         .filter(|value| !value.is_empty())
@@ -167,13 +385,8 @@ fn report_denial() {
     let mut discarded = String::new();
     let _ = io::stdin().lock().read_to_string(&mut discarded);
 
-    let Ok(mut raw_key) = load_key() else {
+    let Ok(keys) = helper_key() else {
         // No key was ever presented, so nothing of ours was denied.
-        return;
-    };
-    let parsed = Keys::parse(&raw_key);
-    raw_key.zeroize();
-    let Ok(keys) = parsed else {
         return;
     };
     let pubkey = keys.public_key().to_hex();
@@ -235,15 +448,9 @@ pub fn run() -> i32 {
         "credential.useHttpPath must be true for NIP-98 auth"
     );
 
-    let repo_path = path
-        .split_once("/info/refs")
-        .map(|(prefix, _)| prefix)
-        .or_else(|| path.strip_suffix("/git-upload-pack"))
-        .or_else(|| path.strip_suffix("/git-receive-pack"))
-        .unwrap_or(path);
-    let url = format!("{protocol}://{host}/{repo_path}");
+    let url = repo_root_url(&format!("{protocol}://{host}/{path}"));
 
-    let mut raw_key = match load_key() {
+    let keys = match helper_key() {
         Ok(k) => k,
         Err(e) => {
             eprintln!("error: {e}");
@@ -251,47 +458,25 @@ pub fn run() -> i32 {
         }
     };
 
-    let keys = match Keys::parse(&raw_key) {
-        Ok(k) => k,
-        Err(e) => {
-            raw_key.zeroize();
-            eprintln!("error: invalid nostr private key: {e}");
-            return 1;
-        }
-    };
-    raw_key.zeroize();
-
-    let parsed_url = Url::parse(&url).unwrap_or_else(|e| panic!("invalid URL {url:?}: {e}"));
-    let http_data = HttpData::new(parsed_url, method);
-    let auth_tag = match load_auth_tag() {
+    let auth_tag = match resolve_auth_tag() {
         Ok(tag) => tag,
         Err(e) => {
             eprintln!("error: {e}");
             return 1;
         }
     };
-    let builder = EventBuilder::http_auth(http_data);
-    let builder = match auth_tag {
-        Some(tag) => builder.tag(tag),
-        None => builder,
-    };
-    let event = match builder.sign_with_keys(&keys) {
-        Ok(e) => e,
+
+    // One signing path, shared with `bee git check`: the check has to sign the
+    // event git sends, or it answers a different question than the one it is
+    // presented as answering.
+    let header = match authorization_header(&keys, method, &url, auth_tag) {
+        Ok(header) => header,
         Err(e) => {
-            eprintln!("error: failed to sign NIP-98 event: {e}");
+            eprintln!("error: {e}");
             return 1;
         }
     };
-
-    let json = match serde_json::to_string(&event) {
-        Ok(j) => j,
-        Err(e) => {
-            eprintln!("error: failed to serialize event: {e}");
-            return 1;
-        }
-    };
-
-    let credential = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+    let credential = header.strip_prefix("Nostr ").unwrap_or(&header);
 
     println!("capability[]=authtype");
     println!("authtype=Nostr");
@@ -301,4 +486,94 @@ pub fn run() -> i32 {
     println!();
     let _ = io::stdout().flush();
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::JsonUtil as _;
+
+    #[test]
+    fn the_signed_url_is_always_the_repo_root() {
+        // git invokes a helper once per challenge and reuses the header across
+        // the GET and the POST, so the `u` tag must name the repo root. Every
+        // caller — the helper and `bee git check` — goes through this one
+        // function so neither can sign a URL the other would not.
+        let root = "https://hive.agiterra.org/git/abc/repo";
+        for url in [
+            format!("{root}/info/refs?service=git-upload-pack"),
+            format!("{root}/info/refs?service=git-receive-pack"),
+            format!("{root}/git-upload-pack"),
+            format!("{root}/git-receive-pack"),
+            root.to_string(),
+        ] {
+            assert_eq!(repo_root_url(&url), root, "for {url}");
+        }
+    }
+
+    #[test]
+    fn the_authorization_header_carries_the_attestation_inside_the_signature() {
+        let seat = Keys::generate();
+        let owner = Keys::generate();
+        let tag = Tag::parse([
+            "auth".to_string(),
+            owner.public_key().to_hex(),
+            String::new(),
+            "00".repeat(64),
+        ])
+        .expect("tag");
+
+        let header = authorization_header(
+            &seat,
+            HttpMethod::GET,
+            "https://relay.example/git/abc/repo",
+            Some(tag.clone()),
+        )
+        .expect("header");
+
+        let encoded = header.strip_prefix("Nostr ").expect("Nostr scheme");
+        let json = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("base64");
+        let event = nostr::Event::from_json(&json).expect("event");
+
+        assert!(
+            event.verify().is_ok(),
+            "the attestation must be covered by the signature — git cannot send it as a header"
+        );
+        assert_eq!(event.pubkey, seat.public_key(), "a seat signs as itself");
+        assert!(event.tags.iter().any(|t| t.as_slice() == tag.as_slice()));
+        assert!(event
+            .tags
+            .iter()
+            .any(|t| t.as_slice() == ["u", "https://relay.example/git/abc/repo"]));
+    }
+
+    #[test]
+    fn the_env_key_wins_over_the_key_file() {
+        // The ACP harness injects `NOSTR_PRIVATE_KEY` into a seat; the file on
+        // disk is usually the operator's. Naming the file's identity in a seat's
+        // shell names the wrong key.
+        let env = Keys::generate();
+        let file = Keys::generate();
+        let resolved = choose_key(
+            Some(env.clone()),
+            Path::new("/home/a/.nostr/key"),
+            Some(file.clone()),
+        )
+        .expect("a key");
+        assert_eq!(resolved.keys.public_key(), env.public_key());
+        assert_eq!(resolved.source, KeySource::Env);
+        assert_eq!(
+            resolved.shadowed.map(|(_, key)| key),
+            Some(file.public_key()),
+            "the identity git will NOT use is still reported"
+        );
+    }
+
+    #[test]
+    fn a_missing_key_file_is_a_state_not_a_failure() {
+        let missing = Path::new("/nonexistent/beekeeper/key");
+        assert!(matches!(read_keyfile(missing), Ok(None)));
+    }
 }

@@ -188,58 +188,18 @@ pub fn config_entries(scope: &str, helper: &str, keyfile: &Path) -> Vec<(String,
     ]
 }
 
-/// Read a key file, enforcing the same 0600 rule the helper enforces.
+/// Read a key file exactly as `git-credential-nostr` reads it.
 ///
-/// A file the helper will refuse is worse than no file: setup would report
-/// success and every push would still fail, with the reason surfacing only in
-/// git's stderr.
+/// Thin wrapper over [`git_credential_nostr::read_keyfile`] — the checks (0600,
+/// regular file, size, `npub1…`) live in the helper crate so `bee` and the
+/// helper cannot drift. Only the error *classification* is `bee`'s: an
+/// unreadable file is a usage problem (exit 1), unusable material is a key
+/// problem (exit 3).
 fn read_keyfile(path: &Path) -> Result<Option<Keys>, CliError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| CliError::Usage(format!("cannot stat {}: {e}", path.display())))?;
-    if !metadata.is_file() {
-        return Err(CliError::Usage(format!(
-            "{} exists but is not a regular file",
-            path.display()
-        )));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = metadata.permissions().mode();
-        if mode & 0o177 != 0 {
-            return Err(CliError::Usage(format!(
-                "{} is mode {:o}; git-credential-nostr requires 0600. Run: chmod 600 {}",
-                path.display(),
-                mode & 0o777,
-                path.display()
-            )));
-        }
-    }
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", path.display())))?;
-    let trimmed = raw.trim();
-    // A pasted `npub1...` is a public key where a secret was wanted. It is the
-    // one shape of that mistake which is decidable, so it gets a real message
-    // instead of a parse error. The 64-hex form of the same mistake is NOT
-    // decidable — every 32-byte value is a plausible secret key — which is why
-    // `bee git check` exists to ask the relay instead of guessing.
-    if trimmed.starts_with("npub1") {
-        return Err(CliError::Key(format!(
-            "{} holds an npub, which is a *public* key. The key file needs the \
-             matching nsec.",
-            path.display()
-        )));
-    }
-    let keys = Keys::parse(trimmed).map_err(|e| {
-        CliError::Key(format!(
-            "{} does not hold a usable key: {e}",
-            path.display()
-        ))
-    })?;
-    Ok(Some(keys))
+    git_credential_nostr::read_keyfile(path).map_err(|error| match error {
+        git_credential_nostr::KeyError::Access(message) => CliError::Usage(message),
+        git_credential_nostr::KeyError::Material(message) => CliError::Key(message),
+    })
 }
 
 /// Where `git-credential-nostr` found the key it will sign git with.
@@ -279,6 +239,23 @@ pub struct EffectiveKey {
     pub shadowed: Option<(PathBuf, nostr::PublicKey)>,
 }
 
+impl From<git_credential_nostr::ResolvedKey> for EffectiveKey {
+    /// Adapt the helper's own resolution to the shape `bee` prints. The
+    /// precedence lives in `git_credential_nostr::choose_key`, never here: a
+    /// second copy of it is how a report comes to name an identity git does not
+    /// use.
+    fn from(resolved: git_credential_nostr::ResolvedKey) -> Self {
+        Self {
+            keys: resolved.keys,
+            origin: match resolved.source {
+                git_credential_nostr::KeySource::Env => KeyOrigin::Env,
+                git_credential_nostr::KeySource::Keyfile(path) => KeyOrigin::Keyfile(path),
+            },
+            shadowed: resolved.shadowed,
+        }
+    }
+}
+
 impl EffectiveKey {
     /// The one-sentence disclosure when two identities are present, or `None`
     /// when there is nothing to disclose.
@@ -301,36 +278,6 @@ fn short_pubkey(pubkey: &nostr::PublicKey) -> String {
     format!("{}\u{2026}", &hex[..8.min(hex.len())])
 }
 
-/// Decide, from what each source holds, which key git will present.
-///
-/// Split out from the IO so the precedence itself is testable without touching
-/// process environment or the filesystem — the precedence is the part that has
-/// been wrong.
-fn choose_effective_key(
-    env_key: Option<Keys>,
-    keyfile_path: &Path,
-    keyfile_key: Option<Keys>,
-) -> Option<EffectiveKey> {
-    match (env_key, keyfile_key) {
-        (Some(env), file) => {
-            let shadowed = file
-                .filter(|file| file.public_key() != env.public_key())
-                .map(|file| (keyfile_path.to_path_buf(), file.public_key()));
-            Some(EffectiveKey {
-                keys: env,
-                origin: KeyOrigin::Env,
-                shadowed,
-            })
-        }
-        (None, Some(file)) => Some(EffectiveKey {
-            keys: file,
-            origin: KeyOrigin::Keyfile(keyfile_path.to_path_buf()),
-            shadowed: None,
-        }),
-        (None, None) => None,
-    }
-}
-
 /// The key file path the helper would read: `--keyfile`, then
 /// `git config nostr.keyfile`, then the default.
 fn effective_keyfile_path(keyfile: Option<&Path>) -> Result<PathBuf, CliError> {
@@ -343,19 +290,6 @@ fn effective_keyfile_path(keyfile: Option<&Path>) -> Result<PathBuf, CliError> {
     }
 }
 
-/// Parse `$NOSTR_PRIVATE_KEY`, or `None` when it is unset or empty.
-fn env_key() -> Result<Option<Keys>, CliError> {
-    let Ok(raw) = std::env::var("NOSTR_PRIVATE_KEY") else {
-        return Ok(None);
-    };
-    if raw.trim().is_empty() {
-        return Ok(None);
-    }
-    Keys::parse(raw.trim())
-        .map(Some)
-        .map_err(|e| CliError::Key(format!("NOSTR_PRIVATE_KEY is not a key: {e}")))
-}
-
 /// Resolve the key git will present, exactly as `git-credential-nostr` does:
 /// `$NOSTR_PRIVATE_KEY` first, then `git config nostr.keyfile`.
 ///
@@ -364,23 +298,21 @@ fn env_key() -> Result<Option<Keys>, CliError> {
 /// actually presents, and could report success while every push failed.
 pub fn resolve_effective_key(keyfile: Option<&Path>) -> Result<EffectiveKey, CliError> {
     let path = effective_keyfile_path(keyfile)?;
-    let env = env_key()?;
-    // A broken key file must not mask a working env key: the helper would never
-    // read it, so neither does this.
-    let file = match read_keyfile(&path) {
-        Ok(found) => found,
-        // The helper never reads the file when the env key is set, so a broken
-        // file must not fail a resolution that will succeed. `bee git status`
-        // still reports the file's problem in its own field.
-        Err(_) if env.is_some() => None,
-        Err(error) => return Err(error),
-    };
-    choose_effective_key(env, &path, file).ok_or_else(|| {
+    // The helper's own resolution, including its rule that a broken key file
+    // must not mask a working `NOSTR_PRIVATE_KEY` — the helper would never open
+    // the file in that case, so neither does this. `bee git status` still
+    // reports the file's problem in its own field.
+    let resolved = git_credential_nostr::resolve_key(&path).map_err(|error| match error {
+        git_credential_nostr::KeyError::Access(message) => CliError::Usage(message),
+        git_credential_nostr::KeyError::Material(message) => CliError::Key(message),
+    })?;
+    let resolved = resolved.ok_or_else(|| {
         CliError::Usage(format!(
             "no key: {} does not exist and NOSTR_PRIVATE_KEY is unset",
             path.display()
         ))
-    })
+    })?;
+    Ok(EffectiveKey::from(resolved))
 }
 
 /// Write `keys` to `path` at mode 0600, refusing to replace a different identity.
@@ -677,12 +609,17 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
 }
 
 /// Probe outcome for one repository.
-struct RepoProbe {
-    repo_id: String,
-    owner: String,
-    status: u16,
-    access: &'static str,
-    detail: Option<String>,
+pub struct RepoProbe {
+    /// The `d` tag of the kind:30617 announcement.
+    pub repo_id: String,
+    /// The announcement author, which is the repo owner in the URL.
+    pub owner: String,
+    /// The HTTP status the git transport returned.
+    pub status: u16,
+    /// `read`, `denied`, `no-grant-or-missing`, `auth-rejected`, `unexpected`.
+    pub access: &'static str,
+    /// The relay's own words, when it said anything.
+    pub detail: Option<String>,
 }
 
 /// Classify a git `info/refs` response.
@@ -737,22 +674,13 @@ pub struct ProbeAttestation {
 /// fails. An attestation signed for a *different* key is not an error — it is
 /// the shape of the two-identities-in-one-shell trap, and it is reported.
 fn probe_attestation(keys: &Keys) -> Result<ProbeAttestation, CliError> {
-    let raw = std::env::var("BUZZ_AUTH_TAG")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| git_config_get("nostr.authtag"));
-    let Some(raw) = raw else {
+    // The helper's own reader: same sources (`BUZZ_AUTH_TAG`, then
+    // `git config nostr.authtag`), same fail-closed rule on a malformed tag.
+    let Some(tag) = git_credential_nostr::resolve_auth_tag().map_err(CliError::Auth)? else {
         return Ok(ProbeAttestation::default());
     };
-    let parts: Vec<String> = serde_json::from_str(&raw)
-        .map_err(|e| CliError::Auth(format!("BUZZ_AUTH_TAG is not valid JSON: {e}")))?;
-    if parts.len() != 4 || parts.first().map(String::as_str) != Some("auth") {
-        return Err(CliError::Auth(
-            "BUZZ_AUTH_TAG must be [auth, owner, conditions, signature]".to_string(),
-        ));
-    }
-    let tag = nostr::Tag::parse(parts)
-        .map_err(|e| CliError::Auth(format!("BUZZ_AUTH_TAG is not a usable tag: {e}")))?;
+    let raw = serde_json::to_string(&tag.clone().to_vec())
+        .map_err(|e| CliError::Auth(format!("cannot re-encode the attestation: {e}")))?;
 
     match buzz_sdk::nip_oa::verify_auth_tag(&raw, &keys.public_key()) {
         Ok(owner) => Ok(ProbeAttestation {
@@ -773,34 +701,18 @@ fn probe_attestation(keys: &Keys) -> Result<ProbeAttestation, CliError> {
 
 /// Sign the NIP-98 event `git-credential-nostr` signs, attestation included.
 ///
-/// Deliberately not `client::sign_nip98`: that one cannot carry the NIP-OA
-/// tag, and the whole value of `bee git check` is that it asks the relay the
-/// same question git asks.
+/// One signing path, in the helper crate: a check that signed its own variant
+/// of the event would ask the relay a question git never asks.
 fn sign_git_nip98(
     keys: &Keys,
     method: &str,
     url: &str,
     auth_tag: Option<nostr::Tag>,
 ) -> Result<String, CliError> {
-    use base64::Engine as _;
-    use nostr::JsonUtil as _;
-
-    let mut tags = vec![
-        nostr::Tag::parse(["u", url]).map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-        nostr::Tag::parse(["method", method])
-            .map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-        nostr::Tag::parse(["nonce", &uuid::Uuid::new_v4().to_string()])
-            .map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-    ];
-    tags.extend(auth_tag);
-    let event = nostr::EventBuilder::new(nostr::Kind::Custom(27235), "")
-        .tags(tags)
-        .sign_with_keys(keys)
-        .map_err(|e| CliError::Other(format!("NIP-98 signing failed: {e}")))?;
-    Ok(format!(
-        "Nostr {}",
-        base64::engine::general_purpose::STANDARD.encode(event.as_json().as_bytes())
-    ))
+    let method: nostr::nips::nip98::HttpMethod = method
+        .parse()
+        .map_err(|_| CliError::Other(format!("unsupported HTTP method {method}")))?;
+    git_credential_nostr::authorization_header(keys, method, url, auth_tag).map_err(CliError::Other)
 }
 
 /// Sign the repo-root URL the credential helper signs.
@@ -814,26 +726,413 @@ fn repo_root_url(relay_origin: &str, owner: &str, repo: &str) -> String {
     format!("{relay_origin}/git/{owner}/{repo}")
 }
 
-/// Ask the relay what this key can actually do.
-pub async fn cmd_check(
-    relay_url: &str,
-    keyfile: Option<PathBuf>,
-    compact: bool,
-) -> Result<(), CliError> {
-    let scope = credential_scope(relay_url)?;
+/// The owner attestation's state, as the relay will treat it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttestationState {
+    /// No `BUZZ_AUTH_TAG` and no `nostr.authtag`: the key answers for itself.
+    Absent,
+    /// Verified to cover the key git signs with — the relay will honour it.
+    Present {
+        /// The owner whose relay membership this key inherits.
+        owner: String,
+    },
+    /// Well formed, so the helper still sends it, but not signed for this key.
+    /// The relay ignores it, so the key answers for itself after all.
+    NotForThisKey {
+        /// Why it will not be honoured.
+        problem: String,
+    },
+    /// Unparseable. `git-credential-nostr` fails closed on it, so no git
+    /// request can be made at all — not one that is denied, one that never
+    /// leaves the machine.
+    Malformed {
+        /// What is wrong with it.
+        problem: String,
+    },
+}
+
+impl AttestationState {
+    /// The one-word state for the report: present, absent, or invalid.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Present { .. } => "present",
+            Self::NotForThisKey { .. } | Self::Malformed { .. } => "invalid",
+        }
+    }
+}
+
+/// What the git transport answered, in the only terms that matter: whether
+/// `git clone` and `git push` will work with this key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportVerdict {
+    /// The relay authorized this key on the smart-HTTP transport.
+    Accepted,
+    /// The relay refused it. Git will fail the same way.
+    Denied,
+    /// The relay answered something that is neither — a 5xx, say. Nothing is
+    /// known about the key, and saying either word would be a guess.
+    Unavailable,
+}
+
+/// One `info/refs` probe: the request git makes, and what came back.
+#[derive(Debug, Clone)]
+pub struct TransportProbe {
+    /// `git-upload-pack` (clone/fetch) or `git-receive-pack` (push).
+    pub service: &'static str,
+    /// The exact URL probed.
+    pub url: String,
+    /// The HTTP status the relay returned.
+    pub status: u16,
+    /// Accepted, denied, or unknown.
+    pub verdict: TransportVerdict,
+    /// What that status means here, in one sentence.
+    pub detail: String,
+}
+
+/// Which repository the transport probe asked about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeTarget {
+    /// A remote in this checkout that points at the relay — the repository
+    /// this shell would actually push to.
+    Remote {
+        /// Repo owner pubkey, from the remote URL.
+        owner: String,
+        /// Repo id, from the remote URL.
+        repo: String,
+    },
+    /// A repository that cannot exist. The relay checks membership *before* it
+    /// resolves the repository, so a 404 here isolates the authorization gate
+    /// from repository access.
+    Gate {
+        /// The key's own pubkey — any owner would do.
+        owner: String,
+        /// The impossible repo id.
+        repo: String,
+    },
+}
+
+impl ProbeTarget {
+    fn owner(&self) -> &str {
+        match self {
+            Self::Remote { owner, .. } | Self::Gate { owner, .. } => owner,
+        }
+    }
+
+    fn repo(&self) -> &str {
+        match self {
+            Self::Remote { repo, .. } | Self::Gate { repo, .. } => repo,
+        }
+    }
+
+    /// True when the repository probed is a real one, which changes what a 404
+    /// is allowed to mean.
+    fn is_real_repo(&self) -> bool {
+        matches!(self, Self::Remote { .. })
+    }
+}
+
+/// What the relay's *HTTP* membership path said — a different gate from git's,
+/// reported so a person can see the two differ.
+#[derive(Debug, Clone)]
+pub enum HttpMembership {
+    /// The HTTP bridge answered; this many repo announcements were visible.
+    Accepted {
+        /// Count of kind:30617 announcements returned.
+        announcements: usize,
+    },
+    /// The HTTP bridge refused, or could not be reached. Never the verdict.
+    Refused {
+        /// The relay's own words, with no invented remedy attached.
+        detail: String,
+    },
+}
+
+/// The repo id used to probe the authorization gate. It cannot exist: the name
+/// is not a valid repo id anywhere, and no announcement can create it.
+const GATE_PROBE_REPO: &str = "membership-probe-does-not-exist";
+
+/// Map an `info/refs` status onto the verdict git itself will act on.
+///
+/// `real_repo` is load-bearing. The relay answers a denied read with **404, not
+/// 403**, deliberately, so membership is not probeable by a stranger — which
+/// makes 404 on a real repository ambiguous. On the gate probe, where the
+/// repository cannot exist, the same 404 proves the opposite: the request got
+/// past the membership gate and died at repository resolution.
+fn transport_verdict(status: u16, real_repo: bool) -> (TransportVerdict, String) {
+    match status {
+        200 => (
+            TransportVerdict::Accepted,
+            "the relay served the ref advertisement".to_string(),
+        ),
+        401 => (
+            TransportVerdict::Denied,
+            "the relay rejected the NIP-98 credential itself".to_string(),
+        ),
+        403 => (
+            TransportVerdict::Denied,
+            "the relay does not say why; likely membership or attestation".to_string(),
+        ),
+        404 if real_repo => (
+            TransportVerdict::Denied,
+            "the relay answers 404 for both 'no grant on this repository' and \
+             'no such repository', and will not distinguish them"
+                .to_string(),
+        ),
+        404 => (
+            TransportVerdict::Accepted,
+            "the relay authorized this key at the git gate; the probe repository \
+             does not exist, which is how the gate is told apart from repository access"
+                .to_string(),
+        ),
+        other => (
+            TransportVerdict::Unavailable,
+            format!("HTTP {other}: the relay answered neither yes nor no"),
+        ),
+    }
+}
+
+/// What to do about a denial.
+///
+/// **Never "unset BUZZ_AUTH_TAG".** The remedy this replaces said exactly that
+/// (ledger draft 92): the check denied a seat over the relay's HTTP membership
+/// path while `git push` from the same key succeeded seconds later, and a seat
+/// that followed the advice would have dropped the owner attestation its push
+/// depends on.
+fn remedy(
+    verdict: TransportVerdict,
+    attestation: &AttestationState,
+    gate_accepted: bool,
+) -> Option<String> {
+    if verdict == TransportVerdict::Accepted {
+        return None;
+    }
+    // The gate probe already proved the key itself is admitted, so nothing about
+    // membership or the attestation is the problem here — saying otherwise would
+    // send someone to fix a thing that is not broken.
+    if gate_accepted {
+        return Some(
+            "This key is admitted by the relay; what it lacks is a grant on this repository. \
+             Ask the operator for a role on the project the repository belongs to — or check \
+             the remote, because a repository that does not exist answers identically."
+                .to_string(),
+        );
+    }
+    Some(match attestation {
+        AttestationState::Present { owner } => format!(
+            "Ask the operator to confirm this seat's owner ({}) is a member of this relay. \
+             Keep the attestation: it is what carries the owner's grant.",
+            short_hex(owner)
+        ),
+        AttestationState::Absent => "This key answers for itself alone — it carries no owner \
+             attestation. Ask the operator to add it to the relay, or run this from a seat the \
+             desktop attested."
+            .to_string(),
+        AttestationState::NotForThisKey { problem } => format!(
+            "The owner attestation will not be honoured, so this key answers for itself: {problem}"
+        ),
+        AttestationState::Malformed { problem } => format!(
+            "git-credential-nostr fails closed on this attestation, so no git request is made \
+             at all: {problem}"
+        ),
+    })
+}
+
+/// Drop the CLI client's generic 403 hint from a line this command prints.
+///
+/// `client.rs` appends "(BUZZ_AUTH_TAG is set — it may be stale or revoked; try
+/// unsetting it)" to every 403. On a *git* answer that advice is actively
+/// harmful — the attestation in `BUZZ_AUTH_TAG` is what a seat's push depends
+/// on — so it never rides along on this command's output.
+fn strip_auth_tag_hint(message: &str) -> String {
+    match message.split_once(" (BUZZ_AUTH_TAG is set") {
+        Some((head, _)) => head.trim().to_string(),
+        None => message.trim().to_string(),
+    }
+}
+
+/// First 8 hex characters plus an ellipsis.
+fn short_hex(hex: &str) -> String {
+    format!("{}\u{2026}", &hex[..8.min(hex.len())])
+}
+
+/// Find a remote in this checkout that points at the relay's git hosting.
+///
+/// Parses `git remote -v` output. A shell sitting in a checkout of a relay repo
+/// is the case that matters: probing the repository git would actually contact
+/// answers the real question, where the gate probe only answers half of it.
+fn parse_remote_target(origin: &str, remotes: &str) -> Option<(String, String)> {
+    let prefix = format!("{origin}/git/");
+    for line in remotes.lines() {
+        let url = line.split_whitespace().nth(1)?;
+        let Some(rest) = url.strip_prefix(&prefix) else {
+            continue;
+        };
+        let rest = rest.trim_end_matches('/');
+        let rest = rest.strip_suffix(".git").unwrap_or(rest);
+        let mut parts = rest.splitn(2, '/');
+        let (Some(owner), Some(repo)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if owner.len() == 64 && !repo.is_empty() && !repo.contains('/') {
+            return Some((owner.to_string(), repo.to_string()));
+        }
+    }
+    None
+}
+
+/// `git remote -v` in the current directory, or empty when there is no repo.
+fn git_remotes() -> String {
+    Command::new("git")
+        .args(["remote", "-v"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+        .unwrap_or_default()
+}
+
+/// Everything `bee git check` learned, before any of it is rendered.
+pub struct CheckReport {
+    /// The relay origin probed.
+    pub relay: String,
+    /// The key git will present.
+    pub pubkey: String,
+    /// Where that key came from — `NOSTR_PRIVATE_KEY` or a path.
+    pub key_source: String,
+    /// The one-sentence disclosure when a second, unused identity is present.
+    pub key_disclosure: Option<String>,
+    /// The owner attestation's state.
+    pub attestation: AttestationState,
+    /// Which repository the transport probes asked about.
+    pub target: ProbeTarget,
+    /// The transport probes, in the order git makes them.
+    pub transport: Vec<TransportProbe>,
+    /// A follow-up probe of the authorization gate, made only when a *real*
+    /// repository answered 404 — the one status that cannot say whether the key
+    /// or the repository was the problem. Never changes the verdict: git still
+    /// fails on this repository either way.
+    pub gate: Option<TransportProbe>,
+    /// The relay's HTTP membership path — secondary, never the verdict.
+    pub http_membership: HttpMembership,
+    /// Per-repository git probes, when the announcements were readable.
+    pub repos: Vec<RepoProbe>,
+}
+
+impl CheckReport {
+    /// Whether the follow-up gate probe proved the key itself is admitted.
+    pub fn gate_accepted(&self) -> bool {
+        self.gate
+            .as_ref()
+            .is_some_and(|gate| gate.verdict == TransportVerdict::Accepted)
+    }
+
+    /// The verdict the exit code must match: what git will do.
+    ///
+    /// Denied beats unavailable beats accepted — a push that is refused is
+    /// refused however the fetch probe went.
+    pub fn verdict(&self) -> TransportVerdict {
+        if self.transport.is_empty() {
+            return TransportVerdict::Denied;
+        }
+        if self
+            .transport
+            .iter()
+            .any(|p| p.verdict == TransportVerdict::Denied)
+        {
+            return TransportVerdict::Denied;
+        }
+        if self
+            .transport
+            .iter()
+            .any(|p| p.verdict == TransportVerdict::Unavailable)
+        {
+            return TransportVerdict::Unavailable;
+        }
+        TransportVerdict::Accepted
+    }
+}
+
+/// What `bee git check` was asked to do.
+pub struct CheckRequest {
+    /// Relay URL, in any of the ws/wss/http/https forms.
+    pub relay_url: String,
+    /// Key file override; defaults to whatever `nostr.keyfile` names.
+    pub keyfile: Option<PathBuf>,
+    /// Also probe `git-receive-pack` — the request `git push` makes first.
+    pub push: bool,
+}
+
+/// Ask the relay the same question git asks, and report what it answered.
+///
+/// The probe is a real `GET <repo>/info/refs?service=git-upload-pack` (plus
+/// `git-receive-pack` when `push` is set) signed exactly as
+/// `git-credential-nostr` signs it — same key resolution, same attestation,
+/// same repo-root URL, same signing function. Anything less asks a different
+/// question than the one the command is presented as answering.
+pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> {
+    let scope = credential_scope(&request.relay_url)?;
     let origin = scope.strip_suffix("/git").unwrap_or(&scope).to_string();
-    let effective = resolve_effective_key(keyfile.as_deref())?;
+    let effective = resolve_effective_key(request.keyfile.as_deref())?;
     let key_source = effective.origin.label();
     let key_disclosure = effective.disclosure();
     let keys = effective.keys.clone();
     let pubkey = keys.public_key().to_hex();
+
     // A managed seat's git requests carry its owner attestation *inside* the
     // signed NIP-98 event — git's credential protocol cannot add a header — so
-    // a probe that omitted it would ask the relay a different question than
-    // git asks, and could report "member NO" over a key the relay admits.
-    let attestation = probe_attestation(&keys)?;
-    let auth_tag = attestation.tag.clone();
-    let attested_owner = attestation.owner.clone();
+    // a probe that omitted it would ask the relay a different question than git
+    // asks, and could report a denial over a key the relay admits.
+    let (attestation, auth_tag) = match probe_attestation(&keys) {
+        Ok(probe) => {
+            let state = match (&probe.owner, &probe.warning) {
+                (Some(owner), _) => AttestationState::Present {
+                    owner: owner.clone(),
+                },
+                (None, Some(problem)) => AttestationState::NotForThisKey {
+                    problem: problem.clone(),
+                },
+                (None, None) => AttestationState::Absent,
+            };
+            (state, probe.tag)
+        }
+        Err(error) => (
+            AttestationState::Malformed {
+                problem: error.to_string(),
+            },
+            None,
+        ),
+    };
+
+    let target = match parse_remote_target(&origin, &git_remotes()) {
+        Some((owner, repo)) => ProbeTarget::Remote { owner, repo },
+        None => ProbeTarget::Gate {
+            owner: pubkey.clone(),
+            repo: GATE_PROBE_REPO.to_string(),
+        },
+    };
+
+    // A malformed attestation never reaches the wire: the helper refuses to
+    // sign, so git fails before any request is made. Probing without it would
+    // report on a request git will never send.
+    if matches!(attestation, AttestationState::Malformed { .. }) {
+        return Ok(CheckReport {
+            relay: origin,
+            pubkey,
+            key_source,
+            key_disclosure,
+            attestation,
+            target,
+            transport: Vec::new(),
+            gate: None,
+            http_membership: HttpMembership::Refused {
+                detail: "not asked: git-credential-nostr fails closed on the attestation"
+                    .to_string(),
+            },
+            repos: Vec::new(),
+        });
+    }
+
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -853,41 +1152,85 @@ pub async fn cmd_check(
         Ok::<_, CliError>((status, body))
     };
 
-    // Membership oracle. The relay checks NIP-98 and relay membership in the
-    // request extractor, *before* it resolves the repository — so a repo that
-    // cannot exist still separates the two answers cleanly:
-    //   403 -> the key is not a relay member
-    //   404 -> the key is a member; this repo just isn't there
-    // That makes membership answerable without needing any repo to exist.
-    let sentinel = format!(
-        "{}/info/refs?service=git-upload-pack",
-        repo_root_url(&origin, &pubkey, "membership-probe-does-not-exist")
-    );
-    let (sentinel_status, sentinel_body) =
-        probe(sentinel, keys.clone(), http.clone(), auth_tag.clone()).await?;
-    let is_member = match sentinel_status {
-        403 => false,
-        404 | 200 => true,
-        _ => {
-            return Err(CliError::Other(format!(
-                "membership probe returned an unexpected HTTP {sentinel_status}: {}",
-                sentinel_body.trim()
-            )))
-        }
+    let mut services: Vec<&'static str> = vec!["git-upload-pack"];
+    if request.push {
+        services.push("git-receive-pack");
+    }
+    let mut transport = Vec::new();
+    for service in services {
+        let url = format!(
+            "{}/info/refs?service={service}",
+            repo_root_url(&origin, target.owner(), target.repo())
+        );
+        let (status, _body) =
+            probe(url.clone(), keys.clone(), http.clone(), auth_tag.clone()).await?;
+        let (verdict, detail) = transport_verdict(status, target.is_real_repo());
+        transport.push(TransportProbe {
+            service,
+            url,
+            status,
+            verdict,
+            detail,
+        });
+    }
+
+    // A real repository's 404 is the relay's single answer for "no grant here"
+    // and "no such repo". It cannot say whether the *key* got through, so when
+    // it happens the gate is asked separately — a repository that cannot exist
+    // separates the two cleanly.
+    let gate = if target.is_real_repo() && transport.iter().any(|p| p.status == 404) {
+        let url = format!(
+            "{}/info/refs?service=git-upload-pack",
+            repo_root_url(&origin, &pubkey, GATE_PROBE_REPO)
+        );
+        let (status, _body) =
+            probe(url.clone(), keys.clone(), http.clone(), auth_tag.clone()).await?;
+        let (verdict, detail) = transport_verdict(status, false);
+        Some(TransportProbe {
+            service: "git-upload-pack",
+            url,
+            status,
+            verdict,
+            detail,
+        })
+    } else {
+        None
     };
 
-    // Repository inventory. Announcements the key cannot read simply do not come
-    // back, so this is already "repos visible to this key" — but visibility of
-    // the announcement and git read access are separate gates, so each one is
-    // still probed rather than assumed.
-    let mut probes: Vec<RepoProbe> = Vec::new();
-    if is_member {
-        let client =
-            crate::client::BuzzClient::new(relay_url.to_string(), keys.clone(), None, None)?;
-        let raw = client
-            .query(&serde_json::json!({ "kinds": [30617], "limit": 500 }))
-            .await?;
-        let events: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap_or_default();
+    // Secondary, and only ever secondary. This is the relay's HTTP membership
+    // path — a different gate from the one git uses, on a different code path.
+    // The live failure was letting it decide: it refused a seat whose `git push`
+    // succeeded seconds later.
+    let client =
+        crate::client::BuzzClient::new(request.relay_url.clone(), keys.clone(), None, None)?;
+    let announcements = client
+        .query(&serde_json::json!({ "kinds": [30617], "limit": 500 }))
+        .await;
+    let (http_membership, events) = match announcements {
+        Ok(raw) => {
+            let events: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap_or_default();
+            (
+                HttpMembership::Accepted {
+                    announcements: events.len(),
+                },
+                events,
+            )
+        }
+        Err(error) => (
+            HttpMembership::Refused {
+                detail: strip_auth_tag_hint(&error.to_string()),
+            },
+            Vec::new(),
+        ),
+    };
+
+    // Repository inventory. Visibility of the announcement and git read access
+    // are separate gates, so each repo is still probed rather than assumed.
+    let mut repos: Vec<RepoProbe> = Vec::new();
+    if transport
+        .iter()
+        .all(|p| p.verdict == TransportVerdict::Accepted)
+    {
         let mut seen = std::collections::BTreeSet::new();
         for event in events {
             let author = event
@@ -916,7 +1259,7 @@ pub async fn cmd_check(
             );
             let (status, body) = probe(url, keys.clone(), http.clone(), auth_tag.clone()).await?;
             let (access, detail) = classify_probe(status, &body);
-            probes.push(RepoProbe {
+            repos.push(RepoProbe {
                 repo_id: dtag,
                 owner: author,
                 status,
@@ -926,86 +1269,290 @@ pub async fn cmd_check(
         }
     }
 
-    let readable = probes.iter().filter(|p| p.access == "read").count();
-    let report = serde_json::json!({
-        "relay": origin,
-        "pubkey": pubkey,
-        "key_source": key_source,
-        "key_disclosure": key_disclosure,
-        // The owner this key is attested to, when it runs as a managed seat and
-        // the attestation actually covers this key. Null means the key answers
-        // for itself alone.
-        "attested_owner": attested_owner,
-        "attestation_problem": attestation.warning,
-        "relay_member": is_member,
-        "repos_probed": probes.len(),
-        "repos_readable": readable,
-        "repos": probes.iter().map(|p| serde_json::json!({
+    Ok(CheckReport {
+        relay: origin,
+        pubkey,
+        key_source,
+        key_disclosure,
+        attestation,
+        target,
+        transport,
+        gate,
+        http_membership,
+        repos,
+    })
+}
+
+/// The compact (`--format compact`) form of a report.
+pub fn render_json(report: &CheckReport) -> serde_json::Value {
+    serde_json::json!({
+        "relay": report.relay,
+        "pubkey": report.pubkey,
+        "key_source": report.key_source,
+        "key_disclosure": report.key_disclosure,
+        "attestation": report.attestation.label(),
+        "attested_owner": match &report.attestation {
+            AttestationState::Present { owner } => Some(owner.clone()),
+            _ => None,
+        },
+        "attestation_problem": match &report.attestation {
+            AttestationState::NotForThisKey { problem }
+            | AttestationState::Malformed { problem } => Some(problem.clone()),
+            _ => None,
+        },
+        // The verdict, and the only field an exit code is derived from.
+        "git_transport": match report.verdict() {
+            TransportVerdict::Accepted => "accepted",
+            TransportVerdict::Denied => "denied",
+            TransportVerdict::Unavailable => "unavailable",
+        },
+        "git_probes": report.transport.iter().map(|p| serde_json::json!({
+            "service": p.service,
+            "url": p.url,
+            "http_status": p.status,
+            "verdict": match p.verdict {
+                TransportVerdict::Accepted => "accepted",
+                TransportVerdict::Denied => "denied",
+                TransportVerdict::Unavailable => "unavailable",
+            },
+            "detail": p.detail,
+        })).collect::<Vec<_>>(),
+        "gate_probe": report.gate.as_ref().map(|gate| serde_json::json!({
+            "http_status": gate.status,
+            "verdict": match gate.verdict {
+                TransportVerdict::Accepted => "accepted",
+                TransportVerdict::Denied => "denied",
+                TransportVerdict::Unavailable => "unavailable",
+            },
+            "detail": gate.detail,
+        })),
+        "probe_target": match &report.target {
+            ProbeTarget::Remote { owner, repo } => serde_json::json!({
+                "kind": "remote", "owner": owner, "repo": repo,
+            }),
+            ProbeTarget::Gate { owner, repo } => serde_json::json!({
+                "kind": "authorization-gate", "owner": owner, "repo": repo,
+            }),
+        },
+        // A different gate from git's, reported so the two can be seen to differ.
+        "relay_http_membership": match &report.http_membership {
+            HttpMembership::Accepted { announcements } => serde_json::json!({
+                "ok": true, "announcements": announcements,
+            }),
+            HttpMembership::Refused { detail } => serde_json::json!({
+                "ok": false, "detail": detail,
+            }),
+        },
+        "remedy": remedy(report.verdict(), &report.attestation, report.gate_accepted()),
+        "repos_probed": report.repos.len(),
+        "repos_readable": report.repos.iter().filter(|p| p.access == "read").count(),
+        "repos": report.repos.iter().map(|p| serde_json::json!({
             "repo_id": p.repo_id,
             "owner": p.owner,
             "access": p.access,
             "http_status": p.status,
             "detail": p.detail,
         })).collect::<Vec<_>>(),
-    });
+    })
+}
+
+/// The human form of a report.
+pub fn render_human(report: &CheckReport) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "relay   {}", report.relay);
+    let _ = writeln!(
+        out,
+        "key     {}  (from {})",
+        report.pubkey, report.key_source
+    );
+    match &report.attestation {
+        AttestationState::Present { owner } => {
+            let _ = writeln!(
+                out,
+                "owner   {owner}  (attestation present; this key acts for its owner's grant)"
+            );
+        }
+        AttestationState::Absent => {
+            let _ = writeln!(
+                out,
+                "owner   none  (no attestation; this key answers for itself)"
+            );
+        }
+        AttestationState::NotForThisKey { problem } | AttestationState::Malformed { problem } => {
+            let _ = writeln!(out, "owner   attestation invalid — {problem}");
+        }
+    }
+    if let Some(disclosure) = &report.key_disclosure {
+        let _ = writeln!(out, "note    {disclosure}");
+    }
+
+    match &report.target {
+        ProbeTarget::Remote { owner, repo } => {
+            let _ = writeln!(
+                out,
+                "repo    {}/{repo}  (a remote in this checkout)",
+                short_hex(owner)
+            );
+        }
+        ProbeTarget::Gate { .. } => {
+            let _ = writeln!(
+                out,
+                "repo    none here — probing the authorization gate with a repository that cannot exist"
+            );
+        }
+    }
+
+    for probe in &report.transport {
+        let word = match probe.verdict {
+            TransportVerdict::Accepted => "accepted",
+            TransportVerdict::Denied => "denied",
+            TransportVerdict::Unavailable => "unavailable",
+        };
+        let _ = writeln!(
+            out,
+            "git     {word} — {} → HTTP {}",
+            probe.service, probe.status
+        );
+        let _ = writeln!(out, "        {}", probe.detail);
+    }
+    if report.transport.is_empty() {
+        let _ = writeln!(
+            out,
+            "git     denied — no request was made; the credential helper refuses to sign"
+        );
+    }
+    if let Some(gate) = &report.gate {
+        let _ = writeln!(
+            out,
+            "gate    {} — the same request against a repository that cannot exist → HTTP {}",
+            match gate.verdict {
+                TransportVerdict::Accepted => "accepted",
+                TransportVerdict::Denied => "denied",
+                TransportVerdict::Unavailable => "unavailable",
+            },
+            gate.status
+        );
+        let _ = writeln!(
+            out,
+            "        {}",
+            match gate.verdict {
+                TransportVerdict::Accepted =>
+                    "so the key itself is admitted; the denial above is about this repository",
+                _ => "so the key itself is refused, on this repository and every other",
+            }
+        );
+    }
+
+    // Secondary. Labelled, so a person can see the two gates differ.
+    match &report.http_membership {
+        HttpMembership::Accepted { announcements } => {
+            let _ = writeln!(
+                out,
+                "relay HTTP membership: accepted ({announcements} repository announcements visible)"
+            );
+        }
+        HttpMembership::Refused { detail } => {
+            let _ = writeln!(out, "relay HTTP membership: refused — {detail}");
+            let _ = writeln!(
+                out,
+                "        That is a different gate from git's. The git line above is the one"
+            );
+            let _ = writeln!(out, "        that governs clone and push.");
+        }
+    }
+
+    if let Some(remedy) = remedy(
+        report.verdict(),
+        &report.attestation,
+        report.gate_accepted(),
+    ) {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "{remedy}");
+    }
+
+    if !report.repos.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "{:<34} {:<20} OWNER", "REPO", "ACCESS");
+        for entry in &report.repos {
+            let _ = writeln!(
+                out,
+                "{:<34} {:<20} {}",
+                entry.repo_id,
+                entry.access,
+                &entry.owner[..16.min(entry.owner.len())]
+            );
+        }
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "{} of {} readable over git.",
+            report.repos.iter().filter(|p| p.access == "read").count(),
+            report.repos.len()
+        );
+        let _ = writeln!(
+            out,
+            "`no-grant-or-missing` is the relay's single answer for both — it does"
+        );
+        let _ = writeln!(out, "not distinguish them, so neither does this.");
+    }
+    out
+}
+
+/// Ask the relay what git can actually do with this key, print it, and exit
+/// with the code that matches: 0 when the transport accepts, 3 when it denies.
+pub async fn cmd_check(
+    relay_url: &str,
+    keyfile: Option<PathBuf>,
+    push: bool,
+    compact: bool,
+) -> Result<(), CliError> {
+    let report = run_check(&CheckRequest {
+        relay_url: relay_url.to_string(),
+        keyfile,
+        push,
+    })
+    .await?;
 
     if compact {
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
-        return Ok(());
+        println!(
+            "{}",
+            serde_json::to_string(&render_json(&report)).unwrap_or_default()
+        );
+    } else {
+        print!("{}", render_human(&report));
     }
 
-    println!("relay   {origin}");
-    println!("key     {pubkey}  (from {key_source})");
-    if let Some(owner) = &attested_owner {
-        println!("owner   {owner}  (this key acts for its owner's grant)");
+    // The exit code is the transport's verdict and nothing else — it has to
+    // match what git will do, or a script that trusts it is misled.
+    match report.verdict() {
+        TransportVerdict::Accepted => Ok(()),
+        TransportVerdict::Denied if report.gate_accepted() => Err(CliError::Auth(format!(
+            "the relay's git transport denied this repository to {} (the key itself is admitted)",
+            short_hex(&report.pubkey)
+        ))),
+        TransportVerdict::Denied => Err(CliError::Auth(format!(
+            "the relay's git transport denied this key ({})",
+            short_hex(&report.pubkey)
+        ))),
+        TransportVerdict::Unavailable => Err(CliError::Relay {
+            status: report
+                .transport
+                .iter()
+                .find(|p| p.verdict == TransportVerdict::Unavailable)
+                .map(|p| p.status)
+                .unwrap_or(0),
+            body: "the relay's git transport answered neither yes nor no".to_string(),
+        }),
     }
-    if let Some(warning) = &attestation.warning {
-        println!("owner   none — {warning}");
-    }
-    if let Some(disclosure) = &key_disclosure {
-        println!("note    {disclosure}");
-    }
-    if !is_member {
-        println!(
-            "member  NO — the relay rejects this key: {}",
-            sentinel_body.trim()
-        );
-        println!();
-        println!("Nothing below can work until this key is a relay member.");
-        println!("Every git request is gated on it, clone included.");
-        return Ok(());
-    }
-    println!("member  yes");
-    println!();
-    if probes.is_empty() {
-        println!("No repository announcements are visible to this key.");
-        return Ok(());
-    }
-    println!("{:<34} {:<20} OWNER", "REPO", "ACCESS");
-    for entry in &probes {
-        println!(
-            "{:<34} {:<20} {}",
-            entry.repo_id,
-            entry.access,
-            &entry.owner[..16.min(entry.owner.len())]
-        );
-    }
-    println!();
-    println!("{readable} of {} readable over git.", probes.len());
-    println!("`no-grant-or-missing` is the relay's single answer for both — it does");
-    println!("not distinguish them, so neither does this.");
-    Ok(())
 }
 
 /// Strip the git service suffix so the signed URL matches the helper's.
+///
+/// Delegates to [`git_credential_nostr::repo_root_url`], the same function the
+/// helper uses on the URL git hands it.
 fn repo_root_from_refs_url(url: &str) -> String {
-    let without_query = url.split('?').next().unwrap_or(url);
-    for suffix in ["/info/refs", "/git-upload-pack", "/git-receive-pack"] {
-        if let Some(root) = without_query.strip_suffix(suffix) {
-            return root.to_string();
-        }
-    }
-    without_query.to_string()
+    git_credential_nostr::repo_root_url(url)
 }
 
 #[cfg(test)]
@@ -1013,10 +1560,23 @@ mod tests {
     use super::*;
     use base64::Engine as _;
 
+    /// The helper's own precedence, adapted to what `bee` prints — the same two
+    /// steps `resolve_effective_key` takes, without touching the filesystem.
+    fn choose_key_for_test(
+        env: Option<Keys>,
+        keyfile_path: &Path,
+        keyfile_key: Option<Keys>,
+    ) -> Option<EffectiveKey> {
+        git_credential_nostr::choose_key(env, keyfile_path, keyfile_key).map(EffectiveKey::from)
+    }
+
     /// Serialises the tests that read or write process environment.
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    ///
+    /// One lock for the sync and the async tests alike — two locks let a sync
+    /// test overwrite `BUZZ_AUTH_TAG` while an async probe was mid-flight, which
+    /// failed only in the full-suite run.
+    fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        async_env_lock().blocking_lock()
     }
 
     #[test]
@@ -1150,11 +1710,11 @@ mod tests {
     #[test]
     fn the_env_key_wins_and_says_so() {
         // The ACP harness injects `NOSTR_PRIVATE_KEY` into a seat, and the
-        // helper prefers it (`git-credential-nostr` lib.rs `load_key`). A
+        // helper prefers it (`git-credential-nostr` lib.rs `choose_key`). A
         // report that named the key *file* would name the operator's identity
         // in a shell where git signs as the seat.
         let env = Keys::generate();
-        let resolved = choose_effective_key(Some(env.clone()), Path::new("/tmp/key"), None)
+        let resolved = choose_key_for_test(Some(env.clone()), Path::new("/tmp/key"), None)
             .expect("an env key is a key");
         assert_eq!(resolved.keys.public_key(), env.public_key());
         assert_eq!(resolved.origin, KeyOrigin::Env);
@@ -1166,7 +1726,7 @@ mod tests {
     fn the_key_file_is_named_by_path_when_it_is_what_git_uses() {
         let file = Keys::generate();
         let resolved =
-            choose_effective_key(None, Path::new("/home/a/.nostr/key"), Some(file.clone()))
+            choose_key_for_test(None, Path::new("/home/a/.nostr/key"), Some(file.clone()))
                 .expect("a key file is a key");
         assert_eq!(resolved.keys.public_key(), file.public_key());
         assert_eq!(resolved.origin.label(), "/home/a/.nostr/key");
@@ -1181,7 +1741,7 @@ mod tests {
         // to be said out loud.
         let env = Keys::generate();
         let file = Keys::generate();
-        let resolved = choose_effective_key(
+        let resolved = choose_key_for_test(
             Some(env.clone()),
             Path::new("/home/a/.nostr/key"),
             Some(file.clone()),
@@ -1216,7 +1776,7 @@ mod tests {
     #[test]
     fn the_same_identity_in_both_places_is_not_a_conflict() {
         let same = Keys::generate();
-        let resolved = choose_effective_key(
+        let resolved = choose_key_for_test(
             Some(same.clone()),
             Path::new("/home/a/.nostr/key"),
             Some(same),
@@ -1230,7 +1790,7 @@ mod tests {
 
     #[test]
     fn no_key_anywhere_resolves_to_nothing() {
-        assert!(choose_effective_key(None, Path::new("/home/a/.nostr/key"), None).is_none());
+        assert!(choose_key_for_test(None, Path::new("/home/a/.nostr/key"), None).is_none());
     }
 
     #[test]
@@ -1326,6 +1886,402 @@ mod tests {
         );
 
         std::env::remove_var("BUZZ_AUTH_TAG");
+    }
+
+    // ── the check answers the question it is presented as answering ──────
+
+    /// A stub relay: `info/refs` answers `refs_status`, `POST /query` answers
+    /// `query_status` with `query_body`. Returns the base URL.
+    async fn stub_relay(
+        refs_status: u16,
+        refs_body: &'static str,
+        query_status: u16,
+        query_body: &'static str,
+    ) -> String {
+        use axum::body::Body;
+        use axum::http::Response;
+        use axum::Router;
+
+        let app = Router::new()
+            .route(
+                "/query",
+                axum::routing::post(move || async move {
+                    Response::builder()
+                        .status(query_status)
+                        .header("content-type", "application/json")
+                        .body(Body::from(query_body))
+                        .expect("response")
+                }),
+            )
+            .route(
+                "/{*path}",
+                axum::routing::get(move || async move {
+                    Response::builder()
+                        .status(refs_status)
+                        .body(Body::from(refs_body))
+                        .expect("response")
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    }
+
+    /// Serialises the async tests that set process environment. `tokio`'s mutex,
+    /// not `std`'s: the environment has to stay set across the probe's `await`.
+    fn async_env_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    /// Set the seat's key and attestation for the duration of one test, and
+    /// hand back the report a check produces against `relay`.
+    async fn check_against(relay: &str, keys: &Keys, tag: Option<&str>, push: bool) -> CheckReport {
+        // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
+        std::env::set_var("NOSTR_PRIVATE_KEY", keys.secret_key().to_secret_hex());
+        match tag {
+            Some(tag) => std::env::set_var("BUZZ_AUTH_TAG", tag),
+            None => std::env::remove_var("BUZZ_AUTH_TAG"),
+        }
+        let report = run_check(&CheckRequest {
+            relay_url: relay.to_string(),
+            keyfile: None,
+            push,
+        })
+        .await;
+        std::env::remove_var("NOSTR_PRIVATE_KEY");
+        std::env::remove_var("BUZZ_AUTH_TAG");
+        report.expect("a probe against the stub relay")
+    }
+
+    #[test]
+    fn the_verdict_is_what_git_will_do_with_the_same_request() {
+        // 200: the relay served the ref advertisement.
+        assert_eq!(
+            transport_verdict(200, true).0,
+            TransportVerdict::Accepted,
+            "a served ref advertisement is a clone that works"
+        );
+        // 404 on a repo that cannot exist: the request got PAST the membership
+        // gate and died at repository resolution. That is the gate answering.
+        assert_eq!(transport_verdict(404, false).0, TransportVerdict::Accepted);
+        // 404 on a real repo: the relay answers 404 for "no grant" and for "no
+        // such repo" alike, so acceptance cannot be read out of it.
+        let (verdict, detail) = transport_verdict(404, true);
+        assert_eq!(verdict, TransportVerdict::Denied);
+        assert!(
+            detail.contains("will not distinguish"),
+            "the ambiguity has to be stated, not resolved by guessing: {detail}"
+        );
+        assert_eq!(transport_verdict(403, false).0, TransportVerdict::Denied);
+        assert_eq!(transport_verdict(401, true).0, TransportVerdict::Denied);
+        // A 5xx is neither. Calling it "denied" would invent a decision.
+        assert_eq!(
+            transport_verdict(503, true).0,
+            TransportVerdict::Unavailable
+        );
+    }
+
+    #[test]
+    fn no_remedy_ever_advises_dropping_the_owner_attestation() {
+        // The remedy this replaces said "BUZZ_AUTH_TAG is set — it may be stale
+        // or revoked; try unsetting it" over a key whose `git push` worked. A
+        // seat that followed it would lose the access it had.
+        let states = [
+            AttestationState::Absent,
+            AttestationState::Present {
+                owner: "ab".repeat(32),
+            },
+            AttestationState::NotForThisKey {
+                problem: "signed for another key".to_string(),
+            },
+            AttestationState::Malformed {
+                problem: "not JSON".to_string(),
+            },
+        ];
+        for state in &states {
+            for verdict in [TransportVerdict::Denied, TransportVerdict::Unavailable] {
+                let text = remedy(verdict, state, false).expect("a denial explains itself");
+                assert!(
+                    !text.contains("unset"),
+                    "never advise unsetting the attestation: {text}"
+                );
+                assert!(
+                    !text.contains("stale or revoked"),
+                    "never guess at the reason: {text}"
+                );
+            }
+        }
+        assert!(
+            remedy(TransportVerdict::Accepted, &states[1], false).is_none(),
+            "an accepted transport has nothing to remedy"
+        );
+        let attested = remedy(
+            TransportVerdict::Denied,
+            &AttestationState::Present {
+                owner: "ab".repeat(32),
+            },
+            false,
+        )
+        .expect("remedy");
+        // A gate that admitted the key must not be told to go fix membership.
+        let repo_only =
+            remedy(TransportVerdict::Denied, &AttestationState::Absent, true).expect("remedy");
+        assert!(
+            repo_only.contains("grant on this repository") && !repo_only.contains("unset"),
+            "a repository-level denial is not a membership problem: {repo_only}"
+        );
+        assert!(
+            attested.contains("owner") && attested.contains("member of this relay"),
+            "an attested seat is told whose membership to check: {attested}"
+        );
+        assert!(
+            attested.contains("Keep the attestation"),
+            "and told to keep the thing its push depends on: {attested}"
+        );
+    }
+
+    #[test]
+    fn the_clients_generic_403_hint_never_rides_along() {
+        let raw = "relay error 403: relay_membership_required (BUZZ_AUTH_TAG is set \u{2014} it may be stale or revoked; try unsetting it)";
+        let stripped = strip_auth_tag_hint(raw);
+        assert_eq!(stripped, "relay error 403: relay_membership_required");
+        assert!(!stripped.contains("unsetting"));
+        // Anything without the hint passes through untouched.
+        assert_eq!(
+            strip_auth_tag_hint("relay error 500: boom"),
+            "relay error 500: boom"
+        );
+    }
+
+    #[test]
+    fn a_relay_remote_in_this_checkout_is_the_repository_probed() {
+        let owner = "ab".repeat(32);
+        let remotes = format!(
+            "github\thttps://github.com/block/buzz.git (fetch)\n\
+             origin\thttps://hive.agiterra.org/git/{owner}/beekeeper.git (fetch)\n\
+             origin\thttps://hive.agiterra.org/git/{owner}/beekeeper.git (push)\n"
+        );
+        assert_eq!(
+            parse_remote_target("https://hive.agiterra.org", &remotes),
+            Some((owner.clone(), "beekeeper".to_string())),
+            "the repository git would contact is the one worth probing"
+        );
+        // A checkout with no relay remote leaves the gate probe as the target.
+        assert_eq!(
+            parse_remote_target(
+                "https://hive.agiterra.org",
+                "origin\tgit@github.com:block/buzz.git (fetch)\n"
+            ),
+            None
+        );
+    }
+
+    /// A real repository answering 404 cannot say whether the key or the repo
+    /// was the problem, so the gate is asked separately and both are reported.
+    #[tokio::test]
+    async fn a_404_on_a_real_repository_still_says_whether_the_key_got_through() {
+        let _guard = async_env_lock().lock().await;
+        let seat = Keys::generate();
+        let relay = stub_relay(404, "repository not found", 200, "[]").await;
+        let owner = "ab".repeat(32);
+        let target = ProbeTarget::Remote {
+            owner: owner.clone(),
+            repo: "beekeeper".to_string(),
+        };
+        assert!(target.is_real_repo());
+
+        // No remote here points at the stub, so drive the mapping directly and
+        // then prove the gate follow-up through the rendered report.
+        let report = CheckReport {
+            relay: relay.clone(),
+            pubkey: seat.public_key().to_hex(),
+            key_source: "NOSTR_PRIVATE_KEY".to_string(),
+            key_disclosure: None,
+            attestation: AttestationState::Absent,
+            target,
+            transport: vec![TransportProbe {
+                service: "git-upload-pack",
+                url: format!("{relay}/git/{owner}/beekeeper/info/refs?service=git-upload-pack"),
+                status: 404,
+                verdict: TransportVerdict::Denied,
+                detail: transport_verdict(404, true).1,
+            }],
+            gate: Some(TransportProbe {
+                service: "git-upload-pack",
+                url: format!("{relay}/git/{owner}/{GATE_PROBE_REPO}/info/refs"),
+                status: 404,
+                verdict: TransportVerdict::Accepted,
+                detail: transport_verdict(404, false).1,
+            }),
+            http_membership: HttpMembership::Accepted { announcements: 0 },
+            repos: Vec::new(),
+        };
+
+        assert_eq!(
+            report.verdict(),
+            TransportVerdict::Denied,
+            "git still fails on this repository, so the exit code must too"
+        );
+        let rendered = render_human(&report);
+        assert!(
+            rendered.contains("gate    accepted"),
+            "the key's own standing must not be lost in the repo's 404: {rendered}"
+        );
+        assert!(
+            rendered.contains("the denial above is about this repository"),
+            "{rendered}"
+        );
+        assert_eq!(render_json(&report)["gate_probe"]["verdict"], "accepted");
+    }
+
+    /// 200 on `info/refs` is git working. The check must say so, exit 0, and
+    /// disclose which key and which attestation produced that answer.
+    #[tokio::test]
+    async fn an_accepted_transport_is_reported_accepted_with_its_disclosures() {
+        let _guard = async_env_lock().lock().await;
+        let seat = Keys::generate();
+        let owner = Keys::generate();
+        let tag =
+            buzz_sdk::nip_oa::compute_auth_tag(&owner, &seat.public_key(), "").expect("auth tag");
+        let relay = stub_relay(200, "001e# service=git-upload-pack", 200, "[]").await;
+
+        let report = check_against(&relay, &seat, Some(&tag), true).await;
+
+        assert_eq!(report.verdict(), TransportVerdict::Accepted);
+        assert_eq!(
+            report.transport.len(),
+            2,
+            "--push probes git-receive-pack as well as git-upload-pack"
+        );
+        assert_eq!(report.transport[0].service, "git-upload-pack");
+        assert_eq!(report.transport[1].service, "git-receive-pack");
+        assert_eq!(
+            report.attestation,
+            AttestationState::Present {
+                owner: owner.public_key().to_hex()
+            }
+        );
+
+        let rendered = render_human(&report);
+        assert!(
+            rendered.contains(&seat.public_key().to_hex()),
+            "the key it used must be named: {rendered}"
+        );
+        assert!(
+            rendered.contains("NOSTR_PRIVATE_KEY"),
+            "and where that key came from: {rendered}"
+        );
+        assert!(
+            rendered.contains(&owner.public_key().to_hex()),
+            "and the owner the attestation covers: {rendered}"
+        );
+        assert!(
+            rendered.contains("git     accepted"),
+            "the transport verdict is the headline: {rendered}"
+        );
+        assert!(
+            !rendered.contains("unsetting"),
+            "no advice to drop the attestation on a success either: {rendered}"
+        );
+        let json = render_json(&report);
+        assert_eq!(json["git_transport"], "accepted");
+        assert_eq!(json["attestation"], "present");
+        assert!(json["remedy"].is_null());
+    }
+
+    /// 401 is the relay refusing the credential outright. Git fails; so does
+    /// the check, with exit 3 and no invented reason.
+    #[tokio::test]
+    async fn a_denied_transport_is_reported_denied_and_exits_three() {
+        let _guard = async_env_lock().lock().await;
+        let seat = Keys::generate();
+        let relay = stub_relay(401, "missing Authorization header", 200, "[]").await;
+
+        // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
+        std::env::set_var("NOSTR_PRIVATE_KEY", seat.secret_key().to_secret_hex());
+        std::env::remove_var("BUZZ_AUTH_TAG");
+        let result = cmd_check(&relay, None, false, true).await;
+        std::env::remove_var("NOSTR_PRIVATE_KEY");
+
+        let error = result.expect_err("a refused credential is not a success");
+        assert_eq!(
+            crate::error::exit_code(&error),
+            3,
+            "the exit code has to match what git will do: {error}"
+        );
+        assert!(
+            !error.to_string().contains("unsetting"),
+            "no dangerous remedy on the error line either: {error}"
+        );
+    }
+
+    /// 403 on the gate probe: the relay refuses this key on the git transport.
+    /// With an attestation present, the remedy names the owner to check.
+    #[tokio::test]
+    async fn a_gate_denial_names_the_owner_to_ask_about() {
+        let _guard = async_env_lock().lock().await;
+        let seat = Keys::generate();
+        let owner = Keys::generate();
+        let tag =
+            buzz_sdk::nip_oa::compute_auth_tag(&owner, &seat.public_key(), "").expect("auth tag");
+        let relay = stub_relay(403, "relay_membership_required", 200, "[]").await;
+
+        let report = check_against(&relay, &seat, Some(&tag), false).await;
+
+        assert_eq!(report.verdict(), TransportVerdict::Denied);
+        let rendered = render_human(&report);
+        assert!(rendered.contains("git     denied"), "{rendered}");
+        assert!(
+            rendered.contains(&owner.public_key().to_hex()[..8]),
+            "the owner whose membership to confirm must be named: {rendered}"
+        );
+        assert!(!rendered.contains("unsetting"), "{rendered}");
+    }
+
+    /// The live failure (ledger draft 92, 2026-08-29 18:51): `bee git check`
+    /// exited 3 over `relay_membership_required` while `git push` from the same
+    /// key succeeded seconds later. The git transport is the gate that governs
+    /// push and clone; the relay's HTTP membership path is a different gate, and
+    /// letting it decide made the check answer a different question than the one
+    /// it is presented as answering.
+    #[tokio::test]
+    async fn the_git_transport_governs_not_the_relay_http_membership_path() {
+        let _guard = async_env_lock().lock().await;
+        let seat = Keys::generate();
+        let owner = Keys::generate();
+        let tag =
+            buzz_sdk::nip_oa::compute_auth_tag(&owner, &seat.public_key(), "").expect("auth tag");
+        // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
+        std::env::set_var("NOSTR_PRIVATE_KEY", seat.secret_key().to_secret_hex());
+        std::env::set_var("BUZZ_AUTH_TAG", &tag);
+
+        // 404 from the git transport on a repo that cannot exist = the
+        // authorization gate let this key through. 403 from POST /query = the
+        // relay's HTTP membership path refuses it.
+        let relay = stub_relay(
+            404,
+            "repository not found",
+            403,
+            r#"{"error":"relay_membership_required"}"#,
+        )
+        .await;
+
+        let result = cmd_check(&relay, None, false, true).await;
+
+        std::env::remove_var("NOSTR_PRIVATE_KEY");
+        std::env::remove_var("BUZZ_AUTH_TAG");
+
+        let error = result.as_ref().err().map(ToString::to_string);
+        assert!(
+            result.is_ok(),
+            "the git transport accepted this key, so the check must too: {error:?}"
+        );
     }
 
     #[cfg(unix)]

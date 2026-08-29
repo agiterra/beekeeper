@@ -69,6 +69,11 @@ url = { workspace = true }
 # Persona pack parsing, validation, and resolution
 buzz-persona = { path = "../buzz-persona" }
 
+# The git credential helper's own key resolution, attestation reader, and NIP-98
+# signing — `bee git check` must ask the relay the question git asks, which means
+# using git's code, not a second copy of it.
+git-credential-nostr = { path = "../git-credential-nostr" }
+
 # Platform app-data dir resolution — locates the desktop app's
 # channel-templates.json store for `channels create --template`
 dirs = "6"

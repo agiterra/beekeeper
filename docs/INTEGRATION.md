@@ -124,25 +124,46 @@ Two commands report on it, and the split is deliberate:
   exists*: a config naming a helper that has been moved or deleted reads as set
   up and fails only at push time. It reports `configured`, never `ready` —
   nothing local can know whether the relay accepts the key.
-- **`bee git check`** — asks the relay. Reports relay membership and, for each
-  visible repository, whether this key can read it over git. It loads the key
-  the way the *helper* does (`$NOSTR_PRIVATE_KEY`, else `nostr.keyfile`), not
-  from `BUZZ_PRIVATE_KEY`, so the verdict is about the identity git presents.
+- **`bee git check`** — asks the relay, over the transport git uses. It makes a
+  real `GET <repo>/info/refs?service=git-upload-pack` (add `--push` for
+  `git-receive-pack`, the request `git push` makes first), signed by
+  `git-credential-nostr`'s own key resolution, attestation reader and signing
+  function (`crates/git-credential-nostr/src/lib.rs`: `resolve_key`,
+  `resolve_auth_tag`, `repo_root_url`, `authorization_header`), so it cannot
+  drift from what git sends. It reports the key it used and where it came from,
+  the attestation state (present / absent / invalid), and the transport verdict:
+  **accepted**, or **denied** with the relay's own non-explanation. Exit 0 when
+  the transport accepts, 3 when it denies — the code matches what git will do.
 
-The membership answer comes from probing a repo path that cannot exist: the
-relay checks NIP-98 and membership in the request extractor, before resolving
-the repository, so 403 means "not a member" and 404 means "member, no such
-repo". Per-repo access is reported as `no-grant-or-missing` when the answer is
-404, because the relay returns 404 for both a missing repo and a denied read —
-on purpose, so membership is not probeable — and pretending to tell them apart
-would be a guess.
+Which repository it probes: a remote in the current checkout that points at the
+relay, when there is one — that is the repository git would actually contact.
+Otherwise it probes a repo path that **cannot exist**, which isolates the
+authorization gate: the relay checks NIP-98 and membership in the request
+extractor, before resolving the repository, so 403 means the key was refused at
+the gate and 404 means it got through and only the repo was missing. On a *real*
+repository a 404 is not acceptance — the relay answers 404 for both a missing
+repo and a denied read, on purpose, so membership is not probeable — and the
+check says so instead of choosing one.
+
+Two gates, not one. The relay's HTTP membership path (`POST /query` and the rest
+of the JSON surface, `api/mod.rs` `enforce_relay_membership`) is a different code
+path from the git transport's, and they can disagree: on 2026-08-29 a seat's
+`bee git check` failed with `relay_membership_required` while `git push` from the
+same key succeeded seconds later. The HTTP answer is now printed as a secondary
+line, labelled `relay HTTP membership:`, and never decides the exit code.
+
+**No remedy ever tells you to unset `BUZZ_AUTH_TAG`.** That was the old advice on
+a 403, and following it would have made the seat drop the owner attestation its
+push depends on. A denial with an attestation present says to ask the operator to
+confirm the seat's *owner* is a relay member, and to keep the attestation.
 
 #### Seats push on their owner's grant
 
 A hired seat signs git as **itself**, never as its operator — the ACP harness
 injects `NOSTR_PRIVATE_KEY` into the managed subprocess, and
 `git-credential-nostr` prefers it over `nostr.keyfile`
-(`crates/git-credential-nostr/src/lib.rs`, `load_key`). That fence is the point:
+(`crates/git-credential-nostr/src/lib.rs`, `resolve_key`/`choose_key`, which
+`bee git status` and `bee git check` call rather than reimplement). That fence is the point:
 a seat must never be able to commit or push as the human. But a seat's own key
 holds no membership and no roster row, so on its own it can read nothing.
 
