@@ -10,6 +10,24 @@
  */
 
 /**
+ * What an `edit`-kind tool call touched, as the producer published it.
+ *
+ * Mirrors `buzz_core::coding_session_payload::tool_edit_payload`. Every field
+ * optional and every reader defensive: an absent `paths` means the producer
+ * reported no file, which is not the same as the call touching none.
+ */
+export type CodingSessionToolEditPayloadV1 = {
+  paths?: string[];
+  changes?: {
+    path?: string;
+    oldText?: string;
+    newText?: string;
+    truncated?: boolean;
+  }[];
+  truncated?: boolean;
+};
+
+/**
  * A `kind`-discriminated classification of the transcript entry union, or a
  * quarantine record. Unknown kinds are legal and must degrade, never throw.
  */
@@ -58,6 +76,18 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
         toolKind?: string;
         toolId?: string;
         input?: unknown;
+        /**
+         * What an `edit`-kind call touched, from ACP's `locations` and its
+         * `diff` content blocks. Additive and optional; a producer from before
+         * it existed omits it, and so does any call that reported neither.
+         *
+         * `paths` is deduplicated. Each `changes` entry carries the adapter's
+         * own `oldText`/`newText`, each key absent rather than `""` when the
+         * adapter sent none. Bounded: `truncated` on a change means its texts
+         * were shortened, `truncated` on the payload means whole changes were
+         * dropped. Truncation is never silent.
+         */
+        edit?: CodingSessionToolEditPayloadV1;
       };
     }
   | {
@@ -66,6 +96,17 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       toolName?: string;
       /** The opening call's ACP discriminant, carried onto its result. */
       toolKind?: string;
+      /**
+       * The arguments the adapter finished streaming after the call opened.
+       *
+       * Additive: claude-agent-acp opens an edit with an empty `rawInput` and
+       * fills it in on a later update, so a result that omits this is a
+       * producer that never re-read those frames — not a call with no
+       * arguments.
+       */
+      input?: unknown;
+      /** The same edit payload the opening call carries, as finally known. */
+      edit?: CodingSessionToolEditPayloadV1;
       content?: unknown;
       isError?: boolean;
     }

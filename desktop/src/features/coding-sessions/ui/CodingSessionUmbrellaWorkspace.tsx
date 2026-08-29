@@ -34,7 +34,7 @@ import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSes
 import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
-import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import {
   codingSessionUmbrellaGenerationLabel,
   codingSessionWireWorkspaceStatus,
@@ -197,9 +197,9 @@ export function UmbrellaCodingSessionWorkspace({
     React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
   // Observed changes across every execution the umbrella narrative renders —
   // prior generations included, in the same order the timeline ingests them.
-  const changedFiles = React.useMemo(
+  const observedChanges = React.useMemo(
     () =>
-      deriveCodingSessionChangedFiles(
+      deriveCodingSessionObservedChanges(
         umbrella.executions.flatMap((execution) =>
           [...execution.priorGenerations, execution.activeGeneration].flatMap(
             (record) => record.transcript,
@@ -208,6 +208,7 @@ export function UmbrellaCodingSessionWorkspace({
       ),
     [umbrella.executions],
   );
+  const changedFiles = observedChanges.files;
   // Same item set as the timeline renders, so every operator who drove a turn
   // anywhere in the umbrella is resolvable in one lookup.
   const umbrellaTranscript = React.useMemo(
@@ -240,10 +241,20 @@ export function UmbrellaCodingSessionWorkspace({
         id: "changes",
         label: "Observed changes",
         count: changedFiles.length,
-        content: <CodingSessionChangesRail files={changedFiles} />,
+        content: (
+          <CodingSessionChangesRail
+            files={changedFiles}
+            unreportedEditCount={observedChanges.unreportedEditCount}
+          />
+        ),
       },
     ],
-    [changedFiles, umbrella, workspaceActorName],
+    [
+      changedFiles,
+      observedChanges.unreportedEditCount,
+      umbrella,
+      workspaceActorName,
+    ],
   );
   const surfaceIds = React.useMemo(
     () => surfaces.map((surfaceEntry) => surfaceEntry.id),

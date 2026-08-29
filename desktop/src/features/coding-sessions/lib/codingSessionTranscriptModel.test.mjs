@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   deriveCodingSessionChangedFiles,
+  deriveCodingSessionObservedChanges,
   deriveCodingSessionTranscriptModel,
   formatCodingSessionDuration,
   isCodingSessionTranscriptError,
@@ -664,6 +665,89 @@ test("keeps a changed filename but omits partial stats when any edit is uncounte
       diffs: [],
     },
   ]);
+});
+
+test("counts an ACP edit the name classifier does not recognize", () => {
+  // claude-agent-acp calls its editor `Edit`, which no developer-harness name
+  // rule matches, so the descriptor lands on "generic". ACP's own `edit`
+  // discriminant is the authoritative signal and the fold reads it.
+  const edit = tool({ id: "edit", renderClass: "generic" });
+  edit.descriptor = {
+    renderClass: "generic",
+    label: "Tool",
+    preview: null,
+    object: null,
+  };
+  edit.toolKind = "edit";
+  edit.args = { file_path: "src/app.ts" };
+  edit.result = "";
+
+  assert.deepEqual(deriveCodingSessionChangedFiles([edit]), [
+    {
+      path: "src/app.ts",
+      filename: "app.ts",
+      additions: null,
+      deletions: null,
+      editCount: 1,
+      diffs: [],
+    },
+  ]);
+});
+
+test("names a file from the provider's published edit locations", () => {
+  const edit = tool({ id: "edit", renderClass: "generic" });
+  edit.descriptor = {
+    renderClass: "generic",
+    label: "Tool",
+    preview: null,
+    object: null,
+  };
+  edit.toolKind = "edit";
+  edit.args = {};
+  edit.editPaths = ["desktop/src/App.tsx"];
+  edit.result = "";
+
+  const observed = deriveCodingSessionObservedChanges([edit]);
+  assert.equal(observed.unreportedEditCount, 0);
+  assert.deepEqual(observed.files, [
+    {
+      path: "desktop/src/App.tsx",
+      filename: "App.tsx",
+      additions: null,
+      deletions: null,
+      editCount: 1,
+      diffs: [],
+    },
+  ]);
+});
+
+test("counts edits that named no file instead of reporting none", () => {
+  // The 2026-08-29 walk: 19 signed edits, every one with an empty payload. The
+  // surface said "No observed changes yet" over all of them.
+  const items = [0, 1, 2].map((index) => {
+    const edit = tool({ id: `edit-${index}`, renderClass: "generic" });
+    edit.descriptor = {
+      renderClass: "generic",
+      label: "Tool",
+      preview: null,
+      object: null,
+    };
+    edit.toolKind = "edit";
+    edit.args = {};
+    edit.result = "";
+    return edit;
+  });
+
+  const observed = deriveCodingSessionObservedChanges(items);
+  assert.deepEqual(observed.files, []);
+  assert.equal(observed.unreportedEditCount, 3);
+});
+
+test("reports no unnamed edits when there were no edits at all", () => {
+  const shell = tool({ id: "shell" });
+  const observed = deriveCodingSessionObservedChanges([shell]);
+  assert.deepEqual(observed.files, []);
+  assert.equal(observed.unreportedEditCount, 0);
 });
 
 test("failed Turn result produces a failed completion and keeps its error visible", () => {

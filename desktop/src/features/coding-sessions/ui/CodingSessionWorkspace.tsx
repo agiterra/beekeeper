@@ -75,7 +75,7 @@ import {
   useCodingSessionSurfaceHostState,
   type CodingSessionSurfaceDescriptor,
 } from "./CodingSessionSurfaceHost";
-import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 import { useCodingSessionClosureDialog } from "../hooks/useCodingSessionClosureDialog";
@@ -494,10 +494,11 @@ function ReadyCodingSessionWorkspace({
     () => deriveCodingSessionContextWindow(session.transcript),
     [session.transcript],
   );
-  const changedFiles = React.useMemo(
-    () => deriveCodingSessionChangedFiles(session.transcript),
+  const observedChanges = React.useMemo(
+    () => deriveCodingSessionObservedChanges(session.transcript),
     [session.transcript],
   );
+  const changedFiles = observedChanges.files;
   // Surfaces offered by current data: Observed changes always applies to a
   // transcript; Agents only when the umbrella model actually provides
   // participants (it lists one per signed execution) — never an empty tab.
@@ -517,10 +518,15 @@ function ReadyCodingSessionWorkspace({
         id: "changes",
         label: "Observed changes",
         count: changedFiles.length,
-        content: <CodingSessionChangesRail files={changedFiles} />,
+        content: (
+          <CodingSessionChangesRail
+            files={changedFiles}
+            unreportedEditCount={observedChanges.unreportedEditCount}
+          />
+        ),
       },
     ],
-    [changedFiles, umbrella],
+    [changedFiles, observedChanges.unreportedEditCount, umbrella],
   );
   const surfaceIds = React.useMemo(
     () => surfaces.map((surfaceEntry) => surfaceEntry.id),
