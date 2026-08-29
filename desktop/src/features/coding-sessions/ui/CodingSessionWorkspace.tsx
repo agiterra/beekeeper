@@ -572,6 +572,18 @@ function ReadyCodingSessionWorkspace({
         <CodingSessionHeader
           channelName={channelName}
           compact={isNarrow}
+          // Without this the popover's founder row would read `unresolved`
+          // directly above the `Founded by <name>` line this same view
+          // renders — one screen, two answers.
+          founderDetails={
+            founderPubkey ? (
+              <CodingSessionFounderLine
+                founderPubkey={founderPubkey}
+                genesisRef={genesisRef}
+                variant="label"
+              />
+            ) : undefined
+          }
           generationLabel={session.label}
           seat={seatLabel ? { label: seatLabel } : null}
           isExporting={isExporting}
