@@ -381,12 +381,50 @@ pub async fn hook_policy_check(
         }
     };
 
+    // The pusher's own NIP-OA owner, if it is a managed seat. The hook
+    // callback carries only the pusher pubkey — it cannot see this push's
+    // attestation — so the mapping the git request extractor materialized from
+    // that attestation is what a seat's grant is resolved through. A seat signs
+    // git as itself (the fence forbids signing as its operator), so without
+    // this it holds no roster row anywhere and every hired seat's push is
+    // refused after the read gate already let it in.
+    let seat_owner_bytes = match state
+        .db
+        .get_agent_channel_policy(community, &pusher_bytes)
+        .await
+    {
+        Ok(Some((_, owner))) => owner,
+        Ok(None) => None,
+        Err(error) => {
+            error!(
+                repo = %req.repo_id,
+                error = %error,
+                "hook callback: seat owner lookup failed"
+            );
+            return (StatusCode::FORBIDDEN, "internal error").into_response();
+        }
+    };
+    // A seat of the repo owner carries the repo owner's authority, exactly as
+    // the announcement author does.
+    let pushes_for_repo_owner = seat_owner_bytes.as_deref() == Some(owner_bytes.as_slice());
+
     // The repo's own `["project", …]` back-reference, if any. Read from the
     // announcement rather than the `git_repo_names.project_ref` projection so
     // the gate agrees with the signed event even if the projection is stale.
     let project_ref = buzz_core::kind::repo_project_ref(&repo_event.event);
 
-    let git_role = if is_repo_owner || is_managed_agent_owner {
+    // Principals a grant may be found under: the signing key, then the owner
+    // it is attested to. Inheritance, never a bypass — an owner with no grant
+    // grants nothing, and the denial copy is unchanged.
+    let principals: Vec<&[u8]> = std::iter::once(pusher_bytes.as_slice())
+        .chain(
+            seat_owner_bytes
+                .as_deref()
+                .filter(|owner| *owner != pusher_bytes.as_slice()),
+        )
+        .collect();
+
+    let git_role = if is_repo_owner || is_managed_agent_owner || pushes_for_repo_owner {
         MemberRole::Owner
     } else {
         // Two ACLs, both additive: the project's curated roster and the bound
@@ -394,49 +432,63 @@ pub async fn hook_policy_check(
         // permissive grant — a channel Admin must not be demoted for also
         // being a project Collaborator, nor a project Owner for also being a
         // channel Guest. Neither granting is what denies.
-        let project_role = match &project_ref {
-            None => None,
-            Some(coordinate) => match state
-                .db
-                .get_project_role_by_coordinate(community, coordinate, &pusher_bytes)
-                .await
-            {
-                Ok(role) => role.and_then(git_role_for_project_role),
-                Err(e) => {
-                    error!(repo = %req.repo_id, error = %e, "hook callback: project role lookup failed");
-                    return (StatusCode::FORBIDDEN, "internal error").into_response();
-                }
-            },
-        };
-
-        let channel_role = match channel_id {
-            None => None,
-            Some(ch_id) => match state
-                .db
-                .get_member_role(community, ch_id, &pusher_bytes)
-                .await
-            {
-                Ok(Some(role_str)) => match role_str.parse::<MemberRole>() {
-                    // Bots are intentionally added to channels by members and
-                    // admins; for git push they are ordinary members.
-                    // Protection rules still apply. Bot is a designation
-                    // (what it is), not a permission tier (what it can do).
-                    // Normalized here rather than after ranking so an
-                    // out-of-hierarchy Bot never loses a max() it should win.
-                    Ok(MemberRole::Bot) => Some(MemberRole::Member),
-                    Ok(role) => Some(role),
-                    Err(_) => {
-                        error!(role = %role_str, "hook callback: unknown role");
+        let mut project_role = None;
+        if let Some(coordinate) = &project_ref {
+            for principal in &principals {
+                match state
+                    .db
+                    .get_project_role_by_coordinate(community, coordinate, principal)
+                    .await
+                {
+                    Ok(role) => {
+                        if let Some(resolved) = role.and_then(git_role_for_project_role) {
+                            project_role = Some(match project_role {
+                                Some(current) => max_git_role(current, resolved),
+                                None => resolved,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        error!(repo = %req.repo_id, error = %e, "hook callback: project role lookup failed");
                         return (StatusCode::FORBIDDEN, "internal error").into_response();
                     }
-                },
-                Ok(None) => None,
-                Err(e) => {
-                    error!(error = %e, "hook callback: role lookup failed");
-                    return (StatusCode::FORBIDDEN, "internal error").into_response();
                 }
-            },
-        };
+            }
+        }
+
+        let mut channel_role = None;
+        if let Some(ch_id) = channel_id {
+            for principal in &principals {
+                let resolved = match state.db.get_member_role(community, ch_id, principal).await {
+                    Ok(Some(role_str)) => match role_str.parse::<MemberRole>() {
+                        // Bots are intentionally added to channels by members
+                        // and admins; for git push they are ordinary members.
+                        // Protection rules still apply. Bot is a designation
+                        // (what it is), not a permission tier (what it can do).
+                        // Normalized here rather than after ranking so an
+                        // out-of-hierarchy Bot never loses a max() it should
+                        // win.
+                        Ok(MemberRole::Bot) => Some(MemberRole::Member),
+                        Ok(role) => Some(role),
+                        Err(_) => {
+                            error!(role = %role_str, "hook callback: unknown role");
+                            return (StatusCode::FORBIDDEN, "internal error").into_response();
+                        }
+                    },
+                    Ok(None) => None,
+                    Err(e) => {
+                        error!(error = %e, "hook callback: role lookup failed");
+                        return (StatusCode::FORBIDDEN, "internal error").into_response();
+                    }
+                };
+                if let Some(resolved) = resolved {
+                    channel_role = Some(match channel_role {
+                        Some(current) => max_git_role(current, resolved),
+                        None => resolved,
+                    });
+                }
+            }
+        }
 
         match (project_role, channel_role) {
             (Some(p), Some(c)) => max_git_role(p, c),
@@ -1364,6 +1416,180 @@ printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "{secret}" -hex 2>/dev/nu
             status,
             StatusCode::OK,
             "a project owner must not be demoted by also being a channel guest (body: {body})"
+        );
+    }
+
+    // ── NIP-OA seats (a hired seat pushing on its owner's grant) ─────────
+
+    /// Register `agent` as a managed seat of `owner`, the way the git request
+    /// extractor does when a push carries a verified NIP-OA attestation.
+    async fn seat_of(
+        state: &Arc<AppState>,
+        community: buzz_core::CommunityId,
+        agent: &nostr::Keys,
+        owner: &nostr::Keys,
+    ) {
+        for pk in [agent.public_key(), owner.public_key()] {
+            state
+                .db
+                .ensure_user(community, &pk.to_bytes())
+                .await
+                .expect("user");
+        }
+        assert!(
+            state
+                .db
+                .set_agent_owner(
+                    community,
+                    &agent.public_key().to_bytes(),
+                    &owner.public_key().to_bytes(),
+                )
+                .await
+                .expect("set agent owner"),
+            "fixture: the seat must be newly attested"
+        );
+    }
+
+    /// A hired seat signs git as itself and holds no roster row of its own.
+    /// Its push must resolve through the owner it is attested to — otherwise
+    /// the read gate lets the seat in and the pre-receive hook throws it out.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_grants_a_seat_its_owners_project_role() {
+        let f = project_fixture("public").await;
+        let seat = nostr::Keys::generate();
+
+        // Unattested, the seat is a stranger.
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &seat.public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, "not a project member");
+
+        // Attested to a collaborator, it pushes at the collaborator's tier.
+        seat_of(&f.state, f.community, &seat, &f.collaborator).await;
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &seat.public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a seat attested to a collaborator must be able to push (body: {body})"
+        );
+    }
+
+    /// The seat inherits its owner's *tier*, not merely permission to push.
+    /// A viewer's seat pushes nothing; an owner's seat force-pushes.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_gives_a_seat_exactly_its_owners_tier() {
+        let f = project_fixture("public").await;
+
+        let viewer_seat = nostr::Keys::generate();
+        seat_of(&f.state, f.community, &viewer_seat, &f.viewer).await;
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &viewer_seat.public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a viewer's seat is read-only"
+        );
+        assert_eq!(body, "not a project member");
+
+        // A collaborator maps to Member, and force-push needs Admin, so a
+        // collaborator's seat must be refused the force-push too.
+        let collab_seat = nostr::Keys::generate();
+        seat_of(&f.state, f.community, &collab_seat, &f.collaborator).await;
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &collab_seat.public_key().to_hex(),
+            force_push_main(),
+        )
+        .await;
+        let (status, _) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a collaborator's seat must not force-push; the tier travels with the grant"
+        );
+
+        // The project creator holds Owner, so their seat force-pushes.
+        let owner_seat = nostr::Keys::generate();
+        seat_of(&f.state, f.community, &owner_seat, &f.creator).await;
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &owner_seat.public_key().to_hex(),
+            force_push_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a project owner's seat must inherit force-push (body: {body})"
+        );
+    }
+
+    /// The repo owner's own seat gets the owner short-circuit, the same
+    /// authority the announcement author holds — that is the case that makes
+    /// `git push origin` work for a seat hired into its operator's checkout.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_gives_the_repo_owners_seat_owner_authority() {
+        let f = project_fixture("public").await;
+        let seat = nostr::Keys::generate();
+        seat_of(&f.state, f.community, &seat, &f.repo_owner).await;
+
+        // No channel binding and no project tag at all: only owner authority
+        // can carry this push, so it isolates the short-circuit.
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            vec![],
+            &seat.public_key().to_hex(),
+            force_push_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the repo owner's seat must push as the owner (body: {body})"
         );
     }
 

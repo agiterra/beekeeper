@@ -13,8 +13,18 @@ use nostr::{Keys, ToBech32};
 /// `env_vars` are added on top of the inherited environment.
 /// `NOSTR_PRIVATE_KEY` is always cleared first to prevent test pollution.
 fn run_helper(input: &str, env_vars: &[(&str, &str)]) -> std::process::Output {
+    run_helper_with_args(&[], input, env_vars)
+}
+
+/// Same as [`run_helper`] but passes `args` (e.g. `["erase"]`) to the binary.
+fn run_helper_with_args(
+    args: &[&str],
+    input: &str,
+    env_vars: &[(&str, &str)],
+) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_git-credential-nostr");
     let mut cmd = Command::new(bin);
+    cmd.args(args);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -353,4 +363,85 @@ fn bad_keyfile_permissions() {
         stderr.contains("insecure permissions"),
         "expected 'insecure permissions' in stderr, got:\n{stderr}"
     );
+}
+
+/// Git calls `erase` when it rejects the credential the previous `get`
+/// supplied. That is the only denial signal the credential protocol gives a
+/// helper, and a seat whose key the relay refuses otherwise sees git's generic
+/// failure with no hint that the key is what was denied.
+#[test]
+fn erase_names_the_denied_key_and_points_at_bee_git_check() {
+    let keys = Keys::generate();
+    let nsec = keys.secret_key().to_bech32().unwrap();
+    let out = run_helper_with_args(
+        &["erase"],
+        "protocol=https\nhost=relay.example.com\npath=git/owner/repo.git\n\n",
+        &[("NOSTR_PRIVATE_KEY", &nsec)],
+    );
+
+    assert!(out.status.success(), "erase must exit 0");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let short = &keys.public_key().to_hex()[..8];
+    assert!(
+        stderr.contains(&format!("relay denied this key ({short}")),
+        "erase must name the key git actually used, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("bee git check"),
+        "erase must point at `bee git check`, got:\n{stderr}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+        "erase must not write to stdout"
+    );
+}
+
+/// The denial line must never guess *why* the relay refused. The relay answers
+/// every git denial identically so membership cannot be probed; a reason
+/// printed here would be invented.
+#[test]
+fn erase_states_no_reason_for_the_denial() {
+    let nsec = fresh_nsec();
+    let out = run_helper_with_args(
+        &["erase"],
+        "protocol=https\nhost=relay.example.com\npath=git/owner/repo.git\n\n",
+        &[("NOSTR_PRIVATE_KEY", &nsec)],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for invented in ["not a member", "not found", "forbidden", "403", "404"] {
+        assert!(
+            !stderr.contains(invented),
+            "denial line must not claim a reason ({invented}), got:\n{stderr}"
+        );
+    }
+}
+
+/// No key configured means nothing of ours was presented, so nothing of ours
+/// was denied — stay silent rather than blame a key that was never used.
+#[test]
+fn erase_is_silent_when_no_key_is_configured() {
+    let out = run_helper_with_args(
+        &["erase"],
+        "protocol=https\nhost=relay.example.com\npath=git/owner/repo.git\n\n",
+        &[],
+    );
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "no key configured must produce no denial line"
+    );
+}
+
+/// `store` stays silent: it is git's success path, not a denial.
+#[test]
+fn store_stays_silent() {
+    let nsec = fresh_nsec();
+    let out = run_helper_with_args(
+        &["store"],
+        "protocol=https\nhost=relay.example.com\npath=git/owner/repo.git\n\n",
+        &[("NOSTR_PRIVATE_KEY", &nsec)],
+    );
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).trim().is_empty());
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
 }

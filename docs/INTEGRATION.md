@@ -137,6 +137,49 @@ repo". Per-repo access is reported as `no-grant-or-missing` when the answer is
 on purpose, so membership is not probeable — and pretending to tell them apart
 would be a guess.
 
+#### Seats push on their owner's grant
+
+A hired seat signs git as **itself**, never as its operator — the ACP harness
+injects `NOSTR_PRIVATE_KEY` into the managed subprocess, and
+`git-credential-nostr` prefers it over `nostr.keyfile`
+(`crates/git-credential-nostr/src/lib.rs`, `load_key`). That fence is the point:
+a seat must never be able to commit or push as the human. But a seat's own key
+holds no membership and no roster row, so on its own it can read nothing.
+
+What carries it is the **NIP-OA owner attestation** the harness also injects as
+`BUZZ_AUTH_TAG` — `["auth", <owner>, <conditions>, <sig>]`, signed by the owner
+over the agent key. Git's credential protocol can return an `Authorization`
+value but cannot add a separate header, so the helper attaches the tag to the
+**signed NIP-98 event itself**, where the relay reads it
+(`crates/buzz-relay/src/api/git/transport.rs`, the `GitAuth` extractor). The
+relay then admits the seat exactly as the rest of its HTTP surface does:
+
+- the read gate resolves a grant for the signing key **and** for the verified
+  owner, taking either (`authorize_git_read`);
+- the pre-receive policy endpoint resolves the pusher's role for both
+  principals and takes the more permissive, and a seat of the repo owner
+  carries owner authority (`api/git/policy.rs`).
+
+This is inheritance, not a bypass. An owner with no grant admits nobody,
+removing the owner revokes every seat attested to them in the same request, and
+every denial is the same generic 404 as a nonexistent repo, so nothing about
+membership becomes probeable.
+
+Two identities in one shell is the trap. `bee git status` and `bee git check`
+both report the key git **will** present, resolved by the helper's own
+precedence, and name where it came from (`key_source`:
+`NOSTR_PRIVATE_KEY` or the key file path). When both sources hold keys and they
+are different identities, both commands print one sentence saying which one git
+signs with and which one is not used — reporting only the key file named the
+operator's identity in a shell where git signs as the seat.
+
+When git rejects a credential it calls the helper with `erase`; the helper
+answers with one line on stderr naming the refused key and pointing at
+`bee git check`. It never states a reason: the relay answers every git denial
+identically, so a reason printed there would be invented. A denial that never
+re-invokes the helper — a read-gate 404, which git reports as a missing
+repository — still prints nothing, so `bee git check` remains the way to ask.
+
 **A pasted public key is the failure mode to watch for.** `Keys::parse` accepts
 any 64 hex characters as a *secret* key, so pasting a pubkey hex into the key
 file yields a valid-looking, entirely different identity, and every local check
