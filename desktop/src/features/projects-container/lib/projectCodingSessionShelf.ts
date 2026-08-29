@@ -397,12 +397,16 @@ function umbrellaStatusPriority(status: CodingSessionWorkspaceStatus): number {
   switch (status.kind) {
     case "working":
       return 0;
-    case "idle":
+    // Blocked on a person still outranks quiet: it is the one resting state
+    // a reader can act on.
+    case "waiting":
       return 1;
-    case "ended":
+    case "idle":
       return 2;
-    case "unknown":
+    case "ended":
       return 3;
+    case "unknown":
+      return 4;
   }
 }
 
@@ -562,12 +566,14 @@ function statusPriority(status: CodingSessionWorkspaceStatus): number {
   switch (status.kind) {
     case "working":
       return 0;
-    case "unknown":
+    case "waiting":
       return 1;
-    case "idle":
+    case "unknown":
       return 2;
-    case "ended":
+    case "idle":
       return 3;
+    case "ended":
+      return 4;
   }
 }
 

@@ -234,5 +234,7 @@ function statusDotClass(status: CodingSessionWorkspaceStatus): string {
   if (status.kind === "idle" || status.kind === "ended") {
     return "bg-muted-foreground/45";
   }
+  // A seat blocked on a person is not attention-red and not resting-grey.
+  if (status.kind === "waiting") return "bg-amber-500";
   return status.attention ? "bg-destructive" : "bg-amber-500";
 }

@@ -7,12 +7,17 @@ import {
   formatCodingSessionRuntimeLabel,
 } from "@/features/coding-sessions/lib/codingSessionLabels";
 import {
+  codingSessionDispositionWord,
   listCodingSessionUmbrellaParticipants,
   type CodingSessionActorNameResolver,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import { deriveCodingSessionExecutionStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import { UNKNOWN_CODING_SESSION_REACHABILITY } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import type {
   CodingSessionExecution,
   CodingSessionUmbrellaRecord,
+  CodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { cn } from "@/shared/lib/cn";
 
@@ -26,6 +31,8 @@ type ExecutionRailTab = "overview" | `execution:${string}`;
  */
 export function CodingSessionExecutionRail({
   actorNames,
+  canSteer = false,
+  resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
   umbrella,
 }: {
   /**
@@ -34,6 +41,17 @@ export function CodingSessionExecutionRail({
    * never by a name it had to invent.
    */
   actorNames?: CodingSessionActorNameResolver;
+  /**
+   * Whether this viewer may prompt executions. It chooses which of W1's two
+   * waiting strings a waiting seat reads, and nothing else.
+   */
+  canSteer?: boolean;
+  /**
+   * Reachability for this channel, threaded down from the surface that owns
+   * the coordination read. Without it every seat is `{known:false}` — which
+   * demotes nothing, because absence of evidence is not evidence.
+   */
+  resolveReachability?: CodingSessionReachabilityResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
@@ -43,6 +61,21 @@ export function CodingSessionExecutionRail({
       ),
     [actorNames, umbrella],
   );
+  // W1 once per execution: the rows, the detail card and the footer tally
+  // all read this map, so the panel cannot answer the same question twice.
+  const statuses = React.useMemo(() => {
+    const resolved = new Map<string, CodingSessionWorkspaceStatus>();
+    for (const execution of umbrella.executions) {
+      resolved.set(
+        execution.executionKey,
+        deriveCodingSessionExecutionStatus(
+          execution,
+          resolveReachability(execution.activeGeneration.commandTarget),
+        ),
+      );
+    }
+    return resolved;
+  }, [resolveReachability, umbrella]);
   const [activeTab, setActiveTab] =
     React.useState<ExecutionRailTab>("overview");
   const panelId = React.useId();
@@ -126,19 +159,27 @@ export function CodingSessionExecutionRail({
         {selectedExecution ? (
           <ExecutionDetail
             actorNames={actorNames}
+            canSteer={canSteer}
             execution={selectedExecution}
             panelId={`${panelId}-${selectedExecution.executionKey}`}
+            status={statuses.get(selectedExecution.executionKey)}
           />
         ) : (
           <Overview
             actorNames={actorNames}
+            canSteer={canSteer}
             executions={umbrella.executions}
             panelId={`${panelId}-overview`}
+            statuses={statuses}
           />
         )}
       </div>
 
-      <ExecutionRailFooter executions={umbrella.executions} />
+      <ExecutionRailFooter
+        canSteer={canSteer}
+        executions={umbrella.executions}
+        statuses={statuses}
+      />
     </div>
   );
 }
@@ -181,12 +222,16 @@ function ExecutionTab({
 
 function Overview({
   actorNames,
+  canSteer,
   executions,
   panelId,
+  statuses,
 }: {
   actorNames?: CodingSessionActorNameResolver;
+  canSteer: boolean;
   executions: CodingSessionExecution[];
   panelId: string;
+  statuses: ReadonlyMap<string, CodingSessionWorkspaceStatus>;
 }) {
   return (
     <section aria-label="Execution overview" id={panelId} role="tabpanel">
@@ -197,8 +242,10 @@ function Overview({
         {executions.map((execution) => (
           <ExecutionCard
             actorNames={actorNames}
+            canSteer={canSteer}
             execution={execution}
             key={execution.executionKey}
+            status={statuses.get(execution.executionKey)}
           />
         ))}
       </div>
@@ -208,12 +255,16 @@ function Overview({
 
 function ExecutionDetail({
   actorNames,
+  canSteer,
   execution,
   panelId,
+  status,
 }: {
   actorNames?: CodingSessionActorNameResolver;
+  canSteer: boolean;
   execution: CodingSessionExecution;
   panelId: string;
+  status: CodingSessionWorkspaceStatus | undefined;
 }) {
   const record = execution.activeGeneration;
   const latest = latestActivity(record.transcript);
@@ -223,7 +274,12 @@ function ExecutionDetail({
       id={panelId}
       role="tabpanel"
     >
-      <ExecutionCard actorNames={actorNames} execution={execution} />
+      <ExecutionCard
+        actorNames={actorNames}
+        canSteer={canSteer}
+        execution={execution}
+        status={status}
+      />
       <div className="mt-4 border-t border-border/60 pt-4">
         <p className="text-3xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
           Latest activity
@@ -256,13 +312,21 @@ function ExecutionDetail({
 
 function ExecutionCard({
   actorNames,
+  canSteer,
   execution,
+  status,
 }: {
   actorNames?: CodingSessionActorNameResolver;
+  canSteer: boolean;
   execution: CodingSessionExecution;
+  status: CodingSessionWorkspaceStatus | undefined;
 }) {
   const record = execution.activeGeneration;
-  const status = executionStatus(record.status);
+  const resolved = status ?? {
+    kind: "unknown" as const,
+    label: "Status unknown" as const,
+  };
+  const word = codingSessionDispositionWord(resolved, canSteer);
   return (
     <article className="py-3" data-testid="coding-session-execution-card">
       <div className="flex items-start gap-2.5">
@@ -274,8 +338,14 @@ function ExecutionCard({
             <p className="min-w-0 flex-1 truncate text-xs font-semibold">
               {executionName(execution, actorNames)}
             </p>
-            <span className={cn("shrink-0 text-2xs font-medium", status.tone)}>
-              {status.label}
+            <span
+              className={cn(
+                "shrink-0 text-2xs font-medium",
+                executionStatusTone(resolved),
+              )}
+              data-testid="coding-session-execution-status"
+            >
+              {word}
             </span>
           </div>
           <p className="mt-0.5 truncate text-2xs text-muted-foreground">
@@ -299,24 +369,61 @@ function ExecutionCard({
   );
 }
 
+/**
+ * The footer tally, in W1's own words.
+ *
+ * It used to recount the raw 44223 status — a second reader of the same
+ * question, which is how `1 working` came to sit under a strip reading `no
+ * provider answering` (WALK-2026-08-29 finding 1). It now tallies the very
+ * statuses the rows above it render, so the row and the count cannot
+ * disagree, and `All idle` is gone with them: a tally of the words is never
+ * a claim the rows contradict.
+ */
 function ExecutionRailFooter({
+  canSteer,
   executions,
+  statuses,
 }: {
+  canSteer: boolean;
   executions: CodingSessionExecution[];
+  statuses: ReadonlyMap<string, CodingSessionWorkspaceStatus>;
 }) {
-  const working = executions.filter((execution) =>
-    ["running", "starting"].includes(execution.activeGeneration.status),
-  ).length;
-  const waiting = executions.filter(
-    (execution) => execution.activeGeneration.status === "waiting_for_input",
-  ).length;
+  const tally = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const execution of executions) {
+      const status = statuses.get(execution.executionKey);
+      if (status === undefined) continue;
+      const word = codingSessionDispositionWord(status, canSteer);
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort(([left], [right]) => footerWordRank(left) - footerWordRank(right))
+      .map(([word, count]) => `${count} ${word}`)
+      .join(" · ");
+  }, [canSteer, executions, statuses]);
   return (
-    <div className="flex shrink-0 items-center gap-2 border-t border-border/60 px-4 py-3 text-2xs text-muted-foreground">
+    <div
+      className="flex shrink-0 items-center gap-2 border-t border-border/60 px-4 py-3 text-2xs text-muted-foreground"
+      data-testid="coding-session-execution-rail-footer"
+    >
       <Users className="size-3.5" />
-      <span>{working > 0 ? `${working} working` : "All idle"}</span>
-      {waiting > 0 ? <span>· {waiting} waiting</span> : null}
+      <span>{tally}</span>
     </div>
   );
+}
+
+/** Activity first, then the states a person can act on, then the rest. */
+const FOOTER_WORD_ORDER = [
+  "live",
+  "waiting for you",
+  "waiting for an operator",
+  "idle",
+  "released",
+];
+
+function footerWordRank(word: string): number {
+  const rank = FOOTER_WORD_ORDER.indexOf(word);
+  return rank === -1 ? FOOTER_WORD_ORDER.length : rank;
 }
 
 function ExecutionFact({ label, value }: { label: string; value: string }) {
@@ -394,27 +501,20 @@ function disambiguatedExecutionLabel(
   return `${base} ${matches.indexOf(participant) + 1}`;
 }
 
-/** Map a signed execution status to its rail label. Exported for test. */
-export function executionStatus(status: string): {
-  label: string;
-  tone: string;
-} {
-  if (status === "running" || status === "starting") {
-    return { label: "Working", tone: "text-blue-500" };
-  }
-  if (status === "waiting_for_input") {
-    return { label: "Waiting", tone: "text-amber-500" };
-  }
-  // `idle` is the provider's most common resting status — omitting it here
-  // rendered every waiting execution as "Status unknown" while the header
-  // beside it read Idle.
-  if (["idle", "completed", "stopped", "interrupted"].includes(status)) {
-    return { label: "Idle", tone: "text-muted-foreground" };
-  }
-  if (status === "failed" || status === "disconnected") {
-    return { label: "Needs attention", tone: "text-destructive" };
-  }
-  return { label: "Status unknown", tone: "text-muted-foreground" };
+/**
+ * Colour for a resolved W1 status. Exported for test.
+ *
+ * The word itself comes from `codingSessionDispositionWord`; this only says
+ * how loudly to print it. An `unknown` a signed lifecycle put there — or that
+ * the lease demoted — is attention-worthy; a merely unread one is not.
+ */
+export function executionStatusTone(
+  status: CodingSessionWorkspaceStatus,
+): string {
+  if (status.kind === "working") return "text-blue-500";
+  if (status.kind === "waiting") return "text-amber-500";
+  if (status.kind === "unknown" && status.attention) return "text-destructive";
+  return "text-muted-foreground";
 }
 
 function latestActivity(

@@ -179,6 +179,15 @@ export type GlobalCodingSessionCatalogSnapshot = {
 
 export type CodingSessionWorkspaceStatus =
   | { kind: "working"; label: "Working" }
+  /**
+   * Blocked on a person, per the provider's signed `waiting_for_input`.
+   *
+   * Its own kind rather than a shade of `idle` because it is the one resting
+   * state that is actionable: a seat nobody answers is waiting forever. The
+   * wire has treated it as its own tier since `deriveUmbrellaStatus`; the
+   * seat-level vocabulary was the odd one out (SURFACES §2a).
+   */
+  | { kind: "waiting"; label: "Waiting" }
   | { kind: "idle"; label: "Idle" }
   | { kind: "ended"; label: "Ended" }
   /**

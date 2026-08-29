@@ -53,11 +53,21 @@ const CODEX_TARGET = {
   generation: 1,
 };
 
+/**
+ * One execution's signed 44223 metadata.
+ *
+ * `status` is a parameter because this fixture used to sign `completed` for
+ * every execution while asserting the surfaces read `1 working` — it encoded
+ * WALK-2026-08-29 finding 2 (the strip inferred `live` from an unterminated
+ * transcript and printed it over the signed word). The seat this spec calls
+ * working now says so on the wire.
+ */
 function metadataEvent(
   target: typeof CLAUDE_TARGET,
   runtime: string,
   model: string,
   createdAt: number,
+  status: string,
 ): RelayEvent {
   return finalizeEvent(
     {
@@ -79,7 +89,7 @@ function metadataEvent(
         provider: target.driver,
         runtime,
         model,
-        status: "completed",
+        status,
         branch: null,
         capabilities: {
           threadTurnStart: true,
@@ -129,7 +139,16 @@ function transcriptEvent(
 
 function seededEvents(): RelayEvent[] {
   return [
-    metadataEvent(CLAUDE_TARGET, "claude-agent-acp", "sonnet", BASE_CREATED_AT),
+    metadataEvent(
+      CLAUDE_TARGET,
+      "claude-agent-acp",
+      "sonnet",
+      BASE_CREATED_AT,
+      // The seat whose plan the active-work dock shows: signed `running`, and
+      // its turn has no terminator, so W1 narrows it to live rather than
+      // inventing that word from the transcript alone.
+      "running",
+    ),
     transcriptEvent(
       CLAUDE_TARGET,
       1,
@@ -200,6 +219,7 @@ function seededEvents(): RelayEvent[] {
       "codex-acp",
       "gpt-5.6-sol",
       BASE_CREATED_AT + 10,
+      "completed",
     ),
     transcriptEvent(
       CODEX_TARGET,
@@ -322,6 +342,13 @@ test("merged work focuses in place and the shared surface remains responsive", a
   await expect(host).toContainText("All agents");
   await expect(host).toContainText("Claude");
   await expect(host).toContainText("Codex");
+  // D6 / walk finding 1: the rail rows, the strip and the footer tally are
+  // three readers of W1 and used to disagree in one frame. Claude is signed
+  // `running` with an open turn; Codex is signed `completed`. Nothing in the
+  // panel may say otherwise, and `All idle` is gone with the raw recount.
+  await expect(host).toContainText("1 live · 1 idle");
+  await expect(host).not.toContainText("All idle");
+  await expect(host).not.toContainText("Working");
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/03-agents-open.png` });
 

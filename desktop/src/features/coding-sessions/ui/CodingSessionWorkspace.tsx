@@ -510,7 +510,12 @@ function ReadyCodingSessionWorkspace({
               id: "agents",
               label: "Agents",
               count: umbrella.executions.length,
-              content: <CodingSessionExecutionRail umbrella={umbrella} />,
+              content: (
+                <CodingSessionExecutionRail
+                  resolveReachability={resolveReachability}
+                  umbrella={umbrella}
+                />
+              ),
             },
           ]
         : []),
@@ -526,7 +531,12 @@ function ReadyCodingSessionWorkspace({
         ),
       },
     ],
-    [changedFiles, observedChanges.unreportedEditCount, umbrella],
+    [
+      changedFiles,
+      observedChanges.unreportedEditCount,
+      resolveReachability,
+      umbrella,
+    ],
   );
   const surfaceIds = React.useMemo(
     () => surfaces.map((surfaceEntry) => surfaceEntry.id),

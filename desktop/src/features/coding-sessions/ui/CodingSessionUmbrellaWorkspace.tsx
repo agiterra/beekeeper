@@ -233,6 +233,7 @@ export function UmbrellaCodingSessionWorkspace({
         content: (
           <CodingSessionExecutionRail
             actorNames={workspaceActorName}
+            resolveReachability={resolveReachability}
             umbrella={umbrella}
           />
         ),
@@ -252,6 +253,7 @@ export function UmbrellaCodingSessionWorkspace({
     [
       changedFiles,
       observedChanges.unreportedEditCount,
+      resolveReachability,
       umbrella,
       workspaceActorName,
     ],
