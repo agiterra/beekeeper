@@ -30,6 +30,7 @@ use buzz_core::kind::{
 };
 
 use super::crew::*;
+use super::crew_cmds::{status_json_lines, status_row};
 use super::{decode_metadata, decode_receipts, decode_transcripts, diagnose_turns};
 use crate::error::CliError;
 
@@ -2610,4 +2611,150 @@ fn a_refused_hire_report_carries_the_remedy_for_its_code() {
         "detail {:?}",
         report.detail
     );
+}
+
+// ── `bee sessions status --json-lines` ───────────────────────────────────────
+//
+// NDJSON is for a consumer that reads the status stream a line at a time —
+// `grep`, `jq -c`, a `while read` loop. The single-document outputs make that
+// consumer buffer the whole array and index into it, so the guarantees worth
+// pinning here are structural: one line per execution, in order; the same
+// fields a `--format json` row carries; nothing at all when there is nothing
+// to say.
+
+/// Three executions in, three rows out, in the order `facts.executions` holds
+/// them. A line format whose lines do not correspond one-to-one with the
+/// executions is not a line format.
+#[test]
+fn json_lines_emits_one_row_per_execution() {
+    let executions = vec![
+        execution("s-1", 1, Some(&pk(ALICE)), Some("lead"), Some("u-1")),
+        execution("s-2", 1, Some(&pk(BOB)), Some("builder"), Some("u-1")),
+        execution("s-3", 2, None, None, None),
+    ];
+    let rows = status_json_lines(&executions, &[], &HashMap::new(), &[], &index_of(&[]));
+    assert_eq!(rows.len(), 3, "one row per execution");
+    let ids: Vec<String> = rows
+        .iter()
+        .map(|line| {
+            let row: Value = serde_json::from_str(line).expect("each line is a JSON document");
+            row["sessionId"].as_str().expect("sessionId").to_owned()
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["s-1", "s-2", "s-3"],
+        "rows keep their input order"
+    );
+    // NDJSON, not a pretty-printed array: no line may carry an embedded newline.
+    for line in &rows {
+        assert!(!line.contains('\n'), "line carries a newline: {line:?}");
+    }
+}
+
+/// Field parity with `--format json`, asserted rather than assumed: the same
+/// key set and the same values. `--json-lines` is a framing change, not a
+/// second row shape to keep in step by hand.
+#[test]
+fn json_lines_rows_carry_the_same_fields_as_the_json_format_rows() {
+    let executions = vec![execution(
+        "s-1",
+        2,
+        Some(&pk(ALICE)),
+        Some("builder"),
+        Some("u-1"),
+    )];
+    let founders = index_of(&[]);
+    let line = status_json_lines(&executions, &[], &HashMap::new(), &[], &founders)
+        .pop()
+        .expect("one row");
+    let from_line: Value = serde_json::from_str(&line).expect("the line is a JSON document");
+    let from_json = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &[],
+        &founders,
+        &crate::OutputFormat::Json,
+    );
+    let line_keys: Vec<&String> = from_line.as_object().expect("object").keys().collect();
+    let json_keys: Vec<&String> = from_json.as_object().expect("object").keys().collect();
+    assert_eq!(line_keys, json_keys, "identical key set");
+    assert_eq!(from_line, from_json, "identical values");
+}
+
+/// Zero executions is zero bytes on stdout — not `[]`, not an envelope, not a
+/// header. A consumer counting lines must be able to read "none" as none.
+#[test]
+fn json_lines_emits_nothing_when_there_are_no_executions() {
+    let rows = status_json_lines(&[], &[], &HashMap::new(), &[], &index_of(&[]));
+    assert!(rows.is_empty(), "no executions means no rows: {rows:?}");
+}
+
+/// `--json-lines` overrides the global `--format`. Asking for compact and for
+/// lines gets the JSON row's fields, because "same fields as a `--format json`
+/// row" is the flag's whole contract — a compact seven-key row would silently
+/// drop the `model` that item 82's tooling reads.
+#[test]
+fn json_lines_overrides_format_compact() {
+    let executions = vec![execution(
+        "s-1",
+        1,
+        Some(&pk(ALICE)),
+        Some("builder"),
+        Some("u-1"),
+    )];
+    let line = status_json_lines(&executions, &[], &HashMap::new(), &[], &index_of(&[]))
+        .pop()
+        .expect("one row");
+    let row: Value = serde_json::from_str(&line).expect("the line is a JSON document");
+    for key in ["actor", "runtime", "model", "lastSignedSeq"] {
+        assert!(
+            row.get(key).is_some(),
+            "JSON-only key {key} missing from {row:?}"
+        );
+    }
+    // And the compact row genuinely lacks them, so the assertion above is not
+    // vacuous.
+    let compact = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &[],
+        &index_of(&[]),
+        &crate::OutputFormat::Compact,
+    );
+    assert!(compact.get("model").is_none(), "compact row {compact:?}");
+}
+
+/// The flag exists on `sessions status`, defaults to `false`, and is a
+/// subcommand flag rather than a global one.
+#[test]
+fn sessions_status_parses_the_json_lines_flag() {
+    use clap::Parser;
+
+    let with_flag = crate::Cli::try_parse_from([
+        "bee",
+        "sessions",
+        "status",
+        "--channel",
+        CHANNEL,
+        "--json-lines",
+    ])
+    .expect("--json-lines parses");
+    match with_flag.command {
+        crate::Cmd::Sessions(crate::SessionsCmd::Status { json_lines, .. }) => {
+            assert!(json_lines, "--json-lines sets the flag");
+        }
+        _ => panic!("expected sessions status"),
+    }
+
+    let without = crate::Cli::try_parse_from(["bee", "sessions", "status", "--channel", CHANNEL])
+        .expect("the bare command parses");
+    match without.command {
+        crate::Cmd::Sessions(crate::SessionsCmd::Status { json_lines, .. }) => {
+            assert!(!json_lines, "the flag defaults to false");
+        }
+        _ => panic!("expected sessions status"),
+    }
 }

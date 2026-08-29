@@ -2557,11 +2557,19 @@ pub enum SessionsCmd {
         since: Option<String>,
     },
     /// Per-execution liveness, seat, and open-turn state for a channel.
-    #[command(after_help = "Examples:\n  bee sessions status --channel <uuid>")]
+    #[command(
+        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines"
+    )]
     Status {
         /// Channel UUID to read
         #[arg(long)]
         channel: String,
+        /// Print one JSON object per execution, one per line (NDJSON), with the
+        /// same fields as a `--format json` row. The envelope keys (`channel`,
+        /// `founders`, `leaseSnapshotRecords`) are not printed. Overrides
+        /// `--format`: a compact request still gets the JSON row's fields.
+        #[arg(long = "json-lines")]
+        json_lines: bool,
     },
 }
 

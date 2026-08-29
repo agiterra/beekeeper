@@ -2376,7 +2376,10 @@ pub async fn dispatch(
         SessionsCmd::Inbox { channel, since } => {
             crew_cmds::cmd_inbox(client, &channel, since.as_deref(), format).await
         }
-        SessionsCmd::Status { channel } => crew_cmds::cmd_status(client, &channel, format).await,
+        SessionsCmd::Status {
+            channel,
+            json_lines,
+        } => crew_cmds::cmd_status(client, &channel, json_lines, format).await,
     }
 }
 

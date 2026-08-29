@@ -881,84 +881,156 @@ pub async fn cmd_inbox(
     Ok(())
 }
 
+/// One `bee sessions status` row, for one execution, in the shape `format`
+/// asks for.
+///
+/// Pure over the facts handed in, so the row shape is testable without a
+/// relay: [`turn_load`] and [`FounderIndex::of`] are both reads, and the only
+/// other input is the wall clock behind `runningFor`.
+pub fn status_row(
+    execution: &CrewExecution,
+    commands: &[TurnCommand],
+    stages: &HashMap<String, TurnStage>,
+    transcripts: &[super::TranscriptRecord],
+    founders: &FounderIndex,
+    format: &crate::OutputFormat,
+) -> Value {
+    let load = turn_load(execution, commands, stages, transcripts);
+    let open_turn = load.open_command_id.as_ref().map(|command_id| {
+        json!({
+            "commandId": command_id,
+            "turnId": load.open_turn_id,
+            "startedAt": load.open_since.map(rfc3339),
+            "runningFor": load.open_since.map(|at| {
+                format_age(chrono::Utc::now().timestamp().saturating_sub(at))
+            }),
+        })
+    });
+    // D9 / contract B: `None` means no budget key has ever been seen
+    // on this execution's metadata — either this provider predates
+    // the umbrella turn budget, or the umbrella has none configured.
+    // Never rendered as `0/0` or any other guessed number.
+    let turn_budget_line = execution
+        .turn_budget
+        .map(|budget| format!("{}/{}", budget.used, budget.limit));
+    // Who asked for this execution, and who founded the umbrella it
+    // belongs to. `null` means this channel does not contain the
+    // record that would say — never the provider's key, which signs
+    // every execution here and would make every founder identical.
+    let founding = founders.of(&execution.target);
+    match format {
+        crate::OutputFormat::Compact => json!({
+            "target": execution.target_key,
+            "seat": execution.seat_label(),
+            "founder": founding.founder.as_deref().map(short_pubkey),
+            "live": execution.liveness.render(),
+            "openTurn": load.open_command_id,
+            "queued": load.queued,
+            "turnBudget": turn_budget_line,
+        }),
+        crate::OutputFormat::Json => json!({
+            "target": execution.target_key,
+            "sessionId": execution.target.session_id,
+            "generation": execution.target.generation,
+            "signer": execution.signer,
+            "actor": execution.actor,
+            "role": execution.role,
+            "sessionRef": execution.session_ref,
+            "seat": execution.seat_label(),
+            "founder": founding.founder,
+            "createSigner": founding.create_signer,
+            "runtime": execution.runtime,
+            "model": execution.model,
+            "status": execution.status,
+            "live": execution.liveness.render(),
+            "liveness": execution.liveness.word(),
+            "lastSignedSeq": execution.last_signed_seq,
+            "lastSignedAt": execution.last_signed_at.map(rfc3339),
+            "openTurn": open_turn,
+            "queuedTurns": load.queued,
+            "turnBudget": execution.turn_budget.map(|budget| json!({
+                "used": budget.used,
+                "limit": budget.limit,
+                "exhausted": budget.exhausted(),
+            })),
+        }),
+    }
+}
+
+/// The `--json-lines` rendering: one serialized [`crate::OutputFormat::Json`]
+/// row per execution, in `executions` order, each one a complete JSON document
+/// on its own.
+///
+/// The JSON shape is not a choice the caller gets to make — the flag's
+/// contract is "the same fields as a `--format json` row", so a compact
+/// request still gets these. No envelope, no header, and no rows at all when
+/// there are no executions.
+pub fn status_json_lines(
+    executions: &[CrewExecution],
+    commands: &[TurnCommand],
+    stages: &HashMap<String, TurnStage>,
+    transcripts: &[super::TranscriptRecord],
+    founders: &FounderIndex,
+) -> Vec<String> {
+    executions
+        .iter()
+        .map(|execution| {
+            let row = status_row(
+                execution,
+                commands,
+                stages,
+                transcripts,
+                founders,
+                &crate::OutputFormat::Json,
+            );
+            // `Value` serialization is infallible for the shapes above; the
+            // fallback keeps this off the no-`unwrap` list without inventing
+            // a row.
+            serde_json::to_string(&row).unwrap_or_else(|_| row.to_string())
+        })
+        .collect()
+}
+
 /// `bee sessions status` — one row per execution: who is seated, whether an
 /// actor is behind it, and what it owes.
 pub async fn cmd_status(
     client: &BuzzClient,
     channel_id: &str,
+    json_lines: bool,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     let facts = fetch_crew_facts(client, channel_id).await?;
+
+    // `--json-lines` overrides `--format`, and drops the envelope: a consumer
+    // reading a line at a time cannot be handed `founders` or
+    // `leaseSnapshotRecords`, which describe the whole call rather than any
+    // one row. Read them from `--format json` when you need them.
+    if json_lines {
+        for line in status_json_lines(
+            &facts.executions,
+            &facts.commands,
+            &facts.stages,
+            &facts.transcripts,
+            &facts.founders,
+        ) {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+
     let rows: Vec<Value> = facts
         .executions
         .iter()
         .map(|execution| {
-            let load = turn_load(
+            status_row(
                 execution,
                 &facts.commands,
                 &facts.stages,
                 &facts.transcripts,
-            );
-            let open_turn = load.open_command_id.as_ref().map(|command_id| {
-                json!({
-                    "commandId": command_id,
-                    "turnId": load.open_turn_id,
-                    "startedAt": load.open_since.map(rfc3339),
-                    "runningFor": load.open_since.map(|at| {
-                        format_age(chrono::Utc::now().timestamp().saturating_sub(at))
-                    }),
-                })
-            });
-            // D9 / contract B: `None` means no budget key has ever been seen
-            // on this execution's metadata — either this provider predates
-            // the umbrella turn budget, or the umbrella has none configured.
-            // Never rendered as `0/0` or any other guessed number.
-            let turn_budget_line = execution
-                .turn_budget
-                .map(|budget| format!("{}/{}", budget.used, budget.limit));
-            // Who asked for this execution, and who founded the umbrella it
-            // belongs to. `null` means this channel does not contain the
-            // record that would say — never the provider's key, which signs
-            // every execution here and would make every founder identical.
-            let founding = facts.founders.of(&execution.target);
-            match format {
-                crate::OutputFormat::Compact => json!({
-                    "target": execution.target_key,
-                    "seat": execution.seat_label(),
-                    "founder": founding.founder.as_deref().map(short_pubkey),
-                    "live": execution.liveness.render(),
-                    "openTurn": load.open_command_id,
-                    "queued": load.queued,
-                    "turnBudget": turn_budget_line,
-                }),
-                crate::OutputFormat::Json => json!({
-                    "target": execution.target_key,
-                    "sessionId": execution.target.session_id,
-                    "generation": execution.target.generation,
-                    "signer": execution.signer,
-                    "actor": execution.actor,
-                    "role": execution.role,
-                    "sessionRef": execution.session_ref,
-                    "seat": execution.seat_label(),
-                    "founder": founding.founder,
-                    "createSigner": founding.create_signer,
-                    "runtime": execution.runtime,
-                    "model": execution.model,
-                    "status": execution.status,
-                    "live": execution.liveness.render(),
-                    "liveness": execution.liveness.word(),
-                    "lastSignedSeq": execution.last_signed_seq,
-                    "lastSignedAt": execution.last_signed_at.map(rfc3339),
-                    "openTurn": open_turn,
-                    "queuedTurns": load.queued,
-                    "turnBudget": execution.turn_budget.map(|budget| json!({
-                        "used": budget.used,
-                        "limit": budget.limit,
-                        "exhausted": budget.exhausted(),
-                    })),
-                }),
-            }
+                &facts.founders,
+                format,
+            )
         })
         .collect();
 
