@@ -17,8 +17,24 @@ npx playwright test --project=smoke coding-session-surface-host-screenshots
 npx playwright test --project=smoke coding-session-reachability
 ```
 
-Captures: `desktop/test-results/coding-session-surface-host/0{1..9}-*.png`, nine
-distinct hashes. States I could not reach are written **not reached**, with why.
+**Captures:** `docs/design/singularity/walk-2026-08-29/0{1..9}-*.png`, nine
+states, distinct hashes. Those committed files are **lane E's copies** of the
+same spec's output, not the run I read — Texas re-ran
+`coding-session-surface-host-screenshots` against the same fixtures during the
+walk and copied his out in time. Every string this spec quotes from `01`–`09`
+reads the same in both sets; the per-run difference is the provider key in the
+turn-block byline (`17888150…952d` in mine, `e644a2d2…4399` in the committed
+set), which is generated per run — and is the very element **C1a** evicts from
+that byline.
+
+**Why not my own copies:** captures written under `test-results/` are **not
+durable**. Playwright empties that directory at the start of every run, so any
+spec run in a desktop worktree destroys them, and a citation pointing there
+resolves to an empty directory that cannot be told apart from evidence that
+never existed. The build lanes will run specs in that worktree. Cite the
+committed path, never `test-results/`.
+
+States I could not reach are written **not reached**, with why.
 
 **Read this in ten minutes:** §1 (what changes), §2 (the wire table), §11 (every
 number in the mock, sourced or unknown), §15 (what I found by driving), §16 (the
