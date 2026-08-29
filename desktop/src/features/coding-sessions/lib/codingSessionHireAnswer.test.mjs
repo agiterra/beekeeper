@@ -210,3 +210,54 @@ test("a substituted model is disclosed in the umbrella, naming the seat's role",
   assert.match(line, /claude-sonnet-5/);
   assert.match(line, /sonnet instead\.$/);
 });
+
+// --- item 88(c): the hired seat's create carried projectRef NONE ------------
+
+test("the hire inherits the project from the umbrella's own executions", () => {
+  // The real fold — `groupCodingSessionCatalog` → `CodingSessionUmbrellaRecord`
+  // — carries no `projectRef` field at all, so `umbrella.projectRef` was
+  // always undefined and every hired seat landed outside the project. The
+  // project the lead's create signed lives on each execution's active
+  // generation, which is what the projects sidebar reads back.
+  const result = answer({
+    umbrella: {
+      sessionRef: SESSION_REF,
+      genesisRef: GENESIS_REF,
+      title: "Agent Teams",
+      executions: [
+        {
+          activeGeneration: {
+            agentRef: LEAD,
+            role: "lead",
+            status: "running",
+            projectRef: "30621:owner:beekeeper",
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.projectRef, "30621:owner:beekeeper");
+});
+
+test("an umbrella in no project seats a hire with no project, never a guess", () => {
+  const result = answer({
+    umbrella: {
+      sessionRef: SESSION_REF,
+      genesisRef: GENESIS_REF,
+      title: "Agent Teams",
+      executions: [
+        {
+          activeGeneration: {
+            agentRef: LEAD,
+            role: "lead",
+            status: "running",
+            projectRef: null,
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.projectRef, null);
+});

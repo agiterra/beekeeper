@@ -28,6 +28,7 @@ import {
 import {
   buildCodingSessionHireSeatPlan,
   codingSessionHireSeatOrdinal,
+  codingSessionHireUmbrellaProjectRef,
   isCodingSessionHireAuthorized,
   listCodingSessionHireLiveSeats,
   type CodingSessionHireAuthority,
@@ -83,6 +84,8 @@ export type CodingSessionHireAnswerInput = {
   commandId: string;
   /** Each runtime's offered model ids, by instance ref. See the decision. */
   modelCatalogs?: ReadonlyMap<string, readonly string[]>;
+  /** Runtime slug by instance ref, so an identity's own runtime can match. */
+  providerRuntimeSlugs?: ReadonlyMap<string, string>;
   /**
    * This host's clock, Unix seconds. Supplied so the staleness window is a
    * fact of the call rather than of when the module happened to run.
@@ -146,6 +149,9 @@ export function planCodingSessionHireAnswer(
     liveSeats,
     availableProviderInstanceRefs: input.availableProviderInstanceRefs,
     ...(input.modelCatalogs ? { modelCatalogs: input.modelCatalogs } : {}),
+    ...(input.providerRuntimeSlugs
+      ? { providerRuntimeSlugs: input.providerRuntimeSlugs }
+      : {}),
   });
   if (!decision.ok) {
     return {
@@ -163,7 +169,10 @@ export function planCodingSessionHireAnswer(
       channelId: request.channelId,
       sessionRef: request.action.sessionRef,
       genesisRef: request.action.genesisRef,
-      projectRef: umbrella.projectRef ?? null,
+      // The umbrella's own project when a caller supplies one, else the one
+      // its executions carry — the fold has no project field of its own.
+      projectRef:
+        umbrella.projectRef ?? codingSessionHireUmbrellaProjectRef(umbrella),
       // Inherited, so the hired seat lands under the session's own name rather
       // than starting a second one beside it.
       title: umbrella.title.trim().length > 0 ? umbrella.title : null,
@@ -174,6 +183,7 @@ export function planCodingSessionHireAnswer(
       providerAuthorityPubkey: input.providerAuthorityPubkey,
       model: decision.model,
       modelNotice: decision.modelNotice,
+      providerNotice: decision.providerNotice,
       seatOrdinal: codingSessionHireSeatOrdinal(liveSeats, decision.role),
     }),
   };
@@ -189,6 +199,20 @@ export function planCodingSessionHireAnswer(
  * timeline where the work is.
  */
 export function codingSessionHireModelNoticeLine(input: {
+  role: string;
+  notice: string;
+}): string {
+  return codingSessionHireNoticeLine(input);
+}
+
+/**
+ * The umbrella's line for anything the host decided on the lead's behalf.
+ *
+ * One shape for every substitution — model or runtime — so a person reading
+ * the timeline sees them in the same voice and a second kind of disclosure
+ * never has to invent a second format.
+ */
+export function codingSessionHireNoticeLine(input: {
   role: string;
   notice: string;
 }): string {

@@ -324,3 +324,194 @@ test("the identity's own model is taken when the hire names none", () => {
   assert.equal(result.model, "sonnet");
   assert.equal(result.modelNotice, null);
 });
+
+// --- item 88(a),(b),(h),(i): what the live DogFood2 loop proved wrong -------
+
+test("the identity's own model is checked against the same catalog the hire's is", () => {
+  // Live 2026-08-28: a hire naming no model fell back to `opus[1m]` — a model
+  // the host's own refusal had just claimed was not offered — because only
+  // `request.model` ever reached the catalog check.
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: null,
+    },
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Ada",
+        homeRole: "builder",
+        hasRolePack: true,
+        model: "opus[1m]",
+      },
+    ],
+    modelCatalogs: new Map([["claude-primary", ["default", "sonnet"]]]),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
+  // Named, so the operator knows which record to fix.
+  assert.match(result.reason, /Ada/);
+  assert.match(result.reason, /opus\[1m\]/);
+  assert.match(result.reason, /default, sonnet/);
+});
+
+test("an identity model the catalog does offer is still seated untouched", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: null,
+    },
+    modelCatalogs: new Map([["claude-primary", ["default", "sonnet"]]]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "sonnet");
+  assert.equal(result.modelNotice, null);
+});
+
+test("an identity's vendor model alias is translated and disclosed as the identity's", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: null,
+    },
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Ada",
+        homeRole: "builder",
+        hasRolePack: true,
+        model: "claude-opus-4-1",
+      },
+    ],
+    modelCatalogs: new Map([["claude-primary", ["default", "opus[1m]"]]]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "opus[1m]");
+  assert.match(result.modelNotice, /Ada/);
+  assert.match(result.modelNotice, /claude-opus-4-1/);
+});
+
+test("the seat runs on the identity's own runtime, not the umbrella's", () => {
+  // Live 2026-08-28 (item 88(i)): Banksy — a codex identity on gpt-5.6-sol —
+  // was seated on driver claude-agent-acp because the host took the
+  // umbrella's runtime and passed the identity's model through it.
+  const result = decide({
+    request: {
+      role: "designer",
+      providerInstanceRef: "claude-primary",
+      model: null,
+    },
+    policy: {
+      ...DEFAULT_CODING_SESSION_HIRE_POLICY,
+      allowedRoles: ["designer"],
+    },
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Banksy",
+        homeRole: "designer",
+        hasRolePack: true,
+        model: "gpt-5.6-sol",
+        runtime: "codex",
+      },
+    ],
+    providerRuntimeSlugs: new Map([
+      ["claude-primary", "claude"],
+      ["codex-primary", "codex"],
+    ]),
+    modelCatalogs: new Map([
+      ["claude-primary", ["default", "sonnet"]],
+      ["codex-primary", ["gpt-5.6-sol"]],
+    ]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.providerInstanceRef, "codex-primary");
+  assert.equal(result.model, "gpt-5.6-sol");
+  // The host overrode the runtime the hire named, so it says so.
+  assert.match(result.providerNotice, /codex-primary/);
+  assert.match(result.providerNotice, /claude-primary/);
+});
+
+test("an identity whose runtime this computer does not run is refused, never re-homed", () => {
+  const result = decide({
+    request: { role: "designer", providerInstanceRef: null, model: null },
+    policy: {
+      ...DEFAULT_CODING_SESSION_HIRE_POLICY,
+      allowedRoles: ["designer"],
+    },
+    candidates: [
+      {
+        pubkey: ADA,
+        name: "Banksy",
+        homeRole: "designer",
+        hasRolePack: true,
+        model: "gpt-5.6-sol",
+        runtime: "codex",
+      },
+    ],
+    availableProviderInstanceRefs: ["claude-primary"],
+    providerRuntimeSlugs: new Map([["claude-primary", "claude"]]),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "HIRE_PROVIDER_NOT_ALLOWED");
+  assert.match(result.reason, /Banksy/);
+  assert.match(result.reason, /codex/);
+  assert.match(result.reason, /claude-primary/);
+});
+
+test("an identity naming no runtime still takes the hire's, then the host's default", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "codex-primary",
+      model: null,
+    },
+    candidates: [
+      { pubkey: BEN, name: "Ben", homeRole: "builder", hasRolePack: true },
+    ],
+    providerRuntimeSlugs: new Map([
+      ["claude-primary", "claude"],
+      ["codex-primary", "codex"],
+    ]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.providerInstanceRef, "codex-primary");
+  assert.equal(result.providerNotice, null);
+});
+
+test("a role whose every identity is seated here is refused as busy, naming the seat", () => {
+  // Live 2026-08-28 (item 88(h)): one builder existed and was seated-but-idle,
+  // and the host said "or none is installed. Install team roles" — the wrong
+  // remedy for the case that actually happened.
+  const decision = decide({
+    liveSeats: [
+      { actor: ADA, role: "builder", generationId: "gen-7" },
+      { actor: BEN, role: "builder" },
+    ],
+  });
+  assert.equal(decision.ok, false);
+  assert.equal(decision.code, "HIRE_NO_IDENTITY");
+  // The seat it should talk to instead, and how.
+  assert.match(decision.reason, /already seated/);
+  assert.match(decision.reason, /·builder/);
+  assert.match(decision.reason, /gen-7/);
+  assert.match(decision.reason, /bee sessions send --to builder/);
+  // Never the install remedy: the role IS installed.
+  assert.equal(/[Ii]nstall team roles/.test(decision.reason), false);
+});
+
+test("a role no installed identity holds keeps the install remedy", () => {
+  const decision = decide({
+    request: { role: "verifier", providerInstanceRef: null, model: null },
+    policy: {
+      ...DEFAULT_CODING_SESSION_HIRE_POLICY,
+      allowedRoles: ["verifier"],
+    },
+  });
+  assert.equal(decision.code, "HIRE_NO_IDENTITY");
+  assert.match(decision.reason, /[Ii]nstall team roles/);
+  assert.equal(/already seated/.test(decision.reason), false);
+});

@@ -73,6 +73,10 @@ const UMBRELLA = {
   ],
 };
 
+// Exactly what `list_runtimes()` answers: every row's model list is the
+// hardcoded placeholder `["default"]`
+// (desktop/src-tauri/src/session_provider/runtimes.rs:269). Reading a catalog
+// off this is what refused `sonnet` live on 2026-08-28 (item 88(a)).
 const CLAUDE_RUNTIME = {
   instanceRef: "claude-primary",
   runtime: "claude",
@@ -80,17 +84,36 @@ const CLAUDE_RUNTIME = {
   label: "Claude Code",
   authState: "ready",
   defaultModel: "default",
-  allowedModels: [
-    "default",
-    "claude-fable-5[1m]",
-    "haiku",
-    "opus[1m]",
-    "sonnet",
-  ],
+  allowedModels: ["default"],
   capabilities: {},
 };
 
-async function signedHire({ model = null, createdAt = HIRE_CREATED_AT } = {}) {
+const CODEX_RUNTIME = {
+  instanceRef: "codex-primary",
+  runtime: "codex",
+  driver: "codex",
+  label: "Codex",
+  authState: "ready",
+  defaultModel: "default",
+  allowedModels: ["default"],
+  capabilities: {},
+};
+
+/** What `coding_session_provider_models` answers — the published 44222 list. */
+const CLAUDE_CATALOG = [
+  "default",
+  "claude-fable-5[1m]",
+  "haiku",
+  "opus[1m]",
+  "sonnet",
+];
+
+async function signedHire({
+  model = null,
+  createdAt = HIRE_CREATED_AT,
+  role = "builder",
+  providerInstanceRef = "claude-primary",
+} = {}) {
   const { buildCodingSessionHireEvent } = await import(
     "../lib/codingSessionHireWire.ts"
   );
@@ -102,8 +125,8 @@ async function signedHire({ model = null, createdAt = HIRE_CREATED_AT } = {}) {
         commandId: "csl-hire-1",
         sessionRef: SESSION_REF,
         genesisRef: GENESIS_REF,
-        role: "builder",
-        providerInstanceRef: "claude-primary",
+        role,
+        providerInstanceRef,
         model,
         brief: "Take the badge lane. Red test first.",
       }),
@@ -118,6 +141,17 @@ async function signedHire({ model = null, createdAt = HIRE_CREATED_AT } = {}) {
 async function harness({
   policy,
   runtimes = [CLAUDE_RUNTIME],
+  modelCatalogs = new Map([["claude-primary", CLAUDE_CATALOG]]),
+  agents = [
+    {
+      pubkey: ADA_PUBKEY,
+      name: "Ada",
+      homeRole: "builder",
+      hasRolePack: true,
+      model: "opus[1m]",
+    },
+  ],
+  umbrellas = [UMBRELLA],
   now = HIRE_CREATED_AT,
   receiptError = null,
   grantError = null,
@@ -198,16 +232,9 @@ async function harness({
 
   const view = render(
     React.createElement(CodingSessionHireRunner, {
-      agents: [
-        {
-          pubkey: ADA_PUBKEY,
-          name: "Ada",
-          homeRole: "builder",
-          hasRolePack: true,
-          model: "opus[1m]",
-        },
-      ],
+      agents,
       channelIds: [CHANNEL_ID],
+      modelCatalogs,
       checkoutForChannel: () => "/Users/brian/Projects/beekeeper",
       deps,
       operatorPubkey: OPERATOR_PUBKEY,
@@ -218,7 +245,7 @@ async function harness({
         channelId === CHANNEL_ID && actorPubkey === LEAD_PUBKEY
           ? LEAD_TARGET
           : null,
-      umbrellas: [UMBRELLA],
+      umbrellas,
     }),
   );
 
@@ -348,9 +375,9 @@ test("a vendor model id is translated onto the catalog's, and said out loud", as
 
 test("a model no runtime offers is refused with the offered ids, not guessed", async () => {
   const host = await harness({
-    runtimes: [
-      { ...CLAUDE_RUNTIME, allowedModels: ["default", "claude-fable-5[1m]"] },
-    ],
+    modelCatalogs: new Map([
+      ["claude-primary", ["default", "claude-fable-5[1m]"]],
+    ]),
   });
   await host.deliver(await signedHire({ model: "claude-sonnet-5" }));
 
@@ -414,6 +441,96 @@ test("a create receipt that never lands is disclosed as ungranted, not as grante
   assert.match(
     JSON.parse(turn.content).action.text,
     /^seated, but not granted: The provider did not answer within the wait — it cannot report until granted$/,
+  );
+  host.teardown();
+});
+
+// --- item 88(a),(c),(i): the live DogFood2 findings, at the host ------------
+
+test("a model the provider's catalog offers is seated, not refused by the runtime table", async () => {
+  // Live 2026-08-28: `--model sonnet` came back HIRE_MODEL_NOT_OFFERED "It
+  // offers default", because the offered list was `list_runtimes()`'s
+  // hardcoded `["default"]` rather than `coding_session_provider_models`.
+  const host = await harness();
+  await host.deliver(await signedHire({ model: "sonnet" }));
+
+  assert.equal(host.of(44220).length, 0, "the hire was refused");
+  const [create] = host.of(44221);
+  assert.ok(create, "no seated create was published");
+  assert.equal(JSON.parse(create.content).action.model, "sonnet");
+  host.teardown();
+});
+
+test("the refusal sentence lists the provider catalog verbatim", async () => {
+  const host = await harness();
+  await host.deliver(await signedHire({ model: "gpt-5.6-sol" }));
+
+  const text = JSON.parse(host.of(44220)[0].content).action.text;
+  assert.match(text, /^hire refused: HIRE_MODEL_NOT_OFFERED — /);
+  assert.match(
+    text,
+    /It offers default, claude-fable-5\[1m\], haiku, opus\[1m\], sonnet\./,
+  );
+  host.teardown();
+});
+
+test("a codex identity is seated on codex, with its own model", async () => {
+  const host = await harness({
+    runtimes: [CLAUDE_RUNTIME, CODEX_RUNTIME],
+    modelCatalogs: new Map([
+      ["claude-primary", CLAUDE_CATALOG],
+      ["codex-primary", ["gpt-5.6-sol"]],
+    ]),
+    agents: [
+      {
+        pubkey: ADA_PUBKEY,
+        name: "Banksy",
+        homeRole: "designer",
+        hasRolePack: true,
+        model: "gpt-5.6-sol",
+        runtime: "codex",
+      },
+    ],
+  });
+  await host.deliver(await signedHire({ role: "designer" }));
+
+  const [create] = host.of(44221);
+  assert.ok(create, "no seated create was published");
+  const action = JSON.parse(create.content).action;
+  assert.equal(action.providerInstanceRef, "codex-primary");
+  assert.equal(action.model, "gpt-5.6-sol");
+  // The hire named claude-primary; the host overrode it, so it says so.
+  const [notice] = host.of(9);
+  assert.ok(notice, "the runtime substitution was never disclosed");
+  assert.match(notice.content, /codex-primary/);
+  host.teardown();
+});
+
+test("the hired seat's create carries the umbrella's project", async () => {
+  const host = await harness({
+    umbrellas: [
+      {
+        ...UMBRELLA,
+        executions: [
+          {
+            activeGeneration: {
+              agentRef: LEAD_PUBKEY,
+              role: "lead",
+              status: "running",
+              projectRef: "30621:owner:beekeeper",
+            },
+          },
+        ],
+      },
+    ],
+  });
+  await host.deliver(await signedHire());
+
+  const [create] = host.of(44221);
+  assert.ok(create, "no seated create was published");
+  assert.equal(
+    JSON.parse(create.content).action.projectRef,
+    "30621:owner:beekeeper",
   );
   host.teardown();
 });
