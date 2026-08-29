@@ -8,6 +8,15 @@ import {
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
+import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
+import {
+  readCodingSessionContextLoad,
+  type CodingSessionContextLoad,
+} from "@/features/coding-sessions/lib/codingSessionContextLoad";
+import {
+  buildCodingSessionTurnByline,
+  CODING_SESSION_UNKNOWN_ACTOR,
+} from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import {
   listCodingSessionUmbrellaParticipants,
   type CodingSessionActorNameResolver,
@@ -45,7 +54,6 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
-import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   CodingSessionDispositionStrip,
   CodingSessionHeader,
@@ -210,19 +218,49 @@ export function UmbrellaCodingSessionWorkspace({
   );
   const changedFiles = observedChanges.files;
   // Same item set as the timeline renders, so every operator who drove a turn
-  // anywhere in the umbrella is resolvable in one lookup.
+  // anywhere in the umbrella is resolvable in one lookup — plus the lane's own
+  // authors, who never drove a turn and so appeared in no transcript item,
+  // which is why their messages rendered as bare keys (walk finding 4).
   const umbrellaTranscript = React.useMemo(
-    () =>
-      umbrella.executions.flatMap((execution) =>
+    () => [
+      ...umbrella.executions.flatMap((execution) =>
         [...execution.priorGenerations, execution.activeGeneration].flatMap(
           (record) => record.transcript,
         ),
       ),
-    [umbrella.executions],
+      ...lane.messages.map((message) => ({
+        operatorPubkey: message.authorPubkey,
+      })),
+    ],
+    [lane.messages, umbrella.executions],
   );
   const operatorProfiles = useCodingSessionOperatorProfiles(
     umbrellaTranscript,
     currentUserPubkey,
+  );
+  // D7 / W12: how full each seat's context is, folded from the driver's own
+  // signed occupancy items. Never estimated, and an execution that has
+  // reported nothing carries `null` rather than a zero.
+  const contextLoads = React.useMemo(
+    () =>
+      umbrella.executions.map((execution) => ({
+        key: execution.executionKey,
+        label: buildCodingSessionTurnByline({
+          agentDisplayName: execution.activeGeneration.agentRef
+            ? (workspaceActorName(execution.activeGeneration.agentRef) ?? null)
+            : null,
+          agentRef: execution.activeGeneration.agentRef,
+          generation: execution.activeGeneration.commandTarget?.generation ?? 1,
+          label: null,
+          model: execution.activeGeneration.model,
+          role: execution.activeGeneration.role,
+          runtime: execution.activeGeneration.runtime,
+        }).name,
+        load: readCodingSessionContextLoad(
+          execution.activeGeneration.transcript,
+        ) satisfies CodingSessionContextLoad | null,
+      })),
+    [umbrella.executions, workspaceActorName],
   );
   const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
     () => [
@@ -390,8 +428,9 @@ export function UmbrellaCodingSessionWorkspace({
           }
           channelName={channelName}
           compact={isNarrow || headerCompact}
+          contextLoads={contextLoads}
           founderDetails={
-            umbrella.founderPubkey && umbrella.genesisRef ? (
+            umbrella.founderPubkey ? (
               <CodingSessionFounderLine
                 founderPubkey={umbrella.founderPubkey}
                 genesisRef={umbrella.genesisRef}
@@ -789,12 +828,19 @@ export function CodingSessionUmbrellaTimelineView({
       {entries.map((entry, index) => {
         const key = codingSessionUmbrellaEntryKey(entry);
         if (entry.kind === "conversation") {
-          return <UmbrellaConversationRow key={key} message={entry.message} />;
+          return (
+            <UmbrellaConversationRow
+              currentUserPubkey={currentUserPubkey}
+              key={key}
+              message={entry.message}
+              operatorProfiles={operatorProfiles}
+            />
+          );
         }
         if (entry.kind === "lifecycle") {
           const label =
             labelsByExecutionKey.get(entry.executionKey) ??
-            truncatePubkey(entry.signerPubkey);
+            CODING_SESSION_UNKNOWN_ACTOR;
           return (
             <p
               className="text-center text-2xs text-muted-foreground"
@@ -821,10 +867,8 @@ export function CodingSessionUmbrellaTimelineView({
             }
             isWorking={workingBlockKeys.has(key)}
             key={key}
-            label={
-              labelsByExecutionKey.get(entry.executionKey) ??
-              truncatePubkey(entry.signerPubkey)
-            }
+            actorNames={actorNames}
+            label={labelsByExecutionKey.get(entry.executionKey) ?? null}
             labelsByExecutionKey={labelsByExecutionKey}
             onHandoff={onHandoff}
             onFocusExecution={onFocusExecution}
@@ -869,19 +913,39 @@ export function shouldShowTurnBlockProvenance(
   );
 }
 
+/**
+ * One lane message.
+ *
+ * The author is named, not stamped: the 2026-08-29 walk (finding 4) read the
+ * founder's own message in the lane as a bare `a3945536…3cf2`, because this
+ * row printed a key while the surrounding surface already held the profiles
+ * that resolve it.
+ */
 function UmbrellaConversationRow({
+  currentUserPubkey,
   message,
+  operatorProfiles,
 }: {
+  currentUserPubkey: string | null;
   message: CodingSessionLaneMessage;
+  operatorProfiles: UserProfileLookup | undefined;
 }) {
+  const authorLabel = resolveCodingSessionPromptAuthorLabel({
+    currentUserPubkey,
+    operatorPubkey: message.authorPubkey,
+    profiles: operatorProfiles,
+  });
   return (
     <div
       className="rounded-xl bg-muted/40 px-4 py-2"
       data-testid="coding-session-umbrella-conversation"
     >
       <p className="text-2xs text-muted-foreground">
-        <span className="font-mono">
-          {truncatePubkey(message.authorPubkey)}
+        <span
+          className="font-medium text-foreground/75"
+          data-testid="coding-session-umbrella-conversation-author"
+        >
+          {authorLabel}
         </span>{" "}
         · {formatLaneTimestamp(message.timestampMs)}
       </p>

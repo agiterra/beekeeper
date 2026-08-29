@@ -16,6 +16,10 @@ import {
 import * as React from "react";
 import type { ReactNode } from "react";
 
+import {
+  renderCodingSessionContextLoad,
+  type CodingSessionContextLoad,
+} from "@/features/coding-sessions/lib/codingSessionContextLoad";
 import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/codingSessionLabels";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import type {
@@ -56,8 +60,22 @@ type CodingSessionHeaderProps = {
   channelName: string | null;
   compact?: boolean;
   generationLabel: string;
-  /** Resolved founder label rendered inside the provenance popover. */
+  /**
+   * Resolved founder label rendered inside the provenance popover.
+   *
+   * Absent, the row still renders and reads `unresolved` — W6 says a session
+   * always has a founder, so a missing name is a resolution this client has
+   * not completed, not a session nobody founded.
+   */
   founderDetails?: ReactNode;
+  /**
+   * Per-execution context occupancy for the provenance popover (D7 / W12).
+   *
+   * Empty means this surface has no executions to report on and the section
+   * is omitted entirely; a listed execution with a `null` load renders an em
+   * dash, because nothing reported is not zero.
+   */
+  contextLoads?: readonly CodingSessionContextRow[];
   /** Durable session intent, shown directly below the title when present. */
   goalText?: string | null;
   isExporting?: boolean;
@@ -128,6 +146,7 @@ export function CodingSessionHeader({
   agentControls,
   channelName,
   compact = false,
+  contextLoads,
   generationLabel,
   founderDetails,
   goalText = null,
@@ -309,39 +328,14 @@ export function CodingSessionHeader({
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-72">
-          <p className="text-sm font-medium">Shared session details</p>
-          <dl className="mt-3 grid gap-2 text-xs">
-            {projectName ? (
-              <div>
-                <dt className="text-muted-foreground">Project</dt>
-                <dd className="mt-0.5 wrap-break-word">{projectName}</dd>
-              </div>
-            ) : null}
-            {channelName ? (
-              <div>
-                <dt className="text-muted-foreground">Channel</dt>
-                <dd className="mt-0.5 wrap-break-word">#{channelName}</dd>
-              </div>
-            ) : null}
-            <div>
-              <dt className="text-muted-foreground">Signed projection</dt>
-              <dd className="mt-0.5 wrap-break-word">{generationLabel}</dd>
-            </div>
-            {providerAuthorityPubkey ? (
-              <div>
-                <dt className="text-muted-foreground">Verified source</dt>
-                <dd className="mt-0.5 font-mono wrap-break-word">
-                  {shortPubkey(providerAuthorityPubkey)}
-                </dd>
-              </div>
-            ) : null}
-            {founderDetails ? (
-              <div>
-                <dt className="text-muted-foreground">Founded by</dt>
-                <dd className="mt-0.5 wrap-break-word">{founderDetails}</dd>
-              </div>
-            ) : null}
-          </dl>
+          <CodingSessionProvenanceDetails
+            channelName={channelName}
+            contextLoads={contextLoads}
+            founderDetails={founderDetails}
+            generationLabel={generationLabel}
+            projectName={projectName}
+            providerAuthorityPubkey={providerAuthorityPubkey}
+          />
         </PopoverContent>
       </Popover>
       {onToggleTaskRail ? (
@@ -528,6 +522,116 @@ export function CodingSessionHeader({
         </Button>
       ) : null}
     </header>
+  );
+}
+
+/** One execution's line in the provenance popover's `Context` section. */
+export type CodingSessionContextRow = {
+  key: string;
+  /** How the seat names itself — `Actor · Role`, or runtime and model. */
+  label: string;
+  /** What the wire reported, or null when nothing has. */
+  load: CodingSessionContextLoad | null;
+};
+
+/**
+ * The provenance popover's body (SURFACES.md D7).
+ *
+ * The 2026-08-29 walk (finding 5) read the shipped popover in full — channel,
+ * signed projection, verified source — and found it answered none of the
+ * questions it exists to answer: no founder, though the 44226 genesis carries
+ * one and **W6 says a founder is never unknown**, and no context, though the
+ * 44225 usage items were on the wire and `bee sessions status` printed 27% of
+ * a 1M window from exactly them. Both rows live here now, rendered the way
+ * the CLI renders them so the two cannot drift apart.
+ *
+ * Exported so the copy can be asserted directly: Radix does not mount popover
+ * content until it opens, so a test that renders the header alone sees none
+ * of this.
+ */
+export function CodingSessionProvenanceDetails({
+  channelName = null,
+  contextLoads,
+  founderDetails,
+  generationLabel,
+  projectName = null,
+  providerAuthorityPubkey = null,
+}: {
+  channelName?: string | null;
+  contextLoads?: readonly CodingSessionContextRow[];
+  founderDetails?: ReactNode;
+  generationLabel: string;
+  projectName?: string | null;
+  providerAuthorityPubkey?: string | null;
+}) {
+  return (
+    <div data-testid="coding-session-provenance-details">
+      <p className="text-sm font-medium">Shared session details</p>
+      <dl className="mt-3 grid gap-2 text-xs">
+        {projectName ? (
+          <div>
+            <dt className="text-muted-foreground">Project</dt>
+            <dd className="mt-0.5 wrap-break-word">{projectName}</dd>
+          </div>
+        ) : null}
+        {channelName ? (
+          <div>
+            <dt className="text-muted-foreground">Channel</dt>
+            <dd className="mt-0.5 wrap-break-word">#{channelName}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt className="text-muted-foreground">Signed projection</dt>
+          <dd className="mt-0.5 wrap-break-word">{generationLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Founded by</dt>
+          <dd className="mt-0.5 wrap-break-word">
+            {founderDetails ?? (
+              <span
+                data-testid="coding-session-provenance-founder-unresolved"
+                title="No genesis or create naming this session's founder has reached this client yet."
+              >
+                unresolved
+              </span>
+            )}
+          </dd>
+        </div>
+        {providerAuthorityPubkey ? (
+          <div>
+            <dt className="text-muted-foreground">Verified source</dt>
+            <dd className="mt-0.5 font-mono wrap-break-word">
+              {shortPubkey(providerAuthorityPubkey)}
+            </dd>
+          </div>
+        ) : null}
+        {contextLoads && contextLoads.length > 0 ? (
+          <div data-testid="coding-session-provenance-context">
+            <dt className="text-muted-foreground">Context</dt>
+            {contextLoads.map((row) => (
+              <dd
+                className="mt-0.5 flex items-baseline justify-between gap-2 wrap-break-word"
+                key={row.key}
+              >
+                <span className="min-w-0 truncate">{row.label}</span>
+                {row.load === null ? (
+                  <span
+                    className="shrink-0 text-muted-foreground"
+                    title="no usage reported"
+                  >
+                    {renderCodingSessionContextLoad(null)}
+                  </span>
+                ) : (
+                  <span className="shrink-0 font-mono">
+                    {renderCodingSessionContextLoad(row.load)}
+                  </span>
+                )}
+              </dd>
+            ))}
+          </div>
+        ) : null}
+      </dl>
+    </div>
   );
 }
 

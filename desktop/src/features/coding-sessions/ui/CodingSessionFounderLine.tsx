@@ -6,7 +6,13 @@ import { cn } from "@/shared/lib/cn";
 
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 
-/** Minimal provenance line for sessions whose linked genesis resolved. */
+/**
+ * The session's founder, named.
+ *
+ * `variant="line"` is the standalone bar under the header and still requires
+ * a linked genesis. `variant="label"` is the provenance popover's value cell
+ * and needs only the founder key, however it resolved.
+ */
 export function CodingSessionFounderLine({
   founderPubkey,
   genesisRef,
@@ -17,16 +23,25 @@ export function CodingSessionFounderLine({
   variant?: "label" | "line";
 }) {
   const gutter = useCodingSessionColumnGutter();
+  // The `label` variant only needs the founder: a legacy session (creates
+  // observed, none naming a genesis) still has one, and dropping the name for
+  // want of a genesis ref is what left the provenance popover founderless
+  // (walk finding 5). The standalone `line` still waits for the linked
+  // genesis, because that line's whole claim is the resolved authority chain.
+  const wantsProfile = Boolean(
+    founderPubkey && (variant === "label" || genesisRef),
+  );
   const pubkeys = React.useMemo(
-    () => (founderPubkey && genesisRef ? [founderPubkey] : []),
-    [founderPubkey, genesisRef],
+    () => (wantsProfile && founderPubkey ? [founderPubkey] : []),
+    [founderPubkey, wantsProfile],
   );
   const profiles = useUsersBatchQuery(pubkeys).data?.profiles;
-  if (!founderPubkey || !genesisRef) return null;
+  if (!founderPubkey) return null;
   const label = resolveUserLabel({ pubkey: founderPubkey, profiles });
   if (variant === "label") {
     return <span className="font-medium text-foreground">{label}</span>;
   }
+  if (!genesisRef) return null;
   return (
     <div
       className={cn(

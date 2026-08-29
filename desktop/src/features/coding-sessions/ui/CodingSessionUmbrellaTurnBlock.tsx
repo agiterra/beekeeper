@@ -9,21 +9,23 @@ import {
   resolveCodingSessionHandoffSource,
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
+import { buildCodingSessionTurnByline } from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import type { CodingSessionUmbrellaTurnBlock as TurnBlock } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionUmbrellaRecord,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import type { CodingSessionActorNameResolver } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { cn } from "@/shared/lib/cn";
-import { truncatePubkey } from "@/shared/lib/pubkey";
 import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 export function CodingSessionUmbrellaTurnBlock({
+  actorNames,
   block,
   blockKey,
   channelId,
@@ -44,6 +46,12 @@ export function CodingSessionUmbrellaTurnBlock({
   stickyProvenance,
   umbrella,
 }: {
+  /**
+   * Resolves a seat's `agentRef` to a display name, exactly as the Agents rail
+   * does. Absent, the byline falls back to role and runtime — never to the
+   * provider key, which is identical on every seat in the session.
+   */
+  actorNames?: CodingSessionActorNameResolver;
   block: TurnBlock;
   blockKey: string;
   channelId: string;
@@ -51,7 +59,8 @@ export function CodingSessionUmbrellaTurnBlock({
   isHighlighted: boolean;
   isFolded: boolean;
   isWorking: boolean;
-  label: string;
+  /** The surface's resolved participant label, or null when it has none. */
+  label: string | null;
   labelsByExecutionKey: ReadonlyMap<string, string>;
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
   onFocusExecution?: (executionKey: string | null) => void;
@@ -86,6 +95,21 @@ export function CodingSessionUmbrellaTurnBlock({
   );
   const accent = codingSessionAgentAccent(block.executionKey);
   const foldedSummary = isFolded ? foldedTurnSummary(block) : null;
+  // C1a: the seat's own identity, from `agentRef` resolved through kind-0 —
+  // never `block.signerPubkey`, which one provider stamps on every seat.
+  const byline = buildCodingSessionTurnByline({
+    agentDisplayName: record?.agentRef
+      ? (actorNames?.(record.agentRef) ?? null)
+      : null,
+    agentRef: record?.agentRef,
+    generation: block.generation,
+    label,
+    model: record?.model,
+    providerInstanceRef: record?.provider,
+    role: record?.role,
+    runtime: record?.runtime,
+  });
+  const name = byline.name;
 
   if (isFolded) {
     if (foldedSummary === null) return null;
@@ -100,7 +124,7 @@ export function CodingSessionUmbrellaTurnBlock({
       >
         <span aria-hidden className={cn("size-2 rounded-full", accent.dot)} />
         <span className="max-w-48 shrink-0 truncate font-medium text-foreground/80">
-          {label}
+          {name}
         </span>
         <span className="min-w-0 flex-1 truncate">{foldedSummary}</span>
         <span className="shrink-0 text-2xs">
@@ -125,10 +149,7 @@ export function CodingSessionUmbrellaTurnBlock({
       data-testid="coding-session-umbrella-turn-block"
       ref={registerNode}
     >
-      <span className="sr-only">
-        Response from {label}, signer {truncatePubkey(block.signerPubkey)},
-        generation {block.generation}.
-      </span>
+      <span className="sr-only">{byline.screenReader}</span>
       {showProvenance || stickyProvenance ? (
         <header
           className={cn(
@@ -144,19 +165,22 @@ export function CodingSessionUmbrellaTurnBlock({
               accent.soft,
               accent.text,
             )}
+            title={byline.via ?? undefined}
           >
             <span
               aria-hidden
               className={cn("size-2 rounded-full", accent.dot)}
             />
-            {label}
+            {name}
           </span>
-          <span
-            className="font-mono text-2xs text-muted-foreground"
-            title="Fact-stream signer for every item in this execution run"
-          >
-            {truncatePubkey(block.signerPubkey)}
-          </span>
+          {byline.detail ? (
+            <span
+              className="text-2xs text-muted-foreground"
+              data-testid="coding-session-umbrella-byline-detail"
+            >
+              {byline.detail}
+            </span>
+          ) : null}
           <span className="text-2xs text-muted-foreground">
             generation {block.generation}
           </span>
@@ -179,7 +203,7 @@ export function CodingSessionUmbrellaTurnBlock({
         >
           <ArrowRightLeft aria-hidden className="size-3.5" />
           <span>
-            Handoff from {handoff.sourceLabel} → {label}
+            Handoff from {handoff.sourceLabel} → {name}
           </span>
           {handoff.link === null ? null : sourceLocation !== null ? (
             <button
@@ -225,7 +249,7 @@ export function CodingSessionUmbrellaTurnBlock({
             }
             type="button"
           >
-            Reply to {label}
+            Reply to {name}
           </button>
           {source && handoffTargets.length > 0 ? (
             <CodingSessionHandoffMenu
@@ -236,7 +260,7 @@ export function CodingSessionUmbrellaTurnBlock({
               onHandoff={onHandoff}
               quote={source.quote}
               record={record}
-              sourceLabel={label}
+              sourceLabel={name}
               targets={handoffTargets}
             />
           ) : null}
@@ -296,9 +320,17 @@ function CodingSessionHandoffMenu({
         <div className="grid gap-1">
           {targets.map((target) => {
             const accent = codingSessionAgentAccent(target.executionKey);
-            const targetLabel =
-              labelsByExecutionKey.get(target.executionKey) ??
-              truncatePubkey(target.signerPubkey);
+            // Same rule as the byline: one provider signs every seat here,
+            // so its key names none of them.
+            const targetLabel = buildCodingSessionTurnByline({
+              agentRef: target.activeGeneration.agentRef,
+              generation:
+                target.activeGeneration.commandTarget?.generation ?? 1,
+              label: labelsByExecutionKey.get(target.executionKey) ?? null,
+              model: target.activeGeneration.model,
+              role: target.activeGeneration.role,
+              runtime: target.activeGeneration.runtime,
+            }).name;
             return (
               <button
                 className="flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60"
