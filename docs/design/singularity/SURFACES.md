@@ -77,7 +77,7 @@ the unknown copy, never a number.**
 
 | # | Fact | Signed source | Copy when it has not arrived |
 |---|---|---|---|
-| W1 | Liveness | 44223 `status` demoted by the ephemeral lease (`deriveCodingSessionWorkspaceStatus`, `codingSessionWorkspaceModel.ts:292`) | `live` · `idle` · `released` · **`No provider answering`** + `last reported Idle 2h ago` |
+| W1 | Liveness | **Signed 44223 `status`, demoted by the ephemeral lease — never the transcript.** The transcript open-turn test may only *narrow* a live seat to "working right now"; it may never promote (§15(b), lane 0) | `live` · `idle` · `released` · **`No provider answering`** + `last reported Idle 2h ago` |
 | W2 | Turn stages | 44224 `turn_queued`/`turn_started`/`turn_degraded`/`turn_dropped`/`turn_refused`/`interrupt_delivered` | `no receipt yet` |
 | W3 | Dispositions | 44240 Pulse, `pu-type` ∈ `plan`\|`milestone`\|`note`\|`handoff`\|`blocker`, chained by `supersedes` | `no pulse yet` — rendered as a claim **by its author**, never as a verdict |
 | W4 | Authority | 44228 `grant-operator` + roster fold | `View only — ask the session owner for collaborator access` |
@@ -87,7 +87,7 @@ the unknown copy, never a number.**
 | W8 | Seats | 44223 `agentRef` + `role`; display name from kind-0 | `unseated`; never a pubkey |
 | W9 | Hires | 44221 `session.hire` + 44224 receipt (`HIRE_MODEL_NOT_OFFERED`, `HIRE_STALE`) | `hire not answered` |
 | W10 | Seat plan | 44225 `plan` item / `update_plan`/`todo` tool item (`codingSessionTaskModel.ts:58`) — **the seat's own plan, not an accepted one** | `No plan published` |
-| W11 | Observed changes | 44225 tool items with file edits (`deriveCodingSessionChangedFiles`) | `No observed changes yet` / `Observed in transcript activity` |
+| W11 | Observed changes | 44225 tool items with file edits (`deriveCodingSessionChangedFiles`). **Three states, not two** — no edit items; edit items that name files; edit items that name nothing (`toolKind:"edit"` with empty `input`) | zero edits → `No observed changes yet`; **edits with no nameable file → `16 edits observed · files not reported`** |
 | W12 | **Tokens, tool calls, context** | 44225 terminal `result` item, `usage` block — `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `toolCalls`, `contextWindow` (`coding_session_payload.rs:1196`); occupancy from the `context_window_updated` item (`coding_session_payload.rs:1268`) | `tokens not reported` / `tools not reported` / `window unknown` |
 | W13 | Model / runtime | 44223 `model`, `runtime` | `model unknown` |
 | W14 | **Tests** | **none today** | `No test report yet` |
@@ -259,6 +259,35 @@ participant status bar → [● Running] [K Keystone · Lead] [B Builder · Work
   **not** wire facts on a transcript item — see C4
 - walk: surface-host spec, `01`
 
+### C1a — Turn-block byline
+*(Added 2026-08-29 — walk finding 4. B1 said "never a pubkey" but claimed only
+the strip, so the one surface that actually prints a key went unspecified.)*
+- cite: `Singularity.png → main stream → the "Builder" byline above each entry`
+  (the mock prints a name and no key)
+- replaces: `CodingSessionUmbrellaTurnBlock.tsx:154-159` (the monospace
+  `truncatePubkey(block.signerPubkey)` beside the label) and `:128-131` (the
+  screen-reader line *"Response from Lead, signer 8b830553…fbc0, generation
+  1."*)
+- reads: **W8** — the seat's own identity from `agentRef`, resolved to a display
+  name through kind-0. Never `signerPubkey`
+- copy: `Keystone · Lead` then `generation 1`. Unseated execution →
+  `Codex · gpt-5.6-sol · generation 1`. Seated but no profile read → role and
+  runtime. Screen-reader line: `Response from Keystone, Lead, generation 1.`
+  The provider key moves to D7's popover under its existing honest label
+  `Verified source`, where it is provenance rather than identity
+- walk: open the umbrella on real events; read the byline of each of three
+  seats. Walk finding 4: today all three read the same `8b830553…fbc0`, the
+  provider key that signs for every seat, while the Agents rail resolves
+  `Lead`, `Designer`, `Poker` correctly from the same records
+
+> **Ruling.** The word "signer" is true and the key really is the signer — but
+> it sits in the identity slot, it is byte-identical on every seat in the
+> session, and it is the one thing on the row a person would use to tell two
+> seats apart. A reader learns nothing and believes they learned an identity.
+> Ledger 77(c), still shipped. Independently confirmable without the render
+> harness: `bee sessions status` shows all seats sharing one `signer` while
+> their `actor` values differ.
+
 ### C2 — Execution bundle disclosure
 - cite: `Singularity.png → main stream → "▸ 11 execution events" and
   "Terminal 4 · Read 2 · Edit 3 · Search 2"`
@@ -404,18 +433,35 @@ and close behaviour untouched.
 - cite: `Singularity.png → inspector → FILES → four rows with per-file counts`
 - replaces: `CodingSessionChangesRail.tsx:62-109` — kept whole
 - reads: **W11**
-- copy: existing verbatim — empty state `No observed changes yet` /
-  *"File edits observed in this session's transcript will collect here."*;
-  per-row `View` / `Hide`; a file with no diff renders its name with no counts,
-  never `+0 −0`
-- walk: **seen**, `04`
+- copy, **three states**:
+  - zero edit items observed → existing verbatim: `No observed changes yet` /
+    *"File edits observed in this session's transcript will collect here."*
+  - edit items observed, none nameable → `16 edits observed · files not reported`
+    / *"The provider published these edits without a path or a diff, so
+    Beekeeper cannot name the files. Nothing was hidden — nothing was sent."*
+  - files resolved → existing rows verbatim; per-row `View` / `Hide`; a file
+    with no diff renders its name with no counts, never `+0 −0`
+- walk: **seen**, `04` (files resolved). For the middle state, walk finding 3 on
+  real relay events: 16 of 188 `tool_call` items carry `toolKind:"edit"`, every
+  one with an empty `input`, and the tab renders `No observed changes yet`
+- **A4's count follows the same rule**: the header tab counts *nameable files*,
+  so in the middle state it shows no count and the panel carries the sentence.
+  A tab reading `Observed changes 0` beside 16 observed edits would be the same
+  lie in a smaller font
+
+> **Ruling.** Presence rendered as absence is the mirror of the rule this spec
+> opens with. `No observed changes yet` is reserved for **zero** observed edits;
+> it may never stand in for "we saw sixteen and can name none." The provider
+> stripping edit payloads before they reach the wire is a wire-side bug on the
+> ledger — this surface reports what arrived and does not reconstruct paths.
 
 ### D5 — `TESTS`
 - cite: `Singularity.png → inspector → TESTS → "3 / 3 passing" + a full green
   bar + "100%"`
 - replaces: nothing — **new**
 - reads: **W14 — no signed source today.**
-- copy, always, until W15/W14 exist:
+- copy, always, until W15/W14 exist, in the elision shape of §10a — a refusal
+  that names what it is refusing:
   `No test report yet` /
   *"Nothing on the wire reports tests. A seat's written report is prose in its
   turn — Beekeeper will not count it."*
@@ -440,11 +486,31 @@ and close behaviour untouched.
   (`:235-248`); empty activity kept verbatim: `No attributable activity yet.`;
   spawn note kept verbatim: *"Spawned agents will appear here when the session
   publishes signed spawn relationships."*
-- walk: **seen**, `03` — and this capture is a bug: the rail says `Idle` for a
-  seat the strip beside it calls `live`. See §15(b). The lane deletes
-  `executionStatus` (`CodingSessionExecutionRail.tsx:398`) and threads the
-  demoted resolver in; the footer's `All idle` (`:316`) goes with it, replaced
-  by `1 working · 1 idle` computed from the same demoted status
+- walk: **seen**, `03` — and this capture is a bug in both directions: the rail
+  says `Idle` for a seat the strip calls `live`, and on real events with stale
+  leases the rail says `Working` for a seat the strip calls `no provider
+  answering` (walk finding 1). See §15(b). The lane deletes `executionStatus`
+  (`CodingSessionExecutionRail.tsx:398`) and calls lane 0's single W1 function;
+  the footer's `All idle` (`:316`) goes with it, replaced by
+  `1 working · 1 idle` computed from that same function
+
+> **The red-first test must name which word wins**, or it passes with both
+> panels agreeing on the wrong one. Two cases, and they are the two directions
+> §15(b) names:
+>
+> - signed `completed`, transcript with no terminator, lease fresh → **both**
+>   the rail and the bar read **`idle`**. Not `live` (today's strip) and not
+>   `Idle` in one place and `live` in the other.
+> - signed `running`, lease aged out → **both** read **`No provider answering`**.
+>   Not `Working` (today's rail).
+>
+> **A second correction to the lead's ruling.** It words this test as *"reads
+> `released`, not `live`"*. `released` is wrong: it is the word for
+> `kind: "ended"`, which only a `stopped` status produces
+> (`codingSessionWireWorkspaceStatus`, `codingSessionWorkspaceModel.ts:192-208`;
+> `codingSessionDispositionWord`, `codingSessionUmbrellaModel.ts:589-601`).
+> `completed` falls through to `{kind:"idle"}`, so the expected string is
+> **`idle`**. Asserting `released` would fail against correct code.
 
 ### D7 — `Context` tab
 - cite: `Singularity.png → inspector → "Context" tab (unselected in the mock)`
@@ -459,6 +525,18 @@ and close behaviour untouched.
 - walk: open the tab on a Claude seat (emits `context_window_updated`) and on a
   seat that does not; confirm the second says `window unknown` and never a
   percentage
+
+> **The spec is ahead of the surface here, and the CLI is ahead of both.** Walk
+> finding 5 read the shipped popover in full: `Shared session details` /
+> `Channel #engineering` / `Signed projection 3 executions` /
+> `Verified source 8b83055307…6ef9fbc0`. No founder, though W6 says founder is
+> never unknown and the 44226 genesis carries it. No context, though W12 is on
+> the wire and `bee sessions status` prints 27% of 1M for one seat and 12% for
+> another from exactly those items (`crew_cmds.rs:884-933`). Nothing here is
+> false — it simply answers none of the questions the panel exists to answer,
+> while the CLI beside it answers them today. That is the gap D7 closes, and
+> the `Verified source` row it already has is the right home for the provider
+> key that C1a evicts from the byline.
 
 ### D8 — Nothing-selected / collapsed
 - cite: `Singularity.png → inspector` is drawn open with nothing selected
@@ -661,7 +739,10 @@ identity signed the chain, and multiple chains render multiple cards.
 - reads: **W16**
 - copy: chip `{} brief`; opened, a monospace panel titled with the seat's target
   and dismissable; when the seat's opening turn is not in this client's store →
-  `no brief on the wire` (the chip renders disabled with that as its title)
+  `no brief on the wire` (the chip renders disabled with that as its title).
+  A brief the client holds but may not show follows §10a's elision shape and
+  names its size, e.g. `[elided private context: 67 bytes, sha256:a39f1225…]` —
+  never a blank panel
 - walk: open a hired seat's card and read the exact dispatch text the lead sent
 
 > This is the T3 idea worth stealing whole: the instruction is *viewable in
@@ -707,6 +788,59 @@ identity signed the chain, and multiple chains render multiple cards.
 > **Ruling.** A total with missing terms presented as a total is the quietest
 > lie a dashboard tells. The parenthetical is not decoration; it is the whole
 > honesty of the number.
+
+---
+
+## 10a. Region J — The way in (channel session list)
+
+*(Added 2026-08-29 — walk finding "what surprised me most", promoted to a
+ruling. No mock region: this is the door to every region above, and it can say
+the session does not exist when it does.)*
+
+**The pattern to copy, by name.** The best honesty behaviour in the product
+today is the elided-context marker, which renders inline in a message as:
+
+```
+[elided private context: 67 bytes, sha256:a39f12250cc25119a084511d4d569ae1eb8a60f310da67f442fda1b800fc23cf]
+```
+
+It refuses to show a thing **and** discloses how much it withheld and how to
+verify it. That is the shape every "we are not showing you something" state in
+this spec takes — J1 here, **D5** (tests), **H2** (an unreadable brief). A
+refusal that names its own size is trustworthy; a refusal that renders as an
+absence is not.
+
+### J1 — Empty channel session list
+- cite: no mock element — **new**
+- replaces: `ChannelCodingSessionsMenu.tsx:124-128` (`No signed sessions in this
+  channel yet.`) and `:236` (*"Sessions started here appear in this list as soon
+  as the provider signs its first event."*), plus the trigger's count at `:112`
+- reads: `CodingSessionCatalogSnapshot.rejectedAuthorCount` and
+  `.invalidSignatureCount` (`codingSessionTypes.ts:151-152`) — **already
+  computed** by the trusted ingress (`codingSessionTrustedIngress.ts:600-603`,
+  surfaced at `:666-667`, threaded at `useCodingSessionCatalog.ts:92-93`) and
+  **read by nothing**. No new plumbing and no wire change
+- copy, three states:
+  - nothing arrived → existing verbatim: `No signed sessions in this channel
+    yet.` / *"Sessions started here appear in this list as soon as the provider
+    signs its first event."*
+  - events arrived and were all rejected → `No sessions Beekeeper can verify.` /
+    *"12 session events in this channel were rejected: 12 with a signature this
+    client could not verify, 0 from an author this session does not accept. Run
+    `bee events query --kinds 44223 --channel <id>` to see what the relay
+    holds."* Counts named separately, each omitted when zero
+  - some accepted, some rejected → the list renders as today, with a footer
+    line: `3 more session events were rejected and are not shown.`
+- walk: seed the channel with correctly-formed 44223 events signed by a key the
+  client will not accept; open the trigger. Today it reads `Coding sessions (0)`
+  over the "provider has not started" copy — walk finding: three runs were spent
+  believing the events were malformed
+
+> **Ruling.** Failing closed is right and stays. The copy is the bug: for an
+> operator whose provider signs with a key this client rejects, `No signed
+> sessions in this channel yet` says *the provider never started*. It is the
+> green-dot-over-a-dead-team lie told by an empty-state string, and the counts
+> that make it honest are already sitting in the component's props.
 
 ---
 
@@ -811,15 +945,56 @@ context window are on the wire since ledger 89(b) (`coding_session_payload.rs:11
 `crew_cmds.rs:884`). The MISSION card's numbers are sourceable today. This
 *shrinks* the "requires new wire artifact" list to two items.
 
-**(b) Two voices for one liveness fact — confirmed live, `03-agents-open.png`.**
-In one screenshot the disposition strip says `Claude Code · sonnet · live`, the
-header says `1 working`, and the Agents rail says `Idle` for that same
-execution. Cause: `CodingSessionExecutionRail.tsx:398` (`executionStatus`) reads
-the raw 44223 status with no reachability demotion and no transcript-derived
-open-turn test, while the strip uses `deriveCodingSessionWorkspaceStatus`. The
-rail's footer `All idle` (`:316`) inherits it. Severity: this is the ledger-77(c)
-class — a stock component painting a comfortable word over a fact the surface
-beside it already knows. Fixed by D6 in lane 2.
+**(b) Two models answer W1, and they lie in opposite directions.**
+*(Amended 2026-08-29 after Texas's walk, `WALK-2026-08-29.md` findings 1 and 2.
+My first diagnosis — "the rail reads raw status, move it onto the strip's
+model" — was half the bug and the fix would have spread the other half.)*
+
+Neither of today's two models is the source of truth:
+
+- **The rail under-reports.** `CodingSessionExecutionRail.tsx:398`
+  (`executionStatus`) switches on the raw 44223 string; the footer `:307-311`
+  recounts `status ∈ {running, starting}`. Neither consults the lease. Walk
+  finding 1, on real relay events with aged-out leases: the strip said
+  `Poker · no provider answering`, the header said `3 agents · 3 need
+  attention`, and the rail said **`Working`** in blue with a footer of
+  `1 working` — same execution, same window. Measured proof: the cropped rail
+  is byte-identical across a fresh-lease and a stale-lease run
+  (`sha256 e0dd7b23…`). Reachability changed; the rail's pixels did not.
+- **The strip over-reports.** `codingSessionWorkspaceModel.ts:355-377`: when the
+  newest transcript item is not a turn terminator and its `turnId` differs from
+  the last terminator's, the function returns `{kind:"working"}` **before it
+  reads the signed status at all**. `codingSessionDispositionWord`
+  (`codingSessionUmbrellaModel.ts:589-601`) prints that inference as the word
+  **`live`** — a reachability word for an activity guess. Walk finding 2: an
+  execution whose signed 44223 status is `completed` reads `live` in the strip
+  and `Idle` in the rail, and the signed word appears nowhere on screen.
+
+**One correction to the lead's ruling, on the record because it changes a
+test.** The ruling says "the strip is not the demoted side." The strip *is*
+lease-demoted — `CodingSessionHeader.tsx:593-598` passes
+`resolveReachability(…)` into `deriveCodingSessionWorkspaceStatus`, and walk
+finding 1 is the proof (the strip moved to `no provider answering` when the
+leases aged; the rail did not). The strip's defect is not that it skips the
+lease, it is that it **promotes ahead of the signed status** and the lease only
+catches that promotion when reachability is *known-unreachable* —
+`demoteUnreachable` returns the status untouched on `{known:false}`
+(`codingSessionWorkspaceModel.ts:248-252`), which is the honest default and the
+common one. So: demoted, but promoted first, and only sometimes caught.
+
+**The ruling this surface builds to (LOCKED):**
+
+1. One function answers **W1** for every panel; the rail and the strip both
+   call it.
+2. Its source is the **signed 44223 status, demoted by the ephemeral lease** —
+   never the transcript.
+3. The transcript open-turn heuristic survives only as a **narrowing**: it may
+   take a seat the wire already says is live and add *working right now*. It may
+   **never promote** a non-live signed status to live.
+4. Severity: this is the shape a **killed seat** leaves — a resting last status,
+   no terminator, a transcript that looks open. It is the common case.
+
+Owned by **lane 0** (§16), which lands before either UI lane.
 
 **(c) The umbrella lifecycle status is never demoted.** `deriveUmbrellaStatus`
 (`codingSessionUmbrellaModel.ts:486`) folds raw statuses, so an umbrella whose
@@ -836,9 +1011,39 @@ replaces the card.
 
 ## 16. Lane briefs
 
-Two lanes, no shared files. Neither lane touches the wire, the relay, the CLI,
-mobile or web. Neither lane changes `codingSessionWorkspaceModel.ts` — both read
-it.
+**Three lanes now, not two** *(amended 2026-08-29)*. RULING 1 requires changing
+the one function both UI lanes read, so it cannot sit inside either of them
+without making them sequential on a file they share. It becomes a small lane 0
+that lands first; lanes 1 and 2 then run in parallel exactly as before. No lane
+touches the wire, the relay, the CLI, mobile or web.
+
+### Lane 0 — One answer for W1 (lands first, blocks both)
+
+**Owns, exclusive:**
+```
+desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.ts
+desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.test.mjs
+```
+
+**Delivers:** the single W1 function per §15(b)'s locked ruling — signed 44223
+demoted by the lease; the transcript open-turn test narrows a live seat and
+never promotes a non-live one. It changes no component and no copy; both UI
+lanes call it unchanged.
+
+**Red first:**
+- `a completed execution with an unterminated transcript is idle, not working` —
+  the promotion path at `:355-377`, which is the walk's finding 2
+- `a running execution with an aged-out lease is No provider answering` — walk
+  finding 1
+- `a live seat with an open turn still narrows to working` — the heuristic keeps
+  its one legitimate job
+- `an unknown-reachability live seat is not demoted` — `{known:false}` is not
+  evidence of absence (`:248-252`)
+
+**Done when:** the function's only inputs for the *word* are the signed status
+and the lease, and a test proves the transcript cannot raise a seat's state.
+
+Lane 1 and lane 2 below are unchanged except where marked.
 
 ### Lane 1 — Stream and strip
 
@@ -865,6 +1070,11 @@ components. Lane 2 exports components with props; it never edits this file.
   leaseless; assert the chip reads `No provider answering`, not `Running`
 - `a seat chip reads agent and role, never a pubkey` — seed `agentRef` + `role`;
   assert `Keystone · Lead`; assert no 64-hex substring in the bar
+- **`a turn-block byline names the seat, not the signer`** (C1a) — three seats
+  under one provider signer; assert each byline differs, assert no 64-hex or
+  truncated-key substring (`/[0-9a-f]{8}…[0-9a-f]{4}/`) anywhere in the block
+  header **or its screen-reader line**, and assert the provider key still
+  appears exactly once, in D7's `Verified source` row
 - `a chip with no profile falls back to role and runtime` — `agentRef` set, no
   kind-0; assert `designer · Codex · gpt-5.6-sol`
 - `an execution with no transcript says no turn observed` — assert the chip
@@ -897,10 +1107,13 @@ desktop/src/features/coding-sessions/ui/CodingSessionSurfaceHost.tsx
 desktop/src/features/coding-sessions/ui/CodingSessionMissionCard.tsx         (new)
 desktop/src/features/coding-sessions/lib/codingSessionMissionModel.ts        (new)
 desktop/src/features/coding-sessions/lib/codingSessionUsage.ts               (new)
+desktop/src/features/coding-sessions/ui/ChannelCodingSessionsMenu.tsx        (J1)
 desktop/tests/e2e/singularity-inspector.spec.ts                              (new)
 ```
 
-**Delivers:** D1–D8, H1–H5.
+**Delivers:** D1–D8, H1–H5, J1. J1 lands here rather than in lane 1 because it
+is the same job as D4 and D5 — disclose what we do not know — and lane 1 is
+already the larger lane. It touches no file lane 1 owns.
 
 **Red first, one per claimed state:**
 - `the tests panel says No test report yet even when a turn claims 3/3 passing`
@@ -908,9 +1121,19 @@ desktop/tests/e2e/singularity-inspector.spec.ts                              (ne
   never renders a count. **This is the lane's headline test**
 - `the plan panel names the seat whose plan it is` — assert `PLAN · Keystone`
 - `no plan snapshot renders No plan published` — verbatim, with its description
-- `the agents rail and the participant bar agree on liveness` — one leaseless
-  execution; assert the rail does not say `Idle` while the bar says
-  `No provider answering`
+- **`the rail and the bar agree on liveness, on the signed word`** — two
+  fixtures, and the assertion names the word so agreement alone cannot pass it:
+  signed `completed` + unterminated transcript + fresh lease → both read `idle`;
+  signed `running` + aged lease → both read `No provider answering`. Assert the
+  footer count moves with them (never `All idle` beside a `Working` row)
+- **`sixteen unnameable edits do not render as no observed changes`** (D3/D4) —
+  seed 16 `toolKind:"edit"` items with empty `input`; assert
+  `16 edits observed · files not reported`, assert the tab shows no count, and
+  assert the string `No observed changes yet` is absent
+- **`a channel whose events were all rejected does not say the provider never
+  started`** (J1) — seed events with an unacceptable signature; assert the
+  rejected-count copy and assert the "as soon as the provider signs its first
+  event" sentence is absent
 - `a null line count suppresses the total` — one file with null additions;
   assert `4 files · line counts not reported` and no `+0`
 - `context with no window never shows a percent` — assert
