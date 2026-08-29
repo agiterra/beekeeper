@@ -8,7 +8,6 @@ import {
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
-import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import {
   readCodingSessionContextLoad,
   type CodingSessionContextLoad,
@@ -93,6 +92,7 @@ import {
   type CodingSessionUmbrellaComposerPrefill,
 } from "./CodingSessionUmbrellaComposer";
 import { CodingSessionUmbrellaTurnBlock } from "./CodingSessionUmbrellaTurnBlock";
+import { UmbrellaConversationRow } from "./CodingSessionUmbrellaConversationRow";
 
 export { buildUmbrellaTurnBlockHandoff } from "./CodingSessionUmbrellaTurnBlock";
 
@@ -911,56 +911,6 @@ export function shouldShowTurnBlockProvenance(
   return (
     previous.kind !== "turn-block" || previous.generation !== entry.generation
   );
-}
-
-/**
- * One lane message.
- *
- * The author is named, not stamped: the 2026-08-29 walk (finding 4) read the
- * founder's own message in the lane as a bare `a3945536…3cf2`, because this
- * row printed a key while the surrounding surface already held the profiles
- * that resolve it.
- */
-function UmbrellaConversationRow({
-  currentUserPubkey,
-  message,
-  operatorProfiles,
-}: {
-  currentUserPubkey: string | null;
-  message: CodingSessionLaneMessage;
-  operatorProfiles: UserProfileLookup | undefined;
-}) {
-  const authorLabel = resolveCodingSessionPromptAuthorLabel({
-    currentUserPubkey,
-    operatorPubkey: message.authorPubkey,
-    profiles: operatorProfiles,
-  });
-  return (
-    <div
-      className="rounded-xl bg-muted/40 px-4 py-2"
-      data-testid="coding-session-umbrella-conversation"
-    >
-      <p className="text-2xs text-muted-foreground">
-        <span
-          className="font-medium text-foreground/75"
-          data-testid="coding-session-umbrella-conversation-author"
-        >
-          {authorLabel}
-        </span>{" "}
-        · {formatLaneTimestamp(message.timestampMs)}
-      </p>
-      <p className="mt-0.5 text-base whitespace-pre-wrap wrap-break-word">
-        {message.content}
-      </p>
-    </div>
-  );
-}
-
-function formatLaneTimestamp(timestampMs: number): string {
-  const date = new Date(timestampMs);
-  return Number.isFinite(date.getTime())
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "";
 }
 
 /** Map the umbrella's derived status onto the header's three honest states. */
