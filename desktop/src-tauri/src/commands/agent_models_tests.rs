@@ -513,63 +513,6 @@ fn update_request_turn_timeout_parses_for_wire_compat() {
     assert_eq!(req.turn_timeout_seconds, Some(9999));
 }
 
-// ---------------------------------------------------------------------------
-// Linked-instance write guard (model/provider/prompt)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn linked_instance_ignores_model_provider_prompt_writes() {
-    let mut record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
-        r#"{
-            "pubkey": "linked1",
-            "name": "linked-agent",
-            "persona_id": "p1",
-            "private_key_nsec": "nsec1fake",
-            "relay_url": "wss://localhost:3000",
-            "acp_command": "buzz-acp",
-            "agent_command": "goose",
-            "agent_args": [],
-            "mcp_command": "",
-            "turn_timeout_seconds": 320,
-            "system_prompt": null,
-            "model": null,
-            "provider": null,
-            "env_vars": {},
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "last_started_at": null,
-            "last_stopped_at": null,
-            "last_exit_code": null,
-            "last_error": null
-        }"#,
-    )
-    .expect("linked agent record");
-
-    let is_linked = record.persona_id.is_some();
-    assert!(is_linked, "test setup: record must be linked");
-
-    crate::commands::agent_models::apply_model_provider_prompt_update(
-        &mut record,
-        Some(Some("explicit-model".to_string())),
-        Some(Some("explicit-prov".to_string())),
-        Some(Some("explicit-prompt".to_string())),
-    )
-    .unwrap();
-
-    assert!(
-        record.model.is_none(),
-        "linked record model must not be updated"
-    );
-    assert!(
-        record.provider.is_none(),
-        "linked record provider must not be updated"
-    );
-    assert!(
-        record.system_prompt.is_none(),
-        "linked record system_prompt must not be updated"
-    );
-}
-
 #[test]
 fn definition_less_instance_accepts_model_provider_prompt_writes() {
     let mut record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
@@ -605,6 +548,7 @@ fn definition_less_instance_accepts_model_provider_prompt_writes() {
         Some(Some("new-model".to_string())),
         Some(Some("new-prov".to_string())),
         Some(Some("new-prompt".to_string())),
+        None,
     )
     .unwrap();
 

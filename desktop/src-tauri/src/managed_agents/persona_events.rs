@@ -428,10 +428,9 @@ pub struct PersonaSnapshot {
     pub model: Option<String>,
     pub provider: Option<String>,
     /// Preferred ACP runtime ID, copied verbatim from the persona (including
-    /// `None`). Unlike `model`/`provider`, there is no record-fallback: the
-    /// materialized instance `runtime` must mirror the definition so that
-    /// definition edits propagate on the next spawn rather than being silently
-    /// shadowed by the stale materialized value.
+    /// `None`). Applied on the same terms as `model`/`provider`: a named
+    /// runtime propagates to the instance on the next spawn, a blank one
+    /// leaves the host's choice standing. See [`apply_persona_snapshot`].
     pub runtime: Option<String>,
     /// `persona_content_hash` of the persona at snapshot time; the drift basis.
     pub source_version: String,
@@ -453,14 +452,45 @@ pub fn persona_snapshot(persona: &AgentDefinition) -> PersonaSnapshot {
     }
 }
 
+/// Apply one host-owned definition field onto the record: a non-blank
+/// definition value replaces whatever the record carries; a blank or absent
+/// one leaves the record's value alone.
+///
+/// The asymmetry is the whole point — see [`apply_persona_snapshot`].
+fn apply_definition_value(slot: &mut Option<String>, value: Option<String>) {
+    let Some(value) = value else {
+        return;
+    };
+    if value.trim().is_empty() {
+        return;
+    }
+    *slot = Some(value);
+}
+
 /// Re-pin `record` to `persona`: build a snapshot via [`persona_snapshot`]
 /// and mirror it onto the record — the definition quad
 /// (`system_prompt`/`model`/`provider`/`runtime`), the env-override
 /// self-heal, and the `persona_source_version` drift basis.
 ///
-/// Definition-authoritative: blank definition model/provider produce `None`
-/// on the record. The effective-config resolver falls through to the global
-/// default at read time; stale materialized record bytes are never preserved.
+/// Model, provider and runtime are HOST-owned identity facts: they say what
+/// this computer runs the identity on, while the pack owns role, persona,
+/// skills and the display-name default (`docs/CREW_SESSIONS_PLAN.md` §3.1
+/// D11–D13). So a **blank** definition value never clears the record's:
+/// role-pack definitions carry `null` for all three by design
+/// (`crew_roles.rs` builds them from pack frontmatter, and packs are
+/// model-agnostic), and the old unconditional copy is what rewrote a
+/// hand-seated `codex` / `gpt-5.6-sol` back to `null` on the next
+/// whole-file save. Whitespace-only counts as blank and is never
+/// materialized. A **non-blank** definition value is still authoritative, so
+/// editing a definition's model/provider/runtime keeps propagating to its
+/// instances on the next spawn.
+///
+/// Known limitation: for a definition that DOES name a model, a host pick
+/// made through the picker is overwritten again on the next snapshot apply.
+/// Closing that needs per-field host-pin provenance on the record (or
+/// instance-over-definition precedence in
+/// `effective_config::resolve_linked`, which today ignores the record
+/// entirely for a linked instance).
 ///
 /// This is the single apply used by every snapshot-apply site: the spawn
 /// re-pin (`start_local_agent_with_preflight`), the launch backfill and
@@ -476,12 +506,17 @@ pub fn apply_persona_snapshot(record: &mut ManagedAgentRecord, persona: &AgentDe
     if let Some(prompt) = snapshot.system_prompt {
         record.system_prompt = Some(prompt);
     }
-    record.model = snapshot.model;
-    record.provider = snapshot.provider;
-    record.runtime = snapshot.runtime;
+    apply_definition_value(&mut record.model, snapshot.model);
+    apply_definition_value(&mut record.provider, snapshot.provider);
+    apply_definition_value(&mut record.runtime, snapshot.runtime);
     // Drop a stale create-time harness pin when the definition switches to a
     // different known runtime (builtin, static preset, or loaded custom). A pin
     // that names an unknown/custom command is always kept.
+    //
+    // Gated on the definition naming a runtime at all: a pack that names none
+    // leaves the host's runtime standing (above), so there is no new harness
+    // for the pin to be stale against and dropping it would silently move the
+    // agent onto a different binary.
     //
     // Both sides are resolved through the canonical harness-identity resolver
     // (`canonical_harness_command`) which accepts either a runtime id OR a
@@ -556,6 +591,8 @@ pub fn preview_prospective_persona_snapshot(
     }
     preview
 }
+#[cfg(test)]
+mod host_owned_tests;
 #[cfg(test)]
 mod stale_pin_tests;
 #[cfg(test)]

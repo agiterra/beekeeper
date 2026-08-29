@@ -85,6 +85,32 @@ pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> 
     Ok(())
 }
 
+/// Re-pin `record` to its linked definition and report whether anything moved.
+///
+/// Returns `false` — meaning "no store write is owed" — when the record has no
+/// linked definition, when that definition is missing (an orphan the spawn path
+/// refuses downstream), or when the re-pin is a no-op.
+///
+/// The pair-restart path saves the whole store BEFORE the spawn it is about to
+/// attempt, so a start that never produces a live process still rewrote every
+/// record on disk. That is how a dark-wake start managed to rewrite the store
+/// on 2026-08-29 (item 90). Gating the write on a real change makes the failed
+/// start leave the file alone.
+pub fn resnapshot_linked_record(
+    record: &mut super::ManagedAgentRecord,
+    personas: &[super::AgentDefinition],
+) -> bool {
+    let Some(persona_id) = record.persona_id.clone() else {
+        return false;
+    };
+    let Some(persona) = personas.iter().find(|persona| persona.id == persona_id) else {
+        return false;
+    };
+    let before = record.clone();
+    super::persona_events::apply_persona_snapshot(record, persona);
+    *record != before
+}
+
 /// Restore managed agents that were running before the app was closed.
 ///
 /// Split into three phases to minimise lock contention with the frontend:
@@ -557,3 +583,7 @@ fn persist_restore_error(
     record.last_error = Some(error);
     save_managed_agents(app, &records)
 }
+
+#[cfg(test)]
+#[path = "restore_host_owned_tests.rs"]
+mod host_owned_tests;

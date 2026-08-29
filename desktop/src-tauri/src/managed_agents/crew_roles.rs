@@ -576,6 +576,18 @@ fn mint_agent_name(
     }
 }
 
+/// Keep a host-owned value across a role-pack reinstall.
+///
+/// `slot` starts out as whatever the pack projection produced. A non-blank
+/// `previous` — the value the operator seated on this host — replaces it;
+/// a blank or absent one leaves the pack's value standing so a pack that newly
+/// declares something can still be picked up.
+fn carry_over_host_value(slot: &mut Option<String>, previous: Option<&str>) {
+    if let Some(value) = previous.map(str::trim).filter(|value| !value.is_empty()) {
+        *slot = Some(value.to_string());
+    }
+}
+
 /// Install every discovered role pack into the stores handed in.
 ///
 /// Pure over the stores: it takes the current definitions, agents and teams and
@@ -679,14 +691,6 @@ pub fn install_role_packs(
             None => definitions.push(definition),
         }
 
-        let agent_command =
-            crate::managed_agents::effective_agent_command(Some(&persona_id), &definitions, None);
-        let agent_args = crate::managed_agents::normalize_agent_args(&agent_command, Vec::new());
-        let mcp_command = crate::managed_agents::known_acp_runtime(&agent_command)
-            .and_then(|runtime| runtime.mcp_command)
-            .unwrap_or("")
-            .to_string();
-
         let (pubkey, nsec, auth_tag, refreshed, created_at) = match existing.as_ref() {
             Some(record) => (
                 record.pubkey.clone(),
@@ -732,9 +736,6 @@ pub fn install_role_packs(
             .map(|record| record.relay_url.clone())
             .unwrap_or_default();
         record.acp_command = crate::managed_agents::DEFAULT_ACP_COMMAND.to_string();
-        record.agent_command = agent_command;
-        record.agent_args = agent_args;
-        record.mcp_command = mcp_command;
         record.home_role = Some(pack.role.clone());
         record.persona_team_dir = Some(pack.dir.clone());
         record.persona_name_in_team = Some(pack.persona_name.clone());
@@ -747,7 +748,35 @@ pub fn install_role_packs(
             record.env_vars = previous.env_vars.clone();
             record.last_started_at = previous.last_started_at.clone();
             record.last_stopped_at = previous.last_stopped_at.clone();
+            // Model, provider, runtime and avatar are host-owned install facts
+            // — what THIS computer runs the identity on, and what it looks like
+            // — while the pack owns role, persona, skills and the display-name
+            // default (D11–D13; ledger 77 "roles are team artifacts, installs
+            // are per host"). The instance above is rebuilt off the pack
+            // definition, and packs are model-agnostic by design, so without
+            // this carry-over a refresh (or a rename-in-place) silently wipes
+            // the seat the operator chose.
+            //
+            // Only a non-blank previous value carries over: a refresh must
+            // still be able to pick up a value the pack newly declares for an
+            // identity that never had one.
+            carry_over_host_value(&mut record.model, previous.model.as_deref());
+            carry_over_host_value(&mut record.provider, previous.provider.as_deref());
+            carry_over_host_value(&mut record.runtime, previous.runtime.as_deref());
+            carry_over_host_value(&mut record.avatar_url, previous.avatar_url.as_deref());
+            record.agent_command_override = previous.agent_command_override.clone();
         }
+        // Re-derive the stored harness from the record we just assembled, so a
+        // carried-over runtime or pin is not contradicted by a command line
+        // computed from the pack alone. `record_agent_command` is the same
+        // resolver spawn and the summary use (pin → record runtime → pack).
+        record.agent_command = crate::managed_agents::record_agent_command(&record, &definitions);
+        record.agent_args =
+            crate::managed_agents::normalize_agent_args(&record.agent_command, Vec::new());
+        record.mcp_command = crate::managed_agents::known_acp_runtime(&record.agent_command)
+            .and_then(|runtime| runtime.mcp_command)
+            .unwrap_or("")
+            .to_string();
 
         match agents
             .iter_mut()

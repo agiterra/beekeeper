@@ -830,3 +830,118 @@ fn install_log_filename_accepts_ordinary_runtime_ids() {
         );
     }
 }
+
+// ── Keyring read failures: transient vs absent (item 90) ────────────────────
+
+/// The macOS keychain refuses reads in dark wake with
+/// `errSecInteractionNotAllowed` (-25308, "User interaction is not allowed").
+/// That is a *this boot* condition, retried on the next start — the log line
+/// must say so rather than reading like the key is gone for good.
+#[test]
+fn a_dark_wake_keyring_failure_reads_as_transient() {
+    let note = super::keyring_read_failure_note(
+        "abc123",
+        "keyring unavailable: SecKeychainSearchCopyNext: User interaction is not allowed.",
+    );
+    assert!(
+        note.contains("transient"),
+        "a dark-wake read failure must be labelled transient: {note}"
+    );
+    assert!(
+        note.contains("retried on the next start"),
+        "the note must say the read is retried: {note}"
+    );
+    assert!(
+        !note.contains("has no key"),
+        "a transient failure must not claim the key is missing: {note}"
+    );
+}
+
+/// A backend that reports the entry itself is missing is NOT transient — that
+/// is a real "no key" case and must keep saying so.
+#[test]
+fn an_item_not_found_keyring_failure_reads_as_absent() {
+    for error in [
+        "keyring read: No matching entry found in secure storage",
+        "keyring read: item not found",
+        "keyring read: SecItemCopyMatching failed: -25300",
+    ] {
+        let note = super::keyring_read_failure_note("abc123", error);
+        assert!(
+            note.contains("has no key"),
+            "an item-not-found failure must read as absence: {note}"
+        );
+        assert!(
+            !note.contains("transient"),
+            "a real missing key must not be excused as transient: {note}"
+        );
+    }
+}
+
+/// Any other backend failure is transient too — the default must fail toward
+/// "retry", never toward "the secret is gone".
+#[test]
+fn an_unclassified_keyring_failure_defaults_to_transient() {
+    let note = super::keyring_read_failure_note("abc123", "dbus: connection refused");
+    assert!(note.contains("transient"), "{note}");
+}
+
+// ── Definitions and instances share one store (item 90) ─────────────────────
+
+/// `managed-agents.json` deliberately holds both halves: key-less agent
+/// *definitions* (`"pubkey": ""`) and keyed agent *instances*. There is no
+/// separate definition store, so those rows are the intended on-disk shape.
+/// Every reader must split them through the one predicate — an instance reader
+/// that saw a definition would try to spawn something with no identity.
+#[test]
+fn a_unified_store_splits_into_definitions_and_instances_by_pubkey() {
+    let store: Vec<ManagedAgentRecord> = serde_json::from_str(
+        r#"[
+            {
+                "pubkey": "",
+                "name": "Lead",
+                "slug": "lead-definition",
+                "private_key_nsec": "",
+                "relay_url": "",
+                "acp_command": "buzz-acp",
+                "agent_command": "",
+                "agent_args": [],
+                "mcp_command": "",
+                "turn_timeout_seconds": 320,
+                "env_vars": {},
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            },
+            {
+                "pubkey": "abc123",
+                "name": "Keystone",
+                "persona_id": "lead-definition",
+                "private_key_nsec": "nsec1fake",
+                "relay_url": "wss://localhost:3000",
+                "acp_command": "buzz-acp",
+                "agent_command": "goose",
+                "agent_args": [],
+                "mcp_command": "",
+                "turn_timeout_seconds": 320,
+                "env_vars": {},
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            }
+        ]"#,
+    )
+    .expect("unified store parses");
+
+    let definitions: Vec<_> = store
+        .iter()
+        .filter(|record| super::is_definition_record(record))
+        .collect();
+    let instances: Vec<_> = store
+        .iter()
+        .filter(|record| !super::is_definition_record(record))
+        .collect();
+
+    assert_eq!(definitions.len(), 1, "the key-less row is a definition");
+    assert_eq!(definitions[0].slug.as_deref(), Some("lead-definition"));
+    assert_eq!(instances.len(), 1, "the keyed row is an instance");
+    assert_eq!(instances[0].pubkey, "abc123");
+}

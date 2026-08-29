@@ -885,3 +885,68 @@ fn a_projects_roles_folder_scans_to_exactly_what_the_picker_would_have_shown() {
 /// into its own file only to keep both under the repository file-size gate.
 #[path = "crew_roles_naming_tests.rs"]
 mod naming;
+
+/// Item 90: model, provider, runtime and avatar are host-owned install facts.
+/// A refresh (including one that renames in place) rebuilds the instance off
+/// the pack definition, and role packs are model-agnostic by design — so
+/// without an explicit carry-over the reinstall wipes whatever the operator
+/// seated the identity on.
+#[test]
+fn a_refresh_preserves_the_host_owned_model_provider_runtime_and_avatar() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "lead", "lead", Some("lead"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let first = {
+        let mut mint = counting_mint(&mut minted);
+        install_role_packs(
+            &scan,
+            Vec::new(),
+            Vec::new(),
+            &[],
+            NOW,
+            &names(&[]),
+            &mut mint,
+        )
+        .expect("install succeeds")
+    };
+
+    // The host seats the identity on a specific runtime/model and gives it a
+    // custom avatar — exactly what happened by hand at 23:17.
+    let mut seated = first.agents.clone();
+    seated[0].model = Some("gpt-5.6-sol".into());
+    seated[0].provider = Some("openai".into());
+    seated[0].runtime = Some("codex".into());
+    seated[0].avatar_url = Some("https://example.com/banksy.png".into());
+
+    let mut mint = counting_mint(&mut minted);
+    let second = install_role_packs(
+        &scan,
+        first.definitions.clone(),
+        seated,
+        std::slice::from_ref(&first.team),
+        NOW,
+        &names(&[("lead", "Keystone")]),
+        &mut mint,
+    )
+    .expect("install succeeds");
+
+    assert_eq!(second.agents[0].name, "Keystone", "the rename still lands");
+    assert_eq!(
+        second.agents[0].model.as_deref(),
+        Some("gpt-5.6-sol"),
+        "a reinstall must not wipe the model the host seated"
+    );
+    assert_eq!(second.agents[0].provider.as_deref(), Some("openai"));
+    assert_eq!(
+        second.agents[0].runtime.as_deref(),
+        Some("codex"),
+        "a reinstall must not wipe the runtime the host seated"
+    );
+    assert_eq!(
+        second.agents[0].avatar_url.as_deref(),
+        Some("https://example.com/banksy.png"),
+        "a reinstall must not wipe the avatar the host chose"
+    );
+}

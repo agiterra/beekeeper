@@ -45,6 +45,7 @@ import {
   sortPersonaRuntimes,
   type PersonaDropdownOption,
 } from "./agentConfigOptions";
+import { hostOwnedModelProviderSubmission } from "./hostOwnedModelProviderSubmission";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -656,6 +657,14 @@ export function AgentInstanceEditDialog({
       // all agree. See resolveInheritedRuntimeSubmission.
       const normalizedSubmitProvider = inheritedSubmission.provider;
       const submitEnvVars = inheritedSubmission.envVars;
+      const hostOwnedSubmission = hostOwnedModelProviderSubmission({
+        linked: linkedPersona != null,
+        model: normalizedModel,
+        provider: normalizedSubmitProvider,
+        agentModel: agent.model ?? null,
+        agentProvider: agent.provider ?? null,
+        providerRuntimeCapability,
+      });
       const input: UpdateManagedAgentInput = {
         pubkey: agent.pubkey,
         name: name.trim() !== agent.name ? name.trim() : undefined,
@@ -680,36 +689,23 @@ export function AgentInstanceEditDialog({
           parsedParallelism > 0 && parsedParallelism !== agent.parallelism
             ? parsedParallelism
             : undefined,
-        // Linked instances defer model/provider/systemPrompt to the definition.
+        // systemPrompt stays definition-owned: the pack owns role, persona and
+        // skills, so a linked instance edits it on the definition instead.
         systemPrompt:
           linkedPersona != null
             ? undefined
             : (systemPrompt.trim() || null) !== agent.systemPrompt
               ? systemPrompt.trim() || null
               : undefined,
-        model:
-          linkedPersona != null
-            ? undefined
-            : normalizedModel !== (agent.model ?? null)
-              ? normalizedModel
-              : undefined,
+        // model/provider are HOST-owned identity facts and are sent for a
+        // linked instance too — see hostOwnedModelProviderSubmission.
+        model: hostOwnedSubmission.model,
         // Tri-state provider persistence keyed on providerRuntimeCapability:
         //   "capable"  → persist: value if changed, omit if unchanged.
         //   "locked"   → clear: send null if provider was set, else omit.
         //   "unknown"  → omit always (never send null for a transient state).
         // llmProviderFieldVisible is for UX visibility only; not used here.
-        provider:
-          linkedPersona != null
-            ? undefined
-            : providerRuntimeCapability === "capable"
-              ? normalizedSubmitProvider !== (agent.provider ?? null)
-                ? normalizedSubmitProvider
-                : undefined
-              : providerRuntimeCapability === "locked"
-                ? (agent.provider ?? null) !== null
-                  ? null
-                  : undefined
-                : undefined, // "unknown" → omit always
+        provider: hostOwnedSubmission.provider,
         envVars: envVarsEqual(submitEnvVars, agent.envVars)
           ? undefined
           : submitEnvVars,

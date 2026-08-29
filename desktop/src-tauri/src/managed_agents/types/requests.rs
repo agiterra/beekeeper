@@ -246,6 +246,15 @@ pub struct UpdateManagedAgentRequest {
     /// Absent = don't touch. null = clear to runtime default. "id" = set.
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub provider: Option<Option<String>>,
+    /// Preferred ACP runtime id. Absent = don't touch, null = clear back to
+    /// definition/global inheritance, "id" = set.
+    ///
+    /// Host-owned like `model`/`provider`: which harness this computer runs the
+    /// identity on is an install fact, not a pack fact. Distinct from
+    /// `agent_command`/`harness_override`, which pin a *command string*;
+    /// this names the runtime the record materializes.
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub runtime: Option<Option<String>>,
     /// Absent = don't touch. Present = set mode.
     #[serde(default)]
     pub respond_to: Option<RespondTo>,

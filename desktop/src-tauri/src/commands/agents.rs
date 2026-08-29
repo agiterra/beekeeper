@@ -317,13 +317,12 @@ pub(super) async fn start_local_agent_pairs_with_preflight(
         let mut records = load_managed_agents(app)?;
         let record = find_managed_agent_mut(&mut records, pubkey)?;
         let personas = load_personas(app).unwrap_or_default();
-        if let Some(persona_id) = record.persona_id.clone() {
-            if let Some(persona) = personas.iter().find(|persona| persona.id == persona_id) {
-                crate::managed_agents::persona_events::apply_persona_snapshot(record, persona);
-                record.updated_at = crate::util::now_iso();
-            }
+        // Only write when the re-pin actually moved something: this save runs
+        // BEFORE the spawn below, which can fail. See `resnapshot_linked_record`.
+        if crate::managed_agents::resnapshot_linked_record(record, &personas) {
+            record.updated_at = crate::util::now_iso();
+            save_managed_agents(app, &records)?;
         }
-        save_managed_agents(app, &records)?;
         if let Some(saved_record) = records.iter().find(|record| record.pubkey == pubkey) {
             retain_managed_agent_pending(app, state, saved_record);
         }

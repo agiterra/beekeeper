@@ -96,6 +96,7 @@ pub async fn update_managed_agent(
             input.model,
             input.provider,
             input.system_prompt,
+            input.runtime,
         )?;
         if let Some(parallelism) = input.parallelism {
             record.parallelism = parallelism;

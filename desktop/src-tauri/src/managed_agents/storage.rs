@@ -234,6 +234,27 @@ pub(crate) fn spawn_key_refusal(record: &ManagedAgentRecord) -> Option<String> {
     })
 }
 
+/// True when `record` is a key-less agent *definition* (a "persona") rather
+/// than a keyed agent *instance*.
+///
+/// Definitions and instances deliberately share one file. The Phase 1A store
+/// fold made `AgentDefinition` a projection of `ManagedAgentRecord`
+/// (`AgentDefinition::into_agent_record`) so the two halves cannot drift in
+/// shape, and an empty `pubkey` is the discriminator: a definition has no
+/// identity until an instance is minted from it, so it has no keyring entry
+/// and nothing to publish. There is no separate definition store to move them
+/// to — `load_personas`/`save_personas` are compatibility shims over this same
+/// file — so the `"pubkey": ""` rows in `managed-agents.json` are the intended
+/// on-disk shape, not leaked instances.
+///
+/// Every reader filters through this one predicate so the two halves are
+/// split identically: [`load_managed_agents`] keeps instances,
+/// [`load_agent_definitions`] keeps definitions, and both save paths re-read
+/// the other half before a wholesale rewrite.
+pub(crate) fn is_definition_record(record: &ManagedAgentRecord) -> bool {
+    record.pubkey.is_empty()
+}
+
 /// Read the raw unified store — keyed instances AND key-less definitions —
 /// with fail-loud parse handling. Internal seam; public readers filter.
 fn load_agent_store(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> {
@@ -261,7 +282,7 @@ fn load_agent_store(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> 
 /// keeps seeing exactly the records it always did.
 pub fn load_managed_agents(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> {
     let mut records = load_agent_store(app)?;
-    records.retain(|record| !record.pubkey.is_empty());
+    records.retain(|record| !is_definition_record(record));
     hydrate_keys(&mut records);
     Ok(records)
 }
@@ -271,7 +292,7 @@ pub fn load_managed_agents(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, S
 /// the legacy shape via `to_definition_view`.
 pub(crate) fn load_agent_definitions(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> {
     let mut records = load_agent_store(app)?;
-    records.retain(|record| record.pubkey.is_empty());
+    records.retain(is_definition_record);
     Ok(records)
 }
 
@@ -309,6 +330,48 @@ fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
     hydrate_keys_with(store, records);
 }
 
+/// Substrings that mean the keyring answered and the entry genuinely is not
+/// there — a real "no key", not a backend outage.
+///
+/// `SecretStore::load` already maps a clean miss to `Ok(None)`, so an `Err`
+/// carrying one of these is a backend that reported absence through its error
+/// channel instead. `-25300` is `errSecItemNotFound`. Deliberately narrow:
+/// everything else — including the macOS dark-wake refusal
+/// `errSecInteractionNotAllowed` (-25308, "User interaction is not allowed"),
+/// which is what fired once per agent on 2026-08-29 — is treated as transient
+/// so the next start retries instead of the log declaring the secret lost.
+const KEYRING_ABSENCE_MARKERS: [&str; 4] = [
+    "item not found",
+    "no matching entry",
+    "no such entry",
+    "-25300",
+];
+
+/// The log line for a keyring read that returned `Err`, classified into
+/// "genuinely absent" and "transient, retried next start".
+///
+/// Split out from [`hydrate_keys_with`] so the classification is testable
+/// without an OS keyring. Either way the key is left empty and the spawn path
+/// refuses the agent ([`spawn_key_refusal`]) — what differs is what the
+/// operator is told, and a transient failure must not read like a lost secret.
+fn keyring_read_failure_note(pubkey: &str, error: &str) -> String {
+    let lower = error.to_lowercase();
+    if KEYRING_ABSENCE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        return format!(
+            "buzz-desktop: agent {pubkey} has no key in the keyring ({error}); \
+             it cannot start until the key is restored"
+        );
+    }
+    format!(
+        "buzz-desktop: agent {pubkey} key not read this boot — transient keyring failure \
+         ({error}); the key is left alone and the read is retried on the next start. \
+         This agent is refused until then."
+    )
+}
+
 /// Testable core of [`hydrate_keys`], generic over the [`KeyStore`] seam.
 ///
 /// A keyring LOAD error (`Err`) is an OUTAGE — distinct from `Ok(None)`
@@ -336,13 +399,7 @@ fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) 
                 // Outage, NOT absence: the key may exist in the keyring but is
                 // unreadable this boot. Leave it empty so the spawn path
                 // refuses rather than launching with no identity.
-                Err(e) => {
-                    eprintln!(
-                        "buzz-desktop: agent {} key unavailable — keyring read failed ({e}); \
-                         agent will be refused until the keyring is reachable",
-                        record.pubkey
-                    );
-                }
+                Err(e) => eprintln!("{}", keyring_read_failure_note(&record.pubkey, &e)),
             }
         } else {
             // Inline residue from a prior keyring-unreachable save. Lift it
@@ -365,7 +422,7 @@ pub fn save_managed_agents(app: &AppHandle, records: &[ManagedAgentRecord]) -> R
     let mut sorted = records.to_vec();
     // A caller-supplied key-less record would collide with the definition
     // half re-read below; instances always carry a pubkey.
-    sorted.retain(|record| !record.pubkey.is_empty());
+    sorted.retain(|record| !is_definition_record(record));
     sorted.sort_by(|left, right| {
         left.name
             .to_lowercase()
@@ -388,9 +445,9 @@ pub(crate) fn save_agent_definitions(
     definitions: &[ManagedAgentRecord],
 ) -> Result<(), String> {
     let mut instances = load_agent_store(app)?;
-    instances.retain(|record| !record.pubkey.is_empty());
+    instances.retain(|record| !is_definition_record(record));
     let mut definitions = definitions.to_vec();
-    definitions.retain(|record| record.pubkey.is_empty());
+    definitions.retain(is_definition_record);
     write_agent_store(app, definitions, instances)
 }
 

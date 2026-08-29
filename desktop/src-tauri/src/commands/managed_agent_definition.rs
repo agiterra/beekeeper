@@ -19,21 +19,39 @@ fn validate_definition_fields(
         .map_err(|error| format!("Managed agent definition is unsafe: {error}"))
 }
 
-/// Apply definition-owned update fields, then validate the complete
-/// prospective definition before the caller can persist it.
+/// Apply the host-owned and definition-owned update fields, then validate the
+/// complete prospective definition before the caller can persist it.
+///
+/// `model`, `provider` and `runtime` are HOST-owned identity facts — what this
+/// computer runs the identity on — so they are applied whether or not the
+/// record is linked to a definition (`docs/CREW_SESSIONS_PLAN.md` §3.1
+/// D11–D13). Applying them only to definition-less records is what made the
+/// model picker and the edit dialog silently do nothing for every team
+/// identity.
+///
+/// `system_prompt` stays definition-owned: the pack owns role, persona and
+/// skills, so a linked record's prompt is refused here and edited on the
+/// definition instead.
+///
+/// Each argument is tri-state: `None` = don't touch, `Some(None)` = clear back
+/// to definition/global inheritance, `Some(Some(v))` = set.
 pub(super) fn apply_model_provider_prompt_update(
     record: &mut ManagedAgentRecord,
     model: Option<Option<String>>,
     provider: Option<Option<String>>,
     system_prompt: Option<Option<String>>,
+    runtime: Option<Option<String>>,
 ) -> Result<(), String> {
+    if let Some(model_update) = model {
+        record.model = model_update;
+    }
+    if let Some(provider_update) = provider {
+        record.provider = provider_update;
+    }
+    if let Some(runtime_update) = runtime {
+        record.runtime = runtime_update;
+    }
     if record.persona_id.is_none() {
-        if let Some(model_update) = model {
-            record.model = model_update;
-        }
-        if let Some(provider_update) = provider {
-            record.provider = provider_update;
-        }
         if let Some(prompt_update) = system_prompt {
             record.system_prompt = prompt_update;
         }
@@ -111,13 +129,14 @@ mod tests {
             None,
             None,
             Some(Some("Review\u{200B} code.".to_string())),
+            None,
         )
         .expect_err("definition-less prompt update must reject invisible text");
         assert!(error.contains("U+200B"), "unexpected error: {error}");
 
         let mut unsafe_name = standalone_record();
         unsafe_name.name = "Review\u{202E}er".to_string();
-        let error = apply_model_provider_prompt_update(&mut unsafe_name, None, None, None)
+        let error = apply_model_provider_prompt_update(&mut unsafe_name, None, None, None, None)
             .expect_err("definition-less name update must reject formatting controls");
         assert!(error.contains("U+202E"), "unexpected error: {error}");
     }
