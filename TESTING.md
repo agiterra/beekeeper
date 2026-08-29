@@ -16,6 +16,24 @@ just test               # unit + integration (starts Docker if needed)
 cargo test -p buzz-test-client -- --ignored
 ```
 
+### The desktop Playwright smoke suite is not in `just ci`
+
+```bash
+just smoke              # pnpm build:e2e + the whole desktop smoke project
+```
+
+`just ci` (justfile:379) runs `desktop-test` — the Vitest/node unit tests — and
+the desktop and web *builds*. It does **not** run the Playwright smoke project,
+and neither does any pre-commit or pre-push hook. That is on purpose: the smoke
+project is ~1149 browser tests and takes about **47 minutes** on an M-series
+laptop, several times the rest of `just ci` combined, so wiring it into the
+per-commit gate would make every commit unaffordable.
+
+The cost of that choice is that the suite rots silently — in August 2026 it sat
+at 75 failing tests that no green `just ci` ever mentioned. So run `just smoke`
+deliberately: before landing a change that touches desktop UI, and before a
+desktop release. Do not add it to `just ci`.
+
 ---
 
 ## Live Local Relay

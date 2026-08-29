@@ -172,10 +172,17 @@ export default defineConfig({
         "**/where-to-run-config.spec.ts",
         "**/huddle-transcription.spec.ts",
         "**/agent-numeric-tuning.spec.ts",
+        "**/mock-bridge-global-config-shape.spec.ts",
         "**/needs-restart-screenshots.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
+        // Chromium denies `navigator.clipboard.write`/`writeText` unless the
+        // context is granted these. The Tauri webview the app actually ships in
+        // does not, so without the grant the harness tests a permission state
+        // production never sees: the copy path rejects, and specs fail on
+        // symptoms (`Copy link` never flips to `Copied`) that no user hits.
+        permissions: ["clipboard-read", "clipboard-write"],
       },
     },
     {
