@@ -1121,15 +1121,23 @@ desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.ts
 desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.test.mjs
 ```
 
-**One move, so no file is shared.** `codingSessionDispositionWord` lives in
-`codingSessionUmbrellaModel.ts` today (`:589-601`), which lane 1 owns — and the
-fifth word is a change to that mapper. Rather than give lane 0 a function inside
-lane 1's file, **lane 0 moves the mapper into
-`codingSessionWorkspaceModel.ts`** and re-exports it, in the same commit as the
-word. It belongs there anyway: the mapper *is* W1's vocabulary and W1's source
-now lives in that file. After the move lane 0 owns two whole files and lane 1
-owns `codingSessionUmbrellaModel.ts` whole. Partial-file ownership is the one
-thing the lane rule cannot express, so it is worth a three-line move to avoid.
+**One move, so no file is shared afterwards.**
+`codingSessionDispositionWord` lives in `codingSessionUmbrellaModel.ts` today
+(`:589-601`), which lane 1 owns — and the fifth word is a change to that mapper.
+**Lane 0 moves the mapper into `codingSessionWorkspaceModel.ts`** and
+re-exports it, in the same commit as the word. It belongs there now: the mapper
+*is* W1's vocabulary, and W1's source lives in that file. After the move lane 0
+owns two whole files and lane 1 owns `codingSessionUmbrellaModel.ts` whole.
+
+**Be clear about what the move costs, because it is not free.** It still has
+lane 0 editing lane 1's file once — deleting the mapper and leaving the
+re-export. That crossing is safe **because lane 0 lands first and lanes 1 and 2
+start after it**: the exclusive-ownership rule exists to stop two lanes writing
+one file *concurrently*, and there is no concurrency between a lane and its
+predecessor. It is **not** safe because the edit is small. A three-line edit
+into a file another lane is writing at the same time is exactly as broken as a
+three-hundred-line one, and a lane that reads "it was only a small move" will
+make that mistake next time.
 
 **Delivers:** the single W1 function per §15(b)'s locked ruling — signed 44223
 demoted by the lease; the transcript open-turn test narrows a live seat and
