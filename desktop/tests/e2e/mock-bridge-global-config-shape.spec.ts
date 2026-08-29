@@ -26,6 +26,18 @@ async function readMockGlobalAgentConfig(
   page: import("@playwright/test").Page,
 ) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // The bridge registers this hook when its module evaluates, which is after
+  // DOMContentLoaded — reading straight through the optional call would return
+  // `undefined` and make this contract test pass or fail on timing instead of
+  // on the shape it is about.
+  await page.waitForFunction(
+    () =>
+      typeof (
+        window as unknown as {
+          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: unknown;
+        }
+      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function",
+  );
   return page.evaluate(() =>
     (
       window as unknown as {
