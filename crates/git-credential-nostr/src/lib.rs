@@ -5,7 +5,7 @@
 //! event as the credential value.  Git then sends:
 //!   Authorization: Nostr <credential>
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 
 use base64::Engine as _;
 use nostr::nips::nip98::{HttpData, HttpMethod};
@@ -147,12 +147,50 @@ fn parse_method(wwwauth: &str) -> Option<HttpMethod> {
     None
 }
 
+/// Short prefix of a pubkey used to name a key without printing it whole.
+const PUBKEY_PREFIX_LEN: usize = 8;
+
+/// Tell the user which key the relay just refused — and nothing else.
+///
+/// `erase` is the only denial signal git's credential protocol hands a helper:
+/// git calls it when it rejects the credential the previous `get` supplied.
+/// Without this line a seat sees git's generic failure with no hint that the
+/// *key* is what was refused, and a shell where `NOSTR_PRIVATE_KEY` and the
+/// configured keyfile disagree presents an identity the user never chose.
+///
+/// The line names the key and points at `bee git check`. It deliberately does
+/// not state a reason: the relay answers every git denial identically so
+/// membership cannot be probed, so any reason printed here would be invented.
+fn report_denial() {
+    // Drain stdin first — git writes the credential fields and expects the
+    // helper to consume them.
+    let mut discarded = String::new();
+    let _ = io::stdin().lock().read_to_string(&mut discarded);
+
+    let Ok(mut raw_key) = load_key() else {
+        // No key was ever presented, so nothing of ours was denied.
+        return;
+    };
+    let parsed = Keys::parse(&raw_key);
+    raw_key.zeroize();
+    let Ok(keys) = parsed else {
+        return;
+    };
+    let pubkey = keys.public_key().to_hex();
+    let short = &pubkey[..PUBKEY_PREFIX_LEN.min(pubkey.len())];
+    eprintln!("relay denied this key ({short}\u{2026}); run `bee git check` to see why");
+}
+
 /// Run the credential helper. Returns exit code.
 /// Reads from stdin, writes to stdout. Errors go to stderr only.
 pub fn run() -> i32 {
     match std::env::args().nth(1).as_deref() {
         Some("get") | None => {}
-        Some(_) => return 0, // store, erase, or unknown → silent exit 0
+        Some("erase") => {
+            report_denial();
+            return 0;
+        }
+        Some(_) => return 0, // store or unknown → silent exit 0
     }
 
     let req = parse_stdin();

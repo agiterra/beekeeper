@@ -74,6 +74,14 @@ pub struct GitAuth {
     pub pubkey: nostr::PublicKey,
     /// Server-resolved tenant bound from the request Host before auth checks.
     pub tenant: TenantContext,
+    /// The cryptographically verified NIP-OA owner this key acts for, when the
+    /// request carried an owner attestation.
+    ///
+    /// Git cannot carry a standalone `x-auth-tag` header through the credential
+    /// helper protocol, so a managed agent attaches its attestation to the
+    /// signed NIP-98 event itself. `None` means the key signed for itself alone
+    /// and inherits nothing.
+    pub attested_owner: Option<nostr::PublicKey>,
 }
 
 impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
@@ -240,9 +248,30 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
             return Err((StatusCode::FORBIDDEN, "restricted: not a relay member").into_response());
         }
 
-        deny_banned_git_principal(&state.db, tenant.community(), &pubkey, auth_tag).await?;
+        // Verify the attestation once, here, and carry the result. The NIP-OA
+        // signature is self-proving, so this holds on open relays too — the
+        // same posture `extract_nip_oa_owner` documents for the rest of the
+        // HTTP surface.
+        let attested_owner =
+            crate::api::relay_members::extract_nip_oa_owner(pubkey.as_bytes(), auth_tag);
 
-        Ok(GitAuth { pubkey, tenant })
+        deny_banned_git_principal(&state.db, tenant.community(), &pubkey, attested_owner).await?;
+
+        // Persist the agent→owner mapping the same way `POST /events` and the
+        // NIP-42 handler do. The pre-receive policy endpoint is reached through
+        // a hook callback that carries only the pusher pubkey — it cannot see
+        // this request's attestation — so the mapping is how a seat's push
+        // reaches its owner's grant.
+        if let Some(owner) = attested_owner {
+            crate::api::relay_members::materialize_nip_oa_owner(state, &tenant, &pubkey, &owner)
+                .await;
+        }
+
+        Ok(GitAuth {
+            pubkey,
+            tenant,
+            attested_owner,
+        })
     }
 }
 
@@ -261,17 +290,13 @@ async fn deny_banned_git_principal(
     db: &buzz_db::Db,
     community: buzz_core::CommunityId,
     pubkey: &nostr::PublicKey,
-    auth_tag: Option<&str>,
+    attested_owner: Option<nostr::PublicKey>,
 ) -> Result<(), Response> {
     let agent = git_restriction_state(db, community, pubkey).await?;
 
     // Skip the owner read when the agent is already banned: the denial is
     // identical either way. Mirrors the WebSocket cascade's short-circuit.
-    let owner = if agent.banned {
-        None
-    } else {
-        crate::api::relay_members::extract_nip_oa_owner(pubkey.as_bytes(), auth_tag)
-    };
+    let owner = if agent.banned { None } else { attested_owner };
     let owner_state = match owner {
         Some(owner) => Some(git_restriction_state(db, community, &owner).await?),
         None => None,
@@ -503,6 +528,7 @@ async fn authorize_git_read(
     db: &buzz_db::Db,
     community: buzz_core::CommunityId,
     caller: &nostr::PublicKey,
+    attested_owner: Option<&nostr::PublicKey>,
     owner_hex: &str,
     repo_name: &str,
 ) -> Result<(), Response> {
@@ -551,15 +577,30 @@ async fn authorize_git_read(
     // implicit creator row) returns a role — so a public project's repos do
     // not become community-cloneable.
     let project_ref = buzz_core::kind::repo_project_ref(&repo_event.event);
+
+    // Principals whose grant admits this request, most specific first: the
+    // signing key, then the cryptographically verified NIP-OA owner it acts
+    // for. A managed agent signs git as *itself* — the fence forbids a seat
+    // signing as its operator — so without the second principal every hired
+    // seat's clone and push dies on the generic 404, however the owner is
+    // granted. The attestation is inheritance, never a bypass: an owner with
+    // no grant admits nobody, and every denial stays the same generic 404.
+    let principals: Vec<nostr::PublicKey> = std::iter::once(*caller)
+        .chain(attested_owner.copied().filter(|owner| owner != caller))
+        .collect();
+
     if let Some(coordinate) = &project_ref {
-        match db
-            .get_project_role_by_coordinate(community, coordinate, &caller.to_bytes())
-            .await
-        {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(e) => {
-                error!(repo = %repo_name, error = %e, "git read gate: project role lookup failed (fall through to channel gate)");
+        for principal in &principals {
+            match db
+                .get_project_role_by_coordinate(community, coordinate, &principal.to_bytes())
+                .await
+            {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => {}
+                Err(e) => {
+                    error!(repo = %repo_name, error = %e, "git read gate: project role lookup failed (fall through to channel gate)");
+                    break;
+                }
             }
         }
     }
@@ -599,17 +640,20 @@ async fn authorize_git_read(
         }
     };
 
-    match db
-        .get_member_role(community, channel_id, &caller.to_bytes())
-        .await
-    {
-        Ok(role) if read_role_allows(role.as_deref()) => Ok(()),
-        Ok(_) => Err(denied()),
-        Err(e) => {
-            error!(repo = %repo_name, error = %e, "git read gate: role lookup failed (deny)");
-            Err(denied())
+    for principal in &principals {
+        match db
+            .get_member_role(community, channel_id, &principal.to_bytes())
+            .await
+        {
+            Ok(role) if read_role_allows(role.as_deref()) => return Ok(()),
+            Ok(_) => {}
+            Err(e) => {
+                error!(repo = %repo_name, error = %e, "git read gate: role lookup failed (deny)");
+                return Err(denied());
+            }
         }
     }
+    Err(denied())
 }
 
 /// Pure decision for [`authorize_git_read`]: a read requires a current
@@ -827,6 +871,7 @@ pub async fn info_refs(
         &state.db,
         auth.tenant.community(),
         &auth.pubkey,
+        auth.attested_owner.as_ref(),
         &params.owner,
         repo_name,
     )
@@ -1083,6 +1128,7 @@ pub async fn upload_pack(
         &state.db,
         auth.tenant.community(),
         &auth.pubkey,
+        auth.attested_owner.as_ref(),
         &params.owner,
         repo_name,
     )
@@ -3471,6 +3517,7 @@ mod sec005_read_gate_tests {
                     &f.db,
                     f.community,
                     &keys.public_key(),
+                    None,
                     &f.owner_hex,
                     &f.repo
                 )
@@ -3485,7 +3532,7 @@ mod sec005_read_gate_tests {
         // by itself make code cloneable by the whole community.
         let stranger = Keys::generate().public_key();
         let (status, body) = denial_parts(
-            authorize_git_read(&f.db, f.community, &stranger, &f.owner_hex, &f.repo).await,
+            authorize_git_read(&f.db, f.community, &stranger, None, &f.owner_hex, &f.repo).await,
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -3521,6 +3568,7 @@ mod sec005_read_gate_tests {
                 &f.db,
                 f.community,
                 &f.repo_owner_keys.public_key(),
+                None,
                 &f.owner_hex,
                 &f.repo,
             )
@@ -3541,11 +3589,16 @@ mod sec005_read_gate_tests {
         // member loses read immediately, not at the next republish.
         let f = setup_project_repo("public").await;
         let collaborator = f.collaborator_keys.public_key();
-        assert!(
-            authorize_git_read(&f.db, f.community, &collaborator, &f.owner_hex, &f.repo)
-                .await
-                .is_ok()
-        );
+        assert!(authorize_git_read(
+            &f.db,
+            f.community,
+            &collaborator,
+            None,
+            &f.owner_hex,
+            &f.repo
+        )
+        .await
+        .is_ok());
 
         let project_owner_pk = f.project_owner_keys.public_key().to_bytes().to_vec();
         f.db.remove_project_members(
@@ -3559,9 +3612,16 @@ mod sec005_read_gate_tests {
         .expect("remove member");
 
         assert!(
-            authorize_git_read(&f.db, f.community, &collaborator, &f.owner_hex, &f.repo)
-                .await
-                .is_err(),
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &collaborator,
+                None,
+                &f.owner_hex,
+                &f.repo
+            )
+            .await
+            .is_err(),
             "a removed project member must lose read access"
         );
     }
@@ -3602,6 +3662,7 @@ mod sec005_read_gate_tests {
                 &db,
                 community,
                 &repo_owner_keys.public_key(),
+                None,
                 &owner_hex,
                 &repo,
             )
@@ -3620,7 +3681,7 @@ mod sec005_read_gate_tests {
         // Current member: allowed.
         let member = f.member_keys.public_key();
         assert!(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &member, None, &f.owner_hex, &f.repo)
                 .await
                 .is_ok(),
             "current member must be allowed to read"
@@ -3629,7 +3690,7 @@ mod sec005_read_gate_tests {
         // Never-a-member caller: denied.
         let stranger = Keys::generate().public_key();
         assert!(
-            authorize_git_read(&f.db, f.community, &stranger, &f.owner_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &stranger, None, &f.owner_hex, &f.repo)
                 .await
                 .is_err(),
             "non-member must be denied"
@@ -3641,7 +3702,7 @@ mod sec005_read_gate_tests {
             .await
             .expect("self-remove");
         assert!(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &member, None, &f.owner_hex, &f.repo)
                 .await
                 .is_err(),
             "removed member must be denied"
@@ -3651,10 +3712,149 @@ mod sec005_read_gate_tests {
         // member and must be denied too.
         let owner = f.owner_keys.public_key();
         assert!(
-            authorize_git_read(&f.db, f.community, &owner, &f.owner_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &owner, None, &f.owner_hex, &f.repo)
                 .await
                 .is_err(),
             "repo owner outside the channel must be denied (no owner bypass)"
+        );
+    }
+
+    // ── NIP-OA owner attestation (a hired seat's own key) ────────────────
+
+    /// A managed agent signs git as *itself* — the fence forbids a seat
+    /// signing as its operator — and carries a NIP-OA attestation naming the
+    /// owner it acts for. Its own key holds no channel membership, so without
+    /// this path every seat's clone and push dies on the generic 404.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_admits_an_attested_agent_through_its_owners_channel_grant() {
+        let f = setup_repo(Binding::Channel).await;
+        let agent = Keys::generate().public_key();
+        let owner = f.member_keys.public_key();
+
+        // Unattested, the agent is a stranger.
+        let (status, body) = denial_parts(
+            authorize_git_read(&f.db, f.community, &agent, None, &f.owner_hex, &f.repo).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body, GENERIC_DENIAL,
+            "an unattested agent key must be denied"
+        );
+
+        // Attested to a channel member: admitted through the owner's grant.
+        assert!(
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &agent,
+                Some(&owner),
+                &f.owner_hex,
+                &f.repo
+            )
+            .await
+            .is_ok(),
+            "an agent attested to a channel member must be able to read"
+        );
+    }
+
+    /// The attestation is not a bypass: it inherits exactly the owner's grant
+    /// and nothing more. An owner with no grant admits nobody, and the denial
+    /// is the same generic 404 — attestation must not become a membership
+    /// oracle for the owner either.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_denies_an_attested_agent_whose_owner_has_no_grant() {
+        let f = setup_repo(Binding::Channel).await;
+        let agent = Keys::generate().public_key();
+        let stranger_owner = Keys::generate().public_key();
+
+        let (status, body) = denial_parts(
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &agent,
+                Some(&stranger_owner),
+                &f.owner_hex,
+                &f.repo,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body, GENERIC_DENIAL,
+            "an agent attested to a non-member must get the generic denial"
+        );
+    }
+
+    /// A removed owner revokes their seats in the same request, not at the
+    /// next republish — the finding-005 shape, one hop out.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_revokes_an_attested_agent_when_its_owner_is_removed() {
+        let f = setup_repo(Binding::Channel).await;
+        let agent = Keys::generate().public_key();
+        let owner = f.member_keys.public_key();
+        assert!(authorize_git_read(
+            &f.db,
+            f.community,
+            &agent,
+            Some(&owner),
+            &f.owner_hex,
+            &f.repo
+        )
+        .await
+        .is_ok());
+
+        let owner_pk = owner.to_bytes().to_vec();
+        f.db.remove_member(f.community, f.channel, &owner_pk, &owner_pk)
+            .await
+            .expect("self-remove");
+
+        assert!(
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &agent,
+                Some(&owner),
+                &f.owner_hex,
+                &f.repo
+            )
+            .await
+            .is_err(),
+            "removing the owner must revoke every seat attested to them"
+        );
+    }
+
+    /// The same inheritance on the project-roster path, which resolves before
+    /// the channel gate and must not skip the attested owner.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_admits_an_attested_agent_through_its_owners_project_role() {
+        let f = setup_project_repo("private").await;
+        let agent = Keys::generate().public_key();
+        let owner = f.viewer_keys.public_key();
+
+        assert!(
+            authorize_git_read(&f.db, f.community, &agent, None, &f.owner_hex, &f.repo)
+                .await
+                .is_err(),
+            "an unattested agent key holds no roster row"
+        );
+        assert!(
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &agent,
+                Some(&owner),
+                &f.owner_hex,
+                &f.repo
+            )
+            .await
+            .is_ok(),
+            "an agent attested to a project viewer must be able to read"
         );
     }
 
@@ -3666,7 +3866,7 @@ mod sec005_read_gate_tests {
         let f = setup_repo(Binding::Missing).await;
         let member = f.member_keys.public_key();
         let (status, body) = denial_parts(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, &f.repo).await,
+            authorize_git_read(&f.db, f.community, &member, None, &f.owner_hex, &f.repo).await,
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -3683,7 +3883,7 @@ mod sec005_read_gate_tests {
         let g = setup_repo(Binding::Malformed).await;
         let g_owner = g.owner_keys.public_key();
         let (status, body) = denial_parts(
-            authorize_git_read(&g.db, g.community, &g_owner, &g.owner_hex, &g.repo).await,
+            authorize_git_read(&g.db, g.community, &g_owner, None, &g.owner_hex, &g.repo).await,
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -3700,7 +3900,7 @@ mod sec005_read_gate_tests {
         let u = setup_repo(Binding::UnknownChannel).await;
         let u_owner = u.owner_keys.public_key();
         let (status, body) = denial_parts(
-            authorize_git_read(&u.db, u.community, &u_owner, &u.owner_hex, &u.repo).await,
+            authorize_git_read(&u.db, u.community, &u_owner, None, &u.owner_hex, &u.repo).await,
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -3711,7 +3911,15 @@ mod sec005_read_gate_tests {
 
         // Nonexistent announcement → deny.
         let (status, body) = denial_parts(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, "no-such-repo").await,
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &member,
+                None,
+                &f.owner_hex,
+                "no-such-repo",
+            )
+            .await,
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -3723,7 +3931,7 @@ mod sec005_read_gate_tests {
         // Owner-mismatch: URL owner differs from announcement author → deny.
         let impostor_hex = Keys::generate().public_key().to_hex();
         assert!(
-            authorize_git_read(&f.db, f.community, &member, &impostor_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &member, None, &impostor_hex, &f.repo)
                 .await
                 .is_err(),
             "URL owner that never announced this repo must deny"
@@ -3731,7 +3939,7 @@ mod sec005_read_gate_tests {
 
         // Invalid owner hex in URL → deny (never panics).
         assert!(
-            authorize_git_read(&f.db, f.community, &member, "zz-not-hex", &f.repo)
+            authorize_git_read(&f.db, f.community, &member, None, "zz-not-hex", &f.repo)
                 .await
                 .is_err(),
             "malformed owner hex must deny"
@@ -3749,7 +3957,7 @@ mod sec005_read_gate_tests {
         let f = setup_repo(Binding::Missing).await;
         let author = f.owner_keys.public_key();
 
-        let response = authorize_git_read(&f.db, f.community, &author, &f.owner_hex, &f.repo)
+        let response = authorize_git_read(&f.db, f.community, &author, None, &f.owner_hex, &f.repo)
             .await
             .expect_err("unbound repo must still deny its author");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -3779,7 +3987,7 @@ mod sec005_read_gate_tests {
         // who is not the author still gets the generic body.
         let member = f.member_keys.public_key();
         let (_, body) = denial_parts(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, &f.repo).await,
+            authorize_git_read(&f.db, f.community, &member, None, &f.owner_hex, &f.repo).await,
         )
         .await;
         assert_eq!(body, GENERIC_DENIAL, "remediation is author-only");
@@ -3796,7 +4004,7 @@ mod sec005_read_gate_tests {
 
         let member = f.member_keys.public_key();
         assert!(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &member, None, &f.owner_hex, &f.repo)
                 .await
                 .is_ok(),
             "precondition: member allowed while announcement is live"
@@ -3818,7 +4026,7 @@ mod sec005_read_gate_tests {
         assert!(deleted, "precondition: a live announcement row was deleted");
 
         assert!(
-            authorize_git_read(&f.db, f.community, &member, &f.owner_hex, &f.repo)
+            authorize_git_read(&f.db, f.community, &member, None, &f.owner_hex, &f.repo)
                 .await
                 .is_err(),
             "deleted announcement must deny reads even for channel members"
@@ -3888,12 +4096,36 @@ mod sec005_read_gate_tests {
         db.ensure_user(community, &owner_pk).await.expect("owner");
         db.ensure_user(community, &agent_pk).await.expect("agent");
 
-        // A real attestation: the gate must verify it, not trust a claim.
+        // A real attestation, resolved through the same verifier the request
+        // extractor uses: the cascade must follow a *verified* owner, never a
+        // claimed one.
         let auth_tag = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "kind=9")
             .expect("auth tag");
+        let attested = crate::api::relay_members::extract_nip_oa_owner(
+            agent.public_key().as_bytes(),
+            Some(&auth_tag),
+        );
+        assert_eq!(
+            attested,
+            Some(owner.public_key()),
+            "precondition: the attestation verifies to the owner"
+        );
+        // A forged claim resolves to nothing, so nothing is inherited.
+        assert_eq!(
+            crate::api::relay_members::extract_nip_oa_owner(
+                agent.public_key().as_bytes(),
+                Some(&format!(
+                    "[\"auth\",\"{}\",\"kind=9\",\"{}\"]",
+                    Keys::generate().public_key().to_hex(),
+                    "00".repeat(64)
+                )),
+            ),
+            None,
+            "an unsigned claim must not resolve to an owner"
+        );
 
         assert!(
-            deny_banned_git_principal(&db, community, &agent.public_key(), Some(&auth_tag))
+            deny_banned_git_principal(&db, community, &agent.public_key(), attested)
                 .await
                 .is_ok(),
             "precondition: neither agent nor owner is banned"
@@ -3905,7 +4137,7 @@ mod sec005_read_gate_tests {
             .expect("ban owner");
 
         let (status, _) = denial_parts(
-            deny_banned_git_principal(&db, community, &agent.public_key(), Some(&auth_tag)).await,
+            deny_banned_git_principal(&db, community, &agent.public_key(), attested).await,
         )
         .await;
         assert_eq!(

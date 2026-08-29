@@ -242,34 +242,145 @@ fn read_keyfile(path: &Path) -> Result<Option<Keys>, CliError> {
     Ok(Some(keys))
 }
 
-/// Load the key exactly as `git-credential-nostr` does: `$NOSTR_PRIVATE_KEY`
-/// first, then `git config nostr.keyfile`.
+/// Where `git-credential-nostr` found the key it will sign git with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyOrigin {
+    /// `$NOSTR_PRIVATE_KEY` — what the ACP harness injects into a managed
+    /// seat, and what therefore wins over anything on disk.
+    Env,
+    /// The file named by `git config nostr.keyfile`, or the default path.
+    Keyfile(PathBuf),
+}
+
+impl KeyOrigin {
+    /// How to name this source in output: "NOSTR_PRIVATE_KEY" or the path.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Env => "NOSTR_PRIVATE_KEY".to_string(),
+            Self::Keyfile(path) => path.to_string_lossy().to_string(),
+        }
+    }
+}
+
+/// The identity git will actually present, and the one it will not.
+#[derive(Clone, Debug)]
+pub struct EffectiveKey {
+    /// The key the helper resolves — the key git signs with.
+    pub keys: Keys,
+    /// Which of the two sources it came from.
+    pub origin: KeyOrigin,
+    /// The key file's identity, when a key file also exists and holds a
+    /// *different* identity than the one git will use.
+    ///
+    /// A seat runs with `NOSTR_PRIVATE_KEY` set to its own key while the
+    /// operator's key file sits in the same shell. Both are real; only one is
+    /// used. Reporting the unused one as "the key" is the two-identities-in-one-
+    /// shell lie this field exists to prevent.
+    pub shadowed: Option<(PathBuf, nostr::PublicKey)>,
+}
+
+impl EffectiveKey {
+    /// The one-sentence disclosure when two identities are present, or `None`
+    /// when there is nothing to disclose.
+    pub fn disclosure(&self) -> Option<String> {
+        let (path, other) = self.shadowed.as_ref()?;
+        Some(format!(
+            "Two keys are configured here: git signs with {} from {}, and {} from {} is not used.",
+            short_pubkey(&self.keys.public_key()),
+            self.origin.label(),
+            short_pubkey(other),
+            path.display()
+        ))
+    }
+}
+
+/// First 8 hex characters plus an ellipsis — enough to tell two keys apart
+/// without printing a full identity into a log.
+fn short_pubkey(pubkey: &nostr::PublicKey) -> String {
+    let hex = pubkey.to_hex();
+    format!("{}\u{2026}", &hex[..8.min(hex.len())])
+}
+
+/// Decide, from what each source holds, which key git will present.
+///
+/// Split out from the IO so the precedence itself is testable without touching
+/// process environment or the filesystem — the precedence is the part that has
+/// been wrong.
+fn choose_effective_key(
+    env_key: Option<Keys>,
+    keyfile_path: &Path,
+    keyfile_key: Option<Keys>,
+) -> Option<EffectiveKey> {
+    match (env_key, keyfile_key) {
+        (Some(env), file) => {
+            let shadowed = file
+                .filter(|file| file.public_key() != env.public_key())
+                .map(|file| (keyfile_path.to_path_buf(), file.public_key()));
+            Some(EffectiveKey {
+                keys: env,
+                origin: KeyOrigin::Env,
+                shadowed,
+            })
+        }
+        (None, Some(file)) => Some(EffectiveKey {
+            keys: file,
+            origin: KeyOrigin::Keyfile(keyfile_path.to_path_buf()),
+            shadowed: None,
+        }),
+        (None, None) => None,
+    }
+}
+
+/// The key file path the helper would read: `--keyfile`, then
+/// `git config nostr.keyfile`, then the default.
+fn effective_keyfile_path(keyfile: Option<&Path>) -> Result<PathBuf, CliError> {
+    match keyfile {
+        Some(path) => Ok(path.to_path_buf()),
+        None => match git_config_get("nostr.keyfile") {
+            Some(configured) => Ok(PathBuf::from(configured)),
+            None => default_keyfile(),
+        },
+    }
+}
+
+/// Parse `$NOSTR_PRIVATE_KEY`, or `None` when it is unset or empty.
+fn env_key() -> Result<Option<Keys>, CliError> {
+    let Ok(raw) = std::env::var("NOSTR_PRIVATE_KEY") else {
+        return Ok(None);
+    };
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    Keys::parse(raw.trim())
+        .map(Some)
+        .map_err(|e| CliError::Key(format!("NOSTR_PRIVATE_KEY is not a key: {e}")))
+}
+
+/// Resolve the key git will present, exactly as `git-credential-nostr` does:
+/// `$NOSTR_PRIVATE_KEY` first, then `git config nostr.keyfile`.
 ///
 /// Reproducing the helper's precedence is the whole point. A check that read
 /// `BUZZ_PRIVATE_KEY` instead would test a different identity than the one git
 /// actually presents, and could report success while every push failed.
-fn helper_effective_keys(keyfile: Option<&Path>) -> Result<(Keys, String), CliError> {
-    if let Ok(env_key) = std::env::var("NOSTR_PRIVATE_KEY") {
-        if !env_key.trim().is_empty() {
-            let keys = Keys::parse(env_key.trim())
-                .map_err(|e| CliError::Key(format!("NOSTR_PRIVATE_KEY is not a key: {e}")))?;
-            return Ok((keys, "NOSTR_PRIVATE_KEY".to_string()));
-        }
-    }
-    let path = match keyfile {
-        Some(path) => path.to_path_buf(),
-        None => match git_config_get("nostr.keyfile") {
-            Some(configured) => PathBuf::from(configured),
-            None => default_keyfile()?,
-        },
+pub fn resolve_effective_key(keyfile: Option<&Path>) -> Result<EffectiveKey, CliError> {
+    let path = effective_keyfile_path(keyfile)?;
+    let env = env_key()?;
+    // A broken key file must not mask a working env key: the helper would never
+    // read it, so neither does this.
+    let file = match read_keyfile(&path) {
+        Ok(found) => found,
+        // The helper never reads the file when the env key is set, so a broken
+        // file must not fail a resolution that will succeed. `bee git status`
+        // still reports the file's problem in its own field.
+        Err(_) if env.is_some() => None,
+        Err(error) => return Err(error),
     };
-    match read_keyfile(&path)? {
-        Some(keys) => Ok((keys, path.to_string_lossy().to_string())),
-        None => Err(CliError::Usage(format!(
+    choose_effective_key(env, &path, file).ok_or_else(|| {
+        CliError::Usage(format!(
             "no key: {} does not exist and NOSTR_PRIVATE_KEY is unset",
             path.display()
-        ))),
-    }
+        ))
+    })
 }
 
 /// Write `keys` to `path` at mode 0600, refusing to replace a different identity.
@@ -503,13 +614,30 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
         },
     };
 
+    // The key file is not necessarily the key git uses. `$NOSTR_PRIVATE_KEY`
+    // wins — that is the helper's precedence, and it is how the ACP harness
+    // gives a seat its own identity — so report the key that will actually be
+    // presented, name where it came from, and say plainly when a second,
+    // unused identity is sitting in the same shell.
+    let effective = resolve_effective_key(keyfile_path.as_deref());
+    let (effective_pubkey, key_source, key_disclosure, effective_problem) = match &effective {
+        Ok(resolved) => (
+            Some(resolved.keys.public_key().to_hex()),
+            Some(resolved.origin.label()),
+            resolved.disclosure(),
+            None,
+        ),
+        Err(error) => (None, None, None, Some(error.to_string())),
+    };
+
     // NOT "ready". This says the three local pieces are in place — it cannot
     // say the relay accepts the key, and reporting `ready: true` over a 403 is
     // exactly the kind of comfortable guess this project treats as a bug.
     // `bee git check` is the one that asks.
+    // A key git will present, from either source — not merely a key file.
     let configured = helper_ok == Some(true)
         && configured_path.as_deref() == Some("true")
-        && key_pubkey.is_some();
+        && effective_pubkey.is_some();
 
     let report = serde_json::json!({
         "scope": scope_url,
@@ -523,6 +651,15 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
         "keyfile_present": key_present,
         "keyfile_pubkey": key_pubkey,
         "keyfile_problem": key_problem,
+        // The key git WILL sign with, and where the helper found it. Reporting
+        // only `keyfile_pubkey` named the operator's key in a seat's shell,
+        // where git actually signs as the seat.
+        "effective_pubkey": effective_pubkey,
+        "key_source": key_source,
+        "key_problem": effective_problem,
+        // One sentence, present only when two identities are configured and
+        // they differ. Null is the honest value for "nothing to disclose".
+        "key_disclosure": key_disclosure,
         "configured": configured,
         // Deliberately absent: anything named `ready`. Whether a push works is
         // a question for the relay — run `bee git check`.
@@ -577,6 +714,95 @@ fn classify_probe(status: u16, body: &str) -> (&'static str, Option<String>) {
     }
 }
 
+/// The owner attestation a git request will carry, and what it is worth.
+#[derive(Default)]
+pub struct ProbeAttestation {
+    /// The tag the helper would attach to the signed NIP-98 event. Sent as-is
+    /// even when it does not verify — the helper does not check it either, and
+    /// the point of the probe is to ask the relay the question git asks.
+    pub tag: Option<nostr::Tag>,
+    /// The owner, only once the attestation is proven to cover the key git
+    /// signs with. Reporting an owner from an unverified tag would claim a
+    /// relationship the relay is about to reject.
+    pub owner: Option<String>,
+    /// Why the attestation will not be honoured, when it will not be.
+    pub warning: Option<String>,
+}
+
+/// Read the NIP-OA owner attestation the ACP harness injects, or the one
+/// `git config nostr.authtag` holds, exactly as `git-credential-nostr` does.
+///
+/// A *malformed* attestation is an error, not a shrug: the helper fails closed
+/// on it, so a probe that quietly dropped it would pass where every real push
+/// fails. An attestation signed for a *different* key is not an error — it is
+/// the shape of the two-identities-in-one-shell trap, and it is reported.
+fn probe_attestation(keys: &Keys) -> Result<ProbeAttestation, CliError> {
+    let raw = std::env::var("BUZZ_AUTH_TAG")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| git_config_get("nostr.authtag"));
+    let Some(raw) = raw else {
+        return Ok(ProbeAttestation::default());
+    };
+    let parts: Vec<String> = serde_json::from_str(&raw)
+        .map_err(|e| CliError::Auth(format!("BUZZ_AUTH_TAG is not valid JSON: {e}")))?;
+    if parts.len() != 4 || parts.first().map(String::as_str) != Some("auth") {
+        return Err(CliError::Auth(
+            "BUZZ_AUTH_TAG must be [auth, owner, conditions, signature]".to_string(),
+        ));
+    }
+    let tag = nostr::Tag::parse(parts)
+        .map_err(|e| CliError::Auth(format!("BUZZ_AUTH_TAG is not a usable tag: {e}")))?;
+
+    match buzz_sdk::nip_oa::verify_auth_tag(&raw, &keys.public_key()) {
+        Ok(owner) => Ok(ProbeAttestation {
+            tag: Some(tag),
+            owner: Some(owner.to_hex()),
+            warning: None,
+        }),
+        Err(e) => Ok(ProbeAttestation {
+            tag: Some(tag),
+            owner: None,
+            warning: Some(format!(
+                "BUZZ_AUTH_TAG is not signed for {}, the key git uses, so the relay will ignore it ({e})",
+                short_pubkey(&keys.public_key())
+            )),
+        }),
+    }
+}
+
+/// Sign the NIP-98 event `git-credential-nostr` signs, attestation included.
+///
+/// Deliberately not `client::sign_nip98`: that one cannot carry the NIP-OA
+/// tag, and the whole value of `bee git check` is that it asks the relay the
+/// same question git asks.
+fn sign_git_nip98(
+    keys: &Keys,
+    method: &str,
+    url: &str,
+    auth_tag: Option<nostr::Tag>,
+) -> Result<String, CliError> {
+    use base64::Engine as _;
+    use nostr::JsonUtil as _;
+
+    let mut tags = vec![
+        nostr::Tag::parse(["u", url]).map_err(|e| CliError::Other(format!("tag error: {e}")))?,
+        nostr::Tag::parse(["method", method])
+            .map_err(|e| CliError::Other(format!("tag error: {e}")))?,
+        nostr::Tag::parse(["nonce", &uuid::Uuid::new_v4().to_string()])
+            .map_err(|e| CliError::Other(format!("tag error: {e}")))?,
+    ];
+    tags.extend(auth_tag);
+    let event = nostr::EventBuilder::new(nostr::Kind::Custom(27235), "")
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|e| CliError::Other(format!("NIP-98 signing failed: {e}")))?;
+    Ok(format!(
+        "Nostr {}",
+        base64::engine::general_purpose::STANDARD.encode(event.as_json().as_bytes())
+    ))
+}
+
 /// Sign the repo-root URL the credential helper signs.
 ///
 /// `git-credential-nostr` strips `/info/refs`, `/git-upload-pack` and
@@ -596,16 +822,26 @@ pub async fn cmd_check(
 ) -> Result<(), CliError> {
     let scope = credential_scope(relay_url)?;
     let origin = scope.strip_suffix("/git").unwrap_or(&scope).to_string();
-    let (keys, key_source) = helper_effective_keys(keyfile.as_deref())?;
+    let effective = resolve_effective_key(keyfile.as_deref())?;
+    let key_source = effective.origin.label();
+    let key_disclosure = effective.disclosure();
+    let keys = effective.keys.clone();
     let pubkey = keys.public_key().to_hex();
+    // A managed seat's git requests carry its owner attestation *inside* the
+    // signed NIP-98 event — git's credential protocol cannot add a header — so
+    // a probe that omitted it would ask the relay a different question than
+    // git asks, and could report "member NO" over a key the relay admits.
+    let attestation = probe_attestation(&keys)?;
+    let auth_tag = attestation.tag.clone();
+    let attested_owner = attestation.owner.clone();
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| CliError::Other(e.to_string()))?;
 
-    let probe = |url: String, keys: Keys, http: reqwest::Client| async move {
+    let probe = |url: String, keys: Keys, http: reqwest::Client, tag: Option<nostr::Tag>| async move {
         let signed = repo_root_from_refs_url(&url);
-        let auth = crate::client::sign_nip98(&keys, "GET", &signed, None)?;
+        let auth = sign_git_nip98(&keys, "GET", &signed, tag)?;
         let response = http
             .get(&url)
             .header("Authorization", auth)
@@ -627,7 +863,8 @@ pub async fn cmd_check(
         "{}/info/refs?service=git-upload-pack",
         repo_root_url(&origin, &pubkey, "membership-probe-does-not-exist")
     );
-    let (sentinel_status, sentinel_body) = probe(sentinel, keys.clone(), http.clone()).await?;
+    let (sentinel_status, sentinel_body) =
+        probe(sentinel, keys.clone(), http.clone(), auth_tag.clone()).await?;
     let is_member = match sentinel_status {
         403 => false,
         404 | 200 => true,
@@ -677,7 +914,7 @@ pub async fn cmd_check(
                 "{}/info/refs?service=git-upload-pack",
                 repo_root_url(&origin, &author, &dtag)
             );
-            let (status, body) = probe(url, keys.clone(), http.clone()).await?;
+            let (status, body) = probe(url, keys.clone(), http.clone(), auth_tag.clone()).await?;
             let (access, detail) = classify_probe(status, &body);
             probes.push(RepoProbe {
                 repo_id: dtag,
@@ -694,6 +931,12 @@ pub async fn cmd_check(
         "relay": origin,
         "pubkey": pubkey,
         "key_source": key_source,
+        "key_disclosure": key_disclosure,
+        // The owner this key is attested to, when it runs as a managed seat and
+        // the attestation actually covers this key. Null means the key answers
+        // for itself alone.
+        "attested_owner": attested_owner,
+        "attestation_problem": attestation.warning,
         "relay_member": is_member,
         "repos_probed": probes.len(),
         "repos_readable": readable,
@@ -713,6 +956,15 @@ pub async fn cmd_check(
 
     println!("relay   {origin}");
     println!("key     {pubkey}  (from {key_source})");
+    if let Some(owner) = &attested_owner {
+        println!("owner   {owner}  (this key acts for its owner's grant)");
+    }
+    if let Some(warning) = &attestation.warning {
+        println!("owner   none — {warning}");
+    }
+    if let Some(disclosure) = &key_disclosure {
+        println!("note    {disclosure}");
+    }
     if !is_member {
         println!(
             "member  NO — the relay rejects this key: {}",
@@ -759,6 +1011,13 @@ fn repo_root_from_refs_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+
+    /// Serialises the tests that read or write process environment.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn credential_scope_covers_only_the_git_path() {
@@ -884,6 +1143,189 @@ mod tests {
             "auth-rejected"
         );
         assert_eq!(classify_probe(500, "boom").0, "unexpected");
+    }
+
+    // ── which key git will actually present ──────────────────────────────
+
+    #[test]
+    fn the_env_key_wins_and_says_so() {
+        // The ACP harness injects `NOSTR_PRIVATE_KEY` into a seat, and the
+        // helper prefers it (`git-credential-nostr` lib.rs `load_key`). A
+        // report that named the key *file* would name the operator's identity
+        // in a shell where git signs as the seat.
+        let env = Keys::generate();
+        let resolved = choose_effective_key(Some(env.clone()), Path::new("/tmp/key"), None)
+            .expect("an env key is a key");
+        assert_eq!(resolved.keys.public_key(), env.public_key());
+        assert_eq!(resolved.origin, KeyOrigin::Env);
+        assert_eq!(resolved.origin.label(), "NOSTR_PRIVATE_KEY");
+        assert!(resolved.disclosure().is_none(), "nothing is being shadowed");
+    }
+
+    #[test]
+    fn the_key_file_is_named_by_path_when_it_is_what_git_uses() {
+        let file = Keys::generate();
+        let resolved =
+            choose_effective_key(None, Path::new("/home/a/.nostr/key"), Some(file.clone()))
+                .expect("a key file is a key");
+        assert_eq!(resolved.keys.public_key(), file.public_key());
+        assert_eq!(resolved.origin.label(), "/home/a/.nostr/key");
+        assert!(resolved.disclosure().is_none());
+    }
+
+    #[test]
+    fn two_different_identities_in_one_shell_are_disclosed_in_one_sentence() {
+        // The live finding: a seat signs git as itself while the operator's
+        // key file sits in the same shell, and every local report named the
+        // file. Both keys are real; only one is used, and the difference has
+        // to be said out loud.
+        let env = Keys::generate();
+        let file = Keys::generate();
+        let resolved = choose_effective_key(
+            Some(env.clone()),
+            Path::new("/home/a/.nostr/key"),
+            Some(file.clone()),
+        )
+        .expect("resolved");
+        assert_eq!(resolved.keys.public_key(), env.public_key());
+
+        let disclosure = resolved
+            .disclosure()
+            .expect("two identities must be disclosed");
+        assert_eq!(disclosure.lines().count(), 1, "one sentence, one line");
+        assert!(
+            disclosure.contains(&env.public_key().to_hex()[..8]),
+            "must name the key git signs with: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("NOSTR_PRIVATE_KEY"),
+            "must name where it came from: {disclosure}"
+        );
+        assert!(
+            disclosure.contains(&file.public_key().to_hex()[..8])
+                && disclosure.contains("/home/a/.nostr/key"),
+            "must name the identity that is NOT used: {disclosure}"
+        );
+        assert!(
+            !disclosure.contains(&env.public_key().to_hex())
+                && !disclosure.contains(&file.public_key().to_hex()),
+            "a short prefix is enough; do not print whole identities: {disclosure}"
+        );
+    }
+
+    #[test]
+    fn the_same_identity_in_both_places_is_not_a_conflict() {
+        let same = Keys::generate();
+        let resolved = choose_effective_key(
+            Some(same.clone()),
+            Path::new("/home/a/.nostr/key"),
+            Some(same),
+        )
+        .expect("resolved");
+        assert!(
+            resolved.disclosure().is_none(),
+            "one identity written twice is not two identities"
+        );
+    }
+
+    #[test]
+    fn no_key_anywhere_resolves_to_nothing() {
+        assert!(choose_effective_key(None, Path::new("/home/a/.nostr/key"), None).is_none());
+    }
+
+    #[test]
+    fn the_probe_signs_the_owner_attestation_into_the_event() {
+        // Git's credential protocol cannot add a header, so a managed seat's
+        // attestation rides inside the signed NIP-98 event. A probe that
+        // omitted it would ask the relay a different question than git asks.
+        use nostr::JsonUtil as _;
+
+        let seat = Keys::generate();
+        let owner = Keys::generate();
+        let tag = nostr::Tag::parse([
+            "auth".to_string(),
+            owner.public_key().to_hex(),
+            String::new(),
+            "00".repeat(64),
+        ])
+        .unwrap();
+
+        let header = sign_git_nip98(
+            &seat,
+            "GET",
+            "https://relay.example/git/abc/repo",
+            Some(tag.clone()),
+        )
+        .expect("sign");
+        let encoded = header.strip_prefix("Nostr ").expect("Nostr scheme");
+        let json = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("base64");
+        let event = nostr::Event::from_json(&json).expect("event");
+
+        assert!(
+            event.verify().is_ok(),
+            "the tag must be covered by the signature"
+        );
+        assert_eq!(event.pubkey, seat.public_key(), "a seat signs as itself");
+        assert!(
+            event.tags.iter().any(|t| t.as_slice() == tag.as_slice()),
+            "the attestation must be in the signed event"
+        );
+        assert_eq!(
+            tag.as_slice().get(1).map(String::as_str),
+            Some(owner.public_key().to_hex().as_str())
+        );
+    }
+
+    #[test]
+    fn an_attestation_for_another_key_is_reported_not_claimed() {
+        // `BUZZ_AUTH_TAG` is attested to `BUZZ_PRIVATE_KEY`, which need not be
+        // the key git signs with. Reporting an owner from a tag that does not
+        // cover the git key would claim a relationship the relay is about to
+        // reject. Serialised because it reads process environment.
+        let _guard = env_lock();
+        let git_key = Keys::generate();
+        let other_key = Keys::generate();
+        let owner = Keys::generate();
+
+        let good = buzz_sdk::nip_oa::compute_auth_tag(&owner, &git_key.public_key(), "")
+            .expect("auth tag");
+        // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
+        std::env::set_var("BUZZ_AUTH_TAG", &good);
+        let resolved = probe_attestation(&git_key).expect("verified tag");
+        assert_eq!(
+            resolved.owner.as_deref(),
+            Some(owner.public_key().to_hex().as_str())
+        );
+        assert!(resolved.warning.is_none());
+        assert!(resolved.tag.is_some(), "the tag still rides on the request");
+
+        let mismatched = buzz_sdk::nip_oa::compute_auth_tag(&owner, &other_key.public_key(), "")
+            .expect("auth tag");
+        std::env::set_var("BUZZ_AUTH_TAG", &mismatched);
+        let resolved = probe_attestation(&git_key).expect("a mismatch is a report, not an error");
+        assert!(
+            resolved.owner.is_none(),
+            "an attestation that does not cover the git key names no owner"
+        );
+        let warning = resolved.warning.expect("the mismatch must be disclosed");
+        assert!(
+            warning.contains(&git_key.public_key().to_hex()[..8]),
+            "must name the key git uses: {warning}"
+        );
+        assert!(
+            resolved.tag.is_some(),
+            "the helper sends it regardless, so the probe must too"
+        );
+
+        std::env::set_var("BUZZ_AUTH_TAG", "not-json");
+        assert!(
+            probe_attestation(&git_key).is_err(),
+            "a malformed attestation fails closed, exactly as the helper does"
+        );
+
+        std::env::remove_var("BUZZ_AUTH_TAG");
     }
 
     #[cfg(unix)]
