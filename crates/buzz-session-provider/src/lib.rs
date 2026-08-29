@@ -37,6 +37,7 @@ pub mod commands;
 pub mod config;
 pub mod context_projector;
 mod context_store;
+mod context_window;
 mod git_probe;
 mod lease;
 mod model_catalog;
@@ -786,6 +787,7 @@ impl Provider {
                             .unwrap_or_default(),
                         "provider terminated mid-turn",
                         payload::TurnCost::default(),
+                        payload::TurnUsageReport::default(),
                     ),
                     Priority::High,
                 )?;
@@ -3807,11 +3809,26 @@ impl Provider {
                 outcome,
                 duration_ms,
                 usage,
+                tool_calls,
             } => {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
-                let (item, status) = turn_result(&outcome, duration_ms, usage.as_deref());
+                // The model the seat is actually running, so the usage block
+                // can name the window a reader divides by. `None` when the
+                // record does not say — the window is then omitted rather
+                // than guessed.
+                let model = self
+                    .state
+                    .session(&session_id)
+                    .and_then(|record| record.model.clone());
+                let (item, status) = turn_result(
+                    &outcome,
+                    duration_ms,
+                    usage.as_deref(),
+                    tool_calls,
+                    model.as_deref(),
+                );
                 self.enqueue_transcript(channel_id, &target, Some(&turn_id), item, Priority::High)?;
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = None;
@@ -4348,8 +4365,11 @@ fn turn_result(
     outcome: &TurnOutcome,
     duration_ms: u64,
     usage: Option<&TurnUsage>,
+    tool_calls: u64,
+    model: Option<&str>,
 ) -> (serde_json::Value, SessionStatus) {
     let cost = usage.map(turn_cost).unwrap_or_default();
+    let usage_report = turn_usage_report(usage, tool_calls, model);
     match outcome {
         TurnOutcome::Completed { stop_reason } => {
             // `refusal` and the two limit stops are real answers, not provider
@@ -4366,7 +4386,13 @@ fn turn_result(
             // ends the turn, not the session, and the operator's next prompt is
             // perfectly serviceable.
             (
-                payload::result_item(subtype, duration_ms, stop_reason_text(stop_reason), cost),
+                payload::result_item(
+                    subtype,
+                    duration_ms,
+                    stop_reason_text(stop_reason),
+                    cost,
+                    usage_report,
+                ),
                 SessionStatus::Idle,
             )
         }
@@ -4376,6 +4402,7 @@ fn turn_result(
                 duration_ms,
                 "interrupted by the operator",
                 cost,
+                usage_report,
             ),
             SessionStatus::Interrupted,
         ),
@@ -4383,7 +4410,13 @@ fn turn_result(
             message,
             agent_gone,
         } => (
-            payload::result_item(payload::ResultSubtype::Error, duration_ms, message, cost),
+            payload::result_item(
+                payload::ResultSubtype::Error,
+                duration_ms,
+                message,
+                cost,
+                usage_report,
+            ),
             if *agent_gone {
                 SessionStatus::Disconnected
             } else {
@@ -4516,6 +4549,47 @@ fn stop_reason_text(stop_reason: &buzz_acp::acp::StopReason) -> &'static str {
     }
 }
 
+/// Fold what the driver reported into the wire's per-turn usage block.
+///
+/// Three things happen here that the shape does not say on its own:
+///
+/// - `TurnUsage::turn_input_tokens` is **cache-inclusive** (see
+///   `buzz_acp::usage`), while
+///   [`payload::TurnUsageReport`](buzz_core::coding_session_payload::TurnUsageReport)
+///   partitions the prompt side into three disjoint fields. The fresh-input
+///   count is therefore the inclusive total *minus* both cache subsets, taken
+///   with `checked_sub` so a driver whose subsets exceed its total omits the
+///   field rather than publishing a wrapped number.
+/// - `tool_calls` is only reported when the turn had any: `Some(0)` would
+///   claim the provider counted, which it did — but a zero on every prose-only
+///   turn is noise, and a reader that wants "no calls" gets it from the absent
+///   key the same way it gets it from the zero.
+/// - `context_window` comes from this provider's own table and is omitted for
+///   a model it does not recognize.
+fn turn_usage_report(
+    usage: Option<&TurnUsage>,
+    tool_calls: u64,
+    model: Option<&str>,
+) -> payload::TurnUsageReport {
+    let cache_read = usage.and_then(|usage| usage.turn_cache_read_tokens);
+    let cache_write = usage.and_then(|usage| usage.turn_cache_write_tokens);
+    let fresh_input = usage
+        .and_then(|usage| usage.turn_input_tokens)
+        .and_then(|inclusive| {
+            inclusive
+                .checked_sub(cache_read.unwrap_or(0))
+                .and_then(|rest| rest.checked_sub(cache_write.unwrap_or(0)))
+        });
+    payload::TurnUsageReport {
+        input_tokens: fresh_input,
+        output_tokens: usage.and_then(|usage| usage.turn_output_tokens),
+        cache_read_tokens: cache_read,
+        cache_write_tokens: cache_write,
+        tool_calls: (tool_calls > 0).then_some(tool_calls),
+        context_window: model.and_then(crate::context_window::context_window_for_model),
+    }
+}
+
 fn turn_cost(usage: &TurnUsage) -> payload::TurnCost {
     payload::TurnCost {
         cost_usd: usage.turn_cost_usd,
@@ -4548,6 +4622,82 @@ fn log_ignored(what: &str, reason: &Ignored) {
 
 #[cfg(test)]
 mod tests {
+
+    /// The seam the whole lane exists for: what a driver reported becomes an
+    /// additive `usage` block on the turn's terminal item, with the prompt
+    /// side split into three disjoint counts.
+    #[test]
+    fn a_finished_turn_publishes_the_drivers_usage_on_its_result_item() {
+        let usage = buzz_acp::TurnUsage {
+            session_id: "s".into(),
+            turn_seq: 1,
+            delta_reliable: true,
+            // Cache-inclusive, exactly as `buzz_acp::usage` produces it.
+            turn_input_tokens: Some(101_200),
+            turn_output_tokens: Some(340),
+            turn_total_tokens: None,
+            turn_cost_usd: None,
+            turn_cache_read_tokens: Some(96_000),
+            turn_cache_write_tokens: Some(4_000),
+            cumulative_input_tokens: None,
+            cumulative_output_tokens: None,
+            cumulative_total_tokens: None,
+            cumulative_cost_usd: None,
+            cumulative_cache_read_tokens: None,
+            cumulative_cache_write_tokens: None,
+            model: None,
+            pricing_identity: None,
+        };
+        let (item, _) = turn_result(
+            &session::TurnOutcome::Completed {
+                stop_reason: buzz_acp::acp::StopReason::EndTurn,
+            },
+            1_000,
+            Some(&usage),
+            7,
+            Some("opus[1m]"),
+        );
+        assert_eq!(
+            item["usage"],
+            serde_json::json!({
+                "inputTokens": 1_200,
+                "outputTokens": 340,
+                "cacheReadTokens": 96_000,
+                "cacheWriteTokens": 4_000,
+                "toolCalls": 7,
+                "contextWindow": 1_000_000,
+            }),
+            "{item}"
+        );
+        // The split is lossless: the three prompt-side fields re-sum to the
+        // cache-inclusive total the top-level key still carries.
+        assert_eq!(item["inputTokens"], serde_json::json!(101_200));
+    }
+
+    /// A driver that reports nothing leaves the item exactly as it was before
+    /// the block existed — no `usage` key, not an empty object.
+    #[test]
+    fn a_turn_with_no_driver_usage_publishes_no_usage_block() {
+        let (item, _) = turn_result(
+            &session::TurnOutcome::Completed {
+                stop_reason: buzz_acp::acp::StopReason::EndTurn,
+            },
+            1_000,
+            None,
+            0,
+            Some("default"),
+        );
+        assert!(item.get("usage").is_none(), "{item}");
+    }
+
+    /// An unrecognized model omits the window; the token counts still ship.
+    #[test]
+    fn an_unrecognized_model_omits_the_window_and_keeps_the_counts() {
+        let report = turn_usage_report(None, 3, Some("some-model-nobody-shipped"));
+        assert_eq!(report.context_window, None);
+        assert_eq!(report.tool_calls, Some(3));
+    }
+
     use super::*;
     use crate::payload::{BUDGET_EXHAUSTED, UNAUTHORIZED_OPERATOR};
     use std::path::Path;

@@ -262,3 +262,49 @@ test("blocks order by start time, never by merging their items", () => {
     ["a", "b"],
   );
 });
+
+// ── Per-turn usage on the wire ───────────────────────────────────────────────
+
+test("a result item carrying a usage block still projects the turn", () => {
+  // The provider stamps an additive `usage` block on the terminal item. A
+  // reader that rejected the item on an unknown field would blank the end of
+  // every turn the moment the provider started measuring context.
+  const items = projectCodingSessionTranscript([
+    envelope(1, {
+      kind: "result",
+      subtype: "success",
+      durationMs: 1234,
+      costUsd: 0.02,
+      result: "done",
+      inputTokens: 101200,
+      usage: {
+        inputTokens: 1200,
+        outputTokens: 340,
+        cacheReadTokens: 96000,
+        cacheWriteTokens: 4000,
+        toolCalls: 7,
+        contextWindow: 1000000,
+      },
+    }),
+  ]);
+  assert.equal(items[0].title, "Turn result");
+  assert.equal(items[0].text, "done");
+  assert.equal(items[0].unknownKind, null);
+  assert.deepEqual(items[0].lifecycle, {
+    durationMs: 1234,
+    costUsd: 0.02,
+    isError: false,
+  });
+});
+
+test("the driver's own context occupancy item still projects", () => {
+  const items = projectCodingSessionTranscript([
+    envelope(1, {
+      kind: "context_window_updated",
+      usage: { size: 1000000, used: 137498 },
+    }),
+  ]);
+  assert.equal(items[0].title, "Context window");
+  assert.equal(items[0].unknownKind, null);
+  assert.deepEqual(items[0].meta, ["size=1000000", "used=137498"]);
+});

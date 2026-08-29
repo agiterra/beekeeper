@@ -27,7 +27,7 @@ use buzz_core::coding_session_lifecycle_command::{
     validate_event_id_hex, validate_role_slug, validate_session_ref, CodingSessionLifecycleAction,
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
-use buzz_core::coding_session_payload::ACTOR_ROLE_PAIR;
+use buzz_core::coding_session_payload::{context_window_usage, TurnUsageReport, ACTOR_ROLE_PAIR};
 use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -881,6 +881,105 @@ pub async fn cmd_inbox(
     Ok(())
 }
 
+/// How much of its model's context an execution is holding, and out of what.
+///
+/// Read off the wire, never estimated. Two sources answer, in this order:
+///
+/// 1. The driver's own `context_window_updated` item (`used` / `size`). This
+///    is *occupancy*: the driver measured the prompt it was about to send, so
+///    it can never exceed the window. `claude-agent-acp` emits it.
+/// 2. Failing that, the terminal `result` item's `usage` block, summed by
+///    [`TurnUsageReport::used_tokens`]. That is the turn's prompt-side
+///    *consumption*, which on a turn that made several model calls is larger
+///    than the context the model actually held. It is the honest second-best
+///    and it is labelled as such in `--help`.
+///
+/// `None` means no execution of either kind reached the wire — reported as
+/// nothing, never as zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContextLoad {
+    used_tokens: u64,
+    context_window: Option<u64>,
+}
+
+impl ContextLoad {
+    /// Percent of the window in use, rounded half-up to a whole percent
+    /// (137 498 of 1 000 000 reads `14%`). `None` when no window is known — a
+    /// percentage against a guessed denominator reads exactly like a measured
+    /// one, and there is no honest denominator to invent.
+    fn pct(&self) -> Option<u64> {
+        let window = self.context_window.filter(|window| *window > 0)?;
+        Some((self.used_tokens.saturating_mul(200) / window).div_ceil(2))
+    }
+
+    /// The cell a person reads.
+    fn render(&self) -> String {
+        match (self.context_window, self.pct()) {
+            (Some(window), Some(pct)) => {
+                format!("{}/{window} ({pct}%)", self.used_tokens)
+            }
+            _ => format!("{} (window unknown)", self.used_tokens),
+        }
+    }
+
+    /// The machine-readable shape: three keys, each `null` when unknown.
+    fn to_json(self) -> Value {
+        json!({
+            "usedTokens": self.used_tokens,
+            "contextWindow": self.context_window,
+            "contextPct": self.pct(),
+        })
+    }
+}
+
+/// Fold this execution's transcript into its current context load.
+///
+/// Newest item wins within each source, ordered by `(seq, created_at)` — the
+/// same ordering `build_executions` uses to pick an execution's last signed
+/// item, so the two can never disagree about which item is newest.
+fn context_load(
+    execution: &CrewExecution,
+    transcripts: &[super::TranscriptRecord],
+) -> Option<ContextLoad> {
+    let mut mine: Vec<&super::TranscriptRecord> = transcripts
+        .iter()
+        .filter(|record| {
+            record.signer == execution.signer && record.target_key == execution.target_key
+        })
+        .collect();
+    mine.sort_by_key(|record| (record.seq, record.created_at));
+
+    let occupancy = mine
+        .iter()
+        .rev()
+        .find_map(|record| context_window_usage(&record.envelope.item));
+    // The turn block is read either way: it carries the window the provider
+    // named, which an occupancy item without a `size` does not.
+    let reported = mine.iter().rev().find_map(|record| {
+        let item = &record.envelope.item;
+        if item.get("kind").and_then(Value::as_str) != Some("result") {
+            return None;
+        }
+        serde_json::from_value::<TurnUsageReport>(item.get("usage")?.clone()).ok()
+    });
+
+    match occupancy {
+        Some(occupancy) => Some(ContextLoad {
+            used_tokens: occupancy.used_tokens,
+            context_window: occupancy
+                .context_window
+                .or_else(|| reported.and_then(|usage| usage.context_window)),
+        }),
+        None => {
+            let reported = reported?;
+            Some(ContextLoad {
+                used_tokens: reported.used_tokens()?,
+                context_window: reported.context_window,
+            })
+        }
+    }
+}
+
 /// One `bee sessions status` row, for one execution, in the shape `format`
 /// asks for.
 ///
@@ -918,6 +1017,9 @@ pub fn status_row(
     // record that would say — never the provider's key, which signs
     // every execution here and would make every founder identical.
     let founding = founders.of(&execution.target);
+    // How full this seat's context is, from the wire only. `None` renders as
+    // an em dash and as JSON `null`: nothing has said, which is not zero.
+    let context = context_load(execution, transcripts);
     match format {
         crate::OutputFormat::Compact => json!({
             "target": execution.target_key,
@@ -927,6 +1029,9 @@ pub fn status_row(
             "openTurn": load.open_command_id,
             "queued": load.queued,
             "turnBudget": turn_budget_line,
+            "context": context
+                .map(|context| Value::String(context.render()))
+                .unwrap_or_else(|| Value::String("\u{2014}".to_owned())),
         }),
         crate::OutputFormat::Json => json!({
             "target": execution.target_key,
@@ -953,6 +1058,7 @@ pub fn status_row(
                 "limit": budget.limit,
                 "exhausted": budget.exhausted(),
             })),
+            "context": context.map(ContextLoad::to_json),
         }),
     }
 }

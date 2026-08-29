@@ -403,4 +403,55 @@ void main() {
       expect(call.tool!.status, CodingSessionToolStatus.executing);
     });
   });
+
+  group('per-turn usage', () {
+    // The `usage` block is additive on the `result` item. This observer must
+    // accept a result item carrying it and keep projecting the turn — a strict
+    // reader that rejected the item would blank the end of every turn the
+    // moment the provider started measuring context.
+    test('a result item carrying a usage block still projects', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          turnId: 'turn-1',
+          item: {
+            'kind': 'result',
+            'subtype': 'success',
+            'isError': false,
+            'durationMs': 1000,
+            'result': 'completed',
+            'usage': {
+              'inputTokens': 1200,
+              'outputTokens': 340,
+              'cacheReadTokens': 96000,
+              'cacheWriteTokens': 4000,
+              'toolCalls': 7,
+              'contextWindow': 1000000,
+            },
+          },
+        ),
+      ]);
+      final item = blocks.single.items.single;
+      expect(item.type, CodingSessionItemType.lifecycle);
+      expect(item.text, 'completed');
+      expect(item.result!.durationMs, 1000);
+      expect(item.result!.isError, isFalse);
+    });
+
+    // A driver's own occupancy item is what the context percentage is built
+    // from upstream; this observer must not reject it either.
+    test('a context_window_updated item carrying occupancy still projects', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          turnId: 'turn-1',
+          item: {
+            'kind': 'context_window_updated',
+            'usage': {'size': 1000000, 'used': 137498},
+          },
+        ),
+      ]);
+      expect(blocks.single.items.single.title, 'Context window updated');
+    });
+  });
 }
