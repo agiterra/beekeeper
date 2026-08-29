@@ -2379,7 +2379,20 @@ pub async fn dispatch(
         SessionsCmd::Status {
             channel,
             json_lines,
-        } => crew_cmds::cmd_status(client, &channel, json_lines, format).await,
+            no_json_lines,
+            format_explicit,
+        } => {
+            // The one place the real terminal is consulted; the rule itself is
+            // pure and lives in `resolve_json_lines`, where it is tested
+            // without touching this process's stdout.
+            let json_lines = crew_cmds::resolve_json_lines(
+                json_lines,
+                no_json_lines,
+                format_explicit,
+                std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            );
+            crew_cmds::cmd_status(client, &channel, json_lines, format).await
+        }
     }
 }
 

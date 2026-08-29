@@ -30,7 +30,7 @@ use buzz_core::kind::{
 };
 
 use super::crew::*;
-use super::crew_cmds::{status_json_lines, status_row};
+use super::crew_cmds::{resolve_json_lines, status_json_lines, status_row};
 use super::{decode_metadata, decode_receipts, decode_transcripts, diagnose_turns};
 use crate::error::CliError;
 
@@ -2757,4 +2757,145 @@ fn sessions_status_parses_the_json_lines_flag() {
         }
         _ => panic!("expected sessions status"),
     }
+}
+
+// ── `bee sessions status`: NDJSON automatically down a pipe ──────────────────
+//
+// The five rows of the lane's precedence table, each driven straight through
+// `resolve_json_lines`. That function takes the terminal's state as an
+// argument precisely so these cases never consult the test harness's own
+// stdout — a test that passes under `cargo test` and fails under
+// `cargo test | cat` would be testing the runner, not the rule.
+
+/// Row 1. An explicit `--json-lines` is obeyed on a terminal, where the
+/// automatic rule would have chosen the document.
+#[test]
+fn json_lines_auto_explicit_json_lines_beats_a_tty() {
+    assert!(resolve_json_lines(true, false, false, true));
+    // …and still wins when a format was named too.
+    assert!(resolve_json_lines(true, false, true, true));
+}
+
+/// Row 2. An explicit `--no-json-lines` is obeyed down a pipe, where the
+/// automatic rule would have chosen NDJSON. This is the escape hatch, so it
+/// has to hold in exactly the case the new behavior applies to.
+#[test]
+fn json_lines_auto_explicit_no_json_lines_beats_a_pipe() {
+    assert!(!resolve_json_lines(false, true, false, false));
+}
+
+/// Row 3. Naming `--format` is itself a request for that format's document.
+/// Item 82's tooling reads `bee --format json sessions status …` down a pipe
+/// and must keep getting the envelope it indexes into.
+#[test]
+fn json_lines_auto_an_explicit_format_keeps_the_document() {
+    assert!(!resolve_json_lines(false, false, true, false));
+    assert!(!resolve_json_lines(false, false, true, true));
+}
+
+/// Row 4, the only new behavior in the lane: nothing asked for, stdout is not
+/// a terminal, so the output is NDJSON.
+#[test]
+fn json_lines_auto_a_bare_pipe_gets_ndjson() {
+    assert!(resolve_json_lines(false, false, false, false));
+}
+
+/// Row 5. Nothing asked for and a terminal on the other end: unchanged, the
+/// document a person reads.
+#[test]
+fn json_lines_auto_a_bare_tty_keeps_the_document() {
+    assert!(!resolve_json_lines(false, false, false, true));
+}
+
+/// The two flags contradict each other, so clap refuses the invocation rather
+/// than letting either win silently. An error, not a panic.
+#[test]
+fn json_lines_and_no_json_lines_together_are_a_usage_error() {
+    use clap::Parser;
+
+    // `Cli` is not `Debug`, so this cannot be `expect_err`.
+    let error = match crate::Cli::try_parse_from([
+        "bee",
+        "sessions",
+        "status",
+        "--channel",
+        CHANNEL,
+        "--json-lines",
+        "--no-json-lines",
+    ]) {
+        Ok(_) => panic!("the two flags together must be refused"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.kind(),
+        clap::error::ErrorKind::ArgumentConflict,
+        "expected a conflict, got {:?}: {error}",
+        error.kind()
+    );
+}
+
+/// The escape hatch exists on the command, and is absent by default.
+#[test]
+fn sessions_status_parses_the_no_json_lines_flag() {
+    use clap::Parser;
+
+    let with_flag = crate::Cli::try_parse_from([
+        "bee",
+        "sessions",
+        "status",
+        "--channel",
+        CHANNEL,
+        "--no-json-lines",
+    ])
+    .expect("--no-json-lines parses");
+    match with_flag.command {
+        crate::Cmd::Sessions(crate::SessionsCmd::Status { no_json_lines, .. }) => {
+            assert!(no_json_lines, "--no-json-lines sets the flag");
+        }
+        _ => panic!("expected sessions status"),
+    }
+
+    let without = crate::Cli::try_parse_from(["bee", "sessions", "status", "--channel", CHANNEL])
+        .expect("the bare command parses");
+    match without.command {
+        crate::Cmd::Sessions(crate::SessionsCmd::Status { no_json_lines, .. }) => {
+            assert!(!no_json_lines, "the flag defaults to false");
+        }
+        _ => panic!("expected sessions status"),
+    }
+}
+
+/// The mechanism row 3 stands on: after parsing, `--format json` asked for
+/// explicitly must still be distinguishable from the `json` that fell through
+/// as the default. `Cli.format` alone cannot say — both read `Json` — so the
+/// answer comes from the `ArgMatches` the entry point now keeps.
+#[test]
+fn an_explicit_format_is_distinguishable_from_the_default() {
+    use clap::CommandFactory;
+
+    let explicit = crate::Cli::command()
+        .try_get_matches_from([
+            "bee",
+            "--format",
+            "json",
+            "sessions",
+            "status",
+            "--channel",
+            CHANNEL,
+        ])
+        .expect("an explicit --format parses");
+    assert_eq!(
+        explicit.value_source("format"),
+        Some(clap::parser::ValueSource::CommandLine),
+        "an explicit --format must read as CommandLine"
+    );
+
+    let fell_through = crate::Cli::command()
+        .try_get_matches_from(["bee", "sessions", "status", "--channel", CHANNEL])
+        .expect("the bare command parses");
+    assert_eq!(
+        fell_through.value_source("format"),
+        Some(clap::parser::ValueSource::DefaultValue),
+        "an unstated --format must read as DefaultValue"
+    );
 }

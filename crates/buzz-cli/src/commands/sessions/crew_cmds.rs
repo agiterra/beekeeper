@@ -957,6 +957,38 @@ pub fn status_row(
     }
 }
 
+/// Decide whether `bee sessions status` prints NDJSON, from the four facts
+/// that get a vote — and nothing else.
+///
+/// The precedence, highest first:
+///
+/// 1. `--json-lines` was asked for → NDJSON, terminal or not.
+/// 2. `--no-json-lines` was asked for → the single document, pipe or not.
+///    (clap refuses both flags together, so 1 and 2 cannot both hold.)
+/// 3. `--format` was named explicitly → that format's document. Naming a
+///    format is a request for it, and the tooling that reads `bee --format
+///    json sessions status` down a pipe indexes into the envelope.
+/// 4. Nothing was asked for → stdout decides: a pipe or a file gets NDJSON,
+///    a terminal gets the document a person reads.
+///
+/// `stdout_is_tty` is a parameter rather than a call to [`std::io::IsTerminal`]
+/// so that this is a pure function of its inputs. A test that read the real
+/// stdout would pass under `cargo test` and fail under `cargo test | cat`.
+pub fn resolve_json_lines(
+    flag: bool,
+    no_flag: bool,
+    format_explicit: bool,
+    stdout_is_tty: bool,
+) -> bool {
+    if flag {
+        return true;
+    }
+    if no_flag || format_explicit {
+        return false;
+    }
+    !stdout_is_tty
+}
+
 /// The `--json-lines` rendering: one serialized [`crate::OutputFormat::Json`]
 /// row per execution, in `executions` order, each one a complete JSON document
 /// on its own.

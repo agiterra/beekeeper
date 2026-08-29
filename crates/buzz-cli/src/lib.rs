@@ -40,8 +40,20 @@ where
     // double-install returns Err and is harmless.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let cli = match Cli::try_parse_from(args) {
-        Ok(cli) => cli,
+    // Parsed in two steps rather than one `Cli::try_parse_from`, for one fact
+    // that the built `Cli` cannot carry: `--format` has a default, so
+    // `cli.format` reads `Json` whether it was named or fell through, and
+    // `sessions status` needs the difference (a named format suppresses the
+    // NDJSON that a pipe otherwise gets — see `crew_cmds::resolve_json_lines`).
+    // `ArgMatches::value_source` is the only thing that knows. Scanning
+    // `std::env::args()` for `--format` would be wrong: `sessions transcript`
+    // has its own unrelated `--format md|jsonl`.
+    //
+    // The error handling below is unchanged from the single-step form, and
+    // must stay so: `--help`/`--version` print and exit 0, everything else is
+    // a usage error on stderr and exit 1.
+    let matches = match <Cli as clap::CommandFactory>::command().try_get_matches_from(args) {
+        Ok(matches) => matches,
         Err(e) => {
             if e.use_stderr() {
                 error::print_error(&CliError::Usage(e.to_string()));
@@ -53,6 +65,23 @@ where
             }
         }
     };
+    let format_explicit =
+        matches.value_source("format") == Some(clap::parser::ValueSource::CommandLine);
+    let mut cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(e) => {
+            error::print_error(&CliError::Usage(e.to_string()));
+            return 1;
+        }
+    };
+    if let Cmd::Sessions(SessionsCmd::Status {
+        format_explicit: explicit,
+        ..
+    }) = &mut cli.command
+    {
+        *explicit = format_explicit;
+    }
+
     match run(cli).await {
         Ok(()) => 0,
         Err(e) => {
@@ -2557,8 +2586,13 @@ pub enum SessionsCmd {
         since: Option<String>,
     },
     /// Per-execution liveness, seat, and open-turn state for a channel.
+    ///
+    /// The output shape follows stdout unless you say otherwise: a terminal
+    /// gets the single document, a pipe or a file gets NDJSON. See
+    /// `--json-lines` / `--no-json-lines`, and the rule spelled out below the
+    /// examples.
     #[command(
-        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines"
+        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines\n  bee sessions status --channel <uuid> --no-json-lines\n\nOutput shape, when neither flag is given and --format is not named:\nstdout decides. A terminal gets the single document (the --format json\nenvelope, or the --format compact array); a pipe or a file gets NDJSON --\none JSON object per execution, one per line. Naming --format explicitly\nalways gets that format's document, terminal or pipe. This is a different\nthing from `sessions transcript --format jsonl`, which is whole signed\nevents rather than these rows."
     )]
     Status {
         /// Channel UUID to read
@@ -2568,8 +2602,23 @@ pub enum SessionsCmd {
         /// same fields as a `--format json` row. The envelope keys (`channel`,
         /// `founders`, `leaseSnapshotRecords`) are not printed. Overrides
         /// `--format`: a compact request still gets the JSON row's fields.
+        /// This is already what a pipe gets when neither flag is given and
+        /// `--format` is not named, so the flag is only needed to force NDJSON
+        /// onto a terminal, or alongside an explicit `--format`.
         #[arg(long = "json-lines")]
         json_lines: bool,
+        /// Print the single document (the `--format json` envelope, or the
+        /// `--format compact` array) even when stdout is not a terminal —
+        /// the escape hatch from the automatic NDJSON above. Naming `--format`
+        /// explicitly has the same effect. Conflicts with `--json-lines`.
+        #[arg(long = "no-json-lines", conflicts_with = "json_lines")]
+        no_json_lines: bool,
+        /// Not a flag. The entry point sets this after parsing, because
+        /// `--format` has a default and so `Cli.format` alone cannot say
+        /// whether a format was named or fell through — and only a named one
+        /// suppresses the automatic NDJSON. See `crew_cmds::resolve_json_lines`.
+        #[arg(skip)]
+        format_explicit: bool,
     },
 }
 
