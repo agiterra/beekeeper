@@ -7,6 +7,7 @@ import {
   Info,
   ListChecks,
   Pencil,
+  OctagonX,
   RotateCcw,
   Square,
   UserPlus,
@@ -69,6 +70,16 @@ type CodingSessionHeaderProps = {
   onAddProvider?: () => void;
   /** Publishes the provider-independent shared closure fact. */
   onCloseSession?: () => void;
+  /**
+   * Stops every live seat of this umbrella at once.
+   *
+   * Founder-only, and *absent* rather than disabled for anybody else — see
+   * `buildCodingSessionStopAll`. A greyed-out control invites the click that
+   * teaches you the authority is not yours.
+   */
+  onStopAll?: () => void;
+  /** How many seats {@link onStopAll} would stop. Named on the control. */
+  stopAllCount?: number;
   onBack: () => void;
   onExport?: () => void;
   /**
@@ -127,6 +138,7 @@ export function CodingSessionHeader({
   onCloseSession,
   onExport,
   onOpenPeople,
+  onStopAll,
   onOpenProject,
   onPopout,
   onRename,
@@ -143,6 +155,7 @@ export function CodingSessionHeader({
   sessionClosed = false,
   status,
   statusLabelOverride = null,
+  stopAllCount = 0,
   surfaceHostId,
   surfaceTabs,
   taskCount = 0,
@@ -441,6 +454,24 @@ export function CodingSessionHeader({
         >
           <UserPlus />
           <span className={compact ? "sr-only" : undefined}>Add provider</span>
+        </Button>
+      ) : null}
+      {onStopAll ? (
+        <Button
+          aria-label={`Stop ${stopAllCount} live ${
+            stopAllCount === 1 ? "seat" : "seats"
+          }`}
+          data-testid="coding-session-stop-all"
+          onClick={onStopAll}
+          size={compact ? "icon" : "sm"}
+          title="Stop every live seat in this session. The session stays open; a stopped seat cannot be resumed."
+          type="button"
+          variant="ghost"
+        >
+          <OctagonX />
+          <span className={compact ? "sr-only" : undefined}>
+            Stop all{stopAllCount > 0 ? ` (${stopAllCount})` : ""}
+          </span>
         </Button>
       ) : null}
       {onCloseSession ? (

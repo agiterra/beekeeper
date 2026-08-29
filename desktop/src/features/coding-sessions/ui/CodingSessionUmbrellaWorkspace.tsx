@@ -1,5 +1,4 @@
 import * as React from "react";
-import { X } from "lucide-react";
 import { toast } from "sonner";
 
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
@@ -68,8 +67,9 @@ import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import {
   CodingSessionAgentFocus,
   type CodingSessionAgentFocusItem,
-  codingSessionAgentAccent,
 } from "./CodingSessionAgentFocus";
+import { CodingSessionFocusedAgentNotice } from "./CodingSessionFocusedAgentNotice";
+import { useCodingSessionStopAll } from "./useCodingSessionStopAll";
 import {
   CodingSessionActiveWorkDock,
   type CodingSessionActiveWorkAgent,
@@ -320,6 +320,17 @@ export function UmbrellaCodingSessionWorkspace({
   const focusedAgent =
     agentFocusItems.find((item) => item.executionKey === focusedExecutionKey) ??
     null;
+  const {
+    dialog: stopAllDialog,
+    model: stopAll,
+    stopAll: handleStopAll,
+  } = useCodingSessionStopAll({
+    channelId,
+    currentUserPubkey,
+    resolveActorName: workspaceActorName,
+    resolveReachability,
+    umbrella,
+  });
   const handleFocusExecution = React.useCallback(
     (executionKey: string | null) => setFocusedExecutionKey(executionKey),
     [],
@@ -384,6 +395,8 @@ export function UmbrellaCodingSessionWorkspace({
           onPopout={surface === "main" ? handlePopout : undefined}
           onRename={canRename ? () => setRenameOpen(true) : undefined}
           onReopenSession={onReopenSession}
+          onStopAll={stopAll.kind === "available" ? handleStopAll : undefined}
+          stopAllCount={stopAll.kind === "available" ? stopAll.liveCount : 0}
           peopleCount={peopleCount}
           onToggleTaskRail={
             !isMultiExecution && composerTaskDock.activeModel
@@ -575,49 +588,8 @@ export function UmbrellaCodingSessionWorkspace({
           </SheetContent>
         </Sheet>
       ) : null}
+      {stopAllDialog}
     </main>
-  );
-}
-
-function CodingSessionFocusedAgentNotice({
-  agent,
-  onClear,
-}: {
-  agent: CodingSessionAgentFocusItem;
-  onClear: () => void;
-}) {
-  const accent = codingSessionAgentAccent(agent.executionKey);
-  const working = agent.status.kind === "working";
-  return (
-    <div
-      className="mb-5 flex min-h-8 items-center gap-2 border-b border-border/45 pb-3 text-xs text-muted-foreground"
-      data-testid="coding-session-focused-agent-notice"
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "grid size-5 shrink-0 place-items-center rounded-full",
-          accent.soft,
-          working && "coding-session-agent-breathe",
-        )}
-      >
-        <span className={cn("size-2 rounded-full", accent.dot)} />
-      </span>
-      <span className="min-w-0 truncate">
-        Viewing{" "}
-        <span className={cn("font-medium", accent.text)}>{agent.label}</span>
-      </span>
-      <button
-        aria-label="Return to the complete session"
-        className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        data-testid="coding-session-focused-agent-clear"
-        onClick={onClear}
-        title="Show the complete session"
-        type="button"
-      >
-        <X aria-hidden className="size-3.5" />
-      </button>
-    </div>
   );
 }
 

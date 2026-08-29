@@ -90,9 +90,12 @@ export function useEndCodingSessionDialog(): {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Stop this execution?</AlertDialogTitle>
+          <AlertDialogTitle data-testid="coding-session-end-title">
+            {target?.confirm?.title ?? "Stop this execution?"}
+          </AlertDialogTitle>
           <AlertDialogDescription data-testid="coding-session-end-description">
-            {endCodingSessionDialogDescription(target)}
+            {target?.confirm?.description ??
+              endCodingSessionDialogDescription(target)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -107,7 +110,7 @@ export function useEndCodingSessionDialog(): {
             }}
             data-testid="coding-session-end-confirm"
           >
-            Stop execution
+            {target?.confirm?.action ?? "Stop execution"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -451,3 +451,38 @@ test("disposition strip renders nothing when the umbrella holds no execution", (
     "",
   );
 });
+
+/**
+ * Item 87(e): the header is where "stop all of it" has to live, because the
+ * per-execution stop is inside a composer you cannot reach when three agents
+ * are working. Founder-only, and absent — not disabled — for anybody else: a
+ * greyed-out control invites the click that teaches you the authority is not
+ * yours.
+ */
+test("Stop all names how many seats it stops, and only the founder sees it", () => {
+  const base = {
+    channelName: "Beekeeper sessions",
+    generationLabel: "Keystone Session · generation 1",
+    onBack() {},
+    sessionTitle: "UI",
+    status: { kind: "working", label: "Working" },
+  };
+
+  const founderView = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...base,
+      onStopAll() {},
+      stopAllCount: 3,
+    }),
+  );
+  assert.match(founderView, /data-testid="coding-session-stop-all"/);
+  assert.match(founderView, /Stop all \(3\)/);
+  assert.match(founderView, /aria-label="Stop 3 live seats"/);
+
+  // Everybody else: no control at all, and nothing disabled to click at.
+  const viewerView = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, base),
+  );
+  assert.doesNotMatch(viewerView, /coding-session-stop-all/);
+  assert.doesNotMatch(viewerView, /Stop all/);
+});

@@ -24,6 +24,15 @@ export type EndCodingSessionRequest = {
    * pressing it has to be told it is a request, not an effect.
    */
   providerUnanswered?: boolean;
+  /**
+   * Confirm copy for a request that is not "stop this one execution".
+   *
+   * The bulk control in the umbrella header stops every live seat at once, and
+   * a dialog titled "Stop this execution?" over three of them would understate
+   * what the button does. Absent keeps the single-execution wording, which is
+   * what every existing caller wants.
+   */
+  confirm?: { title: string; description: string; action: string };
 };
 
 /**
