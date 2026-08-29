@@ -282,17 +282,18 @@ pub struct ManagedAgentRecord {
     /// Desired LLM model ID. Matches AgentModelInfo.id from discovery.
     /// The harness re-discovers the correct ACP switching metadata at session
     /// creation by matching this ID against the fresh session/new response.
-    /// For a linked instance this is a legacy/display snapshot only — spawn
-    /// and deploy resolve the effective model from the definition, never
-    /// from this field (see `effective_config::resolve_effective_config`).
-    /// For a definition-less instance this field is authoritative.
+    /// Host-owned: this is the model THIS computer runs the identity on, so a
+    /// non-blank value here wins over the linked definition's (item 90, see
+    /// `effective_config::resolve_effective_config`). Blank/absent falls back
+    /// to the definition, then the global default. For a definition-less
+    /// instance this field is the only source.
     #[serde(default)]
     pub model: Option<String>,
-    /// LLM inference provider. For a linked instance this is a legacy/display
-    /// snapshot only — spawn and deploy resolve the effective provider from
-    /// the definition, never from this field (see
+    /// LLM inference provider. Host-owned like `model`: a non-blank value
+    /// here wins over the linked definition's, blank falls back to the
+    /// definition and then the global default (see
     /// `effective_config::resolve_effective_config`). For a definition-less
-    /// instance this field is authoritative. `#[serde(default)]` so
+    /// instance this field is the only source. `#[serde(default)]` so
     /// pre-existing records deserialize as `None` and get backfilled on
     /// first load.
     #[serde(default)]
@@ -444,8 +445,8 @@ pub struct ManagedAgentRecord {
     /// backward-compatibility signal for records written before the record had
     /// a `provider` field, and is consulted only for definition-less records
     /// that carry no provider — after which the env-var preset is the last
-    /// fallback. A linked instance's marker is never read: its definition is
-    /// authoritative. `#[serde(default)]` so records predating the field
+    /// fallback. A linked instance's marker is never read: only its typed
+    /// `provider` field (host-owned) and its definition are. `#[serde(default)]` so records predating the field
     /// deserialize as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_mesh: Option<RelayMeshConfig>,
@@ -541,8 +542,8 @@ pub struct ManagedAgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_source: Option<super::effective_config::ConfigSource>,
     /// LLM inference provider, resolved the same way as `model`/`model_source`
-    /// (definition → global for linked instances; instance → global for
-    /// definition-less instances). `None` for an orphaned instance.
+    /// (record → definition → global for linked instances; instance → global
+    /// for definition-less instances). `None` for an orphaned instance.
     pub provider: Option<String>,
     /// `true` when the linked persona has been edited since this agent was
     /// created — the running agent uses the older pinned snapshot. The UI

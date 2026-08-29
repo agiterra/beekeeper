@@ -104,6 +104,7 @@ fn persona_drift_state(
     (out_of_date, false)
 }
 
+
 pub fn build_managed_agent_summary(
     app: &AppHandle,
     record: &ManagedAgentRecord,
@@ -172,32 +173,8 @@ pub fn build_managed_agent_summary(
 
     let (persona_out_of_date, persona_orphaned) = persona_drift_state(record, personas);
 
-    let effective_cfg = crate::managed_agents::effective_config::resolve_effective_config(
-        record,
-        personas,
-        global_config,
-    );
-    let (effective_model, effective_provider, effective_prompt, model_source) = match effective_cfg
-    {
-        crate::managed_agents::effective_config::EffectiveConfigResult::Resolved(cfg) => {
-            let source = cfg.model.source.clone();
-            (
-                cfg.model.value,
-                cfg.provider.value,
-                cfg.system_prompt.value,
-                Some(source),
-            )
-        }
-        crate::managed_agents::effective_config::EffectiveConfigResult::OrphanedInstance {
-            record_pubkey,
-            missing_persona_id,
-        } => {
-            eprintln!(
-                "orphaned agent instance: pubkey={record_pubkey}, missing_persona_id={missing_persona_id}"
-            );
-            (None, None, None, None)
-        }
-    };
+    let (effective_model, effective_provider, effective_prompt, model_source) =
+        effective_summary::summary_effective_fields(record, personas, global_config);
 
     // Restart badge: the running process stamped the effective spawn config
     // it was launched with; recompute a prospective one from current disk
@@ -973,6 +950,8 @@ pub fn start_managed_agent_process(
     runtimes.insert(key, ManagedAgentPairRuntime::starting(process));
     Ok(())
 }
+
+mod effective_summary;
 
 #[cfg(test)]
 mod test_fixtures;

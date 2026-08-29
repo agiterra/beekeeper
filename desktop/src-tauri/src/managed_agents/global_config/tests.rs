@@ -386,14 +386,17 @@ fn persona(id: &str, model: Option<&str>, provider: Option<&str>) -> AgentDefini
     }
 }
 
-/// Linked instance: definition (persona) wins — stale record bytes are
-/// ignored. This is the core model-inheritance fix.
+/// Linked instance: the model and provider THIS HOST set on the record win
+/// over the pack's (item 90). Which model and provider an identity runs on is
+/// an install fact — role packs are model-agnostic and carry `null` for both —
+/// so a host pick made through the picker is what a spawn, a deploy and the
+/// Agents card must all report.
 #[test]
-fn resolve_definition_wins_over_stale_record_for_linked_instance() {
+fn host_set_record_value_wins_over_definition_for_linked_instance() {
     let mut record = bare_record();
     record.persona_id = Some("p1".to_string());
-    record.model = Some("stale-record-model".to_string());
-    record.provider = Some("stale-record-provider".to_string());
+    record.model = Some("gpt-5.6-sol".to_string());
+    record.provider = Some("codex".to_string());
     let personas = vec![persona(
         "p1",
         Some("persona-model"),
@@ -409,14 +412,39 @@ fn resolve_definition_wins_over_stale_record_for_linked_instance() {
 
     assert_eq!(
         model.as_deref(),
-        Some("persona-model"),
-        "definition model must win over stale record"
+        Some("gpt-5.6-sol"),
+        "the host's model must win over the pack's"
     );
     assert_eq!(
         provider.as_deref(),
-        Some("persona-provider"),
-        "definition provider must win over stale record"
+        Some("codex"),
+        "the host's provider must win over the pack's"
     );
+}
+
+/// The other half of the rule: a record with no value of its own still
+/// inherits the definition's.
+#[test]
+fn blank_record_falls_back_to_definition_for_linked_instance() {
+    let mut record = bare_record();
+    record.persona_id = Some("p1".to_string());
+    record.model = Some("   ".to_string());
+    record.provider = None;
+    let personas = vec![persona(
+        "p1",
+        Some("persona-model"),
+        Some("persona-provider"),
+    )];
+    let global = GlobalAgentConfig {
+        model: Some("global-model".to_string()),
+        provider: Some("global-provider".to_string()),
+        ..Default::default()
+    };
+
+    let (model, provider) = resolve_effective_model_provider(&record, &personas, &global);
+
+    assert_eq!(model.as_deref(), Some("persona-model"));
+    assert_eq!(provider.as_deref(), Some("persona-provider"));
 }
 
 /// Tier 2 — persona fallback: record has no model/provider; the linked
@@ -556,14 +584,13 @@ fn resolve_all_none_when_no_source_provides_values() {
     );
 }
 
-/// Each field resolves independently: definition model=None → global fills
-/// model; definition has provider → definition wins for provider. Stale
-/// record bytes are ignored for linked instances.
+/// Each field resolves independently: with the record blank, definition
+/// model=None → global fills model, while the definition's provider wins.
 #[test]
 fn resolve_each_field_resolves_independently_through_tiers() {
     let mut record = bare_record();
     record.persona_id = Some("p1".to_string());
-    record.model = Some("stale-record-model".to_string());
+    record.model = None;
     let personas = vec![persona("p1", None, Some("persona-provider"))];
     let global = GlobalAgentConfig {
         model: Some("global-model".to_string()),
@@ -576,7 +603,7 @@ fn resolve_each_field_resolves_independently_through_tiers() {
     assert_eq!(
         model.as_deref(),
         Some("global-model"),
-        "definition model=None → global fills model; stale record ignored"
+        "record blank, definition model=None → global fills model"
     );
     assert_eq!(
         provider.as_deref(),

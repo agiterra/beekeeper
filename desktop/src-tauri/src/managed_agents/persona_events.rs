@@ -486,11 +486,11 @@ fn apply_definition_value(slot: &mut Option<String>, value: Option<String>) {
 /// instances on the next spawn.
 ///
 /// Known limitation: for a definition that DOES name a model, a host pick
-/// made through the picker is overwritten again on the next snapshot apply.
-/// Closing that needs per-field host-pin provenance on the record (or
-/// instance-over-definition precedence in
-/// `effective_config::resolve_linked`, which today ignores the record
-/// entirely for a linked instance).
+/// made through the picker is overwritten again here on the next snapshot
+/// apply. Since item 90 `effective_config::resolve_linked` prefers the
+/// record's own non-blank value, so a pick survives until the next apply;
+/// closing the gap entirely needs per-field host-pin provenance on the
+/// record.
 ///
 /// This is the single apply used by every snapshot-apply site: the spawn
 /// re-pin (`start_local_agent_with_preflight`), the launch backfill and

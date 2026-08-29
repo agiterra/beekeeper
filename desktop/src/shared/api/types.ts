@@ -259,7 +259,13 @@ export type ManagedAgent = {
   systemPrompt: string | null;
   avatarUrl: string | null;
   model: string | null;
-  modelSource: "definition" | "global" | "instance_legacy" | null;
+  /**
+   * Which tier the effective `model` came from. `"instance"` = this host set it
+   * on the agent record itself (host-owned model/provider/runtime, item 90),
+   * `"definition"` = the linked persona named it, `"global"` = the app default,
+   * `"instance_legacy"` = a record with no linked definition at all.
+   */
+  modelSource: "instance" | "definition" | "global" | "instance_legacy" | null;
   /** LLM inference provider, from the agent's pinned record snapshot. */
   provider: string | null;
   /**
@@ -605,6 +611,13 @@ export type UpdateManagedAgentInput = {
   name?: string;
   model?: string | null;
   provider?: string | null;
+  /**
+   * Preferred ACP runtime id. Absent = don't touch, `null` = clear back to
+   * definition/global inheritance, `"id"` = set. Host-owned like
+   * `model`/`provider`: which harness this computer runs the identity on is an
+   * install fact, not a pack fact.
+   */
+  runtime?: string | null;
   systemPrompt?: string | null;
   /** Absent = don't touch. Present = replace the env_vars map entirely. */
   envVars?: Record<string, string>;

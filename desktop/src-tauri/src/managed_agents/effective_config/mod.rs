@@ -12,6 +12,13 @@ use super::types::{AgentDefinition, ManagedAgentRecord};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigSource {
+    /// The value this host set on the instance record itself — the model,
+    /// provider or runtime a human picked for *this* computer. Highest
+    /// precedence for a linked instance (item 90): model, provider and runtime
+    /// are host-owned identity facts, while the pack owns prompt, role and
+    /// skills. Distinct from [`ConfigSource::InstanceLegacy`], which is the
+    /// same bytes read off a record that has no definition at all.
+    Instance,
     Definition,
     Global,
     InstanceLegacy,
@@ -28,6 +35,14 @@ pub struct EffectiveAgentConfig {
     pub model: ResolvedField<String>,
     pub provider: ResolvedField<String>,
     pub system_prompt: ResolvedField<String>,
+    /// The effective ACP harness/runtime id (`"codex"`, `"goose"`, …).
+    ///
+    /// Resolved record → definition, with no global tier: `preferred_runtime`
+    /// in the global config seeds a *definition* at create time
+    /// (`commands/personas/snapshot.rs:216`) and has never been a spawn-time
+    /// fallback, so folding it in here would silently move an agent with no
+    /// runtime anywhere onto a different binary.
+    pub runtime: ResolvedField<String>,
 }
 
 impl EffectiveAgentConfig {
@@ -71,31 +86,63 @@ fn non_blank(v: Option<&str>) -> Option<&str> {
     v.filter(|s| !s.trim().is_empty())
 }
 
+/// Resolve one host-owned field for a linked instance: record → definition →
+/// global. A blank (or whitespace-only) value at a tier is treated as absent,
+/// so a role pack that carries `null` for model/provider/runtime — every pack
+/// does, they are model-agnostic — never blanks out what the host picked.
+fn host_owned_field(
+    record_value: Option<&str>,
+    definition_value: Option<&str>,
+    global_value: Option<&String>,
+) -> ResolvedField<String> {
+    if let Some(value) = non_blank(record_value) {
+        return ResolvedField {
+            value: Some(value.to_owned()),
+            source: ConfigSource::Instance,
+        };
+    }
+    if let Some(value) = non_blank(definition_value) {
+        return ResolvedField {
+            value: Some(value.to_owned()),
+            source: ConfigSource::Definition,
+        };
+    }
+    ResolvedField {
+        value: global_value.cloned(),
+        source: ConfigSource::Global,
+    }
+}
+
+/// Effective config for a persona-linked instance.
+///
+/// Model, provider and runtime are **host-owned**: they say what this computer
+/// runs the identity on, so a non-blank value on the record wins over the
+/// definition (item 90). The system prompt stays definition-owned — the pack
+/// owns role, persona and skills — so the record's prompt bytes are never
+/// consulted here.
 fn resolve_linked(
+    record: &ManagedAgentRecord,
     definition: &AgentDefinition,
     global: &GlobalAgentConfig,
 ) -> EffectiveAgentConfig {
-    let model = match non_blank(definition.model.as_deref()) {
-        Some(m) => ResolvedField {
-            value: Some(m.to_owned()),
-            source: ConfigSource::Definition,
-        },
-        None => ResolvedField {
-            value: global.model.clone(),
-            source: ConfigSource::Global,
-        },
-    };
+    let model = host_owned_field(
+        record.model.as_deref(),
+        definition.model.as_deref(),
+        global.model.as_ref(),
+    );
 
-    let provider = match non_blank(definition.provider.as_deref()) {
-        Some(p) => ResolvedField {
-            value: Some(p.to_owned()),
-            source: ConfigSource::Definition,
-        },
-        None => ResolvedField {
-            value: global.provider.clone(),
-            source: ConfigSource::Global,
-        },
-    };
+    let provider = host_owned_field(
+        record.provider.as_deref(),
+        definition.provider.as_deref(),
+        global.provider.as_ref(),
+    );
+
+    // No global tier — see `EffectiveAgentConfig::runtime`.
+    let runtime = host_owned_field(
+        record.runtime.as_deref(),
+        definition.runtime.as_deref(),
+        None,
+    );
 
     let system_prompt = ResolvedField {
         value: non_blank(Some(definition.system_prompt.as_str())).map(str::to_owned),
@@ -106,6 +153,7 @@ fn resolve_linked(
         model,
         provider,
         system_prompt,
+        runtime,
     }
 }
 
@@ -169,8 +217,9 @@ fn mesh_preset_env_model_id(env_vars: &BTreeMap<String, String>) -> Option<Strin
 /// - before that, the mesh preset written straight into `env_vars`.
 ///
 /// Consulted only by [`resolve_definition_less`]: a record with no definition
-/// has nothing authoritative to be overridden by, so its own bytes are the
-/// highest-precedence signal it has. A linked instance never reaches here.
+/// has nothing to fall back to, so its own legacy bytes are the last signal it
+/// has. A linked instance never reaches here — its typed fields are read
+/// directly by [`resolve_linked`], and its legacy bytes are never read.
 fn legacy_record_mesh_model_id(record: &ManagedAgentRecord) -> Option<String> {
     match &record.relay_mesh {
         // The marker itself is the mesh signal; a blank `model_ref` still means
@@ -216,10 +265,18 @@ fn resolve_definition_less(
         source: ConfigSource::InstanceLegacy,
     };
 
+    // No definition to fall back to, and no global tier for the harness id —
+    // see `EffectiveAgentConfig::runtime`.
+    let runtime = ResolvedField {
+        value: non_blank(record.runtime.as_deref()).map(str::to_owned),
+        source: ConfigSource::InstanceLegacy,
+    };
+
     let mut config = EffectiveAgentConfig {
         model,
         provider,
         system_prompt,
+        runtime,
     };
 
     // Legacy mesh compatibility. A record with an explicit `provider` has
@@ -251,7 +308,7 @@ pub fn resolve_effective_config(
 ) -> EffectiveConfigResult {
     match &record.persona_id {
         Some(pid) => match definitions.iter().find(|d| d.id == *pid) {
-            Some(def) => EffectiveConfigResult::Resolved(resolve_linked(def, global)),
+            Some(def) => EffectiveConfigResult::Resolved(resolve_linked(record, def, global)),
             None => EffectiveConfigResult::OrphanedInstance {
                 record_pubkey: record.pubkey.clone(),
                 missing_persona_id: pid.clone(),
@@ -272,12 +329,36 @@ pub fn resolve_effective_model_provider_pair(
     }
 }
 
+/// The effective ACP harness/runtime id for `record` — the single resolution
+/// every harness-definition lookup uses (`resolve_effective_harness_descriptor`
+/// and `resolve_effective_agent_env`).
+///
+/// Record → definition, blank treated as absent; `None` when nothing names a
+/// runtime, which callers read as "no harness definition" and fall back to the
+/// record's own command. An orphaned link keeps the record's own id: the record
+/// is the only tier left, and the caller's orphan refusal (`require_resolved`)
+/// is what stops the spawn.
+pub fn resolve_effective_runtime_id(
+    record: &ManagedAgentRecord,
+    definitions: &[AgentDefinition],
+    global: &GlobalAgentConfig,
+) -> Option<String> {
+    match resolve_effective_config(record, definitions, global) {
+        EffectiveConfigResult::Resolved(cfg) => cfg.runtime.value,
+        EffectiveConfigResult::OrphanedInstance { .. } => {
+            non_blank(record.runtime.as_deref()).map(str::to_owned)
+        }
+    }
+}
+
 /// The relay-mesh preflight decision for `record`, resolved the same way
 /// spawn resolves its mesh env: through `resolve_effective_config` (which
-/// folds in the definition → global fallback). A linked instance's own
-/// `provider`/`model`/`relay_mesh` bytes never contribute; a definition-less
-/// legacy record may fall back to them via `legacy_record_mesh_model_id`,
-/// which is confined to `resolve_definition_less`.
+/// folds in the record → definition → global fallback). A linked instance's
+/// *legacy* `relay_mesh` marker and preset env bytes never contribute — only
+/// its typed, host-owned `provider`/`model` fields do; a definition-less
+/// legacy record may still fall back to the legacy bytes via
+/// `legacy_record_mesh_model_id`, which is confined to
+/// `resolve_definition_less`.
 ///
 /// `None` covers both "not a mesh agent" and "orphaned instance" — an orphan
 /// never spawns (see `require_resolved`), so it never needs a mesh preflight

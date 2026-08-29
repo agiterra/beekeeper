@@ -48,6 +48,15 @@ test("resolveAgentCardModelLabel — linked instance with an explicit resolved m
   assert.equal(label, "gpt-5");
 });
 
+test("resolveAgentCardModelLabel — linked identity whose model this host set renders that model, not the pack's", () => {
+  const label = resolveAgentCardModelLabel({
+    agent: { modelSource: "instance", model: "gpt-5.6-sol" },
+    personaModel: "claude-opus-4-6",
+    defaultModel: "claude-sonnet",
+  });
+  assert.equal(label, "gpt-5.6-sol");
+});
+
 test("resolveAgentCardModelLabel — non-inherited agent with a blank resolved model falls back to the default", () => {
   const label = resolveAgentCardModelLabel({
     agent: { modelSource: "instance_legacy", model: "  " },

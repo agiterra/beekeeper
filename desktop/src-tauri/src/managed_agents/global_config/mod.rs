@@ -62,8 +62,8 @@ pub struct AllowedBridgePubkey {
 /// `env_vars` is the lowest user-settable env layer — global < persona < agent.
 /// `provider` / `model` are fallback defaults, resolved via
 /// `effective_config::resolve_effective_config`: for a linked instance,
-/// definition → global (the record's own `provider`/`model` bytes are never
-/// consulted); for a definition-less instance, instance → global.
+/// record → definition → global (model, provider and runtime are host-owned,
+/// item 90); for a definition-less instance, instance → global.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlobalAgentConfig {
     /// Global env vars injected into ALL agents unconditionally.
@@ -287,9 +287,10 @@ pub fn save_global_agent_config(app: &AppHandle, config: &GlobalAgentConfig) -> 
 
 /// Resolve the effective model and provider for an agent.
 ///
-/// Delegates to `effective_config::resolve_effective_config` which enforces
-/// definition-authoritative semantics for linked instances:
-///   - **Linked:** definition → global. Record bytes are never consulted.
+/// Delegates to `effective_config::resolve_effective_config`, which enforces
+/// host-owned model/provider semantics (item 90):
+///   - **Linked:** record → definition → global. A non-blank value on the
+///     record is this host's own pick and wins.
 ///   - **Definition-less:** instance → global.
 ///   - **Orphaned:** returns `(None, None)`. This function is a display/
 ///     readiness/hash convenience, not the spawn gate — an orphan must never

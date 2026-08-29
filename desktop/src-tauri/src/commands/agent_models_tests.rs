@@ -395,13 +395,9 @@ fn effective_discovery_provider_reads_the_runtimes_own_env_var() {
     );
 }
 
-/// Definition-authoritative: a linked agent's stale materialized
-/// `record.model`/`record.provider` must never drive model discovery — the
-/// linked definition's current model/provider wins, mirroring spawn's
-/// `resolve_effective_model_provider`.
-#[test]
-fn model_discovery_ignores_stale_record_for_linked_agent() {
-    let record: crate::managed_agents::ManagedAgentRecord = serde_json::from_str(
+/// A linked managed-agent record whose model/provider this host pinned.
+fn linked_discovery_record() -> crate::managed_agents::ManagedAgentRecord {
+    serde_json::from_str(
         r#"{
             "pubkey": "abcd1234",
             "name": "test-agent",
@@ -414,8 +410,8 @@ fn model_discovery_ignores_stale_record_for_linked_agent() {
             "mcp_command": "",
             "turn_timeout_seconds": 320,
             "system_prompt": null,
-            "model": "stale-record-model",
-            "provider": "stale-record-provider",
+            "model": "host-record-model",
+            "provider": "host-record-provider",
             "env_vars": {},
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
@@ -425,9 +421,13 @@ fn model_discovery_ignores_stale_record_for_linked_agent() {
             "last_error": null
         }"#,
     )
-    .expect("sample managed agent record");
+    .expect("sample managed agent record")
+}
 
-    let persona = crate::managed_agents::AgentDefinition {
+/// The definition `linked_discovery_record` links to — it names its own
+/// model/provider, so it is what a blank record falls back to.
+fn linked_discovery_persona() -> crate::managed_agents::AgentDefinition {
+    crate::managed_agents::AgentDefinition {
         id: "persona-1".to_string(),
         display_name: "Persona".to_string(),
         avatar_url: None,
@@ -448,29 +448,56 @@ fn model_discovery_ignores_stale_record_for_linked_agent() {
         parallelism: None,
         created_at: "".to_string(),
         updated_at: "".to_string(),
-    };
+    }
+}
+
+/// Model discovery resolves exactly as a spawn does
+/// (`resolve_effective_model_provider`): for a linked agent the model and
+/// provider THIS HOST set on the record win over the pack's (item 90), so the
+/// model list a user is offered matches the model the agent would actually
+/// run on — including the derived `GOOSE_MODEL`/`GOOSE_PROVIDER` env the
+/// probe inherits from the same descriptor.
+#[test]
+fn model_discovery_uses_host_set_record_for_linked_agent() {
+    let record = linked_discovery_record();
+    let persona = linked_discovery_persona();
 
     // agent_model_discovery_config is the single helper get_agent_models
-    // consumes — the stale record bytes must lose to the persona's current
-    // model/provider (the same authoritative resolver spawn uses).
+    // consumes — it must report the host-owned record values.
     let personas = [persona];
     let global = crate::managed_agents::GlobalAgentConfig::default();
     let discovery = agent_model_discovery_config(&record, &personas, &global)
         .expect("discovery config should resolve for a linked record");
-    assert_eq!(discovery.model.as_deref(), Some("persona-model"));
-    assert_eq!(discovery.provider.as_deref(), Some("anthropic"));
+    assert_eq!(discovery.model.as_deref(), Some("host-record-model"));
+    assert_eq!(discovery.provider.as_deref(), Some("host-record-provider"));
 
-    // And the discovery env comes from the descriptor, whose layering also
-    // resolves through the definition — the derived model env var must carry
-    // the persona's model, not the stale record snapshot.
+    // And the discovery env comes from the descriptor, whose layering runs
+    // through the same resolution — the derived model env var must carry the
+    // host's model too.
     assert_eq!(
         discovery.env.get("GOOSE_MODEL").map(String::as_str),
-        Some("persona-model")
+        Some("host-record-model")
     );
     assert_eq!(
         discovery.env.get("GOOSE_PROVIDER").map(String::as_str),
-        Some("anthropic")
+        Some("host-record-provider")
     );
+}
+
+/// The same helper with a record that names nothing: the linked definition's
+/// model and provider fill in.
+#[test]
+fn model_discovery_falls_back_to_definition_when_record_is_blank() {
+    let mut record = linked_discovery_record();
+    record.model = None;
+    record.provider = None;
+    let personas = [linked_discovery_persona()];
+    let global = crate::managed_agents::GlobalAgentConfig::default();
+
+    let discovery = agent_model_discovery_config(&record, &personas, &global)
+        .expect("discovery config should resolve for a linked record");
+    assert_eq!(discovery.model.as_deref(), Some("persona-model"));
+    assert_eq!(discovery.provider.as_deref(), Some("anthropic"));
 }
 
 // ---------------------------------------------------------------------------

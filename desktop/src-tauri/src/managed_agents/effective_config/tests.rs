@@ -105,16 +105,14 @@ fn global(model: Option<&str>, provider: Option<&str>) -> GlobalAgentConfig {
     }
 }
 
-// ── Linked instance: definition → global, record ignored ──
+// ── Linked instance: record → definition → global (item 90) ──
+//
+// Model, provider and runtime are host-owned: what this computer runs the
+// identity on. The pack keeps the system prompt.
 
 #[test]
-fn linked_definition_model_wins_over_stale_record() {
-    let rec = record(
-        Some("d1"),
-        Some("stale-model"),
-        Some("stale-prov"),
-        Some("stale prompt"),
-    );
+fn linked_definition_model_wins_when_record_has_no_host_pick() {
+    let rec = record(Some("d1"), None, None, Some("stale prompt"));
     let defs = vec![definition(
         "d1",
         Some("def-model"),
@@ -138,13 +136,8 @@ fn linked_definition_model_wins_over_stale_record() {
 }
 
 #[test]
-fn linked_inherit_global_when_definition_blank() {
-    let rec = record(
-        Some("d1"),
-        Some("stale-model"),
-        Some("stale-prov"),
-        Some("stale prompt"),
-    );
+fn linked_inherit_global_when_record_and_definition_blank() {
+    let rec = record(Some("d1"), None, None, Some("stale prompt"));
     let defs = vec![definition("d1", None, None, "")];
     let g = global(Some("global-model"), Some("global-prov"));
 
@@ -162,9 +155,12 @@ fn linked_inherit_global_when_definition_blank() {
     assert_eq!(cfg.system_prompt.source, ConfigSource::Definition);
 }
 
+/// A role pack names no model or provider by design — packs are
+/// model-agnostic — so the host's own values are all there is, and they must
+/// survive rather than resolving to nothing.
 #[test]
-fn linked_stale_record_model_is_inert() {
-    let rec = record(Some("d1"), Some("stale-model"), Some("stale-prov"), None);
+fn linked_record_values_stand_when_definition_and_global_are_blank() {
+    let rec = record(Some("d1"), Some("host-model"), Some("host-prov"), None);
     let defs = vec![definition("d1", None, None, "")];
     let g = global(None, None);
 
@@ -174,10 +170,10 @@ fn linked_stale_record_model_is_inert() {
         other => panic!("expected Resolved, got {:?}", other),
     };
 
-    assert_eq!(cfg.model.value, None);
-    assert_eq!(cfg.model.source, ConfigSource::Global);
-    assert_eq!(cfg.provider.value, None);
-    assert_eq!(cfg.provider.source, ConfigSource::Global);
+    assert_eq!(cfg.model.value.as_deref(), Some("host-model"));
+    assert_eq!(cfg.model.source, ConfigSource::Instance);
+    assert_eq!(cfg.provider.value.as_deref(), Some("host-prov"));
+    assert_eq!(cfg.provider.source, ConfigSource::Instance);
 }
 
 #[test]
@@ -215,8 +211,8 @@ fn linked_blank_prompt_means_no_prompt() {
 }
 
 #[test]
-fn linked_whitespace_only_definition_model_inherits_global() {
-    let rec = record(Some("d1"), Some("stale"), None, None);
+fn linked_whitespace_only_record_and_definition_values_inherit_global() {
+    let rec = record(Some("d1"), Some(" "), Some("\t"), None);
     let defs = vec![definition("d1", Some("  "), Some("  \t"), "")];
     let g = global(Some("global-model"), Some("global-prov"));
 
@@ -411,22 +407,40 @@ fn morgans_sequence_inherit_explicit_inherit() {
     assert_eq!(cfg2.model.value.as_deref(), Some("goose-gpt-5-6-sol"));
     assert_eq!(cfg2.model.source, ConfigSource::Definition);
 
-    // Step 3: switch back to inherit — even with stale record bytes
-    let rec_stale = record(
-        Some("d1"),
-        Some("goose-gpt-5-6-sol"),
-        Some("databricks"),
-        None,
-    );
+    // Step 3a: the definition switches back to inherit and the record carries
+    // no value of its own — global fills both, as before.
+    let rec_bare = record(Some("d1"), None, None, None);
     let defs_inherit = vec![definition("d1", None, None, "agent prompt")];
-    let cfg3 = match resolve_effective_config(&rec_stale, &defs_inherit, &g) {
+    let cfg3 = match resolve_effective_config(&rec_bare, &defs_inherit, &g) {
         EffectiveConfigResult::Resolved(c) => c,
-        other => panic!("step 3: {:?}", other),
+        other => panic!("step 3a: {:?}", other),
     };
     assert_eq!(cfg3.model.value.as_deref(), Some("claude-opus-4-6"));
     assert_eq!(cfg3.model.source, ConfigSource::Global);
     assert_eq!(cfg3.provider.value.as_deref(), Some("anthropic"));
     assert_eq!(cfg3.provider.source, ConfigSource::Global);
+
+    // Step 3b: the same definition edit against a record that DOES carry a
+    // value. Since item 90 the record's model/provider are host-owned, so they
+    // stand — a definition switching to "inherit" no longer reaches across and
+    // blanks what this computer runs the identity on. The remaining gap this
+    // leaves (a value the record only holds because an older snapshot apply
+    // copied it there is indistinguishable from a deliberate host pick) needs
+    // per-field host-pin provenance; see item 90's Open list.
+    let rec_host_pinned = record(
+        Some("d1"),
+        Some("goose-gpt-5-6-sol"),
+        Some("databricks"),
+        None,
+    );
+    let cfg3b = match resolve_effective_config(&rec_host_pinned, &defs_inherit, &g) {
+        EffectiveConfigResult::Resolved(c) => c,
+        other => panic!("step 3b: {:?}", other),
+    };
+    assert_eq!(cfg3b.model.value.as_deref(), Some("goose-gpt-5-6-sol"));
+    assert_eq!(cfg3b.model.source, ConfigSource::Instance);
+    assert_eq!(cfg3b.provider.value.as_deref(), Some("databricks"));
+    assert_eq!(cfg3b.provider.source, ConfigSource::Instance);
 }
 
 // ── relay-mesh preflight resolution (Wes review 2 on #1968) ──
@@ -456,15 +470,14 @@ fn relay_mesh_model_id_defaults_to_auto_when_model_blank() {
     );
 }
 
-/// Switch-away regression (Wes finding 1): a linked definition that used to
-/// be relay-mesh but was edited to another provider must NOT trigger the mesh
-/// preflight — even though the record's own stale bytes still say
-/// `provider: relay-mesh`. The old `relay_mesh_config(record)` sniff read
-/// those stale record bytes directly and returned Some; the resolver-driven
-/// decision must read the definition's CURRENT provider and return None.
+/// Switch-away regression (Wes finding 1): a linked definition edited away
+/// from relay-mesh must NOT trigger the mesh preflight for a record that holds
+/// no provider of its own. The old `relay_mesh_config(record)` sniff read the
+/// record's legacy bytes directly and returned Some; the resolver-driven
+/// decision reads the definition's CURRENT provider and returns None.
 #[test]
-fn switch_away_from_relay_mesh_clears_preflight_despite_stale_record_bytes() {
-    let rec = record(Some("d1"), Some("auto"), Some(RELAY_MESH_PROVIDER_ID), None);
+fn switch_away_from_relay_mesh_clears_preflight_for_record_without_own_provider() {
+    let rec = record(Some("d1"), None, None, None);
     let defs = vec![definition(
         "d1",
         Some("claude-opus-4-6"),
@@ -477,6 +490,38 @@ fn switch_away_from_relay_mesh_clears_preflight_despite_stale_record_bytes() {
         resolve_effective_relay_mesh_model_id(&rec, &defs, &g),
         None,
         "definition switched away from relay-mesh — no mesh preflight should fire"
+    );
+}
+
+/// The host-owned counterpart (item 90): when the record itself names
+/// relay-mesh, the definition switching to another provider does not move this
+/// computer off mesh — provider is a host fact. What still matters, and what
+/// this pins, is that preflight and spawn agree: both derive from the SAME
+/// `resolve_effective_config`, so the mesh env block fires exactly when the
+/// preflight bootstrapped for it.
+#[test]
+fn host_pinned_relay_mesh_record_keeps_preflight_when_definition_switches_away() {
+    let rec = record(Some("d1"), Some("auto"), Some(RELAY_MESH_PROVIDER_ID), None);
+    let defs = vec![definition(
+        "d1",
+        Some("claude-opus-4-6"),
+        Some("anthropic"),
+        "",
+    )];
+    let g = global(None, None);
+
+    let cfg = match resolve_effective_config(&rec, &defs, &g) {
+        EffectiveConfigResult::Resolved(cfg) => cfg,
+        other => panic!("expected Resolved, got {:?}", other),
+    };
+    assert_eq!(
+        resolve_effective_relay_mesh_model_id(&rec, &defs, &g),
+        cfg.relay_mesh_model_id(),
+        "preflight and the spawn-time mesh gate must be the same decision"
+    );
+    assert_eq!(
+        resolve_effective_relay_mesh_model_id(&rec, &defs, &g).as_deref(),
+        Some("auto")
     );
 }
 
@@ -815,8 +860,12 @@ fn definition_less_explicit_provider_wins_over_stale_legacy_mesh_bytes() {
 }
 
 /// The test that proves the fallback did not reintroduce the bug this PR
-/// deletes: a LINKED record carrying both legacy mesh signals resolves purely
-/// from its definition and never trips mesh.
+/// deletes: a LINKED record's legacy mesh signals — the typed `relay_mesh`
+/// marker and the preset `env_vars` — are never consulted. Its *typed*
+/// `model`/`provider` fields are host-owned and do resolve (item 90), so the
+/// model below is the record's `"auto"`; `Qwen3`, which lives only in the
+/// legacy bytes, must appear nowhere, and the effective provider comes from
+/// the definition, so mesh stays off.
 #[test]
 fn linked_record_ignores_legacy_mesh_marker_and_env() {
     let mut rec = record(Some("d1"), Some("auto"), None, None);
@@ -848,7 +897,7 @@ fn linked_record_ignores_legacy_mesh_marker_and_env() {
     };
 
     assert_eq!(cfg.provider.value.as_deref(), Some("anthropic"));
-    assert_eq!(cfg.model.value.as_deref(), Some("claude-opus-4-6"));
+    assert_eq!(cfg.model.value.as_deref(), Some("auto"));
     assert_eq!(
         cfg.relay_mesh_model_id(),
         None,
@@ -875,4 +924,59 @@ fn linked_record_with_legacy_bytes_inherits_global_not_mesh() {
     assert_eq!(cfg.provider.value.as_deref(), Some("openai"));
     assert_eq!(cfg.model.value.as_deref(), Some("gpt-5"));
     assert_eq!(cfg.relay_mesh_model_id(), None);
+}
+
+// ── Host-owned instance values (item 90) ──
+
+#[test]
+fn linked_host_owned_fields_win_over_definition() {
+    let mut rec = record(Some("d1"), Some("gpt-5.6-sol"), Some("databricks_v2"), None);
+    rec.runtime = Some("codex".to_string());
+    let defs = vec![definition(
+        "d1",
+        Some("claude-opus-4-6"),
+        Some("anthropic"),
+        "def prompt",
+    )];
+    let g = global(Some("global-model"), Some("global-prov"));
+
+    let cfg = match resolve_effective_config(&rec, &defs, &g) {
+        EffectiveConfigResult::Resolved(c) => c,
+        other => panic!("expected Resolved, got {:?}", other),
+    };
+
+    assert_eq!(cfg.model.value.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(cfg.model.source, ConfigSource::Instance);
+    assert_eq!(cfg.provider.value.as_deref(), Some("databricks_v2"));
+    assert_eq!(cfg.provider.source, ConfigSource::Instance);
+    assert_eq!(cfg.runtime.value.as_deref(), Some("codex"));
+    assert_eq!(cfg.runtime.source, ConfigSource::Instance);
+    // The pack still owns the prompt.
+    assert_eq!(cfg.system_prompt.value.as_deref(), Some("def prompt"));
+}
+
+#[test]
+fn linked_blank_record_value_falls_back_to_definition() {
+    let mut rec = record(Some("d1"), Some("   "), None, None);
+    rec.runtime = Some("\t".to_string());
+    let mut defs = vec![definition(
+        "d1",
+        Some("claude-opus-4-6"),
+        Some("anthropic"),
+        "def prompt",
+    )];
+    defs[0].runtime = Some("goose".to_string());
+    let g = global(Some("global-model"), Some("global-prov"));
+
+    let cfg = match resolve_effective_config(&rec, &defs, &g) {
+        EffectiveConfigResult::Resolved(c) => c,
+        other => panic!("expected Resolved, got {:?}", other),
+    };
+
+    assert_eq!(cfg.model.value.as_deref(), Some("claude-opus-4-6"));
+    assert_eq!(cfg.model.source, ConfigSource::Definition);
+    assert_eq!(cfg.provider.value.as_deref(), Some("anthropic"));
+    assert_eq!(cfg.provider.source, ConfigSource::Definition);
+    assert_eq!(cfg.runtime.value.as_deref(), Some("goose"));
+    assert_eq!(cfg.runtime.source, ConfigSource::Definition);
 }

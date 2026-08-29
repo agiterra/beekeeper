@@ -11,10 +11,11 @@ import type { ManagedAgent } from "@/shared/api/types";
  *
  * A materialized `agent` is authoritative once it exists: its `modelSource`
  * says whether the *effective* config (from `resolve_effective_config` on
- * the backend) came from the global default or from an explicit
- * definition/instance value, so the card never has to re-derive that from
- * raw model bytes. Absent or `"global"` renders the default-model label;
- * anything else renders the agent's own resolved model.
+ * the backend) came from the global default, the linked definition, or a
+ * value this host set on the record itself (`"instance"`), so the card never
+ * has to re-derive that from raw model bytes. Absent or `"global"` renders
+ * the default-model label; anything else renders the agent's own resolved
+ * model.
  *
  * With NO materialized instance yet (a definition that has never been
  * started), there is no `modelSource` to read — the definition itself is

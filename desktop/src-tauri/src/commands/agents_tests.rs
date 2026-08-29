@@ -137,10 +137,11 @@ fn build_agent_archive_request_attaches_owner_auth_and_retired_reason() {
     }));
 }
 
-/// Deploy resolver uses definition model/provider, ignoring stale record.
+/// Deploy resolver uses the definition's model/provider when the record holds
+/// none of its own.
 #[test]
-fn deploy_resolver_uses_definition_over_stale_record() {
-    let record = bare_agent_record(Some("p1"), Some("old-model"), Some("old-prov"));
+fn deploy_resolver_uses_definition_when_record_has_no_host_pick() {
+    let record = bare_agent_record(Some("p1"), None, None);
     let personas = vec![persona_record("p1", Some("new-model"), Some("new-prov"))];
     let global = crate::managed_agents::GlobalAgentConfig::default();
 
@@ -149,20 +150,34 @@ fn deploy_resolver_uses_definition_over_stale_record() {
     assert_eq!(
         model.as_deref(),
         Some("new-model"),
-        "deploy must use definition model, not stale record snapshot"
+        "deploy must use the definition's model when the record has none"
     );
     assert_eq!(
         provider.as_deref(),
         Some("new-prov"),
-        "deploy must use definition provider, not stale record snapshot"
+        "deploy must use the definition's provider when the record has none"
     );
 }
 
-/// When a linked definition has blank model/provider (inherit), the deploy
-/// resolver must fall through to global — stale record bytes are inert.
+/// A remote deploy must ship the model and provider THIS HOST set on the
+/// record (item 90) — the same pair a local spawn would use.
 #[test]
-fn deploy_resolver_inherits_global_when_definition_blank() {
-    let record = bare_agent_record(Some("p1"), Some("stale-model"), Some("stale-prov"));
+fn deploy_resolver_uses_host_set_record_over_definition() {
+    let record = bare_agent_record(Some("p1"), Some("gpt-5.6-sol"), Some("codex"));
+    let personas = vec![persona_record("p1", Some("new-model"), Some("new-prov"))];
+    let global = crate::managed_agents::GlobalAgentConfig::default();
+
+    let (model, provider) = resolve_deploy_model_provider(&record, &personas, &global);
+
+    assert_eq!(model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(provider.as_deref(), Some("codex"));
+}
+
+/// When both the record and its linked definition are blank (inherit), the
+/// deploy resolver falls through to global.
+#[test]
+fn deploy_resolver_inherits_global_when_record_and_definition_blank() {
+    let record = bare_agent_record(Some("p1"), Some("  "), None);
     let personas = vec![persona_record("p1", None, None)];
     let global = crate::managed_agents::GlobalAgentConfig {
         model: Some("global-model".to_string()),
@@ -175,12 +190,12 @@ fn deploy_resolver_inherits_global_when_definition_blank() {
     assert_eq!(
         model.as_deref(),
         Some("global-model"),
-        "definition blank → global; stale record ignored"
+        "record and definition blank → global"
     );
     assert_eq!(
         provider.as_deref(),
         Some("global-prov"),
-        "definition blank → global; stale record ignored"
+        "record and definition blank → global"
     );
 }
 
