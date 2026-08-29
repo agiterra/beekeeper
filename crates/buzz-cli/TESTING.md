@@ -675,15 +675,49 @@ validators rather than from taste:
   # steer    → {"type":"thread.turn.start","text":"...","deliver":"steer"}
   ```
 
+**`sessions status` output shape follows stdout.** With neither `--json-lines`
+nor `--no-json-lines`, and with no explicit `--format`, it prints **NDJSON** —
+one JSON object per execution, one per line, no envelope — when stdout is a
+pipe or a file, and the single document when stdout is a terminal. Naming
+`--format` explicitly, or passing `--no-json-lines`, always gets the document,
+piped or not. That matters when you are reading the *channel-level* keys, which
+only the envelope carries: every example below that needs `founders` or
+`leaseSnapshotRecords` therefore says `--format json`, and every one that reads
+per-execution fields is left bare. (This is unrelated to `sessions transcript
+--format jsonl`, which is whole signed events rather than these rows.)
+
 ```bash
 # ── status ────────────────────────────────────────────────────────────────
 # One row per execution: seat, liveness, open turn, queue depth, turn budget.
+# Bare and piped, with no --format named: NDJSON, one object per line.
 bee sessions status --channel "$CHANNEL_ID" | jq .
-# → {"channel":"...","executions":[{"target":"coding-session/v1|...",
-#      "actor":null,"role":null,"sessionRef":null,"seat":"claude·claude-opus",
-#      "live":"quiet 3m","liveness":"quiet","lastSignedSeq":41,
-#      "openTurn":null,"queuedTurns":0,"turnBudget":null}, ...],
-#    "leaseSnapshotRecords":0}
+# → {"target":"coding-session/v1|...","sessionId":"8063fcfc-...",
+#      "generation":1,"actor":"ede63017...","role":"lead",
+#      "sessionRef":"ccf74cc3-...","seat":"ede63017·lead",
+#      "founder":"3d3b7169...","createSigner":"3d3b7169...",
+#      "runtime":"claude","model":"default","status":"running",
+#      "live":"live","liveness":"live","lastSignedSeq":154,
+#      "openTurn":{"commandId":"48adca62-...","runningFor":"2m",...},
+#      "queuedTurns":0,
+#      "turnBudget":{"used":10,"limit":200,"exhausted":false}}
+# → {"target":"coding-session/v1|...","seat":"1ddd35c6·builder",...}
+#   …one line per execution, and nothing else: no brackets, no envelope, and
+#   zero bytes (exit 0) when the channel has no executions.
+
+# The envelope — `channel`, the channel-level `founders` array, and
+# `leaseSnapshotRecords` — exists only in the single document, so ask for it
+# by name. This is also the form to use in a script that indexes into
+# `.executions`.
+bee --format json sessions status --channel "$CHANNEL_ID" | jq .
+# → {"channel":"175c3165-...",
+#     "executions":[{"target":"coding-session/v1|...","seat":"ede63017·lead",
+#      "live":"live","liveness":"live","lastSignedSeq":154,
+#      "openTurn":{...},"queuedTurns":0,
+#      "turnBudget":{"used":10,"limit":200,"exhausted":false}}, ...],
+#     "founders":["3d3b7169..."],
+#     "leaseSnapshotRecords":2}
+#   (2 leases answered, which is why both rows read "live"; see below for what
+#    a 0 there means)
 bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
 
 # `live` comes from a kind-24223 lease, which is EPHEMERAL: the relay serves it
@@ -947,7 +981,7 @@ stand in for a provider here.
 
 | check | result |
 | --- | --- |
-| `sessions status` on an empty channel | `{"executions":[],"leaseSnapshotRecords":0}`, exit 0 |
+| `sessions status` on an empty channel | piped, no `--format`: **0 bytes**, exit 0 (NDJSON of nothing is nothing). `--format json`: `{"channel":"…","executions":[],"founders":[],"leaseSnapshotRecords":0}`, exit 0 |
 | `sessions inbox` on an empty channel | `{"seats":0,"turns":[]}`, exit 0 |
 | `sessions status` after seeding | 3 executions, each `seat":"93240b3e·builder"`/`·verifier`, `"live":"unknown"` (no lease answered), `"sessionRef"` echoed |
 | `sessions create` (unseated, 44221) | `accepted:true`, event `1faf7a2a…` — **this is the proof that `sign_event_unchecked` + exactly-three-tags is right**; `sign_event` would have added an `auth` tag and been rejected `invalid: unsupported coding-session lifecycle command tag` |
@@ -1066,8 +1100,17 @@ aimed at "a 3-day-quiet session" once landed in someone else's session
 (`docs/SESSION_STATE.md` item 73): the row said what was running, never whose
 it was.
 
+`--format json` is not optional in the first line below: it reads `founders`
+and `.executions`, both of which live only in the envelope, and a bare piped
+`sessions status` prints NDJSON rows instead (see the output-shape note in
+§6.13.3). Bare, this exact command fails `jq: error (at <stdin>:1): Cannot
+iterate over null`.
+
 ```bash
-bee sessions status --channel "$CHANNEL_ID" | jq '{founders, executions: [.executions[] | {target, seat, founder, createSigner}]}'
+bee --format json sessions status --channel "$CHANNEL_ID" | jq '{founders, executions: [.executions[] | {target, seat, founder, createSigner}]}'
+# → {"founders":["3d3b7169a13a8311b480bdfce85b4a0c7ff9b185832cbc6e547db7bbcf96c05e"],
+#    "executions":[{"target":"coding-session/v1|…","seat":"1ddd35c6·builder",
+#      "founder":"3d3b7169a13a…","createSigner":"3d3b7169a13a…"}, …]}
 bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
 # → [{"target":"…","seat":"…","founder":"3d3b7169","live":"quiet 2h",…}]
 
@@ -1086,7 +1129,9 @@ Two fields, each derived once (`crates/buzz-cli/src/commands/sessions/crew.rs`,
   create claimed.
 
 `sessions status` also prints a channel-level `founders` array: every distinct
-non-null founder above.
+non-null founder above. It is an envelope key, so it appears under `--format
+json` (or `--no-json-lines`) and not in the NDJSON rows a bare piped call
+prints — the per-execution `founder` field is in both.
 
 **`null` means the channel does not contain the record that would say** — a
 create that aged out, a create no provider ever answered, a create with no
@@ -1253,4 +1298,4 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 67 | turn-stage receipts (kind 44224, §6.13.1) | ☐ | NOT YET RUN LIVE — `sessions list`/`transcript` unaffected by a turn receipt on an otherwise-known or unknown target |
 | 68 | `events query` | ☐ | `--kinds` required (verbatim refusal, exit 1); compact row survives non-JSON content; empty result → `[]`, exit 0 |
 | 70 | `sessions hire` (44221 `session.hire`) | ☑ | founder + granted-operator accepted, stranger and unknown-umbrella refused by the relay, host `created` (exit 0) and `refused`/HIRE_OFF (exit 1), `--no-wait` unconfirmed (exit 5). Open: the `failed`/`seating` outcomes and the old-relay sentence |
-| 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on status; `null` when the channel holds no joined create; never the provider's key |
+| 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
