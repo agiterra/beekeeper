@@ -663,6 +663,9 @@ fn spawn_provider_child(
         // the same augmented PATH managed-agent launches use.
         augmented_path: crate::managed_agents::readiness::cli_probe::augmented_path_with_inherited(
         ),
+        // Read per spawn: the answer cannot change while the app runs, but
+        // reading it here keeps the whole env map one function of the spawn.
+        app_checkout: crate::session_provider::env::app_checkout_dir(),
         // Read from the host's own environment at spawn: both are debugging
         // switches, and the way somebody turns one on for a Finder-launched
         // app is `launchctl setenv` or launching the bundle's binary from a

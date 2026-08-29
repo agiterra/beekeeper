@@ -803,32 +803,112 @@ fn materialize_seat_skills(
     materialize_seat_skills_outside(skills, cwd, &shared_workdir_roots())
 }
 
+/// Why a directory belongs to nobody in particular.
+///
+/// The distinction is only there so the refusal can say which directory it
+/// means. "May be your own home directory" is the wrong sentence to read when
+/// what you actually did was seat an agent in the checkout your app is running
+/// from — the fix is different and the surprise is different.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedWorkdirKind {
+    /// The operator's home directory, or the nest beside it.
+    Operator,
+    /// A checkout the desktop told us it is itself running from.
+    AppCheckout,
+}
+
+/// A directory on this computer that no single seat owns, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedWorkdirRoot {
+    pub path: PathBuf,
+    pub kind: SharedWorkdirKind,
+}
+
+impl SharedWorkdirRoot {
+    /// The operator's home, or the nest beside it.
+    pub fn operator(path: PathBuf) -> Self {
+        Self {
+            path,
+            kind: SharedWorkdirKind::Operator,
+        }
+    }
+
+    /// A checkout the app itself runs from.
+    pub fn app_checkout(path: PathBuf) -> Self {
+        Self {
+            path,
+            kind: SharedWorkdirKind::AppCheckout,
+        }
+    }
+
+    /// The clause the refusal uses to say what this directory is.
+    fn describe(&self) -> &'static str {
+        match self.kind {
+            SharedWorkdirKind::Operator => {
+                "that directory is shared by every agent on this computer (and may be your own                  home directory)"
+            }
+            SharedWorkdirKind::AppCheckout => {
+                "that is the checkout the app runs from, shared with the person driving it"
+            }
+        }
+    }
+}
+
+/// Environment variable naming directories the host knows no seat may own.
+///
+/// A platform path list (`:`-separated on unix), so a host with several — the
+/// checkout it runs from, a project checkout it manages — hands them all down
+/// without this crate learning the host's own vocabulary.
+pub const SHARED_WORKDIRS_VAR: &str = "BUZZ_CSP_SHARED_WORKDIRS";
+
 /// The directories on this computer that no single seat owns.
 ///
-/// The operator's home and the nest beside it. Read from the environment
-/// rather than a home-directory crate so this stays one small function with no
-/// new dependency; a host with neither variable set simply has no shared roots
-/// to refuse, which is the same answer the desktop gives when it cannot
-/// resolve a home.
-pub(crate) fn shared_workdir_roots() -> Vec<PathBuf> {
+/// The operator's home, the nest beside it, and whatever the host named in
+/// [`SHARED_WORKDIRS_VAR`]. Read from the environment rather than a
+/// home-directory crate so this stays one small function with no new
+/// dependency; a host with neither variable set simply has no shared roots to
+/// refuse, which is the same answer the desktop gives when it cannot resolve a
+/// home.
+pub(crate) fn shared_workdir_roots() -> Vec<SharedWorkdirRoot> {
+    let mut roots = parse_shared_workdirs(std::env::var_os(SHARED_WORKDIRS_VAR).as_deref());
     let Some(home) = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .filter(|home| !home.as_os_str().is_empty())
     else {
-        return Vec::new();
+        return roots;
     };
-    vec![home.join(".beekeeper"), home]
+    roots.push(SharedWorkdirRoot::operator(home.join(".beekeeper")));
+    roots.push(SharedWorkdirRoot::operator(home));
+    roots
 }
 
-/// Is `cwd` one of `shared_roots`?
+/// The host-named shared checkouts, as data.
+///
+/// Split out so the parse can be proved without setting a process-wide
+/// variable — env mutation in a test is visible to every other test in the
+/// binary.
+fn parse_shared_workdirs(value: Option<&std::ffi::OsStr>) -> Vec<SharedWorkdirRoot> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    std::env::split_paths(value)
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(SharedWorkdirRoot::app_checkout)
+        .collect()
+}
+
+/// The root `cwd` collides with, if any.
 ///
 /// Roots are a parameter so the refusal can be proved against directories a
 /// test owns. Nothing here may read or write a person's real home.
-fn is_shared_workdir(cwd: &Path, shared_roots: &[PathBuf]) -> bool {
+fn shared_workdir_match<'a>(
+    cwd: &Path,
+    shared_roots: &'a [SharedWorkdirRoot],
+) -> Option<&'a SharedWorkdirRoot> {
     shared_roots
         .iter()
-        .any(|shared| same_directory(cwd, shared))
+        .find(|shared| same_directory(cwd, &shared.path))
 }
 
 /// Do two paths name the same directory on this computer?
@@ -883,16 +963,16 @@ pub struct LiveWorkdirClaim {
 pub fn seated_workdir_refusal(
     cwd: &Path,
     live: &[LiveWorkdirClaim],
-    shared_roots: &[PathBuf],
+    shared_roots: &[SharedWorkdirRoot],
 ) -> Option<CreateFailure> {
-    if is_shared_workdir(cwd, shared_roots) {
+    if let Some(shared) = shared_workdir_match(cwd, shared_roots) {
         return Some(CreateFailure {
             code: SEAT_CWD_SHARED,
             message: format!(
-                "refusing to seat an agent in {} — that directory is shared by every agent on \
-                 this computer (and may be your own home directory). A seat belongs in a working \
-                 directory of its own.",
-                cwd.display()
+                "refusing to seat an agent in {} — {}. A seat belongs in a working directory of \
+                 its own; give it a worktree.",
+                cwd.display(),
+                shared.describe()
             ),
         });
     }
@@ -917,9 +997,9 @@ pub fn seated_workdir_refusal(
 fn materialize_seat_skills_outside(
     skills: &SeatSkills,
     cwd: &Path,
-    shared_roots: &[PathBuf],
+    shared_roots: &[SharedWorkdirRoot],
 ) -> Result<SeatRoleBriefing, CreateFailure> {
-    if is_shared_workdir(cwd, shared_roots) {
+    if shared_workdir_match(cwd, shared_roots).is_some() {
         return Err(CreateFailure {
             code: PROVIDER_UNAVAILABLE,
             message: format!(
@@ -4541,7 +4621,10 @@ mod seat_skill_materialization_tests {
         let home = tmp.path().join("home");
         let nest = home.join(".beekeeper");
         std::fs::create_dir_all(&nest).expect("nest");
-        let roots = vec![nest.clone(), home.clone()];
+        let roots = vec![
+            SharedWorkdirRoot::operator(nest.clone()),
+            SharedWorkdirRoot::operator(home.clone()),
+        ];
         // The human's own skill file, in the shape a seat's pack would clobber.
         let mine = home.join(".agents/skills/write-report");
         std::fs::create_dir_all(&mine).expect("my skills dir");
@@ -4571,7 +4654,10 @@ mod seat_skill_materialization_tests {
         let home = tmp.path().join("home");
         let cwd = home.join("Projects/checkout");
         std::fs::create_dir_all(&cwd).expect("seat dir");
-        let roots = vec![home.join(".beekeeper"), home];
+        let roots = vec![
+            SharedWorkdirRoot::operator(home.join(".beekeeper")),
+            SharedWorkdirRoot::operator(home),
+        ];
 
         materialize_seat_skills_outside(&seat(pack), &cwd, &roots)
             .expect("a seat's own directory is not shared");
@@ -4643,7 +4729,10 @@ mod seat_skill_materialization_tests {
         let home = tmp.path().join("home");
         let nest = home.join(".beekeeper");
         std::fs::create_dir_all(&nest).expect("nest");
-        let roots = vec![nest.clone(), home.clone()];
+        let roots = vec![
+            SharedWorkdirRoot::operator(nest.clone()),
+            SharedWorkdirRoot::operator(home.clone()),
+        ];
 
         for shared in [&home, &nest] {
             let failure =
@@ -4655,6 +4744,60 @@ mod seat_skill_materialization_tests {
         let own = home.join("Projects/checkout");
         std::fs::create_dir_all(&own).expect("own");
         assert!(seated_workdir_refusal(&own, &[], &roots).is_none());
+    }
+
+    /// Item 87(d), found live 2026-08-28 21:2x: a Team launch seated its lead
+    /// in the checkout the desktop app itself was running from — the
+    /// operator's own hot tree, with a dev build rebuilding under it — and
+    /// materialized the seat's skills into it. The desktop names that
+    /// directory when it spawns the provider; a seated create landing on it is
+    /// refused by name, not by the generic "may be your own home" clause.
+    #[test]
+    fn a_seat_is_refused_the_checkout_the_app_runs_from() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let checkout = tmp.path().join("Projects/beekeeper/beekeeper");
+        std::fs::create_dir_all(&checkout).expect("checkout");
+        let roots = vec![SharedWorkdirRoot::app_checkout(checkout.clone())];
+
+        let failure = seated_workdir_refusal(&checkout, &[], &roots)
+            .expect("the app's own checkout must be refused");
+        assert_eq!(failure.code, SEAT_CWD_SHARED);
+        assert!(
+            failure.message.contains("the checkout the app runs from"),
+            "the refusal must say which directory this is: {}",
+            failure.message
+        );
+        assert!(
+            failure.message.contains(&checkout.display().to_string()),
+            "{}",
+            failure.message
+        );
+
+        // A worktree cut from that checkout is the seat's own tree and is not
+        // refused — that is the whole point of offering one.
+        let worktree = tmp
+            .path()
+            .join("Projects/beekeeper/beekeeper.worktrees/ui-lead");
+        std::fs::create_dir_all(&worktree).expect("worktree");
+        assert!(seated_workdir_refusal(&worktree, &[], &roots).is_none());
+    }
+
+    /// The desktop hands the checkout down in the environment; a provider
+    /// launched without one simply has no extra root, which is the same answer
+    /// it gives when it cannot resolve a home.
+    #[test]
+    fn the_app_checkout_root_is_read_from_the_environment() {
+        let parsed = parse_shared_workdirs(Some(
+            std::ffi::OsString::from("/Users/b/Projects/bk/bk").as_os_str(),
+        ));
+        assert_eq!(
+            parsed,
+            vec![SharedWorkdirRoot::app_checkout(PathBuf::from(
+                "/Users/b/Projects/bk/bk"
+            ))]
+        );
+        assert!(parse_shared_workdirs(None).is_empty());
+        assert!(parse_shared_workdirs(Some(std::ffi::OsStr::new(""))).is_empty());
     }
 
     #[test]
@@ -4669,7 +4812,11 @@ mod seat_skill_materialization_tests {
             return;
         };
         let roots = shared_workdir_roots();
-        assert!(roots.contains(&home), "{roots:?}");
-        assert!(roots.contains(&home.join(".beekeeper")), "{roots:?}");
+        let paths: Vec<&Path> = roots.iter().map(|root| root.path.as_path()).collect();
+        assert!(paths.contains(&home.as_path()), "{roots:?}");
+        assert!(
+            paths.contains(&home.join(".beekeeper").as_path()),
+            "{roots:?}"
+        );
     }
 }

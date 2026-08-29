@@ -84,6 +84,52 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// without this the provider spawns them into `env: node: No such file or
     /// directory`. `None` leaves the inherited `PATH` untouched.
     pub augmented_path: Option<String>,
+    /// The repository checkout this app is itself running out of, when it has
+    /// one (a `cargo tauri dev` build; a bundled app launched from Finder has
+    /// none).
+    ///
+    /// Exported as [`SHARED_WORKDIRS_VAR`] so the provider can refuse to seat
+    /// an agent there. The provider owns that refusal — only the host knows
+    /// which directory it is. Item 87(d), found live: a Team launch seated its
+    /// lead in the operator's own hot checkout and wrote the seat's skills
+    /// into it, while every seat the lead hired got a worktree.
+    pub app_checkout: Option<PathBuf>,
+}
+
+/// The variable the provider reads its host-named shared directories from.
+///
+/// Kept byte-for-byte in step with `SHARED_WORKDIRS_VAR` in
+/// `crates/buzz-session-provider/src/session.rs`; a drift here is a refusal
+/// that silently stops happening.
+pub(crate) const SHARED_WORKDIRS_VAR: &str = "BUZZ_CSP_SHARED_WORKDIRS";
+
+/// The repository `dir` sits inside, or `None`.
+///
+/// Walks up looking for a `.git` entry, stopping at the filesystem root. A
+/// `home` that is itself a repository is deliberately not a checkout: the
+/// provider already refuses the operator's home by name, and calling it "the
+/// checkout the app runs from" would be the wrong sentence to read.
+///
+/// `home` is a parameter so this can be proved against directories a test
+/// owns.
+pub(crate) fn resolve_app_checkout(dir: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let mut current = Some(dir);
+    while let Some(candidate) = current {
+        if candidate.join(".git").exists() {
+            if home.is_some_and(|home| home == candidate) {
+                return None;
+            }
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+/// [`resolve_app_checkout`] against this process's own working directory.
+pub(crate) fn app_checkout_dir() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    resolve_app_checkout(&cwd, dirs::home_dir().as_deref())
 }
 
 /// Build the child's Buzz-owned environment.
@@ -157,6 +203,15 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
     if let Some(path) = &inputs.augmented_path {
         env.insert("PATH".to_string(), path.clone());
     }
+    if let Some(checkout) = &inputs.app_checkout {
+        // Absent rather than empty when there is none: an empty list would
+        // read as "the host looked and found nothing shared", which is a
+        // different claim than "the host could not tell".
+        env.insert(
+            SHARED_WORKDIRS_VAR.to_string(),
+            checkout.to_string_lossy().into_owned(),
+        );
+    }
     env.insert(
         "RUST_LOG".to_string(),
         inputs
@@ -199,6 +254,7 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
 /// exported in their shell.
 pub(crate) const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BUZZ_AUTH_TAG",
+    SHARED_WORKDIRS_VAR,
     "BUZZ_ACP_PRIVATE_KEY",
     "BUZZ_API_TOKEN",
     "BUZZ_CSP_RUNTIMES",

@@ -20,7 +20,8 @@ use crate::session_provider::commands::{
     coding_session_provider_models_from_response, mint_provider_record,
 };
 use crate::session_provider::env::{
-    build_provider_env, ProviderEnvInputs, DEFAULT_RUST_LOG, PROJECTS_FILE_NAME,
+    build_provider_env, resolve_app_checkout, ProviderEnvInputs, DEFAULT_RUST_LOG,
+    PROJECTS_FILE_NAME, SHARED_WORKDIRS_VAR,
 };
 use crate::session_provider::store::{
     CodingSessionProviderRecord, CodingSessionProviderStore, STORE_VERSION,
@@ -270,6 +271,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        app_checkout: None,
     })
 }
 
@@ -356,6 +358,7 @@ fn env_omits_an_empty_runtime_list() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        app_checkout: None,
     });
     assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
     // Without an augmented PATH the child inherits the process PATH unchanged.
@@ -709,6 +712,7 @@ fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
         rust_log: None,
         emit_raw_sdk_frames,
         turn_budget: None,
+        app_checkout: None,
     };
 
     assert!(!build_provider_env(&base(false)).contains_key("BUZZ_CSP_EMIT_RAW_SDK_FRAMES"));
@@ -740,6 +744,7 @@ fn a_chosen_log_filter_beats_the_default() {
         rust_log,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        app_checkout: None,
     };
 
     assert_eq!(
@@ -775,6 +780,7 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        app_checkout: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_MAX_SESSIONS"));
@@ -813,6 +819,7 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget: None,
+        app_checkout: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_IDLE_TIMEOUT"));
@@ -843,6 +850,7 @@ fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
         rust_log: None,
         emit_raw_sdk_frames: false,
         turn_budget,
+        app_checkout: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_TURN_BUDGET"));
@@ -858,4 +866,72 @@ fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
             .map(String::as_str),
         Some("0")
     );
+}
+
+/// Item 87(d), found live 2026-08-28 21:2x. A Team launch seated its lead in
+/// the checkout this app was running from — the operator's own hot tree — and
+/// the provider had no way to know that directory was special. The provider
+/// owns the refusal (`session::seated_workdir_refusal`); only the host knows
+/// which directory it is, so the host hands it down.
+#[test]
+fn the_checkout_the_app_runs_from_is_handed_to_the_provider() {
+    let record = sample_record();
+    let base = |app_checkout: Option<PathBuf>| ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        context_mcp_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+        augmented_path: None,
+        max_sessions: None,
+        turn_idle_timeout_secs: None,
+        rust_log: None,
+        emit_raw_sdk_frames: false,
+        turn_budget: None,
+        app_checkout,
+    };
+
+    assert_eq!(
+        build_provider_env(&base(Some(PathBuf::from(
+            "/Users/b/Projects/beekeeper/beekeeper"
+        ))))
+        .get(SHARED_WORKDIRS_VAR)
+        .map(String::as_str),
+        Some("/Users/b/Projects/beekeeper/beekeeper")
+    );
+    // A bundled app launched from Finder resolves no checkout. Absent, not
+    // empty: an empty list would read as "the host looked and found nothing
+    // shared", which is a different claim.
+    assert!(!build_provider_env(&base(None)).contains_key(SHARED_WORKDIRS_VAR));
+}
+
+/// The resolver walks up from the process's working directory to the
+/// repository that contains it, and refuses to call a home directory a
+/// checkout.
+#[test]
+fn an_app_checkout_is_the_repository_the_process_is_running_inside() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let repo = tmp.path().join("Projects/beekeeper/beekeeper");
+    std::fs::create_dir_all(repo.join(".git")).expect("repo");
+    let inner = repo.join("desktop/src-tauri");
+    std::fs::create_dir_all(&inner).expect("inner");
+
+    assert_eq!(
+        resolve_app_checkout(&inner, Some(tmp.path())),
+        Some(repo.clone())
+    );
+    assert_eq!(resolve_app_checkout(&repo, Some(tmp.path())), Some(repo));
+
+    // Outside any repository — a bundled app's `/` — there is nothing to name.
+    let bare = tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&bare).expect("bare");
+    assert_eq!(resolve_app_checkout(&bare, Some(tmp.path())), None);
+
+    // A home directory that happens to be a git repository is still the
+    // operator's home, and the provider already refuses that by name.
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(home.join(".git")).expect("home repo");
+    assert_eq!(resolve_app_checkout(&home, Some(&home)), None);
 }
