@@ -505,6 +505,12 @@ pub enum SessionEvent {
         duration_ms: u64,
         /// Usage, when the adapter reported any.
         usage: Option<Box<TurnUsage>>,
+        /// Tool calls the agent opened during this turn.
+        ///
+        /// The translator is the only party that sees every one, so the count
+        /// rides the event rather than being recounted from the published
+        /// items — a truncated or elided item is still a call that ran.
+        tool_calls: u64,
     },
     /// Projected transcript items, in the order they were produced.
     ///
@@ -1875,6 +1881,9 @@ impl SessionActor {
 
         // Flush before the terminal item so the turn's prose and its final usage
         // snapshot are on the record ahead of the `result` the provider appends.
+        // Read before `close_turn`, which is where the next turn's count
+        // starts from.
+        let tool_calls = self.translator.tool_calls();
         let tail = self.translator.close_turn();
         emit_items(&self.events, &self.session_id, &turn_id, tail).await;
 
@@ -1887,6 +1896,7 @@ impl SessionActor {
                 outcome,
                 duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
                 usage,
+                tool_calls,
             })
             .await;
         self.client.set_observer_context(context_for(

@@ -76,6 +76,27 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       durationMs?: number;
       result?: string;
       costUsd?: number;
+      /**
+       * Per-turn token accounting, when the driver reported any. Additive and
+       * every field optional; an unknown field is omitted, never sent as `0`.
+       *
+       * `inputTokens`, `cacheReadTokens` and `cacheWriteTokens` partition the
+       * prompt side, so their sum is the turn's prompt-side total. That is
+       * deliberately not the same convention as the item's own top-level
+       * `inputTokens`, which is cache-*inclusive* and predates this block.
+       *
+       * The sum is turn *consumption*, not context occupancy: a turn that made
+       * several model calls sent a prompt on each. A driver that states
+       * occupancy directly does so in `context_window_updated`.
+       */
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+        toolCalls?: number;
+        contextWindow?: number;
+      };
     }
   | { kind: "status"; status?: string }
   | {

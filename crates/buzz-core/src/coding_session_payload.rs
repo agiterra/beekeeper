@@ -1166,16 +1166,134 @@ impl TurnCost {
     }
 }
 
+/// Per-turn token accounting, in the shape a reader can compute context
+/// occupancy from.
+///
+/// This rides the terminal `result` item as an optional `usage` object. Every
+/// field is optional and every unknown one is *omitted*, never serialized as
+/// `null` or `0` — "the driver did not report it" and "the driver measured
+/// zero" are different facts and the archive keeps them apart.
+///
+/// # The three prompt-side fields are disjoint
+///
+/// [`Self::input_tokens`], [`Self::cache_read_tokens`] and
+/// [`Self::cache_write_tokens`] partition the tokens the provider sent *to*
+/// the model this turn, so [`Self::used_tokens`] is their sum. That is
+/// deliberately not the same convention as the item's own top-level
+/// `inputTokens` key, which is cache-*inclusive* — it shipped that way before
+/// this block existed and is left alone so old readers keep reading it.
+///
+/// # What `usedTokens` is, and what it is not
+///
+/// It is the prompt-side token total for **one turn**. A turn that makes
+/// several model calls sends a prompt on each one, so on those turns the total
+/// is larger than the context the model actually held — it is consumption, not
+/// occupancy. A driver that states occupancy directly does so in its own
+/// `context_window_updated` item; read that with [`context_window_usage`] and
+/// prefer it when it is present.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnUsageReport {
+    /// Fresh (uncached) prompt tokens sent this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Tokens the model produced this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Prompt tokens served from the provider's cache this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    /// Prompt tokens written into the provider's cache this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    /// Tool calls the agent opened during this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<u64>,
+    /// The model's context window in tokens, when the provider knows it.
+    /// Omitted for an unrecognized model — a guessed window makes every
+    /// percentage downstream a fiction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+}
+
+impl TurnUsageReport {
+    /// Whether the driver reported nothing at all.
+    ///
+    /// An empty block is omitted from the item rather than published as `{}`.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Prompt-side tokens for this turn: fresh input plus both cache subsets.
+    ///
+    /// `None` when the driver reported none of the three — there is no honest
+    /// number to give, and `0` would claim a measurement nobody made.
+    /// Saturating on the (impossible in practice) overflow of three `u64`
+    /// token counts, because a clamped total is still closer to the truth than
+    /// a wrapped one.
+    pub fn used_tokens(&self) -> Option<u64> {
+        let parts = [
+            self.input_tokens,
+            self.cache_read_tokens,
+            self.cache_write_tokens,
+        ];
+        parts.iter().any(Option::is_some).then(|| {
+            parts
+                .into_iter()
+                .flatten()
+                .fold(0u64, |total, part| total.saturating_add(part))
+        })
+    }
+}
+
+/// A driver's own statement of how full the model's context window is.
+///
+/// Unlike [`TurnUsageReport::used_tokens`], this *is* occupancy: the driver
+/// measured the prompt it is about to send, so it never exceeds the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextWindowUsage {
+    /// Tokens currently occupying the window.
+    pub used_tokens: u64,
+    /// The window itself, when the driver named it. `None` rather than a
+    /// guess: a percentage against an invented denominator is a lie.
+    pub context_window: Option<u64>,
+}
+
+/// Read occupancy off a `context_window_updated` transcript item.
+///
+/// Returns `None` for any other item kind and for an item that names no
+/// occupancy. Both spellings drivers use for each number are accepted —
+/// `used`/`usedTokens` and `size`/`contextWindow` — because the ACP schema
+/// pins neither and the provider forwards whatever the driver sent.
+pub fn context_window_usage(item: &serde_json::Value) -> Option<ContextWindowUsage> {
+    if item.get("kind").and_then(serde_json::Value::as_str) != Some("context_window_updated") {
+        return None;
+    }
+    let usage = item.get("usage")?;
+    let number = |keys: &[&str]| -> Option<u64> {
+        keys.iter()
+            .find_map(|key| usage.get(*key).and_then(serde_json::Value::as_u64))
+    };
+    Some(ContextWindowUsage {
+        used_tokens: number(&["used", "usedTokens"])?,
+        context_window: number(&["size", "contextWindow", "contextLimit"]),
+    })
+}
+
 /// Build the terminal `result` item that closes a turn.
 ///
 /// `costUsd` and the token counts are omitted rather than sent as `null`: the
 /// consumer's projector renders `costUsd` only when it is a number, and an
-/// explicit `null` would claim the provider measured zero.
+/// explicit `null` would claim the provider measured zero. `usage` follows the
+/// same rule and the whole object is omitted when it is empty, so a result
+/// item from a driver that reports nothing is byte-identical to the shape that
+/// shipped before [`TurnUsageReport`] existed.
 pub fn result_item(
     subtype: ResultSubtype,
     duration_ms: u64,
     result: &str,
     cost: TurnCost,
+    usage: TurnUsageReport,
 ) -> serde_json::Value {
     let mut item = serde_json::json!({
         "kind": "result",
@@ -1198,6 +1316,15 @@ pub fn result_item(
         ] {
             if let Some(value) = value {
                 object.insert(key.into(), serde_json::json!(value));
+            }
+        }
+        // Serialization of a struct of `Option`s with `skip_serializing_if`
+        // cannot fail; written as an `if let` rather than an `expect` so a
+        // future edit degrades into a result item without the block instead of
+        // panicking mid-turn.
+        if !usage.is_empty() {
+            if let Ok(value) = serde_json::to_value(usage) {
+                object.insert("usage".into(), value);
             }
         }
     }
@@ -2453,5 +2580,134 @@ mod tests {
             base
         );
         assert!(!base.with_thread_steer(false).thread_steer);
+    }
+
+    /// The `usage` block is optional and additive: a result item built without
+    /// one is byte-identical to the shape that shipped before it existed.
+    #[test]
+    fn a_result_item_without_usage_carries_no_usage_key() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost::default(),
+            TurnUsageReport::default(),
+        );
+        assert!(item.get("usage").is_none(), "{item}");
+    }
+
+    /// Every field the provider knows reaches the wire under its camelCase
+    /// name, and nothing it does not know is serialized as `null`.
+    #[test]
+    fn a_result_item_with_usage_carries_exactly_the_known_fields() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1_000,
+            "completed",
+            TurnCost::default(),
+            TurnUsageReport {
+                input_tokens: Some(1_200),
+                output_tokens: Some(340),
+                cache_read_tokens: Some(96_000),
+                cache_write_tokens: Some(4_000),
+                tool_calls: Some(7),
+                context_window: Some(1_000_000),
+            },
+        );
+        assert_eq!(
+            item["usage"],
+            serde_json::json!({
+                "inputTokens": 1_200,
+                "outputTokens": 340,
+                "cacheReadTokens": 96_000,
+                "cacheWriteTokens": 4_000,
+                "toolCalls": 7,
+                "contextWindow": 1_000_000,
+            })
+        );
+    }
+
+    /// A partly-known block omits the keys it does not know rather than
+    /// claiming a measured zero.
+    #[test]
+    fn an_unknown_usage_field_is_omitted_not_zeroed() {
+        let item = result_item(
+            ResultSubtype::Success,
+            1,
+            "completed",
+            TurnCost::default(),
+            TurnUsageReport {
+                output_tokens: Some(5),
+                ..TurnUsageReport::default()
+            },
+        );
+        assert_eq!(item["usage"], serde_json::json!({ "outputTokens": 5 }));
+    }
+
+    /// `usedTokens` is the prompt-side total: fresh input plus both cache
+    /// subsets. The three fields are disjoint by contract, so this is a sum.
+    #[test]
+    fn used_tokens_sums_the_three_prompt_side_fields() {
+        let usage = TurnUsageReport {
+            input_tokens: Some(1_200),
+            cache_read_tokens: Some(96_000),
+            cache_write_tokens: Some(4_000),
+            output_tokens: Some(999),
+            ..TurnUsageReport::default()
+        };
+        assert_eq!(usage.used_tokens(), Some(101_200));
+    }
+
+    /// A block that reports none of the three prompt-side fields knows no
+    /// prompt size — it must say so rather than report zero.
+    #[test]
+    fn used_tokens_is_unknown_when_no_prompt_side_field_was_reported() {
+        let usage = TurnUsageReport {
+            output_tokens: Some(999),
+            tool_calls: Some(2),
+            ..TurnUsageReport::default()
+        };
+        assert_eq!(usage.used_tokens(), None);
+    }
+
+    /// A `context_window_updated` item is the driver's own statement of how
+    /// full the window is; both names it uses are read.
+    #[test]
+    fn context_window_usage_reads_the_drivers_own_occupancy_item() {
+        let item = serde_json::json!({
+            "kind": "context_window_updated",
+            "usage": { "size": 1_000_000, "used": 137_498 },
+        });
+        assert_eq!(
+            context_window_usage(&item),
+            Some(ContextWindowUsage {
+                used_tokens: 137_498,
+                context_window: Some(1_000_000),
+            })
+        );
+    }
+
+    /// A driver that reports occupancy without a window still gets read; the
+    /// window stays unknown rather than being guessed.
+    #[test]
+    fn context_window_usage_without_a_size_leaves_the_window_unknown() {
+        let item = serde_json::json!({
+            "kind": "context_window_updated",
+            "usage": { "usedTokens": 42 },
+        });
+        assert_eq!(
+            context_window_usage(&item),
+            Some(ContextWindowUsage {
+                used_tokens: 42,
+                context_window: None,
+            })
+        );
+    }
+
+    /// Any other item kind is not an occupancy statement, whatever it carries.
+    #[test]
+    fn context_window_usage_ignores_other_item_kinds() {
+        let item = serde_json::json!({ "kind": "result", "usage": { "used": 9 } });
+        assert_eq!(context_window_usage(&item), None);
     }
 }

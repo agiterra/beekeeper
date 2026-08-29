@@ -2899,3 +2899,221 @@ fn an_explicit_format_is_distinguishable_from_the_default() {
         "an unstated --format must read as DefaultValue"
     );
 }
+
+// ── Context consumption on the wire ──────────────────────────────────────────
+
+/// The driver's own occupancy item is the best fact available, so it wins:
+/// `used`/`size` came from the thing holding the context.
+#[test]
+fn the_context_column_prefers_the_drivers_own_occupancy_item() {
+    let target = target("s-1", 2);
+    let events = vec![transcript_event(
+        "t-1",
+        1_000,
+        &target,
+        1,
+        Some("turn-1"),
+        json!({ "kind": "context_window_updated", "usage": { "size": 1_000_000, "used": 137_498 } }),
+    )];
+    let (transcripts, _) = decode_transcripts(&events);
+    let executions = [execution("s-1", 2, None, None, None)];
+    let row = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Json,
+    );
+    assert_eq!(
+        row["context"],
+        json!({ "usedTokens": 137_498, "contextWindow": 1_000_000, "contextPct": 14 })
+    );
+}
+
+/// With no occupancy item, the turn's own usage block answers: the prompt-side
+/// total, against the window the provider named.
+#[test]
+fn the_context_column_falls_back_to_the_turns_usage_block() {
+    let target = target("s-1", 2);
+    let events = vec![transcript_event(
+        "t-1",
+        1_000,
+        &target,
+        1,
+        Some("turn-1"),
+        json!({
+            "kind": "result",
+            "subtype": "success",
+            "usage": {
+                "inputTokens": 1_200,
+                "cacheReadTokens": 96_000,
+                "cacheWriteTokens": 4_000,
+                "contextWindow": 200_000,
+            },
+        }),
+    )];
+    let (transcripts, _) = decode_transcripts(&events);
+    let executions = [execution("s-1", 2, None, None, None)];
+    let row = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Json,
+    );
+    assert_eq!(
+        row["context"],
+        json!({ "usedTokens": 101_200, "contextWindow": 200_000, "contextPct": 51 })
+    );
+}
+
+/// Tokens without a window is a real answer and a partial one. It must not be
+/// rendered as a percentage of a guess, and it must not be dropped.
+#[test]
+fn tokens_without_a_window_report_the_tokens_and_say_the_window_is_unknown() {
+    let target = target("s-1", 2);
+    let events = vec![transcript_event(
+        "t-1",
+        1_000,
+        &target,
+        1,
+        Some("turn-1"),
+        json!({ "kind": "result", "subtype": "success", "usage": { "inputTokens": 4_096 } }),
+    )];
+    let (transcripts, _) = decode_transcripts(&events);
+    let executions = [execution("s-1", 2, None, None, None)];
+    let json_row = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Json,
+    );
+    assert_eq!(
+        json_row["context"],
+        json!({ "usedTokens": 4_096, "contextWindow": Value::Null, "contextPct": Value::Null })
+    );
+    let compact = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Compact,
+    );
+    assert_eq!(compact["context"], json!("4096 (window unknown)"));
+}
+
+/// No usage anywhere on the wire is `null` in JSON and an em dash in the
+/// compact row — never `0`, never `0%`.
+#[test]
+fn an_execution_with_no_usage_on_the_wire_reports_none_rather_than_zero() {
+    let executions = [execution("s-1", 2, None, None, None)];
+    let json_row = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &[],
+        &index_of(&[]),
+        &crate::OutputFormat::Json,
+    );
+    assert_eq!(json_row["context"], Value::Null);
+    let compact = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &[],
+        &index_of(&[]),
+        &crate::OutputFormat::Compact,
+    );
+    assert_eq!(compact["context"], json!("\u{2014}"));
+}
+
+/// The newest occupancy item wins; an older one is history, not the answer.
+#[test]
+fn the_newest_occupancy_item_is_the_one_reported() {
+    let target = target("s-1", 2);
+    let events = vec![
+        transcript_event(
+            "t-1",
+            1_000,
+            &target,
+            1,
+            Some("turn-1"),
+            json!({ "kind": "context_window_updated", "usage": { "size": 1_000_000, "used": 10 } }),
+        ),
+        transcript_event(
+            "t-2",
+            2_000,
+            &target,
+            2,
+            Some("turn-2"),
+            json!({ "kind": "context_window_updated", "usage": { "size": 1_000_000, "used": 500_000 } }),
+        ),
+    ];
+    let (transcripts, _) = decode_transcripts(&events);
+    let executions = [execution("s-1", 2, None, None, None)];
+    let row = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Json,
+    );
+    assert_eq!(row["context"]["usedTokens"], json!(500_000));
+    assert_eq!(row["context"]["contextPct"], json!(50));
+}
+
+/// The compact row a person reads renders the ratio and the percentage.
+#[test]
+fn the_compact_context_cell_renders_used_over_window_and_a_percentage() {
+    let target = target("s-1", 2);
+    let events = vec![transcript_event(
+        "t-1",
+        1_000,
+        &target,
+        1,
+        Some("turn-1"),
+        json!({ "kind": "context_window_updated", "usage": { "size": 1_000_000, "used": 137_498 } }),
+    )];
+    let (transcripts, _) = decode_transcripts(&events);
+    let executions = [execution("s-1", 2, None, None, None)];
+    let compact = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Compact,
+    );
+    assert_eq!(compact["context"], json!("137498/1000000 (14%)"));
+}
+
+/// Another execution's transcript is not this execution's context.
+#[test]
+fn context_is_scoped_to_the_execution_that_produced_it() {
+    let other = target("s-2", 1);
+    let events = vec![transcript_event(
+        "t-1",
+        1_000,
+        &other,
+        1,
+        Some("turn-1"),
+        json!({ "kind": "context_window_updated", "usage": { "size": 1_000_000, "used": 900_000 } }),
+    )];
+    let (transcripts, _) = decode_transcripts(&events);
+    let executions = [execution("s-1", 2, None, None, None)];
+    let row = status_row(
+        &executions[0],
+        &[],
+        &HashMap::new(),
+        &transcripts,
+        &index_of(&[]),
+        &crate::OutputFormat::Json,
+    );
+    assert_eq!(row["context"], Value::Null);
+}

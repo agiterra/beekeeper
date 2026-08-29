@@ -109,3 +109,63 @@ test("an unrecognized status is unaffected by CODING_SESSION_CONTINUITY_REASONS"
   assert.equal(item.title, "Status");
   assert.equal(item.text, "some_unrecognized_status");
 });
+
+// ── Per-turn usage on the wire ───────────────────────────────────────────────
+//
+// The provider now stamps an additive `usage` block on the terminal `result`
+// item. This observer must accept it and keep projecting the turn: a reader
+// that rejected the item on an unknown field would blank the end of every turn
+// the moment the provider started measuring context.
+
+test("a result item carrying a usage block still projects", () => {
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "result",
+      subtype: "success",
+      isError: false,
+      durationMs: 1000,
+      result: "completed",
+      inputTokens: 101200,
+      outputTokens: 340,
+      usage: {
+        inputTokens: 1200,
+        outputTokens: 340,
+        cacheReadTokens: 96000,
+        cacheWriteTokens: 4000,
+        toolCalls: 7,
+        contextWindow: 1000000,
+      },
+    },
+    IDENTITY,
+  );
+  assert.equal(item.title, "Turn result");
+  assert.equal(item.text, "completed");
+  assert.equal(item.unknownKind, undefined);
+});
+
+test("a result item with no usage block projects exactly as before", () => {
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "result",
+      subtype: "success",
+      isError: false,
+      durationMs: 1000,
+      result: "completed",
+    },
+    IDENTITY,
+  );
+  assert.equal(item.title, "Turn result");
+  assert.equal(item.text, "completed");
+});
+
+test("a context_window_updated item carrying the driver's occupancy still projects", () => {
+  const item = buildBaseTranscriptItem(
+    { kind: "context_window_updated", usage: { size: 1000000, used: 137498 } },
+    IDENTITY,
+  );
+  assert.equal(item.unknownKind, undefined);
+  assert.ok(
+    JSON.stringify(item).includes("137498"),
+    `the occupancy the driver reported must survive projection: ${JSON.stringify(item)}`,
+  );
+});

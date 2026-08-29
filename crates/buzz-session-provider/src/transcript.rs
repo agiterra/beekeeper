@@ -78,6 +78,7 @@ pub struct TranscriptTranslator {
     text: String,
     thoughts: String,
     usage: Option<Value>,
+    tool_calls: u64,
     tool_names: HashMap<String, String>,
     tool_kinds: HashMap<String, String>,
 }
@@ -90,6 +91,7 @@ impl TranscriptTranslator {
             text: String::new(),
             thoughts: String::new(),
             usage: None,
+            tool_calls: 0,
             tool_names: HashMap::new(),
             tool_kinds: HashMap::new(),
         }
@@ -124,6 +126,7 @@ impl TranscriptTranslator {
         self.text.clear();
         self.thoughts.clear();
         self.usage = None;
+        self.tool_calls = 0;
         vec![crate::payload::user_prompt_item(
             prompt,
             false,
@@ -181,6 +184,9 @@ impl TranscriptTranslator {
             }
             "tool_call" => {
                 let mut items = self.flush_all();
+                // Counted here rather than at the result, because a call that
+                // never returns still consumed a call's worth of context.
+                self.tool_calls = self.tool_calls.saturating_add(1);
                 items.push(self.tool_call_item(update));
                 items
             }
@@ -204,6 +210,15 @@ impl TranscriptTranslator {
     /// Close a turn: flush anything buffered and publish its final usage
     /// snapshot. The terminal `result` item is appended by the caller, which is
     /// the only party that knows how the turn actually ended.
+    /// Tool calls opened during the turn that is open now.
+    ///
+    /// Reset by [`begin_turn`](Self::begin_turn), so the caller must read it
+    /// before opening the next turn. Counts *calls*, not results: a call the
+    /// agent abandoned still spent the context its arguments occupy.
+    pub fn tool_calls(&self) -> u64 {
+        self.tool_calls
+    }
+
     pub fn close_turn(&mut self) -> Vec<Value> {
         let mut items = self.flush_all();
         if let Some(usage) = self.usage.take() {
@@ -742,7 +757,38 @@ mod tests {
             1234,
             "completed",
             crate::payload::TurnCost::default(),
+            crate::payload::TurnUsageReport::default(),
         )
+    }
+
+    /// The translator counts the turn's tool calls, because it is the only
+    /// party that sees every one of them, and the count belongs in the turn's
+    /// usage block.
+    #[test]
+    fn the_translator_counts_this_turns_tool_calls() {
+        let mut translator = TranscriptTranslator::new(false);
+        let _ = translator.begin_turn("do the thing", None, None, None);
+        assert_eq!(translator.tool_calls(), 0);
+        let _ = translator.on_update(&tool_call("t1", "Read", json!({})));
+        let _ = translator.on_update(&tool_done("t1", "completed", "ok"));
+        let _ = translator.on_update(&tool_call("t2", "Bash", json!({})));
+        assert_eq!(
+            translator.tool_calls(),
+            2,
+            "two calls opened; a result is not a second call"
+        );
+    }
+
+    /// The count is per turn: the next turn starts at zero rather than
+    /// inheriting the last one's total.
+    #[test]
+    fn the_tool_call_count_resets_on_the_next_turn() {
+        let mut translator = TranscriptTranslator::new(false);
+        let _ = translator.begin_turn("first", None, None, None);
+        let _ = translator.on_update(&tool_call("t1", "Read", json!({})));
+        let _ = translator.close_turn();
+        let _ = translator.begin_turn("second", None, None, None);
+        assert_eq!(translator.tool_calls(), 0);
     }
 
     /// The golden case: one prompt, some prose, a tool call and its result,
