@@ -495,14 +495,25 @@ and close behaviour untouched.
   `1 working · 1 idle` computed from that same function
 
 > **The red-first test must name which word wins**, or it passes with both
-> panels agreeing on the wrong one. Two cases, and they are the two directions
-> §15(b) names:
+> panels agreeing on the wrong one. **Three voices, not two** — the rail row,
+> the participant bar, and the rail *footer count*, which is its own reader of
+> the status (`CodingSessionExecutionRail.tsx:307-311`) and can stay raw while
+> the other two are fixed. Two cases, the two directions §15(b) names, and
+> every case asserts all three:
 >
-> - signed `completed`, transcript with no terminator, lease fresh → **both**
->   the rail and the bar read **`idle`**. Not `live` (today's strip) and not
->   `Idle` in one place and `live` in the other.
-> - signed `running`, lease aged out → **both** read **`No provider answering`**.
->   Not `Working` (today's rail).
+> - signed `completed`, transcript with no terminator, lease fresh → the rail
+>   row and the bar both read **`idle`**, and the footer counts it as idle. Not
+>   `live` (today's strip), not `Idle` in one place and `live` in the other, and
+>   not `All idle` beside a row reading `Working`.
+> - signed `running`, lease aged out → the rail row and the bar both read
+>   **`No provider answering`**, and the footer does **not** count it into
+>   `N working`. Not `Working` (today's rail) and not `1 working` under a strip
+>   saying `no provider answering` (walk finding 1's exact frame).
+>
+> Stated once, as the lane should read it: **an execution whose signed status is
+> resting and whose newest transcript item is not a turn terminator must not
+> read `live`, `Working`, or `1 working` on any surface.** Both sides agreeing
+> is the failure mode, not the pass.
 >
 > **A second correction to the lead's ruling.** It words this test as *"reads
 > `released`, not `live`"*. `released` is wrong: it is the word for
@@ -1121,11 +1132,15 @@ already the larger lane. It touches no file lane 1 owns.
   never renders a count. **This is the lane's headline test**
 - `the plan panel names the seat whose plan it is` — assert `PLAN · Keystone`
 - `no plan snapshot renders No plan published` — verbatim, with its description
-- **`the rail and the bar agree on liveness, on the signed word`** — two
-  fixtures, and the assertion names the word so agreement alone cannot pass it:
-  signed `completed` + unterminated transcript + fresh lease → both read `idle`;
-  signed `running` + aged lease → both read `No provider answering`. Assert the
-  footer count moves with them (never `All idle` beside a `Working` row)
+- **`the rail row, the bar and the footer count agree on the signed word`** —
+  two fixtures, three voices asserted in each, and the assertion names the word
+  so agreement alone cannot pass it: signed `completed` + unterminated
+  transcript + fresh lease → row and bar read `idle`, footer counts it idle;
+  signed `running` + aged lease → row and bar read `No provider answering`,
+  footer does **not** count it into `N working`. The footer is a separate reader
+  (`CodingSessionExecutionRail.tsx:307-311`) and a lane can fix the first two
+  and leave it raw, so it is asserted explicitly in both cases. See D6's ruling
+  block for the one-sentence form
 - **`sixteen unnameable edits do not render as no observed changes`** (D3/D4) —
   seed 16 `toolKind:"edit"` items with empty `input`; assert
   `16 edits observed · files not reported`, assert the tab shows no count, and
