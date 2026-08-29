@@ -18,13 +18,13 @@ findings (numbered, each with the code or transcript that proves it), §3 `Next`
 (the ordered track), §3a environment facts that already cost hours.
 
 **Read §3 Next, and only the numbered §2 items your brief cites. Never the whole
-file.** It is ~3,700 lines: a seat that reads it start to finish spends about a
-quarter of its context window before it has done anything, and a codex seat
-already spends ~25% at boot (ledger item 80f). §3 is not at the top — jump to it:
+file.** It grows every ceremony — 5,500 lines and counting: a seat that reads it
+start to finish spends about a quarter of its context window before it has done
+anything, and a codex seat already spends ~25% at boot (ledger item 80f). §3 is not at the top — jump to it:
 
 ```
 grep -n '^## ' docs/SESSION_STATE.md                       # section line numbers
-sed -n '/^## 3\. Next/,/^## 3a\./p' docs/SESSION_STATE.md  # the track, ~195 lines
+sed -n '/^## 3\. Next/,/^## 3a\./p' docs/SESSION_STATE.md  # the track, ~240 lines
 grep -n '^79\. ' docs/SESSION_STATE.md                     # where item 79 starts
 sed -n '<start>,<start+100>p' docs/SESSION_STATE.md        # read that window only
 ```

@@ -15,7 +15,7 @@ from a runtime identifier.
 | Task class | Minimum tier |
 | --- | --- |
 | Mechanical edit with the answer already in the brief (rename, field add, fixture) | **small** |
-| Run a gate and report exit codes and counts | **small** |
+| Run a gate and report exit codes and counts | **small** — and always a hire |
 | One-file implementation against a locked design, tests named | **mid** |
 | Multi-file feature, a contract change, or anything where the design is still being discovered on the ground | **frontier** |
 | Provider runtime, custody/keys, relay ingest, durable state (tier-2) | **frontier** |
@@ -24,6 +24,14 @@ from a runtime identifier.
 
 Minimum means minimum. Hiring under the class is how a lane returns a
 confident report about work it could not do; hiring far over it is only money.
+
+**The gate row is never you.** Any gate longer than a hire round-trip (~2 min)
+— a full `just ci`, an e2e suite, a release build, a full-workspace `cargo test`
+— goes to a small-tier runner, because the whole answer is an exit code and a
+count. Your own context is frontier-tier and unhireable: spend it on the live
+check (the built binary, the real relay, the value the change produced) and the
+ruling. On 2026-08-28 a lead re-ran a 594-test suite a lane had already run and
+bought nothing with those turns (ledger item 88(e)). `skills/hire` has the split.
 
 ## 2. Modality → vendor
 
