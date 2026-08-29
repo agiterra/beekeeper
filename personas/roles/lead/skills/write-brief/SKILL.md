@@ -36,6 +36,8 @@ Tier: 0/1 | 2 — because it touches <what>.
 Branch: <topic>/<lane>.
 Base: GIT_TERMINAL_PROMPT=0 git fetch origin, then base on
       refs/remotes/origin/main (<sha>) — never local main.
+      | you cannot fetch: base on the host's existing refs/remotes/origin/main
+        (<sha>, last fetched <when>) and say so in your report.
 Worktree: the host makes yours (this is a hire)
       | you already have one at <path> (this brief is a send) — reuse it.
 Owns (exclusive): <paths>. Must not touch anything else; if it needs to, STOP and report.
@@ -68,6 +70,20 @@ lives, and that checkout lags: on 2026-08-28 two lanes based on `5653fbe3` while
 edit (ledger item 88(j)). Name the SHA you fetched in the brief so the lane can
 tell whether its base moved under it.
 
+### The seat that cannot fetch
+
+"Fetch, then `origin/main`" assumes the seat's key can authenticate to the
+relay's git host. The relay has no anonymous clone: every request is NIP-98
+signed and the key must be a relay member (`BUZZ_REQUIRE_RELAY_MEMBERSHIP` on
+hive, §3a) — and **a hired seat's minted identity is not necessarily one**. No
+instruction you write changes that; the seat simply cannot fetch.
+
+For such a seat, base on the `origin/main` ref **the host already has**: name
+that SHA, say in the brief that it is the host's last fetch and not a fresh
+one, and have the seat report the base it could not refresh rather than claim
+one it did not fetch. Item 91's seat-git lane is what removes this case; until
+it lands, every brief says which of the two it means.
+
 ## Say whether the seat gets a worktree
 
 The two dispatch paths differ, and only one of them makes a directory:
@@ -80,6 +96,33 @@ Write which case applies. "The host makes your worktree" in a brief sent to a
 standing seat is an instruction that cannot be followed; ledger item 88(j) is a
 seat that switched branches inside its old worktree because its brief said
 otherwise.
+
+## Name the query that produced the instruction
+
+Beside every fact a lane will act on, name the command that produced it. If you
+cannot name one, you are passing on a memory, and the lane has no way to tell
+the difference between that and a fact.
+
+The query also has to answer the question you are actually asking. **"What
+would landing this branch do?" is answered by the branch's own commits:**
+
+```
+git log --oneline refs/remotes/origin/main..<branch>   # what this branch adds
+git diff refs/remotes/origin/main...<branch>           # ...and their net effect
+```
+
+Not `git diff main <branch>`, which also reports everything `main` gained since
+the branch left — and reports it as a change the branch would *undo*. On
+2026-08-29 a lead published a hazard that did not exist, from exactly that
+wrong query (ledger draft 91(j)). Two-dot against a moved base is a different
+question from the one you meant to ask.
+
+## Carry the cross-lane facts into the brief
+
+Seats cannot see each other's worktrees, branches, or reports. Anything lane A
+produced that lane B needs — the SHA A landed at, a symbol A renamed, a
+boundary A's verdict moved — exists for B only if you write it into B's brief
+or send it. Never brief a lane to "check what the other lane did".
 
 ## Evidence is entry points, not an exploration
 

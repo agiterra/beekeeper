@@ -21,7 +21,7 @@ on it — all seven pass clean today (`Valid.`, exit 0).
 
 | role | does | never does |
 | --- | --- | --- |
-| **lead** | rules, writes briefs, reads reports and diffs, hires a runner for every long gate, keeps the live check and the ruling for itself, merges tier-0/1, keeps the ledger honest, ends a mission out loud | writes feature code; reads a builder's exploration; runs a gate a runner could run; lets a finished mission read as a stalled one |
+| **lead** | rules on the wire (a `sessions send` to the seat **plus** a Pulse entry), never in its transcript; writes briefs, reads reports and diffs, hires a runner for every long gate, keeps the live check and the ruling for itself, merges tier-0/1, keeps the ledger honest, ends a mission out loud and stops there | writes feature code; reads a builder's exploration; runs a gate a runner could run; invents lanes the mission did not ask for; lets a finished mission read as a stalled one |
 | **architect** | one-sitting shape verdicts: right design, or a simpler one | redesigns at length; writes code |
 | **builder** | implements one locked brief inside its lane's exclusive files; self-verifies; reports raw facts | redesigns; touches files outside its lane; commits to `main` |
 | **verifier** | one pass over a tier-2 diff against the brief's named constraints; a terminal verdict | re-argues a disposition; reviews tier-0/1 |
@@ -62,7 +62,8 @@ The lead's `write-brief` skill carries the brief template from plan §1.1; the
 builder's `write-report` skill carries the report template from §1.2. Keeping
 these as skills rather than inline pack prompt text is why the prompts stay
 short (see below) — the templates are loaded on demand, not held in context
-for the whole session.
+for the whole session. Skill files stay under 200 lines: a skill nobody
+finishes reading is a skill that does not apply.
 
 ## Family check (vendor diversity)
 
@@ -83,21 +84,23 @@ hand in a roster launched across two providers.
 
 ## Prompt size and where the craft lives
 
-Every pack's prompt (the `.persona.md` markdown body) is short — the current
-six run 21–30 lines — carrying only the role's verbs, its verdict vocabulary,
-and its "never" list. Anything procedural (a template to fill, a sequence of
-steps to follow) is a skill under that pack's `skills/`, loaded on demand
-rather than paid for on every turn:
+Every pack's prompt (the `.persona.md` markdown body) carries only the role's
+verbs, its verdict vocabulary, and its "never" list. Anything procedural (a
+template to fill, a sequence of steps to follow) is a skill under that pack's
+`skills/`, loaded on demand rather than paid for on every turn. Five of the
+seven prompts run 20–25 body lines; `lead` (122) and `designer` (81) are longer
+because both carry rules the team paid for in live runs — measure with the
+frontmatter stripped before quoting a number here:
 
-| role | skills |
-| --- | --- |
-| lead | `write-brief`, `triage-report` |
-| architect | `shape-verdict` |
-| builder | `brief-is-law`, `write-report` |
-| verifier | `refuter-pass` |
-| runner | `run-and-report` |
-| poker | `drive-and-report` |
-| designer | `specify-surfaces` |
+| role | prompt body | skills |
+| --- | --- | --- |
+| lead | 122 | `write-brief`, `hire`, `triage-report`, `choose-model`, `beekeeper-project` |
+| architect | 25 | `shape-verdict` |
+| builder | 23 | `brief-is-law`, `write-report` |
+| verifier | 24 | `refuter-pass` |
+| runner | 20 | `run-and-report` |
+| poker | 22 | `drive-and-report` |
+| designer | 81 | `see-the-app`, `wire-sources-for-surfaces`, `specify-surfaces` |
 
 ## Materialization
 

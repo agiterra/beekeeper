@@ -165,12 +165,12 @@ reading `hire refused: <code> — <reason>`. The seat was never created.
 | `HIRE_MODEL_NOT_OFFERED` | the model you named is not an id that runtime's catalog offers, and not an alias the host could translate | The reason lists every offered id. Re-run with one of them, or drop `--model`. |
 | `HIRE_STALE` | the request sat unanswered longer than the host's window (15 minutes) — the operator's computer was shut or offline | Hire again. Do not assume the first one lands late; it will not be answered at all. |
 
-**Today's host does not separate the middle two rows.** It answers
-`HIRE_NO_IDENTITY` for both, and its remedy sentence ("Install team roles on the
-Agents screen") is wrong for the busy case (ledger item 88(h)). Read the reason
-text, not just the code: if it says *"already seated in this session"*, that is
-`HIRE_ROLE_BUSY` — send to the seat that exists, and do not ask the founder to
-install anything.
+`HIRE_ROLE_BUSY` is a code the host really answers with (ledger item 90): its
+policy returns it whenever this computer holds the role and every identity of
+it is already seated here (`codingSessionHirePolicy.ts:575-581`), and the
+reason names those seats. It is not `HIRE_NO_IDENTITY`, and its remedy is never
+"install a role you already have" — send this brief to the seat the reason
+names.
 
 Never retry a refusal unchanged. Put it on the ledger as a `blocker` Pulse entry
 with its code, then either change the request or `BLOCK: missing-input = <the

@@ -405,11 +405,21 @@ appears in a `kind:44224`.
 
 On refusal the host answers the requesting seat with a `kind:44220` turn whose
 text is exactly `hire refused: <CODE> — <reason>`, where `<CODE>` is one of
-`HIRE_OFF`, `HIRE_ROLE_NOT_ALLOWED`, `HIRE_LIMIT`, `HIRE_NO_IDENTITY`, or
-`HIRE_PROVIDER_NOT_ALLOWED`, and shows the same line in the umbrella as a
+`HIRE_OFF`, `HIRE_ROLE_NOT_ALLOWED`, `HIRE_LIMIT`, `HIRE_NO_IDENTITY`,
+`HIRE_ROLE_BUSY`, `HIRE_PROVIDER_NOT_ALLOWED`, `HIRE_MODEL_NOT_OFFERED`, or
+`HIRE_STALE`, and shows the same line in the umbrella as a
 system row. The codes are the constants
 `HIRE_REFUSAL_CODES` in `crates/buzz-core/src/coding_session_lifecycle_command.rs`;
 the prefix is `HIRE_REFUSAL_PREFIX` in the same file.
+
+`HIRE_ROLE_BUSY` and `HIRE_NO_IDENTITY` are two codes for what was one until
+2026-08-28, and the difference is whose remedy it is. `HIRE_NO_IDENTITY` means
+no installed agent on that computer holds the role at all — only the operator
+can fix it, by installing the role. `HIRE_ROLE_BUSY` means the computer holds
+the role and every identity that *is* it is already seated in this umbrella:
+nothing is broken and nothing needs installing, so the reason names that seat
+and the remedy is for the requesting seat to address it — `bee sessions send
+--session-ref <umbrella-uuid> --to <role>` — rather than hire again.
 
 **Deployment order.** The relay validates 44221 with `deny_unknown_fields` and
 a closed action list, so a `session.hire` is only valid once the relay carrying
