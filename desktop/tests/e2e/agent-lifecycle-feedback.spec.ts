@@ -107,13 +107,20 @@ test.describe("agent lifecycle feedback screenshots", () => {
 
     await openAgentsView(page);
 
-    // The custom persona card appears in the library.
+    // The custom persona's card appears in the library, titled with the
+    // *instance* behind it — `resolveAgentCardTitle` (item 79a) titles a card
+    // with the identity it opens, and `pickProfileAgent` picks the running
+    // sibling (Instance B) over the stopped one. Asserting the pack's
+    // displayName here would demand the app name an agent the operator cannot
+    // find anywhere else; the product is right and this expectation was stale.
     await expect(
-      page.getByText("Cascade Test Agent", { exact: true }),
+      page.getByText("Cascade Instance B", { exact: true }),
     ).toBeVisible({ timeout: 10_000 });
 
     // Open the actions menu for the custom persona. The trigger button carries
-    // an aria-label derived from the persona displayName.
+    // an aria-label derived from the persona displayName — the menu acts on the
+    // persona (delete removes the pack and cascades), so it keeps the pack name
+    // even though the card title names the instance.
     await page
       .getByRole("button", { name: "Open actions for Cascade Test Agent" })
       .click();
@@ -240,8 +247,10 @@ test.describe("agent lifecycle feedback screenshots", () => {
 
     await openAgentsView(page);
 
+    // One instance behind the card, so the card is titled with that instance's
+    // name rather than the persona pack's (item 79a). Same reason as 01.
     await expect(
-      page.getByText("Cascade Test Agent", { exact: true }),
+      page.getByText("Cascade Instance A", { exact: true }),
     ).toBeVisible({ timeout: 10_000 });
 
     await page
@@ -280,6 +289,8 @@ test.describe("agent lifecycle feedback screenshots", () => {
 
     await openAgentsView(page);
 
+    // No instance behind this card, so `resolveAgentCardTitle` falls back to the
+    // persona's display name — the one case where the pack name is the truth.
     await expect(
       page.getByText("Cascade Test Agent", { exact: true }),
     ).toBeVisible({ timeout: 10_000 });

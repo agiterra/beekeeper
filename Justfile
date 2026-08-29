@@ -362,6 +362,15 @@ desktop-e2e-seed: _ensure-migrations
 desktop-e2e-smoke:
     cd {{desktop_dir}} && pnpm test:e2e:smoke
 
+# Build the e2e bundle and run the WHOLE desktop Playwright smoke suite.
+#
+# Deliberately NOT a dependency of `just ci`: the suite is ~1149 tests and takes
+# about 47 minutes on an M-series laptop, which is longer than the rest of `just
+# ci` put together. It is a pre-merge / pre-release gate you run on purpose, not
+# a per-commit one. Because nothing ran it automatically, 75 of its tests rotted
+# unnoticed; run it before landing anything that touches desktop UI.
+smoke: desktop-e2e-smoke
+
 # Run desktop relay-backed e2e tests
 desktop-e2e-integration: _ensure-migrations
     cd {{desktop_dir}} && pnpm test:e2e:integration

@@ -172,6 +172,7 @@ export default defineConfig({
         "**/where-to-run-config.spec.ts",
         "**/huddle-transcription.spec.ts",
         "**/agent-numeric-tuning.spec.ts",
+        "**/mock-bridge-global-config-shape.spec.ts",
         "**/needs-restart-screenshots.spec.ts",
       ],
       use: {

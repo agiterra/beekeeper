@@ -516,6 +516,12 @@ type MockBridgeOptions = {
     provider: string | null;
     model: string | null;
     preferred_runtime?: string | null;
+    /**
+     * Coding-session provider allowlist. Optional here because almost no spec
+     * cares about it; `normalizeMockGlobalAgentConfig` fills in `[]` so the
+     * mocked command answers with the same shape the Rust command does.
+     */
+    "allowed-bridge-pubkeys"?: Array<{ pubkey: string; label: string }>;
   };
   ownerOnlyAccessBuild?: boolean;
   /** File-layer config returned by runtime id. */
@@ -860,6 +866,39 @@ async function seedPreviewFeaturesEnabled(page: Page) {
   );
 }
 
+/**
+ * Make the mocked `get_global_agent_config` answer with the *whole* config
+ * shape.
+ *
+ * Rust declares `allowed-bridge-pubkeys` with `#[serde(default, rename = ...)]`
+ * (desktop/src-tauri/src/managed_agents/global_config/mod.rs:103), so the real
+ * command always emits the key — and `GlobalAgentConfig` in
+ * src/shared/api/types.ts declares it required. The mock omitted it, so
+ * `CodingSessionTrustFields` called `.map` on `undefined` the moment Settings ›
+ * Agents mounted and the app-level error boundary replaced the whole window
+ * with "Something went wrong!". That single missing key is what rotted most of
+ * the smoke suite; a harness that returns a shape the wire cannot produce fails
+ * tests for a bug the product does not have.
+ */
+function normalizeMockGlobalAgentConfig(
+  mock: MockBridgeOptions | undefined,
+): MockBridgeOptions {
+  const globalAgentConfig = mock?.globalAgentConfig ?? {
+    env_vars: {},
+    model: null,
+    preferred_runtime: null,
+    provider: null,
+  };
+  return {
+    ...mock,
+    globalAgentConfig: {
+      ...globalAgentConfig,
+      "allowed-bridge-pubkeys":
+        globalAgentConfig["allowed-bridge-pubkeys"] ?? [],
+    },
+  };
+}
+
 export async function installBridge(page: Page, options: BridgeOptions) {
   const identity =
     options.mode === "relay"
@@ -884,6 +923,11 @@ export async function installBridge(page: Page, options: BridgeOptions) {
   if (options.seedPreviewFeatures !== false) {
     await seedPreviewFeaturesEnabled(page);
   }
+
+  const mock =
+    options.mode === "mock"
+      ? normalizeMockGlobalAgentConfig(options.mock)
+      : options.mock;
 
   await page.addInitScript(
     ({
@@ -970,7 +1014,7 @@ export async function installBridge(page: Page, options: BridgeOptions) {
     },
     {
       identity,
-      mock: options.mock,
+      mock,
       mode: options.mode,
       relayHttpUrl: options.relayHttpUrl,
       relayWsUrl: options.relayWsUrl,
