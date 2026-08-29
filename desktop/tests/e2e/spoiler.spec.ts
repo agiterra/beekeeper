@@ -207,7 +207,29 @@ test("hidden spoiler links reveal without opening on the first click", async ({
   await popup?.close();
   expect(popup).toBeNull();
   await expect(spoiler).toHaveAttribute("data-revealed", "true");
+
+  // ...and the *second* click belongs to the link. Both `onClickCapture` and
+  // `onClick` used to call the same toggle: the capture handler bails once the
+  // spoiler is revealed, so this click fell through to the bubble handler and
+  // hid the content the reader had just asked to see.
+  await secondPopupSettled(page, async () => {
+    await secretLink.click({ force: true });
+  });
+  await expect(spoiler).toHaveAttribute("data-revealed", "true");
 });
+
+/** Run an action that may open a popup, and close whatever it opened. */
+async function secondPopupSettled(
+  page: Page,
+  action: () => Promise<void>,
+): Promise<void> {
+  const popupPromise = page
+    .waitForEvent("popup", { timeout: 500 })
+    .catch(() => null);
+  await action();
+  const popup = await popupPromise;
+  await popup?.close();
+}
 
 test("hidden spoilers stay masked on hover and focus until reveal", async ({
   page,
