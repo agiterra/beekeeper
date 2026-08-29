@@ -16,15 +16,19 @@ import {
   type ResolvedCodingSessionCrewSeat,
 } from "../lib/codingSessionCrew";
 import {
+  codingSessionCrewLeadDestination,
+  codingSessionCrewProjectNote,
   leadSeat,
   type CodingSessionCrewLaunchStep,
 } from "../lib/codingSessionCrewLaunch";
+import { codingSessionLeadWorktreeName } from "../lib/codingSessionWorktreeName";
 import {
   listCodingSessionCrewTeams,
   resolveCodingSessionCrewSeats,
   type CodingSessionCrewTeam,
 } from "../lib/codingSessionCrewTeams";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
+import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
 import { useCodingSessionCrewLaunch } from "./useCodingSessionCrewLaunch";
 
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
@@ -54,9 +58,12 @@ export const CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE =
  */
 export function NewCodingSessionCrewTab({
   channelId,
+  defaultWorkdir = null,
   disabled,
   ensureChannelId = null,
   onLaunched,
+  projectName = null,
+  projectRef = null,
   providerAuthorityPubkey,
   providerInstanceRef,
   providerLabel,
@@ -64,6 +71,8 @@ export function NewCodingSessionCrewTab({
   model,
 }: {
   channelId: string | null;
+  /** The project's local checkout, when the dialog knows one. */
+  defaultWorkdir?: string | null;
   disabled: boolean;
   /**
    * Resolve — publishing it if this is its first session — the channel the
@@ -73,7 +82,21 @@ export function NewCodingSessionCrewTab({
    * make one.
    */
   ensureChannelId?: (() => Promise<string>) | null;
-  onLaunched: (input: { channelId: string }) => void;
+  /**
+   * Where to go once the lead is seated: the channel it landed in and, when
+   * the receipt resolved one, the exact generation to open.
+   */
+  onLaunched: (input: {
+    channelId: string;
+    generationId: string | null;
+  }) => void;
+  /** The project this launch belongs to, named on the tab before it runs. */
+  projectName?: string | null;
+  /**
+   * The project coordinate signed into the lead's create. Null is a real
+   * answer and the tab says so rather than letting the session land nowhere.
+   */
+  projectRef?: string | null;
   providerAuthorityPubkey: string | null;
   providerInstanceRef: string | null;
   /** Name of the runtime every seat will run on, for the disclosure line. */
@@ -102,6 +125,15 @@ export function NewCodingSessionCrewTab({
   const [goal, setGoal] = React.useState("");
   const [title, setTitle] = React.useState("");
   const [workdir, setWorkdir] = React.useState("");
+  // On by default, for the same reason the one-session path defaults it on:
+  // the alternative is the lead sharing one index, one HEAD and one
+  // `.agents/skills` with whoever else has that checkout open — which is
+  // exactly what happened to the operator's own checkout (item 87d).
+  const [useWorktree, setUseWorktree] = React.useState(true);
+  const [worktreeName, setWorktreeName] = React.useState("");
+  const [worktreeSource, setWorktreeSource] = React.useState<string | null>(
+    null,
+  );
   const [launchError, setLaunchError] = React.useState<string | null>(null);
 
   const selectedTeam =
@@ -153,6 +185,13 @@ export function NewCodingSessionCrewTab({
         (runnable && !runnable.ok ? runnable.reason : null) ??
         (family && !family.ok ? family.reason : null));
 
+  // The worktree field slugs whatever it is handed, and the slug is
+  // idempotent — so handing it the already-suffixed name is what makes the
+  // prefill read `<session>-lead` and keep following the session's name.
+  const leadWorktreeSuggestion = codingSessionLeadWorktreeName(
+    title.trim() || selectedTeam?.name || "",
+  );
+
   const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
     ensureChannelId,
     providerInstanceRef,
@@ -184,12 +223,28 @@ export function NewCodingSessionCrewTab({
           goal,
           seats,
           primaryPersonaId: selectedTeam.crew.primary,
+          projectRef,
           provider,
+          workdir: workdir.trim().length > 0 ? workdir.trim() : null,
+          leadWorktree:
+            useWorktree && worktreeName.trim().length > 0
+              ? { name: worktreeName.trim(), source: worktreeSource }
+              : null,
         });
         // The channel the launch settled on: for a project's first session it
         // is the one the launch just published, not the null it was handed.
         if (result.ok && result.channelId) {
-          onLaunched({ channelId: result.channelId });
+          onLaunched({
+            channelId: result.channelId,
+            // The lead's own generation, resolved from its receipt — a launch
+            // that closed the dialog and navigated nowhere is why item 87
+            // exists.
+            generationId:
+              codingSessionCrewLeadDestination({
+                result,
+                providerAuthorityPubkey,
+              })?.generationId ?? null,
+          });
         } else if (result.ok) {
           setLaunchError(
             "The team launched, but into no channel this screen can name.",
@@ -209,9 +264,15 @@ export function NewCodingSessionCrewTab({
     goal,
     launch,
     onLaunched,
+    projectRef,
     provider,
+    providerAuthorityPubkey,
     seats,
     selectedTeam,
+    useWorktree,
+    workdir,
+    worktreeName,
+    worktreeSource,
   ]);
 
   return (
@@ -254,6 +315,13 @@ export function NewCodingSessionCrewTab({
               "in the directory below."}
         </p>
       </div>
+
+      <p
+        className="text-2xs text-muted-foreground"
+        data-testid="new-coding-session-crew-project"
+      >
+        {codingSessionCrewProjectNote(projectName)}
+      </p>
 
       {selectedTeam ? (
         <CodingSessionCrewRoster
@@ -324,10 +392,22 @@ export function NewCodingSessionCrewTab({
       <NewCodingSessionWorkdirField
         channelId={channelId}
         disabled={disabled || isLaunching}
-        fallbackPath={null}
+        fallbackPath={defaultWorkdir}
         onChange={setWorkdir}
-        projectKey={null}
+        projectKey={projectRef}
         value={workdir}
+      />
+
+      <NewCodingSessionWorktreeField
+        checked={useWorktree}
+        disabled={disabled || isLaunching}
+        name={worktreeName}
+        onCheckedChange={setUseWorktree}
+        onNameChange={setWorktreeName}
+        onSourceChange={setWorktreeSource}
+        sessionName={leadWorktreeSuggestion}
+        source={worktreeSource}
+        workdir={workdir}
       />
 
       {steps.length > 0 ? <CodingSessionCrewLaunchSteps steps={steps} /> : null}

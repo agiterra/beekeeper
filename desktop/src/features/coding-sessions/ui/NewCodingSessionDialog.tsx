@@ -547,17 +547,27 @@ export function NewCodingSessionForm({
         <div className="-mx-px flex max-h-[65vh] min-h-0 flex-col overflow-y-auto px-px">
           <NewCodingSessionCrewTab
             channelId={channelId}
+            defaultWorkdir={projectContext?.defaultWorkdir ?? null}
             disabled={transaction !== null}
             // A project's sessions channel is published by the first create
             // that needs one — a team launch is one of those creates, and it
             // mints it through the same helper the one-session path uses.
             ensureChannelId={projectContext?.ensureChannelId ?? null}
             model={effectiveModel}
-            // A crew launch mints one execution per seat and resolves no
-            // single generation to open, so it closes the dialog and leaves
-            // the seats to appear in the sidebar rather than guessing which
-            // one the person wanted to look at.
-            onLaunched={() => onDone()}
+            // D14 seats the lead alone, so there *is* one generation to open —
+            // the one its receipt minted. The launch used to close the dialog
+            // and navigate nowhere, which is how a session that had really
+            // been founded appeared nowhere the person was looking (item 87b).
+            onLaunched={({ channelId: launchedChannelId, generationId }) => {
+              onDone();
+              if (generationId) {
+                void goCodingSession(launchedChannelId, generationId, {
+                  replace: true,
+                });
+              }
+            }}
+            projectName={projectContext?.projectName ?? null}
+            projectRef={projectContext?.projectRef ?? null}
             providerAuthorityPubkey={selectedTarget?.signerPubkey ?? null}
             providerAllowedModels={selectedTarget?.provider.allowedModels ?? []}
             providerInstanceRef={

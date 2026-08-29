@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildCodingSessionTranscriptGenerationId } from "./codingSessionTranscriptPresentation.ts";
 import {
   CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
   CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
   CODING_SESSION_CREW_LAUNCH_GENESIS_STEP,
   CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
   CODING_SESSION_CREW_LAUNCH_TURN_STEP,
+  CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,
   codingSessionCrewLaunchSeatStepId,
+  codingSessionCrewLeadDestination,
+  codingSessionCrewProjectNote,
   launchCodingSessionCrew,
   leadSeat,
   planCodingSessionCrewLaunch,
@@ -490,4 +494,226 @@ test("the lead's first turn carries the goal and the roster it may hire from", a
   assert.match(deps.sentText, /You are seated. Nobody else is/);
   assert.match(deps.sentText, /- builder: Codey \(openai · gpt-5\.6-sol\)/);
   assert.match(deps.sentText, /bee sessions hire/);
+});
+
+/**
+ * Item 87(a), found live 2026-08-28 21:21: Brian launched a team from inside
+ * the Bee Keeper project and the lead's create carried `projectRef: None`, so
+ * the session was founded into a channel nobody was looking at and the
+ * project's session list — which groups by projectRef — never showed it.
+ */
+test("the lead's create carries the project it was launched from", async () => {
+  const deps = recordingDeps();
+  const created = [];
+  deps.publishSeatCreate = async ({ seat, index, projectRef, workdir }) => {
+    created.push({ role: seat.role, projectRef, workdir });
+    return { commandId: `cmd-${index}` };
+  };
+  const result = await launchCodingSessionCrew(
+    {
+      channelId: "chan-1",
+      goal: "Ship the front door.",
+      seats: [LEAD, BUILDER],
+      primaryPersonaId: LEAD.personaId,
+      projectRef: "34550:owner:beekeeper",
+      provider: PROVIDER,
+    },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(created, [
+    { role: "lead", projectRef: "34550:owner:beekeeper", workdir: null },
+  ]);
+});
+
+test("a launch with no project signs no project", async () => {
+  const deps = recordingDeps();
+  let seen;
+  deps.publishSeatCreate = async ({ projectRef }) => {
+    seen = projectRef;
+    return { commandId: "cmd-0" };
+  };
+  await launchCodingSessionCrew(
+    {
+      channelId: "chan-1",
+      goal: "Ship the front door.",
+      seats: [LEAD],
+      primaryPersonaId: LEAD.personaId,
+      provider: PROVIDER,
+    },
+    deps,
+  );
+  assert.equal(seen, null);
+});
+
+/** The sentence the tab shows instead of letting a launch land nowhere. */
+test("the project note names the project, or says there is none", () => {
+  assert.equal(
+    codingSessionCrewProjectNote("Bee Keeper"),
+    "Launching in Bee Keeper: the session belongs to that project and " +
+      "appears in its sessions.",
+  );
+  assert.match(
+    codingSessionCrewProjectNote(null),
+    /will not belong to a project/,
+  );
+  assert.match(codingSessionCrewProjectNote("   "), /will not belong/);
+});
+
+/**
+ * Item 87(d): the Team tab had no worktree toggle, so the lead ran in the
+ * checkout the tab named — the operator's own hot checkout — while every seat
+ * it went on to hire got a worktree of its own.
+ */
+test("the lead's create runs in the worktree the launch cut for it", async () => {
+  const deps = recordingDeps();
+  const cut = [];
+  deps.createLeadWorktree = async (request) => {
+    cut.push(request);
+    return { path: "/Users/b/Projects/bk/bk-ui-lead" };
+  };
+  let workdir;
+  deps.publishSeatCreate = async (input) => {
+    workdir = input.workdir;
+    return { commandId: "cmd-0" };
+  };
+  const result = await launchCodingSessionCrew(
+    {
+      channelId: "chan-1",
+      goal: "Ship the front door.",
+      seats: [LEAD],
+      primaryPersonaId: LEAD.personaId,
+      provider: PROVIDER,
+      workdir: "/Users/b/Projects/bk/bk",
+      leadWorktree: { name: "ui-lead", source: "main" },
+    },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(cut, [
+    { workdir: "/Users/b/Projects/bk/bk", name: "ui-lead", source: "main" },
+  ]);
+  assert.equal(workdir, "/Users/b/Projects/bk/bk-ui-lead");
+  assert.equal(result.leadWorkdir, "/Users/b/Projects/bk/bk-ui-lead");
+  // The step is planned and walked, not done invisibly.
+  assert.equal(
+    result.steps.find(
+      (step) => step.id === CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,
+    )?.state,
+    "done",
+  );
+});
+
+test("without the toggle the lead runs in the checkout, and no worktree step is shown", async () => {
+  const deps = recordingDeps();
+  deps.createLeadWorktree = async () => {
+    throw new Error("nothing asked for a worktree");
+  };
+  let workdir;
+  deps.publishSeatCreate = async (input) => {
+    workdir = input.workdir;
+    return { commandId: "cmd-0" };
+  };
+  const result = await launchCodingSessionCrew(
+    {
+      channelId: "chan-1",
+      goal: "Ship the front door.",
+      seats: [LEAD],
+      primaryPersonaId: LEAD.personaId,
+      provider: PROVIDER,
+      workdir: "/Users/b/Projects/bk/bk",
+      leadWorktree: null,
+    },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(workdir, "/Users/b/Projects/bk/bk");
+  assert.equal(
+    result.steps.some(
+      (step) => step.id === CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,
+    ),
+    false,
+  );
+});
+
+test("a worktree that cannot be cut stops the launch before anything is signed", async () => {
+  const deps = recordingDeps();
+  deps.createLeadWorktree = async () => {
+    throw new Error("fatal: 'ui-lead' is already checked out");
+  };
+  const result = await launchCodingSessionCrew(
+    {
+      channelId: "chan-1",
+      goal: "Ship the front door.",
+      seats: [LEAD],
+      primaryPersonaId: LEAD.personaId,
+      provider: PROVIDER,
+      workdir: "/Users/b/Projects/bk/bk",
+      leadWorktree: { name: "ui-lead", source: null },
+    },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP);
+  assert.match(result.failureReason, /already checked out/);
+  assert.deepEqual(deps.log, []);
+});
+
+/**
+ * Item 87(b): the launch closed the dialog and navigated nowhere, so a
+ * session that really had been founded appeared nowhere the person looked.
+ */
+test("a successful launch resolves the lead's generation to open", () => {
+  const leadTarget = target("sess-lead");
+  const destination = codingSessionCrewLeadDestination({
+    result: {
+      ok: true,
+      channelId: "chan-1",
+      seats: [{ seat: LEAD, target: leadTarget }],
+      hireableSeats: [],
+    },
+    providerAuthorityPubkey: "f".repeat(64),
+  });
+  assert.deepEqual(destination, {
+    channelId: "chan-1",
+    generationId: buildCodingSessionTranscriptGenerationId(
+      "chan-1",
+      "f".repeat(64),
+      leadTarget,
+    ),
+  });
+});
+
+test("a failed launch, or one with no provider named, opens nothing", () => {
+  assert.equal(
+    codingSessionCrewLeadDestination({
+      result: {
+        ok: false,
+        channelId: "chan-1",
+        seats: [{ seat: LEAD, target: target("s") }],
+        hireableSeats: [],
+      },
+      providerAuthorityPubkey: "f".repeat(64),
+    }),
+    null,
+  );
+  assert.equal(
+    codingSessionCrewLeadDestination({
+      result: {
+        ok: true,
+        channelId: "chan-1",
+        seats: [{ seat: LEAD, target: target("s") }],
+        hireableSeats: [],
+      },
+      providerAuthorityPubkey: null,
+    }),
+    null,
+  );
+  assert.equal(
+    codingSessionCrewLeadDestination({
+      result: { ok: true, channelId: "chan-1", seats: [], hireableSeats: [] },
+      providerAuthorityPubkey: "f".repeat(64),
+    }),
+    null,
+  );
 });

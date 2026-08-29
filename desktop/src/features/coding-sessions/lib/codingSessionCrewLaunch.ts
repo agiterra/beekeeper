@@ -35,6 +35,7 @@
  * this function rather than of the hook that calls it.
  */
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
+import { buildCodingSessionTranscriptGenerationId } from "./codingSessionTranscriptPresentation";
 import {
   checkCodingSessionCrewFamilies,
   checkCodingSessionCrewSeatModels,
@@ -95,6 +96,15 @@ export type CodingSessionCrewLaunchResult = {
    * hold their roles' craft.
    */
   seatsWithoutRolePack: string[];
+  /**
+   * The directory the lead's create was staged against on this computer.
+   *
+   * The worktree this launch made when it was asked for one, else the
+   * checkout it was given, else null. Host-local — it is never on the wire —
+   * but it is what a screen has to name to be honest about where the lead is
+   * actually working.
+   */
+  leadWorkdir: string | null;
   /** The step that stopped the launch, by id. Null on success. */
   failedStep: string | null;
   failureReason: string | null;
@@ -123,6 +133,19 @@ export type CodingSessionCrewLaunchDeps = {
    * receipt will carry — never with a target, because a published create is
    * not yet an execution.
    */
+  /**
+   * Create the lead's own git worktree, host-locally, before anything is
+   * signed. Resolves with the directory it actually landed in — which may
+   * carry a disambiguating suffix the form never showed.
+   *
+   * Absent from a caller that cannot make worktrees; asking for one anyway is
+   * then a named refusal rather than a silent fall back into the checkout.
+   */
+  createLeadWorktree?: (input: {
+    workdir: string;
+    name: string;
+    source: string | null;
+  }) => Promise<{ path: string }>;
   publishSeatCreate: (input: {
     seat: ResolvedCodingSessionCrewSeat;
     index: number;
@@ -130,6 +153,19 @@ export type CodingSessionCrewLaunchDeps = {
     channelId: string;
     sessionRef: string;
     genesisRef: string;
+    /**
+     * The project coordinate this session belongs to, signed into the create.
+     *
+     * Null is a real answer — a launch with no project — and it is the answer
+     * a screen has to disclose rather than let the session land nowhere the
+     * person was looking (item 87).
+     */
+    projectRef: string | null;
+    /**
+     * Where the lead runs on this computer: the worktree this launch created,
+     * else the checkout it was given, else null. Never published.
+     */
+    workdir: string | null;
   }) => Promise<{
     commandId: string;
     /**
@@ -175,6 +211,28 @@ export type CodingSessionCrewLaunchInput = {
   /** Persona id of the seat that receives the first turn. */
   primaryPersonaId: string;
   /**
+   * The project this session belongs to, or null when it belongs to none.
+   *
+   * Signed into the lead's create exactly as the one-session path signs it, so
+   * a team launched from inside a project lands in that project's session list
+   * instead of in a channel nobody was looking at (item 87).
+   */
+  projectRef?: string | null;
+  /**
+   * The checkout the lead is launched against on this computer, or null when
+   * the person named none. Host-local; never on the wire.
+   */
+  workdir?: string | null;
+  /**
+   * Give the lead a worktree of its own, cut from `workdir` before the create
+   * is signed.
+   *
+   * Null runs the lead directly in `workdir` — which is what shipped, and what
+   * put a lead in the operator's own hot checkout while every seat it hired
+   * got a worktree (item 87d).
+   */
+  leadWorktree?: { name: string; source: string | null } | null;
+  /**
    * The one provider runtime every seat will be created against.
    *
    * Required, and required to be non-empty: the vendor rule is decided on a
@@ -192,6 +250,7 @@ export type CodingSessionCrewLaunchInput = {
 };
 
 /** Step ids, so a caller can talk about a failure without matching prose. */
+export const CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP = "lead-worktree";
 export const CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP = "channel";
 export const CODING_SESSION_CREW_LAUNCH_GENESIS_STEP = "genesis";
 export const CODING_SESSION_CREW_LAUNCH_GRANT_STEP = "grant-operator";
@@ -219,6 +278,16 @@ export function planCodingSessionCrewLaunch(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
       "Check the team's model families",
     ),
+    // Host-local and before anything is signed, so a worktree that cannot be
+    // cut costs the launch nothing but a named refusal.
+    ...(leadWorktreeRequest(input)
+      ? [
+          step(
+            CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,
+            `Create the ${lead?.role ?? "lead"} seat's worktree`,
+          ),
+        ]
+      : []),
     // Only when there is nothing to launch into yet: a channel that already
     // exists is not a step anybody walks.
     ...(input.channelId === null
@@ -249,6 +318,40 @@ export function planCodingSessionCrewLaunch(
       "Send the goal and the team it may hire",
     ),
   ];
+}
+
+/**
+ * The worktree this launch will cut for the lead, or null when it will not.
+ *
+ * One place, so the step list and the launch cannot disagree about whether a
+ * worktree is part of the sequence — a plan that promises one and a launch
+ * that quietly skips it is the same class of lie as the roster that listed
+ * four seats and created one.
+ */
+export function leadWorktreeRequest(
+  input: Pick<CodingSessionCrewLaunchInput, "leadWorktree" | "workdir">,
+): { workdir: string; name: string; source: string | null } | null {
+  const workdir = input.workdir?.trim() ?? "";
+  const name = input.leadWorktree?.name.trim() ?? "";
+  if (workdir.length === 0 || name.length === 0) return null;
+  return { workdir, name, source: input.leadWorktree?.source ?? null };
+}
+
+/**
+ * What the tab says about where this session will live, before it is launched.
+ *
+ * A team launched from inside a project used to sign `projectRef: null` and
+ * then close the dialog, so the session existed and the person could not find
+ * it (item 87). Naming the project — or saying plainly that there is none — is
+ * the difference between a destination and a guess.
+ */
+export function codingSessionCrewProjectNote(
+  projectName: string | null,
+): string {
+  const name = projectName?.trim() ?? "";
+  return name.length > 0
+    ? `Launching in ${name}: the session belongs to that project and appears in its sessions.`
+    : "This session will not belong to a project — it lives in the channel above, not in a project's sessions.";
 }
 
 /**
@@ -287,6 +390,40 @@ export function partitionCodingSessionCrewLaunchSeats(
     hireable: lead
       ? seats.filter((seat) => seat.personaId !== lead.personaId)
       : [...seats],
+  };
+}
+
+/**
+ * The session the person should be looking at after a successful launch.
+ *
+ * The one-session path navigates on its create's receipt; a team launch closed
+ * the dialog and navigated nowhere, so a session that really had been founded
+ * appeared nowhere the person had been looking (item 87b). The lead's receipt
+ * carries the exact target, and the generation id is a pure function of
+ * (channel, provider authority, target) — the same one the catalog mints — so
+ * this needs no catalog round-trip and cannot open a different session.
+ *
+ * Null when there is nothing honest to open: a failed launch, a launch with no
+ * settled channel, or a provider authority the caller could not name.
+ */
+export function codingSessionCrewLeadDestination(input: {
+  result: Pick<
+    CodingSessionCrewLaunchResult,
+    "ok" | "channelId" | "seats" | "hireableSeats"
+  >;
+  providerAuthorityPubkey: string | null;
+}): { channelId: string; generationId: string } | null {
+  const { result, providerAuthorityPubkey } = input;
+  if (!result.ok || !result.channelId || !providerAuthorityPubkey) return null;
+  const lead = result.seats[0];
+  if (!lead) return null;
+  return {
+    channelId: result.channelId,
+    generationId: buildCodingSessionTranscriptGenerationId(
+      result.channelId,
+      providerAuthorityPubkey,
+      lead.target,
+    ),
   };
 }
 
@@ -354,6 +491,9 @@ export async function launchCodingSessionCrew(
   // goes here, so a project that had no channel gets one and then gets its
   // whole team in it.
   let channelId: string | null = input.channelId;
+  // Where the lead will actually run. Starts as the checkout the person named
+  // and is replaced by the worktree step when one is asked for.
+  let leadWorkdir: string | null = input.workdir?.trim() || null;
   const fail = (
     id: string,
     reason: string,
@@ -369,6 +509,7 @@ export async function launchCodingSessionCrew(
       seats: seated,
       hireableSeats: [...hireable],
       seatsWithoutRolePack,
+      leadWorkdir,
       failedStep: id,
       failureReason: reason,
       steps: steps.map((entry) => ({ ...entry })),
@@ -432,6 +573,34 @@ export async function launchCodingSessionCrew(
   }
   mark(CODING_SESSION_CREW_LAUNCH_FAMILY_STEP, "done");
 
+  // The lead's own tree, cut before anything is signed. The create's workdir
+  // *is* this path, so making it afterwards would publish a create pointing at
+  // a directory that does not exist yet — the same order the one-session path
+  // uses.
+  const worktree = leadWorktreeRequest(input);
+  if (worktree) {
+    mark(CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP, "running");
+    if (!deps.createLeadWorktree) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,
+        "This launch asked for a worktree for the lead, and nothing here can create one.",
+        null,
+        null,
+      );
+    }
+    try {
+      leadWorkdir = (await deps.createLeadWorktree(worktree)).path;
+    } catch (error) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP,
+        describe(error, "The lead's worktree could not be created."),
+        null,
+        null,
+      );
+    }
+    mark(CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP, "done", leadWorkdir);
+  }
+
   if (channelId === null) {
     mark(CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP, "running");
     if (!deps.ensureChannel) {
@@ -486,6 +655,8 @@ export async function launchCodingSessionCrew(
         channelId: launchChannelId,
         sessionRef,
         genesisRef,
+        projectRef: input.projectRef ?? null,
+        workdir: leadWorkdir,
       });
       if (packStaged === false) seatsWithoutRolePack.push(seat.actorLabel);
       // The gate. The next seat's create is not signed until this receipt
@@ -579,6 +750,7 @@ export async function launchCodingSessionCrew(
     seats: seated,
     hireableSeats: hireable,
     seatsWithoutRolePack,
+    leadWorkdir,
     failedStep: null,
     failureReason: null,
     steps: steps.map((entry) => ({ ...entry })),

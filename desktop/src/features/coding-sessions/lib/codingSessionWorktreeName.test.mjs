@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MAX_CODING_SESSION_WORKTREE_SLUG_LENGTH,
+  codingSessionLeadWorktreeName,
   codingSessionWorktreeSlug,
 } from "./codingSessionWorktreeName.ts";
 
@@ -52,4 +53,22 @@ test("a slug never starts with a hyphen", () => {
   for (const name of ["--force", "-b other", " - dash"]) {
     assert.ok(!codingSessionWorktreeSlug(name).startsWith("-"));
   }
+});
+
+/**
+ * Item 87(d): the Team tab ran the lead in the checkout it named — the
+ * operator's own — while the seats it hired got worktrees. The lead's tree is
+ * named for the session and the seat, so a directory listing says which is
+ * which.
+ */
+test("the lead's worktree is named for the session and the seat", () => {
+  assert.equal(codingSessionLeadWorktreeName("UI"), "ui-lead");
+  assert.equal(
+    codingSessionLeadWorktreeName("Front door integration"),
+    "front-door-integration-lead",
+  );
+  // Nothing addressable survives, so nothing is suggested — `-lead` alone
+  // would name a directory after no session at all.
+  assert.equal(codingSessionLeadWorktreeName("   "), "");
+  assert.equal(codingSessionLeadWorktreeName("…"), "");
 });

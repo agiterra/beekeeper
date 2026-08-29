@@ -41,3 +41,20 @@ export function codingSessionWorktreeSlug(name: string): string {
 function trimHyphens(value: string): string {
   return value.replace(/^-+/, "").replace(/-+$/, "");
 }
+
+/**
+ * The worktree name a team launch suggests for its lead.
+ *
+ * Suffixed with the seat it belongs to, because a team's directories sit side
+ * by side: the lead's tree next to the ones the seats it hires get. Without
+ * the suffix the lead's tree and the session's own name are the same string,
+ * and the person reading `~/Projects` cannot tell which directory holds whom.
+ *
+ * Returns `""` when the session name reduces to nothing addressable — the same
+ * "no fallback slug" rule as {@link codingSessionWorktreeSlug}, because
+ * `-lead` alone names nothing.
+ */
+export function codingSessionLeadWorktreeName(sessionName: string): string {
+  const slug = codingSessionWorktreeSlug(sessionName);
+  return slug.length === 0 ? "" : `${slug}-lead`;
+}

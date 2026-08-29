@@ -2,7 +2,11 @@ import * as React from "react";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
-import { stageCodingSessionCreateHint } from "@/shared/api/tauriCodingSessionWorkdirs";
+import {
+  recordCodingSessionWorkdirUse,
+  stageCodingSessionCreateHint,
+} from "@/shared/api/tauriCodingSessionWorkdirs";
+import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
   clearCodingSessionActorSeat,
@@ -21,6 +25,7 @@ import {
   type CodingSessionCrewLaunchStep,
 } from "../lib/codingSessionCrewLaunch";
 import { publishCodingSessionGenesis } from "../lib/codingSessionGenesis";
+import { recordPendingCodingSessionLifecycle } from "../lib/codingSessionPendingLifecycle";
 import {
   buildCodingSessionCreateEvent,
   createCodingSessionLifecycleCommandId,
@@ -59,7 +64,13 @@ export function useCodingSessionCrewLaunch(input: {
    * the same channel and record the same project fact.
    */
   ensureChannelId?: (() => Promise<string>) | null;
-  /** Working directory every seat runs in, host-local and never on the wire. */
+  /**
+   * The checkout the launch was pointed at, host-local and never on the wire.
+   *
+   * Only a fallback now: the directory the lead actually runs in is decided by
+   * the launch itself (it may cut a worktree first) and arrives on each
+   * `publishSeatCreate`.
+   */
   workdir: string | null;
   title: string | null;
 }) {
@@ -91,6 +102,7 @@ export function useCodingSessionCrewLaunch(input: {
         const providerAuthorityPubkey = current.providerAuthorityPubkey;
         const launched = await launchCodingSessionCrew(launchInput, {
           ensureChannel: current.ensureChannelId ?? undefined,
+          createLeadWorktree: createCodingSessionWorktree,
           newSessionRef: createCodingSessionSessionRef,
           publishGenesis: async ({ channelId, sessionRef }) => {
             // Strict membership on 442xx: a provider that joins after the
@@ -109,17 +121,28 @@ export function useCodingSessionCrewLaunch(input: {
             channelId,
             sessionRef,
             genesisRef,
+            projectRef,
+            workdir,
           }) => {
             const commandId = createCodingSessionLifecycleCommandId();
             // What the staging call found on this computer, kept so the step
             // list can say a seat carries no role skills instead of implying
             // it does.
             let packStaged = false;
-            if (current.workdir) {
+            // The directory the launch settled on — the lead's worktree when
+            // it cut one — not the checkout the form still holds.
+            const seatWorkdir = workdir ?? current.workdir;
+            if (seatWorkdir) {
               await stageCodingSessionCreateHint({
                 commandId,
-                path: current.workdir,
+                path: seatWorkdir,
               });
+              // What a person returns to is the checkout, never the worktree
+              // that was made from it — otherwise the next session prefills a
+              // worktree and then cuts a worktree of a worktree.
+              await recordCodingSessionWorkdirUse(
+                current.workdir ?? seatWorkdir,
+              );
             }
             await publishSeatedCodingSessionCreate({
               channelId,
@@ -140,7 +163,10 @@ export function useCodingSessionCrewLaunch(input: {
                   buildCodingSessionCreateEvent({
                     channelId,
                     commandId,
-                    projectRef: null,
+                    // The session's placement authority for the rest of its
+                    // life. A team launched from inside a project used to sign
+                    // null here and land where nobody was looking (item 87a).
+                    projectRef,
                     repoRef: null,
                     sessionRef,
                     genesisRef,
@@ -164,6 +190,21 @@ export function useCodingSessionCrewLaunch(input: {
                   "Timed out while seating the team.",
                   "Failed to seat the team.",
                 );
+                // The relay holds the signed create; file the row now rather
+                // than waiting for the provider's 44223 facts, exactly as the
+                // one-session path does — this is what puts the session in the
+                // project's list the moment it exists.
+                recordPendingCodingSessionLifecycle({
+                  kind: "create",
+                  channelId,
+                  commandId,
+                  sessionRef,
+                  title: index === 0 ? current.title : null,
+                  projectRef,
+                  providerAuthorityPubkey,
+                  hasInitialTurn: false,
+                  recordedAt: Date.now(),
+                });
               },
             });
             return { commandId, packStaged };
