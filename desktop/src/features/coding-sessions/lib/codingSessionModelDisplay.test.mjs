@@ -28,9 +28,21 @@ test("a model nobody here has heard of still gets a readable name", () => {
   assert.equal(codingSessionModelDisplayName("x"), "X");
 });
 
+// One fact, one sentence. `useNewCodingSessionCreate.ts` discloses the same
+// state as "Runtime default (not named on the record)"
+// (`CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL`, pinned by
+// `useNewCodingSessionCreate.test.mjs`), and the model picker's row and closed
+// trigger read from here — so "Adapter default" made the One-session dialog
+// say two different things about the same unnamed model.
 test("the adapter's alias says what it is rather than posing as a model", () => {
-  assert.equal(codingSessionModelDisplayName("default"), "Adapter default");
-  assert.equal(codingSessionModelDisplayName(""), "Adapter default");
+  assert.equal(
+    codingSessionModelDisplayName("default"),
+    "Runtime default (not named on the record)",
+  );
+  assert.equal(
+    codingSessionModelDisplayName(""),
+    "Runtime default (not named on the record)",
+  );
 });
 
 test("traits summarise the way people write them, or not at all", () => {

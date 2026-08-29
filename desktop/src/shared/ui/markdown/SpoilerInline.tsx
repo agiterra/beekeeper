@@ -11,6 +11,26 @@ import { SpoilerParticles } from "../SpoilerParticles";
  */
 export const SpoilerHiddenContext = React.createContext(false);
 
+/** Controls inside revealed content that own their own clicks. */
+const INTERACTIVE_CHILD_SELECTOR =
+  'a[href], area[href], audio, button, details, input, label, select, summary, textarea, video, [role="button"], [role="link"], [role="checkbox"], [role="menuitem"]';
+
+/**
+ * True when a click inside a revealed spoiler landed on a control of its own.
+ *
+ * The spoiler itself carries `role="button"`, so the closest match is compared
+ * against `currentTarget`: a click on the mask is the mask's, a click on a link
+ * it was hiding is the link's.
+ */
+function clickLandedOnInteractiveChild(
+  event: React.MouseEvent<HTMLElement>,
+): boolean {
+  const { target } = event;
+  if (!(target instanceof Element)) return false;
+  const control = target.closest(INTERACTIVE_CHILD_SELECTOR);
+  return control !== null && control !== event.currentTarget;
+}
+
 export function SpoilerInline({
   block = false,
   children,
@@ -52,7 +72,17 @@ export function SpoilerInline({
 
   const handleClick = React.useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
-      if (revealed && isBlock && event.target !== event.currentTarget) return;
+      // The capture handler owns every click made while the spoiler is hidden,
+      // including the one that reveals it, and it stops propagation so this
+      // never runs for the same click. Bailing on the state rather than
+      // trusting that is what makes a reveal exactly one toggle: if both
+      // handlers ever saw one click, the second would undo the first and the
+      // spoiler would snap back to hidden.
+      if (!revealed) return;
+      if (isBlock && event.target !== event.currentTarget) return;
+      // Revealed content is ordinary content: a click on a link or button
+      // inside it belongs to that control, not to the mask.
+      if (clickLandedOnInteractiveChild(event)) return;
       toggleRevealed();
     },
     [isBlock, revealed, toggleRevealed],

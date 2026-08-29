@@ -17,7 +17,11 @@ import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
 import { resolveAgentParallelism } from "@/features/agents/lib/agentParallelism";
 import type { ConnectionState } from "@/shared/api/relayClientShared";
-import type { ChannelTemplate, RelayEvent } from "@/shared/api/types";
+import type {
+  ChannelTemplate,
+  GlobalAgentConfig,
+  RelayEvent,
+} from "@/shared/api/types";
 import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
 import { syncAgentTurnsFromEvents } from "@/features/agents/activeAgentTurnsStore";
 import { recordTimeoutFromRejection } from "@/features/moderation/lib/timeoutStore";
@@ -8061,6 +8065,24 @@ let mockGlobalAgentConfig: {
   preferred_runtime?: string | null;
 } | null = null;
 
+/**
+ * What `get_global_agent_config` answers when a test seeds no config.
+ *
+ * Exported so it can be checked against the readers in `desktop/src` rather
+ * than only against whatever a test happens to look at.
+ */
+export const MOCK_GLOBAL_AGENT_CONFIG_FALLBACK: GlobalAgentConfig = {
+  env_vars: {},
+  provider: null,
+  model: null,
+  preferred_runtime: null,
+  // Required by `GlobalAgentConfig`, and the Rust command always emits it.
+  // Omitting it here made the fallback a shape the product cannot read:
+  // `trustRowsFromEntries` mapped over `undefined` and the error boundary ate
+  // Settings > Agents.
+  "allowed-bridge-pubkeys": [],
+};
+
 // Per-page get_nsec call counter for sequenced error testing.
 let nsecCallCount = 0;
 let backupVerificationCallCount = 0;
@@ -13345,14 +13367,7 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "get_global_agent_config": {
         // Return the mutable persisted mock value, seeded from the test config.
-        return (
-          mockGlobalAgentConfig ?? {
-            env_vars: {},
-            provider: null,
-            model: null,
-            preferred_runtime: null,
-          }
-        );
+        return mockGlobalAgentConfig ?? MOCK_GLOBAL_AGENT_CONFIG_FALLBACK;
       }
       case "get_global_agent_config_set_call_count":
         return setGlobalAgentConfigCallCount;

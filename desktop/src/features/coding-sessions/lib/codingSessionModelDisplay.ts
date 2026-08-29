@@ -44,15 +44,29 @@ function titleToken(token: string): string {
 }
 
 /**
+ * What a control calls a model the record does not name.
+ *
+ * Kept identical to `CODING_SESSION_CREATE_UNNAMED_MODEL_LABEL`
+ * (`../ui/useNewCodingSessionCreate`), which discloses the same state on the
+ * create path. Not imported from there: this is a `lib` module and that is a
+ * `ui` hook module, so the string is duplicated deliberately and both copies
+ * are pinned by tests.
+ */
+const UNNAMED_MODEL_LABEL = "Runtime default (not named on the record)";
+
+/**
  * The name shown as the row's title.
  *
  * `default` is the adapter's "you choose" alias rather than a model, and
  * saying so is the whole point — it used to sit in the list looking like a
- * peer of Sonnet.
+ * peer of Sonnet. It says it the same way the create path does: "Adapter
+ * default" and "Runtime default (not named on the record)" were two voices for
+ * one fact in the same One-session dialog.
  */
 export function codingSessionModelDisplayName(model: string): string {
-  if (model === "") return "Adapter default";
-  if (model === CODING_SESSION_ADAPTER_DEFAULT_MODEL) return "Adapter default";
+  if (model === "") return UNNAMED_MODEL_LABEL;
+  if (model === CODING_SESSION_ADAPTER_DEFAULT_MODEL)
+    return UNNAMED_MODEL_LABEL;
   const { model: base } = splitCodingSessionModelId(model);
   const tokens = base.split(/[-_\s]+/).filter(Boolean);
   if (tokens.length === 0) return base;
