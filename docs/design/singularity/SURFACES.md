@@ -93,7 +93,7 @@ the unknown copy, never a number.**
 
 | # | Fact | Signed source | Copy when it has not arrived |
 |---|---|---|---|
-| W1 | Liveness | **Signed 44223 `status`, demoted by the ephemeral lease — never the transcript.** The transcript open-turn test may only *narrow* a live seat to "working right now"; it may never promote (§15(b), lane 0) | `live` · `idle` · `released` · **`No provider answering`** + `last reported Idle 2h ago` |
+| W1 | Liveness | **Signed 44223 `status`, demoted by the ephemeral lease — never the transcript.** The transcript open-turn test may only *narrow* a live seat to "working right now"; it may never promote (§15(b), lane 0) | Five words: `live` · **`waiting for you`** / **`waiting for an operator`** · `idle` · `released` · **`No provider answering`** + `last reported Idle 2h ago`. See §2a |
 | W2 | Turn stages | 44224 `turn_queued`/`turn_started`/`turn_degraded`/`turn_dropped`/`turn_refused`/`interrupt_delivered` | `no receipt yet` |
 | W3 | Dispositions | 44240 Pulse, `pu-type` ∈ `plan`\|`milestone`\|`note`\|`handoff`\|`blocker`, chained by `supersedes` | `no pulse yet` — rendered as a claim **by its author**, never as a verdict |
 | W4 | Authority | 44228 `grant-operator` + roster fold | `View only — ask the session owner for collaborator access` |
@@ -121,6 +121,58 @@ in this spec fakes it from transcript length. See §15(a).
 Three rules the lanes inherit: absence ≠ zero; one row = one voice (two panels
 showing W1 use the same word); a claim (W3, W10, W16) is rendered with its
 author's name attached, an observation (W1, W2, W7, W12) is not.
+
+## 2a. W1's five words
+
+*(Added 2026-08-29, lane D3. `waiting_for_input` is a signed 44223 status that
+`codingSessionWorkspaceModel.ts` never maps — it falls through to
+`{kind:"idle"}` at `:208`, so a seat blocked on a person reads `idle`. The rail
+footer is the only surface that shows it today, from a second read of the raw
+status, and folding that footer onto W1 would have deleted it. The wire already
+treats it as its own tier in `deriveUmbrellaStatus`
+(`codingSessionUmbrellaModel.ts:497`), so the seat-level vocabulary is the odd
+one out; this removes an inconsistency rather than adding one.)*
+
+| kind | signed source | word |
+|---|---|---|
+| `working` | `running` / `starting` | `live` |
+| **`waiting`** | **`waiting_for_input`** | **`waiting for you`** / **`waiting for an operator`** |
+| `idle` | `idle`, `completed`, anything unmapped | `idle` |
+| `ended` | `stopped` | `released` |
+| `unknown` | unreachable, `disconnected`, `failed`, absent | `No provider answering` / `Disconnected` / `Needs attention` / `Status unknown` |
+
+**Precedence — reachability outranks stage.** An unreachable seat whose signed
+status is `waiting_for_input` reads `No provider answering`, never a waiting
+word. `demoteUnreachable` must demote `waiting` exactly as it demotes `working`
+(`codingSessionWorkspaceModel.ts:241-265`, which returns early only for `ended`
+and `unknown`). Telling an operator that a dead seat is waiting on them invites
+them to type into something nobody will read — a worse lie than the collapse
+this word fixes.
+
+**The transcript heuristic can never produce the waiting word.** It narrows
+`live` to "working right now" and does nothing else. Unchanged from §15(b).
+
+**The umbrella fold is untouched.** `deriveUmbrellaStatus` keeps its tier order
+(running outranks waiting, `:497`), so a team with one seat running and one
+waiting reads `Running`. A3 shows a waiting word only when the fold itself
+returns `waiting_for_input`.
+
+**Why two strings, and where the choice is made.** The word has to name who is
+waited on — that is the actionable half, and it is the only thing that makes
+this state worth a word rather than a shade of `idle`. But `waiting for you` is
+false for a reader who cannot answer: **W4** gates prompting, and a view-only
+observer told "waiting for you" will try, and be refused by the composer's own
+`View only — ask the session owner for collaborator access` (**F2**). So:
+
+- viewer holds authority (`canPromptExecutions`) → `waiting for you`
+- viewer does not → `waiting for an operator`
+
+The choice is made **once**, in the shared word mapper
+(`codingSessionDispositionWord`, `codingSessionUmbrellaModel.ts:589-601`, which
+gains the viewer's steer flag), not at each render site. Lane 0's status
+function stays viewer-independent and returns the `kind`; only the string
+depends on authority. One function, one place, two strings — the one-voice rule
+holds.
 
 ---
 
@@ -155,9 +207,14 @@ line + "Changes 12" + "…"`.
   renders the aggregate `2 agents · 1 working` — **seen**, `01`
 - reads: **W1**, folded across executions by `deriveUmbrellaStatus`
   (`codingSessionUmbrellaModel.ts:486`), **demoted per execution first**
-- copy: `Running` · `Idle` · `Ended` · `Needs attention` ·
-  `No provider answering`. Detail clause preserved verbatim:
-  `last reported Idle 2h ago` (`codingSessionWorkspaceStatusDetail`)
+- copy: `Running` · **`Waiting for you`** / **`Waiting for an operator`** ·
+  `Idle` · `Ended` · `Needs attention` · `No provider answering`. Detail clause
+  preserved verbatim: `last reported Idle 2h ago`
+  (`codingSessionWorkspaceStatusDetail`). The waiting label appears only when
+  the umbrella fold itself returns `waiting_for_input` — running outranks
+  waiting in `deriveUmbrellaStatus` (`codingSessionUmbrellaModel.ts:497`) and
+  that tier order is not touched, so one seat running beside one waiting still
+  reads `Running` (§2a)
 - walk: `coding-session-reachability` spec, test 1 — **seen**: badge reads
   `No provider answering · last reported Idle 2h ago`. Then the umbrella case:
   seed two executions, expire both leases, assert the chip does **not** read
@@ -222,7 +279,8 @@ participant status bar → [● Running] [K Keystone · Lead] [B Builder · Work
     `agentRef` is null → `Codex · gpt-5.6-sol` (runtime · model, today's
     behaviour, **seen**); when seated but the kind-0 profile has not been read →
     the role and runtime, **never a pubkey**
-  - line 2, one of: `live` · `idle` · `released` · `No provider answering` ·
+  - line 2, one of: `live` · `waiting for you` / `waiting for an operator`
+    (§2a) · `idle` · `released` · `No provider answering` ·
     `Needs attention` · `Disconnected`
   - line 3, only while `live` and only when a plan snapshot exists: the
     in-progress task text, quoted from the seat, ≤ 48 chars, e.g.
@@ -508,7 +566,10 @@ and close behaviour untouched.
   answering` (walk finding 1). See §15(b). The lane deletes `executionStatus`
   (`CodingSessionExecutionRail.tsx:398`) and calls lane 0's single W1 function;
   the footer's `All idle` (`:316`) goes with it, replaced by
-  `1 working · 1 idle` computed from that same function
+  `1 working · 1 waiting for you · 1 idle` computed from that same function —
+  **including the waiting count**, which today is a second read of the raw
+  status (`:310-311`) and is the reason W1 has a fifth word (§2a). Both footer
+  clauses come from one model or the footer is two voices in one row
 
 > **The red-first test must name which word wins**, or it passes with both
 > panels agreeing on the wrong one. **Three voices, not two** — the rail row,
@@ -525,6 +586,14 @@ and close behaviour untouched.
 >   **`No provider answering`**, and the footer does **not** count it into
 >   `N working`. Not `Working` (today's rail) and not `1 working` under a strip
 >   saying `no provider answering` (walk finding 1's exact frame).
+>
+> - signed `waiting_for_input`, lease fresh → all three read the waiting word
+>   (§2a), and the footer counts it as waiting rather than folding it into
+>   `idle`. This is the case the old footer got right by accident, from a second
+>   read of the raw status, and the one a naive W1 fold would delete.
+> - signed `waiting_for_input`, lease aged out → all three read
+>   **`No provider answering`**. Reachability outranks stage; a dead seat is
+>   never reported as waiting on a person.
 >
 > Stated once, as the lane should read it: **an execution whose signed status is
 > resting and whose newest transcript item is not a turn terminator must not
@@ -1052,10 +1121,22 @@ desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.ts
 desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.test.mjs
 ```
 
+**One move, so no file is shared.** `codingSessionDispositionWord` lives in
+`codingSessionUmbrellaModel.ts` today (`:589-601`), which lane 1 owns — and the
+fifth word is a change to that mapper. Rather than give lane 0 a function inside
+lane 1's file, **lane 0 moves the mapper into
+`codingSessionWorkspaceModel.ts`** and re-exports it, in the same commit as the
+word. It belongs there anyway: the mapper *is* W1's vocabulary and W1's source
+now lives in that file. After the move lane 0 owns two whole files and lane 1
+owns `codingSessionUmbrellaModel.ts` whole. Partial-file ownership is the one
+thing the lane rule cannot express, so it is worth a three-line move to avoid.
+
 **Delivers:** the single W1 function per §15(b)'s locked ruling — signed 44223
 demoted by the lease; the transcript open-turn test narrows a live seat and
-never promotes a non-live one. It changes no component and no copy; both UI
-lanes call it unchanged.
+never promotes a non-live one — **plus W1's fifth word** (§2a): a `waiting` kind
+mapped from `waiting_for_input`, demoted by the lease like `working`, and the
+two-string mapper that names who is waited on. It changes no component; lanes 1
+and 2 only wire it.
 
 **Red first:**
 - `a completed execution with an unterminated transcript is idle, not working` —
@@ -1066,9 +1147,19 @@ lanes call it unchanged.
   its one legitimate job
 - `an unknown-reachability live seat is not demoted` — `{known:false}` is not
   evidence of absence (`:248-252`)
+- **`a waiting_for_input seat reads the waiting word, not idle`** — today it
+  falls through to `{kind:"idle"}` at `:208`
+- **`an unreachable waiting_for_input seat reads No provider answering`** —
+  precedence, §2a; assert no waiting word appears
+- **`the waiting word names the viewer only when the viewer can steer`** —
+  `waiting for you` with authority, `waiting for an operator` without
+- **`the transcript heuristic never produces the waiting word`** — an open turn
+  on a `waiting_for_input` seat does not invent activity
 
 **Done when:** the function's only inputs for the *word* are the signed status
-and the lease, and a test proves the transcript cannot raise a seat's state.
+and the lease (plus the steer flag for which of the two waiting strings), a test
+proves the transcript cannot raise a seat's state, and `waiting_for_input` is no
+longer unmapped anywhere in the file.
 
 Lane 1 and lane 2 below are unchanged except where marked.
 
@@ -1149,11 +1240,15 @@ already the larger lane. It touches no file lane 1 owns.
 - `the plan panel names the seat whose plan it is` — assert `PLAN · Keystone`
 - `no plan snapshot renders No plan published` — verbatim, with its description
 - **`the rail row, the bar and the footer count agree on the signed word`** —
-  two fixtures, three voices asserted in each, and the assertion names the word
+  four fixtures, three voices asserted in each, and the assertion names the word
   so agreement alone cannot pass it: signed `completed` + unterminated
   transcript + fresh lease → row and bar read `idle`, footer counts it idle;
   signed `running` + aged lease → row and bar read `No provider answering`,
-  footer does **not** count it into `N working`. The footer is a separate reader
+  footer does **not** count it into `N working`; signed `waiting_for_input` +
+  fresh lease → all three read the waiting word and the footer counts it
+  **waiting, not idle** (§2a); signed `waiting_for_input` + aged lease → all
+  three read `No provider answering` and no waiting word appears anywhere. The
+  footer is a separate reader
   (`CodingSessionExecutionRail.tsx:307-311`) and a lane can fix the first two
   and leave it raw, so it is asserted explicitly in both cases. See D6's ruling
   block for the one-sentence form
