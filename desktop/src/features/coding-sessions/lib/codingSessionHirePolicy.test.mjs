@@ -174,14 +174,14 @@ test("an identity already live in this umbrella is skipped, not re-seated", () =
   assert.equal(decision.identity.pubkey, BEN);
 });
 
-test("every builder already live is HIRE_NO_IDENTITY, not a duplicate seat", () => {
+test("every builder already live is HIRE_ROLE_BUSY, not a duplicate seat", () => {
   const decision = decide({
     liveSeats: [
       { actor: ADA, role: "builder" },
       { actor: BEN, role: "builder" },
     ],
   });
-  assert.equal(decision.code, "HIRE_NO_IDENTITY");
+  assert.equal(decision.code, "HIRE_ROLE_BUSY");
 });
 
 test("the request's provider and model win over the defaults", () => {
@@ -493,7 +493,9 @@ test("a role whose every identity is seated here is refused as busy, naming the 
     ],
   });
   assert.equal(decision.ok, false);
-  assert.equal(decision.code, "HIRE_NO_IDENTITY");
+  // Its own code since item 89: a busy role and an absent one are two facts
+  // with two remedies, and a lead acts on the code before it reads the prose.
+  assert.equal(decision.code, "HIRE_ROLE_BUSY");
   // The seat it should talk to instead, and how.
   assert.match(decision.reason, /already seated/);
   assert.match(decision.reason, /·builder/);
@@ -503,7 +505,7 @@ test("a role whose every identity is seated here is refused as busy, naming the 
   assert.equal(/[Ii]nstall team roles/.test(decision.reason), false);
 });
 
-test("a role no installed identity holds keeps the install remedy", () => {
+test("a role no installed identity holds keeps HIRE_NO_IDENTITY and the install remedy", () => {
   const decision = decide({
     request: { role: "verifier", providerInstanceRef: null, model: null },
     policy: {

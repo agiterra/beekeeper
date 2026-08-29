@@ -480,9 +480,15 @@ pub const HIRE_REFUSAL_PREFIX: &str = "hire refused: ";
 ///
 /// A refusal names which standing policy stopped the hire, so the lead can
 /// act on it rather than retry blindly. `HIRE_NO_IDENTITY` is the one whose
-/// remedy is the operator's ("install team roles"); `HIRE_MODEL_NOT_OFFERED`
-/// and `HIRE_STALE` are facts about the request the lead can fix by itself;
-/// the rest are policy.
+/// remedy is the operator's ("install team roles"); `HIRE_ROLE_BUSY` and
+/// `HIRE_MODEL_NOT_OFFERED` and `HIRE_STALE` are facts about the request the
+/// lead can fix by itself; the rest are policy.
+///
+/// `HIRE_ROLE_BUSY` and `HIRE_NO_IDENTITY` are deliberately two codes for
+/// what was one until 2026-08-28: a role every one of whose identities is
+/// already seated is not a role this computer lacks, and telling a lead to
+/// install a role it already holds is an unactionable answer to a question
+/// that had an answer — brief the seat that exists (item 88(h)).
 pub const HIRE_REFUSAL_CODES: &[&str] = &[
     // Hiring is switched off for this host.
     "HIRE_OFF",
@@ -490,8 +496,13 @@ pub const HIRE_REFUSAL_CODES: &[&str] = &[
     "HIRE_ROLE_NOT_ALLOWED",
     // The umbrella already holds the host's maximum live seats.
     "HIRE_LIMIT",
-    // No installed managed agent holds this home role and is free.
+    // No installed managed agent holds this home role at all. Only the
+    // operator can fix this, by installing the role on this computer.
     "HIRE_NO_IDENTITY",
+    // This computer holds the role, and every identity that *is* it is
+    // already seated in this umbrella. Nothing is broken and nothing needs
+    // installing: the lead addresses the seat the reason names instead.
+    "HIRE_ROLE_BUSY",
     // The requested provider instance is not on the host's allowed list.
     "HIRE_PROVIDER_NOT_ALLOWED",
     // The requested model is not one the chosen provider's catalog offers,
@@ -1535,5 +1546,27 @@ mod tests {
                 "a {bytes}-byte brief"
             );
         }
+    }
+
+    /// A role whose every installed identity is already seated is a different
+    /// refusal from a role this computer has never installed, so it carries a
+    /// different code. Until 2026-08-28 both shipped as `HIRE_NO_IDENTITY`
+    /// and a lead was told to "install team roles" about a role it already
+    /// held (item 88(h), item 89).
+    #[test]
+    fn a_busy_role_and_an_absent_one_are_different_refusal_codes() {
+        assert!(
+            HIRE_REFUSAL_CODES.contains(&"HIRE_ROLE_BUSY"),
+            "codes: {HIRE_REFUSAL_CODES:?}"
+        );
+        assert!(
+            HIRE_REFUSAL_CODES.contains(&"HIRE_NO_IDENTITY"),
+            "codes: {HIRE_REFUSAL_CODES:?}"
+        );
+        let mut seen = HIRE_REFUSAL_CODES.to_vec();
+        seen.sort_unstable();
+        let unique = seen.len();
+        seen.dedup();
+        assert_eq!(unique, seen.len(), "a refusal code is listed twice");
     }
 }

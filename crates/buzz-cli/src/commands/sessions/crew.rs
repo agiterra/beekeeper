@@ -1679,8 +1679,13 @@ pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
         }
         "HIRE_LIMIT" => "end a seat in this session, or ask the operator to raise the ceiling",
         "HIRE_NO_IDENTITY" => {
-            "ask the operator to install team roles on the Agents screen, or hire a role whose \
-             identity is free"
+            "ask the operator to install team roles on the Agents screen: this computer holds no \
+             identity for that role"
+        }
+        // Not an install and not a retry: the seat the lead wanted is already
+        // sitting in this umbrella, and the reason names it.
+        "HIRE_ROLE_BUSY" => {
+            "send your brief to the seat the reason names: bee sessions send --to <role>"
         }
         "HIRE_PROVIDER_NOT_ALLOWED" => {
             "name a provider instance the reason lists, or drop --provider-instance and take the \

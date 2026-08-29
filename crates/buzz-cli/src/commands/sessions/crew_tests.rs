@@ -2582,6 +2582,33 @@ fn every_contract_refusal_code_has_a_remedy_this_cli_can_print() {
     assert_eq!(hire_refusal_remedy("HIRE_NOT_A_REAL_CODE"), None);
 }
 
+/// The two identity refusals carry two remedies, because they are two facts.
+///
+/// `HIRE_ROLE_BUSY` means this computer holds the role and every one of its
+/// identities is already sitting in this umbrella — the lead's way forward is
+/// the seat that already exists, not an install. `HIRE_NO_IDENTITY` means the
+/// role is not on this computer at all, which only the operator can fix. Live
+/// on 2026-08-28 a lead was told to install a role it already held (item
+/// 88(h)).
+#[test]
+fn a_busy_role_and_an_absent_one_carry_different_remedies() {
+    let busy = hire_refusal_remedy("HIRE_ROLE_BUSY").expect("HIRE_ROLE_BUSY has a remedy");
+    assert!(
+        busy.contains("bee sessions send --to <role>"),
+        "busy remedy {busy:?}"
+    );
+    assert!(
+        !busy.to_lowercase().contains("install"),
+        "the busy remedy must not tell a lead to install a role it holds: {busy:?}"
+    );
+    let absent = hire_refusal_remedy("HIRE_NO_IDENTITY").expect("HIRE_NO_IDENTITY has a remedy");
+    assert!(
+        absent.to_lowercase().contains("install team roles"),
+        "absent remedy {absent:?}"
+    );
+    assert_ne!(busy, absent);
+}
+
 /// A refused hire prints the host's own sentence *and* what to do next.
 #[test]
 fn a_refused_hire_report_carries_the_remedy_for_its_code() {

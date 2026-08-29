@@ -933,7 +933,11 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 
 # The four non-zero outcomes, and the exit code each earns:
 #   refused      → the host's policy refused; "code" is one of HIRE_OFF,
-#                  HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY,
+#                  HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY (this
+#                  computer holds no identity for that role — only its
+#                  operator can fix it), HIRE_ROLE_BUSY (it holds the role and
+#                  every identity that IS it is already seated in this
+#                  umbrella — brief that seat instead of hiring again),
 #                  HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED (the
 #                  model is not in the chosen provider's catalog and is no
 #                  alias the host could translate) or HIRE_STALE (the request

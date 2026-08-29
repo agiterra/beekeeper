@@ -2527,9 +2527,15 @@ pub enum SessionsCmd {
     /// error, 5 seating/unconfirmed.
     ///
     /// A refusal's `code` is one of HIRE_OFF, HIRE_ROLE_NOT_ALLOWED,
-    /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_PROVIDER_NOT_ALLOWED,
-    /// HIRE_MODEL_NOT_OFFERED or HIRE_STALE, and the detail carries the
-    /// remedy for it. Model ids are the provider catalog's own ids — read
+    /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_ROLE_BUSY,
+    /// HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED or HIRE_STALE, and
+    /// the detail carries the remedy for it. HIRE_NO_IDENTITY and
+    /// HIRE_ROLE_BUSY are two different facts: the first means the host holds
+    /// no identity for that role and only its operator can fix it; the second
+    /// means it holds the role and every identity that is it is already
+    /// seated in this umbrella, so the way forward is to brief the seat the
+    /// reason names rather than to hire again. Model ids are the provider
+    /// catalog's own ids — read
     /// them from `bee sessions status` (the `model` a live seat runs) or the
     /// runtime's kind:44222 catalog; the host translates `claude-sonnet-*`,
     /// `claude-opus-*` and `claude-haiku-*` onto the catalog's `sonnet`,
@@ -2592,7 +2598,7 @@ pub enum SessionsCmd {
     /// `--json-lines` / `--no-json-lines`, and the rule spelled out below the
     /// examples.
     #[command(
-        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines\n  bee sessions status --channel <uuid> --no-json-lines\n\nOutput shape, when neither flag is given and --format is not named:\nstdout decides. A terminal gets the single document (the --format json\nenvelope, or the --format compact array); a pipe or a file gets NDJSON --\none JSON object per execution, one per line. Naming --format explicitly\nalways gets that format's document, terminal or pipe. This is a different\nthing from `sessions transcript --format jsonl`, which is whole signed\nevents rather than these rows."
+        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines\n  bee sessions status --channel <uuid> --no-json-lines\n\nOutput shape, when neither flag is given and --format is not named:\nstdout decides. A terminal gets the single document (the --format json\nenvelope, or the --format compact array); a pipe or a file gets NDJSON --\none JSON object per execution, one per line. Naming --format explicitly\nalways gets that format's document, terminal or pipe. This is a different\nthing from `sessions transcript --format jsonl`, which is whole signed\nevents rather than these rows.\n\nThe context field: how full this seat's model context is, from the wire\nonly. Two sources, in order. (1) The driver's own context_window_updated\nitem (used/size) -- occupancy, measured by the driver against the prompt it\nwas about to send, so it never exceeds the window. (2) Failing that, the\nturn's result usage block: inputTokens + cacheReadTokens + cacheWriteTokens,\nthe three disjoint prompt-side counts. That second number is the turn's\nconsumption across every model call the turn made, so on a multi-call turn\nit is larger than the context the model held. '--' means nothing on the\nwire has said; '<n> (window unknown)' means tokens are known and the window\nis not -- never a percentage of a guess."
     )]
     Status {
         /// Channel UUID to read
@@ -3011,6 +3017,28 @@ mod tests {
         ] {
             assert_eq!(normalize_auth_tag_input(garbage), garbage.trim());
         }
+    }
+
+    /// `bee sessions status --help` explains the `context` column.
+    ///
+    /// The column reports two different measurements depending on what the
+    /// wire carried — the driver's own occupancy, or the turn's prompt-side
+    /// consumption — and the second can exceed the window on a multi-call
+    /// turn. A reader who is not told which one they are looking at will read
+    /// the larger number as a full context (item 89).
+    #[test]
+    fn sessions_status_help_explains_the_context_field() {
+        let cmd = Cli::command();
+        let sessions = cmd
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "sessions")
+            .expect("sessions command");
+        let status = sessions
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "status")
+            .expect("sessions status command");
+        let help = status.clone().render_long_help().to_string();
+        assert!(help.contains("context field"), "help:\n{help}");
     }
 
     /// Smoke test: CLI definition is valid and parseable.

@@ -75,6 +75,7 @@ export type CodingSessionHireRefusalCode =
   | "HIRE_ROLE_NOT_ALLOWED"
   | "HIRE_LIMIT"
   | "HIRE_NO_IDENTITY"
+  | "HIRE_ROLE_BUSY"
   | "HIRE_PROVIDER_NOT_ALLOWED"
   | "HIRE_MODEL_NOT_OFFERED"
   | "HIRE_STALE";
@@ -271,11 +272,9 @@ export function decideCodingSessionHire(
   // codex identity does not run on the Claude adapter whatever the hire said.
   const identity = chooseIdentity(role, input);
   if (identity === null) {
-    return {
-      ok: false,
-      code: "HIRE_NO_IDENTITY",
-      reason: describeIdentityRefusal(role, input),
-    };
+    // Busy and absent are two codes, not one sentence: see
+    // describeIdentityRefusal.
+    return { ok: false, ...describeIdentityRefusal(role, input) };
   }
 
   const provider = chooseProvider(input, identity);
@@ -547,11 +546,16 @@ function describeProviderRefusal(
  * told to "install team roles", which was both wrong and unactionable (item
  * 88(h)). The busy sentence names the seat and the one thing that works —
  * addressing the seat that already exists. It never invents an identity.
+ *
+ * They now carry two codes as well (item 89). A lead acts on the code before
+ * it reads the prose, so a busy role answered `HIRE_NO_IDENTITY` still
+ * pointed every code-driven reader — the `bee sessions hire` remedy table
+ * included — at the operator's install remedy for a role this computer holds.
  */
 function describeIdentityRefusal(
   role: string,
   input: CodingSessionHireDecisionInput,
-): string {
+): { code: CodingSessionHireRefusalCode; reason: string } {
   const seated = input.liveSeats.filter((seat) => {
     const actor = seat.actor.trim().toLowerCase();
     return input.candidates.some(
@@ -561,16 +565,20 @@ function describeIdentityRefusal(
     );
   });
   if (seated.length === 0) {
-    return (
-      `this computer holds no ${role} identity. Install team roles on the ` +
-      "Agents screen, then ask again."
-    );
+    return {
+      code: "HIRE_NO_IDENTITY",
+      reason:
+        `this computer holds no ${role} identity. Install team roles on the ` +
+        "Agents screen, then ask again.",
+    };
   }
-  return (
-    `every ${role} identity this computer holds is already seated in this ` +
-    `session: ${seated.map(describeLiveSeat).join(", ")}. Send your brief to ` +
-    `that seat instead of hiring: bee sessions send --to ${role}`
-  );
+  return {
+    code: "HIRE_ROLE_BUSY",
+    reason:
+      `every ${role} identity this computer holds is already seated in this ` +
+      `session: ${seated.map(describeLiveSeat).join(", ")}. Send your brief to ` +
+      `that seat instead of hiring: bee sessions send --to ${role}`,
+  };
 }
 
 /** `abcd1234…wxyz·builder (execution gen-7)` — the seat, as a lead addresses it. */
