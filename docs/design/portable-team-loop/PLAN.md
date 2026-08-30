@@ -239,8 +239,10 @@ fetched from the signed session. Operation authority is projected from the
 accepted NIP-CSAT chain: additive `grant-seat`/`revoke-seat` links carry the
 exact normalized role, while the existing operator grant supplies
 `may_steer`. Lifecycle metadata never substitutes for a missing signed seat
-grant. Automatic host seat grant after a successful hire is a later provider
-slice; until then a missing grant is disclosed as unauthorized.
+grant. After a receipt-backed hire, the process holding the authorized signer
+key verifies founder-signed create and exact provider/target/metadata parity,
+then appends the seat grant itself. A missing or failed grant is disclosed as
+`created_ungranted`; it never triggers a hidden re-hire or provider self-mint.
 
 ### Stage 3 — Parallel Mission UI
 

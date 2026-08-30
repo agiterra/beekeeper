@@ -15,6 +15,10 @@
 //! relay-signed acceptance receipts). Kinds that carry the umbrella UUID
 //! (44227 goals) resolve exactly.
 
+use buzz_core::coding_session_authority_transition::{
+    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
+};
+use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -31,12 +35,38 @@ pub struct SessionAuthority {
     pub operators: Vec<Vec<u8>>,
     /// Pubkeys with a live `viewer` grant (read-only).
     pub viewers: Vec<Vec<u8>>,
+    /// Active role seats projected from the relay-accepted 44228 chain.
+    pub seats: Vec<SessionSeat>,
+}
+
+/// One active actor-role seat in a session's accepted authority chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSeat {
+    /// Actor public key.
+    pub actor: Vec<u8>,
+    /// Exact normalized role slug.
+    pub role: String,
 }
 
 impl SessionAuthority {
     /// May `pubkey` steer this session (turn start/interrupt, goal edits)?
     pub fn may_steer(&self, pubkey: &[u8]) -> bool {
         self.founder == pubkey || self.operators.iter().any(|op| op == pubkey)
+    }
+
+    /// Whether `pubkey` may hire `role` into this session.
+    ///
+    /// Founder and active steering operators may hire any role. An active
+    /// accepted lead seat may hire only a non-lead role; seat state never
+    /// bootstraps itself because only transitions already accepted by the
+    /// relay's serialized authority transaction reach this projection.
+    pub fn may_hire(&self, pubkey: &[u8], role: &str) -> bool {
+        self.may_steer(pubkey)
+            || (role != "lead"
+                && self
+                    .seats
+                    .iter()
+                    .any(|seat| seat.actor == pubkey && seat.role == "lead"))
     }
 }
 
@@ -154,5 +184,127 @@ pub async fn session_authority_by_ref(
             authority.viewers.push(grantee);
         }
     }
+    Ok(Some(authority))
+}
+
+/// Resolve authority by the hire's exact genesis reference and session label.
+///
+/// Unlike [`session_authority_by_ref`], this never selects authority by the
+/// mutable-looking umbrella label. The referenced genesis event id is fetched
+/// directly, checked against this channel and `session_ref`, and then its
+/// accepted transition chain is folded. A stale, wrong-channel, or
+/// wrong-session reference returns `None` and cannot borrow a lead seat from a
+/// different authority root.
+pub async fn session_authority_for_hire(
+    pool: &PgPool,
+    community: CommunityId,
+    channel_id: Uuid,
+    genesis_ref: &str,
+    session_ref: &str,
+) -> Result<Option<SessionAuthority>> {
+    let Ok(genesis_id) = hex::decode(genesis_ref) else {
+        return Ok(None);
+    };
+    let genesis: Option<(Vec<u8>, String)> = sqlx::query_as(
+        "SELECT pubkey, content FROM events \
+         WHERE community_id = $1 AND channel_id = $2 AND kind = 44226 AND id = $3",
+    )
+    .bind(community.as_uuid())
+    .bind(channel_id)
+    .bind(&genesis_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((founder, genesis_content)) = genesis else {
+        return Ok(None);
+    };
+    let Ok(payload) = decode_coding_session_genesis(&genesis_content) else {
+        return Ok(None);
+    };
+    if payload.session_ref != session_ref {
+        return Ok(None);
+    }
+
+    let rows: Vec<(Vec<u8>, String)> = sqlx::query_as(
+        "SELECT grantee, role FROM coding_session_authority_acl \
+         WHERE community_id = $1 AND channel_id = $2 AND genesis_ref = $3",
+    )
+    .bind(community.as_uuid())
+    .bind(channel_id)
+    .bind(&genesis_id)
+    .fetch_all(pool)
+    .await?;
+    let mut authority = SessionAuthority {
+        founder,
+        ..Default::default()
+    };
+    for (grantee, role) in rows {
+        if role == "operator" {
+            authority.operators.push(grantee);
+        } else {
+            authority.viewers.push(grantee);
+        }
+    }
+
+    let probe = serde_json::json!([["csat-genesis", genesis_ref]]);
+    let transition_rows: Vec<(Vec<u8>, String)> = sqlx::query_as(
+        "SELECT id, content FROM events \
+         WHERE community_id = $1 AND channel_id = $2 AND kind = 44228 \
+         AND tags @> $3::jsonb",
+    )
+    .bind(community.as_uuid())
+    .bind(channel_id)
+    .bind(&probe)
+    .fetch_all(pool)
+    .await?;
+    let mut transitions = transition_rows
+        .into_iter()
+        .filter_map(|(event_id, content)| {
+            let payload = decode_coding_session_authority_transition(&content).ok()?;
+            Some((payload.seq, event_id, payload))
+        })
+        .collect::<Vec<_>>();
+    transitions.sort_by_key(|(seq, _, _)| *seq);
+
+    let mut active = std::collections::HashMap::<String, String>::new();
+    let mut expected_prev: Option<Vec<u8>> = None;
+    for (index, (seq, event_id, transition)) in transitions.into_iter().enumerate() {
+        let expected_seq = u32::try_from(index + 1).unwrap_or(u32::MAX);
+        let actual_prev = transition
+            .prev_accepted
+            .as_deref()
+            .and_then(|value| hex::decode(value).ok());
+        if seq != expected_seq || actual_prev != expected_prev {
+            // Stored accepted chains are contiguous. If storage no longer
+            // proves that invariant, disclose no seat authority rather than
+            // activating a self-described or stale lead.
+            authority.seats.clear();
+            return Ok(Some(authority));
+        }
+        match transition.transition_type {
+            CodingSessionAuthorityTransitionType::GrantSeat => {
+                if let Some(role) = transition.role {
+                    active.insert(transition.grantee_pubkey, role);
+                }
+            }
+            CodingSessionAuthorityTransitionType::RevokeSeat => {
+                active.remove(&transition.grantee_pubkey);
+            }
+            CodingSessionAuthorityTransitionType::GrantOperator
+            | CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke => {}
+        }
+        expected_prev = Some(event_id);
+    }
+    authority.seats = active
+        .into_iter()
+        .filter_map(|(actor, role)| {
+            hex::decode(actor)
+                .ok()
+                .map(|actor| SessionSeat { actor, role })
+        })
+        .collect();
+    authority
+        .seats
+        .sort_by(|left, right| left.actor.cmp(&right.actor));
     Ok(Some(authority))
 }

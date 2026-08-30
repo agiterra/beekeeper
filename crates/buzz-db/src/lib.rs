@@ -2447,6 +2447,25 @@ impl Db {
             .await
     }
 
+    /// Resolve hire authority from an exact genesis event id, channel and
+    /// session label, including active accepted role seats.
+    pub async fn session_authority_for_hire(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        genesis_ref: &str,
+        session_ref: &str,
+    ) -> Result<Option<coding_session_acl::SessionAuthority>> {
+        coding_session_acl::session_authority_for_hire(
+            &self.pool,
+            community,
+            channel_id,
+            genesis_ref,
+            session_ref,
+        )
+        .await
+    }
+
     /// Creates a new channel, bootstraps the creator as owner, and returns the record.
     #[allow(clippy::too_many_arguments)]
     #[datastore_span(name = "create_channel", system = "postgresql")]

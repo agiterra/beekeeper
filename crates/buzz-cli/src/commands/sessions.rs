@@ -63,9 +63,15 @@ pub mod crew_cmds;
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
+mod hire_evidence;
+#[cfg(test)]
+mod hire_evidence_tests;
 pub mod operations;
 pub mod registry;
 pub mod route;
+mod seat_authority;
+#[cfg(test)]
+mod seat_authority_tests;
 
 /// Item kinds the 44225 contract recognizes. Anything else is counted as
 /// `other` rather than dropped — a provider that learns a new item kind must

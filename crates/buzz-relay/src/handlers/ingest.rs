@@ -815,9 +815,9 @@ fn coding_session_content_cap(kind: u32) -> Option<usize> {
 /// - **44227 (goal)**: resolved exactly via its `d` = sessionRef tag — the
 ///   named session's founder or operators only; an unclaimed label keeps the
 ///   base rule.
-/// - **44221 `session.hire`**: resolved exactly via the umbrella named in the
-///   action's own `sessionRef` — that umbrella's founder or a live operator
-///   grant only, the same standing a steer needs. A hire asks a *host* to
+/// - **44221 `session.hire`**: resolved by the exact genesis id plus umbrella
+///   named in the action — that founder, a live operator grant, or an active
+///   accepted lead seat hiring a non-lead role. A hire asks a *host* to
 ///   spend a machine, a worktree and an identity, so unlike the other
 ///   lifecycle actions it cannot be left to the provider: the provider never
 ///   sees the hire, only the seated create the host publishes afterwards.
@@ -893,13 +893,20 @@ pub(crate) async fn check_coding_session_membership(
             }
         }
         KIND_CODING_SESSION_LIFECYCLE_COMMAND => {
-            if let Some(session_ref) = hire_umbrella_of(event) {
+            if let Some(claim) = hire_authority_claim(event) {
                 return match state
                     .db
-                    .session_authority_by_ref(tenant.community(), channel_id, &session_ref)
+                    .session_authority_for_hire(
+                        tenant.community(),
+                        channel_id,
+                        &claim.genesis_ref,
+                        &claim.session_ref,
+                    )
                     .await
                 {
-                    Ok(authority) => hire_authority_verdict(authority.as_ref(), pubkey_bytes),
+                    Ok(authority) => {
+                        hire_authority_verdict(authority.as_ref(), pubkey_bytes, &claim.role)
+                    }
                     Err(error) => Err(format!("error: database error: {error}")),
                 };
             }
@@ -940,13 +947,33 @@ pub(crate) async fn check_coding_session_membership(
 /// not a hire: the envelope validator refuses it a few steps later, and
 /// guessing an umbrella out of malformed bytes would be the wrong kind of
 /// helpful.
-fn hire_umbrella_of(event: &Event) -> Option<String> {
-    buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
-        &event.content,
-    )
-    .ok()?
-    .hire_session_ref()
-    .map(str::to_owned)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HireAuthorityClaim {
+    session_ref: String,
+    genesis_ref: String,
+    role: String,
+}
+
+fn hire_authority_claim(event: &Event) -> Option<HireAuthorityClaim> {
+    let payload =
+        buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+            &event.content,
+        )
+        .ok()?;
+    let buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleAction::SessionHire {
+        session_ref,
+        genesis_ref,
+        role,
+        ..
+    } = payload.action
+    else {
+        return None;
+    };
+    Some(HireAuthorityClaim {
+        session_ref,
+        genesis_ref,
+        role,
+    })
 }
 
 /// Decide a hire against the resolved authority of the umbrella it names.
@@ -957,6 +984,7 @@ fn hire_umbrella_of(event: &Event) -> Option<String> {
 fn hire_authority_verdict(
     authority: Option<&buzz_db::coding_session_acl::SessionAuthority>,
     pubkey_bytes: &[u8],
+    role: &str,
 ) -> Result<(), String> {
     let Some(authority) = authority else {
         return Err(
@@ -965,10 +993,13 @@ fn hire_authority_verdict(
                 .into(),
         );
     };
-    if authority.may_steer(pubkey_bytes) {
+    if authority.may_hire(pubkey_bytes, role) {
         Ok(())
     } else {
-        Err("restricted: only the session founder or a granted operator may hire".into())
+        Err(
+            "restricted: only the session founder, a granted operator, or an active lead hiring a non-lead role may hire"
+                .into(),
+        )
     }
 }
 
@@ -7804,22 +7835,25 @@ mod tests {
         let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
         let hire = lifecycle_event(&hire_content(session_ref), &channel);
         assert_eq!(
-            hire_umbrella_of(&hire).as_deref(),
+            hire_authority_claim(&hire)
+                .as_ref()
+                .map(|claim| claim.session_ref.as_str()),
             Some(session_ref),
             "a hire must name its umbrella to the gate"
         );
 
         let create = lifecycle_event(&lifecycle_content(serde_json::Value::Null), &channel);
-        assert_eq!(hire_umbrella_of(&create), None);
+        assert_eq!(hire_authority_claim(&create), None);
 
         // Unparseable content is not a hire. The envelope validator refuses it
         // a few lines later; the gate must not guess an umbrella from it.
         let garbage = lifecycle_event("{", &channel);
-        assert_eq!(hire_umbrella_of(&garbage), None);
+        assert_eq!(hire_authority_claim(&garbage), None);
     }
 
-    /// A hire is founder-or-grant, exactly like a steer, and an umbrella no
-    /// genesis in this channel claims is refused rather than fallen back on.
+    /// A hire is founder/operator, or active lead for a non-lead role; an
+    /// umbrella no exact genesis in this channel claims is refused rather
+    /// than fallen back on.
     #[test]
     fn a_hire_is_refused_unless_the_signer_founded_or_was_granted_the_umbrella() {
         let founder = vec![0xaa; 32];
@@ -7830,26 +7864,58 @@ mod tests {
             founder: founder.clone(),
             operators: vec![operator.clone()],
             viewers: vec![viewer.clone()],
+            seats: vec![buzz_db::coding_session_acl::SessionSeat {
+                actor: vec![0xee; 32],
+                role: "lead".into(),
+            }],
         };
 
-        assert!(hire_authority_verdict(Some(&authority), &founder).is_ok());
-        assert!(hire_authority_verdict(Some(&authority), &operator).is_ok());
+        assert!(hire_authority_verdict(Some(&authority), &founder, "lead").is_ok());
+        assert!(hire_authority_verdict(Some(&authority), &operator, "lead").is_ok());
+        assert!(hire_authority_verdict(Some(&authority), &[0xee; 32], "builder").is_ok());
+        assert!(hire_authority_verdict(Some(&authority), &[0xee; 32], "lead").is_err());
 
         for refused in [&viewer, &stranger] {
-            let error = hire_authority_verdict(Some(&authority), refused)
+            let error = hire_authority_verdict(Some(&authority), refused, "builder")
                 .expect_err("a viewer or a stranger may not hire");
             assert_eq!(
                 error,
-                "restricted: only the session founder or a granted operator may hire"
+                "restricted: only the session founder, a granted operator, or an active lead hiring a non-lead role may hire"
             );
         }
 
-        let unknown = hire_authority_verdict(None, &founder)
+        let unknown = hire_authority_verdict(None, &founder, "builder")
             .expect_err("an umbrella with no genesis here cannot authorize a hire");
         assert!(
             unknown.starts_with("restricted: ") && unknown.contains("genesis"),
             "got {unknown}"
         );
+    }
+
+    #[test]
+    fn relay_hire_admission_refuses_revoked_stale_and_wrong_genesis_leads() {
+        let founder = vec![0xaa; 32];
+        let lead = vec![0xbb; 32];
+        let active = buzz_db::coding_session_acl::SessionAuthority {
+            founder,
+            operators: Vec::new(),
+            viewers: Vec::new(),
+            seats: vec![buzz_db::coding_session_acl::SessionSeat {
+                actor: lead.clone(),
+                role: "lead".into(),
+            }],
+        };
+        assert!(hire_authority_verdict(Some(&active), &lead, "builder").is_ok());
+        assert!(hire_authority_verdict(Some(&active), &lead, "lead").is_err());
+
+        let revoked = buzz_db::coding_session_acl::SessionAuthority {
+            seats: Vec::new(),
+            ..active.clone()
+        };
+        assert!(hire_authority_verdict(Some(&revoked), &lead, "builder").is_err());
+        // A stale or wrong-genesis reference resolves no exact authority root;
+        // it cannot reuse the active lead state selected under another id.
+        assert!(hire_authority_verdict(None, &lead, "builder").is_err());
     }
 
     #[test]

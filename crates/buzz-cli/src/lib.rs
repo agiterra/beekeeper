@@ -2531,8 +2531,10 @@ pub enum SessionsCmd {
     /// applies its own standing policy — hiring on/off, allowed roles, a
     /// maximum number of live seats, allowed providers — chooses an installed
     /// identity whose home role matches, cuts that seat its own worktree, and
-    /// publishes an ordinary seated create. That create's receipts are this
-    /// hire's receipts, and its `commandId` is reported back.
+    /// publishes an ordinary seated create. That create's signed provider
+    /// receipt and metadata are this hire's execution proof. The hiring CLI
+    /// then uses its own signer key to append an accepted NIP-CSAT `grant-seat`
+    /// for the exact actor-role pair; the provider never grants authority.
     ///
     /// The brief becomes the seat's first turn verbatim (the host prefixes
     /// it), so it is required: a seat hired with nothing to do is a bug.
@@ -2542,8 +2544,11 @@ pub enum SessionsCmd {
     /// refused the seat), `refused` (the host's own policy refused the hire,
     /// with a `code`), `seating` (a seat was published but no provider
     /// receipt answered inside the wait), or `unconfirmed` (nothing answered
-    /// at all). Exit codes follow: 0 created, 1 refused/failed, 2 relay
-    /// error, 5 seating/unconfirmed.
+    /// at all). `created_ungranted` is a partial outcome: the execution is
+    /// live, but the role-seat grant failed, so callers must not hire again.
+    /// Exit codes follow: 0 created with accepted seat authority, 1
+    /// refused/failed/created_ungranted, 2 relay error, 5
+    /// seating/unconfirmed.
     ///
     /// ROUTING — the hire asks, the host answers. Pass `--class` and
     /// `--risk i,u,i` and the hire carries a routing REQUEST: the class, the

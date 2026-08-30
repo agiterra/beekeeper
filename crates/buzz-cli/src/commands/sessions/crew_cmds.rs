@@ -596,6 +596,7 @@ const HIRE_POLL: std::time::Duration = std::time::Duration::from_millis(2_000);
 /// receipt for it, the metadata that says which executions are in this
 /// umbrella, and the turn a refusal arrives as.
 const HIRE_ANSWER_KINDS: &[u32] = &[
+    KIND_CODING_SESSION_GENESIS,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_METADATA,
@@ -612,7 +613,7 @@ async fn read_hire_answer(
     client: &BuzzClient,
     channel_id: &str,
     session_ref: &str,
-    genesis_ref: &str,
+    _genesis_ref: &str,
     role: &str,
     since: i64,
 ) -> Result<HireOutcome, CliError> {
@@ -622,17 +623,6 @@ async fn read_hire_answer(
     let receipt = seat
         .as_ref()
         .and_then(|seat| newest_create_receipt(&receipts, &seat.command_id));
-    let granted = match seat.as_ref() {
-        Some(hired) => {
-            super::fetch_authority_state(client, channel_id, genesis_ref)
-                .await?
-                .grants
-                .get(&hired.actor)
-                .map(String::as_str)
-                == Some("collaborator")
-        }
-        None => false,
-    };
     let refusal = if seat.is_some() {
         None
     } else {
@@ -648,7 +638,7 @@ async fn read_hire_answer(
         let (commands, _) = decode_turn_commands(&events);
         find_hire_refusal(&commands, &executions, session_ref, since)
     };
-    Ok(fold_hire(seat, receipt, refusal, granted))
+    Ok(fold_hire(seat, receipt, refusal, false))
 }
 
 /// `bee sessions hire` — ask an umbrella's host to seat a role (plan D14).
@@ -970,12 +960,59 @@ pub async fn cmd_hire(
         Err(error) => return Err(error),
     };
 
-    let outcome = if no_wait {
+    let mut outcome = if no_wait {
         HireOutcome::Unconfirmed
     } else {
         wait_for_hire(client, channel_id, session_ref, &genesis_ref, role, since).await?
     };
-    let report = hire_report(&outcome, !no_wait);
+    let mut seat_grant = None;
+    let mut seat_grant_error = None;
+    if let HireOutcome::Created {
+        seat,
+        receipt,
+        granted,
+    } = &mut outcome
+    {
+        let grant = async {
+            let evidence = fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await?;
+            super::hire_evidence::verify_hire_evidence(
+                &evidence,
+                &super::hire_evidence::HireEvidenceRequest {
+                    channel: channel_id,
+                    session_ref,
+                    genesis: &genesis_ref,
+                    role,
+                    provider_instance: plan.provider_instance.as_deref(),
+                },
+                seat,
+                receipt,
+            )?;
+            super::seat_authority::ensure_hired_seat_grant(
+                client,
+                channel_id,
+                session_ref,
+                &genesis_ref,
+                &seat.actor,
+                &seat.role,
+            )
+            .await
+        }
+        .await;
+        match grant {
+            Ok(result) => {
+                *granted = true;
+                seat_grant = Some(result);
+            }
+            Err(error) => seat_grant_error = Some(error.to_string()),
+        }
+    }
+    let mut report = hire_report(&outcome, !no_wait);
+    if let Some(error) = &seat_grant_error {
+        report.status = "created_ungranted";
+        report.detail = format!(
+            "the provider created the seat, but its role-seat authority was not accepted: {error}. The seat is live; do not hire again. Inspect the accepted authority chain, then explicitly grant or revoke/change its role"
+        );
+    }
     if let Some(object) = merged.as_object_mut() {
         object.insert("outcome".into(), json!(report.status));
         object.insert("detail".into(), json!(report.detail));
@@ -986,6 +1023,8 @@ pub async fn cmd_hire(
                 | HireOutcome::Failed { seat, receipt } => {
                     json!({
                         "commandId": seat.command_id,
+                        "createEventId": seat.event_id,
+                        "receiptEventId": receipt.event_id,
                         "actor": seat.actor,
                         "seat": format!("{}\u{b7}{}", short_pubkey(&seat.actor), seat.role),
                         "role": seat.role,
@@ -997,6 +1036,8 @@ pub async fn cmd_hire(
                 }
                 HireOutcome::Seating { seat } => json!({
                     "commandId": seat.command_id,
+                    "createEventId": seat.event_id,
+                    "receiptEventId": Value::Null,
                     "actor": seat.actor,
                     "seat": format!("{}\u{b7}{}", short_pubkey(&seat.actor), seat.role),
                     "role": seat.role,
@@ -1034,10 +1075,39 @@ pub async fn cmd_hire(
                 HireOutcome::Refused(_) | HireOutcome::Unconfirmed => Value::Null,
             },
         );
+        object.insert(
+            "seatGrantEventId".into(),
+            seat_grant
+                .as_ref()
+                .map_or(Value::Null, |grant| json!(grant.event_id)),
+        );
+        object.insert(
+            "seatGrantAccepted".into(),
+            match &outcome {
+                HireOutcome::Created { .. } => json!(seat_grant.is_some()),
+                _ => Value::Null,
+            },
+        );
+        object.insert(
+            "seatGrantAlreadyActive".into(),
+            seat_grant
+                .as_ref()
+                .map_or(Value::Null, |grant| json!(grant.already_active)),
+        );
+        object.insert(
+            "seatGrantError".into(),
+            seat_grant_error
+                .as_ref()
+                .map_or(Value::Null, |error| json!(error)),
+        );
     }
     println!("{merged}");
 
-    match hire_exit_code(&outcome) {
+    match if seat_grant_error.is_some() {
+        1
+    } else {
+        hire_exit_code(&outcome)
+    } {
         0 => Ok(()),
         1 => Err(CliError::Refused(report.detail)),
         _ => Err(CliError::Unconfirmed(report.detail)),
@@ -1067,12 +1137,39 @@ async fn wait_for_hire(
                 // A seat with no receipt yet is progress, not an answer: hold
                 // it and keep waiting for the provider to speak.
                 HireOutcome::Seating { .. } => held = outcome,
-                // Nor is a confirmed seat nobody has granted. The host
-                // publishes the grant after the create's receipt, so it lands
-                // second; hold this and keep asking inside the same window
-                // rather than reporting a seat that cannot answer.
-                HireOutcome::Created { granted: false, .. } => held = outcome,
                 HireOutcome::Unconfirmed => {}
+                answered @ HireOutcome::Created { .. } => {
+                    let evidence =
+                        fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await;
+                    let verification = evidence.and_then(|events| {
+                        let HireOutcome::Created { seat, receipt, .. } = &answered else {
+                            return Err(CliError::Other("created hire changed shape".into()));
+                        };
+                        super::hire_evidence::verify_hire_evidence(
+                            &events,
+                            &super::hire_evidence::HireEvidenceRequest {
+                                channel: channel_id,
+                                session_ref,
+                                genesis: genesis_ref,
+                                role,
+                                provider_instance: None,
+                            },
+                            seat,
+                            receipt,
+                        )
+                    });
+                    match verification {
+                        Ok(()) => return Ok(answered),
+                        // A signed create and receipt can precede the
+                        // provider's metadata by a moment. Preserve the live
+                        // seat and keep polling; if metadata never arrives,
+                        // the caller reports the explicit partial outcome.
+                        Err(CliError::Unconfirmed(_)) => held = answered,
+                        // Malformed, forged, or cross-context facts are not a
+                        // hire answer and never reach the authority writer.
+                        Err(_) => {}
+                    }
+                }
                 answered => return Ok(answered),
             }
         }

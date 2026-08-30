@@ -383,12 +383,15 @@ nothing that can authorize it.
 
 **Authority is checked by the relay, on ingest.** Unlike every other lifecycle
 action — whose founder-onlyness the provider enforces — a hire never reaches a
-provider at all, so the relay resolves the umbrella `sessionRef` names against
-the genesis in the same channel and requires the signer to be its founder or
-to hold a live NIP-CSAT `operator` grant, exactly the standing a steer needs.
-Anything else is refused `restricted: only the session founder or a granted
-operator may hire`. An umbrella no genesis in that channel claims is refused
-by name rather than admitted on channel membership.
+provider at all, so the relay resolves the action's exact `genesisRef` in the
+same channel, verifies that genesis names the action's `sessionRef`, and
+requires the signer to be its founder, to hold a live NIP-CSAT `operator`
+grant, or to hold an active accepted `lead` seat. Founder and operator may hire
+any role. A lead may hire only a non-lead role and cannot create or revive lead
+authority. Revoked, stale, wrong-channel, and wrong-genesis seats confer
+nothing; lifecycle metadata never substitutes for the accepted 44228 chain.
+An umbrella no exact genesis in that channel claims is refused by name rather
+than admitted on channel membership.
 
 **The host answers, two ways.** On acceptance it applies its own standing
 policy (hiring on/off, allowed roles, a maximum number of live seats per
@@ -401,6 +404,26 @@ umbrella's title inherited, and `initialTurn` set to the brief prefixed
 `"[From the lead] "`. **That create's receipts are the hire's receipts**; the
 hire itself is answered by no receipt of its own, and its `commandId` never
 appears in a `kind:44224`.
+
+After that receipt exists, the process holding the hire signer's key MUST
+verify the exact signed genesis, seated create, provider receipt, and provider
+metadata signatures. The create signer MUST equal the genesis founder; a
+matching create/receipt/metadata triplet from a member-controlled provider is
+not host authority. Their channel, session, genesis, command, provider
+authority, provider instance, receipt target instance, metadata provider and
+runtime, actor, and role MUST agree. A non-null provider instance requested by
+the hire MUST equal the create's answer; when the request left routing to the
+host, the create, receipt target, and metadata must still agree exactly. Only
+then may that signer append a NIP-CSAT
+`grant-seat` for the exact actor-role pair. This is signer-owned follow-up,
+never provider self-minting. The accepted 44228 receipt chain is the authority
+proof: an already-active exact pair is idempotent and returns its existing
+accepted grant; an active different role requires an explicit revoke/change.
+If another accepted transition advances the head between read and write, the
+signer refetches the receipt-backed projection, rebuilds, and retries once.
+If execution creation succeeds but the grant fails, the execution remains
+live and the client reports a non-success partial outcome with the create and
+receipt ids. It MUST NOT hide, delete, or re-hire that seat.
 
 On refusal the host answers the requesting seat with a `kind:44220` turn whose
 text is exactly `hire refused: <CODE> — <reason>`, where `<CODE>` is one of

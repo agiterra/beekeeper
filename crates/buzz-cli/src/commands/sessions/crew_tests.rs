@@ -2200,20 +2200,19 @@ fn a_seated_but_ungranted_hire_says_it_cannot_report_yet() {
         matches!(ungranted, HireOutcome::Created { granted: false, .. }),
         "{ungranted:?}"
     );
-    // Still `created`, and still exit 0: a seat exists, and calling that a
-    // failure would be as false as calling it a success.
+    // The seat exists, but automation must not read it as a usable hire.
     let report = hire_report(&ungranted, true);
     assert_eq!(report.status, "created");
-    assert_eq!(hire_exit_code(&ungranted), 0);
+    assert_eq!(hire_exit_code(&ungranted), 1);
     assert!(
-        report.detail.contains("seated, but not granted"),
+        report
+            .detail
+            .contains("exact actor-role grant is not accepted"),
         "got {}",
         report.detail
     );
     assert!(
-        report
-            .detail
-            .contains("bee sessions grant --role collaborator"),
+        report.detail.contains("explicitly grant or revoke/change"),
         "got {}",
         report.detail
     );

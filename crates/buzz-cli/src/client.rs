@@ -1329,6 +1329,13 @@ const REFUSAL_GATES: &[RefusalGate] = &[
         attested_remedy: None,
     },
     RefusalGate {
+        marker: "an active lead hiring a non-lead role may hire",
+        remedy: "this key is neither the founder, a steering operator, nor an active lead \
+                 allowed to hire this role — `bee sessions grant` mints operator standing and \
+                 an accepted `grant-seat` establishes lead standing",
+        attested_remedy: None,
+    },
+    RefusalGate {
         marker: "only the session founder may",
         remedy: "this key is not that session's founder: closing, archiving and reopening a \
                  standalone session are the founder's alone, and no grant widens them",
@@ -1464,7 +1471,7 @@ pub(crate) const RELAY_REFUSALS_THE_CLI_NAMES: &[&str] = &[
     "restricted: not a relay member",
     // handlers/ingest.rs — coding-session authority
     "restricted: only a session founder or a granted operator may steer",
-    "restricted: only the session founder or a granted operator may hire",
+    "restricted: only the session founder, a granted operator, or an active lead hiring a non-lead role may hire",
     "restricted: no coding-session genesis in this channel claims that sessionRef",
     "restricted: only the session founder may close this session",
     "restricted: only the session founder may archive this session",
@@ -2597,7 +2604,7 @@ mod tests {
     #[test]
     fn a_grant_refusal_names_the_grant() {
         let text = refusal_with_remedy(
-            "restricted: only the session founder or a granted operator may hire",
+            "restricted: only the session founder, a granted operator, or an active lead hiring a non-lead role may hire",
             true,
         );
         assert!(

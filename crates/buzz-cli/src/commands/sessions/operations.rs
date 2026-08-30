@@ -322,7 +322,7 @@ fn transaction_matches_context(
     })
 }
 
-async fn fetch_founder_context(
+pub(super) async fn fetch_founder_context(
     client: &BuzzClient,
     channel: &str,
     session_ref: &str,
@@ -361,48 +361,8 @@ async fn fetch_founder_context(
             "--session-ref does not match the referenced genesis".into(),
         ));
     }
-    let relay_self = fetch_trusted_relay_self(client).await?;
-    let transition_rows = client
-        .query_all(json!({
-            "kinds": [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
-            "#h": [channel],
-            "#csat-genesis": [genesis]
-        }))
-        .await?;
-    let transition_events = transition_rows
-        .into_iter()
-        .map(|value| {
-            serde_json::from_value(value).map_err(|error| {
-                CliError::Other(format!("relay returned malformed authority event: {error}"))
-            })
-        })
-        .collect::<Result<Vec<Event>, _>>()?;
-    let receipt_rows = client
-        .query_all(json!({
-            "kinds": [KIND_SYSTEM_MESSAGE],
-            "#h": [channel],
-            "authors": [relay_self],
-        }))
-        .await?;
-    let receipt_events = receipt_rows
-        .into_iter()
-        .map(|value| {
-            serde_json::from_value(value).map_err(|error| {
-                CliError::Other(format!(
-                    "relay returned malformed authority receipt: {error}"
-                ))
-            })
-        })
-        .collect::<Result<Vec<Event>, _>>()?;
-    let authority = project_receipt_backed_authority_chain(
-        &transition_events,
-        &receipt_events,
-        channel,
-        genesis,
-        &event.pubkey.to_hex(),
-        &relay_self,
-    )
-    .map_err(|error| CliError::Other(format!("invalid accepted authority chain: {error}")))?;
+    let authority =
+        fetch_projected_authority(client, channel, genesis, &event.pubkey.to_hex()).await?;
     Ok(CodingSessionTeamFoldContext {
         channel_ref: channel.to_owned(),
         session_ref: session_ref.to_owned(),
@@ -448,9 +408,59 @@ async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<String, CliErro
     Ok(relay_self.to_ascii_lowercase())
 }
 
-struct ProjectedAuthority {
-    grants: Vec<CodingSessionTeamActiveGrant>,
-    seats: Vec<CodingSessionTeamActiveSeat>,
+/// Read the relay-receipt-backed accepted authority chain for one genesis.
+pub(super) async fn fetch_projected_authority(
+    client: &BuzzClient,
+    channel: &str,
+    genesis: &str,
+    founder: &str,
+) -> Result<ProjectedAuthority, CliError> {
+    let relay_self = fetch_trusted_relay_self(client).await?;
+    let transitions = client
+        .query_all(json!({
+            "kinds": [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
+            "#h": [channel],
+            "#csat-genesis": [genesis]
+        }))
+        .await?
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<Event>, _>>()
+        .map_err(|error| {
+            CliError::Other(format!("relay returned malformed authority event: {error}"))
+        })?;
+    let receipts = client
+        .query_all(json!({
+            "kinds": [KIND_SYSTEM_MESSAGE],
+            "#h": [channel],
+            "authors": [relay_self]
+        }))
+        .await?
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<Event>, _>>()
+        .map_err(|error| {
+            CliError::Other(format!(
+                "relay returned malformed authority receipt: {error}"
+            ))
+        })?;
+    project_receipt_backed_authority_chain(
+        &transitions,
+        &receipts,
+        channel,
+        genesis,
+        founder,
+        &relay_self,
+    )
+    .map_err(|error| CliError::Other(format!("invalid accepted authority chain: {error}")))
+}
+
+pub(super) struct ProjectedAuthority {
+    pub(super) grants: Vec<CodingSessionTeamActiveGrant>,
+    pub(super) seats: Vec<CodingSessionTeamActiveSeat>,
+    pub(super) seat_grant_refs: BTreeMap<String, String>,
+    pub(super) head_event_id: Option<String>,
+    pub(super) head_seq: u32,
 }
 
 fn validate_accepted_authority_transition(
@@ -569,6 +579,7 @@ fn project_receipt_backed_authority_chain(
     let mut expected_prev: Option<&str> = None;
     let mut grants = BTreeMap::new();
     let mut seats = BTreeMap::new();
+    let mut seat_grant_refs = BTreeMap::new();
     for (offset, (event_id, signer, payload)) in links.iter().enumerate() {
         let expected_seq = u32::try_from(offset + 1)
             .map_err(|_| "authority chain exceeds u32 sequence space".to_owned())?;
@@ -650,6 +661,7 @@ fn project_receipt_backed_authority_chain(
                         role,
                     },
                 );
+                seat_grant_refs.insert(payload.grantee_pubkey.clone(), event_id.clone());
             }
             CodingSessionAuthorityTransitionType::RevokeSeat => {
                 let expected_role = payload
@@ -659,6 +671,7 @@ fn project_receipt_backed_authority_chain(
                 match seats.get(&payload.grantee_pubkey) {
                     Some(seat) if seat.role == expected_role => {
                         seats.remove(&payload.grantee_pubkey);
+                        seat_grant_refs.remove(&payload.grantee_pubkey);
                     }
                     Some(_) => return Err("revoke-seat role does not match active seat".into()),
                     None => return Err("revoke-seat names no active seat".into()),
@@ -670,6 +683,10 @@ fn project_receipt_backed_authority_chain(
     Ok(ProjectedAuthority {
         grants: grants.into_values().collect(),
         seats: seats.into_values().collect(),
+        seat_grant_refs,
+        head_event_id: expected_prev.map(str::to_owned),
+        head_seq: u32::try_from(links.len())
+            .map_err(|_| "authority chain exceeds u32 sequence space".to_owned())?,
     })
 }
 

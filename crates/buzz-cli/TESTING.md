@@ -915,8 +915,11 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
 #    "outcome":"created","detail":"the host seated 4f2c1ab9 as builder on
 #     claude-primary — <cs-target>",
 #    "seat":{"commandId":"…","actor":"…","seat":"4f2c1ab9\u00b7builder",
+#            "createEventId":"…","receiptEventId":"…",
 #            "role":"builder","providerInstanceRef":"claude-primary",
 #            "model":"claude-sonnet-4-6","target":"…","status":"created"},
+#    "seatGrantEventId":"…","seatGrantAccepted":true,
+#    "seatGrantAlreadyActive":false,"seatGrantError":null,
 #    "code":null,"reason":null}
 # exit: 0
 
@@ -950,6 +953,11 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 #   seating      → a seated create was published, no provider receipt inside
 #                  60 s; exit 5
 #   unconfirmed  → nothing answered at all, or --no-wait; exit 5
+#   created_ungranted → provider-created execution is live but signed evidence
+#                  or accepted `grant-seat` authority failed; output retains
+#                  create/receipt ids plus `seatGrantError`; do not hire again;
+#                  inspect the accepted authority chain and explicitly grant or
+#                  revoke/change the role; exit 1
 bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
   --role builder --content 'x' --no-wait | jq '{outcome, detail}'
 # → {"outcome":"unconfirmed","detail":"the relay stored the hire; --no-wait

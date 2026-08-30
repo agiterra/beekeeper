@@ -149,6 +149,12 @@ actor's role; a matching revoke removes it. Stale, revoked, wrong-channel, or
 wrong-genesis links confer no authority. If no accepted seat link exists, the
 actor is unauthorized; clients never infer a role from lifecycle metadata.
 
+The relay uses the same accepted-chain projection when admitting
+`session.hire`: founder and active `may_steer` operator may hire any role; an
+active `lead` seat may hire only a non-lead role. It resolves the hire's exact
+`genesisRef` before consulting seats, so a stale or wrong-genesis request
+cannot borrow lead standing from another session with the same label.
+
 ## Viewer read scope — a documented tradeoff
 
 A viewer grant's read scope is **the session's transport channel**, not a

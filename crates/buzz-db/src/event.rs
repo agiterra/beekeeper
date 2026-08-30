@@ -5449,6 +5449,23 @@ mod tests {
             .expect("sign authority transition")
     }
 
+    fn make_seat_authority_transition_event(
+        keys: &Keys,
+        channel_id: Uuid,
+        payload: &buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload,
+    ) -> nostr::Event {
+        let content = serde_json::to_string(payload).expect("serialize seat transition");
+        EventBuilder::new(Kind::Custom(44228), content)
+            .tags(vec![
+                Tag::parse(["h", channel_id.to_string().as_str()]).expect("h tag"),
+                Tag::parse(["csat-v", "csat1-1"]).expect("csat-v tag"),
+                Tag::parse(["csat-genesis", payload.genesis_ref.as_str()])
+                    .expect("csat-genesis tag"),
+            ])
+            .sign_with_keys(keys)
+            .expect("sign seat transition")
+    }
+
     /// Found a fresh session in `channel`, signed by `founder`, and return the
     /// stored genesis event. Panics (via `expect`/`assert`) on any outcome
     /// other than a clean founding — every authority-transition test starts
@@ -5513,6 +5530,90 @@ mod tests {
             }
             other => panic!("first grant must be accepted, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn accepted_seat_projection_drives_exact_genesis_hire_authority() {
+        use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload;
+
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let lead = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let genesis_ref = genesis.id.to_hex();
+        let session_ref = decode_coding_session_genesis(&genesis.content)
+            .expect("genesis payload")
+            .session_ref;
+
+        let grant_payload = CodingSessionAuthorityTransitionPayload::new_grant_seat(
+            &genesis_ref,
+            None,
+            1,
+            lead.public_key().to_hex(),
+            "lead",
+        );
+        let grant = make_seat_authority_transition_event(&founder, channel, &grant_payload);
+        assert!(matches!(
+            insert_coding_session_authority_transition_event(
+                &pool, community, &grant, channel, None,
+            )
+            .await
+            .expect("grant accepted"),
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { .. }
+        ));
+        let active = crate::coding_session_acl::session_authority_for_hire(
+            &pool,
+            community,
+            channel,
+            &genesis_ref,
+            &session_ref,
+        )
+        .await
+        .expect("project accepted seats")
+        .expect("exact genesis authority");
+        assert!(active.may_hire(lead.public_key().as_bytes(), "builder"));
+        assert!(!active.may_hire(lead.public_key().as_bytes(), "lead"));
+
+        let revoke_payload = CodingSessionAuthorityTransitionPayload::new_revoke_seat(
+            &genesis_ref,
+            Some(grant.id.to_hex()),
+            2,
+            lead.public_key().to_hex(),
+            "lead",
+        );
+        let revoke = make_seat_authority_transition_event(&founder, channel, &revoke_payload);
+        assert!(matches!(
+            insert_coding_session_authority_transition_event(
+                &pool, community, &revoke, channel, None,
+            )
+            .await
+            .expect("revoke accepted"),
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { .. }
+        ));
+        let revoked = crate::coding_session_acl::session_authority_for_hire(
+            &pool,
+            community,
+            channel,
+            &genesis_ref,
+            &session_ref,
+        )
+        .await
+        .expect("project revoked seats")
+        .expect("exact genesis authority");
+        assert!(!revoked.may_hire(lead.public_key().as_bytes(), "builder"));
+        assert!(crate::coding_session_acl::session_authority_for_hire(
+            &pool,
+            community,
+            channel,
+            &"ff".repeat(32),
+            &session_ref,
+        )
+        .await
+        .expect("wrong genesis lookup")
+        .is_none());
     }
 
     /// A second transition that correctly names the first as `prevAccepted`

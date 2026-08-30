@@ -1463,6 +1463,8 @@ pub const HIRE_WAIT_SECONDS: u64 = 60;
 pub struct HiredSeat {
     /// Event id of the seated create.
     pub event_id: String,
+    /// Pubkey that signed the seated create.
+    pub create_signer: String,
     /// Its `commandId` — the key the provider's receipt answers on, and the
     /// id this command reports back as the hire's own receipt reference.
     pub command_id: String,
@@ -1472,17 +1474,27 @@ pub struct HiredSeat {
     pub role: String,
     /// Umbrella it joined.
     pub session_ref: String,
+    /// Exact genesis the create joined.
+    pub genesis_ref: String,
+    /// Provider authority whose receipt may prove the execution exists.
+    pub provider_authority_pubkey: String,
     /// Provider instance the host ran it on — the request's, or the policy's.
     pub provider_instance_ref: String,
     /// Model the host chose, when the create named one.
     pub model: Option<String>,
     /// Event `created_at`, Unix seconds.
     pub at: i64,
+    /// Signed create retained for trust verification before granting a seat.
+    pub raw: Value,
 }
 
 /// What a provider answered a seated create with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatReceipt {
+    /// Event id of the provider receipt.
+    pub event_id: String,
+    /// Pubkey that signed the receipt.
+    pub signer: String,
     /// The receipt's own status word.
     pub status: ReceiptStatus,
     /// `cs-target` key of the execution it minted, absent for a failure.
@@ -1493,6 +1505,8 @@ pub struct SeatReceipt {
     pub error_message: Option<String>,
     /// Receipt `created_at`, Unix seconds.
     pub at: i64,
+    /// Signed receipt retained for trust verification before granting a seat.
+    pub raw: Value,
 }
 
 /// A host's refusal of a hire, as it reached the requesting seat.
@@ -1518,11 +1532,11 @@ pub enum HireOutcome {
         seat: HiredSeat,
         /// Its provider receipt.
         receipt: SeatReceipt,
-        /// Whether a live `grant-operator` names the seat's actor.
+        /// Whether the accepted authority chain names this exact actor-role
+        /// pair with a live `grant-seat`.
         ///
-        /// A seated agent with no grant is a mute one: the relay refuses its
-        /// `sessions send` with "only a session founder or a granted operator
-        /// may steer", so it can do the whole job and deliver none of it.
+        /// A seated agent with no role authority cannot sign its typed team
+        /// report, so it can do the whole job and settle none of it.
         /// Carried separately from the receipt because the provider's `created`
         /// says nothing about authority — on 2026-08-28 a hired builder had a
         /// `created` receipt and no grant, worked for 1,009 s, and its report
@@ -1567,10 +1581,11 @@ pub fn find_hired_seat(
         {
             continue;
         }
-        let (Some(content), Some(created_at), Some(event_id)) = (
+        let (Some(content), Some(created_at), Some(event_id), Some(create_signer)) = (
             content_of(event),
             event_created_at(event),
             event_str(event, "id"),
+            event_str(event, "pubkey"),
         ) else {
             continue;
         };
@@ -1590,6 +1605,8 @@ pub fn find_hired_seat(
             model,
             actor: Some(actor),
             role: Some(seat_role),
+            genesis_ref: Some(genesis_ref),
+            provider_authority_pubkey,
             ..
         } = payload.action
         else {
@@ -1600,13 +1617,17 @@ pub fn find_hired_seat(
         }
         let candidate = HiredSeat {
             event_id,
+            create_signer,
             command_id: payload.command_id,
             actor,
             role: seat_role,
             session_ref,
+            genesis_ref,
+            provider_authority_pubkey,
             provider_instance_ref,
             model,
             at: created_at,
+            raw: event.clone(),
         };
         match &best {
             Some(held)
@@ -1640,11 +1661,14 @@ pub fn newest_create_receipt(receipts: &[ReceiptRecord], command_id: &str) -> Op
         }
         let event_id = event_str(&record.raw, "id").unwrap_or_default();
         let seat_receipt = SeatReceipt {
+            event_id: event_id.clone(),
+            signer: record.signer.clone(),
             status: receipt.status,
             target_key: record.target_key.clone(),
             error_code: receipt.error.as_ref().map(|error| error.code.clone()),
             error_message: receipt.error.as_ref().map(|error| error.message.clone()),
             at: record.created_at,
+            raw: record.raw.clone(),
         };
         match &best {
             Some((at, id, _)) if (*at, id.as_str()) >= (record.created_at, event_id.as_str()) => {}
@@ -1786,9 +1810,10 @@ pub fn find_hire_refusal(
 /// was actually created and reporting "refused" would be false. Pure so the
 /// wording of an unpleasant answer is testable without a relay.
 ///
-/// `granted` is whether the seat's actor holds a live `grant-operator` on the
-/// umbrella's authority chain. It does not change what happened — the seat is
-/// created either way — only what the seat can do next.
+/// `granted` is whether the seat's exact actor-role pair holds a live,
+/// receipt-backed `grant-seat` on the umbrella's authority chain. It does not
+/// change what happened — the seat is created either way — only whether the
+/// hire is usable by the typed team workflow.
 pub fn fold_hire(
     seat: Option<HiredSeat>,
     receipt: Option<SeatReceipt>,
@@ -1852,14 +1877,14 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
                     None => String::new(),
                 },
                 if *granted {
-                    "It holds operator authority, so it can report back to you".to_owned()
+                    "Its accepted role-seat authority is active, so it can report back to you"
+                        .to_owned()
                 } else {
-                    format!(
-                        "It is seated, but not granted: no grant-operator named it within \
-                         {HIRE_WAIT_SECONDS}s, and the relay refuses an ungranted seat's report \
-                         — ask the operator to run `bee sessions grant --role collaborator` for \
-                         it. Do not hire again"
-                    )
+                    "It is seated, but its exact actor-role grant is not accepted; the typed \
+                         team fold excludes an unauthoritative report. Inspect the accepted \
+                         authority chain, then explicitly grant or revoke/change the role. Do \
+                         not hire again"
+                        .to_owned()
                 }
             ),
         },
@@ -1920,14 +1945,13 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
 
 /// The process exit code one hire outcome earns.
 ///
-/// `0` created, `1` refused (by the host or by the provider), `5` unconfirmed
-/// — including a seat published but never answered, which is not a success.
-///
-/// A created-but-ungranted seat is still `0`: the hire did what it says on the
-/// tin and a seat exists. What it cannot do is in the detail, not the code.
+/// `0` created with accepted role-seat authority, `1` refused, failed, or
+/// created without authority, `5` unconfirmed — including a seat published
+/// but never answered, which is not a success.
 pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
     match outcome {
-        HireOutcome::Created { .. } => 0,
+        HireOutcome::Created { granted: true, .. } => 0,
+        HireOutcome::Created { granted: false, .. } => 1,
         HireOutcome::Failed { .. } | HireOutcome::Refused(_) => 1,
         HireOutcome::Seating { .. } | HireOutcome::Unconfirmed => 5,
     }
