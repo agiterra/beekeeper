@@ -2530,9 +2530,24 @@ pub enum SessionsCmd {
     /// at all). Exit codes follow: 0 created, 1 refused/failed, 2 relay
     /// error, 5 seating/unconfirmed.
     ///
+    /// ROUTING. Pass `--class` and `--risk i,u,i` and the CLI routes the hire
+    /// before it signs it: it reads `team/model-registry.yaml` and the live
+    /// kind:44222 catalog, applies the hard requirements and the class gate,
+    /// derives the tier and the effort from the risk, and picks the cheapest
+    /// expected accepted completion among what is left. The decision rides on
+    /// the request as a `routing` object and is echoed onto the seat's create
+    /// and its kind:44223 metadata, so the seat can always be asked why it is
+    /// the model it is. When nothing clears the bar the hire is not signed at
+    /// all: exit 4, naming the binding trait and the best score anything
+    /// available really has (the same fact a host answers HIRE_NO_ROUTE).
+    /// `--model` alongside `--class` is an explicit human override: it is
+    /// still checked against the catalog, it is recorded as an override with
+    /// your `--because`, and it is never silently substituted.
+    ///
     /// A refusal's `code` is one of HIRE_OFF, HIRE_ROLE_NOT_ALLOWED,
     /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_ROLE_BUSY,
-    /// HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED or HIRE_STALE, and
+    /// HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED, HIRE_NO_ROUTE or
+    /// HIRE_STALE, and
     /// the detail carries the remedy for it. HIRE_NO_IDENTITY and
     /// HIRE_ROLE_BUSY are two different facts: the first means the host holds
     /// no identity for that role and only its operator can fix it; the second
@@ -2545,6 +2560,10 @@ pub enum SessionsCmd {
     /// `claude-opus-*` and `claude-haiku-*` onto the catalog's `sonnet`,
     /// `opus` and `haiku` when it offers them, and refuses anything else
     /// HIRE_MODEL_NOT_OFFERED with the offered ids in the reason.
+    /// HIRE_NO_ROUTE means nothing the catalog offers clears the class gate at
+    /// that risk tier; the reason names the binding trait and the best score
+    /// available, and the answer is a different class, a different risk
+    /// assessment, or an explicit override — never a quiet demotion.
     #[command(
         after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request."
     )]
@@ -2566,9 +2585,33 @@ pub enum SessionsCmd {
         /// when omitted
         #[arg(long = "provider-instance")]
         provider_instance: Option<String>,
-        /// Model the seat should run; the chosen identity's own when omitted
+        /// Model the seat should run; the chosen identity's own when omitted.
+        /// Alongside --class this is an OVERRIDE of the router and needs
+        /// --because.
         #[arg(long)]
         model: Option<String>,
+        /// Capability class to route for: lead, architect, builder, runner,
+        /// ui_designer, researcher, verifier, poker. With --risk, the CLI
+        /// routes the hire and puts the decision on the wire.
+        #[arg(long, requires = "risk")]
+        class: Option<String>,
+        /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
+        /// and the effort are derived from it; there is no --tier.
+        #[arg(long, requires = "class")]
+        risk: Option<String>,
+        /// Extra trait minimums as JSON, e.g. '{"taste":4.6}'
+        #[arg(long, requires = "class")]
+        profile: Option<String>,
+        /// Spec §6 review triggers, comma-separated
+        #[arg(long = "review-flags", requires = "class")]
+        review_flags: Option<String>,
+        /// Deliberately route a challenger for this class and mark the record
+        #[arg(long = "challenger-sample", requires = "class")]
+        challenger_sample: bool,
+        /// Why you are overriding the router. Required with --model --class:
+        /// an unexplained override is indistinguishable from a bug.
+        #[arg(long, requires = "model")]
+        because: Option<String>,
         /// File holding the brief, or `-` to read it from stdin
         #[arg(long, conflicts_with = "content")]
         brief: Option<String>,
@@ -2633,7 +2676,7 @@ pub enum SessionsCmd {
     /// Print the live provider catalog (kind 44222) — every model on offer.
     ///
     /// This is the *only* list of models this product offers. A create, a
-    /// hire, or a rubric row naming an id that is not here is naming something
+    /// hire, or a registry row naming an id that is not here is naming something
     /// nobody is serving: the answer is to say so and refuse, never to
     /// translate the id onto a neighbouring one that happens to be offered.
     ///
@@ -2657,64 +2700,137 @@ pub enum SessionsCmd {
         #[arg(long)]
         channel: String,
     },
-    /// The lead's model rubric, checked against the live catalog.
+    /// The model registry, checked against the live catalog.
     #[command(subcommand)]
-    Rubric(RubricCmd),
+    Registry(RegistryCmd),
+    /// Choose an execution target for a class at a risk tier, and say why.
+    ///
+    /// Brian's ruling of 2026-08-30: "The lead chooses the capability
+    /// required. The router chooses the execution target." You name a CLASS
+    /// and a RISK triple; this names the provider, the model and the effort.
+    /// You never name a model — `--model` is not an option here.
+    ///
+    /// THE ORDER. Live catalog, then hard requirements (modality, tools,
+    /// context window, known failure modes, per-target constraints), then the
+    /// class gate (every numeric minimum), then the risk tier, then the
+    /// effort, then — among what is left — the cheapest expected accepted
+    /// completion. Cost and speed never compensate for a capability deficit,
+    /// because they are consulted only after every gate has already passed.
+    /// There is no weighted product anywhere in it.
+    ///
+    /// THE TIER IS DERIVED. Risk = impact x uncertainty x irreversibility,
+    /// each 1-5, so 1-125: 1-8 FAST (effort low), 9-39 STANDARD (medium),
+    /// 40-125 DEEP (high). `--tier` is refused with that explanation rather
+    /// than accepted, because a tier a caller can set is a risk assessment
+    /// nobody made. The router never purchases xhigh, max or ultra, and never
+    /// escalates effort after a failure — a failed high goes to a different
+    /// target or to a reviewer.
+    ///
+    /// REVIEW IS NOT DEEP. Independent review is required by the spec's own
+    /// trigger list: risk >= 40, irreversibility >= 4, or any of the flags
+    /// under `--review-flags`. A cheap fast job that touches an auth boundary
+    /// needs a reviewer; an expensive deep job need not on that ground alone.
+    ///
+    /// Exit 0 with the decision, 1 for a malformed request or an unknown
+    /// class, 4 when nothing clears the bar — and that refusal names the
+    /// binding trait, the minimum it wanted, and the best score anything
+    /// available actually has. It never falls back to the smartest model.
+    #[command(
+        after_help = "Examples:\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2\n  bee sessions route --channel <uuid> --class runner --risk 1,1,1 --scope bounded\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2 --challenger-sample\n  bee sessions route --channel <uuid> --class verifier --risk 3,3,2 --counterpart-provider codex-primary\n  bee --format compact sessions route --channel <uuid> --class architect --risk 5,4,4 --review-flags contractChange\n\n--format json prints the whole table: every candidate with the gate it\ncleared or the reason it did not, the cost/latency/retry numbers behind the\ncomparison, the formula itself, and the provenance of any fact that gated a\ncandidate. --format compact prints the routing record alone -- the same\nobject that rides on a hire."
+    )]
+    Route {
+        /// Channel UUID the providers publish their catalogs into
+        #[arg(long)]
+        channel: String,
+        /// Capability class: lead, architect, builder, runner, ui_designer,
+        /// researcher, verifier, poker
+        #[arg(long)]
+        class: String,
+        /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
+        /// and the effort are derived from it. Required — but deliberately not
+        /// enforced by the parser, so a caller reaching for `--tier` is told
+        /// why the tier is derived rather than told a flag is missing.
+        #[arg(long)]
+        risk: Option<String>,
+        /// Extra trait minimums as JSON, e.g. '{"taste":4.6}'. A profile may
+        /// tighten a class gate; it can never loosen one.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Spec §6 review triggers, comma-separated: securityBoundary,
+        /// contractChange, outsidePlan, builderUncertain, testsInsufficient,
+        /// leadRequests
+        #[arg(long = "review-flags")]
+        review_flags: Option<String>,
+        /// Deliberately route a challenger for this class and mark the record,
+        /// so its result can be attributed later
+        #[arg(long = "challenger-sample")]
+        challenger_sample: bool,
+        /// The task's scope, e.g. `bounded`. A target constrained to a scope
+        /// is refused when nobody states one — unstated is not bounded.
+        #[arg(long)]
+        scope: Option<String>,
+        /// Tokens of context this task needs. A target whose window nobody
+        /// published cannot be shown to satisfy it, and is refused.
+        #[arg(long = "context-need")]
+        context_need: Option<u64>,
+        /// For a cross-provider class (verifier): the provider the class it
+        /// reviews is running on. Its provider's targets are removed when an
+        /// eligible cross-provider target exists.
+        #[arg(long = "counterpart-provider")]
+        counterpart_provider: Option<String>,
+        /// Path to the model registry; resolved from the working directory
+        /// upwards when omitted
+        #[arg(long)]
+        registry: Option<String>,
+        /// Refused: the tier is derived from --risk (see the error text)
+        #[arg(long)]
+        tier: Option<String>,
+        /// Accepted and has no effect: `route` never writes anything. It
+        /// exists so a caller that habitually passes it is not refused.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
 }
 
-/// `bee sessions rubric` — keep the written rubric honest about the offer.
+/// `bee sessions registry` — keep the written registry honest about the offer.
 #[derive(Subcommand)]
-pub enum RubricCmd {
-    /// Compare every rubric row to the live kind:44222 catalog.
+pub enum RegistryCmd {
+    /// Compare the model registry to the live kind:44222 catalog.
     ///
-    /// A rubric is a good instrument and a stale one is a quiet lie: it names
-    /// a model nobody serves, or it omits one that arrived last week, and
-    /// either way a lead reads it and picks wrong. This command never edits
-    /// the rubric and never translates an id — it prints two lists and exits
-    /// non-zero when either is non-empty:
+    /// A registry is a good instrument and a stale one is a quiet lie. This
+    /// command never edits the registry and never translates an id — it prints
+    /// three lists:
     ///
-    ///   `not offered: <ids>`  — rows naming a `provider/model` the catalog
-    ///   does not offer.
+    ///   `stale: <ids>`    — execution targets the catalog offers today that
+    ///   no registry row covers. THIS is staleness, and it is the only list
+    ///   that fails: exit 4.
     ///
-    ///   `unassigned: <ids>`   — `provider/model` pairs the catalog offers
-    ///   that no row names.
+    ///   `dormant: <ids>`  — registry rows the catalog does not offer today.
+    ///   LEGAL, and reported rather than counted: the registry is allowed to
+    ///   hold an opinion about a model this host is not serving right now.
     ///
-    /// Exit 0 when both are empty, 4 otherwise. `--format json` carries both
-    /// lists, the rubric's version, the offered pairs, and the catalog
-    /// revision (`null` when more than one signer published, because two hosts
-    /// share no revision counter).
+    ///   `variants: <ids>` — offered ids a row covers by the base rule without
+    ///   naming literally. Informational.
     ///
-    /// THE RUBRIC BLOCK. The rubric lives in the lead role pack at
-    /// `personas/roles/lead/skills/choose-model/SKILL.md`, inside a Markdown
-    /// fenced block (three backticks) whose info string starts with the word
-    /// `rubric` and whose optional next token is the rubric's version — so the
-    /// opening line reads `rubric v3` after the fence. Inside the fence is a
-    /// five-column table, in this order:
+    /// A bracket suffix is a variant of its base: `gpt-5.6-sol[high]` and
+    /// `gpt-5.6-sol[max]` are one model at two effort levels, and a row naming
+    /// `gpt-5.6-sol` has decided about both. `default` is a provider's pointer
+    /// at whatever the host is set to, never a row and never a gap.
     ///
-    /// | tier | role(s) | provider | model id | reason |
-    ///
-    /// | deep | lead, architect | claude-primary | opus[1m] | planning |
-    ///
-    /// | fast | builder | claude-primary | sonnet | throughput |
-    ///
-    /// | any | poker | * | haiku | cheap adversarial passes |
-    ///
-    /// A Markdown alignment row and the header row are skipped. `*` in the
-    /// provider column means whichever provider offers the id. Backticks
-    /// around a cell are markdown and are stripped. A block with no version is
-    /// accepted and reports `null`: a missing version is a fact about the
-    /// rubric, not a reason to refuse it.
+    /// `--format json` carries all three lists, the registry's version and
+    /// date, the offered pairs, and the catalog revision (`null` when more
+    /// than one signer published, because two hosts share no revision counter).
     #[command(
-        after_help = "Examples:\n  bee sessions rubric check --channel <uuid>\n  bee --format compact sessions rubric check --channel <uuid> --rubric ./personas/roles/lead/skills/choose-model/SKILL.md\n\nWith no --rubric, the nearest ancestor of the working directory holding\npersonas/roles/lead/skills/choose-model/SKILL.md is used, and a failure to\nfind one names every directory that was tried."
+        after_help = "Examples:\n  bee sessions registry check --channel <uuid>\n  bee --format compact sessions registry check --channel <uuid> --registry ./team/model-registry.yaml\n\nWith no --registry, the nearest ancestor of the working directory holding\nteam/model-registry.yaml is used, and a failure to find one names every\ndirectory that was tried."
     )]
     Check {
         /// Channel UUID the providers publish their catalogs into
         #[arg(long)]
         channel: String,
-        /// Path to the rubric document; resolved from the working directory
+        /// Path to the model registry; resolved from the working directory
         /// upwards when omitted
         #[arg(long)]
-        rubric: Option<String>,
+        registry: Option<String>,
     },
 }
 
@@ -3384,9 +3500,10 @@ mod tests {
                 "hire",
                 "inbox",
                 "list",
+                "registry",
                 "revoke",
                 "roster",
-                "rubric",
+                "route",
                 "send",
                 "status",
                 "tools",
@@ -3434,7 +3551,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 15),
+            ("sessions", 16),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

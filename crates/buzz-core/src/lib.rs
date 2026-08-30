@@ -36,6 +36,9 @@ pub mod coding_session_name;
 /// Provider-authored coding-session facts: receipts (44224), metadata (44223),
 /// and transcript envelopes (44225).
 pub mod coding_session_payload;
+/// The model registry and the router: which execution target a class, a risk
+/// tier and the live catalog select, and why.
+pub mod coding_session_routing;
 /// Runtime descriptors shared by the desktop host and the coding-session
 /// provider sidecar (`BUZZ_CSP_RUNTIMES`).
 pub mod coding_session_runtime;

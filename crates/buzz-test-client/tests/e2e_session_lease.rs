@@ -246,6 +246,7 @@ async fn session_lease_authority_register_and_cold_reads_are_end_to_end() {
             initial_turn: None,
             actor: None,
             role: None,
+            routing: None,
         },
     };
     let command_event = build_coding_session_lifecycle_command(channel_id, &create)

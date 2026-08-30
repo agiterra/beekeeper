@@ -443,6 +443,13 @@ pub fn decide_lifecycle(
         initial_turn,
         actor,
         role,
+        // The create may carry a routing record (NIP-CSL, Brian's ruling of
+        // 2026-08-30). This provider does not yet carry it onto the seat's
+        // kind:44223 metadata — doing so needs a field on the persisted
+        // `SessionRecord`, which is a separate change. Bound and ignored here
+        // rather than echoed, so nothing publishes a routing claim this crate
+        // did not actually receive.
+        routing: _,
     } = &payload.action
     else {
         unreachable!()

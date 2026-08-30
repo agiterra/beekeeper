@@ -110,6 +110,7 @@ fn metadata_event(
         relay_reachable: None,
         verified_at: None,
         turn_budget: None,
+        routing: None,
     };
     json!({
         "id": id,
@@ -1417,6 +1418,7 @@ fn create_event(
             initial_turn: None,
             actor: None,
             role: None,
+            routing: None,
         },
     };
     json!({
@@ -1976,6 +1978,7 @@ fn seated_create_event(
             initial_turn: Some("[From the lead] Rebase the lane.".into()),
             actor: Some(pk(actor)),
             role: Some(role.to_owned()),
+            routing: None,
         },
     };
     json!({
@@ -2496,6 +2499,7 @@ fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
         Some("claude-primary"),
         Some("claude-opus"),
         "Rebase the lane.",
+        None,
     );
     assert_eq!(
         serde_json::to_string(&payload).expect("serialize"),
@@ -2522,6 +2526,7 @@ fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
         None,
         None,
         "Rebase the lane.",
+        None,
     );
     let content = serde_json::to_string(&defaults).expect("serialize");
     assert!(
@@ -2535,6 +2540,89 @@ fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
         )
         .expect("decodes"),
         defaults
+    );
+}
+
+/// A routed hire is the same seven keys plus `routing`, in that order, and the
+/// relay's own decoder accepts it. Brian's ruling of 2026-08-30.
+#[test]
+fn a_routed_hire_appends_the_routing_record_as_an_eighth_key() {
+    use buzz_core::coding_session_routing::{
+        parse_registry, route, OfferedTarget, Risk, RouteRequest,
+    };
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    let registry = parse_registry(
+        &std::fs::read_to_string(root.join("team/model-registry.yaml")).expect("read"),
+    )
+    .expect("parse");
+    let fixture: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("testdata/routing/live-catalog-665076ce.json"))
+            .expect("read"),
+    )
+    .expect("json");
+    let offered: Vec<OfferedTarget> = fixture["offered"]
+        .as_array()
+        .expect("offered")
+        .iter()
+        .map(|pair| {
+            OfferedTarget::new(
+                pair["providerInstanceRef"].as_str().expect("provider"),
+                pair["model"].as_str().expect("model"),
+            )
+        })
+        .collect();
+    let decision = route(
+        &registry,
+        &offered,
+        &RouteRequest {
+            class: "builder".to_owned(),
+            risk: Risk {
+                impact: 3,
+                uncertainty: 3,
+                irreversibility: 2,
+            },
+            ..RouteRequest::default()
+        },
+        Some(7),
+    )
+    .expect("a route");
+
+    let genesis = "12".repeat(32);
+    let payload = hire_payload(
+        "hire-3",
+        UMBRELLA_HIRE,
+        &genesis,
+        "builder",
+        Some("claude-primary"),
+        Some("sonnet"),
+        "Rebase the lane.",
+        Some(decision.record.clone()),
+    );
+    let content = serde_json::to_string(&payload).expect("serialize");
+    assert!(
+        content.contains(r#""brief":"Rebase the lane.","routing":{"class":"builder""#),
+        "routing must be the eighth key, after the brief: {content}"
+    );
+    // Every key is written, `null` where unanswered, so a strict observer has
+    // one shape to accept rather than a family of them.
+    assert!(content.contains(r#""profile":null"#), "{content}");
+    assert!(content.contains(r#""override":null"#), "{content}");
+    assert!(
+        content.contains(
+            r#""chosen":{"provider":"claude-primary","model":"sonnet","effort":"medium"}"#
+        ),
+        "{content}"
+    );
+    // And the relay's own strict decoder accepts it.
+    assert_eq!(
+        buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+            &content
+        )
+        .expect("decodes"),
+        payload
     );
 }
 
@@ -2577,6 +2665,15 @@ fn every_contract_refusal_code_has_a_remedy_this_cli_can_print() {
     // staleness window; named literally so a rename cannot pass silently.
     assert!(hire_refusal_remedy("HIRE_MODEL_NOT_OFFERED").is_some());
     assert!(hire_refusal_remedy("HIRE_STALE").is_some());
+    // The router's own refusal. Its remedy must not send a lead to the next
+    // model down — "the smartest available" and "the cheapest that fits" are
+    // both wrong answers to a requirement nothing meets.
+    let no_route = hire_refusal_remedy("HIRE_NO_ROUTE").expect("HIRE_NO_ROUTE has a remedy");
+    assert!(no_route.contains("--because"), "{no_route}");
+    assert!(
+        !no_route.to_lowercase().contains("next model"),
+        "{no_route}"
+    );
     // An invented code is not known, and the report says nothing rather than
     // guessing a remedy for it.
     assert_eq!(hire_refusal_remedy("HIRE_NOT_A_REAL_CODE"), None);

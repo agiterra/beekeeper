@@ -2620,6 +2620,7 @@ mod tests {
                 initial_turn: None,
                 actor: seat.map(|(actor, _)| actor.to_owned()),
                 role: seat.map(|(_, role)| role.to_owned()),
+                routing: None,
             },
         };
         let create_event = build_coding_session_lifecycle_command(channel_id, &create)
@@ -2662,6 +2663,7 @@ mod tests {
             relay_reachable: None,
             verified_at: None,
             turn_budget: None,
+            routing: None,
         };
         let metadata_content = serde_json::to_string(&metadata).unwrap();
         let metadata_event = build_coding_session_metadata(channel_id, &target, &metadata_content)

@@ -1,0 +1,421 @@
+# The model registry — Brian's ruling of 2026-08-30, written down.
+#
+# THE TWO RULES, verbatim:
+#   "The lead chooses the capability required. The router chooses the
+#    execution target."
+#   "Select the least expensive execution target whose expected failure mode
+#    is acceptable for the task."
+#
+# The thing routed is an EXECUTION TARGET — harness/provider + model + effort —
+# not a model. `bee sessions route` reads this file, intersects it with the
+# live kind:44222 catalog, applies hard requirements, then the class gates,
+# then the risk tier, and only then lets cost and speed choose among what is
+# left. Cost never compensates for a capability deficit.
+#
+# WHAT IS AN OPINION AND WHAT IS A FACT
+#
+# `scores` are ten 1-5 operational priors. Every one of them is an opinion —
+# each row carries a `rating` block saying so, with its author, its date, and
+# `confidence: low`. They are not measurements and nothing in this repository
+# may render them as measurements. `costEfficiency` is the weakest of the ten:
+# it is NOT $/MTok (our real cost is quota lanes), and batch 2 replaces it with
+# measured cost per accepted task.
+#
+# `facts` are claims about the world, kept apart from the scores on purpose.
+# Their provenance is recorded in `factsProvenance` below, per field, because
+# some of them come from the catalog, some from Brian's ruling, and some are
+# this lane's reading — and a reader is entitled to know which.
+#
+# DORMANT IS NOT STALE
+#
+# A row here that today's catalog does not offer is DORMANT: the registry
+# knows a model this host is not serving right now. That is legal and is not
+# staleness. STALE is the other direction — a live offered execution target
+# with no row here. `bee sessions registry check --channel <uuid>` reports both
+# and exits 4 only on the stale one.
+#
+# The "default" alias is never a row: it is a provider's pointer at whatever
+# the host is set to, not a model. Mythos is in no catalog and never routes.
+
+version: 1
+updatedAt: "2026-08-30"
+
+# The ten scored traits, in the order Brian listed them (spec §1).
+traits:
+  [
+    reasoning,
+    coding,
+    taste,
+    judgment,
+    agency,
+    discipline,
+    context,
+    verification,
+    velocity,
+    costEfficiency,
+  ]
+
+# Where each `facts` field came from. Printed by `bee sessions route` for every
+# fact that actually gated a candidate, so a refusal can never rest on a number
+# whose origin the reader cannot check.
+factsProvenance:
+  multimodal:
+    "Brian's wire correction of 2026-08-30 (true for every Claude row and for
+    the codex 5.6/5.5/5.4 rows), except gpt-5.3-codex-spark, which the ruling
+    itself calls an \"ultra-fast 128K text-only coding preview\" (spec §3).
+    gpt-5.4-mini is true on the ruling's own \"coding, computer use and
+    subagents\" (spec, opening paragraph). No 44222 catalog metadata contradicts
+    any of these — the catalog carries contextWindow/family/vendor/deprecated
+    and no modality field at all."
+  tools:
+    "LANE-DRAFTED (swat18/registry, 2026-08-30). The 44222 catalog publishes no
+    tool metadata — `Capabilities` carries threadTurnStart, threadTurnInterrupt,
+    threadSteer, context, diff and plan, and nothing about search. These values
+    are this lane's reading of what each harness advertises, and they carry the
+    same low confidence as the scores. They matter because the researcher class
+    gate requires a search tool; if they are wrong, that gate is wrong."
+  contextWindow:
+    "Stated here only for gpt-5.3-codex-spark (128K, from the ruling's own
+    words). Every other row omits it and the router reads the live catalog's
+    per-model `contextWindow` instead — a measured window beats a copied one."
+  priceUsdPerM:
+    "Brian's contract gives a price for gpt-5.6-sol, -terra and -luna only.
+    Every other row omits it rather than guessing. Price is recorded and
+    printed but is NOT in the selection formula: the ruling says our real cost
+    is quota lanes, not API list price."
+  quotaClass:
+    "The lane the target's quota is drawn from. `codex-plan` for every
+    codex-primary row, `claude-subscription` for every claude-primary row, per
+    the ruling's \"our real cost is quota lanes (Claude subscription vs Codex
+    plan)\". A comparison across two quota classes is a comparison across two
+    currencies; the routing record's reason says so when it happens."
+  knownFailureModes:
+    "Empty on every row. Nothing has recorded one yet, and an empty list is the
+    honest state — not a claim that no failure modes exist."
+  constraints:
+    "Brian's spec §4, RUNNER: Spark carries the additional hard constraint
+    ambiguity <= 2 AND irreversibility <= 2 AND scope == bounded."
+
+# Risk = impact x uncertainty x irreversibility (1-5 each), so 1..125.
+# Brian: "mark seed_policy, not truth."
+tiers:
+  fast: { risk: [1, 8], effort: low, seedPolicy: true }
+  standard: { risk: [9, 39], effort: medium, seedPolicy: true }
+  deep: { risk: [40, 125], effort: high, seedPolicy: true }
+
+# Hard minimums from spec §4. A target must clear EVERY listed trait.
+classes:
+  lead:
+    minimums:
+      { reasoning: 4.8, judgment: 4.8, agency: 4.8, discipline: 4.6, context: 4.8 }
+    note: "A lead should almost never be selected because it is cheap (spec §4)."
+  architect:
+    minimums:
+      { reasoning: 4.7, judgment: 4.7, discipline: 4.5, context: 4.5, verification: 4.5 }
+  builder:
+    minimums: { coding: 4.2, agency: 4.4, discipline: 4.5, verification: 4.2 }
+  runner:
+    minimums: { agency: 4.0, discipline: 3.7, velocity: 4.5 }
+  ui_designer:
+    minimums: { taste: 4.5, judgment: 4.3 }
+    requires: { multimodal: true }
+  researcher:
+    minimums: { reasoning: 4.4, judgment: 4.3, context: 4.5, verification: 4.4 }
+    requires: { tools: [search] }
+  verifier:
+    minimums: { reasoning: 4.5, judgment: 4.5, verification: 4.7 }
+    crossProviderOf: builder
+  # NOT in Brian's §4. A designer-class adversarial walk of the running app.
+  poker:
+    minimums: { judgment: 4.3, discipline: 4.0 }
+    requires: { multimodal: true }
+    draftedBy: "swat18/registry lane A, 2026-08-30 — not ruled on by Brian"
+
+# Keyed by the execution-target id the harness PUBLISHES in its 44222 catalog.
+# No aliases (item 94). Effort variants (`[low]`…`[ultra]`) inherit their base
+# row; the router picks the effort from the tier and names the catalog id that
+# carries it, where the catalog offers one.
+targets:
+  - provider: codex-primary
+    model: gpt-5.6-sol
+    scores:
+      {
+        reasoning: 5.0,
+        coding: 5.0,
+        taste: 4.8,
+        judgment: 5.0,
+        agency: 5.0,
+        discipline: 4.8,
+        context: 5.0,
+        verification: 5.0,
+        velocity: 3.5,
+        costEfficiency: 3.5,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      priceUsdPerM: { input: 4, output: 20 }
+      quotaClass: codex-plan
+      knownFailureModes: []
+    status:
+      {
+        lead: incumbent,
+        architect: incumbent,
+        builder: incumbent-deep,
+        verifier: incumbent,
+        ui_designer: incumbent,
+        researcher: incumbent,
+      }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: codex-primary
+    model: gpt-5.6-terra
+    scores:
+      {
+        reasoning: 4.6,
+        coding: 4.7,
+        taste: 4.4,
+        judgment: 4.4,
+        agency: 4.7,
+        discipline: 4.8,
+        context: 5.0,
+        verification: 4.6,
+        velocity: 4.2,
+        costEfficiency: 4.0,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      priceUsdPerM: { input: 2, output: 12 }
+      quotaClass: codex-plan
+      knownFailureModes: []
+    status: { builder: challenger, researcher: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: codex-primary
+    model: gpt-5.6-luna
+    scores:
+      {
+        reasoning: 4.0,
+        coding: 4.2,
+        taste: 3.8,
+        judgment: 3.9,
+        agency: 4.5,
+        discipline: 4.6,
+        context: 5.0,
+        verification: 4.2,
+        velocity: 5.0,
+        costEfficiency: 5.0,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      priceUsdPerM: { input: 0.20, output: 1.20 }
+      quotaClass: codex-plan
+      knownFailureModes: []
+    status: { builder-fast: incumbent, runner: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: codex-primary
+    model: gpt-5.5
+    scores:
+      {
+        reasoning: 4.8,
+        coding: 4.8,
+        taste: 4.5,
+        judgment: 4.7,
+        agency: 4.8,
+        discipline: 4.7,
+        context: 5.0,
+        verification: 4.7,
+        velocity: 3.6,
+        costEfficiency: 2.5,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: codex-plan
+      knownFailureModes: []
+    status: { architect: challenger, builder: challenger }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: codex-primary
+    model: gpt-5.4
+    scores:
+      {
+        reasoning: 4.5,
+        coding: 4.6,
+        taste: 4.2,
+        judgment: 4.3,
+        agency: 4.7,
+        discipline: 4.7,
+        context: 5.0,
+        verification: 4.5,
+        velocity: 4.1,
+        costEfficiency: 3.6,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: codex-plan
+      knownFailureModes: []
+    status: { builder: challenger }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: codex-primary
+    model: gpt-5.4-mini
+    scores:
+      {
+        reasoning: 4.0,
+        coding: 4.5,
+        taste: 3.7,
+        judgment: 3.8,
+        agency: 4.7,
+        discipline: 4.8,
+        context: 4.2,
+        verification: 4.3,
+        velocity: 4.8,
+        costEfficiency: 4.7,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: codex-plan
+      knownFailureModes: []
+    status: { builder-fast: incumbent, runner: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: codex-primary
+    model: gpt-5.3-codex-spark
+    scores:
+      {
+        reasoning: 3.2,
+        coding: 3.8,
+        taste: 2.8,
+        judgment: 3.0,
+        agency: 4.3,
+        discipline: 3.7,
+        context: 2.8,
+        verification: 3.3,
+        velocity: 5.0,
+        costEfficiency: null,
+      }
+    facts:
+      multimodal: false
+      tools: []
+      contextWindow: 128000
+      quotaClass: codex-plan
+      knownFailureModes: []
+      constraints: { ambiguityMax: 2, irreversibilityMax: 2, scope: bounded }
+    status: { runner: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: claude-primary
+    model: claude-fable-5[1m]
+    scores:
+      {
+        reasoning: 5.0,
+        coding: 5.0,
+        taste: 4.9,
+        judgment: 5.0,
+        agency: 5.0,
+        discipline: 4.8,
+        context: 5.0,
+        verification: 5.0,
+        velocity: 2.7,
+        costEfficiency: 2.0,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: claude-subscription
+      knownFailureModes: []
+    status: { lead: incumbent, architect: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: claude-primary
+    model: opus[1m]
+    scores:
+      {
+        reasoning: 5.0,
+        coding: 5.0,
+        taste: 4.9,
+        judgment: 5.0,
+        agency: 5.0,
+        discipline: 4.8,
+        context: 5.0,
+        verification: 5.0,
+        velocity: 3.4,
+        costEfficiency: 3.0,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: claude-subscription
+      knownFailureModes: []
+    status:
+      {
+        lead: incumbent,
+        architect: incumbent,
+        builder-deep: incumbent,
+        verifier: incumbent,
+        ui_designer: incumbent,
+      }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: claude-primary
+    model: sonnet
+    scores:
+      {
+        reasoning: 4.6,
+        coding: 4.7,
+        taste: 4.5,
+        judgment: 4.4,
+        agency: 4.9,
+        discipline: 4.9,
+        context: 5.0,
+        verification: 4.7,
+        velocity: 4.6,
+        costEfficiency: 4.5,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: claude-subscription
+      knownFailureModes: []
+    status: { builder: incumbent, ui_designer: incumbent, researcher: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }
+
+  - provider: claude-primary
+    model: haiku
+    scores:
+      {
+        reasoning: 3.6,
+        coding: 3.7,
+        taste: 3.4,
+        judgment: 3.4,
+        agency: 4.1,
+        discipline: 4.3,
+        context: 3.4,
+        verification: 3.7,
+        velocity: 5.0,
+        costEfficiency: 4.6,
+      }
+    facts:
+      multimodal: true
+      tools: [search]
+      quotaClass: claude-subscription
+      knownFailureModes: []
+    status: { runner: incumbent }
+    rating:
+      { status: operational_opinion, confidence: low, author: brian, date: "2026-08-30" }

@@ -468,6 +468,10 @@ pub async fn cmd_create(
             initial_turn,
             actor: None,
             role: None,
+            // `bee sessions create` names its own model, so there is no
+            // routing decision to record. A record here would claim a choice
+            // nobody made.
+            routing: None,
         },
     };
     let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
@@ -603,6 +607,146 @@ async fn read_hire_answer(
 ///
 /// A relay that predates `session.hire` refuses the payload as malformed;
 /// that is reported as an old relay, never as a bad request.
+/// What `bee sessions hire` was asked to route, if anything.
+///
+/// All-or-nothing on purpose: a class with no risk is a capability nobody
+/// priced, and clap already refuses the half pair.
+#[derive(Debug, Clone, Default)]
+pub struct HireRouting {
+    /// The capability class to route for.
+    pub class: Option<String>,
+    /// `impact,uncertainty,irreversibility`.
+    pub risk: Option<String>,
+    /// Extra trait minimums, as JSON.
+    pub profile: Option<String>,
+    /// Spec §6 triggers, comma-separated.
+    pub review_flags: Option<String>,
+    /// Deliberately sample a challenger for this class.
+    pub challenger_sample: bool,
+    /// Why the human is overriding the router.
+    pub because: Option<String>,
+}
+
+/// Route a hire, or answer that it was not routed.
+///
+/// Returns the provider instance, the model id and the routing record the
+/// request should carry. An explicit `--model` alongside `--class` is an
+/// override: it is validated against the live catalog exactly as an unrouted
+/// hire's model is, recorded as an override with its reason, and never
+/// silently substituted for the router's pick.
+async fn resolve_hire_routing(
+    client: &BuzzClient,
+    channel_id: &str,
+    routing: &HireRouting,
+    provider_instance: Option<&str>,
+    model: Option<&str>,
+) -> Result<
+    (
+        Option<String>,
+        Option<String>,
+        Option<buzz_core::coding_session_routing::Routing>,
+    ),
+    CliError,
+> {
+    let Some(class) = routing.class.as_deref() else {
+        if routing.because.is_some() {
+            return Err(CliError::Usage(
+                "--because explains an override of the router, so it needs --class and --risk; without them there is no routing decision to override"
+                    .to_owned(),
+            ));
+        }
+        return Ok((
+            provider_instance.map(str::to_owned),
+            model.map(str::to_owned),
+            None,
+        ));
+    };
+    let risk = routing.risk.as_deref().ok_or_else(|| {
+        CliError::Usage("--class needs --risk impact,uncertainty,irreversibility".to_owned())
+    })?;
+    if model.is_some() && routing.because.is_none() {
+        return Err(CliError::Usage(
+            "--model alongside --class overrides the router, so --because is required: an unexplained override is indistinguishable from a bug"
+                .to_owned(),
+        ));
+    }
+
+    let (_, registry) = super::registry::load_registry(None)?;
+    let snapshot = super::catalog::load_catalogs(client, channel_id).await?;
+    let offered = super::route::offers(&snapshot);
+    let request = super::route::build_request(
+        class,
+        risk,
+        routing.profile.as_deref(),
+        routing.review_flags.as_deref(),
+        routing.challenger_sample,
+        None,
+        None,
+        None,
+    )?;
+    let decision = buzz_core::coding_session_routing::route(
+        &registry,
+        &offered,
+        &request,
+        super::registry::catalog_revision(&snapshot),
+    )
+    .map_err(|error| super::route::route_error(&error))?;
+    let mut record = decision.record;
+
+    let Some(model) = model else {
+        let chosen = record
+            .chosen
+            .clone()
+            .ok_or_else(|| CliError::Other("the router returned no chosen target".to_owned()))?;
+        return Ok((Some(chosen.provider), Some(chosen.model), Some(record)));
+    };
+
+    // An override still has to name something on offer. The catalog is the
+    // only list of models this product has; an id it does not carry is named
+    // and refused, never mapped onto a neighbour.
+    let matches: Vec<&buzz_core::coding_session_routing::OfferedTarget> = offered
+        .iter()
+        .filter(|offer| offer.model == model)
+        .filter(|offer| provider_instance.is_none_or(|wanted| offer.provider == wanted))
+        .collect();
+    let offer = matches.first().copied().ok_or_else(|| {
+        CliError::Usage(format!(
+            "--model {model:?} is not offered by this channel's catalog{}. Read the offer with `bee sessions catalog --channel {channel_id}`.",
+            provider_instance.map_or(String::new(), |provider| format!(" on {provider}"))
+        ))
+    })?;
+    let because = routing.because.clone().unwrap_or_default();
+    record.r#override = Some(buzz_core::coding_session_routing::RoutingOverride {
+        model: model.to_owned(),
+        // The tier's effort still applies; an override of the model is not an
+        // override of the effort policy.
+        effort: None,
+        because,
+    });
+    let effort = record
+        .chosen
+        .as_ref()
+        .map_or_else(|| "medium".to_owned(), |target| target.effort.clone());
+    // `chosen` is what will actually run. The router's own pick survives as
+    // `runnerUp`, so the record shows what was displaced rather than hiding it.
+    record.runner_up = record.chosen.take();
+    record.chosen = Some(buzz_core::coding_session_routing::RoutingTarget {
+        provider: offer.provider.clone(),
+        model: offer.model.clone(),
+        effort,
+    });
+    record.reason = Some(format!(
+        "human override: {}",
+        routing.because.clone().unwrap_or_default()
+    ));
+    record.validate().map_err(CliError::Usage)?;
+    Ok((
+        Some(offer.provider.clone()),
+        Some(offer.model.clone()),
+        Some(record),
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_hire(
     client: &BuzzClient,
@@ -615,6 +759,7 @@ pub async fn cmd_hire(
     brief: Option<&str>,
     content: Option<&str>,
     no_wait: bool,
+    routing: &HireRouting,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     let channel = Uuid::parse_str(channel_id)
@@ -657,15 +802,22 @@ pub async fn cmd_hire(
         }
     };
 
+    // Routed before the request is signed, so a hire nothing can serve is
+    // never published at all: exit 4 with the binding trait rather than a
+    // request that sits waiting to be refused HIRE_NO_ROUTE.
+    let (provider_instance, model, routing_record) =
+        resolve_hire_routing(client, channel_id, routing, provider_instance, model).await?;
+
     let command_id = Uuid::new_v4().to_string();
     let payload = hire_payload(
         &command_id,
         session_ref,
         &genesis_ref,
         role,
-        provider_instance,
-        model,
+        provider_instance.as_deref(),
+        model.as_deref(),
         &brief_text,
+        routing_record.clone(),
     );
     let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
     let event = client.sign_event_unchecked(builder)?;
@@ -679,6 +831,11 @@ pub async fn cmd_hire(
         "sessionRef": session_ref,
         "genesisRef": genesis_ref,
         "role": role,
+        // `null` when nothing routed — the honest answer to "why this model"
+        // for a hire that named one by hand.
+        "routing": routing_record
+            .as_ref()
+            .and_then(|record| serde_json::to_value(record).ok()),
     });
     let mut merged = match submit_with(client, event, "hire request already accepted", extra).await
     {
