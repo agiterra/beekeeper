@@ -45,11 +45,11 @@ Problem, with evidence: <2–3 file:line entry points, or reproduced output>.
 Ledger: §3 Next, plus items <numbers> — read those and nothing else of SESSION_STATE.md.
 Design (LOCKED): <decisions, numbered>. Deviations need a written reason in the report.
 Contract changes: <exact wire/type deltas, with the doc that must change>.
-Seat: <tier> · <the rubric row's model id, exactly as the catalog prints it> ·
-      thinking <level> — because <the row's reason>. Row from the choose-model
-      rubric, checked this batch with `bee sessions rubric check`.
-      | hire: <role> on <provider>/<that same id> — when no seat holds this lane yet.
-      | the identity's own record — when the host has set one (choose-model rule b).
+Seat: <class> · <fast|standard|deep> (risk I×U×I = <n>) · routed by the host
+      — model on the create. Review: <required, and which §6 triggers | not required>.
+      <challenger sample for this batch, if this is the 5th standard builder job>
+      | hire: <role> — when no seat holds this lane yet.
+      | send: <role> — when a seat in this umbrella already holds it.
 Tests you must add: <named>. Watch each fail before the fix where a defect is claimed.
 Acceptance: <commands with expected counts / exit codes>.
 Out of scope: <named temptations>.
@@ -57,7 +57,8 @@ Report format: see the write-report skill on the builder pack.
 Dispatch: bee sessions send --channel <channel-uuid> --session-ref <umbrella-uuid> \
   --to <role> --content -
   | bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
-      --role <slug> --brief <this file> — when the Seat line says hire.
+      --role <slug> --class <class> --risk <i>,<u>,<r> [--review-flags <f,...>] \
+      [--challenger-sample] --brief <this file> — when the Seat line says hire.
 ```
 
 ## The base is `origin/main` after a fetch, never local main
@@ -167,11 +168,12 @@ with a "start" message. See `skills/hire`.
 - Exclusive file ownership per lane — two lanes never own the same file.
 - Name the tier and why; tier-2 briefs must name what makes them tier-2
   (provider runtime, custody/keys, relay ingest, durable state).
-- The Seat line names the tier, the rubric row's catalog id and the reason in one
-  clause. "tier-1 · sonnet, because the brief is locked and this is a two-file
-  mechanical edit" is a Seat line; "sonnet" is not, and `default` or a vendor
-  marketing string is neither — there are no aliases, so an id the catalog does
-  not offer is refused rather than mapped.
+- **The Seat line names a class and a risk triple, never a model** — and its
+  fast/standard/deep is the routing tier, not the lane's tier-0/1/2 above.
+  "builder · fast (risk 2×1×2 = 4) · routed by the host" is a Seat line; a model
+  id is not, and neither is a tier on its own. You classify the capability
+  required; the router chooses the execution target and writes what it chose
+  onto the create — quote that back in the lane's Pulse line.
 - Never brief a lane to run a gate you should have hired a runner for; the lane
   runs the tests its own change needs, and `skills/hire` says who runs the rest.
 - A brief that turns out wrong on the ground is a report back from the lane, not

@@ -1,153 +1,199 @@
 ---
 name: choose-model
-description: "The versioned rubric a lead picks a hire's model from: real catalog ids, checked against the live catalog before every batch, never an alias and never \"default\"."
+description: "Classify and route: score the task on eleven properties and a risk triple, pick the execution class, emit the routing record — and never name a model, because the router chooses the execution target."
 ---
 
-# Choose a model for a seat
+# Classify and route
 
-One table, real catalog ids, one sentence of justification. The rubric names ids
-the providers on this computer actually publish, because that is the only list a
-hire can be answered from: there is no alias translation anywhere in the path,
-so a name that is not in the catalog is refused, not mapped onto something
-close. Read the rubric, run the check, then write the reason into the brief.
+Two rules, and everything below is only how to obey them:
 
-## The rubric
+> **The lead chooses the capability required. The router chooses the execution target.**
+>
+> **Select the least expensive execution target whose expected failure mode is acceptable for the task.**
 
-**Version 3 — 2026-08-30.** Ids as `claude-primary` and `codex-primary`
-published them in their kind:44222 catalogs, recorded in ledger item 88(a)
-(claude-primary, catalog revision 4) and item 88(i)/92 (codex-primary). **This
-version was written from the ledger, not from a live read** — the relay refused
-an unauthenticated 44222 query at the time it was written, so treat the first
-`rubric check` of your batch as the thing that confirms it, not as a formality.
+**You never name a model.** No `--model`, no vendor string, no alias, no tier
+table of ids. You classify: the capability class the task needs, how expensive
+being wrong is, and which review triggers fire. The host's router intersects the
+live kind:44222 catalog with `team/model-registry.yaml`, enforces the hard gates,
+picks the cheapest expected accepted completion among what is left, and writes
+what it chose, the runner-up and the reason onto the create for you to read back.
 
-```rubric v3
-| tier | role(s) | provider | model id | reason |
-| --- | --- | --- | --- | --- |
-| frontier | lead | claude-primary | claude-fable-5[1m] | every brief, report and diff of a whole batch has to sit in one context and still be ruled on; the million-token window is the capability that decides it |
-| tier-2 | builder on a tier-2 lane — provider runtime, custody/keys, relay ingest, durable state | codex-primary | gpt-5.6-terra[high] | the design is still being discovered on the ground, over a long tool-use chain that must keep a wire contract straight; it is also the frontier row on the other provider, which is what lets a verifier be hired off the builder's blind spot |
-| frontier | verifier over a tier-2 diff | claude-primary | opus[1m] | an adversarial pass needs frontier reasoning and a different provider from the builder it is checking; if the builder took a claude-primary row, the verifier takes the codex-primary one instead |
-| tier-1 | builder on a one-file lane against a locked design, tests named | claude-primary | sonnet | the decisions are already made in the brief; what is left is the edit and the named tests, which is the cheapest seat that does both reliably |
-| tier-0 | docs, ledger, runbook | claude-primary | haiku | it edits prose against a cited file:line and copies exact text; no design judgement is in the lane |
-| tier-0 | runner | claude-primary | haiku | the entire answer is an exit code and a count, so the capability that matters is running a command and copying its output verbatim |
-| frontier | poker | claude-primary | opus[1m] | it must read its own screenshots — a walk it cannot see is a walk it invents — so the row has to be multimodal, and a full walk is long enough to need the large window |
-| frontier | designer | claude-primary | opus[1m] | it drives the real app and reads back what rendered, so multimodal is the gate, and a surfaces spec is one long context of screens, copy and event kinds |
+*(The directory keeps the name `choose-model` so links hold; the rubric table it
+used to carry is gone.)*
+
+## 1. Classify the task — eleven properties
+
+Answer all eleven before anything else — they are what the brief has to defend:
+
+- **domain**, **reasoning depth**, **taste**, **judgment risk** — which class,
+  and the trait minimums that class carries.
+- **ambiguity** (1–5) — ≥ 3 means the design is still being discovered on the
+  ground; the runner-class constraints read this number literally.
+- **tool dependence**, **context size** — hard requirements the router cannot
+  infer from prose: search/browser, shell, multimodal, context window.
+- **execution autonomy**, **verification need** — the `agency` and
+  `verification` minimums, and whether a verifier is its own seat.
+- **latency**, **cost sensitivity** — tie-breakers only.
+
+Cost and speed **choose only among targets that already cleared every gate**;
+they never compensate for a capability deficit. A weighted product of capability
+× cost × velocity is exactly what this skill replaced.
+
+## 2. Score risk, derive the tier
+
+**Risk = impact × uncertainty × irreversibility**, each 1–5.
+
+| risk | tier | effort the router buys |
+| --- | --- | --- |
+| 1–8 | FAST | low |
+| 9–39 | STANDARD | medium |
+| 40–125 | DEEP | high |
+
+Those thresholds are **seed policy, not truth** — say so when you cite them.
+Traits answer *what capability is required*; risk answers *how expensive being
+wrong is*: a hard but disposable experiment is still STANDARD, a simple
+irreversible migration is DEEP.
+
+The router never buys xhigh/max/ultra — human override only. And **never
+auto-escalate effort after a failure**: a failed high seat gets a *different
+execution target* or a *reviewer*, never more thinking on the same model.
+
+## 3. Pick the execution class
+
+`lead`, `architect`, `builder`, `runner`, `ui_designer`, `researcher`,
+`verifier` — the registry carries each one's numeric minimums (spec §4):
+
+- an outcome already understood, design locked → **builder**
+- a boundary, schema, migration or contract still being decided → **architect**
+- repo search, a gate, a mechanical edit, an extraction → **runner**
+- visual direction, hierarchy, screenshot→implementation → **ui_designer**
+- an adversarial pass over someone else's diff → **verifier**, cross-provider
+- `poker` exists as a walk-the-app class and is **lane-drafted, not in Brian's
+  §4** — say so whenever you route one.
+
+### Role splitting: a DEEP buildable task is three seats
+
+When risk lands DEEP *and* the task is buildable, do not hire one deep builder.
+Route three, and say why in the brief:
+
+1. **architect** (DEEP) — decides the boundary, writes the locked design.
+2. **builder** (STANDARD or FAST) — implements it; the decisions are already
+   made, so the implementation's risk is not the decision's risk.
+3. **verifier** (STANDARD) — cross-vendor of the builder: diversity of failure
+   mode is the point of the pass.
+
+Splitting stops a deep risk score buying deep effort on every keystroke of a job
+whose hard part was one paragraph.
+
+## 4. Emit the routing record
+
+The record rides `session.hire` and is echoed on the resulting create and on the
+seat's 44223 metadata. You fill `class`, `tier`, `risk`, optionally `profile`,
+plus review flags, challenger sampling and any override; **the router fills
+`chosen`, `runnerUp`, `reason`, `registryVersion` and `catalogRevision`.**
+
+A FAST builder task — *"implement approved API endpoint"*:
+
+```json
+{
+  "class": "builder",
+  "tier": "fast",
+  "risk": { "impact": 2, "uncertainty": 1, "irreversibility": 2, "score": 4 },
+  "profile": { "coding": 4.2, "discipline": 4.5, "verification": 4.2 },
+  "reviewRequired": false,
+  "reviewReasons": [],
+  "challengerSample": false,
+  "override": null
+}
 ```
 
-Minimum means minimum. Hiring under the row is how a lane returns a confident
-report about work it could not do; hiring over it is only money.
+A DEEP architect task — *"decide whether the orchestration layer belongs inside
+the session runtime or above it"*:
 
-**The gate row is never you.** Any gate longer than a hire round-trip (~2 min)
-— a full `just ci`, an e2e suite, a release build, a full-workspace `cargo test`
-— goes to the runner row, because the whole answer is an exit code and a count.
-Your own context is the frontier row and unhireable: spend it on the live check
-(the built binary, the real relay, the value the change produced) and the
-ruling. On 2026-08-28 a lead re-ran a 594-test suite a lane had already run and
-bought nothing with those turns (ledger item 88(e)). `skills/hire` has the split.
+```json
+{
+  "class": "architect",
+  "tier": "deep",
+  "risk": { "impact": 5, "uncertainty": 4, "irreversibility": 5, "score": 100 },
+  "profile": { "reasoning": 4.8, "judgment": 4.8, "context": 4.8, "verification": 4.5 },
+  "reviewRequired": true,
+  "reviewReasons": ["risk>=40", "irreversibility>=4", "architectureChange"],
+  "challengerSample": false,
+  "override": null
+}
+```
 
-## Which row: classify the task first
+`profile` is optional and it is **your opinion, not a measurement** — a floor you
+assert, not a score anything sampled. Omit it rather than invent one.
 
-- Mechanical edit with the answer already in the brief (rename, field add,
-  fixture) → the tier-1 row; a docs-only edit → the tier-0 docs row.
-- Run a gate and report exit codes and counts → the runner row, always a hire.
-- One-file implementation against a locked design, tests named → tier-1.
-- Multi-file feature, a contract change, or a design still being discovered on
-  the ground → the tier-2 row.
-- Provider runtime, custody/keys, relay ingest, durable state → the tier-2 row,
-  by definition.
-- Adversarial pass over a tier-2 diff → the verifier row, on the provider the
-  builder did not use.
-- Orchestration — briefs, triage, verdicts across a run → the lead row, which is
-  you, and is not hired.
+## 5. Review is a trigger list, not a tier
 
-## (a) Check the rubric against the catalog, every brief
+Require review — and pass the flag — when any of these hold. Cross-provider
+review is preferred wherever an eligible target exists:
+
+- risk ≥ 40, or irreversibility ≥ 4 — the router computes both off `risk`.
+- `securityBoundary` — security, auth, custody or data-loss boundary touched.
+- `contractChange` — architecture, schema or public contract changed.
+- `outsidePlan` — the builder operated outside an approved plan.
+- `builderUncertain` — the builder reports uncertainty.
+- `testsInsufficient` — tests cannot adequately verify correctness.
+- `leadRequests` — you want independent judgment.
+
+DEEP does not imply review, and review does not imply DEEP. Pass the flags you
+can judge; the router adds the two it computes itself.
+
+## 6. Challenger sampling — every 5th STANDARD builder job
+
+A model does not earn an incumbent route by being new, or lose one by being old.
+So **every fifth STANDARD builder hire carries `--challenger-sample`** and the
+brief says so in one clause: "this lane is the challenger sample for this batch —
+the routing record marks it." That cadence is **seed policy until telemetry
+exists**, exactly like the risk thresholds. Count the standard builder hires of
+the batch; never sample a DEEP, irreversible or security-boundary lane to make
+the count.
+
+## 7. Registry check, every batch
 
 Before the first brief of a batch:
 
 ```
-bee sessions rubric check
+bee sessions registry check --channel <uuid>
 ```
 
-- **exit 0 — clean.** Every model id in the table is offered by the live
-  catalog, and every offered id is assigned to a row. Pick a row and hire.
-- **exit 4 — stale.** The output names both halves: ids the table uses that no
-  provider offers any more, and ids a provider offers that no row assigns.
+- **exit 0** — every offered execution target has a registry row. Route.
+- **exit 4 — stale.** A *live offered* target has **no row**. A row for a model
+  the catalog does not offer today is **dormant, not stale** — the registry is
+  allowed to know a model that is not live.
 
-**A bracket suffix is a variant of its base.** `gpt-5.6-sol[high]`, `[low]`,
-`[max]`, `[ultra]` are one model at four effort levels; `opus[1m]` and `opus`
-are one model at two context windows. The rubric decides at the base, so the row
-naming `gpt-5.6-terra[high]` has assigned every `gpt-5.6-terra` row in the
-catalog and `unassigned` reports one gap per base, not one per suffix. The check
-still hides nothing: the offered ids no row names literally are listed under
-`variants`, which is informational and never makes the rubric stale. `default`
-is a runtime alias, not a model, so it is never a gap either — `defaultResolvesTo`
-says which id it points at on each provider, and on `claude-primary` and
-`goose-primary` today it points at the string `default`, meaning the catalog
-declines to name a concrete id.
-
-Read the `unassigned` entries literally: each one is an id the catalog really
-offers, so it can be pasted into a new row as it stands.
-
-Any other exit is the CLI's usual class (1 input, 2 relay, 3 auth) and is **not
-a verdict on the rubric** — fix the call and re-run; do not read a network error
-as "clean".
-
-**Stale is not a licence to guess.** Do not substitute a nearby id, do not fall
-back to the identity's model to dodge the question, and never write `default` —
-that is a label, not a model. In the same turn:
+Stale is never a licence to guess. In the same turn, publish and ask:
 
 ```
 bee pulse update --project <coordinate> --kind blocker --session <umbrella-uuid> \
-  --content "rubric stale: <ids not offered> / <ids unassigned> — proposed: <the row you would add>"
+  --content "registry stale: <ids offered with no row> / <rows unassigned to a class> — proposed rows: <class, minimums cleared, and the capability that earns it>"
 ```
 
-and ask the founder, in that same turn, to rule on the proposed row. Then carry
-on with any row whose id the check confirmed is still offered. A batch is only
-blocked if the row you need is the stale one.
+Then carry on with any class the check confirmed is still satisfiable; a batch
+is blocked only when the class you need is the stale one. A docs lane lands the
+row — you do not edit the registry mid-batch, because a registry that changes
+under a running batch cannot explain why any seat in it was hired.
 
-## (b) The identity's own record wins
-
-If the host has set a model and runtime on the identity you are hiring, **that
-record wins for that identity** and the rubric is not consulted. The rubric
-decides only when the record is blank. The founder set that record deliberately
-— the designer identity seated on `codex-primary` is exactly this case (ledger
-item 92) — and a hire that overrode it with `--model` would be substituting your
-guess for the founder's decision. Omit `--model` and say in the brief that the
-seat runs the identity's own record.
-
-## (c) A new model, and nobody has assigned it
-
-The check reports an offered id no row assigns. Propose one row — tier, roles,
-provider, id, and the capability that earns it — post it as the stale note
-above, and let the founder rule. **A docs lane lands the row**; you do not edit
-the rubric mid-batch, because a rubric that changes under a running batch cannot
-explain why any seat in it was hired.
-
-## (d) The trigger is the catalog revision
-
-The rubric goes stale when a provider publishes a new kind:44222 revision — a
-runtime upgrade, a model added or withdrawn, a provider added to this computer.
-You cannot see that happen, so do not wait to be told: the check is one cheap
-call, and it runs at the start of every batch, before the first brief. That is
-the whole update trigger. A rubric nobody checked is a rubric that can be wrong
-without saying so.
-
-## Thinking level
-
-Raise thinking, not tier, when the work is one hard decision inside an otherwise
-ordinary task. Raise tier when the work is many decisions. On `codex-primary`
-the level is part of the id (`[low|medium|high|xhigh|max|ultra]`), so raising it
-means naming a different catalog id — and that id must be offered too.
-
-## Say why, in the hire
-
-Every hire and every brief names the row and the reason in one clause:
+## 8. Hire, then read the decision
 
 ```
-Seat: <tier> · <provider>/<model id, exactly as the catalog prints it> · thinking <level>
-      — because <the task class that picked this row>, <modality if it decided anything>.
+bee sessions hire --channel <uuid> --session-ref <umbrella-uuid> --role <slug> \
+  --class <class> --risk <impact>,<uncertainty>,<irreversibility> \
+  [--profile <json>] [--review-flags <flag,...>] [--challenger-sample] \
+  --brief <path>
 ```
 
-"Because the brief is locked and this is a two-file mechanical edit" is a
-reason. The model name alone is not. If you cannot write the clause, you have
-not classified the task yet — do that first. Never write an alias, a vendor
-marketing string, or `default`: `skills/hire` has what a refusal will say.
+The tier is **derived from the risk triple by the router** — you do not pass it.
+The create comes back carrying the full record: `chosen` (provider/model/effort),
+`runnerUp`, the one-sentence `reason` naming the gates cleared and why it was
+cheapest, `registryVersion`, `catalogRevision`. Quote `chosen` and `reason` in
+the lane's Pulse line. If nothing clears the bar the hire is refused
+`HIRE_NO_ROUTE`: requirements are never silently weakened, so the answer is a
+different class or a founder ruling, never a retry.
+
+`--model` is an **override only**, it requires `--because`, and the override is
+recorded on the record and on the ledger. Justify it in the brief in the same
+sentence you use it, or do not use it.

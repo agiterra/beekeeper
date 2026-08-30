@@ -1,6 +1,6 @@
 ---
 name: hire
-description: "How a lead hires a seat into its umbrella: when to hire, what it runs itself, the exact bee sessions hire command, the brief-as-first-turn rule, and what every refusal means."
+description: "How a lead hires a seat into its umbrella: when to hire, what it runs itself, the exact bee sessions hire command (a class and a risk triple, never a model), the brief-as-first-turn rule, and what every refusal means."
 ---
 
 # Hire a seat
@@ -50,8 +50,10 @@ worth*. Why a gate went red is the builder's lane, not a second runner's.
 1. **Role.** A pack installed on this computer. Role is fixed per identity — the
    host seats an agent whose *home role* is your slug, so you cannot hire a
    builder and use it as an architect.
-2. **Model and vendor.** Run `skills/choose-model`, write the one-clause reason
-   into the brief. A refuter must not share its builder's vendor.
+2. **Class, risk and review flags.** Run `skills/choose-model`: eleven
+   properties, a risk triple, an execution class, the review triggers that
+   fire. **You do not choose a model** — the router does, from the live catalog
+   and `team/model-registry.yaml`, and it writes back what it chose.
 3. **The brief.** Write it with `skills/write-brief`, to a file: that file's
    text becomes the seat's first turn — see below.
 
@@ -59,17 +61,25 @@ worth*. Why a gate went red is the builder's lane, not a second runner's.
 
 ```
 bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
-  --role <slug> --provider-instance <ref> --model <id> --brief <path>
+  --role <slug> --class <class> --risk <impact>,<uncertainty>,<irreversibility> \
+  [--profile <json>] [--review-flags <flag,...>] [--challenger-sample] \
+  [--provider-instance <ref>] --brief <path>
 ```
 
 - `--channel` / `--session-ref` — the same pair as `sessions send`; both
   required, because a role slug is unique only inside one umbrella.
 - `--role` — lowercase slug, `[a-z0-9-]`, 1–64 chars, matching an installed pack.
-- `--provider-instance` — optional; the operator's default otherwise. Name one
-  when `choose-model` picked a vendor your own runtime cannot run.
-- `--model` — optional; the identity's own model otherwise. Named, it takes a
-  catalog id exactly as `bee sessions catalog` prints it (**Model ids** below).
-  There are no aliases; a guess is refused, never mapped.
+- `--class` — the execution class you classified: `builder`, `architect`,
+  `runner`, `verifier`, `ui_designer`, `researcher`.
+- `--risk` — impact, uncertainty, irreversibility, each 1–5. The router
+  multiplies them and derives the tier and the effort; **you never pass a tier
+  and never pass an effort.**
+- `--profile` — optional trait floors, your opinion and labelled as such.
+- `--review-flags` — the spec §6 triggers you can judge (`securityBoundary`,
+  `contractChange`, `outsidePlan`, `builderUncertain`, `testsInsufficient`,
+  `leadRequests`); the router adds risk ≥ 40 and irreversibility ≥ 4 itself.
+- `--challenger-sample` — every fifth STANDARD builder hire (seed policy).
+- `--provider-instance` — optional; the operator's default otherwise.
 - `--brief <path>` or `--content <text>` — one of the two, 1–12288 bytes. Prefer
   the file: it is the artefact you can cite later.
 - `--no-wait` — publishes and returns; use it only if you will not act on the
@@ -102,36 +112,29 @@ The host publishes the grant itself, right after the create receipt. So:
 - **`granted: null`** — no seat was created at all (refused, or unconfirmed).
   Read `outcome` and the refusal table below instead.
 
-## Model ids
+## Read the routing decision the host wrote
 
-A model id is not a name you invent, not a vendor's marketing string, and not
-`default`: it is an id a runtime's own kind:44222 catalog publishes in
-`allowedModels`, and `--model` takes it **exactly as `bee sessions catalog`
-prints it**. Read the catalog before you name one:
+The create the host publishes carries the whole routing record back — the same
+object you sent, filled in:
 
-```
-bee sessions catalog
-```
+- `chosen` — `{ provider, model, effort }`, the execution target that ran.
+- `runnerUp` — the target that would have run instead, or `null`.
+- `reason` — one sentence naming the gates it cleared and why it was cheapest.
+- `reviewRequired` / `reviewReasons` — including the two the router computes.
+- `challengerSample`, `registryVersion`, `catalogRevision`.
 
-**There are no aliases.** Nothing in this path translates `claude-sonnet-5` onto
-`sonnet`, or `opus` onto `opus[1m]`. Matching is exact — `opus` and `opus[1m]`
-are two different ids — and a name the catalog does not offer is disclosed and
-refused, never quietly swapped for something close. A hire that named an id and
-got a seat running a different one would be the comfortable guess this product
-does not make.
+Quote `chosen` and `reason` in the lane's Pulse line. That record is the only
+honest answer to "why is this seat on this model", and a routing decision that
+cannot be explained from the wire is a bug, not a detail.
 
-`HIRE_MODEL_NOT_OFFERED` is itself a catalog: the refusal lists every id that
-runtime offers, so a refused hire tells you exactly what to re-run with. An
-empty offered list means the host has not read that runtime's catalog — "not
-read", never "offers nothing".
-
-`bee --format json sessions status --channel <uuid>` is the cross-check: it
-prints the `model` of every live execution, which is known-good because
-something is running them right now.
-
-**Omitting `--model` is always safe** — the seat runs the identity's own model,
-which `skills/choose-model` rule (b) says wins over the rubric for that identity
-anyway. Name one only when the rubric gave you a reason to.
+**`--model` is a human-grade override, not a preference.** It requires
+`--because`, it is recorded on the routing record and on the ledger, and it must
+be justified in the brief in the same sentence that uses it. A model id is an id
+a runtime's own kind:44222 catalog publishes in `allowedModels`, taken exactly as
+`bee sessions catalog` prints it — there are no aliases anywhere in this path, so
+a bracket-suffixed id and its bare form are two different ids, and an id the
+catalog does not offer is disclosed and refused, never mapped onto anything
+close.
 
 ## The brief is the first turn
 
@@ -158,7 +161,8 @@ reading `hire refused: <code> — <reason>`. The seat was never created.
 | `HIRE_ROLE_BUSY` | an identity of that role exists, but it is already seated in this umbrella | Do not hire. Send this same brief to that seat: `bee sessions send --session-ref <umbrella-uuid> --to <role> --content -`. It keeps the worktree it is already in. |
 | `HIRE_NO_IDENTITY` | no installed agent on this computer has that home role | Stop and tell the founder **which role to install** (Agents → *Install team roles…*). Never substitute another role for the lane. |
 | `HIRE_PROVIDER_NOT_ALLOWED` | the named provider is outside the allowed providers | Re-run naming an allowed provider, or drop `--provider-instance` and take the default. |
-| `HIRE_MODEL_NOT_OFFERED` | the model you named is not an id that runtime's catalog offers, and nothing translates it into one | The reason lists every offered id. Re-run with one of them, or drop `--model`. |
+| `HIRE_MODEL_NOT_OFFERED` | an overriding `--model` named an id that runtime's catalog does not offer, and nothing translates it into one | The reason lists every offered id. Re-run with one of them, or drop the override and let the router route. |
+| `HIRE_NO_ROUTE` | no execution target cleared every gate for this class, risk and requirement set | Requirements are never silently weakened. Change the class, split the task (`skills/choose-model` §3), or put it to the founder. Never retry unchanged. |
 | `HIRE_STALE` | the request sat unanswered longer than the host's window (15 minutes) — the operator's computer was shut or offline | Hire again. Do not assume the first one lands late; it will not be answered at all. |
 
 `HIRE_ROLE_BUSY` is a code the host really answers with (ledger item 90): its

@@ -21,7 +21,7 @@ on it — all seven pass clean today (`Valid.`, exit 0).
 
 | role | does | never does |
 | --- | --- | --- |
-| **lead** | rules on the wire (a `sessions send` to the seat **plus** a Pulse entry), never in its transcript; writes briefs, chooses models from a versioned rubric checked against the live catalog, reads reports and diffs, hires a runner for every long gate, keeps the live check and the ruling for itself, merges tier-0/1, keeps the ledger honest, ends a mission out loud and stops there | writes feature code; reads a builder's exploration; runs a gate a runner could run; invents lanes the mission did not ask for; lets a finished mission read as a stalled one |
+| **lead** | rules on the wire (a `sessions send` to the seat **plus** a Pulse entry), never in its transcript; writes briefs, **classifies** each lane into an execution class and a risk triple (impact × uncertainty × irreversibility) and hires on that — the host's router picks the execution target and writes it onto the create; reads reports and diffs, hires a runner for every long gate, keeps the live check and the ruling for itself, merges tier-0/1, keeps the ledger honest, ends a mission out loud and stops there | names a model in a brief or a hire (except as an override it justifies with `--because`); writes feature code; reads a builder's exploration; runs a gate a runner could run; invents lanes the mission did not ask for; lets a finished mission read as a stalled one |
 | **architect** | one-sitting shape verdicts: right design, or a simpler one | redesigns at length; writes code |
 | **builder** | implements one locked brief inside its lane's exclusive files; self-verifies; reports raw facts | redesigns; touches files outside its lane; commits to `main` |
 | **verifier** | one pass over a tier-2 diff against the brief's named constraints; a terminal verdict | re-argues a disposition; reviews tier-0/1 |
@@ -88,13 +88,13 @@ Every pack's prompt (the `.persona.md` markdown body) carries only the role's
 verbs, its verdict vocabulary, and its "never" list. Anything procedural (a
 template to fill, a sequence of steps to follow) is a skill under that pack's
 `skills/`, loaded on demand rather than paid for on every turn. Five of the
-seven prompts run 20–25 body lines; `lead` (122) and `designer` (81) are longer
+seven prompts run 20–25 body lines; `lead` (128) and `designer` (81) are longer
 because both carry rules the team paid for in live runs — measure with the
 frontmatter stripped before quoting a number here:
 
 | role | prompt body | skills |
 | --- | --- | --- |
-| lead | 122 | `write-brief`, `hire`, `triage-report`, `choose-model`, `beekeeper-project` |
+| lead | 128 | `write-brief`, `hire`, `triage-report`, `choose-model`, `beekeeper-project` |
 | architect | 25 | `shape-verdict` |
 | builder | 23 | `brief-is-law`, `write-report` |
 | verifier | 24 | `refuter-pass` |
