@@ -5,17 +5,32 @@ import { installMockBridge } from "../helpers/bridge";
 
 const SHOTS = "test-results/projects-v3-screenshots";
 
+// Two product moves broke the old path here, neither of them a bug:
+//  1. The Projects screen's "Projects" section is the organize board
+//     (ProjectsView.tsx:867-868 renders ProjectsManagePanel). It offers no way
+//     to open a project — ProjectGridCard/ProjectListRow
+//     (src/features/projects/ui/ProjectCards.tsx:488,565), which carried
+//     `project-card-<dtag>` / `project-row-<dtag>`, have no render site left.
+//     A project opens from the sidebar group header
+//     (ProjectSidebarGroup.tsx:289, `project-open-<dtag>` → goProject).
+//  2. `/projects/$projectId` is now the container screen (members, sessions,
+//     code, channels …). The single-box workspace this spec captures —
+//     WorkspaceTabs (ProjectWorkspaceTabs.tsx:369-413) inside
+//     ProjectDetailScreen — renders one level down, at
+//     `/projects/$projectId/code/$repoId`, reached by opening a repository
+//     from the container screen's Code section
+//     (ProjectContainerScreen.tsx:552-566).
 async function openBuzzProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
-  const projectEntry = page
-    .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
-    )
-    .first();
+  const projectEntry = page.getByTestId("project-open-buzz");
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  const repoEntry = page
+    .getByTestId("project-screen-item-row")
+    .filter({ has: page.getByRole("button", { name: "buzz", exact: true }) })
+    .getByRole("button", { name: "buzz", exact: true });
+  await expect(repoEntry).toBeVisible({ timeout: 10_000 });
+  await repoEntry.click();
 }
 
 // Walks the Projects v3 workspace through its headline states so PR

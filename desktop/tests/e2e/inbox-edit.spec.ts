@@ -426,9 +426,14 @@ test("Inbox offers Edit and Delete actions only for manageable messages", async 
   await expect(
     page.getByTestId(`edit-message-${FOREIGN_MESSAGE_ID}`),
   ).toHaveCount(0);
+  // The mock identity manages this community, so the ownership gate downgrades
+  // the delete rather than removing it: messageManageAuthority returns
+  // "moderator" (useMessageDeleteAffordance.ts:63-72), which publishes the
+  // kind:9005 moderator event, never the author's own kind:5 delete, and never
+  // grants Edit. An ownership regression would render "Delete message" here.
   await expect(
     page.getByTestId(`delete-message-${FOREIGN_MESSAGE_ID}`),
-  ).toHaveCount(0);
+  ).toHaveText("Delete as moderator");
   await page.keyboard.press("Escape");
 
   await page.evaluate(async (channelId) => {

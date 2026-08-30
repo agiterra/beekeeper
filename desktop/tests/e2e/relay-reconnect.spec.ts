@@ -177,18 +177,16 @@ test("failed initial relay dial retries automatically", async ({ page }) => {
   // App-shell preconnect owns a keep-alive request. The first native dial is
   // rejected before a socket ID exists; the session must still enter its
   // backoff loop and recover without a click, query, or reload.
+  // Read the seam optionally, like every other site in this file:
+  // `maybeInstallE2eTauriMocks` (src/testing/e2eBridge.ts:10601) runs from a
+  // dynamic import in main.tsx, so it can still be in flight when `goto`
+  // resolves. `expect.poll` propagates a thrown callback error instead of
+  // retrying, so throwing on a not-yet-installed seam turned "the bridge
+  // loaded a beat late" into a hard failure under suite load.
   await expect
     .poll(
       () =>
-        page.evaluate(() => {
-          const getState = (
-            window as Window & {
-              __BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?: () => string;
-            }
-          ).__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__;
-          if (!getState) throw new Error("Relay state seam is not installed.");
-          return getState();
-        }),
+        page.evaluate(() => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.()),
       { timeout: 10_000 },
     )
     .toBe("connected");
@@ -329,6 +327,19 @@ test("service restart close resets accumulated backoff", async ({ page }) => {
   await expect(page.getByTestId("channel-general")).toBeVisible({
     timeout: 15_000,
   });
+
+  // The sidebar paints from cached channels, so `channel-general` is visible
+  // long before the third dial succeeds. Restarting then finds no open mock
+  // socket and `__BUZZ_E2E_RESTART_MOCK_WEBSOCKETS__` returns 0
+  // (src/testing/e2eBridge.ts:10940-10947). Wait for the socket the seeded
+  // failures were accumulating backoff toward before closing it.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.()),
+      { timeout: 15_000 },
+    )
+    .toBe("connected");
 
   const startedAt = Date.now();
   await restartMockWebsockets(page);

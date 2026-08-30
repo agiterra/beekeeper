@@ -203,10 +203,14 @@ test("creating a repository publishes only the repo announcement into the projec
   // Repo creation needs a concrete target project — scope to General first
   // ("Project" creates a container; "Repository" opens the repo-only dialog,
   // which publishes a single 30617 carrying the container back-ref).
+  // `exact` matters: the same menu offers "Import local repository"
+  // (src/features/projects/ui/ProjectsCreateMenu.tsx:99-104), whose
+  // accessible name also contains "repository", so a substring match
+  // resolves to two elements.
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "General" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByRole("menuitem", { name: "Repository", exact: true }).click();
   await page.getByTestId("create-project-repo-name").fill("multi-repo-demo");
   await page
     .getByTestId("create-project-repo-clone-url")
@@ -244,7 +248,7 @@ test("creating a repository publishes only the repo announcement into the projec
 
   // Still scoped to General — a duplicate name is rejected by the guard.
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByRole("menuitem", { name: "Repository", exact: true }).click();
   await page.getByTestId("create-project-repo-name").fill("multi-repo-demo");
   await page.getByTestId("create-project-repo-submit").click();
   await expect(page.getByTestId("create-project-repo-dialog")).toBeVisible();
@@ -294,7 +298,7 @@ test("unsupported relays keep the repository accessible", async ({ page }) => {
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByRole("menuitem", { name: "Repository", exact: true }).click();
   await page.getByTestId("create-project-repo-name").fill("legacy-fallback");
   await page.getByTestId("create-project-repo-submit").click();
 
@@ -365,7 +369,7 @@ test("repository creation can retry after its publication fails", async ({
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByRole("menuitem", { name: "Repository", exact: true }).click();
   await page.getByTestId("create-project-repo-name").fill("retry-project");
   await page.getByTestId("create-project-repo-submit").click();
 
@@ -416,7 +420,7 @@ test("repository creation recovers from a lost publish acknowledgement", async (
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByRole("menuitem", { name: "Repository", exact: true }).click();
   await page.getByTestId("create-project-repo-name").fill("lost-ack-project");
   await page.getByTestId("create-project-repo-submit").click();
 
