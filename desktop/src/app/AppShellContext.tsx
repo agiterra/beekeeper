@@ -7,6 +7,7 @@ import type { FeedItem } from "@/shared/api/types";
 import type { SettingsSection } from "@/features/settings/ui/SettingsPanels";
 
 const EMPTY_SET = new Set<string>();
+const EMPTY_COUNT_MAP = new Map<string, number>();
 
 type AppShellContextValue = {
   markAllChannelsRead: () => void;
@@ -77,6 +78,13 @@ type AppShellContextValue = {
   // Ordinary unread channel-level activity. Sidebar rows use this for text
   // emphasis only; thread activity owns the dot.
   topLevelUnreadChannelIds: ReadonlySet<string>;
+  // Per-channel count of every unread message that concerns this user —
+  // top-level messages plus replies in threads they are part of, plus
+  // mentions. This is what the sidebar row's unread count badge shows, so it
+  // deliberately counts more than `unreadChannelCounts` does for a regular
+  // channel. Channels with no unread messages are absent, as are channels
+  // that are unread only because the user chose "Mark unread".
+  unreadChannelTotals: ReadonlyMap<string, number>;
   // Lets isolated component tests retain the legacy hasUnread fallback while
   // the mounted shell uses the split projections above.
   hasSidebarUnreadProjections: boolean;
@@ -120,6 +128,7 @@ const AppShellContext = React.createContext<AppShellContextValue>({
   unreadThreadFeedItems: [],
   unreadThreadChannelIds: EMPTY_SET,
   topLevelUnreadChannelIds: EMPTY_SET,
+  unreadChannelTotals: EMPTY_COUNT_MAP,
   hasSidebarUnreadProjections: false,
   feedItemState: {
     doneSet: EMPTY_SET,

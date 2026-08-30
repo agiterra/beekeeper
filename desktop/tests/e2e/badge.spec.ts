@@ -360,7 +360,7 @@ test("offscreen unread DM shows the primary sidebar arrow", async ({
   await expect(activityArrow).toHaveClass(/bg-primary/);
 });
 
-test("regular message bolds inactive channel without numeric badge", async ({
+test("regular message bolds inactive channel and counts on the row", async ({
   page,
 }) => {
   await page.goto("/");
@@ -387,7 +387,9 @@ test("regular message bolds inactive channel without numeric badge", async ({
     "opacity",
     "1",
   );
-  await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
+  await expect(page.getByTestId("channel-unread-random")).toHaveText(
+    "1 new message",
+  );
   await expect(page.getByTestId("channel-unread-dot-random")).toHaveCount(0);
   await waitForBadgeState(page, withDotOnlyBadge(baselineBadge));
 
@@ -400,9 +402,11 @@ test("regular message bolds inactive channel without numeric badge", async ({
     "font-weight",
     "400",
   );
+  // Reading the channel retires the count along with the bold.
+  await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
 });
 
-test("top-level @mention bolds the channel without a row badge", async ({
+test("top-level @mention bolds the channel and counts on the row", async ({
   page,
 }) => {
   await page.goto("/");
@@ -431,7 +435,9 @@ test("top-level @mention bolds the channel without a row badge", async ({
     "font-weight",
     "700",
   );
-  await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
+  await expect(page.getByTestId("channel-unread-random")).toHaveText(
+    "1 new message",
+  );
   await expect(page.getByTestId("channel-unread-dot-random")).toHaveCount(0);
   await waitForBadgeState(page, withAdditionalBadgeCount(baselineBadge, 1));
 });
@@ -496,7 +502,7 @@ test("interested thread reply shows the channel preview dot without incrementing
   await waitForBadgeState(page, baselineBadge);
 });
 
-test("broadcast reply bolds the channel without a thread dot", async ({
+test("broadcast reply counts on the row without a thread dot", async ({
   page,
 }) => {
   await page.goto("/");
@@ -525,7 +531,9 @@ test("broadcast reply bolds the channel without a thread dot", async ({
     "font-weight",
     "700",
   );
-  await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
+  await expect(page.getByTestId("channel-unread-random")).toHaveText(
+    "1 new message",
+  );
   await expect(page.getByTestId("channel-unread-dot-random")).toHaveCount(0);
   await waitForBadgeState(page, withAdditionalBadgeCount(baselineBadge, 1));
 });
@@ -559,7 +567,9 @@ test("mark-as-read via context menu clears channel unread indicator", async ({
     "font-weight",
     "700",
   );
-  await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
+  await expect(page.getByTestId("channel-unread-random")).toHaveText(
+    "1 new message",
+  );
 
   await page.getByTestId("channel-random").click({ button: "right" });
   await page.getByText("Mark as read").click();
@@ -587,6 +597,8 @@ test("mark-as-unread via context menu bolds the channel", async ({ page }) => {
     "font-weight",
     "700",
   );
+  // "Mark unread" is a user gesture, not an arriving message, so the row
+  // bolds without a count it could not point at a message for.
   await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
   await expect(page.getByTestId("channel-unread-dot-random")).toHaveCount(0);
   await waitForBadgeState(page, withAdditionalBadgeCount(baselineBadge, 1));

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 
@@ -16,6 +16,22 @@ import {
 } from "../helpers/bridge";
 import { overridePreviewFeatures } from "../helpers/features";
 import { openDashboardTab, openInboxTab } from "../helpers/dashboard";
+
+/**
+ * The unread count a sidebar channel row is currently showing, or 0 when the
+ * row wears no count badge. The badge's text carries an "N new message(s)"
+ * screen-reader suffix, so read the leading number rather than the whole
+ * string.
+ */
+async function readChannelUnreadCount(
+  page: Page,
+  channelName: string,
+): Promise<number> {
+  const badge = page.getByTestId(`channel-unread-${channelName}`);
+  if ((await badge.count()) === 0) return 0;
+  const text = (await badge.textContent()) ?? "";
+  return Number.parseInt(text, 10) || 0;
+}
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const RANDOM_CHANNEL_ID = "9dae0116-799b-5071-a0a8-fdd30a91a35d";
@@ -2414,7 +2430,9 @@ test("sidebar shows unread indicator for newly active channels", async ({
     "font-weight",
     "700",
   );
-  await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
+  await expect(page.getByTestId("channel-unread-random")).toHaveText(
+    "1 new message",
+  );
 
   await page.getByTestId("channel-random").click();
   await expect(page.getByTestId("chat-title")).toHaveText("random");
@@ -2429,6 +2447,12 @@ test("sidebar shows unread indicator for new forum posts", async ({ page }) => {
 
   await expect(page.getByTestId("channel-unread-watercooler")).toHaveCount(0);
   await waitForMockLiveSubscription(page, "watercooler");
+
+  // watercooler carries seeded forum posts, and how many of them the catch-up
+  // scan has folded in by now depends on what ran before this test. Count from
+  // wherever it has settled rather than assuming an empty channel.
+  await page.waitForTimeout(2000);
+  const seededUnread = await readChannelUnreadCount(page, "watercooler");
 
   // Emit as alice — the unread tracker ignores self-authored messages.
   await page.evaluate(
@@ -2447,7 +2471,9 @@ test("sidebar shows unread indicator for new forum posts", async ({ page }) => {
     "font-weight",
     "700",
   );
-  await expect(page.getByTestId("channel-unread-watercooler")).toHaveCount(0);
+  await expect
+    .poll(() => readChannelUnreadCount(page, "watercooler"))
+    .toBe(seededUnread + 1);
 
   await page.getByTestId("channel-watercooler").click();
   await expect(page.getByTestId("chat-title")).toHaveText("watercooler");

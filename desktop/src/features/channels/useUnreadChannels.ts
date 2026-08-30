@@ -728,6 +728,16 @@ export function useUnreadChannels(
   // than the read marker. Forced-unread channels are dot tier only (not
   // high-priority). Both sets share identical deps and always invalidate
   // together, so they are computed in a single memo.
+  //
+  // Two counts come out of this pass, and they mean different things:
+  //   - `unreadChannelCounts` counts only badge-tier events (DMs, threaded
+  //     replies, mentions/broadcasts). It drives the DM row badge.
+  //   - `unreadChannelTotals` counts every observed unread event, which for a
+  //     regular channel means its plain top-level messages too. It drives the
+  //     channel row's unread count badge, so that badge cannot read as quiet
+  //     when twenty top-level messages have landed in the channel.
+  // For a DM the two are always equal (every observed DM event is badge-tier),
+  // so the DM badge reads the same number either way.
   const rawUnread =
     // biome-ignore lint/correctness/useExhaustiveDependencies: readStateVersion and latestVersion are intentional invalidation signals
     React.useMemo(() => {
@@ -737,6 +747,7 @@ export function useUnreadChannels(
           topLevelUnreadChannelIds: new Set<string>(),
           highPriorityUnreadChannelIds: new Set<string>(),
           unreadChannelCounts: new Map<string, number>(),
+          unreadChannelTotals: new Map<string, number>(),
           unreadChannelNotificationCount: 0,
         };
       }
@@ -745,6 +756,7 @@ export function useUnreadChannels(
       const topLevelUnread = new Set<string>();
       const highPriority = new Set<string>();
       const counts = new Map<string, number>();
+      const totals = new Map<string, number>();
       let unreadChannelNotificationCount = 0;
 
       for (const channel of channels) {
@@ -775,6 +787,9 @@ export function useUnreadChannels(
           unread.add(channel.id);
           topLevelUnread.add(channel.id);
           counts.set(channel.id, 1);
+          // No total: "Mark unread" is a user gesture, not an arriving
+          // message, so the row bolds without claiming a message count it
+          // cannot point at.
           unreadChannelNotificationCount += 1;
           continue;
         }
@@ -790,6 +805,7 @@ export function useUnreadChannels(
           readAtForObservedEvent,
         );
         counts.set(channel.id, badgeCount);
+        totals.set(channel.id, unreadCount);
         unreadChannelNotificationCount += countUnreadAppBadgeObservedEvents(
           observedEvents,
           readAtForObservedEvent,
@@ -815,6 +831,7 @@ export function useUnreadChannels(
         topLevelUnreadChannelIds: topLevelUnread,
         highPriorityUnreadChannelIds: highPriority,
         unreadChannelCounts: counts,
+        unreadChannelTotals: totals,
         unreadChannelNotificationCount,
       };
     }, [
@@ -835,6 +852,7 @@ export function useUnreadChannels(
     rawUnread.highPriorityUnreadChannelIds,
   );
   const unreadChannelCounts = useStableMap(rawUnread.unreadChannelCounts);
+  const unreadChannelTotals = useStableMap(rawUnread.unreadChannelTotals);
   const unreadChannelNotificationCount =
     rawUnread.unreadChannelNotificationCount;
 
@@ -887,6 +905,7 @@ export function useUnreadChannels(
     unreadChannelIds,
     topLevelUnreadChannelIds,
     unreadChannelCounts,
+    unreadChannelTotals,
     highPriorityUnreadChannelIds,
     unreadChannelNotificationCount,
     markAllChannelsRead,

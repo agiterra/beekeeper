@@ -61,6 +61,40 @@ function formatUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
+export type SidebarUnreadIndicators = {
+  showCount: boolean;
+  showDot: boolean;
+};
+
+/**
+ * Which unread indicators a channel row wears at its right edge.
+ *
+ * The count and the dot answer different questions and are built from
+ * different projections — the count from the observed-unread store, the dot
+ * from the relay-reconciled thread activity feed — so a row can legitimately
+ * need both: "12 unread messages, and some of them sit in a thread you are
+ * part of". Letting the count swallow the dot would hide thread activity
+ * behind any ordinary message in the same channel, which is the common case,
+ * and would take the activity popover's trigger with it.
+ *
+ * DMs are excluded from the count: their badge is rendered separately by the
+ * section, positioned so hover can swap it for the close button.
+ */
+export function resolveSidebarUnreadIndicators({
+  channelType,
+  hasThreadUnread,
+  unreadTotal,
+}: {
+  channelType: Channel["channelType"];
+  hasThreadUnread: boolean;
+  unreadTotal: number;
+}): SidebarUnreadIndicators {
+  return {
+    showCount: channelType !== "dm" && unreadTotal > 0,
+    showDot: hasThreadUnread,
+  };
+}
+
 function UnreadCountBadge({
   channelName,
   className,
@@ -79,7 +113,7 @@ function UnreadCountBadge({
       data-testid={`channel-unread-${channelName}`}
     >
       {formatUnreadCount(count)}
-      <span className="sr-only"> new comment{count === 1 ? "" : "s"}</span>
+      <span className="sr-only"> new message{count === 1 ? "" : "s"}</span>
     </span>
   );
 }
@@ -277,6 +311,7 @@ export function ChannelMenuButton({
   const {
     hasSidebarUnreadProjections,
     topLevelUnreadChannelIds,
+    unreadChannelTotals,
     unreadThreadChannelIds,
   } = useAppShell();
   const hasTopLevelUnread =
@@ -290,6 +325,12 @@ export function ChannelMenuButton({
     (hasSidebarUnreadProjections
       ? unreadThreadChannelIds.has(channel.id)
       : hasUnread);
+  const unreadTotal = unreadChannelTotals.get(channel.id) ?? 0;
+  const { showCount, showDot } = resolveSidebarUnreadIndicators({
+    channelType: channel.channelType,
+    hasThreadUnread,
+    unreadTotal,
+  });
   const inactiveContentOpacity = cn(
     !isActive && !hasTopLevelUnread && !isMuted && "opacity-80",
     !isActive &&
@@ -354,8 +395,19 @@ export function ChannelMenuButton({
           )}
         />
       ) : null}
-      {hasThreadUnread ? (
+      {showDot ? (
         <UnreadDotBadge channelName={channel.name} className="ml-auto" />
+      ) : null}
+      {showCount ? (
+        <UnreadCountBadge
+          channelName={channel.name}
+          className={cn(
+            "group-data-[collapsible=icon]:hidden",
+            // The dot already took the auto margin when both are showing.
+            showDot ? "ml-1" : "ml-auto",
+          )}
+          count={unreadTotal}
+        />
       ) : null}
     </SidebarMenuButton>
   );
