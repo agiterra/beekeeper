@@ -4,6 +4,8 @@ Manual testing runbook for verifying every CLI command against a local relay.
 An agent or developer follows this step by step, running each command and
 checking the output.
 
+Routed seats exercise this runbook too.
+
 ---
 
 ## 1. Prerequisites
