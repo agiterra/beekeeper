@@ -14,6 +14,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionModelFavorites";
 import { codingSessionProviderBaseModels } from "@/features/coding-sessions/lib/codingSessionModelPickerModel";
 import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
+import { resolveCodingSessionSeatIdentityModel } from "../lib/codingSessionHireModel";
 import {
   codingSessionAuthRemediation,
   formatCodingSessionProviderLabel,
@@ -300,6 +301,11 @@ export function NewCodingSessionModelDisclosure({
  * note* when the record names a model this runtime does not offer — a silent
  * downgrade to the runtime default is the same class of lie as the id it would
  * replace.
+ *
+ * The matching itself is {@link resolveCodingSessionSeatIdentityModel}, the
+ * same table the hire host reads an identity's model through: matching here by
+ * exact string is what made a record saying `claude-fable-5` unrunnable on a
+ * runtime publishing `claude-fable-5[1m]` (item 90 lane C).
  */
 export function resolveNewCodingSessionSeatModel(input: {
   /** The seated identity's own model id, or null when it names none. */
@@ -309,20 +315,7 @@ export function resolveNewCodingSessionSeatModel(input: {
   /** Whether the person has picked a model by hand. */
   selectionExplicit: boolean;
 }): { model: string | null; note: string | null } {
-  const agentModel = input.agentModel?.trim() ?? "";
-  if (input.selectionExplicit || agentModel.length === 0) {
-    return { model: null, note: null };
-  }
-  if (input.allowedModels.includes(agentModel)) {
-    return { model: agentModel, note: null };
-  }
-  if (input.allowedModels.length === 0) return { model: null, note: null };
-  return {
-    model: null,
-    note:
-      `This agent's record names ${agentModel}, which the selected provider ` +
-      "does not offer. The session runs on the model above instead.",
-  };
+  return resolveCodingSessionSeatIdentityModel(input);
 }
 
 /** The remediation a failed receipt asks for: which runtime, and how to fix it. */

@@ -123,9 +123,14 @@ export function getLatestLiveSessionId(
   );
 }
 
-// Per-agent listeners for `control_result` frames. The ModelPicker subscribes
-// here to learn the async outcome of a `switch_model` frame (the send is
-// fire-and-forget; the harness replies out-of-band over the observer relay).
+// Per-agent listeners for `control_result` frames. Subscribers learn the async
+// outcome of a control frame they sent fire-and-forget; the harness replies
+// out-of-band over the observer relay. The subscriber today is
+// `features/projects/projectOwnerControl.ts` (`publish_project_owner_
+// announcements`). This comment used to name the ModelPicker, which was
+// deleted in item 92 lane 2; the `switch_model` frames it sent are still
+// defined by the harness (`buzz-acp`) and folded by `lib/liveSwitchOutcome.ts`,
+// which currently has no caller.
 const controlResultListeners = new Map<
   string,
   Set<(frame: ControlResultFrame) => void>
@@ -653,9 +658,11 @@ function dispatchControlResult(agentPubkey: string, payload: unknown) {
 }
 
 /**
- * Subscribe to `control_result` frames for a single agent. Returns an
- * unsubscribe function. Used by the ModelPicker to learn the async outcome of
- * a `switch_model` frame.
+ * Subscribe to agent-management requests the harness raises. Returns an
+ * unsubscribe function. Used by `useAgentManagement`.
+ *
+ * (This doc previously described `subscribeControlResults`, two functions
+ * below, and named the deleted ModelPicker as its subscriber.)
  */
 export function subscribeAgentManagementRequests(
   listener: (agentPubkey: string, request: AgentManagementRequest) => void,
@@ -666,6 +673,11 @@ export function subscribeAgentManagementRequests(
   };
 }
 
+/**
+ * Subscribe to `control_result` frames for a single agent. Returns an
+ * unsubscribe function. Used by `projectOwnerControl.ts` to learn the async
+ * outcome of a `publish_project_owner_announcements` frame.
+ */
 export function subscribeControlResults(
   agentPubkey: string,
   listener: (frame: ControlResultFrame) => void,

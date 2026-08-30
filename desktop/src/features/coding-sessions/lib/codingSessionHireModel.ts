@@ -64,13 +64,25 @@ export function resolveCodingSessionHireModel(
   // Nothing was read, so nothing is refused. See the module doc.
   if (offered.length === 0) return { kind: "unknown", model: asked };
   if (offered.includes(asked)) return { kind: "offered", model: asked };
+  // Two vocabularies name the same id, and neither is a guess about *which*
+  // model: the vendor's family name (`claude-opus-5` where the catalog
+  // publishes `opus[1m]`), and the same id without the window suffix the
+  // runtime appends (`claude-fable-5` where the catalog publishes
+  // `claude-fable-5[1m]`). Both are disclosed, never applied silently.
+  const asked_alias = familyAliasOf(asked);
+  const translated = offered.find(
+    (candidate) => familyAliasOf(candidate) === asked_alias,
+  );
+  if (translated !== undefined) {
+    return { kind: "translated", model: translated, requested: asked };
+  }
   const family = claudeFamilyOf(asked);
   if (family !== null) {
-    const translated = offered.find(
+    const byFamily = offered.find(
       (candidate) => familyAliasOf(candidate) === family,
     );
-    if (translated !== undefined) {
-      return { kind: "translated", model: translated, requested: asked };
+    if (byFamily !== undefined) {
+      return { kind: "translated", model: byFamily, requested: asked };
     }
   }
   return { kind: "not-offered", requested: asked, offered: [...offered] };
@@ -164,6 +176,68 @@ export function codingSessionHireModelNotice(
     `${providerInstanceRef} runtime does not offer that id, so the seat runs ` +
     `${resolution.model} instead.`
   );
+}
+
+/**
+ * The model a seated identity asks a *create* to run on — the create path's
+ * one call into this table.
+ *
+ * The hire host has read an identity's model against the catalog through
+ * {@link resolveCodingSessionHireModel} since item 88(a); the create dialog
+ * matched the same record with `allowedModels.includes(...)`, so a record
+ * saying `claude-fable-5` against a catalog publishing `claude-fable-5[1m]`
+ * was reported as a model the runtime does not offer and the session silently
+ * took the runtime default (item 90 lane C). Two hosts, two answers, one
+ * record. This is the shared answer, and the same three outcomes:
+ *
+ * - the catalog offers the id → it is used, nothing to say;
+ * - the catalog offers it under another vocabulary → it is used *and* the
+ *   substitution is disclosed, never applied silently;
+ * - the catalog offers neither → nothing is asked for, and the record's id is
+ *   named in the note rather than swallowed.
+ *
+ * A model the person picked by hand outranks the record, an empty record asks
+ * for nothing, and an unread catalog (`allowedModels` empty) says nothing —
+ * a refusal built on a list this computer never loaded would be a claim about
+ * the model dressed up as a claim about the catalog.
+ */
+export function resolveCodingSessionSeatIdentityModel(input: {
+  /** The seated identity's own model id, or null when it names none. */
+  agentModel: string | null;
+  /** Model ids the selected runtime actually publishes. */
+  allowedModels: readonly string[];
+  /** Whether the person has picked a model by hand. */
+  selectionExplicit: boolean;
+}): { model: string | null; note: string | null } {
+  const agentModel = input.agentModel?.trim() ?? "";
+  if (input.selectionExplicit || agentModel.length === 0) {
+    return { model: null, note: null };
+  }
+  const resolution = resolveCodingSessionHireModel(
+    agentModel,
+    input.allowedModels,
+  );
+  if (resolution === null || resolution.kind === "unknown") {
+    return { model: null, note: null };
+  }
+  if (resolution.kind === "offered") {
+    return { model: resolution.model, note: null };
+  }
+  if (resolution.kind === "translated") {
+    return {
+      model: resolution.model,
+      note:
+        `This agent's record names ${resolution.requested}, which the ` +
+        `selected provider publishes as ${resolution.model}. The session ` +
+        `runs on ${resolution.model}.`,
+    };
+  }
+  return {
+    model: null,
+    note:
+      `This agent's record names ${agentModel}, which the selected provider ` +
+      "does not offer. The session runs on the model above instead.",
+  };
 }
 
 /** `claude-sonnet-5` → `sonnet`; anything outside the family → null. */
