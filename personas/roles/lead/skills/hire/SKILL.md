@@ -67,8 +67,9 @@ bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
 - `--role` — lowercase slug, `[a-z0-9-]`, 1–64 chars, matching an installed pack.
 - `--provider-instance` — optional; the operator's default otherwise. Name one
   when `choose-model` picked a vendor your own runtime cannot run.
-- `--model` — optional; the identity's own model otherwise. Named, it must be an
-  id the *provider catalog* offers (**Model ids** below). A guess is refused.
+- `--model` — optional; the identity's own model otherwise. Named, it takes a
+  catalog id exactly as `bee sessions catalog` prints it (**Model ids** below).
+  There are no aliases; a guess is refused, never mapped.
 - `--brief <path>` or `--content <text>` — one of the two, 1–12288 bytes. Prefer
   the file: it is the artefact you can cite later.
 - `--no-wait` — publishes and returns; use it only if you will not act on the
@@ -103,39 +104,34 @@ The host publishes the grant itself, right after the create receipt. So:
 
 ## Model ids
 
-A model id is not a name you invent and not the vendor's marketing string: it is
-an id the runtime's own kind:44222 catalog publishes in `allowedModels`, which is
-what the host checks a hire against. Read them before you name one:
+A model id is not a name you invent, not a vendor's marketing string, and not
+`default`: it is an id a runtime's own kind:44222 catalog publishes in
+`allowedModels`, and `--model` takes it **exactly as `bee sessions catalog`
+prints it**. Read the catalog before you name one:
 
-- `bee --format json sessions status --channel <uuid>` — every live execution's
-  `model`; known-good, because something is running them right now.
-- The kind:44222 catalog is the full offered list; the operator reads it in the
-  desktop's provider picker (no `bee` subcommand for it yet).
-- A refusal is also a catalog: `HIRE_MODEL_NOT_OFFERED` names every offered id.
+```
+bee sessions catalog
+```
+
+**There are no aliases.** Nothing in this path translates `claude-sonnet-5` onto
+`sonnet`, or `opus` onto `opus[1m]`. Matching is exact — `opus` and `opus[1m]`
+are two different ids — and a name the catalog does not offer is disclosed and
+refused, never quietly swapped for something close. A hire that named an id and
+got a seat running a different one would be the comfortable guess this product
+does not make.
+
+`HIRE_MODEL_NOT_OFFERED` is itself a catalog: the refusal lists every id that
+runtime offers, so a refused hire tells you exactly what to re-run with. An
+empty offered list means the host has not read that runtime's catalog — "not
+read", never "offers nothing".
+
+`bee --format json sessions status --channel <uuid>` is the cross-check: it
+prints the `model` of every live execution, which is known-good because
+something is running them right now.
 
 **Omitting `--model` is always safe** — the seat runs the identity's own model,
-checked and translated by nobody. Name one only when `choose-model` gave you a
-reason to.
-
-### The alias table
-
-Claude-family vendor names are translated onto the catalog's alias when it is
-offered, and the host discloses the swap in the umbrella ("the hire asked for X
-… so the seat runs Y instead"). Nothing else is guessed.
-
-| what you write | what the catalog offers | what runs |
-| --- | --- | --- |
-| `claude-sonnet-5`, `claude-sonnet-*` | `sonnet` | `sonnet` |
-| `claude-opus-4-1`, `claude-opus-*` | `opus`, or `opus[1m]` | that id |
-| `claude-haiku-*` | `haiku` | `haiku` |
-| `sonnet`, `opus[1m]`, `default`, … | the same id | exactly what you wrote |
-| `claude-sonnet-5` | a catalog with no `sonnet` | **refused** |
-| `gpt-9`, anything else | — | **refused** |
-
-Matching is exact on offered ids — `opus` and `opus[1m]` are different ids and
-the host never silently swaps one for the other; a bracketed suffix belongs to
-the family for translation only. A host that has not read a runtime's catalog
-refuses nothing: an empty list is "not read", not "offers nothing".
+which `skills/choose-model` rule (b) says wins over the rubric for that identity
+anyway. Name one only when the rubric gave you a reason to.
 
 ## The brief is the first turn
 
@@ -162,7 +158,7 @@ reading `hire refused: <code> — <reason>`. The seat was never created.
 | `HIRE_ROLE_BUSY` | an identity of that role exists, but it is already seated in this umbrella | Do not hire. Send this same brief to that seat: `bee sessions send --session-ref <umbrella-uuid> --to <role> --content -`. It keeps the worktree it is already in. |
 | `HIRE_NO_IDENTITY` | no installed agent on this computer has that home role | Stop and tell the founder **which role to install** (Agents → *Install team roles…*). Never substitute another role for the lane. |
 | `HIRE_PROVIDER_NOT_ALLOWED` | the named provider is outside the allowed providers | Re-run naming an allowed provider, or drop `--provider-instance` and take the default. |
-| `HIRE_MODEL_NOT_OFFERED` | the model you named is not an id that runtime's catalog offers, and not an alias the host could translate | The reason lists every offered id. Re-run with one of them, or drop `--model`. |
+| `HIRE_MODEL_NOT_OFFERED` | the model you named is not an id that runtime's catalog offers, and nothing translates it into one | The reason lists every offered id. Re-run with one of them, or drop `--model`. |
 | `HIRE_STALE` | the request sat unanswered longer than the host's window (15 minutes) — the operator's computer was shut or offline | Hire again. Do not assume the first one lands late; it will not be answered at all. |
 
 `HIRE_ROLE_BUSY` is a code the host really answers with (ledger item 90): its

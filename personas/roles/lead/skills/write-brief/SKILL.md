@@ -45,8 +45,11 @@ Problem, with evidence: <2–3 file:line entry points, or reproduced output>.
 Ledger: §3 Next, plus items <numbers> — read those and nothing else of SESSION_STATE.md.
 Design (LOCKED): <decisions, numbered>. Deviations need a written reason in the report.
 Contract changes: <exact wire/type deltas, with the doc that must change>.
-Seat: <model + thinking level, and why> — see the choose-model skill.
-      | hire: <role> on <provider>/<model> — when no seat holds this lane yet.
+Seat: <tier> · <the rubric row's model id, exactly as the catalog prints it> ·
+      thinking <level> — because <the row's reason>. Row from the choose-model
+      rubric, checked this batch with `bee sessions rubric check`.
+      | hire: <role> on <provider>/<that same id> — when no seat holds this lane yet.
+      | the identity's own record — when the host has set one (choose-model rule b).
 Tests you must add: <named>. Watch each fail before the fix where a defect is claimed.
 Acceptance: <commands with expected counts / exit codes>.
 Out of scope: <named temptations>.
@@ -164,8 +167,11 @@ with a "start" message. See `skills/hire`.
 - Exclusive file ownership per lane — two lanes never own the same file.
 - Name the tier and why; tier-2 briefs must name what makes them tier-2
   (provider runtime, custody/keys, relay ingest, durable state).
-- Name the seat's model and the reason in one clause. "Sonnet, because this is a
-  two-file mechanical edit" is a reason; "Sonnet" is not.
+- The Seat line names the tier, the rubric row's catalog id and the reason in one
+  clause. "tier-1 · sonnet, because the brief is locked and this is a two-file
+  mechanical edit" is a Seat line; "sonnet" is not, and `default` or a vendor
+  marketing string is neither — there are no aliases, so an id the catalog does
+  not offer is refused rather than mapped.
 - Never brief a lane to run a gate you should have hired a runner for; the lane
   runs the tests its own change needs, and `skills/hire` says who runs the rest.
 - A brief that turns out wrong on the ground is a report back from the lane, not
