@@ -48,6 +48,12 @@ export const MAX_PULSE_CODE_AREA_BYTES = 256;
 /** Maximum UTF-8 byte length of a branch shortname (tag or content field). */
 export const MAX_PULSE_BRANCH_BYTES = 256;
 
+/** Maximum number of seats one entry's `cost` may account for. */
+export const MAX_PULSE_COST_SEATS = 64;
+
+/** Maximum UTF-8 byte length of a cost seat's `role` or `model` label. */
+export const MAX_PULSE_COST_LABEL_BYTES = 256;
+
 /** Every accepted `pu-type` value, in the wire order buzz-core lists them. */
 export const PULSE_ENTRY_TYPES = [
   "plan",
@@ -60,6 +66,42 @@ export const PULSE_ENTRY_TYPES = [
 /** What an entry claims about its author's work. */
 export type PulseEntryType = (typeof PULSE_ENTRY_TYPES)[number];
 
+/**
+ * What one seat spent producing the work an entry claims.
+ *
+ * Every field is optional and an unreported one is *absent*, never `0` — the
+ * rule the 44225 usage block this is folded from already follows. "The driver
+ * did not report it" and "the driver measured zero" are different facts.
+ */
+export type PulseCostSeat = {
+  /** The seat's agent pubkey, lowercase 64-hex, when the work ran as a seat. */
+  actor?: string;
+  /** The role slug the seat held, when one was published. */
+  role?: string;
+  /** The effective model, when the provider named one. */
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  toolCalls?: number;
+  /** Turns that carried a usage block — how much of the cost was measured. */
+  turns?: number;
+};
+
+/**
+ * What the work an entry claims cost, per seat.
+ *
+ * Absent when nothing on the wire measured it: a zero here would assert that a
+ * lane cost nothing, which is a different claim from "nobody measured it".
+ * `totalTokens` is the sum of every listed seat's four token counts, and when
+ * `seats` is non-empty the two must agree.
+ */
+export type PulseCost = {
+  seats: PulseCostSeat[];
+  totalTokens: number | null;
+};
+
 /** Strict public JSON carried by a Pulse entry (kind 44240). */
 export type PulseEntry = {
   schema: typeof PULSE_ENTRY_SCHEMA;
@@ -69,6 +111,8 @@ export type PulseEntry = {
   codeAreas: string[];
   branch: string | null;
   supersedes: string | null;
+  /** What the work cost, per seat, or `null` when the entry carried none. */
+  cost: PulseCost | null;
 };
 
 /** A signature-stripped Nostr event — the shape both `POST /query` and the
@@ -95,7 +139,41 @@ const PULSE_ENTRY_FIELDS = [
   "codeAreas",
   "branch",
   "supersedes",
+  "cost",
 ];
+
+const PULSE_COST_FIELDS = ["seats", "totalTokens"];
+
+const PULSE_COST_SEAT_FIELDS = [
+  "actor",
+  "role",
+  "model",
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "toolCalls",
+  "turns",
+];
+
+const PULSE_COST_SEAT_COUNTS = [
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "toolCalls",
+  "turns",
+];
+
+/** The four token counts `totalTokens` is defined as the sum of. */
+const PULSE_COST_SEAT_TOKENS = [
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+];
+
+const LOWERCASE_HEX64_PATTERN = /^[0-9a-f]{64}$/;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -201,6 +279,158 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Outcome of decoding one `cost` object. */
+type PulseCostDecodeResult =
+  | { ok: true; cost: PulseCost }
+  | { ok: false; error: string };
+
+/** Validate one cost seat label (`role` or `model`). */
+function validateCostLabel(field: string, value: string): string | null {
+  if (value.trim().length === 0) {
+    return `pulse cost seat ${field} must not be blank`;
+  }
+  if (utf8Bytes(value) > MAX_PULSE_COST_LABEL_BYTES) {
+    return `pulse cost seat ${field} exceeds ${MAX_PULSE_COST_LABEL_BYTES} bytes`;
+  }
+  if (hasControlCharacter(value)) {
+    return `pulse cost seat ${field} must not contain control characters`;
+  }
+  return null;
+}
+
+/** A non-negative safe integer, the only shape a wire token count may take. */
+function isCount(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+/**
+ * Strictly decode and validate an entry's `cost`. The TypeScript twin of
+ * `buzz_core::pulse::validate_cost`, rejection for rejection.
+ *
+ * Four honesty rules: a cost that reports nothing is a rejection (a costless
+ * entry omits the key), so is a seat that reports nothing, a seat is named
+ * once (the same `actor` twice would double-count a lane), and `totalTokens`
+ * must equal the seats it sits beside — including the case where no seat
+ * reported a token count and there is therefore no total to state.
+ */
+function decodePulseCost(value: unknown): PulseCostDecodeResult {
+  if (!isPlainObject(value)) {
+    return { ok: false, error: "pulse entry cost must be an object or null" };
+  }
+  const unknown = Object.keys(value).find(
+    (key) => !PULSE_COST_FIELDS.includes(key),
+  );
+  if (unknown !== undefined) {
+    return {
+      ok: false,
+      error: `pulse entry cost has unsupported field "${unknown}"`,
+    };
+  }
+  const rawSeats = value.seats ?? [];
+  if (!Array.isArray(rawSeats)) {
+    return { ok: false, error: "pulse entry cost seats must be an array" };
+  }
+  const totalTokens = value.totalTokens ?? null;
+  if (totalTokens !== null && !isCount(totalTokens)) {
+    return {
+      ok: false,
+      error: "pulse entry cost totalTokens must be a non-negative integer",
+    };
+  }
+  if (rawSeats.length === 0 && totalTokens === null) {
+    return { ok: false, error: "pulse entry cost must report something" };
+  }
+  if (rawSeats.length > MAX_PULSE_COST_SEATS) {
+    return {
+      ok: false,
+      error: `pulse entry cost lists more than ${MAX_PULSE_COST_SEATS} seats`,
+    };
+  }
+
+  const seats: PulseCostSeat[] = [];
+  const seenActors = new Set<string>();
+  let summed: number | null = null;
+  for (const rawSeat of rawSeats) {
+    if (!isPlainObject(rawSeat)) {
+      return { ok: false, error: "pulse entry cost seat must be an object" };
+    }
+    const unknownSeatKey = Object.keys(rawSeat).find(
+      (key) => !PULSE_COST_SEAT_FIELDS.includes(key),
+    );
+    if (unknownSeatKey !== undefined) {
+      return {
+        ok: false,
+        error: `pulse entry cost seat has unsupported field "${unknownSeatKey}"`,
+      };
+    }
+    const seat: PulseCostSeat = {};
+    for (const field of ["actor", "role", "model"]) {
+      const raw = rawSeat[field];
+      if (raw === undefined || raw === null) continue;
+      if (typeof raw !== "string") {
+        return {
+          ok: false,
+          error: `pulse entry cost seat ${field} must be a string`,
+        };
+      }
+      if (field === "actor") {
+        if (!LOWERCASE_HEX64_PATTERN.test(raw)) {
+          return {
+            ok: false,
+            error:
+              "pulse cost seat actor must be a 64-character lowercase hex pubkey",
+          };
+        }
+        if (seenActors.has(raw)) {
+          return {
+            ok: false,
+            error: `pulse entry cost repeats cost seat "${raw}"`,
+          };
+        }
+        seenActors.add(raw);
+      } else {
+        const rejection = validateCostLabel(field, raw);
+        if (rejection) return { ok: false, error: rejection };
+      }
+      (seat as Record<string, unknown>)[field] = raw;
+    }
+    let seatTokens: number | null = null;
+    for (const field of PULSE_COST_SEAT_COUNTS) {
+      const raw = rawSeat[field];
+      if (raw === undefined || raw === null) continue;
+      if (!isCount(raw)) {
+        return {
+          ok: false,
+          error: `pulse entry cost seat ${field} must be a non-negative integer`,
+        };
+      }
+      (seat as Record<string, unknown>)[field] = raw;
+      if (PULSE_COST_SEAT_TOKENS.includes(field)) {
+        seatTokens = (seatTokens ?? 0) + raw;
+      }
+    }
+    if (Object.keys(seat).length === 0) {
+      return {
+        ok: false,
+        error: "pulse entry cost seat must report something",
+      };
+    }
+    if (seatTokens !== null) summed = (summed ?? 0) + seatTokens;
+    seats.push(seat);
+  }
+
+  if (seats.length > 0 && totalTokens !== null && totalTokens !== summed) {
+    return {
+      ok: false,
+      error:
+        summed === null
+          ? `pulse entry cost totalTokens ${totalTokens} does not equal the seats it lists, which report no tokens at all`
+          : `pulse entry cost totalTokens ${totalTokens} does not equal the ${summed} its seats report`,
+    };
+  }
+  return { ok: true, cost: { seats, totalTokens } };
+}
+
 /**
  * Strictly decode and validate Pulse entry content.
  *
@@ -301,6 +531,13 @@ export function decodePulseEntry(content: string): PulseEntryDecodeResult {
         "pulse entry supersedes must be a 64-character lowercase hex event id",
     };
   }
+  const rawCost = value.cost ?? null;
+  let cost: PulseCost | null = null;
+  if (rawCost !== null) {
+    const decoded = decodePulseCost(rawCost);
+    if (!decoded.ok) return { ok: false, error: decoded.error };
+    cost = decoded.cost;
+  }
   return {
     ok: true,
     entry: {
@@ -310,6 +547,7 @@ export function decodePulseEntry(content: string): PulseEntryDecodeResult {
       codeAreas,
       branch,
       supersedes,
+      cost,
     },
   };
 }

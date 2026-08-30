@@ -2763,6 +2763,13 @@ pub enum PulseCmd {
         /// Event id of your own earlier entry this one revises
         #[arg(long)]
         supersedes: Option<String>,
+        /// Attach what the work cost, folded from signed turn usage in
+        /// `<channel-uuid>` (optionally narrowed to `:<session-ref-uuid>`)
+        #[arg(long)]
+        cost_from: Option<String>,
+        /// Restrict --cost-from to one seat: 4-64 lowercase hex characters of its pubkey
+        #[arg(long)]
+        cost_seat: Option<String>,
         /// Entry text, taken verbatim; use '-' to read stdin to EOF
         #[arg(long)]
         content: String,

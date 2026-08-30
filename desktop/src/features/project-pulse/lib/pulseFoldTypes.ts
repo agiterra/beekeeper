@@ -8,7 +8,7 @@
  * published vocabulary and the Rust twin's field names do not move.
  */
 
-import type { PulseEntryType, PulseEvent } from "./pulseEntry.ts";
+import type { PulseCost, PulseEntryType, PulseEvent } from "./pulseEntry.ts";
 import type {
   CoordinatedGeneration,
   CoordinatedSession,
@@ -59,6 +59,17 @@ export type PulseDigestEntry = {
   supersedes: string | null;
   supersededBy: PulseSupersessionClaim[];
   active: boolean;
+  /**
+   * What the entry said its work cost, when it said anything at all.
+   *
+   * Present **only** when the entry carried a `cost`, so a costless entry
+   * serializes byte-identically to the pre-cost digest and every
+   * `conformance/project-pulse-fold/` vector keeps passing unchanged. The Rust
+   * digest twin (`buzz_core::pulse_fold::PulseDigestEntry`) does not carry the
+   * key yet, so no fold vector may carry one until it does — the two folds are
+   * pinned byte-for-byte against the same corpus.
+   */
+  cost?: PulseCost;
 };
 
 /** Reachability evidence for one exact session generation. */

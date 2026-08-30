@@ -5543,6 +5543,7 @@ mod tests {
             code_areas: vec!["crates/buzz-acp/src/pool.rs".to_owned()],
             branch: None,
             supersedes: None,
+            cost: None,
         }
     }
 

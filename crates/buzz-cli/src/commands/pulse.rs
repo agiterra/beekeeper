@@ -22,13 +22,20 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
+use buzz_core::coding_session_command::coding_session_target_key;
+use buzz_core::coding_session_payload::{
+    decode_coding_session_metadata, TranscriptEnvelope, TurnUsageReport,
+};
 use buzz_core::kind::{
     normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_NIP29_GROUP_METADATA, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PULSE_ENTRY,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_NIP29_GROUP_METADATA, KIND_PROJECT, KIND_PROJECT_MEMBERS,
+    KIND_PULSE_ENTRY,
 };
-use buzz_core::pulse::{PulseEntry, PulseEntryType, MAX_PULSE_TEXT_BYTES, PULSE_ENTRY_SCHEMA};
+use buzz_core::pulse::{
+    PulseCost, PulseCostSeat, PulseEntry, PulseEntryType, MAX_PULSE_TEXT_BYTES, PULSE_ENTRY_SCHEMA,
+};
 use buzz_core::pulse_fold::{
     fold_pulse_digest, PulseDigest, PulseDigestEntry, PulseDigestError, PulseDigestSession,
 };
@@ -80,7 +87,6 @@ fn json_str<'a>(event: &'a Value, field: &str) -> Option<&'a str> {
     event.get(field).and_then(Value::as_str)
 }
 
-#[cfg(test)]
 fn json_kind(event: &Value) -> Option<u32> {
     event
         .get("kind")
@@ -507,6 +513,329 @@ fn resolve_bare_dtag(dtag: &str, candidates: Vec<String>) -> Result<String, CliE
     }
 }
 
+// ── Cost ─────────────────────────────────────────────────────────────────────
+
+/// The two kinds `--cost-from` reads.
+///
+/// 44223 names the seat (`agentRef`, `role`, `model`); 44225 carries the usage
+/// blocks every number comes from. `kinds` is never omitted: an open-ended
+/// filter trips the relay's p-gate and comes back 403.
+const COST_FACT_KINDS: [u32; 2] = [KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_TRANSCRIPT];
+
+/// `true` for the lowercase hyphenated UUID form and nothing else.
+///
+/// The same rule `buzz_core::pulse` applies to a 44240 `h` tag, and for the
+/// same reason: `Uuid::parse_str` also accepts uppercase and the 32-hex simple
+/// form, neither of which any `#h` relay filter can match — the SQL
+/// containment probe compares exact bytes.
+fn is_canonical_uuid(value: &str) -> bool {
+    uuid::Uuid::parse_str(value).is_ok_and(|parsed| parsed.to_string() == value)
+}
+
+/// A parsed `--cost-from <channel>[:<sessionRef>]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CostSource {
+    /// Channel UUID whose coding-session facts are read.
+    channel: String,
+    /// Umbrella `sessionRef`, when the caller narrowed to one session.
+    session_ref: Option<String>,
+}
+
+/// Parse `--cost-from`.
+///
+/// Both halves are canonical lowercase UUIDs. Uppercase is refused rather than
+/// lowercased: `#h` is matched by the relay's SQL containment probe on exact
+/// bytes, so a case-variant channel would query nothing and the entry would
+/// carry a cost of "nothing measured" that looks like a quiet session.
+fn parse_cost_from(value: &str) -> Result<CostSource, CliError> {
+    let mut parts = value.split(':');
+    let channel = parts.next().unwrap_or_default();
+    let session_ref = parts.next();
+    if parts.next().is_some() {
+        return Err(CliError::Usage(
+            "--cost-from takes <channel-uuid> or <channel-uuid>:<session-ref-uuid>".to_owned(),
+        ));
+    }
+    if !is_canonical_uuid(channel) {
+        return Err(CliError::Usage(format!(
+            "--cost-from channel {channel:?} is not a lowercase canonical UUID"
+        )));
+    }
+    if let Some(session_ref) = session_ref {
+        if !is_canonical_uuid(session_ref) {
+            return Err(CliError::Usage(format!(
+                "--cost-from session reference {session_ref:?} is not a lowercase canonical UUID"
+            )));
+        }
+    }
+    Ok(CostSource {
+        channel: channel.to_owned(),
+        session_ref: session_ref.map(str::to_owned),
+    })
+}
+
+/// Parse `--cost-seat`: a lowercase hex prefix of one seat's pubkey.
+///
+/// Four characters is the floor. Shorter prefixes collide often enough that
+/// the ambiguity check below would be the only thing standing between a lane's
+/// milestone and another lane's numbers.
+fn parse_cost_seat(value: &str) -> Result<String, CliError> {
+    let ok = (4..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !ok {
+        return Err(CliError::Usage(format!(
+            "--cost-seat {value:?} must be 4-64 lowercase hex characters of a seat pubkey"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+/// What one execution's newest metadata says about the seat behind it.
+struct CostTarget {
+    actor: Option<String>,
+    role: Option<String>,
+    model: Option<String>,
+    session_ref: Option<String>,
+    created_at: i64,
+}
+
+/// One seat's running totals while the fold walks the transcript.
+#[derive(Default)]
+struct CostTally {
+    actor: Option<String>,
+    role: Option<String>,
+    model: Option<String>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
+    tool_calls: Option<u64>,
+    turns: u64,
+}
+
+/// Add one turn's reported count into a running total.
+///
+/// An unreported count leaves the total exactly as it was — including still
+/// `None` — so a seat whose provider never reported `toolCalls` publishes no
+/// `toolCalls`, rather than a zero it never measured.
+fn accumulate(total: &mut Option<u64>, part: Option<u64>) {
+    if let Some(part) = part {
+        *total = Some(total.unwrap_or(0).saturating_add(part));
+    }
+}
+
+/// What one `--cost-from` read produced.
+#[derive(Debug)]
+struct CostFold {
+    /// The cost to attach, or `None` when nothing on the wire measured it.
+    cost: Option<PulseCost>,
+    /// Turns whose usage could not be attributed to any seat, because the
+    /// execution that signed them published no metadata in this read.
+    ///
+    /// Reported rather than folded in: a number attributed to nobody is not a
+    /// seat's cost, and dropping it silently would understate the session
+    /// without saying so.
+    unattributed_turns: u64,
+}
+
+/// Fold the usage blocks a channel's providers signed into a per-seat cost.
+///
+/// The numbers come from exactly one place: the `usage` object on a terminal
+/// `result` transcript item (kind 44225), which is
+/// [`buzz_core::coding_session_payload::TurnUsageReport`] — the same block
+/// `bee sessions status` reads for its context column
+/// (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:963`). That command
+/// keeps the *newest* turn's block, because occupancy is a now-fact; a lane's
+/// cost is the opposite question, so this sums every turn's block instead.
+///
+/// Seats are keyed by `agentRef`, not by generation: a seat that was resumed
+/// runs under a new `cs-target` generation but is the same lane, and two rows
+/// for one actor would double-count it (and be refused by
+/// [`buzz_core::pulse`]'s duplicate-seat rule).
+///
+/// A seat that reported no usage at all is left out entirely. Publishing it
+/// with zeros would claim its lane cost nothing.
+fn fold_session_cost(
+    events: &[Value],
+    session_ref: Option<&str>,
+    seat: Option<&str>,
+) -> Result<CostFold, CliError> {
+    let mut targets: std::collections::HashMap<String, CostTarget> =
+        std::collections::HashMap::new();
+    for event in events {
+        if json_kind(event) != Some(KIND_CODING_SESSION_METADATA) {
+            continue;
+        }
+        let Some(content) = json_str(event, "content") else {
+            continue;
+        };
+        let Ok(metadata) = decode_coding_session_metadata(content) else {
+            continue;
+        };
+        let created_at = event.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+        let key = coding_session_target_key(&metadata.session);
+        let entry = targets.entry(key).or_insert(CostTarget {
+            actor: None,
+            role: None,
+            model: None,
+            session_ref: None,
+            created_at: i64::MIN,
+        });
+        if created_at >= entry.created_at {
+            entry.actor = metadata.agent_ref.clone();
+            entry.role = metadata.role.clone();
+            entry.model = metadata.model.clone();
+            entry.session_ref = metadata.session_ref.clone();
+            entry.created_at = created_at;
+        }
+    }
+
+    // Resolved against the *same* rows the fold will walk, `--cost-from`'s
+    // session narrowing included. A prefix that names a seat elsewhere in the
+    // channel but not in this umbrella is refused rather than folded to
+    // nothing: an entry whose cost silently vanished reads exactly like a lane
+    // nobody measured.
+    if let Some(seat) = seat {
+        let mut matches: HashSet<&str> = HashSet::new();
+        for target in targets.values() {
+            if session_ref.is_some() && target.session_ref.as_deref() != session_ref {
+                continue;
+            }
+            if let Some(actor) = target.actor.as_deref() {
+                if actor.starts_with(seat) {
+                    matches.insert(actor);
+                }
+            }
+        }
+        match matches.len() {
+            0 => {
+                return Err(CliError::Usage(format!(
+                    "--cost-seat {seat:?} matches no seat in that read; the entry would have carried a cost measured for nobody"
+                )))
+            }
+            1 => {}
+            count => {
+                return Err(CliError::Usage(format!(
+                    "--cost-seat {seat:?} matches {count} seats; name more of the pubkey"
+                )))
+            }
+        }
+    }
+
+    let mut tallies: std::collections::BTreeMap<String, CostTally> =
+        std::collections::BTreeMap::new();
+    let mut unattributed_turns = 0u64;
+    for event in events {
+        if json_kind(event) != Some(KIND_CODING_SESSION_TRANSCRIPT) {
+            continue;
+        }
+        let Some(content) = json_str(event, "content") else {
+            continue;
+        };
+        let Ok(envelope) = serde_json::from_str::<TranscriptEnvelope>(content) else {
+            continue;
+        };
+        let item = &envelope.item;
+        if item.get("kind").and_then(Value::as_str) != Some("result") {
+            continue;
+        }
+        let Some(usage) = item.get("usage") else {
+            continue;
+        };
+        let Ok(usage) = serde_json::from_value::<TurnUsageReport>(usage.clone()) else {
+            continue;
+        };
+        if usage.is_empty() {
+            continue;
+        }
+        let key = coding_session_target_key(&envelope.session);
+        let Some(target) = targets.get(&key) else {
+            unattributed_turns = unattributed_turns.saturating_add(1);
+            continue;
+        };
+        if let Some(session_ref) = session_ref {
+            if target.session_ref.as_deref() != Some(session_ref) {
+                continue;
+            }
+        }
+        if let Some(seat) = seat {
+            if !target
+                .actor
+                .as_deref()
+                .is_some_and(|actor| actor.starts_with(seat))
+            {
+                continue;
+            }
+        }
+        // One row per seat, and per *execution* only when there is no seat to
+        // name — an unseated execution is somebody's terminal, not a lane, and
+        // merging two of them under one anonymous row would invent a seat.
+        let tally = tallies
+            .entry(match target.actor.as_deref() {
+                Some(actor) => format!("actor:{actor}"),
+                None => format!("target:{key}"),
+            })
+            .or_default();
+        tally.actor.clone_from(&target.actor);
+        tally.role.clone_from(&target.role);
+        tally.model.clone_from(&target.model);
+        accumulate(&mut tally.input_tokens, usage.input_tokens);
+        accumulate(&mut tally.output_tokens, usage.output_tokens);
+        accumulate(&mut tally.cache_read_tokens, usage.cache_read_tokens);
+        accumulate(&mut tally.cache_write_tokens, usage.cache_write_tokens);
+        accumulate(&mut tally.tool_calls, usage.tool_calls);
+        tally.turns = tally.turns.saturating_add(1);
+    }
+
+    let seats: Vec<PulseCostSeat> = tallies
+        .into_values()
+        .map(|tally| PulseCostSeat {
+            actor: tally.actor,
+            role: tally.role,
+            model: tally.model,
+            input_tokens: tally.input_tokens,
+            output_tokens: tally.output_tokens,
+            cache_read_tokens: tally.cache_read_tokens,
+            cache_write_tokens: tally.cache_write_tokens,
+            tool_calls: tally.tool_calls,
+            turns: Some(tally.turns),
+        })
+        .collect();
+    if seats.is_empty() {
+        return Ok(CostFold {
+            cost: None,
+            unattributed_turns,
+        });
+    }
+    let mut cost = PulseCost {
+        seats,
+        total_tokens: None,
+    };
+    cost.total_tokens = cost.seat_token_sum();
+    Ok(CostFold {
+        cost: Some(cost),
+        unattributed_turns,
+    })
+}
+
+/// Read one channel's coding-session facts and fold them into a cost.
+///
+/// A failed read is an error, never an omitted cost: an entry that silently
+/// dropped its cost because the relay was unreachable would be indistinguishable
+/// from one whose lane genuinely published no usage.
+async fn resolve_cost(
+    client: &BuzzClient,
+    source: &CostSource,
+    seat: Option<&str>,
+) -> Result<CostFold, CliError> {
+    let events = client
+        .query_all(json!({ "kinds": COST_FACT_KINDS, "#h": [source.channel] }))
+        .await?;
+    fold_session_cost(&events, source.session_ref.as_deref(), seat)
+}
+
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 /// Build the entry payload from the command-line arguments.
@@ -520,6 +849,7 @@ fn build_entry(
     areas: Option<&str>,
     branch: Option<String>,
     supersedes: Option<String>,
+    cost: Option<PulseCost>,
 ) -> Result<PulseEntry, CliError> {
     if text.len() > MAX_PULSE_TEXT_BYTES {
         return Err(CliError::Usage(format!(
@@ -545,10 +875,15 @@ fn build_entry(
         code_areas,
         branch,
         supersedes,
+        cost,
     })
 }
 
 /// `bee pulse update` — publish one entry.
+///
+/// `--cost-from` is read *before* the entry is built, so a relay that cannot
+/// answer stops the publish rather than producing a costless entry the reader
+/// would take for a lane that measured nothing.
 #[allow(clippy::too_many_arguments)]
 async fn cmd_update(
     client: &BuzzClient,
@@ -558,11 +893,28 @@ async fn cmd_update(
     branch: Option<String>,
     session: Option<&str>,
     supersedes: Option<String>,
+    cost_from: Option<&str>,
+    cost_seat: Option<&str>,
     content: &str,
 ) -> Result<(), CliError> {
+    let seat = cost_seat.map(parse_cost_seat).transpose()?;
+    let source =
+        match (cost_from, seat.as_deref()) {
+            (Some(value), _) => Some(parse_cost_from(value)?),
+            (None, Some(_)) => return Err(CliError::Usage(
+                "--cost-seat needs --cost-from <channel>[:<session-ref>] to read the usage from"
+                    .to_owned(),
+            )),
+            (None, None) => None,
+        };
     let coordinate = resolve_project(client, project).await?;
+    let fold = match source.as_ref() {
+        Some(source) => Some(resolve_cost(client, source, seat.as_deref()).await?),
+        None => None,
+    };
+    let cost = fold.as_ref().and_then(|fold| fold.cost.clone());
     let text = crate::validate::read_or_stdin(content)?;
-    let entry = build_entry(kind, text, areas, branch, supersedes)?;
+    let entry = build_entry(kind, text, areas, branch, supersedes, cost)?;
     let builder = buzz_sdk::builders::build_pulse_entry(&coordinate, &entry, None, session)
         .map_err(crate::validate::sdk_err)?;
 
@@ -589,16 +941,46 @@ async fn cmd_update(
             "relay rejected pulse entry: {message}"
         )));
     }
-    println!(
-        "{}",
-        json!({
-            "event_id": response.get("event_id").and_then(Value::as_str).unwrap_or(&event_id),
-            "accepted": accepted,
-            "project": coordinate,
-            "kind": kind.as_str(),
-            "created_at": created_at,
-        })
-    );
+    let mut printed = json!({
+        "event_id": response.get("event_id").and_then(Value::as_str).unwrap_or(&event_id),
+        "accepted": accepted,
+        "project": coordinate,
+        "kind": kind.as_str(),
+        "created_at": created_at,
+    });
+    // The cost keys appear only when a cost was asked for, and `cost: null`
+    // with its reason is a first-class answer: "nothing on the wire measured
+    // this lane" is a fact the caller needs, and is not the same as the entry
+    // having carried numbers.
+    if let (Some(object), Some(source), Some(fold)) =
+        (printed.as_object_mut(), source.as_ref(), fold.as_ref())
+    {
+        object.insert(
+            "costSource".into(),
+            json!({
+                "channel": source.channel,
+                "sessionRef": source.session_ref,
+                "seat": seat,
+            }),
+        );
+        object.insert(
+            "cost".into(),
+            serde_json::to_value(&fold.cost).unwrap_or(Value::Null),
+        );
+        if fold.cost.is_none() {
+            object.insert(
+                "costNote".into(),
+                json!("no signed turn usage on the wire for that read; cost omitted rather than published as zero"),
+            );
+        }
+        if fold.unattributed_turns > 0 {
+            object.insert(
+                "costUnattributedTurns".into(),
+                json!(fold.unattributed_turns),
+            );
+        }
+    }
+    println!("{printed}");
     Ok(())
 }
 
@@ -808,6 +1190,8 @@ pub async fn dispatch(
             branch,
             session,
             supersedes,
+            cost_from,
+            cost_seat,
             content,
         } => {
             cmd_update(
@@ -818,6 +1202,8 @@ pub async fn dispatch(
                 branch,
                 session.as_deref(),
                 supersedes,
+                cost_from.as_deref(),
+                cost_seat.as_deref(),
                 &content,
             )
             .await
@@ -1156,6 +1542,7 @@ mod tests {
                 Some(area),
                 None,
                 None,
+                None,
             )
             .expect("payload assembles");
             // The payload itself is only assembled here; buzz-core rejects it
@@ -1203,12 +1590,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect_err("must reject");
         assert_eq!(exit_code(&error), 1);
         assert!(build_entry(
             crate::PulseKindArg::Plan,
             "a".repeat(MAX_PULSE_TEXT_BYTES),
+            None,
             None,
             None,
             None,
@@ -1222,6 +1611,7 @@ mod tests {
             crate::PulseKindArg::Blocker,
             "Do not touch these.".to_owned(),
             Some("crates/buzz-acp/src/pool.rs, crates/buzz-cli/src/lib.rs"),
+            None,
             None,
             None,
         )
@@ -1239,6 +1629,7 @@ mod tests {
             crate::PulseKindArg::Note,
             "Nothing claimed.".to_owned(),
             Some("  "),
+            None,
             None,
             None,
         )
@@ -1468,5 +1859,302 @@ mod tests {
             "Commit not found on relay"
         );
         assert_eq!(commit_confirmation(None), "Commit not checked");
+    }
+
+    // ---- Cost (`--cost-from` / `--cost-seat`) ----
+
+    const COST_CHANNEL: &str = "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2";
+    const COST_SESSION: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    const OTHER_SESSION: &str = "9c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
+    const BUILDER: &str = "cc00000000000000000000000000000000000000000000000000000000000022";
+    const REFUTER: &str = "dd00000000000000000000000000000000000000000000000000000000000033";
+
+    fn target(session_id: &str, generation: u64) -> Value {
+        json!({
+            "driver": "claude-acp",
+            "instanceId": "instance-1",
+            "sessionId": session_id,
+            "generation": generation,
+        })
+    }
+
+    /// A signed-shape 44223 metadata event, as `POST /query` hands it back.
+    fn metadata_event(
+        session_id: &str,
+        generation: u64,
+        actor: Option<&str>,
+        role: Option<&str>,
+        model: &str,
+        session_ref: Option<&str>,
+        created_at: i64,
+    ) -> Value {
+        let mut content = json!({
+            "schema": "buzz-coding-session-metadata/v1",
+            "session": target(session_id, generation),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": actor,
+            "provider": null,
+            "runtime": "claude",
+            "model": model,
+            "status": "running",
+            "branch": null,
+            "capabilities": {
+                "threadTurnStart": true,
+                "threadTurnInterrupt": true,
+                "threadSteer": false,
+                "context": false,
+                "diff": false,
+                "plan": true,
+            },
+        });
+        if let (Some(object), Some(role)) = (content.as_object_mut(), role) {
+            object.insert("role".into(), json!(role));
+        }
+        if let (Some(object), Some(session_ref)) = (content.as_object_mut(), session_ref) {
+            object.insert("sessionRef".into(), json!(session_ref));
+        }
+        json!({
+            "id": "a".repeat(64),
+            "pubkey": "b".repeat(64),
+            "created_at": created_at,
+            "kind": KIND_CODING_SESSION_METADATA,
+            "tags": [["h", COST_CHANNEL]],
+            "content": content.to_string(),
+        })
+    }
+
+    /// A 44225 transcript event carrying one terminal `result` item.
+    fn result_event(session_id: &str, generation: u64, seq: u64, usage: Option<Value>) -> Value {
+        let mut item = json!({
+            "kind": "result",
+            "subtype": "success",
+            "isError": false,
+            "durationMs": 1_000,
+            "result": "done",
+        });
+        if let (Some(object), Some(usage)) = (item.as_object_mut(), usage) {
+            object.insert("usage".into(), usage);
+        }
+        let content = json!({
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": target(session_id, generation),
+            "eventSeq": seq,
+            "timestamp": 1_700_000_000_000i64,
+            "turnId": format!("turn-{seq}"),
+            "item": item,
+        });
+        json!({
+            "id": "c".repeat(64),
+            "pubkey": "b".repeat(64),
+            "created_at": 1_700_000_000i64 + seq as i64,
+            "kind": KIND_CODING_SESSION_TRANSCRIPT,
+            "tags": [["h", COST_CHANNEL]],
+            "content": content.to_string(),
+        })
+    }
+
+    fn usage(input: u64, output: u64, read: u64, write: u64, tools: u64) -> Value {
+        json!({
+            "inputTokens": input,
+            "outputTokens": output,
+            "cacheReadTokens": read,
+            "cacheWriteTokens": write,
+            "toolCalls": tools,
+        })
+    }
+
+    fn two_seat_channel() -> Vec<Value> {
+        vec![
+            metadata_event(
+                "s-builder",
+                1,
+                Some(BUILDER),
+                Some("builder"),
+                "opus-5[1m]",
+                Some(COST_SESSION),
+                10,
+            ),
+            metadata_event(
+                "s-refuter",
+                1,
+                Some(REFUTER),
+                Some("refuter"),
+                "sonnet-5",
+                Some(COST_SESSION),
+                11,
+            ),
+            result_event("s-builder", 1, 1, Some(usage(10, 5, 100, 20, 4))),
+            result_event("s-builder", 1, 2, Some(usage(1, 2, 3, 4, 5))),
+            result_event("s-refuter", 1, 1, Some(usage(7, 3, 0, 0, 1))),
+        ]
+    }
+
+    #[test]
+    fn cost_from_parses_a_bare_channel_and_a_session_suffix() {
+        assert_eq!(
+            parse_cost_from(COST_CHANNEL).expect("bare channel parses"),
+            CostSource {
+                channel: COST_CHANNEL.to_owned(),
+                session_ref: None
+            }
+        );
+        assert_eq!(
+            parse_cost_from(&format!("{COST_CHANNEL}:{COST_SESSION}")).expect("suffix parses"),
+            CostSource {
+                channel: COST_CHANNEL.to_owned(),
+                session_ref: Some(COST_SESSION.to_owned())
+            }
+        );
+        for bad in [
+            "not-a-uuid",
+            &format!("{COST_CHANNEL}:not-a-uuid"),
+            &format!("{COST_CHANNEL}:{COST_SESSION}:extra"),
+            &COST_CHANNEL.to_uppercase(),
+        ] {
+            let error = parse_cost_from(bad).expect_err("must reject");
+            assert_eq!(exit_code(&error), 1, "{bad:?} is a usage error");
+        }
+    }
+
+    #[test]
+    fn cost_seat_takes_a_short_lowercase_hex_prefix() {
+        assert_eq!(
+            parse_cost_seat("cc000000").as_deref().ok(),
+            Some("cc000000")
+        );
+        assert_eq!(parse_cost_seat(BUILDER).as_deref().ok(), Some(BUILDER));
+        for bad in ["cc", "CC000000", "zzzzzzzz", &"c".repeat(65)] {
+            assert_eq!(
+                exit_code(&parse_cost_seat(bad).expect_err("must reject")),
+                1,
+                "{bad:?} is a usage error"
+            );
+        }
+    }
+
+    #[test]
+    fn folds_every_seats_usage_and_totals_it() {
+        let fold = fold_session_cost(&two_seat_channel(), None, None).expect("fold succeeds");
+        let cost = fold.cost.expect("two seats reported usage");
+        assert_eq!(cost.seats.len(), 2);
+
+        let builder = cost
+            .seats
+            .iter()
+            .find(|seat| seat.actor.as_deref() == Some(BUILDER))
+            .expect("builder seat");
+        assert_eq!(builder.role.as_deref(), Some("builder"));
+        assert_eq!(builder.model.as_deref(), Some("opus-5[1m]"));
+        assert_eq!(builder.input_tokens, Some(11));
+        assert_eq!(builder.output_tokens, Some(7));
+        assert_eq!(builder.cache_read_tokens, Some(103));
+        assert_eq!(builder.cache_write_tokens, Some(24));
+        assert_eq!(builder.tool_calls, Some(9));
+        assert_eq!(builder.turns, Some(2));
+
+        assert_eq!(cost.total_tokens, Some(11 + 7 + 103 + 24 + 7 + 3));
+        assert_eq!(cost.total_tokens, cost.seat_token_sum());
+        assert_eq!(fold.unattributed_turns, 0);
+    }
+
+    #[test]
+    fn cost_seat_restricts_the_fold_to_one_lane() {
+        let fold =
+            fold_session_cost(&two_seat_channel(), None, Some("cc000000")).expect("fold succeeds");
+        let cost = fold.cost.expect("the named seat reported usage");
+        assert_eq!(cost.seats.len(), 1);
+        assert_eq!(cost.seats[0].actor.as_deref(), Some(BUILDER));
+        assert_eq!(cost.total_tokens, Some(145));
+    }
+
+    #[test]
+    fn a_seat_prefix_nothing_matches_is_a_usage_error_not_a_silent_omission() {
+        let error = fold_session_cost(&two_seat_channel(), None, Some("ffffffff"))
+            .expect_err("an unmatched seat must be reported");
+        assert_eq!(exit_code(&error), 1);
+        assert!(error.to_string().contains("ffffffff"));
+    }
+
+    /// A seat that exists in the channel but not in the umbrella the caller
+    /// narrowed to must fail loudly. Folding it to `None` would publish a
+    /// milestone with no cost that reads exactly like a lane nothing measured.
+    #[test]
+    fn a_seat_outside_the_named_session_is_a_usage_error_not_an_empty_cost() {
+        let error = fold_session_cost(&two_seat_channel(), Some(OTHER_SESSION), Some("cc000000"))
+            .expect_err("a seat outside the umbrella must be reported");
+        assert_eq!(exit_code(&error), 1);
+    }
+
+    #[test]
+    fn a_session_ref_restricts_the_fold_to_that_umbrella() {
+        let mut events = two_seat_channel();
+        events.push(metadata_event(
+            "s-other",
+            1,
+            Some(REFUTER),
+            Some("refuter"),
+            "sonnet-5",
+            Some(OTHER_SESSION),
+            12,
+        ));
+        events.push(result_event(
+            "s-other",
+            1,
+            1,
+            Some(usage(999, 999, 0, 0, 9)),
+        ));
+
+        let fold = fold_session_cost(&events, Some(COST_SESSION), None).expect("fold succeeds");
+        let cost = fold.cost.expect("the umbrella reported usage");
+        assert_eq!(cost.total_tokens, Some(155));
+    }
+
+    #[test]
+    fn a_channel_with_no_usage_on_the_wire_yields_no_cost_never_zero() {
+        let events = vec![
+            metadata_event(
+                "s-builder",
+                1,
+                Some(BUILDER),
+                Some("builder"),
+                "opus-5[1m]",
+                Some(COST_SESSION),
+                10,
+            ),
+            result_event("s-builder", 1, 1, None),
+        ];
+        let fold = fold_session_cost(&events, None, None).expect("fold succeeds");
+        assert!(fold.cost.is_none(), "no usage means no cost, not a zero");
+    }
+
+    #[test]
+    fn usage_from_an_execution_with_no_metadata_is_counted_but_never_attributed() {
+        let events = vec![result_event("s-ghost", 1, 1, Some(usage(10, 10, 0, 0, 1)))];
+        let fold = fold_session_cost(&events, None, None).expect("fold succeeds");
+        assert!(fold.cost.is_none());
+        assert_eq!(fold.unattributed_turns, 1);
+    }
+
+    #[test]
+    fn a_folded_cost_survives_the_builder_that_signs_the_entry() {
+        let fold = fold_session_cost(&two_seat_channel(), None, None).expect("fold succeeds");
+        let entry = build_entry(
+            crate::PulseKindArg::Milestone,
+            "Lane B landed.".to_owned(),
+            None,
+            None,
+            None,
+            fold.cost,
+        )
+        .expect("payload assembles");
+        buzz_sdk::builders::build_pulse_entry(
+            &format!("30621:{}:demo", "a".repeat(64)),
+            &entry,
+            None,
+            Some(COST_SESSION),
+        )
+        .expect("a cost-bearing entry builds and validates");
     }
 }

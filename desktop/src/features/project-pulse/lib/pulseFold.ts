@@ -108,7 +108,7 @@ export function foldProjectPulseDigest(
       });
       continue;
     }
-    entries.push({
+    const folded: PulseDigestEntry = {
       eventId: event.id,
       pubkey: event.pubkey,
       createdAt: event.created_at,
@@ -126,7 +126,12 @@ export function foldProjectPulseDigest(
       supersedes: decoded.entry.supersedes,
       supersededBy: [],
       active: true,
-    });
+    };
+    // Appended last and only when present: `JSON.stringify` skips an absent
+    // key, so a costless entry keeps the exact bytes the conformance corpus
+    // pins.
+    if (decoded.entry.cost) folded.cost = decoded.entry.cost;
+    entries.push(folded);
     claimsById.set(event.id, []);
   }
 
