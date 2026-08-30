@@ -17,7 +17,7 @@
 //! describing one `providerInstanceRef` differently is a real state of the
 //! world and is shown as two rows rather than averaged into one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
@@ -76,6 +76,35 @@ impl CatalogSnapshot {
         pairs.sort();
         pairs.dedup();
         pairs
+    }
+
+    /// What each provider's `default` alias resolves to, by
+    /// `providerInstanceRef`.
+    ///
+    /// `None` for a provider whose signers disagree about it: with no shared
+    /// clock there is no tie-break between two hosts describing one provider,
+    /// and naming one of the two answers would invent a fact. A provider whose
+    /// own `defaultModel` is the literal string `default` resolves to
+    /// `Some("default")` — that is the catalog declining to name a concrete id,
+    /// reported as itself rather than smoothed over.
+    pub fn default_models(&self) -> BTreeMap<String, Option<String>> {
+        let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for record in &self.records {
+            for provider in &record.catalog.providers {
+                seen.entry(provider.provider_instance_ref.clone())
+                    .or_default()
+                    .insert(provider.default_model.clone());
+            }
+        }
+        seen.into_iter()
+            .map(|(provider, defaults)| {
+                let single = match defaults.len() {
+                    1 => defaults.into_iter().next(),
+                    _ => None,
+                };
+                (provider, single)
+            })
+            .collect()
     }
 }
 
@@ -347,6 +376,59 @@ mod tests {
                 ("codex-primary".to_owned(), "gpt-5.6-sol".to_owned()),
             ]
         );
+    }
+
+    /// What the `default` alias points at, per provider. `rubric check` never
+    /// counts the alias as an unassigned model, so this is the only place a
+    /// reader learns which id it actually names — including the honest ugly
+    /// case where a provider's own `defaultModel` is the string `default`.
+    #[test]
+    fn the_default_alias_resolves_per_provider() {
+        let snapshot = snapshot_from_events(&[
+            event(
+                "a1",
+                "signer-1",
+                100,
+                body(1, &[("codex-primary", &["gpt-5.6-terra", "gpt-5.6-sol"])]),
+            ),
+            event(
+                "b1",
+                "signer-2",
+                100,
+                body(1, &[("goose-primary", &["default"])]),
+            ),
+        ]);
+        let defaults = snapshot.default_models();
+        assert_eq!(
+            defaults.get("codex-primary"),
+            Some(&Some("gpt-5.6-terra".to_owned()))
+        );
+        assert_eq!(
+            defaults.get("goose-primary"),
+            Some(&Some("default".to_owned()))
+        );
+    }
+
+    /// Two signers describing one provider with different defaults have no
+    /// tie-break between them, so the answer is `None` — never one of the two
+    /// picked at random and printed as fact.
+    #[test]
+    fn signers_that_disagree_about_a_default_resolve_to_nothing() {
+        let snapshot = snapshot_from_events(&[
+            event(
+                "a1",
+                "signer-1",
+                100,
+                body(1, &[("codex-primary", &["gpt-5.6-terra"])]),
+            ),
+            event(
+                "b1",
+                "signer-2",
+                100,
+                body(1, &[("codex-primary", &["gpt-5.6-sol"])]),
+            ),
+        ]);
+        assert_eq!(snapshot.default_models().get("codex-primary"), Some(&None));
     }
 
     /// An unreadable catalog is reported, not skipped: a provider whose models

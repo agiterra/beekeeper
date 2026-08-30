@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -75,7 +76,7 @@ test("a rubric matching the catalog has both lists empty", () => {
         ["claude-primary", "haiku"],
       ]),
     ),
-    { notOffered: [], unassigned: [] },
+    { notOffered: [], unassigned: [], variants: [] },
   );
 });
 
@@ -93,6 +94,7 @@ test("both ways a rubric goes stale are reported by name, never repaired", () =>
     {
       notOffered: ["claude-primary/opus[1m]"],
       unassigned: ["claude-primary/claude-fable-5[1m]"],
+      variants: [],
     },
   );
 });
@@ -109,7 +111,7 @@ test("a wildcard provider covers every provider offering the id", () => {
         ["second-host", "haiku"],
       ]),
     ),
-    { notOffered: [], unassigned: [] },
+    { notOffered: [], unassigned: [], variants: [] },
   );
 });
 
@@ -130,8 +132,116 @@ test("the right id on the wrong provider is not offered", () => {
     {
       notOffered: ["codex-primary/opus[1m]"],
       unassigned: ["claude-primary/opus[1m]"],
+      variants: [],
     },
   );
+});
+
+test("a row naming one variant covers every variant of that base", () => {
+  const result = compareRubricToCatalog(
+    [
+      {
+        tier: "tier-2",
+        roles: ["builder"],
+        provider: "codex-primary",
+        model: "gpt-5.6-terra[high]",
+        reason: "…",
+      },
+    ],
+    offered([
+      ["codex-primary", "gpt-5.6-terra"],
+      ["codex-primary", "gpt-5.6-terra[high]"],
+      ["codex-primary", "gpt-5.6-terra[low]"],
+      ["codex-primary", "gpt-5.6-terra[ultra]"],
+    ]),
+  );
+  assert.deepEqual(result.notOffered, []);
+  assert.deepEqual(result.unassigned, []);
+  // Nothing is hidden by the collapse.
+  assert.deepEqual(result.variants, [
+    "codex-primary/gpt-5.6-terra",
+    "codex-primary/gpt-5.6-terra[low]",
+    "codex-primary/gpt-5.6-terra[ultra]",
+  ]);
+});
+
+test("a row naming a context variant covers the bare base", () => {
+  const { rows } = parseRubricBlock(DOCUMENT);
+  const result = compareRubricToCatalog(
+    rows,
+    offered([
+      ["claude-primary", "opus"],
+      ["claude-primary", "opus[1m]"],
+      ["claude-primary", "sonnet"],
+      ["claude-primary", "haiku"],
+    ]),
+  );
+  assert.deepEqual(result.unassigned, []);
+  assert.deepEqual(result.variants, ["claude-primary/opus"]);
+});
+
+test("an uncovered base is reported once, with an id the catalog offers", () => {
+  const { rows } = parseRubricBlock(DOCUMENT);
+  const catalog = offered([
+    ["claude-primary", "opus[1m]"],
+    ["claude-primary", "sonnet"],
+    ["claude-primary", "haiku"],
+    ["codex-primary", "gpt-5.6-sol"],
+    ["codex-primary", "gpt-5.6-sol[high]"],
+    ["codex-primary", "gpt-5.6-sol[max]"],
+  ]);
+  assert.deepEqual(compareRubricToCatalog(rows, catalog).unassigned, [
+    "codex-primary/gpt-5.6-sol",
+  ]);
+  // Paste that id into a row and the gap closes without becoming "not offered".
+  const after = compareRubricToCatalog(
+    [
+      ...rows,
+      {
+        tier: "tier-2",
+        roles: ["builder"],
+        provider: "codex-primary",
+        model: "gpt-5.6-sol",
+        reason: "…",
+      },
+    ],
+    catalog,
+  );
+  assert.deepEqual(after.notOffered, []);
+  assert.deepEqual(after.unassigned, []);
+});
+
+test("a base the catalog never offers bare is reported as its variant", () => {
+  const result = compareRubricToCatalog(
+    [],
+    offered([["claude-primary", "claude-fable-5[1m]"]]),
+  );
+  assert.deepEqual(result.unassigned, ["claude-primary/claude-fable-5[1m]"]);
+  assert.deepEqual(result.variants, []);
+});
+
+test("the default alias is never unassigned", () => {
+  const { rows } = parseRubricBlock(DOCUMENT);
+  const state = resolveRubricStaleness({
+    rubricText: DOCUMENT,
+    offered: offered([
+      ["claude-primary", "default"],
+      ["claude-primary", "opus[1m]"],
+      ["claude-primary", "sonnet"],
+      ["claude-primary", "haiku"],
+      ["goose-primary", "default"],
+    ]),
+  });
+  assert.equal(state.state, "fresh");
+  assert.deepEqual(compareRubricToCatalog(rows, offered([["p", "default"]])), {
+    notOffered: [
+      "claude-primary/opus[1m]",
+      "claude-primary/sonnet",
+      "*/haiku",
+    ].sort(),
+    unassigned: [],
+    variants: [],
+  });
 });
 
 test("an unreadable pack is disclosed, never rendered as fresh", () => {
@@ -213,6 +323,48 @@ test("the rule matches the CLI's, including its wildcard and pair semantics", ()
     {
       notOffered: ["claude-primary/opus[1m]"],
       unassigned: ["claude-primary/claude-fable-5[1m]"],
+      variants: [],
     },
+  );
+});
+
+/**
+ * The cross-implementation contract. `testdata/rubric/live-catalog-665076ce.json`
+ * is the kind:44222 catalog this repository's relay really served; the Rust
+ * check (`crates/buzz-cli/src/commands/sessions/rubric.rs`) asserts the same
+ * recorded lists against the same file, so the two cannot drift apart.
+ */
+test("the live catalog fixture produces the recorded lists", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../../testdata/rubric/live-catalog-665076ce.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const rubric = parseRubricBlock(fixture.rubricBlock);
+  const result = compareRubricToCatalog(rubric.rows, fixture.offered);
+  assert.deepEqual(result.notOffered, fixture.expected.notOffered);
+  assert.deepEqual(result.unassigned, fixture.expected.unassigned);
+  assert.deepEqual(result.variants, fixture.expected.variants);
+  // Every offered id lands in exactly one bucket: the `default` alias, a row's
+  // literal id, an unassigned base, or a variant.
+  const aliases = fixture.offered.filter(
+    (pair) => pair.model.toLowerCase() === "default",
+  ).length;
+  const named = fixture.offered.filter(
+    (pair) =>
+      pair.model.toLowerCase() !== "default" &&
+      rubric.rows.some(
+        (row) =>
+          (row.provider === "*" || row.provider === pair.providerInstanceRef) &&
+          row.model === pair.model,
+      ),
+  ).length;
+  assert.equal(
+    aliases + named + result.unassigned.length + result.variants.length,
+    fixture.offered.length,
   );
 });

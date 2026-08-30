@@ -72,6 +72,21 @@ bee sessions rubric check
 - **exit 4 — stale.** The output names both halves: ids the table uses that no
   provider offers any more, and ids a provider offers that no row assigns.
 
+**A bracket suffix is a variant of its base.** `gpt-5.6-sol[high]`, `[low]`,
+`[max]`, `[ultra]` are one model at four effort levels; `opus[1m]` and `opus`
+are one model at two context windows. The rubric decides at the base, so the row
+naming `gpt-5.6-terra[high]` has assigned every `gpt-5.6-terra` row in the
+catalog and `unassigned` reports one gap per base, not one per suffix. The check
+still hides nothing: the offered ids no row names literally are listed under
+`variants`, which is informational and never makes the rubric stale. `default`
+is a runtime alias, not a model, so it is never a gap either — `defaultResolvesTo`
+says which id it points at on each provider, and on `claude-primary` and
+`goose-primary` today it points at the string `default`, meaning the catalog
+declines to name a concrete id.
+
+Read the `unassigned` entries literally: each one is an id the catalog really
+offers, so it can be pasted into a new row as it stands.
+
 Any other exit is the CLI's usual class (1 input, 2 relay, 3 auth) and is **not
 a verdict on the rubric** — fix the call and re-run; do not read a network error
 as "clean".

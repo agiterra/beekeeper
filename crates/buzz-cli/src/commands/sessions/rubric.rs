@@ -28,13 +28,30 @@
 //! ```
 //! ~~~
 //!
+//! # A bracket suffix is a variant of its base
+//!
+//! `gpt-5.6-sol[high]`, `[low]`, `[max]`, `[ultra]` are one model at four
+//! effort levels; `opus[1m]` and `opus` are one model at two context windows.
+//! The bracket is a knob on a model, not a different model, so **a rubric
+//! decides at the base**: a row naming `gpt-5.6-terra[high]` has assigned every
+//! `gpt-5.6-terra` row in the catalog, and a row naming `opus[1m]` has assigned
+//! bare `opus` too. Without that rule this check was permanently red on a
+//! real host — 41 unassigned ids on 2026-08-30, every one of them an effort
+//! level of a model the rubric had already ruled on — and a check that is
+//! always red is a check nobody reads.
+//!
+//! Collapsing hides nothing: every offered id no row names literally is listed
+//! under `variants`, which is informational and never sets `stale`. The
+//! `default` alias is not a model and is never unassigned; `defaultResolvesTo`
+//! says what it points at on each provider.
+//!
 //! Five columns, in that order. The token after `rubric` on the fence line is
 //! the rubric's version and is reported back; a block with no version is
 //! accepted and reports `null`, because a missing version is a fact about the
 //! rubric rather than a reason to refuse it. `*` in the provider column means
 //! "whichever provider offers it". A model id may be wrapped in backticks.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -49,6 +66,14 @@ pub const DEFAULT_RUBRIC_RELATIVE_PATH: &str = "personas/roles/lead/skills/choos
 
 /// The provider column value meaning "whichever provider offers it".
 const ANY_PROVIDER: &str = "*";
+
+/// The runtime alias every provider publishes for "whatever this host is set
+/// to". It is never a model, so it is never something a rubric row can assign.
+const DEFAULT_ALIAS: &str = "default";
+
+/// The recorded live catalog both implementations are checked against.
+#[cfg(test)]
+const RUBRIC_FIXTURE_RELATIVE_PATH: &str = "testdata/rubric/live-catalog-665076ce.json";
 
 /// One rubric row: a tier, the roles it covers, and the model it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,19 +256,47 @@ fn unwrap_code(cell: &str) -> String {
     cell.trim().trim_matches('`').trim().to_owned()
 }
 
+/// A model id with its bracket suffix removed: the base model the variant is a
+/// setting of.
+///
+/// `gpt-5.6-sol[high]` and `gpt-5.6-sol[max]` are one model at two effort
+/// levels; `opus[1m]` and `opus` are one model at two context windows. The
+/// bracket is a knob, not a different model, so the rubric decides at the base
+/// and the check reads it that way.
+fn base_id(model: &str) -> &str {
+    model.split_once('[').map_or(model, |(base, _suffix)| base)
+}
+
+/// Does a rubric row's provider column apply to this provider?
+fn provider_matches(row_provider: &str, provider: &str) -> bool {
+    row_provider == ANY_PROVIDER || row_provider == provider
+}
+
 /// The result of comparing a rubric to a catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RubricCheck {
     /// `provider/model` labels the rubric names that the catalog does not
-    /// offer, sorted and deduplicated.
+    /// offer **under that exact id**, sorted and deduplicated.
     pub not_offered: Vec<String>,
-    /// `provider/model` labels the catalog offers that no rubric row names,
-    /// sorted and deduplicated.
+    /// Labels for the models the catalog offers that no rubric row covers,
+    /// sorted and deduplicated — one entry per uncovered base, not one per
+    /// variant, so a rubric that has not decided about `gpt-5.6-sol` shows one
+    /// gap rather than six. Each entry names an id the catalog actually offers,
+    /// so it can be pasted into a new rubric row as it stands.
     pub unassigned: Vec<String>,
+    /// `provider/model` labels the base rule absorbed — offered ids no row
+    /// names literally, that are neither the `default` alias nor themselves
+    /// reported in [`Self::unassigned`]. Informational: this list never makes a
+    /// rubric stale, and exists so collapsing to the base hides nothing.
+    pub variants: Vec<String>,
 }
 
 impl RubricCheck {
-    /// `true` when the rubric and the catalog agree exactly.
+    /// `true` when the rubric and the catalog agree.
+    ///
+    /// [`Self::variants`] is deliberately not consulted: a variant is a setting
+    /// of a model the rubric already ruled on, and treating one as staleness is
+    /// how a check that is always red trains its reader to ignore it.
     pub fn is_fresh(&self) -> bool {
         self.not_offered.is_empty() && self.unassigned.is_empty()
     }
@@ -254,32 +307,79 @@ impl RubricCheck {
 /// A row whose provider is `*` matches the id on any provider, and covers it
 /// on every provider that offers it — a rubric that says "haiku, wherever you
 /// find it" has assigned haiku everywhere and is not stale for it.
+///
+/// # The two directions are deliberately not symmetric
+///
+/// * **Not offered is exact.** A create names one id and the relay refuses
+///   anything else, so a row naming `opus[1m]` when the catalog offers only
+///   `opus[500k]` is a row that cannot be hired from. Exact, always.
+/// * **Unassigned is by base.** A catalog id is covered when any row names its
+///   base or any variant of its base: the rubric names `gpt-5.6-terra[high]`
+///   and the catalog's six terra rows are all decisions the rubric has already
+///   made. The gap is reported once, at the base.
+///
+/// The [`DEFAULT_ALIAS`] is never unassigned. It is the provider's own pointer
+/// at whatever model the host is set to, not a model a rubric row could name;
+/// see [`super::catalog::CatalogSnapshot::default_models`] for what it resolves
+/// to on each provider.
 pub fn check_rubric(rows: &[RubricRow], offered: &[(String, String)]) -> RubricCheck {
     let mut not_offered: BTreeSet<String> = BTreeSet::new();
-    let mut assigned: BTreeSet<(String, String)> = BTreeSet::new();
     for row in rows {
-        let matches: Vec<&(String, String)> = offered
-            .iter()
-            .filter(|(provider, model)| {
-                *model == row.model && (row.provider == ANY_PROVIDER || *provider == row.provider)
-            })
-            .collect();
-        if matches.is_empty() {
+        let offered_here = offered.iter().any(|(provider, model)| {
+            *model == row.model && provider_matches(&row.provider, provider)
+        });
+        if !offered_here {
             not_offered.insert(row.label());
-            continue;
-        }
-        for pair in matches {
-            assigned.insert(pair.clone());
         }
     }
-    let unassigned: BTreeSet<String> = offered
-        .iter()
-        .filter(|pair| !assigned.contains(*pair))
-        .map(|(provider, model)| format!("{provider}/{model}"))
+
+    let mut uncovered: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    let mut variants: BTreeSet<String> = BTreeSet::new();
+    for (provider, model) in offered {
+        if model.eq_ignore_ascii_case(DEFAULT_ALIAS) {
+            continue;
+        }
+        let covered = rows.iter().any(|row| {
+            provider_matches(&row.provider, provider) && base_id(&row.model) == base_id(model)
+        });
+        if !covered {
+            uncovered
+                .entry((provider.clone(), base_id(model).to_owned()))
+                .or_default()
+                .insert(model.clone());
+        }
+        let named_exactly = rows
+            .iter()
+            .any(|row| provider_matches(&row.provider, provider) && row.model == *model);
+        if !named_exactly {
+            variants.insert(format!("{provider}/{model}"));
+        }
+    }
+    // One gap per base, named with an id the catalog really offers: the bare
+    // base when it is on offer, otherwise the first variant of it. Reporting a
+    // bare base nobody serves would send a reader to add a row that this same
+    // check would then call not offered.
+    let unassigned: BTreeSet<String> = uncovered
+        .into_iter()
+        .map(|((provider, base), ids)| {
+            let representative = if ids.contains(&base) {
+                base
+            } else {
+                ids.iter().next().cloned().unwrap_or(base)
+            };
+            format!("{provider}/{representative}")
+        })
         .collect();
+    // A base id already reported as unassigned is not additionally a variant
+    // the collapse hid — it is right there in the other list.
+    for label in &unassigned {
+        variants.remove(label);
+    }
+
     RubricCheck {
         not_offered: not_offered.into_iter().collect(),
         unassigned: unassigned.into_iter().collect(),
+        variants: variants.into_iter().collect(),
     }
 }
 
@@ -347,6 +447,15 @@ pub async fn cmd_rubric_check(
     // One revision only when one signer published: with two hosts there is no
     // shared clock and therefore no single number, and printing one anyway
     // would name a revision nothing has.
+    // What each provider's `default` alias points at. The check never counts
+    // the alias as unassigned, so this is where a reader sees which id it is —
+    // including the case where a provider's own default is the alias itself.
+    let default_resolves_to: Value = snapshot
+        .default_models()
+        .into_iter()
+        .map(|(provider, model)| (provider, model.map_or(Value::Null, Value::String)))
+        .collect::<serde_json::Map<String, Value>>()
+        .into();
     let catalog_revision = match snapshot.records.as_slice() {
         [only] => json!(only.catalog.revision),
         _ => Value::Null,
@@ -363,8 +472,10 @@ pub async fn cmd_rubric_check(
             .iter()
             .map(|(provider, model)| format!("{provider}/{model}"))
             .collect::<Vec<String>>(),
+        "defaultResolvesTo": default_resolves_to,
         "notOffered": check.not_offered,
         "unassigned": check.unassigned,
+        "variants": check.variants,
         "stale": !check.is_fresh(),
         "malformedCatalogs": snapshot
             .malformed
@@ -378,8 +489,10 @@ pub async fn cmd_rubric_check(
             "{}",
             json!({
                 "rubricVersion": rubric.version,
+                "defaultResolvesTo": default_resolves_to,
                 "notOffered": check.not_offered,
                 "unassigned": check.unassigned,
+                "variants": check.variants,
                 "stale": !check.is_fresh(),
             })
         ),
@@ -551,6 +664,188 @@ More prose.
         assert_eq!(check.not_offered.len(), 3);
         assert!(check.unassigned.is_empty());
         assert!(!check.is_fresh());
+    }
+
+    /// The rule the whole fix turns on: a row naming one effort level has
+    /// decided about the model, so its siblings are not gaps.
+    #[test]
+    fn a_row_naming_one_variant_covers_every_variant_of_that_base() {
+        let rows = vec![RubricRow {
+            tier: "tier-2".into(),
+            roles: vec!["builder".into()],
+            provider: "codex-primary".into(),
+            model: "gpt-5.6-terra[high]".into(),
+            reason: "…".into(),
+        }];
+        let check = check_rubric(
+            &rows,
+            &offered(&[
+                ("codex-primary", "gpt-5.6-terra"),
+                ("codex-primary", "gpt-5.6-terra[high]"),
+                ("codex-primary", "gpt-5.6-terra[low]"),
+                ("codex-primary", "gpt-5.6-terra[ultra]"),
+            ]),
+        );
+        assert!(check.is_fresh(), "unexpected: {check:?}");
+        // Nothing is hidden by the collapse: the three ids no row names
+        // literally are listed, and they do not make the rubric stale.
+        assert_eq!(
+            check.variants,
+            vec![
+                "codex-primary/gpt-5.6-terra",
+                "codex-primary/gpt-5.6-terra[low]",
+                "codex-primary/gpt-5.6-terra[ultra]",
+            ]
+        );
+    }
+
+    /// And the other direction: a row naming `opus[1m]` has decided about bare
+    /// `opus`, because the context window is a setting, not a second model.
+    #[test]
+    fn a_row_naming_a_context_variant_covers_the_bare_base() {
+        let rubric = parse_rubric(DOCUMENT).expect("parse");
+        let check = check_rubric(
+            &rubric.rows,
+            &offered(&[
+                ("claude-primary", "opus"),
+                ("claude-primary", "opus[1m]"),
+                ("claude-primary", "sonnet"),
+                ("claude-primary", "haiku"),
+            ]),
+        );
+        assert!(check.is_fresh(), "unexpected: {check:?}");
+        assert_eq!(check.variants, vec!["claude-primary/opus"]);
+    }
+
+    /// A gap is reported once, at an id the catalog really offers — paste it
+    /// into a row and the same check must not then call it not offered.
+    #[test]
+    fn an_uncovered_base_is_reported_once_with_an_id_the_catalog_offers() {
+        let rubric = parse_rubric(DOCUMENT).expect("parse");
+        let mut catalog = vec![
+            ("claude-primary", "opus[1m]"),
+            ("claude-primary", "sonnet"),
+            ("claude-primary", "haiku"),
+        ];
+        catalog.extend([
+            ("codex-primary", "gpt-5.6-sol"),
+            ("codex-primary", "gpt-5.6-sol[high]"),
+            ("codex-primary", "gpt-5.6-sol[max]"),
+        ]);
+        let check = check_rubric(&rubric.rows, &offered(&catalog));
+        assert_eq!(check.unassigned, vec!["codex-primary/gpt-5.6-sol"]);
+        assert!(!check.is_fresh());
+
+        // The founder adds exactly the row the check named; the gap closes and
+        // the new row is not reported as unoffered.
+        let mut rows = rubric.rows.clone();
+        rows.push(RubricRow {
+            tier: "tier-2".into(),
+            roles: vec!["builder".into()],
+            provider: "codex-primary".into(),
+            model: "gpt-5.6-sol".into(),
+            reason: "…".into(),
+        });
+        let after = check_rubric(&rows, &offered(&catalog));
+        assert!(after.is_fresh(), "unexpected: {after:?}");
+    }
+
+    /// When only a variant is on offer, the gap is named with that variant —
+    /// never with a bare base id nothing serves.
+    #[test]
+    fn a_base_the_catalog_never_offers_bare_is_reported_as_its_variant() {
+        let check = check_rubric(&[], &offered(&[("claude-primary", "claude-fable-5[1m]")]));
+        assert_eq!(check.unassigned, vec!["claude-primary/claude-fable-5[1m]"]);
+        assert!(check.variants.is_empty());
+    }
+
+    /// `default` is the provider's pointer at whatever the host is set to. It
+    /// is not a model, so no rubric row can assign it and it is never a gap.
+    #[test]
+    fn the_default_alias_is_never_unassigned() {
+        let rubric = parse_rubric(DOCUMENT).expect("parse");
+        let check = check_rubric(
+            &rubric.rows,
+            &offered(&[
+                ("claude-primary", "default"),
+                ("claude-primary", "opus[1m]"),
+                ("claude-primary", "sonnet"),
+                ("claude-primary", "haiku"),
+                ("goose-primary", "default"),
+            ]),
+        );
+        assert!(check.is_fresh(), "unexpected: {check:?}");
+        assert!(check.variants.is_empty());
+    }
+
+    /// The cross-implementation contract, on the catalog this relay really
+    /// served: the Rust check and the desktop mirror must produce the same two
+    /// lists for one recorded input.
+    #[test]
+    fn the_live_catalog_fixture_produces_the_recorded_lists() {
+        let fixture = load_fixture();
+        let rubric =
+            parse_rubric(fixture["rubricBlock"].as_str().expect("rubricBlock")).expect("parse");
+        let offered: Vec<(String, String)> = fixture["offered"]
+            .as_array()
+            .expect("offered")
+            .iter()
+            .map(|pair| {
+                (
+                    pair["providerInstanceRef"]
+                        .as_str()
+                        .expect("provider")
+                        .to_owned(),
+                    pair["model"].as_str().expect("model").to_owned(),
+                )
+            })
+            .collect();
+        let expected = &fixture["expected"];
+        let check = check_rubric(&rubric.rows, &offered);
+        assert_eq!(check.not_offered, strings(&expected["notOffered"]));
+        assert_eq!(check.unassigned, strings(&expected["unassigned"]));
+        assert_eq!(check.variants, strings(&expected["variants"]));
+        // Every offered id lands in exactly one bucket: the `default` alias,
+        // a row's literal id, an unassigned base, or a variant. Nothing is
+        // dropped on the way to a shorter list.
+        let aliases = offered
+            .iter()
+            .filter(|(_, model)| model.eq_ignore_ascii_case(DEFAULT_ALIAS))
+            .count();
+        let named = offered
+            .iter()
+            .filter(|(provider, model)| {
+                !model.eq_ignore_ascii_case(DEFAULT_ALIAS)
+                    && rubric
+                        .rows
+                        .iter()
+                        .any(|row| provider_matches(&row.provider, provider) && row.model == *model)
+            })
+            .count();
+        assert_eq!(
+            aliases + named + check.unassigned.len() + check.variants.len(),
+            offered.len(),
+            "the buckets must partition the catalog"
+        );
+    }
+
+    fn load_fixture() -> Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(RUBRIC_FIXTURE_RELATIVE_PATH);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        serde_json::from_str(&text).expect("fixture is JSON")
+    }
+
+    fn strings(value: &Value) -> Vec<String> {
+        value
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|entry| entry.as_str().expect("string").to_owned())
+            .collect()
     }
 
     #[test]
