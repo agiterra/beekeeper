@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { EllipsisVertical, OctagonX, Settings2 } from "lucide-react";
 import {
   consumePendingSnapshotImport,
@@ -30,7 +31,7 @@ import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { resolveRegistryStaleness } from "@/features/agents/lib/registryStaleness";
-import { describeUnreadableModelRegistry } from "@/features/coding-sessions/lib/codingSessionRegistryAccess";
+import { readModelRegistryRows } from "@/features/coding-sessions/lib/codingSessionRegistrySource";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
 import {
@@ -64,29 +65,55 @@ export function AgentsView() {
   // With no project at all nothing is resolved and the dialog is unchanged.
   const rolePacksProject = useRolePacksProject();
   const activeProject = rolePacksProject.project;
-  // The team's model registry, checked against the models actually on offer.
+  // The team's model registry, read from the project checkout this tab already
+  // resolved.
   //
   // Brian's routing ruling of 2026-08-30 moved the question: stale now means
   // *a live offered execution target with no registry row*, and a row this
   // host does not offer today is dormant rather than stale.
   //
-  // This renderer cannot read the registry file. The only project-file access
-  // the app has is `scanProjectRolePacks` and `pickCrewRolePacksDirectory`
-  // (desktop/src/shared/api/tauriTeams.ts:331 and :350), and both return a
-  // role, a name and a `packDir` — never file content. So the badge says
-  // "Registry: unknown (not readable)" out loud, names the path it would have
-  // read, and never renders "fresh" on the strength of having compared
-  // nothing. `resolveRegistryStaleness` holds the whole rule, so the day a
-  // reader exists this call site is the only thing that changes.
-  const registryStaleness = React.useMemo(
-    () =>
-      resolveRegistryStaleness({
+  // Ledger 97(C) gave the app a reader (`read_project_file`, allowlisted to
+  // `team/model-registry.yaml`), so this badge stops describing a permanent
+  // gap and starts reporting a real read: how many rows were found, or the
+  // reader's own sentence for why there were none.
+  //
+  // `offered` stays null here on purpose. The 44222 catalog arrives on a
+  // per-channel relay subscription (`useCodingSessionProviderCatalog`), and
+  // the Agents tab is a Dashboard tab that subscribes to no channel. Rather
+  // than open one for a badge, the badge says what it read and says that it
+  // has nothing to check it against — which is true, and is not the same
+  // sentence as "not readable".
+  const registryProjectRef = activeProject?.address ?? null;
+  const registryRows = useQuery({
+    queryKey: ["model-registry-rows", registryProjectRef],
+    queryFn: () => readModelRegistryRows(registryProjectRef),
+    staleTime: 60_000,
+  });
+  const registryStaleness = React.useMemo(() => {
+    const result = registryRows.data;
+    if (!result) {
+      return resolveRegistryStaleness({
         rows: null,
-        unreadableBecause: describeUnreadableModelRegistry(null).why,
+        unreadableBecause: registryRows.isPending
+          ? "Reading team/model-registry.yaml from this project's checkout."
+          : (registryRows.error?.message ??
+            "team/model-registry.yaml could not be read from this project's checkout."),
         offered: null,
-      }),
-    [],
-  );
+      });
+    }
+    if (result.kind === "unreadable") {
+      return resolveRegistryStaleness({
+        rows: null,
+        unreadableBecause: result.reason,
+        offered: null,
+      });
+    }
+    return resolveRegistryStaleness({
+      rows: result.rows,
+      version: result.version,
+      offered: null,
+    });
+  }, [registryRows.data, registryRows.error, registryRows.isPending]);
 
   function openUnifiedCatalog() {
     personas.prepareCreate();

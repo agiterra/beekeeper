@@ -421,6 +421,7 @@ pub(crate) fn invoke_handler(
         session_provider::commands::coding_session_provider_runtimes,
         commands::coding_session_popout::stage_coding_session_popout_bootstrap,
         commands::coding_session_popout::get_coding_session_popout_bootstrap,
+        read_project_file,
         coding_sessions::workdir_store::get_coding_session_workdir_state,
         coding_sessions::workdir_store::set_coding_session_workdir,
         coding_sessions::workdir_store::clear_coding_session_workdir,

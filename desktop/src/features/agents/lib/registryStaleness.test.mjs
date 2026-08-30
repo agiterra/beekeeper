@@ -399,7 +399,7 @@ test("an offered target with no registry row is what makes the badge stale", () 
   });
   assert.equal(state.state, "stale");
   assert.deepEqual(state.unregistered, ["codex-primary/gpt-5.6-luna"]);
-  assert.match(state.label, /^Registry v1 stale — 1 offered with no row$/);
+  assert.match(state.label, /^Registry v1 · 5 rows · 1 offered with no row$/);
 });
 
 test("a row the catalog does not offer is dormant, not stale", () => {
@@ -446,4 +446,39 @@ test("every no-answer is an answer, and none of them reads as fresh", () => {
   assert.equal(noCatalog.state, "unknown");
   assert.equal(noCatalog.reason, "no-catalog");
   assert.match(noCatalog.label, /no provider catalog/);
+});
+
+test("the badge says how many rows it read, in every state that read any", () => {
+  // Ledger 97(C): the desktop can read `team/model-registry.yaml` now, so the
+  // badge stops saying "not readable" and starts saying what it read. A count
+  // is the smallest honest proof that a file was really opened — without it,
+  // "no provider catalog" reads identically whether the registry was read or
+  // not.
+  const stale = resolveRegistryStaleness({
+    rows: ROWS,
+    version: 1,
+    offered: [
+      { providerInstanceRef: "claude-primary", model: "sonnet" },
+      { providerInstanceRef: "codex-primary", model: "gpt-5.6-luna[low]" },
+    ],
+  });
+  assert.equal(stale.label, "Registry v1 · 5 rows · 1 offered with no row");
+
+  const fresh = resolveRegistryStaleness({
+    rows: ROWS,
+    version: 1,
+    offered: [{ providerInstanceRef: "claude-primary", model: "sonnet" }],
+  });
+  assert.equal(fresh.label, "Registry v1 · 5 rows · covers the catalog");
+
+  const noCatalog = resolveRegistryStaleness({
+    rows: ROWS,
+    version: 1,
+    offered: null,
+  });
+  assert.equal(
+    noCatalog.label,
+    "Registry v1 · 5 rows · no provider catalog yet",
+  );
+  assert.match(noCatalog.detail, /5 registry rows/);
 });
