@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
@@ -661,6 +662,33 @@ void main() {
         decodeCodingSessionMetadata(metadataEvent(routing: blank)).reason,
         CodingSessionDecodeReason.malformedPayload,
       );
+    });
+
+    // The shared fixture the CLI, buzz-core and the desktop are all pinned
+    // to. A decoder that refuses a record the canonical producer writes shows
+    // the seat with no routing at all, and the create's whole "why it is the
+    // model it is" is gone without a word.
+    test('every record in the shared fixture decodes here too', () {
+      final fixture =
+          jsonDecode(
+                File(
+                  '../testdata/routing/create-record-fixture.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
+      final records = fixture['records'] as List<dynamic>;
+      expect(records.length, 3);
+      for (final entry in records) {
+        final row = entry as Map<String, dynamic>;
+        final routing = row['routing'] as Map<String, dynamic>;
+        expect(
+          decodeCodingSessionMetadata(
+            metadataEvent(routing: Map<String, Object?>.from(routing)),
+          ).value,
+          isNotNull,
+          reason: row['name'] as String,
+        );
+      }
     });
 
     test('the router\'s own review reasons decode, value and all', () {

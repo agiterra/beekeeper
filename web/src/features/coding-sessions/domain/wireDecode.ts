@@ -371,7 +371,15 @@ function isRoutingOverride(value: unknown): boolean {
   }
   if (!boundedNonempty(value.model, MAX_REFERENCE_BYTES)) return false;
   if (!boundedNonempty(value.because, MAX_REFERENCE_BYTES)) return false;
+  // `null` is "take the tier's effort", and it is the shape the canonical
+  // producer writes: buzz-core's `RoutingOverride.effort` is an
+  // `Option<String>` with no `skip_serializing_if`
+  // (crates/buzz-core/src/coding_session_routing.rs:1005), so every override
+  // on the wire carries the key explicitly null. Refusing it would drop the
+  // whole routing record of every seat a human overrode.
   return (
-    !hasOwnKey(value, "effort") || ROUTING_EFFORTS.has(value.effort as string)
+    !hasOwnKey(value, "effort") ||
+    value.effort === null ||
+    ROUTING_EFFORTS.has(value.effort as string)
   );
 }

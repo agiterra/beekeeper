@@ -252,8 +252,13 @@ function isStrictOverride(value: unknown): boolean {
   if (typeof value.because !== "string" || value.because.trim().length === 0) {
     return false;
   }
+  // `null` is the canonical "take the tier's effort" answer: buzz-core's
+  // `RoutingOverride.effort` is an `Option<String>` written unconditionally
+  // (crates/buzz-core/src/coding_session_routing.rs:1005), so every override
+  // the CLI emits carries the key with an explicit null.
   return (
     !Object.hasOwn(value, "effort") ||
+    value.effort === null ||
     ["low", "medium", "high"].includes(value.effort as string)
   );
 }

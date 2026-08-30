@@ -605,8 +605,13 @@ function isRoutingOverride(value: unknown): boolean {
   }
   if (!boundedString(value.model, MAX_REFERENCE_BYTES)) return false;
   if (!boundedString(value.because, MAX_REFERENCE_BYTES)) return false;
+  // `null` is the canonical "take the tier's effort": buzz-core writes
+  // `RoutingOverride.effort` unconditionally
+  // (crates/buzz-core/src/coding_session_routing.rs:1005), so an override on
+  // the wire always carries the key, explicitly null when unstated.
   return (
     !Object.hasOwn(value, "effort") ||
+    value.effort === null ||
     ROUTING_EFFORTS.has(value.effort as string)
   );
 }

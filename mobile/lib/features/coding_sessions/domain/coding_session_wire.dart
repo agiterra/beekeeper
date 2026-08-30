@@ -298,6 +298,12 @@ bool _isRoutingOverride(Object? value) {
   if (!boundedNonempty(value['because'], _maxRoutingReferenceBytes)) {
     return false;
   }
+  // `null` is "take the tier's effort", and it is what the canonical producer
+  // writes: buzz-core's `RoutingOverride.effort` is an `Option<String>` with
+  // no `skip_serializing_if` (coding_session_routing.rs:1005), so every
+  // override on the wire carries the key explicitly null. Refusing it would
+  // drop the entire routing record of every seat a human overrode.
   return !value.containsKey('effort') ||
+      value['effort'] == null ||
       _routingEfforts.contains(value['effort']);
 }

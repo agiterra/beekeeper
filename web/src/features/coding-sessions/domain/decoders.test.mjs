@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   isCodingSessionTurnReceiptStatus,
@@ -672,4 +673,32 @@ test("a record disclosing a disagreement with the proposal is read", () => {
     null,
     "a blank disagreement is a disclosure that discloses nothing",
   );
+});
+
+/**
+ * The shared fixture, read by the repo browser's own decoder.
+ *
+ * `testdata/routing/create-record-fixture.json` is the file buzz-core's
+ * validator, the CLI's emitter and the desktop's parser are all pinned to. An
+ * observer that refuses a record the canonical producer writes shows the seat
+ * with no routing at all — the create's whole "why it is the model it is"
+ * silently gone, which is the failure this batch exists to end.
+ */
+test("every record in the shared fixture is read by this decoder", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../../testdata/routing/create-record-fixture.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(fixture.records.length, 3);
+  for (const entry of fixture.records) {
+    const parsed = parseBuzzCodingSessionMetadata(
+      metadataJson({ routing: entry.routing }),
+    );
+    assert.deepEqual(parsed?.routing, entry.routing, entry.name);
+  }
 });

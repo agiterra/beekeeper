@@ -255,9 +255,13 @@ function readRisk(value: unknown): { ok: true; risk: RoutingRisk } | Refusal {
   const keys = ["impact", "uncertainty", "irreversibility"] as const;
   for (const key of Object.keys(value)) {
     if (!(keys as readonly string[]).includes(key)) {
+      // Named to the key, not to `routing.risk`: the shared fixture's
+      // rejected cases carry the offending key by name
+      // (testdata/routing/hire-request-fixture.json), and "routing.risk" would
+      // send a reader looking at three fields that are all fine.
       return {
         ok: false,
-        key: "routing.risk",
+        key: `routing.risk.${key}`,
         why:
           key === "score"
             ? "carries no score: the host computes impact × uncertainty × irreversibility, so a request and the host can never disagree about it"
@@ -363,23 +367,30 @@ function readRequestOverride(value: unknown):
       why: "an override sets the router's own answer aside, so the record has to say why",
     };
   }
-  if (
+  // `effort` is optional *and* nullable. buzz-core's `RoutingOverride` writes
+  // the key unconditionally with `null` for "take the tier's effort"
+  // (crates/buzz-core/src/coding_session_routing.rs:1005), so a parser that
+  // refused an explicit null would refuse every override the CLI emits — the
+  // 2026-08-30 drop again, one key further in.
+  const effortStated =
     Object.hasOwn(value, "effort") &&
+    value.effort !== null &&
+    value.effort !== undefined;
+  if (
+    effortStated &&
     !["low", "medium", "high"].includes(value.effort as string)
   ) {
     return {
       ok: false,
       key: "routing.override.effort",
-      why: "must be low, medium or high; xhigh, max and ultra are not on this wire",
+      why: "must be low, medium or high (or null to take the tier's); xhigh, max and ultra are not on this wire",
     };
   }
   return {
     ok: true,
     override: {
       model: value.model,
-      ...(Object.hasOwn(value, "effort")
-        ? { effort: value.effort as RoutingEffort }
-        : {}),
+      ...(effortStated ? { effort: value.effort as RoutingEffort } : {}),
       because: value.because,
     },
   };
