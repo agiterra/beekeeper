@@ -23,8 +23,6 @@
 
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
-  codingSessionHireIdentityModelNotice,
-  codingSessionHireModelNotice,
   codingSessionHireModelOf,
   describeCodingSessionHireIdentityModelRefusal,
   describeCodingSessionHireModelRefusal,
@@ -145,10 +143,15 @@ export type CodingSessionHireDecision =
       /** Model the create carries, or null to let the runtime choose. */
       model: string | null;
       /**
-       * What the host substituted for the lead's words, when it substituted
-       * anything. Null when the model is exactly the one asked for (or none
-       * was asked for): a disclosure nobody needs is noise, and noise is how
-       * a real disclosure gets skipped.
+       * What the host substituted for the lead's words about the model.
+       *
+       * Always `null` since Brian's 2026-08-29 ruling removed alias
+       * translation: a model is either the exact id that was asked for or it
+       * is refused, so there is never a substitution to disclose. The field
+       * stays because the seat plan and the umbrella line that renders it
+       * (`codingSessionHireSeat.ts`, `codingSessionHireAnswer.ts`) are the
+       * general channel for "something about this seat's model" — it must not
+       * be filled with a guess.
        */
       modelNotice: string | null;
       /**
@@ -327,13 +330,9 @@ export function decideCodingSessionHire(
       codingSessionHireModelOf(requested) ??
       codingSessionHireModelOf(inherited) ??
       null,
-    modelNotice:
-      codingSessionHireModelNotice(provider.ref, requested) ??
-      codingSessionHireIdentityModelNotice(
-        provider.ref,
-        identity.name,
-        inherited,
-      ),
+    // Nothing is ever substituted for the model, so there is nothing to
+    // disclose about it. See the field's doc.
+    modelNotice: null,
     providerNotice: provider.notice,
   };
 }

@@ -262,7 +262,10 @@ test("a model the chosen runtime's catalog offers is seated exactly as asked", (
   assert.equal(result.modelNotice, null);
 });
 
-test("a Claude vendor alias is translated, and the translation is disclosed", () => {
+// Brian's ruling, 2026-08-29: the catalog is the only model list, so a vendor
+// family name the catalog does not publish is refused rather than matched onto
+// one it does. This case used to seat `sonnet` and disclose the swap.
+test("a Claude vendor alias the catalog does not publish is refused, not matched", () => {
   const result = decide({
     request: {
       role: "builder",
@@ -273,10 +276,10 @@ test("a Claude vendor alias is translated, and the translation is disclosed", ()
       ["claude-primary", ["default", "haiku", "opus[1m]", "sonnet"]],
     ]),
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.model, "sonnet");
-  assert.match(result.modelNotice, /claude-sonnet-5/);
-  assert.match(result.modelNotice, /sonnet/);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
+  assert.match(result.reason, /claude-sonnet-5/);
+  assert.match(result.reason, /default, haiku, opus\[1m\], sonnet/);
 });
 
 test("a model the catalog does not offer is refused with the offered ids", () => {
@@ -370,7 +373,10 @@ test("an identity model the catalog does offer is still seated untouched", () =>
   assert.equal(result.modelNotice, null);
 });
 
-test("an identity's vendor model alias is translated and disclosed as the identity's", () => {
+// Same ruling from the other side: an identity's own record gets no more
+// benefit of the doubt than the lead's --model does. This case used to seat
+// `opus[1m]` and disclose the swap.
+test("an identity's vendor model alias is refused, naming the identity and the id", () => {
   const result = decide({
     request: {
       role: "builder",
@@ -388,10 +394,10 @@ test("an identity's vendor model alias is translated and disclosed as the identi
     ],
     modelCatalogs: new Map([["claude-primary", ["default", "opus[1m]"]]]),
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.model, "opus[1m]");
-  assert.match(result.modelNotice, /Ada/);
-  assert.match(result.modelNotice, /claude-opus-4-1/);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
+  assert.match(result.reason, /Ada's record says claude-opus-4-1/);
+  assert.match(result.reason, /default, opus\[1m\]/);
 });
 
 test("the seat runs on the identity's own runtime, not the umbrella's", () => {

@@ -3,19 +3,15 @@
  *
  * A model id is not a name a lead invents — it is an id the runtime's own
  * catalog publishes (kind:44222 `allowedModels`, and the same list this
- * computer's provider answers `coding_session_provider_models` with). A hire
- * naming something else has three possible honest answers, and this module is
- * all three:
+ * computer's provider answers `coding_session_provider_models` with, and the
+ * same list the create picker renders). That catalog is the **only** model
+ * list. A hire naming something else has exactly two honest answers:
  *
- * 1. **Offered** — the catalog has it. Used byte for byte; nothing is
- *    normalized, because `opus[1m]` and `opus` are different ids.
- * 2. **Translated** — the lead wrote a *vendor* model name for the Claude
- *    family (`claude-sonnet-5`, `claude-opus-4-1`) where the catalog offers
- *    the family alias (`sonnet`, `opus[1m]`). That is the one guess worth
- *    making, because those two vocabularies name the same thing and every
- *    lead has read the vendor one. It is a guess, so it is **disclosed** —
- *    see {@link codingSessionHireModelNotice} — never applied silently.
- * 3. **Not offered** — anything else. Refused `HIRE_MODEL_NOT_OFFERED` with
+ * 1. **Offered** — the catalog has it, byte for byte. Nothing is normalized,
+ *    lower-cased, suffix-stripped or family-matched, because `opus[1m]` and
+ *    `opus` are different ids and `claude-sonnet-5` is not an id this catalog
+ *    publishes at all.
+ * 2. **Not offered** — everything else. Refused `HIRE_MODEL_NOT_OFFERED` with
  *    the offered ids in the reason, so the lead's next request can be right
  *    rather than another guess.
  *
@@ -25,25 +21,27 @@
  * refusal built on a list this computer never loaded would be a claim about
  * the model dressed up as a claim about the catalog.
  *
- * Live evidence for why this exists: on 2026-08-28 a lead hired a builder on
- * `claude-sonnet-5`, an id `claude-primary` has never offered — its catalog is
- * `default, claude-fable-5[1m], haiku, opus[1m], sonnet`.
+ * **There used to be a third answer, and it was a lie.** Item 82 added a
+ * Claude-family alias table (`claude-sonnet-5` → `sonnet`) and item 93 lane A
+ * widened it to strip context-window suffixes (`opus` → `opus[1m]`), so a
+ * request naming a model the runtime does not offer was silently answered with
+ * a model it does. Brian's ruling, 2026-08-29: *"The model picker should not be
+ * faked."* A seat that runs weights nobody named is the same class of defect as
+ * a badge pointing at a message you cannot find, and the disclosure attached to
+ * the substitution did not redeem it — it made an unoffered model look offered.
+ * The table is gone; there is no code path in this module that returns an id
+ * other than the one it was handed.
+ *
+ * Live evidence for why the check exists at all: on 2026-08-28 a lead hired a
+ * builder on `claude-sonnet-5`, an id `claude-primary` has never offered — its
+ * catalog is `default, claude-fable-5[1m], haiku, opus[1m], sonnet`.
  */
-
-/** The Claude family aliases a catalog may publish, longest-lived first. */
-export const CODING_SESSION_HIRE_CLAUDE_FAMILIES = [
-  "sonnet",
-  "opus",
-  "haiku",
-] as const;
 
 /** What a host decided about one requested model. */
 export type CodingSessionHireModelResolution =
   /** The catalog offers exactly this id. */
   | { kind: "offered"; model: string }
-  /** A vendor alias mapped onto the catalog's own id. Disclosed. */
-  | { kind: "translated"; model: string; requested: string }
-  /** The catalog offers neither the id nor a family it could translate. */
+  /** The catalog does not publish this id. Nothing is substituted for it. */
   | { kind: "not-offered"; requested: string; offered: readonly string[] }
   /** No catalog was read, so nothing can be said about this id. */
   | { kind: "unknown"; model: string };
@@ -63,28 +61,8 @@ export function resolveCodingSessionHireModel(
   if (asked.length === 0) return null;
   // Nothing was read, so nothing is refused. See the module doc.
   if (offered.length === 0) return { kind: "unknown", model: asked };
+  // Exact, and only exact. The catalog is the model list.
   if (offered.includes(asked)) return { kind: "offered", model: asked };
-  // Two vocabularies name the same id, and neither is a guess about *which*
-  // model: the vendor's family name (`claude-opus-5` where the catalog
-  // publishes `opus[1m]`), and the same id without the window suffix the
-  // runtime appends (`claude-fable-5` where the catalog publishes
-  // `claude-fable-5[1m]`). Both are disclosed, never applied silently.
-  const asked_alias = familyAliasOf(asked);
-  const translated = offered.find(
-    (candidate) => familyAliasOf(candidate) === asked_alias,
-  );
-  if (translated !== undefined) {
-    return { kind: "translated", model: translated, requested: asked };
-  }
-  const family = claudeFamilyOf(asked);
-  if (family !== null) {
-    const byFamily = offered.find(
-      (candidate) => familyAliasOf(candidate) === family,
-    );
-    if (byFamily !== undefined) {
-      return { kind: "translated", model: byFamily, requested: asked };
-    }
-  }
   return { kind: "not-offered", requested: asked, offered: [...offered] };
 }
 
@@ -137,118 +115,78 @@ export function describeCodingSessionHireIdentityModelRefusal(
   >,
 ): string {
   return (
-    `${identityName}'s own model ${resolution.requested} is not one this ` +
-    `computer's ${providerInstanceRef} runtime offers. It offers ` +
+    `${identityName}'s record says ${resolution.requested}, which this ` +
+    `computer's ${providerInstanceRef} runtime does not offer. It offers ` +
     `${resolution.offered.join(", ")}. Name one of them with --model, or fix ` +
     `${identityName}'s record on the Agents screen.`
   );
 }
 
-/** The identity-model counterpart of {@link codingSessionHireModelNotice}. */
-export function codingSessionHireIdentityModelNotice(
-  providerInstanceRef: string,
-  identityName: string,
-  resolution: CodingSessionHireModelResolution | null,
-): string | null {
-  if (resolution === null || resolution.kind !== "translated") return null;
-  return (
-    `The hire named no model, so the seat took ${identityName}'s own ` +
-    `${resolution.requested}; this computer's ${providerInstanceRef} runtime ` +
-    `does not offer that id, so the seat runs ${resolution.model} instead.`
-  );
-}
-
-/**
- * What the host says out loud when it seated a model nobody asked for.
- *
- * A translation is the host substituting its own judgement for the lead's
- * words, so it is stated where both the lead and the person can read it —
- * never left implicit in a create nobody compares against the request. `null`
- * when there is nothing to disclose.
- */
-export function codingSessionHireModelNotice(
-  providerInstanceRef: string,
-  resolution: CodingSessionHireModelResolution | null,
-): string | null {
-  if (resolution === null || resolution.kind !== "translated") return null;
-  return (
-    `The hire asked for ${resolution.requested}; this computer's ` +
-    `${providerInstanceRef} runtime does not offer that id, so the seat runs ` +
-    `${resolution.model} instead.`
-  );
-}
+/** What a create surface should do about a seated identity's own model. */
+export type CodingSessionSeatIdentityModel = {
+  /** The id to preselect, or `null` when this decides nothing. */
+  model: string | null;
+  /** What the surface owes the person about that, or `null`. */
+  note: string | null;
+  /**
+   * The create has no model it can honestly write and must wait for a pick.
+   * True only when the record names an id this runtime does not publish.
+   */
+  mustPick: boolean;
+};
 
 /**
  * The model a seated identity asks a *create* to run on — the create path's
- * one call into this table.
+ * one call into the catalog check.
  *
  * The hire host has read an identity's model against the catalog through
  * {@link resolveCodingSessionHireModel} since item 88(a); the create dialog
- * matched the same record with `allowedModels.includes(...)`, so a record
- * saying `claude-fable-5` against a catalog publishing `claude-fable-5[1m]`
- * was reported as a model the runtime does not offer and the session silently
- * took the runtime default (item 90 lane C). Two hosts, two answers, one
- * record. This is the shared answer, and the same three outcomes:
+ * matched the same record with `allowedModels.includes(...)` and, when that
+ * missed, **fell silently to the runtime default** (item 90 lane C). Both the
+ * miss and the fallback were wrong in the same direction: the session ran on
+ * weights the record did not name and no screen said so.
  *
- * - the catalog offers the id → it is used, nothing to say;
- * - the catalog offers it under another vocabulary → it is used *and* the
- *   substitution is disclosed, never applied silently;
- * - the catalog offers neither → nothing is asked for, and the record's id is
- *   named in the note rather than swallowed.
+ * Three answers, and none of them substitutes one id for another:
  *
- * A model the person picked by hand outranks the record, an empty record asks
- * for nothing, and an unread catalog (`allowedModels` empty) says nothing —
- * a refusal built on a list this computer never loaded would be a claim about
- * the model dressed up as a claim about the catalog.
+ * - the catalog offers the record's id → it is preselected, nothing to say;
+ * - the person has picked a model by hand, or the record names none, or the
+ *   catalog was never read → this decides nothing;
+ * - the catalog does not offer the record's id → **nothing is preselected**,
+ *   the record's id is named out loud, and `mustPick` holds the create until
+ *   a real model is chosen. The record is not edited here — a create dialog
+ *   is the wrong place to rewrite an identity — so the copy says where it is
+ *   edited instead.
  */
 export function resolveCodingSessionSeatIdentityModel(input: {
   /** The seated identity's own model id, or null when it names none. */
   agentModel: string | null;
   /** Model ids the selected runtime actually publishes. */
   allowedModels: readonly string[];
+  /** This computer's name for the runtime, used in the disclosure. */
+  providerInstanceRef: string;
   /** Whether the person has picked a model by hand. */
   selectionExplicit: boolean;
-}): { model: string | null; note: string | null } {
+}): CodingSessionSeatIdentityModel {
   const agentModel = input.agentModel?.trim() ?? "";
   if (input.selectionExplicit || agentModel.length === 0) {
-    return { model: null, note: null };
+    return { model: null, note: null, mustPick: false };
   }
   const resolution = resolveCodingSessionHireModel(
     agentModel,
     input.allowedModels,
   );
   if (resolution === null || resolution.kind === "unknown") {
-    return { model: null, note: null };
+    return { model: null, note: null, mustPick: false };
   }
   if (resolution.kind === "offered") {
-    return { model: resolution.model, note: null };
-  }
-  if (resolution.kind === "translated") {
-    return {
-      model: resolution.model,
-      note:
-        `This agent's record names ${resolution.requested}, which the ` +
-        `selected provider publishes as ${resolution.model}. The session ` +
-        `runs on ${resolution.model}.`,
-    };
+    return { model: resolution.model, note: null, mustPick: false };
   }
   return {
     model: null,
+    mustPick: true,
     note:
-      `This agent's record names ${agentModel}, which the selected provider ` +
-      "does not offer. The session runs on the model above instead.",
+      `This identity's record names ${agentModel}, which ` +
+      `${input.providerInstanceRef} does not offer. Pick a model; the record ` +
+      `keeps ${agentModel} until you change it on the Agents screen.`,
   };
-}
-
-/** `claude-sonnet-5` → `sonnet`; anything outside the family → null. */
-function claudeFamilyOf(model: string): string | null {
-  const match = /^claude-(sonnet|opus|haiku)(?:-.*)?$/i.exec(model.trim());
-  return match?.[1]?.toLowerCase() ?? null;
-}
-
-/** `opus[1m]` → `opus`; `sonnet` → `sonnet`; `default` → `default`. */
-function familyAliasOf(offered: string): string {
-  const trimmed = offered.trim().toLowerCase();
-  const bracket = trimmed.indexOf("[");
-  return bracket === -1 ? trimmed : trimmed.slice(0, bracket);
 }

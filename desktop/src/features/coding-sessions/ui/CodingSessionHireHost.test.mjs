@@ -359,17 +359,23 @@ test("a hire older than the host's window is refused HIRE_STALE, never seated", 
   host.teardown();
 });
 
-test("a vendor model id is translated onto the catalog's, and said out loud", async () => {
+// Brian's ruling, 2026-08-29: the catalog is the only model list. This host
+// used to translate `claude-sonnet-5` onto the catalog's `sonnet`, seat the
+// create on it and disclose the swap; a seat now runs the id it was asked for
+// or none at all, so the whole catalog — including `sonnet` — refuses a vendor
+// name it does not publish.
+test("a vendor model id the catalog does not publish is refused, not translated", async () => {
   const host = await harness();
   await host.deliver(await signedHire({ model: "claude-sonnet-5" }));
 
-  const [create] = host.of(44221);
-  assert.ok(create, "no seated create was published");
-  assert.equal(JSON.parse(create.content).action.model, "sonnet");
-  const [notice] = host.of(9);
-  assert.ok(notice, "the substitution was never disclosed");
-  assert.match(notice.content, /^Hired a builder — /);
-  assert.match(notice.content, /claude-sonnet-5/);
+  assert.equal(host.of(44221).length, 0, "an unoffered model was seated");
+  const text = JSON.parse(host.of(44220)[0].content).action.text;
+  assert.match(text, /^hire refused: HIRE_MODEL_NOT_OFFERED — /);
+  assert.match(text, /claude-sonnet-5/);
+  assert.match(
+    text,
+    /It offers default, claude-fable-5\[1m\], haiku, opus\[1m\], sonnet\./,
+  );
   host.teardown();
 });
 
