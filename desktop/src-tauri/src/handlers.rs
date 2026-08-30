@@ -246,6 +246,7 @@ pub(crate) fn invoke_handler(
         list_teams,
         create_team,
         team_readiness,
+        fold_coding_session_team_transactions,
         install_crew_role_packs,
         pick_crew_role_packs_directory,
         scan_project_role_packs_directory,
