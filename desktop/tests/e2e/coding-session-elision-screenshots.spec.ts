@@ -53,6 +53,10 @@ const TOKEN_DIGEST =
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const SHELL_DIGEST =
   "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f";
+// The 2026-08-30 report, verbatim from the wire: an agent writes a host path
+// in backticks, so the marker lands in an `inlineCode` node.
+const LOG_DIGEST =
+  "01de6a4ef05f5c4052a052531f89bff67836c5ba404d05e4ead0b883e561a88c";
 
 function marker(bytes: number, digest: string): string {
   return `[elided private context: ${bytes} bytes, sha256:${digest}]`;
@@ -128,7 +132,7 @@ function elisionEvents(): RelayEvent[] {
     // back as a hash.
     transcript(2, {
       kind: "assistant_text",
-      text: `The push failed because the helper was never installed. I read the config at ${marker(148, HOME_DIGEST)} and the stored value is ${marker(42, TOKEN_DIGEST)}, so NIP-98 signing never ran.\n\nInside a fence the marker stays literal, because there the reader is looking at the bytes:\n\n\`\`\`\ngrep -n credential ${marker(148, HOME_DIGEST)}\n\`\`\``,
+      text: `The push failed because the helper was never installed. I read the config at ${marker(148, HOME_DIGEST)} and the stored value is ${marker(42, TOKEN_DIGEST)}, so NIP-98 signing never ran.\n\nA fence gets the pill too — the bytes it would otherwise show were replaced before signing, so the literal marker is not the honest rendering, it is ninety characters of hash:\n\n\`\`\`console\ngrep -n credential ${marker(148, HOME_DIGEST)}\n\`\`\`\n\n- PID \`31928\`; log at \`${marker(31, LOG_DIGEST)}\`. HMR is on.`,
     }),
     // The Codex argv case: `tool.toolName` is the whole command as prose, so a
     // redacted interpreter path lands mid-label.
@@ -172,6 +176,10 @@ const LOCAL_VAULT = {
     plaintext: "/Users/andy/.config/git/credentials",
   },
   [SHELL_DIGEST]: { class: "host-path", plaintext: "/opt/homebrew/bin/zsh" },
+  [LOG_DIGEST]: {
+    class: "host-path",
+    plaintext: "/Users/andy/Code/femtorpg/vite.log",
+  },
   // Deliberately absent: TOKEN_DIGEST. A credential is redacted identically
   // and never recorded, so even the machine that redacted it cannot read it
   // back — the pill stays.
@@ -232,12 +240,12 @@ test("a redaction reads as a pill and the raw marker never reaches prose", async
   const pills = page.locator("[data-redaction-pill]");
   await expect(pills.first()).toBeVisible({ timeout: 15_000 });
 
-  // Prose redactions, one per distinct value.
+  // The host path appears twice — once in prose, once inside the fence.
   await expect(
     page.locator('[data-elision-cause="redaction"]', {
       hasText: "redacted 148 B",
     }),
-  ).toHaveCount(1);
+  ).toHaveCount(2);
   await expect(
     page.locator('[data-elision-cause="redaction"]', {
       hasText: "redacted 42 B",
@@ -251,10 +259,20 @@ test("a redaction reads as a pill and the raw marker never reaches prose", async
   await expect(failedRow).not.toContainText("elided private context");
   await expect(failedRow.locator("[data-redaction-pill]")).toHaveCount(1);
 
-  // Inside a fence the marker is the honest rendering, so it survives verbatim.
-  await expect(
-    page.locator("pre").filter({ hasText: "grep -n credential" }),
-  ).toContainText("elided private context");
+  // The two places the remark plugin cannot reach, because a code node holds
+  // a string rather than children: a fence and a backticked span. Both are
+  // where redactions actually land — agents write host paths in backticks and
+  // paste console output — so both are the `code` component's job.
+  const fence = page.locator("pre").filter({ hasText: "grep -n credential" });
+  await expect(fence).not.toContainText("elided private context");
+  await expect(fence.locator("[data-redaction-pill]")).toHaveCount(1);
+
+  const inlineCode = page
+    .locator("code")
+    .filter({ hasText: "redacted 31 B" })
+    .first();
+  await expect(inlineCode).toBeVisible();
+  await expect(inlineCode).not.toContainText("elided private context");
 
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/01-redacted-prose.png` });
@@ -274,7 +292,15 @@ test("a redaction and a cap share the pill but never the label", async ({
   await expect(page.getByText("Content dropped")).toBeVisible();
 
   await waitForAnimations(page);
-  await workspace.screenshot({ path: `${SHOTS}/02-dropped-item.png` });
+  // Scoped to the dropped row, not the workspace: an unscoped shot here is
+  // the same pixels as 01 (both surfaces are on screen at once), and two
+  // byte-identical PNGs read as coverage that does not exist.
+  await page
+    .getByText("Content dropped")
+    .locator("..")
+    .screenshot({
+      path: `${SHOTS}/02-dropped-item.png`,
+    });
 });
 
 test("hovering a pill reveals the digest it stands for", async ({ page }) => {
@@ -318,6 +344,18 @@ test("on the machine that redacted it, the operator sees the value and a badge",
   );
   await expect(
     revealed.first().locator("[data-redaction-revealed-badge]"),
+  ).toContainText("redacted for other viewers");
+
+  // A path written in backticks reveals too, badge and all. Before the `code`
+  // component read the marker this was the one place the operator could not
+  // get their own path back — which is what made it the reported case.
+  const revealedInCode = page
+    .locator("code")
+    .filter({ hasText: "/Users/andy/Code/femtorpg/vite.log" })
+    .first();
+  await expect(revealedInCode).toBeVisible();
+  await expect(
+    revealedInCode.locator("[data-redaction-revealed-badge]"),
   ).toContainText("redacted for other viewers");
 
   // The credential was redacted identically and never recorded, so even here

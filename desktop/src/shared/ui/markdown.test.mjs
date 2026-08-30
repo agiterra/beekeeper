@@ -681,7 +681,10 @@ test("buzzDeepLinkUrlTransform: strips malformed beekeeper://pr (unknown param)"
 // the inline anchor click path (not just card extraction).
 
 import { renderEntityLinkAnchor } from "../ui/markdown/entityLinks.tsx";
-import { createMarkdownComponents } from "../ui/markdown.tsx";
+import {
+  createMarkdownComponents,
+  SyntaxHighlightedCode,
+} from "../ui/markdown.tsx";
 import { renderCachedMarkdown } from "../ui/markdown/nodeCache.ts";
 import { MarkdownRuntimeContext } from "../ui/markdown/runtimeContext.ts";
 
@@ -1312,4 +1315,61 @@ test("renderEntityLinkAnchor keeps chip styling when interaction is disabled", (
   assert.match(html, /<span/);
   assert.match(html, /class="mention-chip\s/);
   assert.doesNotMatch(html, /<button/);
+});
+
+// ── code nodes: the redaction pill the remark plugin cannot reach ────────────
+//
+// `remarkRedactionMarkers` skips `code`/`inlineCode` (those nodes carry a
+// string, not children), so the `code` component applies the pill itself.
+// Agents write host paths in backticks and paste console output in fences,
+// which is where most redactions in a real session land.
+
+const DIGEST =
+  "01de6a4ef05f5c4052a052531f89bff67836c5ba404d05e4ead0b883e561a88c";
+const CODE_MARKER = `[elided private context: 31 bytes, sha256:${DIGEST}]`;
+
+/** The `code` component takes no hooks, so it can be called directly. */
+function codeElement(children, className) {
+  return createMarkdownComponents(false, false).code({ children, className });
+}
+
+function renderCode(children, className) {
+  return renderToStaticMarkup(codeElement(children, className));
+}
+
+test("a marker inside inline code renders as a pill, not as a hash", () => {
+  const html = renderCode(CODE_MARKER, undefined);
+  assert.match(html, /data-redaction-pill=""/);
+  assert.match(html, /redacted 31 B/);
+  assert.doesNotMatch(html, new RegExp(DIGEST));
+});
+
+test("inline code around a marker keeps its own text", () => {
+  const html = renderCode(`log at ${CODE_MARKER} now`, undefined);
+  assert.match(html, /log at /);
+  assert.match(html, /data-redaction-pill=""/);
+  assert.match(html, / now/);
+});
+
+test("inline code with no marker is untouched", () => {
+  const html = renderCode("31928", undefined);
+  assert.match(html, /31928/);
+  assert.doesNotMatch(html, /data-redaction-pill/);
+});
+
+test("a marker inside a fenced block renders a pill on its line", () => {
+  const html = renderCode(`--- 9858: ${CODE_MARKER}\n`, "language-console");
+  assert.match(html, /--- 9858: /);
+  assert.match(html, /data-redaction-pill=""/);
+  assert.doesNotMatch(html, new RegExp(DIGEST));
+});
+
+test("a redacted fence gives up highlighting rather than the pill", () => {
+  const element = codeElement(`${CODE_MARKER}\n`, "language-console");
+  assert.notEqual(element.type, SyntaxHighlightedCode);
+});
+
+test("a fence with no marker is still highlighted", () => {
+  const element = codeElement("const answer = 42;\n", "language-ts");
+  assert.equal(element.type, SyntaxHighlightedCode);
 });

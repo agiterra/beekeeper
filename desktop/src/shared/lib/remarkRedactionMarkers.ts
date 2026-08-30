@@ -5,10 +5,20 @@
  * The marker's shape and the reasons it is read rather than rewritten live in
  * `./redactionMarker`. Two behaviours worth stating here:
  *
- * - **Fenced and inline code are skipped**, via the shared prefix-plugin's
- *   `shouldSkipNode`. Inside a fence the literal marker *is* the honest
- *   rendering — the reader is looking at the bytes, and a pill would claim the
- *   bytes say something they do not.
+ * - **Fenced and inline code are skipped here**, via the shared prefix-plugin's
+ *   `shouldSkipNode`, and the pill for those is applied by the `code`
+ *   component in `markdown.tsx` instead. This plugin cannot do it: a
+ *   `code`/`inlineCode` node carries a string `value`, not children, so there
+ *   is nothing to split.
+ *
+ *   That split of responsibility replaced an earlier decision to leave code
+ *   alone entirely, on the reasoning that inside a fence the literal marker is
+ *   the honest rendering. It is not — the bytes the reader would be looking at
+ *   were replaced before the item was signed, so a fence shows ninety
+ *   characters of hash where content used to be, and (worse) the machine that
+ *   redacted it cannot reveal its own path back. Agents write host paths in
+ *   backticks and paste console output in fences, so that was where most
+ *   redactions landed.
  * - **The byte count and digest travel as `hProperties`**, not as parsed
  *   objects, because the element crosses react-markdown's HAST boundary. They
  *   are re-read by the renderer, which is why the pattern that produced them

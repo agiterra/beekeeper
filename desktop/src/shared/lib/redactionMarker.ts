@@ -16,6 +16,11 @@
  * the field, so it is never rewritten on the wire. It is read here instead, so
  * a client can render 90 characters of hash as a pill.
  *
+ * Two readers share this pattern: `remarkRedactionMarkers` for prose, and the
+ * `code` component in `markdown.tsx` for markers inside a fence or backticks,
+ * which the remark plugin cannot reach. Both must agree, which is why the
+ * pattern lives here and nowhere else.
+ *
  * Two things this module deliberately does not do:
  *
  * - It does not match the *size-capping* markers (`…[elided N bytes]…` and the
@@ -37,6 +42,14 @@
  */
 export const REDACTION_MARKER_PATTERN =
   /\[elided private context: (\d+) bytes, sha256:([0-9a-f]{64})\]/g;
+
+/**
+ * Non-global twin of the pattern, for `hasRedactionMarker`.
+ *
+ * `test` on a `g`-flagged regex advances `lastIndex` and would leave the
+ * shared constant mid-string for the next reader; a non-global copy cannot.
+ */
+const REDACTION_MARKER_PROBE = new RegExp(REDACTION_MARKER_PATTERN.source);
 
 /** One redaction, as read off the wire. */
 export type RedactionMarker = {
@@ -94,10 +107,15 @@ export function parseRedactionMarkers(text: string): RedactionSegment[] {
   return segments;
 }
 
-/** Does this text carry at least one redaction marker? */
+/**
+ * Does this text carry at least one redaction marker?
+ *
+ * Ask this rather than counting segments: a string that *is* a marker parses
+ * to a single segment, so `parseRedactionMarkers(text).length > 1` reads false
+ * on the commonest case of all — a lone marker inside backticks.
+ */
 export function hasRedactionMarker(text: string): boolean {
-  REDACTION_MARKER_PATTERN.lastIndex = 0;
-  return REDACTION_MARKER_PATTERN.test(text);
+  return REDACTION_MARKER_PROBE.test(text);
 }
 
 /**

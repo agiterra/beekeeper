@@ -5665,6 +5665,45 @@ written and `bash -n` clean but **was not executed** — that harness needs
     - Lane C (`swat19/registry-read`): pnpm install --frozen-lockfile was run in the worktree's desktop/ to get node_modules (the worktree had none). pnpm-lock.yaml is unchanged and node_modules is gitignored. Tauri sidecars were copied read-only from the live checkout into the worktree's gitignored desktop/src-tauri/binaries/.
     - Lane C (`swat19/registry-read`): The e2e mock bridge (desktop/src/testing/e2eBridge.ts) has no case for read_project_file and throws 'Unsupported mocked Tauri command' for unknown commands; the reader catches that and renders it as the badge's unreadable reason. No e2e spec asserts data-testid=registry-stale-badge (grep: only the AgentsView definition), so nothing breaks, but a bridge case would make the mock-mode badge read better. e2eBridge.ts is outside this lane's file ownership, so it was left alone.
 
+97. **The redaction pill was never removed — it was switched off exactly where
+    redactions land (2026-08-30).** Andy, on the rebuilt production app: the
+    elided-data work (items around 60; `bc984fac6`, `e0e116d1d`, `88e9a08a9`,
+    `41a6820e8`) "got removed", with a transcript line reading `log at [elided
+    private context: 31 bytes, sha256:01de6a4e…a88c]`. Nothing was reverted:
+    every file of that work is untouched since `88e9a08a9`, the pill is still
+    wired at `markdown.tsx:1396` and registered at `markdown/nodeCache.ts:113`,
+    and the app running when he reported it (`0e4693867`) contained all six
+    commits. The pill is a remark plugin, and `createRemarkPrefixPlugin.ts:64`
+    skips `link`/`code`/`inlineCode` — a decision documented in
+    `remarkRedactionMarkers.ts` as "inside a fence the literal marker *is* the
+    honest rendering".
+    - **The measurement that decided it.** His own outbox
+      (`session-provider/7464daa5…/outbox.jsonl`, session `2f30cc67…`): of 12
+      markers in published `entry.event.content`, **4** sat inside a
+      ` ```console ` fence, **1** inside backticks, and 7 in shell command
+      strings — the last of which already got pills via `RedactedText` in the
+      `<pre>` at `CodingSessionTranscriptParts.tsx:99-105`. So ~40% of a real
+      session's redactions rendered as ninety characters of hash, and on the
+      machine that produced them the vault could not reveal any of those five.
+    - **The fence rationale does not survive the marker.** In a fence the
+      reader is *not* looking at the bytes: the provider replaced them before
+      signing. Reversed deliberately — the `code` component in `markdown.tsx`
+      now reads the marker itself (the remark plugin cannot: a `code` node
+      carries a string, not children), inline and fenced alike, and a fence
+      holding a redaction gives up Shiki highlighting rather than the pill.
+      `hasRedactionMarker` is the shared predicate; **counting segments is the
+      trap** — a string that *is* a marker parses to one segment, so
+      `parseRedactionMarkers(t).length > 1` reads false on the commonest case.
+    - Also fixed: `CodingSessionUmbrellaConversationRow.tsx:42` printed
+      `{message.content}` through neither `Markdown` nor `RedactedText`. That
+      one predates the pill; it was never a regression, just never covered.
+    - Pinned by six cases in `markdown.test.mjs` (inline, fenced, and the
+      no-marker fence still reaching `SyntaxHighlightedCode`), two in
+      `CodingSessionUmbrellaConversationRow.test.mjs`, and the elision e2e
+      spec, which now seeds Andy's line verbatim and asserts the reveal badge
+      inside a code span. That spec was also emitting two byte-identical PNGs
+      (01 and 02 both shot the whole workspace); 02 is scoped to its row now.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,

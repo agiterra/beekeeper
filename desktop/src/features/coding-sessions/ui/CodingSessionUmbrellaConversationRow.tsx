@@ -1,6 +1,7 @@
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 
 /**
  * One lane message.
@@ -9,6 +10,10 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
  * founder's own message in the lane as a bare `a3945536…3cf2`, because this
  * row printed a key while the surrounding surface already held the profiles
  * that resolve it.
+ *
+ * The body goes through `RedactedText` for the same reason the rest of the
+ * transcript does: a lane message can carry a privacy marker, and printing it
+ * raw is ninety characters of hash the reader cannot reveal.
  */
 export function UmbrellaConversationRow({
   currentUserPubkey,
@@ -39,7 +44,7 @@ export function UmbrellaConversationRow({
         · {formatLaneTimestamp(message.timestampMs)}
       </p>
       <p className="mt-0.5 text-base whitespace-pre-wrap wrap-break-word">
-        {message.content}
+        <RedactedText text={message.content} />
       </p>
     </div>
   );

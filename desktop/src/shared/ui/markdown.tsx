@@ -37,10 +37,7 @@ import {
   selectNudgeLeadingContent,
   selectProseOrNudge,
 } from "@/shared/lib/computeConfigNudge";
-import {
-  INLINE_CODE_CHIP_CLASS,
-  MESSAGE_MARKDOWN_CLASS,
-} from "@/shared/ui/mentionChip";
+import { MESSAGE_MARKDOWN_CLASS } from "@/shared/ui/mentionChip";
 
 import {
   classifyChildren,
@@ -50,12 +47,11 @@ import {
   shallowRecordEqual,
 } from "./markdownUtils";
 import {
-  CODE_BLOCK_CLASS,
   extractLanguage,
   MarkdownCodeBlock,
   StaticCodeBlock,
-  SyntaxHighlightedCode,
 } from "./markdown/CodeBlock";
+import { createCodeComponent } from "./markdown/MarkdownCode";
 import {
   renderEntityLinkAnchor,
   useEntityCardOpenHandlers,
@@ -1430,40 +1426,7 @@ export function createMarkdownComponents(
       </blockquote>
     ),
     br: () => <br />,
-    code: ({ children, className, ...props }: React.ComponentProps<"code">) => {
-      const rawCode = String(children);
-      const code = rawCode.replace(/\n$/, "");
-      const isFencedCodeBlock =
-        typeof className === "string" && className.includes("language-");
-
-      if (isFencedCodeBlock || rawCode.endsWith("\n") || code.includes("\n")) {
-        const language = extractLanguage(className);
-
-        if (language) {
-          return (
-            <SyntaxHighlightedCode code={code} language={language} {...props} />
-          );
-        }
-
-        const lines = code.split("\n");
-        return (
-          <code {...props} className={CODE_BLOCK_CLASS}>
-            {lines.map((line, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
-              <span key={i} data-line="">
-                {line}
-              </span>
-            ))}
-          </code>
-        );
-      }
-
-      return (
-        <code {...props} className={cn(INLINE_CODE_CHIP_CLASS, className)}>
-          {children}
-        </code>
-      );
-    },
+    code: createCodeComponent(interactive),
     h1: ({ children }) => (
       <h1 className="text-xl font-semibold leading-8 tracking-tight">
         {children}
@@ -1696,7 +1659,7 @@ export function createMarkdownComponents(
 }
 
 /** Module-stable maps keep cached trees free of per-mount closures. */
-const MARKDOWN_COMPONENT_SCHEMA_VERSION = "9";
+const MARKDOWN_COMPONENT_SCHEMA_VERSION = "10";
 const markdownComponentsByVariant = new Map<string, MarkdownComponentSet>();
 
 type MarkdownComponentSet = { components: Components; variant: string };
