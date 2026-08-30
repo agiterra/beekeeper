@@ -44,7 +44,7 @@ import {
   MAX_CODING_SESSION_ROLE_BYTES,
 } from "./codingSessionActorSeat";
 import {
-  isCodingSessionHireRoutingRequest,
+  readCodingSessionHireRoutingRequest,
   type CodingSessionHireRoutingRequest,
 } from "./codingSessionHireRouting";
 import {
@@ -139,10 +139,38 @@ export type CodingSessionHireRequest = {
   action: CodingSessionHireAction;
 };
 
+/**
+ * Enough of a malformed hire to answer it.
+ *
+ * A hire this host cannot read is still a hire somebody is waiting on, so the
+ * classifier hands back whatever of the envelope *was* readable — the channel,
+ * the command id, the signer, and the session it named when that much parsed.
+ * Without this the host could only drop it, which is exactly what it did for
+ * fifteen minutes on 2026-08-30 (ledger draft 97).
+ */
+export type CodingSessionHireAddress = {
+  channelId: string;
+  commandId: string;
+  /** Whoever signed it — the seat a refusal is published back to. */
+  requesterPubkey: string;
+  /** The umbrella it named, when that key was readable. */
+  sessionRef: string | null;
+  /** The role it asked for, when that key was readable. */
+  role: string | null;
+};
+
 export type CodingSessionHireClassification =
   | ({ kind: "hire" } & CodingSessionHireRequest)
   | { kind: "irrelevant" }
-  | { kind: "malformed" }
+  | {
+      kind: "malformed";
+      /** The dotted key that failed, e.g. `action.routing.tier`. */
+      failingKey: string;
+      /** One sentence naming what is wrong with it. */
+      reason: string;
+      /** Null when not even the envelope parsed; then nobody can be told. */
+      address: CodingSessionHireAddress | null;
+    }
   | { kind: "invalid-signature" };
 
 /**
@@ -257,14 +285,11 @@ export function validateCodingSessionHireInput(input: {
       `action.brief exceeds ${MAX_CODING_SESSION_HIRE_BRIEF_BYTES} bytes`,
     );
   }
-  if (
-    input.routing !== undefined &&
-    !isCodingSessionHireRoutingRequest(input.routing)
-  ) {
-    throw new Error(
-      "action.routing must be { class, risk } with optional tier, profile " +
-        "and override, and must name no model of its own",
-    );
+  if (input.routing !== undefined) {
+    const read = readCodingSessionHireRoutingRequest(input.routing);
+    if (!read.ok) {
+      throw new Error(`action.${read.key} ${read.why}`);
+    }
   }
 }
 
@@ -306,10 +331,18 @@ export function classifyCodingSessionHireEvent(
     !allowedChannelIds.has(tags[0]) ||
     tags[1] !== CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION
   ) {
-    return { kind: "malformed" };
+    return unaddressable(
+      "tags",
+      "the h / csl-v / csl-command tags are not the exact three this wire carries",
+    );
   }
   const requesterPubkey = normalizePubkey(event.pubkey);
-  if (!requesterPubkey) return { kind: "malformed" };
+  if (!requesterPubkey) {
+    return unaddressable(
+      "pubkey",
+      "the signer is not a lowercase 64-hex pubkey",
+    );
+  }
   if (
     !hasExactKeys(payload, ["schema", "commandId", "action"]) ||
     payload.schema !== CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA ||
@@ -319,28 +352,71 @@ export function classifyCodingSessionHireEvent(
     ) ||
     payload.commandId !== tags[2]
   ) {
-    return { kind: "malformed" };
+    return unaddressable(
+      "content",
+      `the envelope is not { schema: ${CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA}, commandId, action } with commandId equal to the csl-command tag`,
+    );
   }
   const action = payload.action;
+  // Addressable from here on: the channel, the command id and the signer all
+  // parsed, so whatever is wrong below can be said *to somebody*.
+  const address: CodingSessionHireAddress = {
+    channelId: tags[0],
+    commandId: payload.commandId,
+    requesterPubkey,
+    sessionRef: isCodingSessionSessionRef(action.sessionRef)
+      ? (action.sessionRef as string)
+      : null,
+    role: isCodingSessionRoleSlug(action.role) ? (action.role as string) : null,
+  };
+  const malformed = (failingKey: string, reason: string) =>
+    ({ kind: "malformed", failingKey, reason, address }) as const;
   const routed = hasExactKeys(action, [
     ...CODING_SESSION_HIRE_ROUTED_ACTION_KEYS,
   ]);
   if (!routed && !hasExactKeys(action, [...CODING_SESSION_HIRE_ACTION_KEYS])) {
-    return { kind: "malformed" };
+    return malformed("action", describeHireKeySet(action));
   }
-  if (routed && !isCodingSessionHireRoutingRequest(action.routing)) {
-    return { kind: "malformed" };
+  if (routed) {
+    const read = readCodingSessionHireRoutingRequest(action.routing);
+    if (!read.ok) {
+      return malformed(`action.${read.key}`, read.why);
+    }
   }
-  if (
-    !isCodingSessionSessionRef(action.sessionRef) ||
-    typeof action.genesisRef !== "string" ||
-    !/^[0-9a-f]{64}$/.test(action.genesisRef) ||
-    !isCodingSessionRoleSlug(action.role) ||
-    !isOptionalReference(action.providerInstanceRef) ||
-    !isOptionalReference(action.model) ||
-    !boundedNonempty(action.brief, MAX_CODING_SESSION_HIRE_BRIEF_BYTES)
-  ) {
-    return { kind: "malformed" };
+  for (const [key, ok, why] of [
+    [
+      "action.sessionRef",
+      isCodingSessionSessionRef(action.sessionRef),
+      "must be a canonical lowercase hyphenated UUID",
+    ],
+    [
+      "action.genesisRef",
+      typeof action.genesisRef === "string" &&
+        /^[0-9a-f]{64}$/.test(action.genesisRef),
+      "must be a lowercase 64-hex event id",
+    ],
+    [
+      "action.role",
+      isCodingSessionRoleSlug(action.role),
+      `must be [a-z0-9-]+ and at most ${MAX_CODING_SESSION_ROLE_BYTES} bytes`,
+    ],
+    [
+      "action.providerInstanceRef",
+      isOptionalReference(action.providerInstanceRef),
+      "must be a non-empty runtime ref, or null",
+    ],
+    [
+      "action.model",
+      isOptionalReference(action.model),
+      "must be a non-empty catalog id, or null",
+    ],
+    [
+      "action.brief",
+      boundedNonempty(action.brief, MAX_CODING_SESSION_HIRE_BRIEF_BYTES),
+      `must be non-empty and at most ${MAX_CODING_SESSION_HIRE_BRIEF_BYTES} bytes`,
+    ],
+  ] as const) {
+    if (!ok) return malformed(key, why);
   }
   // Last, because it is the expensive one and every cheap refusal above has
   // already run.
@@ -348,18 +424,20 @@ export function classifyCodingSessionHireEvent(
   return {
     kind: "hire",
     eventId: event.id,
-    channelId: tags[0],
-    commandId: payload.commandId,
+    channelId: address.channelId,
+    commandId: address.commandId,
     requesterPubkey,
     createdAt: event.created_at,
+    // Each field was checked by the table above; the loop that ran it costs
+    // the narrowing the old one-expression guard gave for free.
     action: {
       type: CODING_SESSION_HIRE_ACTION_TYPE,
-      sessionRef: action.sessionRef,
-      genesisRef: action.genesisRef,
-      role: action.role,
-      providerInstanceRef: action.providerInstanceRef,
-      model: action.model,
-      brief: action.brief,
+      sessionRef: action.sessionRef as string,
+      genesisRef: action.genesisRef as string,
+      role: action.role as string,
+      providerInstanceRef: action.providerInstanceRef as string | null,
+      model: action.model as string | null,
+      brief: action.brief as string,
       ...(routed
         ? { routing: action.routing as CodingSessionHireRoutingRequest }
         : {}),
@@ -448,6 +526,36 @@ export async function publishCodingSessionHire(
   } catch (error) {
     throw new Error(describeCodingSessionHireFailure(error));
   }
+}
+
+/** A malformed hire nobody can be told about: the envelope itself did not parse. */
+function unaddressable(
+  failingKey: string,
+  reason: string,
+): CodingSessionHireClassification {
+  return { kind: "malformed", failingKey, reason, address: null };
+}
+
+/**
+ * Name the keys that made an action neither the seven-key nor the eight-key
+ * form.
+ *
+ * Both sides of the difference are printed. "unknown key routing" alone would
+ * be wrong for a payload that is also missing `brief`, and a lead reading only
+ * half of what is wrong fixes half of it.
+ */
+function describeHireKeySet(action: Record<string, unknown>): string {
+  const allowed = new Set<string>(CODING_SESSION_HIRE_ROUTED_ACTION_KEYS);
+  const unknown = Object.keys(action).filter((key) => !allowed.has(key));
+  const missing = CODING_SESSION_HIRE_ACTION_KEYS.filter(
+    (key) => !Object.hasOwn(action, key),
+  );
+  const parts: string[] = [];
+  if (unknown.length > 0) parts.push(`unknown key(s) ${unknown.join(", ")}`);
+  if (missing.length > 0) parts.push(`missing key(s) ${missing.join(", ")}`);
+  return `${
+    parts.length > 0 ? parts.join("; ") : "the key set does not match"
+  } — a session.hire carries ${CODING_SESSION_HIRE_ACTION_KEYS.join(", ")} plus an optional routing`;
 }
 
 function isOptionalReference(value: unknown): value is string | null {

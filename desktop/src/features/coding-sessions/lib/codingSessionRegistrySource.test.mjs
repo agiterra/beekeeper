@@ -55,7 +55,7 @@ test("reads the registry out of the project the caller named", async () => {
   });
   assert.equal(source.kind, "readable");
   assert.equal(source.text, REGISTRY_YAML);
-  assert.equal(source.path, "/checkout/team/model-registry.yaml");
+  assert.equal(source.label, "/checkout/team/model-registry.yaml");
 });
 
 test("a missing registry file is unreadable, with the host's own sentence", async () => {
@@ -63,8 +63,8 @@ test("a missing registry file is unreadable, with the host's own sentence", asyn
     read: stubReader({}),
   });
   assert.equal(source.kind, "unreadable");
-  assert.match(source.reason, /team\/model-registry\.yaml/);
-  assert.match(source.reason, /No such file or directory/);
+  assert.match(source.why, /team\/model-registry\.yaml/);
+  assert.match(source.why, /No such file or directory/);
 });
 
 test("no project at all is unreadable, and says which project is missing", async () => {
@@ -74,7 +74,7 @@ test("no project at all is unreadable, and says which project is missing", async
     }),
   });
   assert.equal(source.kind, "unreadable");
-  assert.match(source.reason, /no project/i);
+  assert.match(source.why, /no project/i);
 });
 
 test("a reader that throws a bare error still produces a sentence", async () => {
@@ -84,7 +84,7 @@ test("a reader that throws a bare error still produces a sentence", async () => 
     },
   });
   assert.equal(source.kind, "unreadable");
-  assert.match(source.reason, /not running in Tauri/);
+  assert.match(source.why, /not running in Tauri/);
 });
 
 test("rows for the badge come from the real file, with its version", async () => {
@@ -109,4 +109,26 @@ test("a file that is not a registry is unreadable, naming the parse failure", as
   });
   assert.equal(rows.kind, "unreadable");
   assert.match(rows.reason, /version 99/);
+});
+
+test("a blank project coordinate is the no-project answer, not a missing file", async () => {
+  const source = await readModelRegistry("   ", {
+    read: stubReader({
+      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+    }),
+  });
+  assert.equal(source.kind, "unreadable");
+  assert.match(source.why, /no project/i);
+});
+
+test("the reader answers in the shape the router consumes", async () => {
+  // The 2026-08-30 drop was two near-identical shapes on either side of a
+  // seam. `readModelRegistry` returns `CodingSessionRegistrySource` itself, so
+  // the keys the router reads are the keys this produces.
+  const source = await readModelRegistry("30621:abc:beekeeper", {
+    read: stubReader({
+      "30621:abc:beekeeper|team/model-registry.yaml": REGISTRY_YAML,
+    }),
+  });
+  assert.deepEqual(Object.keys(source).sort(), ["kind", "label", "text"]);
 });

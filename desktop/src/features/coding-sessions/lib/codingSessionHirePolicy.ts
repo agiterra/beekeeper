@@ -83,7 +83,19 @@ export type CodingSessionHireRefusalCode =
    * clears the class's gates. Never a quietly weakened requirement: spec §7
    * step 12.
    */
-  | "HIRE_NO_ROUTE";
+  | "HIRE_NO_ROUTE"
+  /**
+   * This host could not read the hire's own shape, and says which key.
+   *
+   * Distinct from `HIRE_NO_ROUTE` on purpose: `NO_ROUTE` is a fact about this
+   * computer's registry and catalog, `MALFORMED` is a fact about the request.
+   * Answering a bad payload with `NO_ROUTE` would send a lead looking at a
+   * registry that is fine. Before 2026-08-30 a malformed hire earned no code
+   * at all — it was dropped with no 44220, no console line and no pixel, and a
+   * lead waited fifteen minutes on a computer that had already read and
+   * discarded its request (ledger draft 97).
+   */
+  | "HIRE_MALFORMED";
 
 /** A managed agent this computer could seat, as the decision needs it. */
 export type CodingSessionHireCandidate = {

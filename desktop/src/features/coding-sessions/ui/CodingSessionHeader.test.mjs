@@ -486,3 +486,96 @@ test("Stop all names how many seats it stops, and only the founder sees it", () 
   assert.doesNotMatch(viewerView, /coding-session-stop-all/);
   assert.doesNotMatch(viewerView, /Stop all/);
 });
+
+/**
+ * The hires line.
+ *
+ * Until 2026-08-30 the host answered `session.hire` in the app shell and the
+ * runner that mounted it discarded every outcome, so a hire could be read,
+ * refused and thrown away with nothing on any screen (ledger draft 97).
+ */
+test("disposition strip counts what this host did with hires, and hovers the reason", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionDispositionStrip, {
+      resolveReachability: () => ({ known: false }),
+      hireOutcomes: [
+        { state: "seated", detail: null },
+        { state: "refused", detail: "HIRE_OFF" },
+        {
+          state: "malformed",
+          detail: "action.routing.tier: the host derives it",
+        },
+        // Not this operator's umbrella — not owed an answer, so not counted.
+        { state: "ignored", detail: "not this operator's session" },
+      ],
+      umbrella: {
+        umbrellaKey: "empty",
+        sessionRef: null,
+        title: "Team session",
+        founderPubkey: null,
+        genesisRef: null,
+        genesisResolution: "legacy",
+        status: "idle",
+        lastEventAt: "2026-08-12T10:06:00.000Z",
+        conflictCount: 0,
+        foreignAttachmentCount: 0,
+        executions: [],
+      },
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-hires-row"/);
+  assert.match(markup, /hires: 1 answered · 1 refused · 1 malformed/);
+  assert.match(markup, /title="action\.routing\.tier: the host derives it"/);
+});
+
+test("an answer that never went out is counted, never folded into refused", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionDispositionStrip, {
+      resolveReachability: () => ({ known: false }),
+      hireOutcomes: [{ state: "error", detail: "the relay timed out" }],
+      umbrella: {
+        umbrellaKey: "empty",
+        sessionRef: null,
+        title: "Team session",
+        founderPubkey: null,
+        genesisRef: null,
+        genesisResolution: "legacy",
+        status: "idle",
+        lastEventAt: "2026-08-12T10:06:00.000Z",
+        conflictCount: 0,
+        foreignAttachmentCount: 0,
+        executions: [],
+      },
+    }),
+  );
+  assert.match(
+    markup,
+    /hires: 0 answered · 0 refused · 0 malformed · 1 failed to answer/,
+  );
+});
+
+test("a host that has answered no hire adds no line", () => {
+  assert.equal(
+    renderToStaticMarkup(
+      React.createElement(CodingSessionDispositionStrip, {
+        resolveReachability: () => ({ known: false }),
+        hireOutcomes: [],
+        umbrella: {
+          umbrellaKey: "empty",
+          sessionRef: null,
+          title: "Team session",
+          founderPubkey: null,
+          genesisRef: null,
+          genesisResolution: "legacy",
+          status: "idle",
+          lastEventAt: "2026-08-12T10:06:00.000Z",
+          conflictCount: 0,
+          foreignAttachmentCount: 0,
+          executions: [],
+        },
+      }),
+    ),
+    "",
+  );
+});

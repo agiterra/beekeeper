@@ -4,6 +4,7 @@ import {
   type ModelRegistry,
 } from "./codingSessionModelRegistry";
 import { MODEL_REGISTRY_PROJECT_PATH } from "./codingSessionRegistryAccess";
+import type { CodingSessionRegistrySource } from "./codingSessionHireRouting";
 
 /**
  * The one place this app reads `team/model-registry.yaml`.
@@ -37,10 +38,16 @@ import { MODEL_REGISTRY_PROJECT_PATH } from "./codingSessionRegistryAccess";
  * registry; it is a hardcoded opinion wearing one's name.
  */
 
-/** What this host holds for the shared registry. */
-export type ModelRegistrySource =
-  | { kind: "readable"; text: string; path: string }
-  | { kind: "unreadable"; reason: string };
+/**
+ * What this host holds for the shared registry.
+ *
+ * This is `CodingSessionRegistrySource` itself, not a parallel shape. The hire
+ * host feeds the value straight into `resolveCodingSessionHireRouting`, so a
+ * second near-identical type here would be one rename away from a reader whose
+ * answers the router silently cannot read — the shape of the bug this batch
+ * exists to fix. `label` carries the absolute path the text was read from.
+ */
+export type ModelRegistrySource = CodingSessionRegistrySource;
 
 /** Test seam: the host call, injectable so the reader is testable in jsdom. */
 export type ModelRegistryReaderDeps = {
@@ -82,16 +89,16 @@ export async function readModelRegistry(
   if (projectRef === null || projectRef.trim().length === 0) {
     return {
       kind: "unreadable",
-      reason:
+      why:
         `This app resolved no project to read ${MODEL_REGISTRY_PROJECT_PATH} ` +
         "from. Open a project, or choose one on the Agents tab.",
     };
   }
   try {
     const file = await deps.read(projectRef, MODEL_REGISTRY_PROJECT_PATH);
-    return { kind: "readable", text: file.text, path: file.path };
+    return { kind: "readable", text: file.text, label: file.path };
   } catch (error) {
-    return { kind: "unreadable", reason: sentenceFor(error) };
+    return { kind: "unreadable", why: sentenceFor(error) };
   }
 }
 
@@ -126,11 +133,11 @@ export async function readModelRegistryRows(
 ): Promise<ModelRegistryRowsResult> {
   const source = await readModelRegistry(projectRef, deps);
   if (source.kind === "unreadable") {
-    return { kind: "unreadable", reason: source.reason };
+    return { kind: "unreadable", reason: source.why };
   }
   const parsed = parseModelRegistry(source.text);
   if (!parsed.ok) {
-    return { kind: "unreadable", reason: `${source.path}: ${parsed.why}` };
+    return { kind: "unreadable", reason: `${source.label}: ${parsed.why}` };
   }
   return {
     kind: "read",
@@ -139,7 +146,7 @@ export async function readModelRegistryRows(
       model: target.model,
     })),
     version: parsed.registry.version,
-    path: source.path,
+    path: source.label,
     registry: parsed.registry,
   };
 }

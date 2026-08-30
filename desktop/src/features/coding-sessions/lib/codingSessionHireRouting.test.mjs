@@ -114,13 +114,16 @@ test("a runtime with no catalog read is refused, never routed against nothing", 
 test("a routed hire naming a model is an override, and an override needs a because", () => {
   const bare = resolve({ requestedModel: "opus[1m]" });
   assert.equal(bare.kind, "refused");
-  assert.match(bare.reason, /routing\.override\.because/);
+  // The request is what is wrong, not this host's registry, so the code says
+  // so: HIRE_NO_ROUTE would send a lead to look at a registry that is fine.
+  assert.equal(bare.code, "HIRE_MALFORMED");
+  assert.match(bare.reason, /model without override\.because/);
 
   const given = resolve({
     requestedModel: "opus[1m]",
     request: {
       ...REQUEST,
-      override: { because: "Brian asked for the big one" },
+      override: { model: "opus[1m]", because: "Brian asked for the big one" },
     },
   });
   assert.equal(given.kind, "routed");
@@ -145,7 +148,10 @@ test("a routed hire naming a model is an override, and an override needs a becau
 test("an override naming an id the catalog does not publish is refused", () => {
   const outcome = resolve({
     requestedModel: "claude-sonnet-5",
-    request: { ...REQUEST, override: { because: "muscle memory" } },
+    request: {
+      ...REQUEST,
+      override: { model: "claude-sonnet-5", because: "muscle memory" },
+    },
   });
   assert.equal(outcome.kind, "refused");
   assert.match(outcome.reason, /claude-sonnet-5/);
@@ -157,7 +163,22 @@ test("a reason with no model is refused rather than read as a route", () => {
     request: { ...REQUEST, override: { because: "because I said so" } },
   });
   assert.equal(outcome.kind, "refused");
-  assert.match(outcome.reason, /names no model/);
+  assert.equal(outcome.code, "HIRE_MALFORMED");
+  assert.match(outcome.reason, /routing\.override\.model/);
+});
+
+test("action.model contradicting routing.override.model is refused, not merged", () => {
+  const outcome = resolve({
+    requestedModel: "sonnet",
+    request: {
+      ...REQUEST,
+      override: { model: "opus[1m]", because: "Brian asked for the big one" },
+    },
+  });
+  assert.equal(outcome.kind, "refused");
+  assert.equal(outcome.code, "HIRE_MALFORMED");
+  assert.match(outcome.reason, /sonnet/);
+  assert.match(outcome.reason, /opus\[1m\]/);
 });
 
 test("the wire check accepts a request and refuses anything that names a target", () => {
@@ -165,9 +186,10 @@ test("the wire check accepts a request and refuses anything that names a target"
   assert.equal(
     isCodingSessionHireRoutingRequest({
       ...REQUEST,
-      tier: "deep",
       profile: { verification: 4.7 },
       override: { model: "sonnet", effort: "high", because: "why" },
+      challengerSample: true,
+      reviewFlags: ["securityBoundary"],
     }),
     true,
   );
@@ -182,6 +204,16 @@ test("the wire check accepts a request and refuses anything that names a target"
     { ...REQUEST, profile: { nonsense: 4 } },
     { ...REQUEST, profile: { reasoning: 9 } },
     { ...REQUEST, chosen: { provider: "p", model: "m", effort: "low" } },
+    // The tier and the risk score are the host's to derive; a request that
+    // asserted either could disagree with the host without anybody noticing.
+    { ...REQUEST, tier: "deep" },
+    {
+      class: "builder",
+      risk: { ...REQUEST.risk, score: 18 },
+    },
+    { ...REQUEST, reviewFlags: ["notATrigger"] },
+    { ...REQUEST, challengerSample: "yes" },
+    { ...REQUEST, override: { because: "no model named" } },
     { ...REQUEST, override: { model: "sonnet", because: " " } },
     {
       ...REQUEST,

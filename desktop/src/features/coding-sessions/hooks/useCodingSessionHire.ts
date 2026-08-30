@@ -24,18 +24,22 @@ import {
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
   type CodingSessionHireAnswer,
+  type CodingSessionHireOutcomeState,
 } from "../lib/codingSessionHireAnswer";
 import {
+  formatCodingSessionHireRefusal,
   readCodingSessionHirePolicy,
   type CodingSessionHirePolicy,
 } from "../lib/codingSessionHirePolicy";
 import type { CodingSessionRegistrySource } from "../lib/codingSessionHireRouting";
 import {
+  isCodingSessionHireAuthorized,
   selectUnansweredCodingSessionHires,
   type CodingSessionHireSeatPlan,
 } from "../lib/codingSessionHireSeat";
 import {
   classifyCodingSessionHireEvent,
+  type CodingSessionHireClassification,
   type CodingSessionHireRequest,
 } from "../lib/codingSessionHireWire";
 import { publishCodingSessionLaneMessage } from "../lib/codingSessionLanePublish";
@@ -98,8 +102,14 @@ export type CodingSessionHireOutcome = {
   channelId: string;
   sessionRef: string;
   role: string;
-  /** What the host did. `error` means the answer itself failed to go out. */
-  state: "seated" | "refused" | "ignored" | "error";
+  /**
+   * What the host did. See {@link CodingSessionHireOutcomeState}.
+   *
+   * `malformed` is its own state, not a flavour of `refused`: the payload
+   * could not be read, so the refusal names a key rather than a policy, and an
+   * operator counting refusals must not have unreadable payloads folded in.
+   */
+  state: CodingSessionHireOutcomeState;
   /**
    * Refusal code, or the failure's own words. Null for a hire that was seated
    * *and* granted — a seated hire whose grant failed carries the grant's
@@ -267,6 +277,56 @@ export type UseCodingSessionHireInput = {
   deps?: CodingSessionHireDeps;
 };
 
+/**
+ * Every outcome this host has produced since the community-scoped subtree
+ * mounted, published so a surface with no access to the hook can read it.
+ *
+ * Module-level, and therefore community-scoped state — but it needs no entry
+ * in `resetCommunityState()`, because its only writer is
+ * {@link useCodingSessionHire}, which clears it both when its subscription
+ * starts and when it is torn down. Switching communities remounts
+ * `CodingSessionHireHost` (`App.tsx` keys the subtree), so the teardown runs
+ * and no previous community's hires can be read here. If a second writer is
+ * ever added, that stops being true and the reset belongs in
+ * `useCommunityInit.ts`.
+ */
+let publishedHireOutcomes: readonly CodingSessionHireOutcome[] = [];
+const hireOutcomeListeners = new Set<() => void>();
+
+function publishHireOutcomes(next: readonly CodingSessionHireOutcome[]): void {
+  publishedHireOutcomes = next;
+  for (const listener of [...hireOutcomeListeners]) listener();
+}
+
+/** The outcomes this host has published, newest last. */
+export function readCodingSessionHireOutcomes(): readonly CodingSessionHireOutcome[] {
+  return publishedHireOutcomes;
+}
+
+/** Watch the published outcomes. Returns the unsubscribe. */
+export function subscribeToCodingSessionHireOutcomes(
+  listener: () => void,
+): () => void {
+  hireOutcomeListeners.add(listener);
+  return () => {
+    hireOutcomeListeners.delete(listener);
+  };
+}
+
+/** Forget everything answered so far. Called by the hook, and by tests. */
+export function resetCodingSessionHireOutcomes(): void {
+  publishHireOutcomes([]);
+}
+
+/** The published outcomes, as React state, for surfaces outside this hook. */
+export function useCodingSessionHireOutcomes(): readonly CodingSessionHireOutcome[] {
+  return React.useSyncExternalStore(
+    subscribeToCodingSessionHireOutcomes,
+    readCodingSessionHireOutcomes,
+    readCodingSessionHireOutcomes,
+  );
+}
+
 /** Watch for hires and honour them. Returns what it has answered, newest last. */
 export function useCodingSessionHire(input: UseCodingSessionHireInput): {
   outcomes: CodingSessionHireOutcome[];
@@ -290,9 +350,14 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
   React.useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    resetCodingSessionHireOutcomes();
     const record = (outcome: CodingSessionHireOutcome) => {
       if (cancelled) return;
       setOutcomes((previous) => [...previous, outcome]);
+      // Published as well as held, so the umbrella strip can show what this
+      // host has answered without being handed the hook's state. An outcome
+      // nobody can see is the silence this whole path exists to end.
+      publishHireOutcomes([...readCodingSessionHireOutcomes(), outcome]);
     };
 
     const receive = (events: readonly RelayEvent[]) => {
@@ -302,8 +367,39 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       const requests: CodingSessionHireRequest[] = [];
       for (const event of events) {
         const classified = classifyCodingSessionHireEvent(event, allowed);
-        if (classified.kind !== "hire") continue;
-        requests.push(classified);
+        if (classified.kind === "hire") {
+          requests.push(classified);
+          continue;
+        }
+        // A hire this host cannot read is still a hire somebody is waiting on.
+        // `irrelevant` is not one of them — that is another action on the same
+        // kind, and counting a create as a malformed hire would make every
+        // ordinary session look like an attack on this store.
+        if (classified.kind !== "malformed") continue;
+        const key =
+          classified.address === null
+            ? `malformed:${event.id}`
+            : `malformed:${classified.address.channelId}:${classified.address.commandId}`;
+        if (answered.current.has(key)) continue;
+        answered.current.add(key);
+        // Logged before anything that can fail, and always — the 44220 below
+        // needs authority and a target, and neither is a reason for this
+        // machine to have no record of what it threw away.
+        console.warn(
+          `[coding-sessions] hire refused: HIRE_MALFORMED — ${classified.failingKey}: ${classified.reason}`,
+        );
+        void refuseMalformed(classified, record).catch((error: unknown) => {
+          record({
+            commandId: classified.address?.commandId ?? event.id,
+            channelId: classified.address?.channelId ?? "",
+            sessionRef: classified.address?.sessionRef ?? "",
+            role: classified.address?.role ?? "",
+            state: "error",
+            detail: error instanceof Error ? error.message : String(error),
+            seatCommandId: null,
+            granted: false,
+          });
+        });
       }
       // Newest first: a host that has been shut sees a whole backlog at once,
       // and the seat ceiling is finite.
@@ -333,7 +429,108 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
     return () => {
       cancelled = true;
       unsubscribe();
+      resetCodingSessionHireOutcomes();
     };
+
+    /**
+     * Answer a hire whose shape this host could not read.
+     *
+     * Recorded and logged unconditionally; *published* only into an umbrella
+     * this operator founded, and only to a requester that umbrella already
+     * trusts. The authority rule is the same one `planCodingSessionHireAnswer`
+     * applies and it is not weakened here: a malformed payload from a stranger
+     * must not be able to make this computer sign an event, or even confirm
+     * that it is listening.
+     */
+    async function refuseMalformed(
+      classified: Extract<
+        CodingSessionHireClassification,
+        { kind: "malformed" }
+      >,
+      report: (outcome: CodingSessionHireOutcome) => void,
+    ): Promise<void> {
+      const current = latest.current;
+      const address = classified.address;
+      const reason = `${classified.failingKey}: ${classified.reason}`;
+      if (address === null) {
+        report({
+          commandId: "",
+          channelId: "",
+          sessionRef: "",
+          role: "",
+          state: "malformed",
+          detail: `${reason} — and the envelope named no channel, command id or signer, so there was nobody to tell`,
+          seatCommandId: null,
+          granted: false,
+        });
+        return;
+      }
+      const outcome: CodingSessionHireOutcome = {
+        commandId: address.commandId,
+        channelId: address.channelId,
+        sessionRef: address.sessionRef ?? "",
+        role: address.role ?? "",
+        state: "malformed",
+        detail: reason,
+        seatCommandId: null,
+        granted: false,
+      };
+      const operator = current.input.operatorPubkey;
+      const umbrella =
+        address.sessionRef === null
+          ? null
+          : (current.input.umbrellas.find(
+              (entry) => entry.sessionRef === address.sessionRef,
+            ) ?? null);
+      if (
+        operator === null ||
+        umbrella === null ||
+        umbrella.founderPubkey !== operator
+      ) {
+        report(outcome);
+        return;
+      }
+      const fold = umbrella.genesisRef
+        ? await current.deps.fetchRosterFold(
+            address.channelId,
+            umbrella.genesisRef,
+          )
+        : null;
+      const grantedOperators = fold
+        ? [...fold.accepted.entries()]
+            .filter(([, role]) => role === "operator")
+            .map(([pubkey]) => pubkey)
+        : [];
+      if (
+        !isCodingSessionHireAuthorized(address.requesterPubkey, {
+          founderPubkey: umbrella.founderPubkey,
+          grantedOperators,
+        })
+      ) {
+        report(outcome);
+        return;
+      }
+      const text = formatCodingSessionHireRefusal({
+        code: "HIRE_MALFORMED",
+        reason,
+      });
+      await discloseCodingSessionHire(
+        {
+          channelId: address.channelId,
+          sessionRef: address.sessionRef ?? "",
+          requesterPubkey: address.requesterPubkey,
+          text,
+          notice: codingSessionHireRefusalNotice({
+            role: address.role ?? "seat",
+            requesterLabel: "A seat",
+            text,
+          }),
+        },
+        current.input,
+        current.deps,
+      );
+      report(outcome);
+    }
 
     async function honour(
       request: CodingSessionHireRequest,

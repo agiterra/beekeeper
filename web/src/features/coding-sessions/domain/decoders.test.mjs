@@ -635,3 +635,41 @@ test("a routed create is read, and a malformed routing record is not", () => {
     null,
   );
 });
+
+/**
+ * The two shapes the canonical producer actually writes.
+ *
+ * `Routing` in buzz-core has no `skip_serializing_if` on `profile`
+ * (`crates/buzz-core/src/coding_session_routing.rs:838`), so a record with no
+ * extra trait minimums is emitted as `profile: null` — and an observer that
+ * accepted only an object refused every record the CLI ever wrote.
+ * `proposedDisagreement` is the host's one sentence when its own choice
+ * differs from the `proposed` decision the hire carried; an observer that
+ * refused it would drop exactly the records that disclose a disagreement.
+ */
+test("a record with profile: null is read, not refused", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataJson({ routing: { ...ROUTING, profile: null } }),
+  );
+  assert.equal(parsed?.routing?.profile, null);
+});
+
+test("a record disclosing a disagreement with the proposal is read", () => {
+  const disagreed = {
+    ...ROUTING,
+    proposedDisagreement:
+      "the request proposed codex-primary/gpt-5.6-luna (low); this host routed claude-primary/sonnet (medium).",
+  };
+  assert.deepEqual(
+    parseBuzzCodingSessionMetadata(metadataJson({ routing: disagreed }))
+      ?.routing,
+    disagreed,
+  );
+  assert.equal(
+    parseBuzzCodingSessionMetadata(
+      metadataJson({ routing: { ...ROUTING, proposedDisagreement: "  " } }),
+    ),
+    null,
+    "a blank disagreement is a disclosure that discloses nothing",
+  );
+});

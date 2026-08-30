@@ -540,3 +540,171 @@ test("the hired seat's create carries the umbrella's project", async () => {
   );
   host.teardown();
 });
+
+/**
+ * A hire signed with a payload this host cannot read.
+ *
+ * Built by hand rather than through `buildCodingSessionHireEvent`, because the
+ * builder validates and would refuse to produce one — which is the point: the
+ * bad payload comes off the relay, from another machine's emitter, and this
+ * host is the one that has to answer it.
+ */
+async function signedMalformedHire(routing) {
+  const { KIND_CODING_SESSION_LIFECYCLE_COMMAND } = await import(
+    "@/shared/constants/kinds"
+  );
+  return finalizeEvent(
+    {
+      created_at: HIRE_CREATED_AT,
+      kind: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csl-v", "csl1-1"],
+        ["csl-command", "csl-hire-bad"],
+      ],
+      content: JSON.stringify({
+        schema: "buzz-coding-session-lifecycle-command/v1",
+        commandId: "csl-hire-bad",
+        action: {
+          type: "session.hire",
+          sessionRef: SESSION_REF,
+          genesisRef: GENESIS_REF,
+          role: "builder",
+          providerInstanceRef: "claude-primary",
+          model: null,
+          brief: "Take the badge lane. Red test first.",
+          routing,
+        },
+      }),
+    },
+    LEAD_SECRET,
+  );
+}
+
+/** The exact payload the CLI published on 2026-08-30: the RECORD, on a hire. */
+const ROUTING_RECORD_ON_A_HIRE = {
+  class: "builder",
+  tier: "standard",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
+  profile: null,
+  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
+  runnerUp: null,
+  reason: "cleared the builder gates",
+  reviewRequired: false,
+  reviewReasons: [],
+  challengerSample: false,
+  override: null,
+  registryVersion: 1,
+  catalogRevision: 7,
+};
+
+test("a hire this host cannot read is refused HIRE_MALFORMED, never dropped", async () => {
+  const { readCodingSessionHireOutcomes } = await import(
+    "../hooks/useCodingSessionHire.ts"
+  );
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  const host = await harness();
+  try {
+    await host.deliver(await signedMalformedHire(ROUTING_RECORD_ON_A_HIRE));
+  } finally {
+    console.warn = realWarn;
+  }
+
+  // Nothing was seated, and nothing was spent.
+  assert.equal(host.of(44221).length, 0);
+  assert.equal(host.steps.includes("worktree"), false);
+
+  // 1. The lead is told, by name.
+  const [turn] = host.of(44220);
+  assert.ok(turn, "the lead was never told the hire was unreadable");
+  const text = JSON.parse(turn.content).action.text;
+  assert.match(text, /^hire refused: HIRE_MALFORMED — action\.routing\.tier: /);
+  assert.match(text, /the host derives the tier from risk/);
+  assert.deepEqual(JSON.parse(turn.content).target, LEAD_TARGET);
+
+  // 2. The person who set the policy is told too.
+  const [notice] = host.of(9);
+  assert.ok(notice, "the umbrella was never told");
+  assert.match(notice.content, /hire refused: HIRE_MALFORMED/);
+
+  // 3. This machine keeps a record of what it threw away.
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /HIRE_MALFORMED — action\.routing\.tier/);
+
+  // 4. And it is countable, so a surface can show it.
+  const outcomes = readCodingSessionHireOutcomes();
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].state, "malformed");
+  assert.match(outcomes[0].detail, /^action\.routing\.tier: /);
+  host.teardown();
+});
+
+test("a hire carrying the contract's own request shape is not malformed", async () => {
+  const host = await harness();
+  await host.deliver(
+    await signedMalformedHire({
+      class: "builder",
+      risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+    }),
+  );
+  // It is read as a hire, so it reaches the router — and this host has no
+  // registry in the test harness, so the honest refusal is HIRE_NO_ROUTE, not
+  // a shape complaint.
+  const text = JSON.parse(host.of(44220)[0].content).action.text;
+  assert.match(text, /^hire refused: HIRE_NO_ROUTE — /);
+  assert.match(text, /registry not readable on this host/);
+  host.teardown();
+});
+
+test("a malformed hire from a stranger is recorded but never answered", async () => {
+  const stranger = generateSecretKey();
+  const { KIND_CODING_SESSION_LIFECYCLE_COMMAND } = await import(
+    "@/shared/constants/kinds"
+  );
+  const event = finalizeEvent(
+    {
+      created_at: HIRE_CREATED_AT,
+      kind: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csl-v", "csl1-1"],
+        ["csl-command", "csl-hire-stranger"],
+      ],
+      content: JSON.stringify({
+        schema: "buzz-coding-session-lifecycle-command/v1",
+        commandId: "csl-hire-stranger",
+        action: {
+          type: "session.hire",
+          sessionRef: SESSION_REF,
+          genesisRef: GENESIS_REF,
+          role: "builder",
+          providerInstanceRef: "claude-primary",
+          model: null,
+          brief: "seat me",
+          routing: ROUTING_RECORD_ON_A_HIRE,
+        },
+      }),
+    },
+    stranger,
+  );
+  const { readCodingSessionHireOutcomes } = await import(
+    "../hooks/useCodingSessionHire.ts"
+  );
+  const realWarn = console.warn;
+  console.warn = () => {};
+  const host = await harness();
+  try {
+    await host.deliver(event);
+  } finally {
+    console.warn = realWarn;
+  }
+
+  // Answering would tell an unknown pubkey that this computer is listening and
+  // will sign events on request. It is still counted, and still logged.
+  assert.equal(host.of(44220).length, 0);
+  assert.equal(host.of(9).length, 0);
+  assert.equal(readCodingSessionHireOutcomes()[0]?.state, "malformed");
+  host.teardown();
+});
