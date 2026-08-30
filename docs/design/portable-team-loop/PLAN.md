@@ -92,10 +92,12 @@ wire       relay reachable; catalog observed or awaiting first session
 blockers   stable code, source, exact remedy
 ```
 
-`team_readiness(projectRef)` is read-only. An explicit, idempotent
-`prepare_project_for_team(projectRef, names)` performs local preparation and
-returns a fresh report. It does not create a channel merely to manufacture a
-catalog.
+`team_readiness(projectRef, selectedRoles, hiringPolicyEnabled)` is read-only.
+The desktop owns one explicit, idempotent Prepare transaction over the existing
+named mutations: confirm and install role-pack names, provision the provider,
+start the provider, then always request a fresh readiness report. There is no
+one-shot native prepare command, and Prepare does not create a channel merely
+to manufacture a catalog.
 
 The primary UI action is **Prepare this project for teams**. The current folder
 installer becomes an Advanced/manual fallback, not the main journey.
@@ -176,7 +178,7 @@ Gate:
 
 - cold host returns stable blockers without writes;
 - locked keychain is `KEYCHAIN_UNAVAILABLE`, not a folder error;
-- a second prepare preserves provider and identity pubkeys;
+- a second UI Prepare transaction preserves provider and identity pubkeys;
 - missing, dirty, and wrong-project packs remain distinguishable;
 - partial profile sync is prepared-with-warning;
 - omitted source SHA is explicitly unknown.
@@ -216,8 +218,10 @@ Gate:
 #### R2. Readiness UI and launch gate
 
 Add the Agents readiness card, one Prepare action, exact remedies, and the Team
-launch gate. A real session remains visible if its first signed catalog is late;
-the UI says hiring is not ready and why.
+launch gate. Prepare orchestrates the existing install, provision, and start
+mutations in order, preserves partial progress, and re-reads readiness even
+after failure. A real session remains visible if its first signed catalog is
+late; the UI says hiring is not ready and why.
 
 #### T2. Relay, SDK, CLI, and provider context
 
