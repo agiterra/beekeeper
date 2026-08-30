@@ -91,6 +91,7 @@ export function useCodingSessionCatalog(
       authorityErrorMessage: trustedIngress.authorityErrorMessage,
       rejectedAuthorCount: trustedIngress.rejectedAuthorCount,
       invalidSignatureCount: trustedIngress.invalidSignatureCount,
+      turnStartedAtFor: trustedIngress.turnStartedAtFor,
     }),
     [channelId, createObservations.observations, trustedIngress],
   );

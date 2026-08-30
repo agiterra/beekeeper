@@ -105,6 +105,7 @@ export type CodingSessionTurnFailure = {
 /** In-memory index of verified turn receipts, keyed per (channel, command, stage). */
 export class CodingSessionTurnReceiptIndex {
   private readonly buckets = new Map<string, ReceiptBucket>();
+  private readonly startedByTurn = new Map<string, ReceiptBucket>();
 
   /** Store one already-verified turn receipt. */
   record(
@@ -117,6 +118,40 @@ export class CodingSessionTurnReceiptIndex {
     const bucket = this.buckets.get(key) ?? new Map();
     bucket.set(value.eventId, value);
     this.buckets.set(key, bucket);
+    if (status === "turn_started" && value.value.status === "turn_started") {
+      const startedKey = startedIndexKey(channelId, value.value.turnId);
+      const startedBucket = this.startedByTurn.get(startedKey) ?? new Map();
+      startedBucket.set(value.eventId, value);
+      this.startedByTurn.set(startedKey, startedBucket);
+    }
+  }
+
+  /**
+   * Signed provider receipt time for one provider turn, in Unix milliseconds.
+   *
+   * Duplicate identical receipts choose the earliest signed publication. Two
+   * different payloads from one authority are a conflict and return `null`.
+   */
+  resolveStartedAtMs(
+    channelId: string,
+    turnId: string,
+    providerAuthorityPubkey: string,
+  ): number | null {
+    const bucket = this.startedByTurn.get(startedIndexKey(channelId, turnId));
+    if (!bucket) return null;
+    const records = [...bucket.values()].filter(
+      (record) => record.signerPubkey === providerAuthorityPubkey,
+    );
+    if (records.length === 0) return null;
+    if (new Set(records.map((record) => record.canonicalPayload)).size !== 1) {
+      return null;
+    }
+    const first = records.sort(
+      (left, right) =>
+        left.createdAt - right.createdAt ||
+        left.eventId.localeCompare(right.eventId),
+    )[0];
+    return first ? first.createdAt * 1_000 : null;
   }
 
   /**
@@ -215,5 +250,13 @@ function indexKey(
     channelId,
     commandId,
     status,
+  );
+}
+
+function startedIndexKey(channelId: string, turnId: string): string {
+  return encodeStructuredKey(
+    "coding-session-turn-started-store/v1",
+    channelId,
+    turnId,
   );
 }

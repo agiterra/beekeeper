@@ -159,6 +159,12 @@ export type CodingSessionCatalogSnapshot = {
   authorityErrorMessage: string | null;
   rejectedAuthorCount: number;
   invalidSignatureCount: number;
+  /** Verified provider-signed `turn_started` publication time, when present. */
+  turnStartedAtFor?: (
+    channelId: string,
+    turnId: string,
+    providerAuthorityPubkey: string,
+  ) => number | null;
 };
 
 export type GlobalCodingSessionCatalogRecord = {

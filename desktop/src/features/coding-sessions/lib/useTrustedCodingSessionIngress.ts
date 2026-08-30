@@ -105,6 +105,12 @@ export type TrustedCodingSessionIngressHookSnapshot =
       commandId: string,
       providerAuthorityPubkey: string,
     ) => CodingSessionLifecycleResolution | null;
+    /** Resolve a verified provider-signed `turn_started` event time. */
+    turnStartedAtFor: (
+      channelId: string,
+      turnId: string,
+      providerAuthorityPubkey: string,
+    ) => number | null;
   };
 
 /**
@@ -122,6 +128,7 @@ export type TrustedCodingSessionIngressBootstrap = {
 const NO_RETAINED_RAW_EVENTS = (): RelayEvent[] => [];
 const NO_LIFECYCLE_RESOLUTION = (): CodingSessionLifecycleResolution | null =>
   null;
+const NO_TURN_STARTED_AT = (): number | null => null;
 
 /**
  * One native filter covers every coding-session kind.
@@ -185,6 +192,7 @@ function emptySnapshot(
     turnProgress,
     retainedRawEvents: NO_RETAINED_RAW_EVENTS,
     lifecycleFor: NO_LIFECYCLE_RESOLUTION,
+    turnStartedAtFor: NO_TURN_STARTED_AT,
   };
 }
 
@@ -481,6 +489,14 @@ export function useTrustedCodingSessionIngress(
             ? store.resolveLifecycle(
                 forChannelId,
                 forCommandId,
+                forAuthorityPubkey,
+              )
+            : null,
+        turnStartedAtFor: (forChannelId, turnId, forAuthorityPubkey) =>
+          isExactProviderAuthorityPubkey(forAuthorityPubkey)
+            ? store.resolveTurnStartedAtMs(
+                forChannelId,
+                turnId,
                 forAuthorityPubkey,
               )
             : null,

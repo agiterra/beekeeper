@@ -79,6 +79,8 @@ import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/l
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 import { useCodingSessionClosureDialog } from "../hooks/useCodingSessionClosureDialog";
+import { useCommunities } from "@/features/communities/useCommunities";
+import { normalizeRelayUrl } from "@/shared/lib/normalizeRelayUrl";
 
 type CodingSessionWorkspaceProps = {
   bootstrap?: CodingSessionPopoutBootstrap | null;
@@ -99,6 +101,8 @@ export function CodingSessionWorkspace({
 }: CodingSessionWorkspaceProps) {
   const [addProviderOpen, setAddProviderOpen] = React.useState(false);
   const identity = useIdentityQuery();
+  const { activeCommunity } = useCommunities();
+  const communityScope = normalizeRelayUrl(activeCommunity?.relayUrl ?? "");
   const catalog = useCodingSessionCatalog(channelId, bootstrap, {
     requirePopoutBootstrap: requireBootstrap,
     // Viewing is channel-membership authority: any member of the channel sees
@@ -265,6 +269,7 @@ export function CodingSessionWorkspace({
         <UmbrellaCodingSessionWorkspace
           channelId={channelId}
           channelName={channel?.name ?? null}
+          communityScope={communityScope}
           focusedExecution={resolution.focusedExecution}
           generationId={generationId}
           isMember={isMember}
@@ -286,6 +291,7 @@ export function CodingSessionWorkspace({
           goal={goal}
           sessionName={sessionName}
           sessionClosed={sessionClosed}
+          turnStartedAtFor={catalog.turnStartedAtFor}
         />
       ) : (
         <ReadyCodingSessionWorkspace

@@ -20,12 +20,14 @@ import {
 import {
   CodingSessionUmbrellaTimelineView,
   buildUmbrellaTurnBlockHandoff,
+} from "./CodingSessionUmbrellaWorkspace.tsx";
+import {
   shouldAutoOpenAgentsSurface,
   shouldShowTurnBlockProvenance,
   scrollCodingSessionNarrativeToLatest,
   umbrellaAgentStatusSummary,
   umbrellaWorkspaceStatus,
-} from "./CodingSessionUmbrellaWorkspace.tsx";
+} from "./CodingSessionUmbrellaWorkspaceModel.ts";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail.tsx";
 
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";

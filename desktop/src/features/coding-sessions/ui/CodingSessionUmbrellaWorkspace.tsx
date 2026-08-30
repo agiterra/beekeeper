@@ -4,6 +4,12 @@ import { toast } from "sonner";
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
+  readCodingSessionLensPreference,
+  type CodingSessionLens,
+  writeCodingSessionLensPreference,
+} from "@/features/coding-sessions/lib/codingSessionLensPreference";
+import { deriveCodingSessionStreamPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
+import {
   resolveCodingSessionHandoffFactLocation,
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
@@ -31,13 +37,11 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import {
   buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
-  type CodingSessionUmbrellaTimelineEntry,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionExecution,
   CodingSessionUmbrellaRecord,
-  CodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
 import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
@@ -46,7 +50,6 @@ import type { CodingSessionSurface } from "@/features/coding-sessions/lib/coding
 import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import {
   codingSessionUmbrellaGenerationLabel,
-  codingSessionWireWorkspaceStatus,
   deriveCodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
@@ -94,6 +97,18 @@ import {
 } from "./CodingSessionUmbrellaComposer";
 import { CodingSessionUmbrellaTurnBlock } from "./CodingSessionUmbrellaTurnBlock";
 import { UmbrellaConversationRow } from "./CodingSessionUmbrellaConversationRow";
+import { CodingSessionLensControl } from "./CodingSessionLensControl";
+import { CodingSessionParticipantBar } from "./CodingSessionParticipantBar";
+import { CodingSessionLiveActivityBar } from "./CodingSessionLiveActivityBar";
+import {
+  blockTargetKey,
+  resolveWorkingBlockKeys,
+  scrollCodingSessionNarrativeToLatest,
+  shouldAutoOpenAgentsSurface,
+  shouldShowTurnBlockProvenance,
+  umbrellaAgentStatusSummary,
+  umbrellaWorkspaceStatus,
+} from "./CodingSessionUmbrellaWorkspaceModel";
 
 export { buildUmbrellaTurnBlockHandoff } from "./CodingSessionUmbrellaTurnBlock";
 
@@ -107,6 +122,7 @@ export function UmbrellaCodingSessionWorkspace({
   acceptedOperators = null,
   channelId,
   channelName,
+  communityScope,
   generationId,
   isMember,
   onAddProvider,
@@ -122,11 +138,14 @@ export function UmbrellaCodingSessionWorkspace({
   goal,
   sessionName = null,
   sessionClosed = false,
+  turnStartedAtFor,
 }: {
   /** Live operator grants from the session roster; null while unknown. */
   acceptedOperators?: ReadonlySet<string> | null;
   channelId: string;
   channelName: string | null;
+  /** Stable normalized relay/community identity for local lens persistence. */
+  communityScope: string;
   generationId: string;
   isMember: boolean;
   /** Opens the join flow (design §B); absent when this session cannot join. */
@@ -144,6 +163,11 @@ export function UmbrellaCodingSessionWorkspace({
   goal: CodingSessionGoal | null;
   sessionName?: CodingSessionName | null;
   sessionClosed?: boolean;
+  turnStartedAtFor?: (
+    channelId: string,
+    turnId: string,
+    providerAuthorityPubkey: string,
+  ) => number | null;
 }) {
   const gutter = useCodingSessionColumnGutter();
   const identity = useIdentityQuery();
@@ -155,6 +179,23 @@ export function UmbrellaCodingSessionWorkspace({
   const isNarrow = bodyWidthPx > 0 && bodyWidthPx < 960;
   const headerCompact = bodyWidthPx > 0 && bodyWidthPx < 1320;
   const isMultiExecution = umbrella.executions.length > 1;
+  const lensCoordinates = React.useMemo(
+    () => ({
+      communityScope,
+      channelId,
+      sessionKey: umbrella.sessionRef ?? umbrella.umbrellaKey,
+    }),
+    [channelId, communityScope, umbrella.sessionRef, umbrella.umbrellaKey],
+  );
+  const [lens, setLens] = React.useState<CodingSessionLens>(() =>
+    isMultiExecution
+      ? readCodingSessionLensPreference({
+          ...lensCoordinates,
+          storage: window.localStorage,
+        })
+      : "conversation",
+  );
+  const mission = isMultiExecution && lens === "mission";
   const [focusedExecutionKey, setFocusedExecutionKey] = React.useState<
     string | null
   >(null);
@@ -373,6 +414,38 @@ export function UmbrellaCodingSessionWorkspace({
       }),
     [composerParticipants, resolveReachability],
   );
+  const canSteerTeam =
+    currentUserPubkey !== null &&
+    (currentUserPubkey.toLowerCase() ===
+      umbrella.founderPubkey?.toLowerCase() ||
+      acceptedOperators?.has(currentUserPubkey) === true);
+  const streamPresence = React.useMemo(
+    () =>
+      deriveCodingSessionStreamPresence({
+        umbrella,
+        resolveActorName: workspaceActorName,
+        resolveStatus: (execution) => {
+          const record = execution.activeGeneration;
+          return deriveCodingSessionWorkspaceStatus(
+            record.transcript,
+            record.status,
+            record.statusAt,
+            resolveReachability(record.commandTarget),
+          );
+        },
+        resolveTurnStartedAt: (execution, turnId) =>
+          turnStartedAtFor?.(channelId, turnId, execution.signerPubkey) ?? null,
+        canSteer: canSteerTeam,
+      }),
+    [
+      canSteerTeam,
+      channelId,
+      resolveReachability,
+      turnStartedAtFor,
+      umbrella,
+      workspaceActorName,
+    ],
+  );
   const focusedAgent =
     agentFocusItems.find((item) => item.executionKey === focusedExecutionKey) ??
     null;
@@ -390,6 +463,17 @@ export function UmbrellaCodingSessionWorkspace({
   const handleFocusExecution = React.useCallback(
     (executionKey: string | null) => setFocusedExecutionKey(executionKey),
     [],
+  );
+  const handleLensChange = React.useCallback(
+    (nextLens: CodingSessionLens) => {
+      setLens(nextLens);
+      writeCodingSessionLensPreference({
+        ...lensCoordinates,
+        lens: nextLens,
+        storage: window.localStorage,
+      });
+    },
+    [lensCoordinates],
   );
   React.useLayoutEffect(() => {
     if (focusedExecutionKey === null) return;
@@ -417,7 +501,7 @@ export function UmbrellaCodingSessionWorkspace({
       <div className="shrink-0" data-testid="coding-session-authority-summary">
         <CodingSessionHeader
           agentControls={
-            isMultiExecution && !isNarrow ? (
+            isMultiExecution && !isNarrow && !mission ? (
               <CodingSessionAgentFocus
                 agentSurfaceOpen={surfaceHost.activeTab === "agents"}
                 focusedExecutionKey={focusedExecutionKey}
@@ -491,6 +575,17 @@ export function UmbrellaCodingSessionWorkspace({
           taskRailOpen={composerTaskDock.open}
         />
         {isMultiExecution ? (
+          <div className="flex items-center justify-center border-b border-border/55 bg-background/90 px-4 py-2">
+            <CodingSessionLensControl lens={lens} onChange={handleLensChange} />
+          </div>
+        ) : null}
+        {mission ? (
+          <CodingSessionParticipantBar
+            focusedExecutionKey={focusedExecutionKey}
+            items={streamPresence.participants}
+            onFocus={handleFocusExecution}
+          />
+        ) : isMultiExecution ? (
           <CodingSessionDispositionStrip
             actorNames={workspaceActorName}
             resolveReachability={resolveReachability}
@@ -522,7 +617,7 @@ export function UmbrellaCodingSessionWorkspace({
               sessionRef={umbrella.sessionRef}
               workspaceExpanded={narrativeExpanded}
             />
-            {isMultiExecution && isNarrow ? (
+            {isMultiExecution && isNarrow && !mission ? (
               <div className="mt-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <CodingSessionAgentFocus
                   agentSurfaceOpen={surfaceHost.activeTab === "agents"}
@@ -549,7 +644,7 @@ export function UmbrellaCodingSessionWorkspace({
             <CodingSessionColumn
               className={cn(
                 "min-h-full pt-7",
-                activeWorkAgents.length > 0 ||
+                (!mission && activeWorkAgents.length > 0) ||
                   (composerTaskDock.open && !isNarrow)
                   ? "pb-[34rem]"
                   : "pb-48",
@@ -581,7 +676,14 @@ export function UmbrellaCodingSessionWorkspace({
                 className="pointer-events-auto"
                 expanded={narrativeExpanded}
               >
-                {isMultiExecution ? (
+                {mission ? (
+                  <div className="-mb-6">
+                    <CodingSessionLiveActivityBar
+                      items={streamPresence.liveActivity}
+                      onFocus={handleFocusExecution}
+                    />
+                  </div>
+                ) : isMultiExecution ? (
                   <div className="-mb-6">
                     <CodingSessionActiveWorkDock
                       agents={activeWorkAgents}
@@ -649,13 +751,6 @@ export function UmbrellaCodingSessionWorkspace({
       {stopAllDialog}
     </main>
   );
-}
-
-export function scrollCodingSessionNarrativeToLatest(
-  viewport: Pick<HTMLElement, "scrollHeight" | "scrollTo"> | null,
-): void {
-  if (!viewport) return;
-  viewport.scrollTo({ behavior: "smooth", top: viewport.scrollHeight });
 }
 
 /**
@@ -894,100 +989,4 @@ export function CodingSessionUmbrellaTimelineView({
       {pendingTurns}
     </div>
   );
-}
-
-/**
- * Provenance labels a contiguous execution run, not every turn. A generation
- * lifecycle row already identifies the execution and generation, so the first
- * block after that row does not repeat the same chrome either.
- */
-export function shouldShowTurnBlockProvenance(
-  entries: readonly CodingSessionUmbrellaTimelineEntry[],
-  index: number,
-): boolean {
-  const entry = entries[index];
-  if (entry?.kind !== "turn-block") return false;
-  const previous = entries[index - 1];
-  if (!previous) return true;
-  if (previous.kind === "conversation") return true;
-  if (previous.executionKey !== entry.executionKey) return true;
-  if (previous.kind === "lifecycle") {
-    return previous.generation !== entry.generation;
-  }
-  return (
-    previous.kind !== "turn-block" || previous.generation !== entry.generation
-  );
-}
-
-/** Map the umbrella's derived status onto the header's three honest states. */
-export function umbrellaWorkspaceStatus(
-  umbrella: Pick<CodingSessionUmbrellaRecord, "status">,
-): CodingSessionWorkspaceStatus {
-  return codingSessionWireWorkspaceStatus(umbrella.status);
-}
-
-export function umbrellaAgentStatusSummary(
-  agents: readonly CodingSessionAgentFocusItem[],
-): string | null {
-  if (agents.length <= 1) return null;
-  const working = agents.filter(
-    (agent) => agent.status.kind === "working",
-  ).length;
-  if (working > 0) {
-    return `${agents.length} agents · ${working} working`;
-  }
-  const attention = agents.filter(
-    (agent) => agent.status.kind === "unknown" && agent.status.attention,
-  ).length;
-  if (attention > 0) {
-    return `${agents.length} agents · ${attention} need attention`;
-  }
-  return `${agents.length} agents · idle`;
-}
-
-export function shouldAutoOpenAgentsSurface({
-  bodyWidthPx,
-  isMultiExecution,
-}: {
-  bodyWidthPx: number;
-  isMultiExecution: boolean;
-}): boolean {
-  return isMultiExecution && bodyWidthPx >= 1920;
-}
-
-/** The exact `cs-target` key of a block's stream, when the record has one. */
-function blockTargetKey(
-  record: CodingSessionCatalogRecord | null,
-): string | null {
-  return record?.commandTarget
-    ? buildCodingSessionTargetKey(record.commandTarget)
-    : null;
-}
-
-/**
- * The keys of blocks that are visibly streaming: the last block of each
- * execution whose active generation reports a working status.
- */
-function resolveWorkingBlockKeys(
-  umbrella: CodingSessionUmbrellaRecord,
-  entries: readonly CodingSessionUmbrellaTimelineEntry[],
-): ReadonlySet<string> {
-  const runningExecutions = new Set(
-    umbrella.executions
-      .filter((execution) => execution.activeGeneration.status === "running")
-      .map((execution) => execution.executionKey),
-  );
-  const lastBlockKeyByExecution = new Map<string, string>();
-  for (const entry of entries) {
-    if (
-      entry.kind === "turn-block" &&
-      runningExecutions.has(entry.executionKey)
-    ) {
-      lastBlockKeyByExecution.set(
-        entry.executionKey,
-        codingSessionUmbrellaEntryKey(entry),
-      );
-    }
-  }
-  return new Set(lastBlockKeyByExecution.values());
 }

@@ -31,6 +31,7 @@ export default defineConfig({
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/search-scope-screenshots.spec.ts",
         "**/coding-sessions.spec.ts",
+        "**/coding-session-mission-lens.spec.ts",
         "**/crew-front-door.spec.ts",
         "**/role-packs-project.spec.ts",
         "**/coding-session-reachability.spec.ts",

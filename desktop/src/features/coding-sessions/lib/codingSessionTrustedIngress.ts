@@ -873,6 +873,20 @@ export class TrustedCodingSessionIngressStore {
     );
   }
 
+  /** Provider-signed `turn_started` receipt time for an execution turn. */
+  resolveTurnStartedAtMs(
+    channelId: string,
+    turnId: string,
+    providerAuthorityPubkey: string,
+  ): number | null {
+    if (!isExactProviderAuthorityPubkey(providerAuthorityPubkey)) return null;
+    return this.turnReceipts.resolveStartedAtMs(
+      channelId,
+      turnId,
+      providerAuthorityPubkey,
+    );
+  }
+
   private retainRawEvent(
     event: RelayEvent,
     scope: CodingSessionGenerationScope,

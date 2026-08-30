@@ -1565,6 +1565,14 @@ test("queued then started is two facts about one turn, not a conflict", () => {
     { stage: "started", turnId: "turn-abc" },
   );
   assert.equal(
+    store.resolveTurnStartedAtMs(CHANNEL_ID, "turn-abc", PROVIDER_PUBKEY),
+    1_800_000_000_000,
+  );
+  assert.equal(
+    store.resolveTurnStartedAtMs(CHANNEL_ID, "other-turn", PROVIDER_PUBKEY),
+    null,
+  );
+  assert.equal(
     store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
     null,
   );
