@@ -331,7 +331,7 @@ test("the rule matches the CLI's, including its wildcard and pair semantics", ()
 });
 
 /**
- * The cross-implementation contract. `testdata/rubric/live-catalog-665076ce.json`
+ * The cross-implementation contract. `testdata/routing/live-catalog-665076ce.json`
  * is the kind:44222 catalog this repository's relay really served; the Rust
  * check (`crates/buzz-cli/src/commands/sessions/rubric.rs`) asserts the same
  * recorded lists against the same file, so the two cannot drift apart.
@@ -340,7 +340,7 @@ test("the live catalog fixture produces the recorded lists", () => {
   const fixture = JSON.parse(
     readFileSync(
       new URL(
-        "../../../../../testdata/rubric/live-catalog-665076ce.json",
+        "../../../../../testdata/routing/live-catalog-665076ce.json",
         import.meta.url,
       ),
       "utf8",

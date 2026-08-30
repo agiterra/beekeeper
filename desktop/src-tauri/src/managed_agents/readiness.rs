@@ -134,11 +134,10 @@ pub(crate) fn resolve_effective_harness_descriptor(
     // Resolution order: record.runtime → persona.runtime → nothing, via the
     // one host-owned resolution in `effective_config` (item 90).
     let harness_def = {
-        let runtime_id =
-            crate::managed_agents::effective_config::resolve_effective_runtime_id(
-                record, personas, global,
-            )
-            .unwrap_or_default();
+        let runtime_id = crate::managed_agents::effective_config::resolve_effective_runtime_id(
+            record, personas, global,
+        )
+        .unwrap_or_default();
         crate::managed_agents::custom_harnesses::lookup_loaded_harness_by_id(&runtime_id)
     };
 
@@ -186,11 +185,10 @@ pub(crate) fn resolve_effective_agent_env(
     // Look up the harness definition for definition-level env (preset/custom).
     // Same single resolution `resolve_effective_harness_descriptor` uses.
     let harness_def = {
-        let runtime_id =
-            crate::managed_agents::effective_config::resolve_effective_runtime_id(
-                record, personas, global,
-            )
-            .unwrap_or_default();
+        let runtime_id = crate::managed_agents::effective_config::resolve_effective_runtime_id(
+            record, personas, global,
+        )
+        .unwrap_or_default();
         crate::managed_agents::custom_harnesses::lookup_loaded_harness_by_id(&runtime_id)
     };
 

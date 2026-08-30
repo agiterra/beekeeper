@@ -632,6 +632,55 @@ void main() {
       }
     });
 
+    test('the router\'s own review reasons decode, value and all', () {
+      // The canonical router renders the two numeric §6 triggers with the
+      // number that fired them (coding_session_routing.rs:1555). This decoder
+      // once policed `reviewReasons` against a closed set of slugs and so
+      // refused the router's own record as malformed; the vocabulary is open
+      // and bounded on both sides now.
+      final routed = routingRecord()
+        ..['reviewRequired'] = true
+        ..['reviewReasons'] = <Object?>[
+          'risk 80 >= 40',
+          'irreversibility 4 >= 4',
+          'securityBoundary',
+        ];
+      expect(
+        decodeCodingSessionMetadata(metadataEvent(routing: routed)).value,
+        isNotNull,
+      );
+    });
+
+    test(
+      'a review reason is still bounded, blank and oversized are refused',
+      () {
+        final bad = <List<Object?>>[
+          <Object?>['   '],
+          <Object?>['x' * 257],
+          <Object?>[42],
+          List<Object?>.filled(17, 'leadRequests'),
+        ];
+        for (final reasons in bad) {
+          final routing = routingRecord()
+            ..['reviewRequired'] = true
+            ..['reviewReasons'] = reasons;
+          expect(
+            decodeCodingSessionMetadata(metadataEvent(routing: routing)).reason,
+            CodingSessionDecodeReason.malformedPayload,
+            reason: jsonEncode(reasons),
+          );
+        }
+        final sixteen = routingRecord()
+          ..['reviewRequired'] = true
+          ..['reviewReasons'] = List<Object?>.filled(16, 'leadRequests');
+        expect(
+          decodeCodingSessionMetadata(metadataEvent(routing: sixteen)).value,
+          isNotNull,
+          reason: 'sixteen is the cap buzz-core signs, not one fewer',
+        );
+      },
+    );
+
     test('a routed create decodes, and a malformed one is refused', () {
       expect(
         decodeCodingSessionCreate(

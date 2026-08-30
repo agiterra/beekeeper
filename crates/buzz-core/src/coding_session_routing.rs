@@ -2864,6 +2864,49 @@ mod tests {
             "the tools fact is this lane's reading and must say so: {note}"
         );
     }
+    /// The other half of the cross-implementation contract: a record the
+    /// **desktop** router produced, deserialized here.
+    ///
+    /// The literal below is stdout from `routeCodingSession` in
+    /// `desktop/src/features/coding-sessions/lib/codingSessionRouting.ts`, run
+    /// against this repository's own `team/model-registry.yaml` and the live
+    /// catalog fixture for `architect` at risk 5×4×4 with the security-boundary
+    /// flag set. It is pasted rather than generated because the point is that
+    /// buzz-core accepts bytes it did not write.
+    ///
+    /// It caught a real break: every strict observer used to police
+    /// `reviewReasons` against a closed set of slugs, so this router's own
+    /// `"risk 80 >= 40"` was refused as malformed by desktop, web and mobile
+    /// alike. The vocabulary is open and bounded on both sides now, and this
+    /// test is what says so.
+    #[test]
+    fn a_record_the_desktop_router_wrote_is_one_this_crate_accepts() {
+        const FROM_DESKTOP: &str = r#"{"class":"architect","tier":"deep","risk":{"impact":5,"uncertainty":4,"irreversibility":4,"score":80},"chosen":{"provider":"codex-primary","model":"gpt-5.6-sol[high]","effort":"high"},"runnerUp":{"provider":"claude-primary","model":"opus[1m]","effort":"high"},"reason":"cleared the architect gates (reasoning≥4.7, judgment≥4.7, discipline≥4.5, context≥4.5, verification≥4.5) and the deep tier's high effort; incumbent, cheaper than claude-primary/opus[1m].","reviewRequired":true,"reviewReasons":["risk 80 >= 40","irreversibility 4 >= 4","securityBoundary"],"challengerSample":false,"override":null,"registryVersion":1,"catalogRevision":7}"#;
+
+        let record: Routing = serde_json::from_str(FROM_DESKTOP)
+            .expect("buzz-core deserializes the desktop router's own record");
+        record
+            .validate()
+            .expect("and every bound and token in it holds");
+        assert!(
+            record.is_complete(),
+            "a routed create must carry every router-filled field"
+        );
+
+        // And the two routers agree about it, field for field.
+        let mut wanted = request("architect", (5, 4, 4));
+        wanted.review_flags.security_boundary = true;
+        let ours = route(&shipped(), &live_offer(), &wanted, Some(7)).expect("a route");
+        assert_eq!(chosen(&ours), "codex-primary/gpt-5.6-sol[high]");
+        assert_eq!(runner_up(&ours).as_deref(), Some("claude-primary/opus[1m]"));
+        assert_eq!(ours.record.tier, record.tier);
+        assert_eq!(ours.record.review_required, record.review_required);
+        assert_eq!(ours.record.review_reasons, record.review_reasons);
+        assert_eq!(ours.record.challenger_sample, record.challenger_sample);
+        assert_eq!(ours.record.registry_version, record.registry_version);
+        assert_eq!(ours.record.catalog_revision, record.catalog_revision);
+    }
+
     /// The cross-implementation contract, on the catalog this relay really
     /// served: every decision in `testdata/routing/live-catalog-665076ce.json`
     /// is recorded once and asserted here. Lane B's TypeScript router pins to

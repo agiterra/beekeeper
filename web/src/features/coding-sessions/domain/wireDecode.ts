@@ -209,16 +209,18 @@ export function hasOwnKey(value: object, key: string): boolean {
 
 const ROUTING_EFFORTS = new Set(["low", "medium", "high"]);
 const ROUTING_TIERS = new Set(["fast", "standard", "deep"]);
-const ROUTING_REVIEW_TRIGGERS = new Set([
-  "risk>=40",
-  "irreversibility>=4",
-  "security-auth-data-boundary",
-  "architecture-schema-public-contract",
-  "builder-outside-plan",
-  "builder-reports-uncertainty",
-  "tests-cannot-verify",
-  "lead-requested",
-]);
+/**
+ * A review reason is a bounded token, not a member of a closed set.
+ *
+ * The canonical router renders the two numeric §6 triggers with the value that
+ * fired them — `risk 80 >= 40`, `irreversibility 4 >= 4` — so a reader is told
+ * the fact rather than the rule (`crates/buzz-core/src/coding_session_routing.rs:1555`).
+ * A closed vocabulary here would make this observer reject the router's own
+ * record as malformed, which is exactly the kind of lie that shows up as
+ * "the seat says nothing about why it is that model".
+ */
+const MAX_ROUTING_REVIEW_REASONS = 16;
+const MAX_ROUTING_TOKEN_BYTES = 256;
 const ROUTING_TRAITS = new Set([
   "reasoning",
   "coding",
@@ -280,7 +282,10 @@ export function isStrictRoutingRecord(value: unknown): boolean {
   if (typeof value.reviewRequired !== "boolean") return false;
   if (
     !Array.isArray(value.reviewReasons) ||
-    value.reviewReasons.some((entry) => !ROUTING_REVIEW_TRIGGERS.has(entry))
+    value.reviewReasons.length > MAX_ROUTING_REVIEW_REASONS ||
+    value.reviewReasons.some(
+      (entry) => !boundedNonempty(entry, MAX_ROUTING_TOKEN_BYTES),
+    )
   ) {
     return false;
   }

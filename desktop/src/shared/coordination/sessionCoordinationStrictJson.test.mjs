@@ -285,9 +285,10 @@ test("the wire never carries a routed effort the router may not buy", () => {
 test("reviewRequired must agree with the triggers it lists", () => {
   assert.equal(
     isStrictMetadataContent(
-      metadata({ routing: { ...ROUTING, reviewReasons: ["risk>=40"] } }),
+      metadata({ routing: { ...ROUTING, reviewReasons: ["risk 80 >= 40"] } }),
     ),
     false,
+    "reviewRequired false while a trigger is listed is a contradiction",
   );
   assert.equal(
     isStrictMetadataContent(
@@ -295,7 +296,9 @@ test("reviewRequired must agree with the triggers it lists", () => {
         routing: {
           ...ROUTING,
           reviewRequired: true,
-          reviewReasons: ["risk>=40", "irreversibility>=4"],
+          // Exactly what the canonical router emits, value and all
+          // (crates/buzz-core/src/coding_session_routing.rs:1555-1564).
+          reviewReasons: ["risk 80 >= 40", "irreversibility 4 >= 4"],
         },
       }),
     ),
@@ -307,12 +310,31 @@ test("reviewRequired must agree with the triggers it lists", () => {
         routing: {
           ...ROUTING,
           reviewRequired: true,
-          reviewReasons: ["because I felt like it"],
+          reviewReasons: ["securityBoundary", "leadRequests"],
         },
       }),
     ),
-    false,
+    true,
+    "the six flag triggers keep the names buzz-core gives them",
   );
+});
+
+test("a review reason is a bounded token, not a member of a closed set", () => {
+  // The vocabulary is open because two of the §6 triggers carry the number
+  // that fired them. What the observer still refuses is a reason that is not
+  // a reason: blank, oversized, or a list longer than buzz-core will sign.
+  const reasons = (list) =>
+    isStrictMetadataContent(
+      metadata({
+        routing: { ...ROUTING, reviewRequired: true, reviewReasons: list },
+      }),
+    );
+  assert.equal(reasons(["risk 80 >= 40"]), true);
+  assert.equal(reasons(["   "]), false, "blank");
+  assert.equal(reasons(["x".repeat(257)]), false, "over 256 bytes");
+  assert.equal(reasons([42]), false, "not a string");
+  assert.equal(reasons(Array(16).fill("leadRequests")), true, "16 is the cap");
+  assert.equal(reasons(Array(17).fill("leadRequests")), false, "17 is not");
 });
 
 test("a routed create is a strict lifecycle command, unrouted or not", () => {

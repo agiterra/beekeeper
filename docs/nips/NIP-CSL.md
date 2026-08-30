@@ -469,6 +469,15 @@ so a hire or create signed before the router existed stays byte-valid forever.
 * `reviewRequired` follows the review trigger list, **not** the tier. A record
   claiming `reviewRequired: false` while `reviewReasons` lists triggers that
   fired is refused: it disagrees with itself.
+* `reviewReasons` is an **open vocabulary of bounded tokens** — at most 16
+  entries, each 1..=256 non-blank bytes — and an observer must not police it
+  against a closed set. Six of the §6 triggers ride as the flag names the
+  caller passed (`securityBoundary`, `contractChange`, `outsidePlan`,
+  `builderUncertain`, `testsInsufficient`, `leadRequests`); the two the router
+  computes carry the number that fired them, `risk 80 >= 40` and
+  `irreversibility 4 >= 4`, because a reader told only `risk>=40` has to redo
+  the arithmetic to learn what happened. An implementation that enumerated the
+  slugs would reject the router's own record as malformed.
 * `challengerSample` marks a decision that deliberately routed a challenger, so
   its outcome can be attributed later rather than read as a normal route.
 * `override` is a human overruling the router. `because` is required and

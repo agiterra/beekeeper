@@ -117,7 +117,7 @@ the session runtime or above it"*:
   "risk": { "impact": 5, "uncertainty": 4, "irreversibility": 5, "score": 100 },
   "profile": { "reasoning": 4.8, "judgment": 4.8, "context": 4.8, "verification": 4.5 },
   "reviewRequired": true,
-  "reviewReasons": ["risk>=40", "irreversibility>=4", "architectureChange"],
+  "reviewReasons": ["risk 100 >= 40", "irreversibility 5 >= 4", "contractChange"],
   "challengerSample": false,
   "override": null
 }
@@ -141,6 +141,11 @@ review is preferred wherever an eligible target exists:
 
 DEEP does not imply review, and review does not imply DEEP. Pass the flags you
 can judge; the router adds the two it computes itself.
+
+The two it computes are written out with the number that fired them — `risk 100
+>= 40`, `irreversibility 5 >= 4` — not as a bare rule, so a reader is told the
+fact rather than being asked to redo the arithmetic. The other six ride on the
+record under the flag names above, exactly as you passed them.
 
 ## 6. Challenger sampling — every 5th STANDARD builder job
 

@@ -104,7 +104,6 @@ fn persona_drift_state(
     (out_of_date, false)
 }
 
-
 pub fn build_managed_agent_summary(
     app: &AppHandle,
     record: &ManagedAgentRecord,

@@ -13,7 +13,7 @@
  *
  * The rubric comparison below is kept as-is, because it is still the desktop
  * mirror of `bee sessions rubric check` and the two are pinned to one fixture
- * (`testdata/rubric/live-catalog-665076ce.json`). Deleting it here would
+ * (`testdata/routing/live-catalog-665076ce.json`). Deleting it here would
  * silently end that agreement.
  *
  * ---

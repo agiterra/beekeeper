@@ -14,10 +14,7 @@ import {
 import { describeUnreadableModelRegistry } from "./codingSessionRegistryAccess.ts";
 
 const REGISTRY_TEXT = readFileSync(
-  new URL(
-    "../../../../../testdata/routing/registry-fixture.yaml",
-    import.meta.url,
-  ),
+  new URL("../../../../../team/model-registry.yaml", import.meta.url),
   "utf8",
 );
 const CLAUDE_CATALOG = [
@@ -30,7 +27,7 @@ const CLAUDE_CATALOG = [
 const READABLE = {
   kind: "readable",
   text: REGISTRY_TEXT,
-  label: "testdata/routing/registry-fixture.yaml",
+  label: "team/model-registry.yaml",
 };
 const REQUEST = {
   class: "builder",

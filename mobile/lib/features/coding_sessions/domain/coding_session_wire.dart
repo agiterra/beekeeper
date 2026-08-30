@@ -156,16 +156,17 @@ void _writeCanonical(Object? value, StringBuffer buffer, int depth) {
 
 const _routingEfforts = {'low', 'medium', 'high'};
 const _routingTiers = {'fast', 'standard', 'deep'};
-const _routingReviewTriggers = {
-  'risk>=40',
-  'irreversibility>=4',
-  'security-auth-data-boundary',
-  'architecture-schema-public-contract',
-  'builder-outside-plan',
-  'builder-reports-uncertainty',
-  'tests-cannot-verify',
-  'lead-requested',
-};
+
+/// A review reason is a bounded token, not a member of a closed set.
+///
+/// The canonical router renders the two numeric §6 triggers with the value
+/// that fired them — `risk 80 >= 40`, `irreversibility 4 >= 4` — so a reader
+/// is told the fact rather than the rule
+/// (`crates/buzz-core/src/coding_session_routing.rs:1555`). A closed
+/// vocabulary here would make this decoder reject the router's own record as
+/// malformed.
+const _maxRoutingReviewReasons = 16;
+const _maxRoutingTokenBytes = 256;
 const _routingTraits = {
   'reasoning',
   'coding',
@@ -229,7 +230,8 @@ bool isStrictRoutingRecord(Object? value) {
   if (reviewRequired is! bool) return false;
   final reasons = value['reviewReasons'];
   if (reasons is! List ||
-      reasons.any((entry) => !_routingReviewTriggers.contains(entry))) {
+      reasons.length > _maxRoutingReviewReasons ||
+      reasons.any((entry) => !boundedNonempty(entry, _maxRoutingTokenBytes))) {
     return false;
   }
   if (reviewRequired != reasons.isNotEmpty) return false;

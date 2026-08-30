@@ -277,16 +277,13 @@ test("an umbrella in no project seats a hire with no project, never a guess", ()
  * seated on the identity's own model as though nobody had asked.
  */
 const ROUTING_FIXTURE = readFileSync(
-  new URL(
-    "../../../../../testdata/routing/registry-fixture.yaml",
-    import.meta.url,
-  ),
+  new URL("../../../../../team/model-registry.yaml", import.meta.url),
   "utf8",
 );
 const READABLE_REGISTRY = {
   kind: "readable",
   text: ROUTING_FIXTURE,
-  label: "testdata/routing/registry-fixture.yaml",
+  label: "team/model-registry.yaml",
 };
 const CLAUDE_CATALOG = new Map([
   [

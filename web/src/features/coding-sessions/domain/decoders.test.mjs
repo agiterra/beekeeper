@@ -565,6 +565,56 @@ test("metadata carrying a routing record is read, and a malformed one refused", 
   }
 });
 
+test("the router's own review reasons are read, value and all", () => {
+  // The canonical router renders the two numeric §6 triggers with the number
+  // that fired them (crates/buzz-core/src/coding_session_routing.rs:1555), so
+  // the vocabulary is open. This decoder used to police it against a closed
+  // set of slugs and refused the router's own record as malformed.
+  const routed = {
+    ...ROUTING,
+    reviewRequired: true,
+    reviewReasons: [
+      "risk 80 >= 40",
+      "irreversibility 4 >= 4",
+      "securityBoundary",
+    ],
+  };
+  assert.deepEqual(
+    parseBuzzCodingSessionMetadata(metadataJson({ routing: routed }))?.routing,
+    routed,
+  );
+  // Open is not unbounded: blank, oversized, non-string and over-long lists
+  // are still refused, which is exactly what buzz-core's `validate` checks.
+  for (const reviewReasons of [
+    ["   "],
+    ["x".repeat(257)],
+    [42],
+    Array(17).fill("leadRequests"),
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(
+        metadataJson({
+          routing: { ...ROUTING, reviewRequired: true, reviewReasons },
+        }),
+      ),
+      null,
+      `decoded ${JSON.stringify(reviewReasons)}`,
+    );
+  }
+  assert.ok(
+    parseBuzzCodingSessionMetadata(
+      metadataJson({
+        routing: {
+          ...ROUTING,
+          reviewRequired: true,
+          reviewReasons: Array(16).fill("leadRequests"),
+        },
+      }),
+    ),
+    "sixteen is the cap buzz-core signs, not one fewer",
+  );
+});
+
 test("a routed create is read, and a malformed routing record is not", () => {
   const signer = newSigner();
   assert.ok(

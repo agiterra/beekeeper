@@ -62,8 +62,21 @@ import {
   type RoutingTrait,
 } from "./codingSessionModelRegistry";
 
+import {
+  describeCodingSessionRouting,
+  isStrictCodingSessionRoutingRecord,
+  MAX_ROUTING_REVIEW_REASONS,
+  MAX_ROUTING_TOKEN_BYTES,
+  ROUTING_REVIEW_FLAG_TRIGGERS,
+  type CodingSessionRoutingRecord,
+  type RoutedExecutionTarget,
+  type RoutingOverride,
+  type RoutingReviewFlagTrigger,
+} from "./codingSessionRoutingRecord";
+
 // Re-exported so the router stays the one import a caller needs: the registry
-// module is a reader, not a second public surface.
+// module is a reader and the record module is a shape; neither is a second
+// public surface.
 export {
   MODEL_REGISTRY_VERSION,
   ROUTING_EFFORT_FOR_TIER,
@@ -71,6 +84,11 @@ export {
   codingSessionRiskScore,
   codingSessionRiskTier,
   parseModelRegistry,
+  describeCodingSessionRouting,
+  isStrictCodingSessionRoutingRecord,
+  MAX_ROUTING_REVIEW_REASONS,
+  MAX_ROUTING_TOKEN_BYTES,
+  ROUTING_REVIEW_FLAG_TRIGGERS,
 };
 export type {
   ModelRegistry,
@@ -80,6 +98,10 @@ export type {
   RoutingRisk,
   RoutingTier,
   RoutingTrait,
+  CodingSessionRoutingRecord,
+  RoutedExecutionTarget,
+  RoutingOverride,
+  RoutingReviewFlagTrigger,
 };
 
 /** One `(providerInstanceRef, model)` pair the live catalog offers. */
@@ -90,63 +112,14 @@ export type RoutingCatalogEntry = {
   contextWindow?: number | null;
 };
 
-/** The routing record's `chosen` / `runnerUp` shape — the execution target. */
-export type RoutedExecutionTarget = {
-  provider: string;
-  /** The catalog id, exactly as published. Never an alias, never a family. */
-  model: string;
-  effort: RoutingEffort;
-};
-
-/** A human's override of the router, recorded rather than hidden. */
-export type RoutingOverride = {
-  model: string;
-  effort?: RoutingEffort;
-  because: string;
-};
-
-/** The `routing` object carried on the hire, the create, and the metadata. */
-export type CodingSessionRoutingRecord = {
-  class: string;
-  tier: RoutingTier;
-  risk: RoutingRisk & { score: number };
-  /** Extra trait minimums the lead asked for, when it asked for any. */
-  profile?: Partial<Record<RoutingTrait, number>>;
-  chosen: RoutedExecutionTarget;
-  runnerUp: RoutedExecutionTarget | null;
-  /** One sentence: the gates cleared, and why this was the cheapest. */
-  reason: string;
-  reviewRequired: boolean;
-  reviewReasons: readonly string[];
-  challengerSample: boolean;
-  override: RoutingOverride | null;
-  registryVersion: number;
-  /** The 44222 revision the choice was made against, or null when unknown. */
-  catalogRevision: number | null;
-};
-
-/** Spec §6's trigger list, spelled once. */
-export const ROUTING_REVIEW_TRIGGERS = [
-  "risk>=40",
-  "irreversibility>=4",
-  "security-auth-data-boundary",
-  "architecture-schema-public-contract",
-  "builder-outside-plan",
-  "builder-reports-uncertainty",
-  "tests-cannot-verify",
-  "lead-requested",
-] as const;
-
-export type RoutingReviewTrigger = (typeof ROUTING_REVIEW_TRIGGERS)[number];
-
 /** The §6 triggers a caller can assert; the two numeric ones are computed. */
 export type RoutingReviewFlags = {
   securityBoundary?: boolean;
-  publicContract?: boolean;
-  builderOutsidePlan?: boolean;
-  builderReportsUncertainty?: boolean;
-  testsCannotVerify?: boolean;
-  leadRequested?: boolean;
+  contractChange?: boolean;
+  outsidePlan?: boolean;
+  builderUncertain?: boolean;
+  testsInsufficient?: boolean;
+  leadRequests?: boolean;
 };
 
 /** What the task itself requires, beyond what its class requires. */
@@ -188,10 +161,37 @@ export type RoutingExclusion = {
   why: string;
 };
 
+/**
+ * The standing one registry row holds for one class at one tier, as four
+ * ordered bands. Lower is preferred, and the band is consulted **before**
+ * cost — spec §8: a challenger does not earn a route by being cheap.
+ *
+ * Mirrors `Standing` in `crates/buzz-core/src/coding_session_routing.rs:635`.
+ * `unranked` and `challenger` are different facts: a row that says nothing
+ * about a class has not been ruled a challenger for it, and only a row the
+ * registry actually calls `challenger` is what a sample samples.
+ */
+export const ROUTING_STANDINGS = [
+  "incumbent-at-tier",
+  "incumbent",
+  "unranked",
+  "challenger",
+] as const;
+
+export type RoutingStanding = (typeof ROUTING_STANDINGS)[number];
+
 /** A candidate that cleared every gate, with the cost that ranked it. */
 export type RoutingCandidate = {
   target: RoutedExecutionTarget;
+  standing: RoutingStanding;
+  /** `true` for either incumbent band. Kept for readers that only ask that. */
   incumbent: boolean;
+  /**
+   * Does the row carry a `costEfficiency` prior at all? A row without one is
+   * ranked behind every row that has one, rather than being folded in at an
+   * invented middle value.
+   */
+  priced: boolean;
   /** Expected cost of an accepted completion. Lower is chosen. */
   expectedCost: number | null;
 };
@@ -251,7 +251,6 @@ export function routeCodingSession(
 
   const excluded: RoutingExclusion[] = [];
   const candidates: RoutingCandidate[] = [];
-  const tierNamesItsOwn = tierHasQualifiedIncumbent(registry, className, tier);
   for (const target of registry.targets) {
     const model = catalogModelId(input.catalog, target, effort);
     if (model === null) {
@@ -279,11 +278,47 @@ export function routeCodingSession(
       });
       continue;
     }
+    const standing = standingOf(registry, target, className, tier);
     candidates.push({
       target: { provider: target.provider, model, effort },
-      incumbent: isIncumbent(target, className, tier, tierNamesItsOwn),
-      expectedCost: expectedCostOf(target, effort),
+      standing,
+      incumbent: standing === "incumbent-at-tier" || standing === "incumbent",
+      priced: hasCostPrior(target),
+      expectedCost: expectedCostOf(target),
     });
+  }
+
+  // Standing (spec §8, and step 4 of the canonical router). A challenger holds
+  // no route: it is sampled by rule, and on a sampling run it is the *only*
+  // thing eligible. A row the registry is silent about is `unranked`, not a
+  // challenger — being unproven is not the same claim as being a contender,
+  // and a sample that swept up every silent row would attribute nothing.
+  const sampling =
+    input.sampleChallenger === true &&
+    candidates.some((candidate) => candidate.standing === "challenger");
+  const standingPool: RoutingCandidate[] = [];
+  for (const candidate of candidates) {
+    const isChallenger = candidate.standing === "challenger";
+    if (sampling && !isChallenger) {
+      excluded.push({
+        provider: candidate.target.provider,
+        model: candidate.target.model,
+        why: "not sampled: this run deliberately samples a challenger for this class",
+      });
+      continue;
+    }
+    if (!sampling && isChallenger) {
+      excluded.push({
+        provider: candidate.target.provider,
+        model: candidate.target.model,
+        why:
+          `challenger for ${className}: a challenger earns an incumbent route ` +
+          "only through measured results (spec §8), so it is routed only on a " +
+          "deliberate sample",
+      });
+      continue;
+    }
+    standingPool.push(candidate);
   }
 
   // Cross-provider diversity (§4 VERIFIER): a hard filter, but only when it
@@ -291,14 +326,14 @@ export function routeCodingSession(
   // become "refuse the work".
   const crossProviderOf = classGate.crossProviderOf;
   const peerProvider = input.peer?.provider ?? null;
-  let pool = candidates;
+  let pool = standingPool;
   if (crossProviderOf !== undefined && peerProvider !== null) {
     const peerVendor = vendorOf(peerProvider);
-    const diverse = candidates.filter(
+    const diverse = standingPool.filter(
       (candidate) => vendorOf(candidate.target.provider) !== peerVendor,
     );
     if (diverse.length > 0) {
-      for (const candidate of candidates) {
+      for (const candidate of standingPool) {
         if (diverse.includes(candidate)) continue;
         excluded.push({
           provider: candidate.target.provider,
@@ -321,10 +356,7 @@ export function routeCodingSession(
     };
   }
 
-  const sampling = input.sampleChallenger === true;
-  const ranked = [...pool].sort((left, right) =>
-    compareCandidates(left, right, sampling),
-  );
+  const ranked = [...pool].sort(compareCandidates);
   const first = ranked[0];
   const second = ranked[1] ?? null;
   if (first === undefined) {
@@ -374,7 +406,7 @@ export function routeCodingSession(
     reason,
     reviewRequired: reviewReasons.length > 0,
     reviewReasons,
-    challengerSample: sampling && !first.incumbent && override === null,
+    challengerSample: sampling,
     override:
       override === null
         ? null
@@ -387,158 +419,6 @@ export function routeCodingSession(
     catalogRevision: input.catalogRevision,
   };
   return { ok: true, record, candidates: ranked, excluded };
-}
-
-/**
- * The one line a seat's provenance row shows.
- *
- * `routed: builder/standard → claude-primary/sonnet (medium) — <reason>`.
- * One line by contract: a routing decision that needs a panel to be readable
- * is a decision nobody reads.
- */
-export function describeCodingSessionRouting(
-  record: CodingSessionRoutingRecord,
-): string {
-  return (
-    `routed: ${record.class}/${record.tier} → ${record.chosen.provider}/` +
-    `${record.chosen.model} (${record.chosen.effort}) — ${record.reason}`
-  );
-}
-
-const ROUTING_RECORD_KEYS = [
-  "class",
-  "tier",
-  "risk",
-  "chosen",
-  "runnerUp",
-  "reason",
-  "reviewRequired",
-  "reviewReasons",
-  "challengerSample",
-  "override",
-  "registryVersion",
-  "catalogRevision",
-] as const;
-
-/**
- * The closed-shape check every strict observer applies to a `routing` object.
- *
- * Mirrored — not imported — by `sessionCoordinationStrictJson.ts`, the web
- * observer and the mobile decoder, each of which has to stay dependency-free.
- * The rule is the same in all four: exactly these keys, `profile` optional,
- * and an effort the router is allowed to buy.
- */
-export function isStrictCodingSessionRoutingRecord(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const keys = Object.keys(value);
-  const allowed = new Set<string>([...ROUTING_RECORD_KEYS, "profile"]);
-  if (keys.some((key) => !allowed.has(key))) return false;
-  if (ROUTING_RECORD_KEYS.some((key) => !Object.hasOwn(value, key))) {
-    return false;
-  }
-  if (
-    typeof value.class !== "string" ||
-    !/^[a-z0-9_-]{1,64}$/.test(value.class)
-  ) {
-    return false;
-  }
-  if (!["fast", "standard", "deep"].includes(value.tier as string))
-    return false;
-  if (!isStrictRisk(value.risk)) return false;
-  if (!isStrictTarget(value.chosen)) return false;
-  if (value.runnerUp !== null && !isStrictTarget(value.runnerUp)) return false;
-  if (typeof value.reason !== "string" || value.reason.trim().length === 0) {
-    return false;
-  }
-  if (typeof value.reviewRequired !== "boolean") return false;
-  if (
-    !Array.isArray(value.reviewReasons) ||
-    value.reviewReasons.some(
-      (entry) =>
-        typeof entry !== "string" ||
-        !(ROUTING_REVIEW_TRIGGERS as readonly string[]).includes(entry),
-    )
-  ) {
-    return false;
-  }
-  if (value.reviewRequired !== value.reviewReasons.length > 0) return false;
-  if (typeof value.challengerSample !== "boolean") return false;
-  if (value.override !== null && !isStrictOverride(value.override))
-    return false;
-  if (!Number.isSafeInteger(value.registryVersion)) return false;
-  if (
-    value.catalogRevision !== null &&
-    !(
-      Number.isSafeInteger(value.catalogRevision) &&
-      (value.catalogRevision as number) > 0
-    )
-  ) {
-    return false;
-  }
-  if (Object.hasOwn(value, "profile") && !isStrictProfile(value.profile)) {
-    return false;
-  }
-  return true;
-}
-
-function isStrictRisk(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const keys = ["impact", "uncertainty", "irreversibility", "score"];
-  if (Object.keys(value).length !== keys.length) return false;
-  if (keys.some((key) => !Number.isSafeInteger(value[key]))) return false;
-  for (const key of ["impact", "uncertainty", "irreversibility"]) {
-    const factor = value[key] as number;
-    if (factor < 1 || factor > 5) return false;
-  }
-  return (
-    value.score ===
-    (value.impact as number) *
-      (value.uncertainty as number) *
-      (value.irreversibility as number)
-  );
-}
-
-function isStrictTarget(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    Object.keys(value).length === 3 &&
-    typeof value.provider === "string" &&
-    value.provider.trim().length > 0 &&
-    typeof value.model === "string" &&
-    value.model.trim().length > 0 &&
-    ["low", "medium", "high"].includes(value.effort as string)
-  );
-}
-
-function isStrictOverride(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const keys = Object.keys(value);
-  if (keys.some((key) => !["model", "effort", "because"].includes(key))) {
-    return false;
-  }
-  if (typeof value.model !== "string" || value.model.trim().length === 0) {
-    return false;
-  }
-  if (typeof value.because !== "string" || value.because.trim().length === 0) {
-    return false;
-  }
-  return (
-    !Object.hasOwn(value, "effort") ||
-    ["low", "medium", "high"].includes(value.effort as string)
-  );
-}
-
-function isStrictProfile(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const traits = new Set<string>(ROUTING_TRAITS);
-  return Object.entries(value).every(
-    ([trait, minimum]) =>
-      traits.has(trait) &&
-      typeof minimum === "number" &&
-      Number.isFinite(minimum) &&
-      minimum >= 1 &&
-      minimum <= 5,
-  );
 }
 
 /**
@@ -694,130 +574,158 @@ function disqualify(input: {
   return null;
 }
 
-/** Effort as a multiplier on what a run spends and how long it takes. */
-function effortWeight(effort: RoutingEffort): number {
-  return effort === "low" ? 1 : effort === "medium" ? 2 : 3;
-}
+/**
+ * The retry prior every target carries until telemetry replaces it: the
+ * expected number of attempts to an *accepted* completion. One flat value for
+ * everything is an admission that we have measured nothing yet, and is
+ * deliberately not a guess that varies by model.
+ */
+const DEFAULT_RETRY_PRIOR = 1;
 
 /**
  * Expected cost of an **accepted** completion — the only thing cost is
  * allowed to decide, and only among targets that already cleared every gate.
+ * Lower is better.
  *
- * Three named terms, summed, exactly as §7 describes the pre-telemetry
- * estimate: quota spend, a latency prior, and a retry prior.
+ * ```text
+ * cost_prior    = 6 − costEfficiency     (1.0 cheapest … 5.0 dearest)
+ * latency_prior = 6 − velocity           (1.0 fastest  … 5.0 slowest)
+ * retry_prior   = expected attempts to acceptance (1.0 until telemetry)
  *
- * - **spend** uses `costEfficiency`, deliberately *not* `priceUsdPerM`. Spec
- *   §1 forbids equating the two: our real cost is a subscription quota lane,
- *   and the published token price says nothing about how much of a Claude
- *   subscription or a Codex plan a run burns. The price stays in the registry
- *   as a fact and is never read here.
- * - **latency** is the velocity prior, scaled by effort for the same reason
- *   spend is: a high-effort run of a slow model is the slowest thing there is.
- * - **retry** is discipline plus verification — the rework a target is
- *   expected to cause — and it does *not* scale with effort, because a
- *   rework round is a whole extra run either way.
+ * expected_cost = retry_prior × (cost_prior + latency_prior)
+ * ```
  *
- * `null` when the row has no cost prior. That is not "free": a target whose
- * spend nobody has estimated is ranked behind every target whose spend is
- * known, because an unpriced run is not evidence of a cheap one.
+ * This is `expected_cost` in `crates/buzz-core/src/coding_session_routing.rs`
+ * (:1048), character for character in its arithmetic, because the two routers
+ * have to reach the same answer on the same registry or one of them is lying.
+ * The two priors add because they are two costs paid on the same attempt; the
+ * retry prior multiplies because it counts attempts.
+ *
+ * `priceUsdPerM` is **not** in here. Spec §1 forbids equating cost with API
+ * $/MTok: our real cost is a subscription quota lane. Price stays a recorded,
+ * printed fact and is never scored.
+ *
+ * A row with no `costEfficiency` is ranked on latency alone and, by
+ * `compareCandidates`, only after every target that has a cost prior. It is
+ * never guessed cheap and never guessed dear.
  */
-function expectedCostOf(
-  target: RegistryTarget,
-  effort: RoutingEffort,
-): number | null {
+function expectedCostOf(target: RegistryTarget): number | null {
   const costEfficiency = target.scores.costEfficiency;
   const velocity = target.scores.velocity;
-  const discipline = target.scores.discipline;
-  const verification = target.scores.verification;
-  if (
-    typeof costEfficiency !== "number" ||
-    typeof velocity !== "number" ||
-    typeof discipline !== "number" ||
-    typeof verification !== "number"
-  ) {
-    return null;
-  }
-  const weight = effortWeight(effort);
-  const spend = weight * (6 - costEfficiency);
-  const latency = weight * (6 - velocity);
-  const retry = 6 - discipline + (6 - verification);
-  return Number((spend + latency + retry).toFixed(4));
+  const cost = typeof costEfficiency === "number" ? 6 - costEfficiency : null;
+  const latency = typeof velocity === "number" ? 6 - velocity : null;
+  if (cost === null && latency === null) return null;
+  return Number(
+    (DEFAULT_RETRY_PRIOR * ((cost ?? 0) + (latency ?? 0))).toFixed(4),
+  );
+}
+
+/** Does this row carry a cost prior at all? Ranked ahead of rows that do not. */
+function hasCostPrior(target: RegistryTarget): boolean {
+  return typeof target.scores.costEfficiency === "number";
 }
 
 /**
- * Rank: incumbency first, then cost, then a stable id.
+ * Sort key, mirroring `rank_key` (`coding_session_routing.rs:1341`): standing
+ * band, then whether a cost prior exists at all, then the expected cost.
  *
- * Incumbency before cost is §8: a challenger does not earn a route by being
- * cheap, it earns one through measured results, and until then it is
- * *sampled* by rule rather than routed to by default. When the lead is
- * sampling, the same key runs the other way — which is the whole of what
- * sampling means here.
+ * Standing before cost is §8. The priced flag before the number is §7's "never
+ * silently weaken": an unpriced run is not evidence of a cheap one, so it
+ * sorts behind everything priced rather than being folded in at some invented
+ * middle value. Ties return 0 and the sort is stable, so registry order breaks
+ * them — the same order the canonical router's stable sort produces.
  */
 function compareCandidates(
   left: RoutingCandidate,
   right: RoutingCandidate,
-  sampling: boolean,
 ): number {
-  const leftFirst = sampling ? !left.incumbent : left.incumbent;
-  const rightFirst = sampling ? !right.incumbent : right.incumbent;
-  if (leftFirst !== rightFirst) return leftFirst ? -1 : 1;
-  const leftCost = left.expectedCost;
-  const rightCost = right.expectedCost;
-  if (leftCost === null || rightCost === null) {
-    if (leftCost !== rightCost) return leftCost === null ? 1 : -1;
-  } else if (leftCost !== rightCost) {
-    return leftCost - rightCost;
-  }
-  return `${left.target.provider}/${left.target.model}`.localeCompare(
-    `${right.target.provider}/${right.target.model}`,
-  );
+  const band =
+    ROUTING_STANDINGS.indexOf(left.standing) -
+    ROUTING_STANDINGS.indexOf(right.standing);
+  if (band !== 0) return band;
+  const leftPriced = left.expectedCost !== null && left.priced;
+  const rightPriced = right.expectedCost !== null && right.priced;
+  if (leftPriced !== rightPriced) return leftPriced ? -1 : 1;
+  const leftCost = left.expectedCost ?? Number.MAX_VALUE;
+  const rightCost = right.expectedCost ?? Number.MAX_VALUE;
+  if (leftCost !== rightCost) return leftCost - rightCost;
+  return 0;
 }
 
 /**
- * Is this row the incumbent for this class at this tier?
+ * The standing this row holds for one class at one tier.
  *
- * The ruling writes incumbency two ways — a tier-qualified key
- * (`builder-fast: incumbent`) and a tier-qualified value
- * (`builder: incumbent-deep`) — and both appear in Brian's own table, so both
- * are read.
+ * Mirrors `standing_for` (`coding_session_routing.rs:1366`). The ruling writes
+ * incumbency two ways — a tier-qualified key (`builder-fast: incumbent`) and a
+ * tier-qualified value (`builder: incumbent-deep`) — and both appear in
+ * Brian's own table, so both are read and they mean the same thing.
  *
- * **A tier that names its own incumbents does not inherit the class-wide
- * one**, which is what `tierNamesItsOwn` carries in. Without that rule
- * Sonnet's unqualified `builder: incumbent` would make it the incumbent at
- * every tier, and — being the cheapest of them — it would take DEEP builder
- * work away from Sol and Opus, which is precisely the assignment spec §4
- * writes out by hand ("FAST: Luna, 5.4-mini. STANDARD: Sonnet 5, Terra …
- * DEEP: Sol, Opus 5"). Tier-qualified is the more specific claim, so where a
- * tier has one it is the whole answer for that tier.
+ * A tier-qualified incumbency is the *more specific* claim, so it wins its
+ * tier outright (`incumbent-at-tier`), and a row seeded as incumbent at some
+ * *other* tier contributes nothing here. That is how §4's hand-written
+ * assignment ("FAST: Luna, 5.4-mini … DEEP: Sol, Opus 5") falls out of the
+ * bands rather than out of a special case.
  *
- * Anything else, including a class the row says nothing about, is a
- * challenger: unproven for this class is exactly what challenger means.
+ * A class this row says nothing about is `unranked`, not `challenger`.
  */
-function isIncumbent(
+function standingOf(
+  registry: ModelRegistry,
   target: RegistryTarget,
   className: string,
   tier: RoutingTier,
-  tierNamesItsOwn: boolean,
-): boolean {
-  const qualified = target.status[`${className}-${tier}`];
-  if (typeof qualified === "string") return qualified === "incumbent";
-  const plain = target.status[className];
-  if (typeof plain !== "string") return false;
-  if (plain === `incumbent-${tier}`) return true;
-  return plain === "incumbent" && !tierNamesItsOwn;
+): RoutingStanding {
+  let untiered: RoutingStanding | null = null;
+  for (const [key, value] of Object.entries(target.status)) {
+    const split = splitClassTier(registry, key);
+    if (split.className !== className) continue;
+    const separator = value.indexOf("-");
+    const tail = separator < 0 ? null : value.slice(separator + 1);
+    const word =
+      tail !== null && Object.hasOwn(registry.tiers, tail)
+        ? value.slice(0, separator)
+        : value;
+    const valueTier =
+      tail !== null && Object.hasOwn(registry.tiers, tail) ? tail : null;
+    const effectiveTier = split.tier ?? valueTier;
+    let standing: RoutingStanding;
+    if (word === "challenger") {
+      standing = "challenger";
+    } else if (word === "incumbent") {
+      if (effectiveTier === null) standing = "incumbent";
+      else if (effectiveTier === tier) return "incumbent-at-tier";
+      else continue; // seeded at a different tier only
+    } else {
+      continue;
+    }
+    untiered =
+      untiered === null
+        ? standing
+        : ROUTING_STANDINGS.indexOf(standing) <
+            ROUTING_STANDINGS.indexOf(untiered)
+          ? standing
+          : untiered;
+  }
+  return untiered ?? "unranked";
 }
 
-/** Does any row claim incumbency for this class *at this tier specifically*? */
-function tierHasQualifiedIncumbent(
+/**
+ * Split a status key into its class and, when it names one, its tier.
+ *
+ * `builder-fast` is the builder class at the fast tier; `ui_designer` is a
+ * class whose own name contains no tier. Only a trailing segment that is
+ * actually one of the registry's tier names is read as a tier.
+ */
+function splitClassTier(
   registry: ModelRegistry,
-  className: string,
-  tier: RoutingTier,
-): boolean {
-  return registry.targets.some(
-    (target) =>
-      target.status[`${className}-${tier}`] === "incumbent" ||
-      target.status[className] === `incumbent-${tier}`,
-  );
+  key: string,
+): { className: string; tier: RoutingTier | null } {
+  const separator = key.lastIndexOf("-");
+  if (separator <= 0) return { className: key, tier: null };
+  const tail = key.slice(separator + 1);
+  if (!Object.hasOwn(registry.tiers, tail)) {
+    return { className: key, tier: null };
+  }
+  return { className: key.slice(0, separator), tier: tail as RoutingTier };
 }
 
 /** `claude-primary` and `claude-secondary` are one vendor; `codex-*` another. */
@@ -921,29 +829,32 @@ function applyOverride(
   };
 }
 
+/**
+ * The §6 triggers that fired, in spec order and in the canonical router's own
+ * words (`coding_session_routing.rs:1555-1579`).
+ *
+ * The two numeric triggers carry the value that fired them. `risk 80 >= 40`
+ * is a fact a reader can check; `risk>=40` is a rule they have to re-apply.
+ */
 function reviewReasonsFor(
   score: number,
   risk: RoutingRisk,
   flags: RoutingReviewFlags | undefined,
-): RoutingReviewTrigger[] {
-  const reasons: RoutingReviewTrigger[] = [];
-  if (score >= 40) reasons.push("risk>=40");
-  if (risk.irreversibility >= 4) reasons.push("irreversibility>=4");
-  if (flags?.securityBoundary === true) {
-    reasons.push("security-auth-data-boundary");
+): string[] {
+  const reasons: string[] = [];
+  if (score >= 40) reasons.push(`risk ${score} >= 40`);
+  if (risk.irreversibility >= 4) {
+    reasons.push(`irreversibility ${risk.irreversibility} >= 4`);
   }
-  if (flags?.publicContract === true) {
-    reasons.push("architecture-schema-public-contract");
+  for (const [fired, name] of [
+    [flags?.securityBoundary, "securityBoundary"],
+    [flags?.contractChange, "contractChange"],
+    [flags?.outsidePlan, "outsidePlan"],
+    [flags?.builderUncertain, "builderUncertain"],
+    [flags?.testsInsufficient, "testsInsufficient"],
+    [flags?.leadRequests, "leadRequests"],
+  ] as const) {
+    if (fired === true) reasons.push(name);
   }
-  if (flags?.builderOutsidePlan === true) reasons.push("builder-outside-plan");
-  if (flags?.builderReportsUncertainty === true) {
-    reasons.push("builder-reports-uncertainty");
-  }
-  if (flags?.testsCannotVerify === true) reasons.push("tests-cannot-verify");
-  if (flags?.leadRequested === true) reasons.push("lead-requested");
   return reasons;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -12,26 +12,24 @@ import {
   routeCodingSession,
 } from "./codingSessionRouting.ts";
 
+// ONE registry and ONE catalog, shared with the canonical Rust router.
+//
+// `team/model-registry.yaml` is the registry the product itself reads — not a
+// copy pinned for tests. A test fixture that had drifted from it would let
+// this suite go green on rules the shipped router does not follow, which is
+// the specific failure the cross-implementation contract exists to prevent.
+// The expected decisions live *inside* the catalog fixture, and
+// `every_recorded_decision_in_the_fixture_still_holds`
+// (crates/buzz-core/src/coding_session_routing.rs:2872) asserts the same six
+// against the Rust router, so the two cannot silently disagree.
 const registryText = readFileSync(
-  new URL(
-    "../../../../../testdata/routing/registry-fixture.yaml",
-    import.meta.url,
-  ),
+  new URL("../../../../../team/model-registry.yaml", import.meta.url),
   "utf8",
 );
 const liveCatalog = JSON.parse(
   readFileSync(
     new URL(
-      "../../../../../testdata/rubric/live-catalog-665076ce.json",
-      import.meta.url,
-    ),
-    "utf8",
-  ),
-);
-const expectedDecisions = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../../../testdata/routing/expected-decisions.json",
+      "../../../../../testdata/routing/live-catalog-665076ce.json",
       import.meta.url,
     ),
     "utf8",
@@ -94,39 +92,56 @@ test("the router buys exactly three efforts and never xhigh, max or ultra", () =
   }
 });
 
-test("every recorded decision in the pinned fixture still holds", () => {
-  for (const expected of expectedDecisions.decisions) {
+test("every recorded decision in the shared fixture still holds", () => {
+  const cases = liveCatalog.expectedDecisions;
+  assert.equal(cases.length, 6, "the fixture records six decisions");
+  for (const expected of cases) {
+    const label = `${expected.class} ${JSON.stringify(expected.risk)}`;
     const decision = routeCodingSession({
       registry: registry(),
       catalog: CATALOG,
       catalogRevision: null,
-      className: expected.input.class,
-      risk: expected.input.risk,
-      ...(expected.input.sampleChallenger ? { sampleChallenger: true } : {}),
-      ...(expected.input.peer ? { peer: expected.input.peer } : {}),
-      ...(expected.input.requirements
-        ? { requirements: expected.input.requirements }
-        : {}),
+      className: expected.class,
+      risk: expected.risk,
+      sampleChallenger: expected.challengerSample === true,
+      peer: expected.counterpartProvider
+        ? { className: "builder", provider: expected.counterpartProvider }
+        : null,
     });
-    if (expected.outcome === "no-route") {
-      assert.equal(decision.ok, false, `${expected.name} should not route`);
-      assert.equal(decision.code, "HIRE_NO_ROUTE");
-      assert.match(decision.reason, new RegExp(expected.reasonMatch));
-      continue;
-    }
-    assert.equal(decision.ok, true, `${expected.name} should route`);
-    assert.deepEqual(
-      decision.record.chosen,
+    assert.equal(decision.ok, true, `${label} should route`);
+    assert.equal(decision.record.tier, expected.tier, `${label} tier`);
+    assert.equal(
+      `${decision.record.chosen.provider}/${decision.record.chosen.model}`,
       expected.chosen,
-      `${expected.name} chose ${JSON.stringify(decision.record.chosen)}`,
+      label,
+    );
+    assert.equal(
+      decision.record.runnerUp === null
+        ? null
+        : `${decision.record.runnerUp.provider}/${decision.record.runnerUp.model}`,
+      expected.runnerUp,
+      `${label} runner-up`,
+    );
+    assert.equal(
+      decision.record.chosen.effort,
+      expected.effort,
+      `${label} effort`,
+    );
+    assert.equal(
+      decision.record.reviewRequired,
+      expected.reviewRequired,
+      `${label} reviewRequired`,
     );
     assert.deepEqual(
-      decision.record.runnerUp,
-      expected.runnerUp,
-      `${expected.name} runner-up ${JSON.stringify(decision.record.runnerUp)}`,
+      decision.record.reviewReasons,
+      expected.reviewReasons,
+      `${label} reviewReasons`,
     );
-    assert.equal(decision.record.tier, expected.tier);
-    assert.equal(decision.record.challengerSample, expected.challengerSample);
+    assert.equal(
+      decision.record.challengerSample,
+      expected.challengerSample,
+      `${label} challengerSample`,
+    );
   }
 });
 
@@ -190,8 +205,36 @@ test("a class requiring modality drops a target that is not multimodal", () => {
   assert.match(spark.why, /multimodal/);
 });
 
-test("a required tool nobody has recorded excludes the target, it does not pass it", () => {
+test("a required tool a target does not have excludes it, it does not pass it", () => {
+  // The shipped registry records `tools: [search]` for every row but Spark,
+  // and says in `factsProvenance` that those values are lane-drafted. Spark's
+  // list is empty, so the researcher gate removes it by name rather than
+  // letting a 5.0 velocity argue its way past a missing capability.
   const decision = route({
+    className: "researcher",
+    risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+  });
+  assert.equal(decision.ok, true);
+  const spark = decision.excluded.find(
+    (entry) => entry.model === "gpt-5.3-codex-spark",
+  );
+  assert.ok(spark);
+  assert.match(spark.why, /search/);
+});
+
+test("a registry with no tools recorded routes nothing that needs one", () => {
+  // The other direction, and the honest one: strip the lane-drafted facts and
+  // the researcher class has nothing it can prove is eligible. An unrecorded
+  // capability is a refusal, never an assumption.
+  // Only the per-row facts are stripped; the class's own `requires` stays.
+  const stripped = parseModelRegistry(
+    registryText.replaceAll("\n      tools: [search]", "\n      tools: []"),
+  );
+  assert.equal(stripped.ok, true, stripped.ok ? "" : stripped.why);
+  const decision = routeCodingSession({
+    registry: stripped.registry,
+    catalog: CATALOG,
+    catalogRevision: null,
     className: "researcher",
     risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
   });
@@ -284,14 +327,16 @@ test("review is triggered by the spec's list, not by the deep tier", () => {
     risk: { impact: 5, uncertainty: 5, irreversibility: 5 },
   });
   assert.equal(deep.record.reviewRequired, true);
-  assert.ok(deep.record.reviewReasons.includes("risk>=40"));
+  assert.ok(deep.record.reviewReasons.includes("risk 125 >= 40"));
 
   const irreversible = route({
     risk: { impact: 1, uncertainty: 1, irreversibility: 4 },
   });
   assert.equal(irreversible.record.tier, "fast");
   assert.equal(irreversible.record.reviewRequired, true);
-  assert.ok(irreversible.record.reviewReasons.includes("irreversibility>=4"));
+  assert.ok(
+    irreversible.record.reviewReasons.includes("irreversibility 4 >= 4"),
+  );
 
   const quiet = route({
     risk: { impact: 2, uncertainty: 2, irreversibility: 2 },
@@ -301,12 +346,12 @@ test("review is triggered by the spec's list, not by the deep tier", () => {
 
   const boundary = route({
     risk: { impact: 2, uncertainty: 2, irreversibility: 2 },
-    review: { securityBoundary: true, leadRequested: true },
+    review: { securityBoundary: true, leadRequests: true },
   });
   assert.equal(boundary.record.reviewRequired, true);
   assert.deepEqual(boundary.record.reviewReasons, [
-    "security-auth-data-boundary",
-    "lead-requested",
+    "securityBoundary",
+    "leadRequests",
   ]);
 });
 
