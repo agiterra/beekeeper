@@ -86,6 +86,9 @@ NostrEvent metadataEvent({
   String runtime = 'claude-agent-acp',
   String model = 'opus',
   String? agentRef,
+  String? role,
+  Map<String, Object?>? turnBudget,
+  Map<String, Object?>? routing,
 }) {
   final resolved = forTarget ?? target();
   final payload = <String, Object?>{
@@ -102,6 +105,9 @@ NostrEvent metadataEvent({
     'branch': null,
     'capabilities': _capabilities(),
     'sessionRef': ?sessionRef,
+    'role': ?role,
+    'turnBudget': ?turnBudget,
+    'routing': ?routing,
   };
   return event(
     kind: EventKind.codingSessionMetadata,
@@ -201,6 +207,7 @@ NostrEvent createEvent({
   String? id,
   String? actor,
   String? role,
+  Map<String, Object?>? routing,
 }) {
   final action = <String, Object?>{
     'type': 'session.create',
@@ -215,6 +222,7 @@ NostrEvent createEvent({
     'initialTurn': null,
     'actor': ?actor,
     'role': ?role,
+    'routing': ?routing,
   };
   return event(
     kind: EventKind.codingSessionLifecycleCommand,

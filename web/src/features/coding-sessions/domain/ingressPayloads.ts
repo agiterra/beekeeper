@@ -20,6 +20,7 @@ import {
   hasRequiredAndOptionalKeys,
   isCodingSessionSessionRef,
   isPlainRecord,
+  isStrictRoutingRecord,
   parseBoundedJson,
 } from "./wireDecode.ts";
 
@@ -216,6 +217,15 @@ export type BuzzCodingSessionMetadataV1 = {
   diffSummary?: string;
   planSummary?: string;
   sessionRef?: string;
+  /** The seat's role slug, present exactly when `agentRef` is. */
+  role?: string;
+  /** D9's crew turn allowance, present only beside an umbrella. */
+  turnBudget?: { used: number; limit: number };
+  /**
+   * The routing decision that chose this seat's execution target (Brian's
+   * routing ruling, 2026-08-30). Absent on a seat nothing routed.
+   */
+  routing?: Record<string, unknown>;
   observedCommit?: string | null;
   dirty?: boolean | null;
   relayReachable?: boolean | null;
@@ -433,7 +443,21 @@ export function parseBuzzCodingSessionMetadata(
     "relayReachable",
     "verifiedAt",
   ] as const;
-  const optional = [...optionalSummaries, "sessionRef", ...factFields] as const;
+  // Every additive amendment buzz-core has landed on this payload, and the
+  // list is the whole of what this observer will read. Three of these were
+  // missing until 2026-08-30 — `role` and `turnBudget` shipped on the desktop
+  // and in Rust and were silently dropping every seated, budgeted session
+  // here, and `routing` is the new one — which is the failure mode this
+  // comment exists to keep naming: a forgotten amendment is not a strictness
+  // nuance, it is a blank session list.
+  const optional = [
+    ...optionalSummaries,
+    "sessionRef",
+    "role",
+    "turnBudget",
+    "routing",
+    ...factFields,
+  ] as const;
   if (
     !isPlainRecord(value) ||
     !hasRequiredAndOptionalKeys(value, required, optional) ||
@@ -476,6 +500,32 @@ export function parseBuzzCodingSessionMetadata(
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
+  // A seat's role travels with its actor; a budget travels with its umbrella;
+  // a routing record is the closed shape or it is corruption. An explicit
+  // `null` is how serde writes an absent `Option` and is read as absent.
+  if (
+    hasOwnKey(value, "role") &&
+    value.role !== null &&
+    (typeof value.agentRef !== "string" ||
+      typeof value.role !== "string" ||
+      !/^[a-z0-9-]{1,64}$/.test(value.role))
+  ) {
+    return null;
+  }
+  if (
+    hasOwnKey(value, "turnBudget") &&
+    value.turnBudget !== null &&
+    !isMetadataTurnBudget(value.turnBudget, value.sessionRef)
+  ) {
+    return null;
+  }
+  if (
+    hasOwnKey(value, "routing") &&
+    value.routing !== null &&
+    !isStrictRoutingRecord(value.routing)
+  ) {
+    return null;
+  }
   const hasFacts = hasOwnKey(value, "observedCommit");
   if (
     hasFacts &&
@@ -515,6 +565,13 @@ export function parseBuzzCodingSessionMetadata(
     ...(typeof value.sessionRef === "string"
       ? { sessionRef: value.sessionRef }
       : {}),
+    ...(typeof value.role === "string" ? { role: value.role } : {}),
+    ...(isMetadataTurnBudget(value.turnBudget, value.sessionRef)
+      ? { turnBudget: value.turnBudget as { used: number; limit: number } }
+      : {}),
+    ...(isStrictRoutingRecord(value.routing)
+      ? { routing: value.routing as Record<string, unknown> }
+      : {}),
     ...(hasFacts
       ? {
           observedCommit: value.observedCommit as string | null,
@@ -524,6 +581,23 @@ export function parseBuzzCodingSessionMetadata(
         }
       : {}),
   });
+}
+
+/**
+ * D9's crew turn allowance: exactly `{used, limit}`, and only beside an
+ * umbrella. A `limit` of zero would read as "no turn may ever pass" rather
+ * than "unbudgeted", so the producer omits the key instead.
+ */
+function isMetadataTurnBudget(value: unknown, sessionRef: unknown): boolean {
+  return (
+    typeof sessionRef === "string" &&
+    isPlainRecord(value) &&
+    hasExactKeys(value, ["used", "limit"]) &&
+    Number.isSafeInteger(value.used) &&
+    (value.used as number) >= 0 &&
+    Number.isSafeInteger(value.limit) &&
+    (value.limit as number) > 0
+  );
 }
 
 function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {

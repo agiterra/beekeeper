@@ -76,7 +76,14 @@ export type CodingSessionHireRefusalCode =
   | "HIRE_ROLE_BUSY"
   | "HIRE_PROVIDER_NOT_ALLOWED"
   | "HIRE_MODEL_NOT_OFFERED"
-  | "HIRE_STALE";
+  | "HIRE_STALE"
+  /**
+   * The hire asked to be routed and nothing could be routed to it — no
+   * registry this host can read, no live catalog, or no execution target that
+   * clears the class's gates. Never a quietly weakened requirement: spec §7
+   * step 12.
+   */
+  | "HIRE_NO_ROUTE";
 
 /** A managed agent this computer could seat, as the decision needs it. */
 export type CodingSessionHireCandidate = {
@@ -193,6 +200,19 @@ export type CodingSessionHireDecisionInput = {
    * only an instance ref equal to it — never a guess.
    */
   providerRuntimeSlugs?: ReadonlyMap<string, string>;
+  /**
+   * True when the hire asked to be routed, in which case the model on the
+   * seat is the router's to choose.
+   *
+   * It changes exactly one thing: the identity's *own* model is not inherited
+   * and not checked against the catalog. That check exists so a record naming
+   * a model the runtime does not offer is refused instead of silently
+   * replaced (item 88(a)); on a routed hire nothing is inherited, so the same
+   * record would refuse a hire whose model the router had not chosen yet. A
+   * model the hire itself names is still checked, because on a routed hire
+   * that is a human override and an override still has to name a real id.
+   */
+  routed?: boolean;
 };
 
 /**
@@ -303,7 +323,7 @@ export function decideCodingSessionHire(
   // Skipping it is what let `opus[1m]` seat itself on 2026-08-28 one line
   // after the host refused it (item 88(a)).
   let inherited: CodingSessionHireModelResolution | null = null;
-  if (requested === null) {
+  if (requested === null && input.routed !== true) {
     inherited = resolveCodingSessionHireModel(identity.model ?? null, offered);
     if (inherited?.kind === "not-offered") {
       return {

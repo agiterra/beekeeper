@@ -16,6 +16,7 @@ import {
   useCodingSessionHire,
   type UseCodingSessionHireInput,
 } from "../hooks/useCodingSessionHire";
+import { describeUnreadableModelRegistry } from "../lib/codingSessionRegistryAccess";
 import { useGlobalCodingSessionCatalog } from "../useCodingSessionCatalog";
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel";
 
@@ -122,6 +123,21 @@ export function CodingSessionHireHost() {
   );
 
   const workdirState = workdirs.data ?? null;
+  // The shared model registry, or the honest reason this host has none.
+  //
+  // The router needs `team/model-registry.yaml` out of the project checkout.
+  // Nothing in this app can read a project file: the Agents tab resolves which
+  // project it is looking at (`features/agents/lib/rolePacksProject.ts`) and
+  // then reaches for `scanProjectRolePacks`, which answers with a role, a name
+  // and a directory and never with file content
+  // (`shared/api/tauriTeams.ts:331`). So the source is `unreadable`, it names
+  // the exact path it would have read, and a hire that asks to be routed is
+  // refused `HIRE_NO_ROUTE` — never routed against a registry copy compiled
+  // into the app, which nobody could check against the file the team edits.
+  const registry = React.useMemo(
+    () => describeUnreadableModelRegistry(workdirState?.mru[0]?.path ?? null),
+    [workdirState],
+  );
   const checkoutForChannel = React.useCallback(
     (channelId: string) => {
       if (workdirState === null) return null;
@@ -171,6 +187,7 @@ export function CodingSessionHireHost() {
       checkoutForChannel={checkoutForChannel}
       modelCatalogs={modelCatalogs}
       operatorPubkey={identityQuery.data?.pubkey ?? null}
+      registry={registry}
       providerAuthorityPubkey={providerStatus.data?.providerPubkey ?? null}
       runtimes={runtimes.data ?? []}
       targetForActor={targetForActor}

@@ -76,6 +76,11 @@ type CodingSessionHeaderProps = {
    * dash, because nothing reported is not zero.
    */
   contextLoads?: readonly CodingSessionContextRow[];
+  /**
+   * The routed seats in this umbrella, one line each, for the provenance
+   * popover. Omitted entirely when nothing here was routed.
+   */
+  routedSeats?: readonly CodingSessionRoutedSeatRow[];
   /** Durable session intent, shown directly below the title when present. */
   goalText?: string | null;
   isExporting?: boolean;
@@ -147,6 +152,7 @@ export function CodingSessionHeader({
   channelName,
   compact = false,
   contextLoads,
+  routedSeats,
   generationLabel,
   founderDetails,
   goalText = null,
@@ -335,6 +341,7 @@ export function CodingSessionHeader({
             generationLabel={generationLabel}
             projectName={projectName}
             providerAuthorityPubkey={providerAuthorityPubkey}
+            routedSeats={routedSeats}
           />
         </PopoverContent>
       </Popover>
@@ -525,6 +532,21 @@ export function CodingSessionHeader({
   );
 }
 
+/**
+ * One routed seat's line in the provenance popover.
+ *
+ * `line` is `describeCodingSessionRouting`'s sentence verbatim — `routed:
+ * builder/standard → claude-primary/sonnet (medium) — <reason>`. Rendered as
+ * one line, never a panel: a routing decision that needs its own screen to be
+ * readable is a decision nobody reads. A seat nothing routed contributes no
+ * row at all, because "not routed" and "routed to the default" are different
+ * facts and only one of them happened.
+ */
+export type CodingSessionRoutedSeatRow = {
+  key: string;
+  line: string;
+};
+
 /** One execution's line in the provenance popover's `Context` section. */
 export type CodingSessionContextRow = {
   key: string;
@@ -556,6 +578,7 @@ export function CodingSessionProvenanceDetails({
   generationLabel,
   projectName = null,
   providerAuthorityPubkey = null,
+  routedSeats,
 }: {
   channelName?: string | null;
   contextLoads?: readonly CodingSessionContextRow[];
@@ -563,6 +586,8 @@ export function CodingSessionProvenanceDetails({
   generationLabel: string;
   projectName?: string | null;
   providerAuthorityPubkey?: string | null;
+  /** The routed seats in this umbrella, one line each. */
+  routedSeats?: readonly CodingSessionRoutedSeatRow[];
 }) {
   return (
     <div data-testid="coding-session-provenance-details">
@@ -603,6 +628,21 @@ export function CodingSessionProvenanceDetails({
             <dd className="mt-0.5 font-mono wrap-break-word">
               {shortPubkey(providerAuthorityPubkey)}
             </dd>
+          </div>
+        ) : null}
+        {routedSeats && routedSeats.length > 0 ? (
+          <div data-testid="coding-session-provenance-routing">
+            <dt className="text-muted-foreground">Routing</dt>
+            {routedSeats.map((row) => (
+              <dd
+                className="mt-0.5 truncate wrap-break-word"
+                data-testid="coding-session-routed-line"
+                key={row.key}
+                title={row.line}
+              >
+                {row.line}
+              </dd>
+            ))}
           </div>
         ) : null}
         {contextLoads && contextLoads.length > 0 ? (

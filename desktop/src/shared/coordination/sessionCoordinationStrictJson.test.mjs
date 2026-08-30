@@ -215,3 +215,140 @@ test("a receipt that tries to carry a usage block is refused", () => {
     "usage belongs on the transcript result item, not on a receipt",
   );
 });
+
+// ── The 2026-08-30 routing amendment ─────────────────────────────────────────
+
+const ROUTING = {
+  class: "builder",
+  tier: "standard",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
+  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
+  runnerUp: {
+    provider: "codex-primary",
+    model: "gpt-5.6-luna[medium]",
+    effort: "medium",
+  },
+  reason: "cleared the builder gates and was the cheapest of them.",
+  reviewRequired: false,
+  reviewReasons: [],
+  challengerSample: false,
+  override: null,
+  registryVersion: 1,
+  catalogRevision: null,
+};
+
+test("the thirty-two metadata shapes buzz-core accepts all decode", () => {
+  const amendments = [
+    { sessionRef: SESSION_REF },
+    { agentRef: ACTOR, role: "builder" },
+    { turnBudget: { used: 3, limit: 20 } },
+    FACTS,
+    { routing: ROUTING },
+  ];
+  let accepted = 0;
+  for (let mask = 0; mask < 32; mask += 1) {
+    const content = {};
+    for (const [index, amendment] of amendments.entries()) {
+      if (mask & (1 << index)) Object.assign(content, amendment);
+    }
+    if (content.turnBudget) content.sessionRef = SESSION_REF;
+    if (isStrictMetadataContent(metadata(content))) accepted += 1;
+  }
+  assert.equal(accepted, 32);
+});
+
+test("a routing record that disagrees with its own risk is refused", () => {
+  const wrongScore = {
+    ...ROUTING,
+    risk: { ...ROUTING.risk, score: 19 },
+  };
+  assert.equal(
+    isStrictMetadataContent(metadata({ routing: wrongScore })),
+    false,
+  );
+});
+
+test("the wire never carries a routed effort the router may not buy", () => {
+  for (const effort of ["xhigh", "max", "ultra", ""]) {
+    assert.equal(
+      isStrictMetadataContent(
+        metadata({
+          routing: { ...ROUTING, chosen: { ...ROUTING.chosen, effort } },
+        }),
+      ),
+      false,
+      `accepted effort ${effort}`,
+    );
+  }
+});
+
+test("reviewRequired must agree with the triggers it lists", () => {
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ routing: { ...ROUTING, reviewReasons: ["risk>=40"] } }),
+    ),
+    false,
+  );
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({
+        routing: {
+          ...ROUTING,
+          reviewRequired: true,
+          reviewReasons: ["risk>=40", "irreversibility>=4"],
+        },
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({
+        routing: {
+          ...ROUTING,
+          reviewRequired: true,
+          reviewReasons: ["because I felt like it"],
+        },
+      }),
+    ),
+    false,
+  );
+});
+
+test("a routed create is a strict lifecycle command, unrouted or not", () => {
+  const create = (extra = {}) => ({
+    schema: "buzz-coding-session-lifecycle-command/v1",
+    commandId: "csl-1",
+    action: {
+      type: "session.create",
+      projectRef: null,
+      repoRef: null,
+      sessionRef: SESSION_REF,
+      genesisRef: "b".repeat(64),
+      providerInstanceRef: "claude-primary",
+      providerAuthorityPubkey: "a".repeat(64),
+      model: null,
+      title: "roletest",
+      initialTurn: null,
+      ...extra,
+    },
+  });
+  const strict = (content) =>
+    hasStrictLifecycleCommandJson(JSON.stringify(content), content) &&
+    hasStrictLifecycleCommandValues(content);
+  assert.equal(strict(create({ routing: ROUTING })), true);
+  assert.equal(
+    strict(create({ actor: ACTOR, role: "builder", routing: ROUTING })),
+    true,
+  );
+  assert.equal(strict(create({ routing: { class: "builder" } })), false);
+  assert.equal(strict(create({ routing: null })), false);
+  assert.equal(
+    strict(create({ routing: { ...ROUTING, profile: { verification: 4.7 } } })),
+    true,
+  );
+  assert.equal(
+    strict(create({ routing: { ...ROUTING, profile: { nonsense: 4 } } })),
+    false,
+  );
+});

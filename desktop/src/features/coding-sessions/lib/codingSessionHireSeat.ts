@@ -14,6 +14,7 @@
  * Pure. Every effect — staging custody, cutting the worktree, signing,
  * publishing — belongs to the hook that consumes this plan.
  */
+import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionStatus } from "./codingSessionTypes";
 import type {
   CodingSessionHireCandidate,
@@ -66,6 +67,15 @@ export type CodingSessionHireSeatPlan = {
    * out loud alongside {@link modelNotice}.
    */
   providerNotice: string | null;
+  /**
+   * The routing decision this seat was chosen by, or null on a hire that
+   * asked for none.
+   *
+   * Carried onto the create verbatim, so the seat's provenance line and every
+   * strict observer read the same object the router produced rather than a
+   * re-derivation of it.
+   */
+  routing: CodingSessionRoutingRecord | null;
   /** Display name for the seat, used in membership and failure copy. */
   seatLabel: string;
   /** `<session-slug>-<role>-<n>`; the host re-slugs and disambiguates it. */
@@ -91,6 +101,8 @@ export function buildCodingSessionHireSeatPlan(input: {
   modelNotice?: string | null;
   /** The host's runtime substitution, disclosed with the seat. */
   providerNotice?: string | null;
+  /** The router's decision, when the hire asked to be routed. */
+  routing?: CodingSessionRoutingRecord | null;
   /** Which seat of this role this is, 1-based; names the worktree. */
   seatOrdinal: number;
 }): CodingSessionHireSeatPlan {
@@ -109,6 +121,7 @@ export function buildCodingSessionHireSeatPlan(input: {
     title: input.title,
     modelNotice: input.modelNotice ?? null,
     providerNotice: input.providerNotice ?? null,
+    routing: input.routing ?? null,
     // A brief that already opens with the prefix keeps one, not two: the lead
     // writing the sentence itself must not produce "[From the lead] [From the
     // lead] …".

@@ -6,7 +6,9 @@ import {
   compareRubricToCatalog,
   parseRubricBlock,
   resolveRubricStaleness,
-} from "./rubricStaleness.ts";
+  compareRegistryToCatalog,
+  resolveRegistryStaleness,
+} from "./registryStaleness.ts";
 
 const DOCUMENT = [
   "# Choose a model",
@@ -367,4 +369,81 @@ test("the live catalog fixture produces the recorded lists", () => {
     aliases + named + result.unassigned.length + result.variants.length,
     fixture.offered.length,
   );
+});
+
+/**
+ * The registry badge, which asks the question the routing ruling made the
+ * real one: **is anything this host offers missing from the registry?**
+ *
+ * The other direction is deliberately not staleness. A row for a model this
+ * host does not offer today is dormant, which is the registry remembering
+ * something (spec §10) — counted and named, never scored.
+ */
+const ROWS = [
+  { provider: "claude-primary", model: "sonnet" },
+  { provider: "claude-primary", model: "opus[1m]" },
+  { provider: "claude-primary", model: "claude-fable-5[1m]" },
+  { provider: "claude-primary", model: "haiku" },
+  { provider: "codex-primary", model: "gpt-5.6-sol" },
+];
+
+test("an offered target with no registry row is what makes the badge stale", () => {
+  const state = resolveRegistryStaleness({
+    rows: ROWS,
+    version: 1,
+    offered: [
+      { providerInstanceRef: "claude-primary", model: "sonnet" },
+      { providerInstanceRef: "codex-primary", model: "gpt-5.6-sol[high]" },
+      { providerInstanceRef: "codex-primary", model: "gpt-5.6-luna[low]" },
+    ],
+  });
+  assert.equal(state.state, "stale");
+  assert.deepEqual(state.unregistered, ["codex-primary/gpt-5.6-luna"]);
+  assert.match(state.label, /^Registry v1 stale — 1 offered with no row$/);
+});
+
+test("a row the catalog does not offer is dormant, not stale", () => {
+  const state = resolveRegistryStaleness({
+    rows: ROWS,
+    version: 1,
+    offered: [{ providerInstanceRef: "claude-primary", model: "sonnet" }],
+  });
+  assert.equal(state.state, "fresh");
+  assert.equal(state.dormant.length, 4);
+  assert.match(state.detail, /dormant/);
+  assert.match(state.label, /covers the catalog/);
+});
+
+test("effort variants are settings of a base a row already names", () => {
+  const { unregistered, covered } = compareRegistryToCatalog(ROWS, [
+    { providerInstanceRef: "codex-primary", model: "gpt-5.6-sol" },
+    { providerInstanceRef: "codex-primary", model: "gpt-5.6-sol[high]" },
+    { providerInstanceRef: "codex-primary", model: "gpt-5.6-sol[xhigh]" },
+    { providerInstanceRef: "claude-primary", model: "default" },
+  ]);
+  assert.deepEqual(unregistered, []);
+  // `default` is an alias, not a model, and is counted by neither side.
+  assert.equal(covered, 3);
+});
+
+test("every no-answer is an answer, and none of them reads as fresh", () => {
+  const unreadable = resolveRegistryStaleness({
+    rows: null,
+    unreadableBecause:
+      "The router reads /x/team/model-registry.yaml, and this app has no command that reads a project file.",
+    offered: [],
+  });
+  assert.equal(unreadable.state, "unknown");
+  assert.equal(unreadable.reason, "registry-unreadable");
+  assert.equal(unreadable.label, "Registry: unknown (not readable)");
+  assert.match(unreadable.detail, /model-registry\.yaml/);
+
+  const empty = resolveRegistryStaleness({ rows: [], offered: [] });
+  assert.equal(empty.state, "unknown");
+  assert.equal(empty.reason, "registry-unparseable");
+
+  const noCatalog = resolveRegistryStaleness({ rows: ROWS, offered: null });
+  assert.equal(noCatalog.state, "unknown");
+  assert.equal(noCatalog.reason, "no-catalog");
+  assert.match(noCatalog.label, /no provider catalog/);
 });

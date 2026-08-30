@@ -323,3 +323,56 @@ test("an agentRef that is not a 64-hex pubkey is refused, as Rust refuses it", (
     SEAT_ACTOR,
   );
 });
+
+// The 2026-08-30 routing amendment on 44223. The provider echoes the decision
+// the create carried, so the seat's own metadata says which gates its model
+// cleared and why it was the cheapest of them.
+const ROUTING_RECORD = {
+  class: "builder",
+  tier: "standard",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
+  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
+  runnerUp: null,
+  reason: "cleared the builder gates and was the cheapest of them.",
+  reviewRequired: false,
+  reviewReasons: [],
+  challengerSample: false,
+  override: null,
+  registryVersion: 1,
+  catalogRevision: null,
+};
+
+test("metadata carrying a routing record decodes it", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataContent({ routing: ROUTING_RECORD }),
+  );
+  assert.deepEqual(parsed?.routing, ROUTING_RECORD);
+});
+
+test("metadata with no routing carries none, and an explicit null is absent", () => {
+  assert.equal(
+    parseBuzzCodingSessionMetadata(metadataContent({})).routing,
+    undefined,
+  );
+  assert.equal(
+    parseBuzzCodingSessionMetadata(metadataContent({ routing: null })).routing,
+    undefined,
+  );
+});
+
+test("a malformed routing record refuses the payload, it is not dropped", () => {
+  for (const routing of [
+    { class: "builder" },
+    {
+      ...ROUTING_RECORD,
+      chosen: { ...ROUTING_RECORD.chosen, effort: "xhigh" },
+    },
+    { ...ROUTING_RECORD, risk: { ...ROUTING_RECORD.risk, score: 3 } },
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(metadataContent({ routing })),
+      null,
+      `decoded ${JSON.stringify(routing)} instead of refusing it`,
+    );
+  }
+});

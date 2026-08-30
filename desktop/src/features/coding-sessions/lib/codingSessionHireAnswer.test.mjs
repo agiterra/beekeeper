@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -265,4 +266,116 @@ test("an umbrella in no project seats a hire with no project, never a guess", ()
   });
   assert.equal(result.kind, "seat");
   assert.equal(result.plan.projectRef, null);
+});
+
+/**
+ * The router, in the answer this host actually publishes.
+ *
+ * Three properties, and each is one the seat's honesty rests on: an unrouted
+ * hire is unchanged, a routed one carries the whole decision onto the create,
+ * and a routed one this host cannot route is refused out loud rather than
+ * seated on the identity's own model as though nobody had asked.
+ */
+const ROUTING_FIXTURE = readFileSync(
+  new URL(
+    "../../../../../testdata/routing/registry-fixture.yaml",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const READABLE_REGISTRY = {
+  kind: "readable",
+  text: ROUTING_FIXTURE,
+  label: "testdata/routing/registry-fixture.yaml",
+};
+const CLAUDE_CATALOG = new Map([
+  [
+    "claude-primary",
+    ["claude-fable-5[1m]", "default", "haiku", "opus[1m]", "sonnet"],
+  ],
+]);
+
+function routedRequest(routing) {
+  return { ...REQUEST, action: { ...REQUEST.action, routing } };
+}
+
+test("an unrouted hire still carries no routing at all", () => {
+  const result = answer();
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.routing, null);
+});
+
+test("a routed hire puts the whole decision on the seat", () => {
+  const result = answer({
+    request: routedRequest({
+      class: "builder",
+      risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+    }),
+    registry: READABLE_REGISTRY,
+    modelCatalogs: CLAUDE_CATALOG,
+    catalogRevision: 12,
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "sonnet");
+  assert.equal(result.plan.routing.chosen.model, "sonnet");
+  assert.equal(result.plan.routing.chosen.effort, "medium");
+  assert.equal(result.plan.routing.catalogRevision, 12);
+  assert.equal(result.plan.routing.reviewRequired, false);
+});
+
+test("a routed hire this host cannot route is refused HIRE_NO_ROUTE", () => {
+  const result = answer({
+    request: routedRequest({
+      class: "lead",
+      risk: { impact: 5, uncertainty: 5, irreversibility: 5 },
+    }),
+    registry: READABLE_REGISTRY,
+    modelCatalogs: new Map([["claude-primary", ["haiku"]]]),
+  });
+  assert.equal(result.kind, "refused");
+  assert.equal(result.code, "HIRE_NO_ROUTE");
+  assert.match(result.text, /^hire refused: HIRE_NO_ROUTE — /);
+});
+
+test("a host with no registry refuses a routed hire and says which file", () => {
+  const result = answer({
+    request: routedRequest({
+      class: "builder",
+      risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+    }),
+    modelCatalogs: CLAUDE_CATALOG,
+  });
+  assert.equal(result.kind, "refused");
+  assert.equal(result.code, "HIRE_NO_ROUTE");
+  assert.match(result.reason, /registry not readable on this host/);
+});
+
+test("a routed hire is not refused for the identity's own stale model", () => {
+  // The identity's record names a model this runtime does not publish. On an
+  // unrouted hire that is `HIRE_MODEL_NOT_OFFERED` and must stay so (item
+  // 88(a)); on a routed hire nothing is inherited, so the router answers.
+  const stale = [
+    {
+      pubkey: ADA,
+      name: "Ada",
+      homeRole: "builder",
+      hasRolePack: true,
+      model: "claude-sonnet-5",
+    },
+  ];
+  const unrouted = answer({ candidates: stale, modelCatalogs: CLAUDE_CATALOG });
+  assert.equal(unrouted.kind, "refused");
+  assert.equal(unrouted.code, "HIRE_MODEL_NOT_OFFERED");
+
+  const routed = answer({
+    candidates: stale,
+    request: routedRequest({
+      class: "builder",
+      risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+    }),
+    registry: READABLE_REGISTRY,
+    modelCatalogs: CLAUDE_CATALOG,
+  });
+  assert.equal(routed.kind, "seat");
+  assert.equal(routed.plan.model, "sonnet");
 });

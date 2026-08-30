@@ -7,6 +7,10 @@ import {
   MAX_CODING_SESSION_ROLE_BYTES,
 } from "./codingSessionActorSeat";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
+import {
+  isStrictCodingSessionRoutingRecord,
+  type CodingSessionRoutingRecord,
+} from "./codingSessionRouting";
 import { isCodingSessionSessionRef } from "./codingSessionWireDecode";
 
 export const CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA =
@@ -126,6 +130,17 @@ export function buildCodingSessionCreateEvent(input: {
   model: string | null;
   title: string | null;
   initialTurn: string | null;
+  /**
+   * The routing decision that chose this seat's execution target, when one
+   * did (2026-08-30).
+   *
+   * Trailing and present-or-absent, exactly like `sessionRef`, `genesisRef`
+   * and the seat pair before it: a create nobody routed is byte-identical to
+   * the form every existing consumer already reads. It is published so the
+   * decision is *on the wire* — a seat whose model cannot be explained from
+   * the events is a seat running weights nobody can account for.
+   */
+  routing?: CodingSessionRoutingRecord | null;
 }): CodingSessionLifecycleCommandEventInput {
   validateCodingSessionCreateInput(input);
   const payload: CodingSessionLifecycleCommandPayload = {
@@ -154,6 +169,9 @@ export function buildCodingSessionCreateEvent(input: {
       model: input.model,
       title: input.title,
       initialTurn: input.initialTurn,
+      ...(input.routing === undefined || input.routing === null
+        ? {}
+        : { routing: input.routing }),
     },
   };
   const content = JSON.stringify(payload);
@@ -187,7 +205,19 @@ export function validateCodingSessionCreateInput(input: {
   model: string | null;
   title: string | null;
   initialTurn: string | null;
+  routing?: CodingSessionRoutingRecord | null;
 }): void {
+  if (
+    input.routing !== undefined &&
+    input.routing !== null &&
+    !isStrictCodingSessionRoutingRecord(input.routing)
+  ) {
+    throw new Error(
+      "action.routing must be the closed routing record: class, tier, risk, " +
+        "chosen, runnerUp, reason, reviewRequired, reviewReasons, " +
+        "challengerSample, override, registryVersion, catalogRevision",
+    );
+  }
   validateRequired(
     input.channelId,
     "channelId",

@@ -14,6 +14,9 @@ import type { CodingSessionTarget } from "./types.ts";
 
 export const MAX_TARGET_IDENTITY_BYTES = 512;
 
+/** The reference ceiling buzz-core applies to every ref-shaped string. */
+export const MAX_REFERENCE_BYTES = 2 * 1024;
+
 export function parseBoundedJson(content: unknown, maxBytes: number): unknown {
   if (
     typeof content !== "string" ||
@@ -202,4 +205,153 @@ export function isExactProviderAuthorityPubkey(
  */
 export function hasOwnKey(value: object, key: string): boolean {
   return Object.getOwnPropertyDescriptor(value, key) !== undefined;
+}
+
+const ROUTING_EFFORTS = new Set(["low", "medium", "high"]);
+const ROUTING_TIERS = new Set(["fast", "standard", "deep"]);
+const ROUTING_REVIEW_TRIGGERS = new Set([
+  "risk>=40",
+  "irreversibility>=4",
+  "security-auth-data-boundary",
+  "architecture-schema-public-contract",
+  "builder-outside-plan",
+  "builder-reports-uncertainty",
+  "tests-cannot-verify",
+  "lead-requested",
+]);
+const ROUTING_TRAITS = new Set([
+  "reasoning",
+  "coding",
+  "taste",
+  "judgment",
+  "agency",
+  "discipline",
+  "context",
+  "verification",
+  "velocity",
+  "costEfficiency",
+]);
+const ROUTING_RECORD_FIELDS = [
+  "class",
+  "tier",
+  "risk",
+  "chosen",
+  "runnerUp",
+  "reason",
+  "reviewRequired",
+  "reviewReasons",
+  "challengerSample",
+  "override",
+  "registryVersion",
+  "catalogRevision",
+];
+
+/**
+ * The `routing` record a routed 44221 create and its 44223 metadata carry
+ * (Brian's routing ruling, 2026-08-30).
+ *
+ * Written out here rather than imported from the desktop because this
+ * observer shares no code with it; the rule is identical and is asserted
+ * against the same shapes. Two of the checks are about honesty rather than
+ * shape and are worth naming:
+ *
+ * - `risk.score` must be `impact × uncertainty × irreversibility`. A record
+ *   whose score disagrees with its own factors is a claim nobody can redo.
+ * - `chosen.effort` must be one of the three the router may buy. `xhigh`,
+ *   `max` and `ultra` are human-override only, so a record presenting one as
+ *   a routed effort is refused rather than rendered.
+ */
+export function isStrictRoutingRecord(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  const allowed = new Set([...ROUTING_RECORD_FIELDS, "profile"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) return false;
+  if (ROUTING_RECORD_FIELDS.some((key) => !hasOwnKey(value, key))) return false;
+  if (
+    typeof value.class !== "string" ||
+    !/^[a-z0-9_-]{1,64}$/.test(value.class)
+  ) {
+    return false;
+  }
+  if (!ROUTING_TIERS.has(value.tier as string)) return false;
+  if (!isRoutingRisk(value.risk)) return false;
+  if (!isRoutingTarget(value.chosen)) return false;
+  if (value.runnerUp !== null && !isRoutingTarget(value.runnerUp)) return false;
+  if (!boundedNonempty(value.reason, MAX_REFERENCE_BYTES)) return false;
+  if (typeof value.reviewRequired !== "boolean") return false;
+  if (
+    !Array.isArray(value.reviewReasons) ||
+    value.reviewReasons.some((entry) => !ROUTING_REVIEW_TRIGGERS.has(entry))
+  ) {
+    return false;
+  }
+  if (value.reviewRequired !== value.reviewReasons.length > 0) return false;
+  if (typeof value.challengerSample !== "boolean") return false;
+  if (value.override !== null && !isRoutingOverride(value.override)) {
+    return false;
+  }
+  if (!Number.isSafeInteger(value.registryVersion)) return false;
+  if (
+    value.catalogRevision !== null &&
+    !(
+      Number.isSafeInteger(value.catalogRevision) &&
+      (value.catalogRevision as number) > 0
+    )
+  ) {
+    return false;
+  }
+  if (!hasOwnKey(value, "profile")) return true;
+  return (
+    isPlainRecord(value.profile) &&
+    Object.entries(value.profile).every(
+      ([trait, minimum]) =>
+        ROUTING_TRAITS.has(trait) &&
+        typeof minimum === "number" &&
+        Number.isFinite(minimum) &&
+        minimum >= 1 &&
+        minimum <= 5,
+    )
+  );
+}
+
+function isRoutingRisk(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  const keys = ["impact", "uncertainty", "irreversibility", "score"];
+  if (Object.keys(value).length !== keys.length) return false;
+  if (keys.some((key) => !Number.isSafeInteger(value[key]))) return false;
+  for (const key of ["impact", "uncertainty", "irreversibility"]) {
+    const factor = value[key] as number;
+    if (factor < 1 || factor > 5) return false;
+  }
+  return (
+    value.score ===
+    (value.impact as number) *
+      (value.uncertainty as number) *
+      (value.irreversibility as number)
+  );
+}
+
+function isRoutingTarget(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    Object.keys(value).length === 3 &&
+    boundedNonempty(value.provider, MAX_REFERENCE_BYTES) &&
+    boundedNonempty(value.model, MAX_REFERENCE_BYTES) &&
+    ROUTING_EFFORTS.has(value.effort as string)
+  );
+}
+
+function isRoutingOverride(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  if (
+    Object.keys(value).some(
+      (key) => !["model", "effort", "because"].includes(key),
+    )
+  ) {
+    return false;
+  }
+  if (!boundedNonempty(value.model, MAX_REFERENCE_BYTES)) return false;
+  if (!boundedNonempty(value.because, MAX_REFERENCE_BYTES)) return false;
+  return (
+    !hasOwnKey(value, "effort") || ROUTING_EFFORTS.has(value.effort as string)
+  );
 }

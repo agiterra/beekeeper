@@ -29,7 +29,8 @@ import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
-import { resolveRubricStaleness } from "@/features/agents/lib/rubricStaleness";
+import { resolveRegistryStaleness } from "@/features/agents/lib/registryStaleness";
+import { describeUnreadableModelRegistry } from "@/features/coding-sessions/lib/codingSessionRegistryAccess";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
 import {
@@ -63,19 +64,27 @@ export function AgentsView() {
   // With no project at all nothing is resolved and the dialog is unchanged.
   const rolePacksProject = useRolePacksProject();
   const activeProject = rolePacksProject.project;
-  // The lead's model rubric, checked against the models actually on offer —
-  // Brian's ruling: the rubric stays, and it gets checked rather than trusted.
+  // The team's model registry, checked against the models actually on offer.
   //
-  // This renderer cannot read a role pack's files. The only role-pack access
+  // Brian's routing ruling of 2026-08-30 moved the question: stale now means
+  // *a live offered execution target with no registry row*, and a row this
+  // host does not offer today is dormant rather than stale.
+  //
+  // This renderer cannot read the registry file. The only project-file access
   // the app has is `scanProjectRolePacks` and `pickCrewRolePacksDirectory`
-  // (desktop/src/shared/api/tauriTeams.ts:327 and :341), and both return a
-  // role, a name and a `packDir` — never file content. So the badge says "pack
-  // not readable" out loud instead of rendering nothing, and points at the
-  // command that can answer it. `resolveRubricStaleness` holds the whole rule
-  // and is the same comparison `bee sessions rubric check` makes, so the day a
+  // (desktop/src/shared/api/tauriTeams.ts:331 and :350), and both return a
+  // role, a name and a `packDir` — never file content. So the badge says
+  // "Registry: unknown (not readable)" out loud, names the path it would have
+  // read, and never renders "fresh" on the strength of having compared
+  // nothing. `resolveRegistryStaleness` holds the whole rule, so the day a
   // reader exists this call site is the only thing that changes.
-  const rubricStaleness = React.useMemo(
-    () => resolveRubricStaleness({ rubricText: null, offered: null }),
+  const registryStaleness = React.useMemo(
+    () =>
+      resolveRegistryStaleness({
+        rows: null,
+        unreadableBecause: describeUnreadableModelRegistry(null).why,
+        offered: null,
+      }),
     [],
   );
 
@@ -238,11 +247,11 @@ export function AgentsView() {
                 Set up and manage your agents.{" "}
                 <span
                   className="ml-1 inline-block whitespace-nowrap rounded border border-border px-1.5 py-0.5 align-middle text-2xs"
-                  data-rubric-state={rubricStaleness.state}
-                  data-testid="rubric-stale-badge"
-                  title={rubricStaleness.detail}
+                  data-registry-state={registryStaleness.state}
+                  data-testid="registry-stale-badge"
+                  title={registryStaleness.detail}
                 >
-                  {rubricStaleness.label}
+                  {registryStaleness.label}
                 </span>
               </>
             }

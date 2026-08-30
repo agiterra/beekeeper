@@ -9,8 +9,16 @@
  * ```json
  * { "type": "session.hire", "sessionRef": "<uuid>", "genesisRef": "<64hex>",
  *   "role": "<slug>", "providerInstanceRef": null, "model": null,
- *   "brief": "<1..12288 bytes>" }
+ *   "brief": "<1..12288 bytes>", "routing": null }
  * ```
+ *
+ * `routing` is the 2026-08-30 amendment and travels present-or-absent, never
+ * as a key the old seven-key form has to grow: a hire that predates the
+ * router is still exactly seven keys and is still honoured. When it *is*
+ * present it carries what the lead knows — the class, the risk, and any extra
+ * trait minimums — and nothing it does not: the lead never names a model, so
+ * the router fills `chosen`, `runnerUp`, `reason` and the rest on the seat's
+ * create. See {@link CodingSessionHireRoutingRequest}.
  *
  * Two properties this module exists to hold:
  *
@@ -35,6 +43,10 @@ import {
   isCodingSessionRoleSlug,
   MAX_CODING_SESSION_ROLE_BYTES,
 } from "./codingSessionActorSeat";
+import {
+  isCodingSessionHireRoutingRequest,
+  type CodingSessionHireRoutingRequest,
+} from "./codingSessionHireRouting";
 import {
   CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
   CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
@@ -76,6 +88,19 @@ export const CODING_SESSION_HIRE_ACTION_KEYS = [
   "brief",
 ] as const;
 
+/**
+ * The 2026-08-30 form: the seven keys plus `routing`, last.
+ *
+ * Two accepted key sets, not one growing set — a relay, a CLI or a lead that
+ * predates the router keeps publishing the seven-key form and keeps being
+ * read. Trailing position matches how every other additive amendment on this
+ * wire has landed (`sessionRef`, `genesisRef`, the seat pair).
+ */
+export const CODING_SESSION_HIRE_ROUTED_ACTION_KEYS = [
+  ...CODING_SESSION_HIRE_ACTION_KEYS,
+  "routing",
+] as const;
+
 /** The `session.hire` action, exactly as it appears on the wire. */
 export type CodingSessionHireAction = {
   type: typeof CODING_SESSION_HIRE_ACTION_TYPE;
@@ -91,6 +116,14 @@ export type CodingSessionHireAction = {
   model: string | null;
   /** The seat's whole first turn. Non-empty. */
   brief: string;
+  /**
+   * What the lead knows about the job, for the host's router — or absent on
+   * a hire that predates the amendment.
+   *
+   * Never a model. "The lead chooses the capability required. The router
+   * chooses the execution target."
+   */
+  routing?: CodingSessionHireRoutingRequest;
 };
 
 /** A signed hire, once read off the wire. */
@@ -127,6 +160,8 @@ export function buildCodingSessionHireEvent(input: {
   providerInstanceRef: string | null;
   model: string | null;
   brief: string;
+  /** Present only on a routed hire; absent reproduces the seven-key form. */
+  routing?: CodingSessionHireRoutingRequest;
 }): CodingSessionLifecycleCommandEventInput {
   validateCodingSessionHireInput(input);
   const content = JSON.stringify({
@@ -140,6 +175,9 @@ export function buildCodingSessionHireEvent(input: {
       providerInstanceRef: input.providerInstanceRef,
       model: input.model,
       brief: input.brief,
+      // `undefined` counts as absent, so a hire that names no routing is
+      // byte-identical to the pre-amendment form.
+      ...(input.routing === undefined ? {} : { routing: input.routing }),
     },
   });
   if (
@@ -171,6 +209,7 @@ export function validateCodingSessionHireInput(input: {
   providerInstanceRef: string | null;
   model: string | null;
   brief: string;
+  routing?: CodingSessionHireRoutingRequest;
 }): void {
   if (input.channelId.trim().length === 0) {
     throw new Error("channelId must not be empty");
@@ -216,6 +255,15 @@ export function validateCodingSessionHireInput(input: {
   if (utf8Bytes(input.brief) > MAX_CODING_SESSION_HIRE_BRIEF_BYTES) {
     throw new Error(
       `action.brief exceeds ${MAX_CODING_SESSION_HIRE_BRIEF_BYTES} bytes`,
+    );
+  }
+  if (
+    input.routing !== undefined &&
+    !isCodingSessionHireRoutingRequest(input.routing)
+  ) {
+    throw new Error(
+      "action.routing must be { class, risk } with optional tier, profile " +
+        "and override, and must name no model of its own",
     );
   }
 }
@@ -274,7 +322,13 @@ export function classifyCodingSessionHireEvent(
     return { kind: "malformed" };
   }
   const action = payload.action;
-  if (!hasExactKeys(action, [...CODING_SESSION_HIRE_ACTION_KEYS])) {
+  const routed = hasExactKeys(action, [
+    ...CODING_SESSION_HIRE_ROUTED_ACTION_KEYS,
+  ]);
+  if (!routed && !hasExactKeys(action, [...CODING_SESSION_HIRE_ACTION_KEYS])) {
+    return { kind: "malformed" };
+  }
+  if (routed && !isCodingSessionHireRoutingRequest(action.routing)) {
     return { kind: "malformed" };
   }
   if (
@@ -306,6 +360,9 @@ export function classifyCodingSessionHireEvent(
       providerInstanceRef: action.providerInstanceRef,
       model: action.model,
       brief: action.brief,
+      ...(routed
+        ? { routing: action.routing as CodingSessionHireRoutingRequest }
+        : {}),
     },
   };
 }

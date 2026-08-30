@@ -1,0 +1,396 @@
+{
+  "note": "Recorded routing decisions for the pinned pair (registry-fixture.yaml x testdata/rubric/live-catalog-665076ce.json). Written by lane B (desktop) on 2026-08-30 because lane A had not yet recorded its own expected-decisions file in this worktree; the integrator reconciles the two. Regenerate by re-running the router, never by hand-editing a decision you disagree with — a disagreement is a rule to change, not a number to overwrite.",
+  "registry": "testdata/routing/registry-fixture.yaml",
+  "catalog": "testdata/rubric/live-catalog-665076ce.json",
+  "router": "desktop/src/features/coding-sessions/lib/codingSessionRouting.ts",
+  "recordedAt": "2026-08-30",
+  "decisions": [
+    {
+      "name": "builder / fast",
+      "input": {
+        "class": "builder",
+        "risk": {
+          "impact": 1,
+          "uncertainty": 2,
+          "irreversibility": 2
+        }
+      },
+      "outcome": "routed",
+      "tier": "fast",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-luna[low]",
+        "effort": "low"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.4-mini[low]",
+        "effort": "low"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the builder gates (coding≥4.2, agency≥4.4, discipline≥4.5, verification≥4.2) and the fast tier's low effort; incumbent, cheaper than codex-primary/gpt-5.4-mini[low].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-luna[low] incumbent cost=5.2",
+        "codex-primary/gpt-5.4-mini[low] incumbent cost=5.4",
+        "claude-primary/sonnet challenger cost=5.3",
+        "codex-primary/gpt-5.6-terra[low] challenger cost=6.4",
+        "codex-primary/gpt-5.4[low] challenger cost=7.1",
+        "codex-primary/gpt-5.6-sol[low] challenger cost=7.2",
+        "claude-primary/opus[1m] challenger cost=7.8",
+        "codex-primary/gpt-5.5[low] challenger cost=8.5",
+        "claude-primary/claude-fable-5[1m] challenger cost=9.5"
+      ]
+    },
+    {
+      "name": "builder / standard",
+      "input": {
+        "class": "builder",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2
+        }
+      },
+      "outcome": "routed",
+      "tier": "standard",
+      "chosen": {
+        "provider": "claude-primary",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-luna[medium]",
+        "effort": "medium"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the builder gates (coding≥4.2, agency≥4.4, discipline≥4.5, verification≥4.2) and the standard tier's medium effort; incumbent, cheaper than codex-primary/gpt-5.6-luna[medium].",
+      "rankedExpectedCost": [
+        "claude-primary/sonnet incumbent cost=8.2",
+        "codex-primary/gpt-5.6-luna[medium] challenger cost=7.2",
+        "codex-primary/gpt-5.4-mini[medium] challenger cost=7.9",
+        "codex-primary/gpt-5.6-terra[medium] challenger cost=10.2",
+        "codex-primary/gpt-5.4[medium] challenger cost=11.4",
+        "codex-primary/gpt-5.6-sol[medium] challenger cost=12.2",
+        "claude-primary/opus[1m] challenger cost=13.4",
+        "codex-primary/gpt-5.5[medium] challenger cost=14.4",
+        "claude-primary/claude-fable-5[1m] challenger cost=16.8"
+      ]
+    },
+    {
+      "name": "builder / deep",
+      "input": {
+        "class": "builder",
+        "risk": {
+          "impact": 5,
+          "uncertainty": 5,
+          "irreversibility": 5
+        }
+      },
+      "outcome": "routed",
+      "tier": "deep",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-sol[high]",
+        "effort": "high"
+      },
+      "runnerUp": {
+        "provider": "claude-primary",
+        "model": "opus[1m]",
+        "effort": "high"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the builder gates (coding≥4.2, agency≥4.4, discipline≥4.5, verification≥4.2) and the deep tier's high effort; incumbent, cheaper than claude-primary/opus[1m].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-sol[high] incumbent cost=17.2",
+        "claude-primary/opus[1m] incumbent cost=19",
+        "codex-primary/gpt-5.6-luna[high] challenger cost=9.2",
+        "codex-primary/gpt-5.4-mini[high] challenger cost=10.4",
+        "claude-primary/sonnet challenger cost=11.1",
+        "codex-primary/gpt-5.6-terra[high] challenger cost=14",
+        "codex-primary/gpt-5.4[high] challenger cost=15.7",
+        "codex-primary/gpt-5.5[high] challenger cost=20.3",
+        "claude-primary/claude-fable-5[1m] challenger cost=24.1"
+      ]
+    },
+    {
+      "name": "builder / standard, challenger sample",
+      "input": {
+        "class": "builder",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2
+        },
+        "sampleChallenger": true
+      },
+      "outcome": "routed",
+      "tier": "standard",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-luna[medium]",
+        "effort": "medium"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.4-mini[medium]",
+        "effort": "medium"
+      },
+      "challengerSample": true,
+      "recordedReason": "cleared the builder gates (coding≥4.2, agency≥4.4, discipline≥4.5, verification≥4.2) and the standard tier's medium effort; sampled challenger, cheaper than codex-primary/gpt-5.4-mini[medium].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-luna[medium] challenger cost=7.2",
+        "codex-primary/gpt-5.4-mini[medium] challenger cost=7.9",
+        "codex-primary/gpt-5.6-terra[medium] challenger cost=10.2",
+        "codex-primary/gpt-5.4[medium] challenger cost=11.4",
+        "codex-primary/gpt-5.6-sol[medium] challenger cost=12.2",
+        "claude-primary/opus[1m] challenger cost=13.4",
+        "codex-primary/gpt-5.5[medium] challenger cost=14.4",
+        "claude-primary/claude-fable-5[1m] challenger cost=16.8",
+        "claude-primary/sonnet incumbent cost=8.2"
+      ]
+    },
+    {
+      "name": "lead / deep",
+      "input": {
+        "class": "lead",
+        "risk": {
+          "impact": 5,
+          "uncertainty": 5,
+          "irreversibility": 5
+        }
+      },
+      "outcome": "routed",
+      "tier": "deep",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-sol[high]",
+        "effort": "high"
+      },
+      "runnerUp": {
+        "provider": "claude-primary",
+        "model": "opus[1m]",
+        "effort": "high"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the lead gates (reasoning≥4.8, judgment≥4.8, agency≥4.8, discipline≥4.6, context≥4.8) and the deep tier's high effort; incumbent, cheaper than claude-primary/opus[1m].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-sol[high] incumbent cost=17.2",
+        "claude-primary/opus[1m] incumbent cost=19",
+        "claude-primary/claude-fable-5[1m] incumbent cost=24.1"
+      ]
+    },
+    {
+      "name": "architect / deep",
+      "input": {
+        "class": "architect",
+        "risk": {
+          "impact": 5,
+          "uncertainty": 5,
+          "irreversibility": 5
+        }
+      },
+      "outcome": "routed",
+      "tier": "deep",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-sol[high]",
+        "effort": "high"
+      },
+      "runnerUp": {
+        "provider": "claude-primary",
+        "model": "opus[1m]",
+        "effort": "high"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the architect gates (reasoning≥4.7, judgment≥4.7, discipline≥4.5, context≥4.5, verification≥4.5) and the deep tier's high effort; incumbent, cheaper than claude-primary/opus[1m].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-sol[high] incumbent cost=17.2",
+        "claude-primary/opus[1m] incumbent cost=19",
+        "claude-primary/claude-fable-5[1m] incumbent cost=24.1",
+        "codex-primary/gpt-5.5[high] challenger cost=20.3"
+      ]
+    },
+    {
+      "name": "runner / fast",
+      "input": {
+        "class": "runner",
+        "risk": {
+          "impact": 1,
+          "uncertainty": 2,
+          "irreversibility": 2
+        }
+      },
+      "outcome": "routed",
+      "tier": "fast",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-luna[low]",
+        "effort": "low"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.4-mini[low]",
+        "effort": "low"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the runner gates (agency≥4, discipline≥3.7, velocity≥4.5) and the fast tier's low effort; incumbent, cheaper than codex-primary/gpt-5.4-mini[low].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-luna[low] incumbent cost=5.2",
+        "codex-primary/gpt-5.4-mini[low] incumbent cost=5.4",
+        "claude-primary/haiku incumbent cost=6.4",
+        "codex-primary/gpt-5.3-codex-spark[low] incumbent cost=null",
+        "claude-primary/sonnet challenger cost=5.3"
+      ]
+    },
+    {
+      "name": "runner / fast, bounded and unambiguous",
+      "input": {
+        "class": "runner",
+        "risk": {
+          "impact": 1,
+          "uncertainty": 1,
+          "irreversibility": 1
+        },
+        "requirements": {
+          "ambiguity": 2,
+          "scope": "bounded"
+        }
+      },
+      "outcome": "routed",
+      "tier": "fast",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-luna[low]",
+        "effort": "low"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.4-mini[low]",
+        "effort": "low"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the runner gates (agency≥4, discipline≥3.7, velocity≥4.5) and the fast tier's low effort; incumbent, cheaper than codex-primary/gpt-5.4-mini[low].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-luna[low] incumbent cost=5.2",
+        "codex-primary/gpt-5.4-mini[low] incumbent cost=5.4",
+        "claude-primary/haiku incumbent cost=6.4",
+        "codex-primary/gpt-5.3-codex-spark[low] incumbent cost=null",
+        "claude-primary/sonnet challenger cost=5.3"
+      ]
+    },
+    {
+      "name": "ui_designer / standard",
+      "input": {
+        "class": "ui_designer",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2
+        }
+      },
+      "outcome": "routed",
+      "tier": "standard",
+      "chosen": {
+        "provider": "claude-primary",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-sol[medium]",
+        "effort": "medium"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the ui_designer gates (taste≥4.5, judgment≥4.3) and the standard tier's medium effort; incumbent, cheaper than codex-primary/gpt-5.6-sol[medium].",
+      "rankedExpectedCost": [
+        "claude-primary/sonnet incumbent cost=8.2",
+        "codex-primary/gpt-5.6-sol[medium] incumbent cost=12.2",
+        "claude-primary/opus[1m] incumbent cost=13.4",
+        "codex-primary/gpt-5.5[medium] challenger cost=14.4",
+        "claude-primary/claude-fable-5[1m] challenger cost=16.8"
+      ]
+    },
+    {
+      "name": "verifier / standard reviewing a claude builder",
+      "input": {
+        "class": "verifier",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2
+        },
+        "peer": {
+          "className": "builder",
+          "provider": "claude-primary"
+        }
+      },
+      "outcome": "routed",
+      "tier": "standard",
+      "chosen": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-sol[medium]",
+        "effort": "medium"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.5[medium]",
+        "effort": "medium"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the verifier gates (reasoning≥4.5, judgment≥4.5, verification≥4.7) and the standard tier's medium effort; incumbent, cheaper than codex-primary/gpt-5.5[medium].",
+      "rankedExpectedCost": [
+        "codex-primary/gpt-5.6-sol[medium] incumbent cost=12.2",
+        "codex-primary/gpt-5.5[medium] challenger cost=14.4"
+      ]
+    },
+    {
+      "name": "researcher / standard",
+      "input": {
+        "class": "researcher",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2
+        }
+      },
+      "outcome": "no-route",
+      "reasonMatch": "no recorded tool support, so search is not established",
+      "recordedReason": "no execution target clears the researcher gates at the standard tier on this host's live catalog. codex-primary/gpt-5.6-sol: no recorded tool support, so search is not established for it; codex-primary/gpt-5.6-terra: no recorded tool support, so search is not established for it; codex-primary/gpt-5.6-luna: no recorded tool support, so search is not established for it; codex-primary/gpt-5.5: no recorded tool support, so search is not established for it; and 7 more."
+    },
+    {
+      "name": "poker / standard (lane-drafted class)",
+      "input": {
+        "class": "poker",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2
+        }
+      },
+      "outcome": "routed",
+      "tier": "standard",
+      "chosen": {
+        "provider": "claude-primary",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "runnerUp": {
+        "provider": "codex-primary",
+        "model": "gpt-5.6-terra[medium]",
+        "effort": "medium"
+      },
+      "challengerSample": false,
+      "recordedReason": "cleared the poker gates (judgment≥4.3, discipline≥4) and the standard tier's medium effort; no incumbent was eligible, cheaper than codex-primary/gpt-5.6-terra[medium].",
+      "rankedExpectedCost": [
+        "claude-primary/sonnet challenger cost=8.2",
+        "codex-primary/gpt-5.6-terra[medium] challenger cost=10.2",
+        "codex-primary/gpt-5.4[medium] challenger cost=11.4",
+        "codex-primary/gpt-5.6-sol[medium] challenger cost=12.2",
+        "claude-primary/opus[1m] challenger cost=13.4",
+        "codex-primary/gpt-5.5[medium] challenger cost=14.4",
+        "claude-primary/claude-fable-5[1m] challenger cost=16.8"
+      ]
+    }
+  ]
+}
