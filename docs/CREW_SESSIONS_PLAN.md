@@ -255,6 +255,60 @@ as written; mobile and web are notated and revisited once the desktop
 works. Open: whether D11's roster-by-default or per-task minting is the
 default the person sees first.
 
+**D17. Routing — the lead classifies, the router chooses (Brian, 2026-08-30).**
+This supersedes D13's rubric: the lead names no model at all. Brian's ruling,
+the two paragraphs that set it, verbatim:
+
+> One architectural correction before landing Batch 1: Do not rank models as
+> capability_match × cost_efficiency × velocity. Routing should be: live catalog
+> → hard requirements → class gates → risk tier → eligible execution targets →
+> cheapest expected acceptable completion. A model must first clear every
+> material capability requirement. Cost and speed choose among models that have
+> already cleared the bar; they must never compensate for a critical capability
+> deficit.
+
+> The thing being routed is an execution target, not merely a model:
+> provider/harness + model + effort. Examples: codex / gpt-5.6-sol / high;
+> claude-code / claude-sonnet-5 / medium. Same model in a materially different
+> harness can eventually earn different telemetry.
+
+And the two rules the design exists to obey, also verbatim: **"The lead chooses
+the capability required. The router chooses the execution target."** and
+**"Select the least expensive execution target whose expected failure mode is
+acceptable for the task."**
+
+Mechanically:
+
+- **The lead classifies.** Eleven task properties (domain, ambiguity, reasoning
+  depth, taste, tool dependence, context size, execution autonomy, verification
+  need, judgment risk, latency, cost sensitivity), then Risk = impact ×
+  uncertainty × irreversibility, each 1–5. It hires with `--class` and
+  `--risk`, never `--model`.
+- **The tier is derived, not passed.** 1–8 FAST → effort low, 9–39 STANDARD →
+  medium, 40–125 DEEP → high. Thresholds are labelled `seed_policy`, not truth.
+  The router never buys xhigh/max/ultra — human override only — and never
+  auto-escalates effort after a failure: a failed high seat gets a different
+  execution target or a reviewer.
+- **Ten scored traits** (reasoning, coding, taste, judgment, agency, discipline,
+  context, verification, velocity, cost_efficiency) are operational priors of
+  low confidence, held apart from the facts (multimodal, context window, tool
+  support, harness, provider, price, quota class, offered, known failure modes).
+  `cost_efficiency` is a prior, not $/MTok: our real cost is quota lanes.
+- **The registry is `team/model-registry.yaml`**, keyed by the execution-target
+  ids the 44222 catalog publishes — no aliases. A row for a model the catalog
+  does not offer today is **dormant, not stale**; stale means a live offered
+  target has no row. Rows carry incumbent|challenger per class, and every fifth
+  STANDARD builder job is sampled to a challenger (seed policy until telemetry).
+- **Review is a trigger list, not a tier** (risk ≥ 40, irreversibility ≥ 4,
+  security/auth/data boundary, architecture/schema/public contract, builder
+  outside plan, builder uncertain, tests cannot verify, lead requests) and
+  prefers a cross-provider reviewer.
+- **The decision is on the wire.** A `routing` object rides `session.hire`, is
+  echoed on the resulting create and on the seat's 44223 metadata, and names
+  `chosen`, `runnerUp`, the `reason`, the review triggers, `registryVersion` and
+  `catalogRevision`. If nothing clears every gate the hire is refused
+  `HIRE_NO_ROUTE` — requirements are never silently weakened.
+
 ## 4. Slices
 
 Dependency graph: S1 → S2; S1 → S3; S3 → S4; S4 → S5; S5 → S6. S2 and S3
