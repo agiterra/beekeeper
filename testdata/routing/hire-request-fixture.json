@@ -1,0 +1,105 @@
+{
+  "schema": "buzz-coding-session-hire-routing-request/v1",
+  "why": "The `routing` a kind:44221 session.hire carries is a REQUEST, not a decision. It is what the lead knows — a class, a risk triple, optional extra trait minimums, an optional human override, the lead's by-rule challenger sample and its review flags — plus, optionally, `proposed`: the decision the requester's own `bee sessions route` computed, which is informational and which the host is free to disagree with out loud. Three requests are pinned here so buzz-core's validator, the CLI's emitter and the desktop's parser accept byte-identical shapes. Any lane changing this file changes a contract three implementations share.",
+  "keys": {
+    "required": ["class", "risk"],
+    "optional": [
+      "profile",
+      "override",
+      "challengerSample",
+      "reviewFlags",
+      "proposed"
+    ],
+    "refused": [
+      "tier",
+      "score",
+      "chosen",
+      "runnerUp",
+      "reason",
+      "reviewRequired",
+      "reviewReasons",
+      "registryVersion",
+      "catalogRevision"
+    ],
+    "note": "`tier` is derived from `risk` by the host and is refused on the wire, so a request and the host can never disagree about it silently. `risk` carries no `score` for the same reason: the product is the host's to compute. Everything under `refused` belongs to the RECORD the host writes on the create."
+  },
+  "requests": [
+    {
+      "case": "fast builder, no override",
+      "why": "The ordinary case. impact 2 x uncertainty 1 x irreversibility 2 = 4, which is the fast band (1-8), and the lead names no model at all.",
+      "routing": {
+        "class": "builder",
+        "risk": { "impact": 2, "uncertainty": 1, "irreversibility": 2 },
+        "proposed": {
+          "chosen": {
+            "provider": "codex-primary",
+            "model": "gpt-5.6-luna",
+            "effort": "low"
+          },
+          "runnerUp": {
+            "provider": "codex-primary",
+            "model": "gpt-5.4-mini",
+            "effort": "low"
+          },
+          "reason": "cleared the builder gates and the fast tier's low effort; cheapest expected accepted completion of the eligible targets.",
+          "registryVersion": 1,
+          "catalogRevision": 7
+        }
+      }
+    },
+    {
+      "case": "standard builder with an override and its because",
+      "why": "impact 3 x uncertainty 3 x irreversibility 2 = 18, the standard band (9-39). A human names the target by hand; the reason is not optional, because the router's own answer is being set aside and the record has to say why.",
+      "routing": {
+        "class": "builder",
+        "risk": { "impact": 3, "uncertainty": 3, "irreversibility": 2 },
+        "override": {
+          "model": "opus[1m]",
+          "because": "Brian asked for the big one on this lane."
+        },
+        "challengerSample": false,
+        "proposed": {
+          "chosen": {
+            "provider": "claude-primary",
+            "model": "opus[1m]",
+            "effort": "medium"
+          },
+          "runnerUp": {
+            "provider": "claude-primary",
+            "model": "sonnet",
+            "effort": "medium"
+          },
+          "reason": "human override: Brian asked for the big one on this lane.",
+          "registryVersion": 1,
+          "catalogRevision": 7
+        }
+      }
+    },
+    {
+      "case": "deep architect with review flags",
+      "why": "impact 5 x uncertainty 4 x irreversibility 5 = 100, the deep band (40-125). The lead adds a trait minimum and the review flags it is entitled to raise; `reviewRequired` and `reviewReasons` stay the host's to compute.",
+      "routing": {
+        "class": "architect",
+        "risk": { "impact": 5, "uncertainty": 4, "irreversibility": 5 },
+        "profile": { "judgment": 4.5 },
+        "reviewFlags": ["contractChange", "outsidePlan"],
+        "challengerSample": true,
+        "proposed": {
+          "chosen": {
+            "provider": "codex-primary",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "runnerUp": {
+            "provider": "claude-primary",
+            "model": "opus[1m]",
+            "effort": "high"
+          },
+          "reason": "cleared the architect gates and the deep tier's high effort; cheapest expected accepted completion of the eligible targets.",
+          "registryVersion": 1,
+          "catalogRevision": 7
+        }
+      }
+    }
+  ]
+}

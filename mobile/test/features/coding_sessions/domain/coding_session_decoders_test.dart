@@ -632,6 +632,37 @@ void main() {
       }
     });
 
+    // `Routing::profile` in buzz-core has no `skip_serializing_if`
+    // (coding_session_routing.rs:838), so a record with no extra trait
+    // minimums rides as `profile: null` — and a decoder that accepted only a
+    // map refused every record the CLI ever wrote.
+    test('profile: null is the shape the canonical producer writes', () {
+      final record = routingRecord()..['profile'] = null;
+      expect(
+        decodeCodingSessionMetadata(metadataEvent(routing: record)).value,
+        isNotNull,
+      );
+    });
+
+    // The host's one sentence when its own choice differs from the `proposed`
+    // decision the hire carried. A decoder that refused it would drop exactly
+    // the records that disclose a disagreement.
+    test('a disclosed disagreement with the proposal decodes', () {
+      final record = routingRecord()
+        ..['proposedDisagreement'] =
+            'the request proposed codex-primary/gpt-5.6-luna (low); this host '
+            'routed claude-primary/sonnet (medium).';
+      expect(
+        decodeCodingSessionMetadata(metadataEvent(routing: record)).value,
+        isNotNull,
+      );
+      final blank = routingRecord()..['proposedDisagreement'] = '   ';
+      expect(
+        decodeCodingSessionMetadata(metadataEvent(routing: blank)).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+    });
+
     test('the router\'s own review reasons decode, value and all', () {
       // The canonical router renders the two numeric §6 triggers with the
       // number that fired them (coding_session_routing.rs:1555). This decoder

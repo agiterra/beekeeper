@@ -38,8 +38,16 @@ export type CodingSessionRoutingRecord = {
   class: string;
   tier: RoutingTier;
   risk: RoutingRisk & { score: number };
-  /** Extra trait minimums the lead asked for, when it asked for any. */
-  profile?: Partial<Record<RoutingTrait, number>>;
+  /**
+   * Extra trait minimums the lead asked for.
+   *
+   * `null` — not absent — is what buzz-core and the CLI emit when the lead
+   * asked for none (`Routing::profile` is an `Option` with no
+   * `skip_serializing_if`, `crates/buzz-core/src/coding_session_routing.rs:838`),
+   * so an observer that accepted only an object refused every record the CLI
+   * ever wrote. Absent is accepted too, for a producer that omits it.
+   */
+  profile?: Partial<Record<RoutingTrait, number>> | null;
   chosen: RoutedExecutionTarget;
   runnerUp: RoutedExecutionTarget | null;
   /** One sentence: the gates cleared, and why this was the cheapest. */
@@ -51,6 +59,18 @@ export type CodingSessionRoutingRecord = {
   registryVersion: number;
   /** The 44222 revision the choice was made against, or null when unknown. */
   catalogRevision: number | null;
+  /**
+   * One sentence, present only when this host's choice differs from the
+   * `proposed` decision the hire carried.
+   *
+   * The requester routes locally with `bee sessions route` and may send that
+   * decision along; the host routes for real, against its own registry and the
+   * catalog of the runtime the seat will actually run on. When the two differ
+   * the difference is written here rather than swallowed — a host that quietly
+   * replaced a proposal would leave the requester reading its own local answer
+   * while a different model did the work.
+   */
+  proposedDisagreement?: string;
 };
 
 /**
@@ -81,6 +101,9 @@ export const MAX_ROUTING_REVIEW_REASONS = 16;
 
 /** A review reason is a bounded, non-blank token — never a closed set. */
 export const MAX_ROUTING_TOKEN_BYTES = 256;
+
+/** Longest `proposedDisagreement` an observer accepts. One sentence, bounded. */
+export const MAX_ROUTING_DISAGREEMENT_BYTES = 512;
 
 /**
  * The one line a seat's provenance row shows.
@@ -124,7 +147,11 @@ const ROUTING_RECORD_KEYS = [
 export function isStrictCodingSessionRoutingRecord(value: unknown): boolean {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value);
-  const allowed = new Set<string>([...ROUTING_RECORD_KEYS, "profile"]);
+  const allowed = new Set<string>([
+    ...ROUTING_RECORD_KEYS,
+    "profile",
+    "proposedDisagreement",
+  ]);
   if (keys.some((key) => !allowed.has(key))) return false;
   if (ROUTING_RECORD_KEYS.some((key) => !Object.hasOwn(value, key))) {
     return false;
@@ -176,7 +203,12 @@ export function isStrictCodingSessionRoutingRecord(value: unknown): boolean {
   if (Object.hasOwn(value, "profile") && !isStrictProfile(value.profile)) {
     return false;
   }
-  return true;
+  return (
+    !Object.hasOwn(value, "proposedDisagreement") ||
+    (typeof value.proposedDisagreement === "string" &&
+      value.proposedDisagreement.trim().length > 0 &&
+      value.proposedDisagreement.length <= MAX_ROUTING_DISAGREEMENT_BYTES)
+  );
 }
 
 function isStrictRisk(value: unknown): boolean {
@@ -227,6 +259,8 @@ function isStrictOverride(value: unknown): boolean {
 }
 
 function isStrictProfile(value: unknown): boolean {
+  // `null` is the answered-with-nothing shape the canonical producer writes.
+  if (value === null) return true;
   if (!isRecord(value)) return false;
   const traits = new Set<string>(ROUTING_TRAITS);
   return Object.entries(value).every(

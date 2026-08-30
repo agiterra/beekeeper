@@ -194,6 +194,9 @@ const _routingRecordFields = [
   'catalogRevision',
 ];
 const _maxRoutingReferenceBytes = 2 * 1024;
+
+/// One sentence, bounded: the host's disagreement with a carried proposal.
+const _maxRoutingDisagreementBytes = 512;
 final RegExp _routingClassPattern = RegExp(r'^[a-z0-9_-]{1,64}$');
 
 /// The `routing` record a routed 44221 create and its 44223 metadata carry
@@ -210,7 +213,7 @@ final RegExp _routingClassPattern = RegExp(r'^[a-z0-9_-]{1,64}$');
 ///   routed effort is refused rather than shown.
 bool isStrictRoutingRecord(Object? value) {
   if (value is! Map<String, dynamic>) return false;
-  final allowed = {..._routingRecordFields, 'profile'};
+  final allowed = {..._routingRecordFields, 'profile', 'proposedDisagreement'};
   if (value.keys.any((key) => !allowed.contains(key))) return false;
   if (_routingRecordFields.any((key) => !value.containsKey(key))) return false;
   final className = value['class'];
@@ -242,7 +245,17 @@ bool isStrictRoutingRecord(Object? value) {
   if (value['registryVersion'] is! int) return false;
   final revision = value['catalogRevision'];
   if (revision != null && (revision is! int || revision <= 0)) return false;
-  if (!value.containsKey('profile')) return true;
+  if (value.containsKey('proposedDisagreement') &&
+      !boundedNonempty(
+        value['proposedDisagreement'],
+        _maxRoutingDisagreementBytes,
+      )) {
+    return false;
+  }
+  // `profile: null` is what the canonical producer writes when the lead asked
+  // for no extra minimums, so an observer accepting only a map refused every
+  // record the CLI ever wrote.
+  if (!value.containsKey('profile') || value['profile'] == null) return true;
   final profile = value['profile'];
   if (profile is! Map<String, dynamic>) return false;
   return profile.entries.every(

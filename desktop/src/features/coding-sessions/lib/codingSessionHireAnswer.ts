@@ -320,3 +320,97 @@ export function codingSessionHireGrantFailureNotice(input: {
 }): string {
   return `Hired a ${input.role} — ${input.text}`;
 }
+
+/**
+ * What this host did with one hire.
+ *
+ * Declared here rather than beside the hook so the tally below and the hook
+ * cannot drift into two different vocabularies for the same five facts.
+ *
+ * - `seated` — an identity was created, granted and is running.
+ * - `refused` — a contract code went back to the requesting seat.
+ * - `malformed` — the payload could not be read; the failing key went back.
+ * - `ignored` — not this operator's umbrella, or no provider identity here.
+ *   Deliberately quiet on the wire: answering a stranger would tell them this
+ *   computer is listening and will sign events on request.
+ * - `error` — the answer itself failed to go out. Not a refusal: nobody was
+ *   told, which is why it is counted separately and never folded into one.
+ */
+export type CodingSessionHireOutcomeState =
+  | "seated"
+  | "refused"
+  | "malformed"
+  | "ignored"
+  | "error";
+
+/** The three counts the umbrella strip shows, plus what to say on hover. */
+export type CodingSessionHireTally = {
+  /** Hires that produced a seat. */
+  answered: number;
+  /** Hires refused with a contract code. */
+  refused: number;
+  /** Hires whose payload this host could not read. */
+  malformed: number;
+  /** Hires whose *answer* failed to go out. Never folded into `refused`. */
+  failed: number;
+  /** The newest reason among them, for the hover. Null when there is none. */
+  lastReason: string | null;
+};
+
+/**
+ * Count what the host has answered, newest outcome last.
+ *
+ * `ignored` is counted by nothing on purpose: a hire into somebody else's
+ * umbrella is not this host's to answer, and putting it in a "refused" count
+ * would make an operator hunt for a refusal that was never owed.
+ */
+export function summarizeCodingSessionHireOutcomes(
+  outcomes: readonly {
+    state: CodingSessionHireOutcomeState;
+    detail: string | null;
+  }[],
+): CodingSessionHireTally {
+  const tally: CodingSessionHireTally = {
+    answered: 0,
+    refused: 0,
+    malformed: 0,
+    failed: 0,
+    lastReason: null,
+  };
+  for (const outcome of outcomes) {
+    if (outcome.state === "seated") tally.answered += 1;
+    else if (outcome.state === "refused") tally.refused += 1;
+    else if (outcome.state === "malformed") tally.malformed += 1;
+    else if (outcome.state === "error") tally.failed += 1;
+    else continue;
+    const said = outcome.detail?.trim();
+    if (said !== undefined && said.length > 0) tally.lastReason = said;
+  }
+  return tally;
+}
+
+/**
+ * The umbrella strip's one hire line, or null when there is nothing to say.
+ *
+ * `failed` is appended only when it is non-zero, because a count of zero for a
+ * thing that has never happened is noise — but a non-zero one may never be
+ * hidden: an answer that did not go out is a lead still waiting.
+ */
+export function formatCodingSessionHireTally(
+  tally: CodingSessionHireTally,
+): string | null {
+  if (
+    tally.answered === 0 &&
+    tally.refused === 0 &&
+    tally.malformed === 0 &&
+    tally.failed === 0
+  ) {
+    return null;
+  }
+  const line =
+    `hires: ${tally.answered} answered · ${tally.refused} refused · ` +
+    `${tally.malformed} malformed`;
+  return tally.failed === 0
+    ? line
+    : `${line} · ${tally.failed} failed to answer`;
+}

@@ -233,6 +233,8 @@ const ROUTING_TRAITS = new Set([
   "velocity",
   "costEfficiency",
 ]);
+/** One sentence, bounded: the host's disagreement with a carried proposal. */
+const MAX_ROUTING_DISAGREEMENT_BYTES = 512;
 const ROUTING_RECORD_FIELDS = [
   "class",
   "tier",
@@ -265,7 +267,11 @@ const ROUTING_RECORD_FIELDS = [
  */
 export function isStrictRoutingRecord(value: unknown): boolean {
   if (!isPlainRecord(value)) return false;
-  const allowed = new Set([...ROUTING_RECORD_FIELDS, "profile"]);
+  const allowed = new Set([
+    ...ROUTING_RECORD_FIELDS,
+    "profile",
+    "proposedDisagreement",
+  ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) return false;
   if (ROUTING_RECORD_FIELDS.some((key) => !hasOwnKey(value, key))) return false;
   if (
@@ -304,7 +310,16 @@ export function isStrictRoutingRecord(value: unknown): boolean {
   ) {
     return false;
   }
-  if (!hasOwnKey(value, "profile")) return true;
+  if (
+    hasOwnKey(value, "proposedDisagreement") &&
+    !boundedNonempty(value.proposedDisagreement, MAX_ROUTING_DISAGREEMENT_BYTES)
+  ) {
+    return false;
+  }
+  // `profile: null` is what the canonical producer writes when the lead asked
+  // for no extra minimums (`Routing::profile` has no `skip_serializing_if`),
+  // so an observer accepting only an object refused every record the CLI wrote.
+  if (!hasOwnKey(value, "profile") || value.profile === null) return true;
   return (
     isPlainRecord(value.profile) &&
     Object.entries(value.profile).every(

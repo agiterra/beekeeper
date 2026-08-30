@@ -450,6 +450,8 @@ const ROUTING_TIERS = new Set(["fast", "standard", "deep"]);
  */
 const MAX_ROUTING_REVIEW_REASONS = 16;
 const MAX_ROUTING_TOKEN_BYTES = 256;
+/** One sentence, bounded. Mirrors `MAX_ROUTING_DISAGREEMENT_BYTES`. */
+const MAX_ROUTING_DISAGREEMENT_BYTES = 512;
 const ROUTING_TRAITS = new Set([
   "reasoning",
   "coding",
@@ -497,7 +499,11 @@ const ROUTING_RECORD_FIELDS = [
  */
 export function hasStrictRoutingRecord(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
-  const allowed = new Set([...ROUTING_RECORD_FIELDS, "profile"]);
+  const allowed = new Set([
+    ...ROUTING_RECORD_FIELDS,
+    "profile",
+    "proposedDisagreement",
+  ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) return false;
   if (ROUTING_RECORD_FIELDS.some((key) => !Object.hasOwn(value, key))) {
     return false;
@@ -538,7 +544,16 @@ export function hasStrictRoutingRecord(value: unknown): boolean {
   ) {
     return false;
   }
-  if (!Object.hasOwn(value, "profile")) return true;
+  if (
+    Object.hasOwn(value, "proposedDisagreement") &&
+    !boundedString(value.proposedDisagreement, MAX_ROUTING_DISAGREEMENT_BYTES)
+  ) {
+    return false;
+  }
+  // `profile: null` is the answered-with-nothing shape the canonical producer
+  // writes (`Routing::profile` has no `skip_serializing_if`), so an observer
+  // that accepted only an object refused every record the CLI ever wrote.
+  if (!Object.hasOwn(value, "profile") || value.profile === null) return true;
   return (
     isPlainObject(value.profile) &&
     Object.entries(value.profile).every(

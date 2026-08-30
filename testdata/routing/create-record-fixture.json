@@ -1,0 +1,127 @@
+{
+  "schema": "buzz-coding-session-routing-record/v1",
+  "why": "The `routing` a kind:44221 session.create carries is the RECORD — the host's whole answer, written after it intersected its registry with its own live catalog. One record per request in hire-request-fixture.json, in the same order, so the pair reads as question and answer. buzz-core's `Routing` is canonical; this file pins the desktop, web and mobile observers to the same bytes.",
+  "keys": {
+    "always": [
+      "class",
+      "tier",
+      "risk",
+      "profile",
+      "chosen",
+      "runnerUp",
+      "reason",
+      "reviewRequired",
+      "reviewReasons",
+      "challengerSample",
+      "override",
+      "registryVersion",
+      "catalogRevision"
+    ],
+    "optional": ["proposedDisagreement"],
+    "note": "Every key under `always` is written, `null` where unanswered, so a strict observer has exactly one shape to accept — including `profile: null`, which is what the CLI and buzz-core emit when the lead asked for no extra minimums. `proposedDisagreement` is present only when the host's own choice differs from the `proposed` decision the request carried, and it is one sentence naming the difference. A record that silently replaced a requester's proposal would be the host routing behind the requester's back."
+  },
+  "records": [
+    {
+      "case": "fast builder, no override — the host agrees with what was proposed",
+      "routing": {
+        "class": "builder",
+        "tier": "fast",
+        "risk": {
+          "impact": 2,
+          "uncertainty": 1,
+          "irreversibility": 2,
+          "score": 4
+        },
+        "profile": null,
+        "chosen": {
+          "provider": "codex-primary",
+          "model": "gpt-5.6-luna",
+          "effort": "low"
+        },
+        "runnerUp": {
+          "provider": "codex-primary",
+          "model": "gpt-5.4-mini",
+          "effort": "low"
+        },
+        "reason": "cleared the builder gates and the fast tier's low effort; cheapest expected accepted completion of the eligible targets.",
+        "reviewRequired": false,
+        "reviewReasons": [],
+        "challengerSample": false,
+        "override": null,
+        "registryVersion": 1,
+        "catalogRevision": 7
+      }
+    },
+    {
+      "case": "standard builder — the override is honoured and recorded, and the router's own pick survives as the runner-up",
+      "routing": {
+        "class": "builder",
+        "tier": "standard",
+        "risk": {
+          "impact": 3,
+          "uncertainty": 3,
+          "irreversibility": 2,
+          "score": 18
+        },
+        "profile": null,
+        "chosen": {
+          "provider": "claude-primary",
+          "model": "opus[1m]",
+          "effort": "medium"
+        },
+        "runnerUp": {
+          "provider": "claude-primary",
+          "model": "sonnet",
+          "effort": "medium"
+        },
+        "reason": "human override: Brian asked for the big one on this lane. The router would have chosen claude-primary/sonnet (medium), which is recorded as the runner-up.",
+        "reviewRequired": false,
+        "reviewReasons": [],
+        "challengerSample": false,
+        "override": {
+          "model": "opus[1m]",
+          "because": "Brian asked for the big one on this lane."
+        },
+        "registryVersion": 1,
+        "catalogRevision": 7
+      }
+    },
+    {
+      "case": "deep architect — the host disagrees with the proposal and says so",
+      "routing": {
+        "class": "architect",
+        "tier": "deep",
+        "risk": {
+          "impact": 5,
+          "uncertainty": 4,
+          "irreversibility": 5,
+          "score": 100
+        },
+        "profile": { "judgment": 4.5 },
+        "chosen": {
+          "provider": "claude-primary",
+          "model": "opus[1m]",
+          "effort": "high"
+        },
+        "runnerUp": {
+          "provider": "claude-primary",
+          "model": "claude-fable-5[1m]",
+          "effort": "high"
+        },
+        "reason": "cleared the architect gates and the deep tier's high effort; cheapest expected accepted completion of the eligible targets on this host's live catalog.",
+        "reviewRequired": true,
+        "reviewReasons": [
+          "risk 100 >= 40",
+          "irreversibility 5 >= 4",
+          "contractChange",
+          "outsidePlan"
+        ],
+        "challengerSample": true,
+        "override": null,
+        "registryVersion": 1,
+        "catalogRevision": 7,
+        "proposedDisagreement": "the request proposed codex-primary/gpt-5.6-sol (high); this host routed claude-primary/opus[1m] (high) because the seat's identity runs on claude-primary and codex-primary is not in this seat's catalog."
+      }
+    }
+  ]
+}

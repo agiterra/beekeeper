@@ -16,7 +16,8 @@ import {
   useCodingSessionHire,
   type UseCodingSessionHireInput,
 } from "../hooks/useCodingSessionHire";
-import { describeUnreadableModelRegistry } from "../lib/codingSessionRegistryAccess";
+import { useRolePacksProject } from "@/features/agents/ui/useRolePacksProject";
+import { readModelRegistry } from "../lib/codingSessionRegistrySource";
 import { useGlobalCodingSessionCatalog } from "../useCodingSessionCatalog";
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel";
 
@@ -125,18 +126,28 @@ export function CodingSessionHireHost() {
   const workdirState = workdirs.data ?? null;
   // The shared model registry, or the honest reason this host has none.
   //
-  // The router needs `team/model-registry.yaml` out of the project checkout.
-  // Nothing in this app can read a project file: the Agents tab resolves which
-  // project it is looking at (`features/agents/lib/rolePacksProject.ts`) and
-  // then reaches for `scanProjectRolePacks`, which answers with a role, a name
-  // and a directory and never with file content
-  // (`shared/api/tauriTeams.ts:331`). So the source is `unreadable`, it names
-  // the exact path it would have read, and a hire that asks to be routed is
-  // refused `HIRE_NO_ROUTE` — never routed against a registry copy compiled
-  // into the app, which nobody could check against the file the team edits.
+  // The router needs `team/model-registry.yaml` out of the project checkout,
+  // and the project it belongs to is the one the Agents tab already resolves
+  // (`features/agents/lib/rolePacksProject.ts`) — the same answer the role-pack
+  // installer and the registry badge use, so a routed hire and a badge can
+  // never be talking about two different checkouts. `readModelRegistry` reads
+  // it when a reader is installed and answers `unreadable`, naming the path,
+  // when one is not. Either way nothing is ever routed against a registry copy
+  // compiled into the app, which nobody could check against the file the team
+  // edits.
+  const rolePacksProject = useRolePacksProject();
+  const projectRef = rolePacksProject.project?.address ?? null;
+  const registryQuery = useQuery({
+    queryKey: ["coding-session-model-registry", projectRef],
+    queryFn: () => readModelRegistry(projectRef),
+  });
   const registry = React.useMemo(
-    () => describeUnreadableModelRegistry(workdirState?.mru[0]?.path ?? null),
-    [workdirState],
+    () =>
+      registryQuery.data ?? {
+        kind: "unreadable" as const,
+        why: "this host has not finished reading the model registry yet.",
+      },
+    [registryQuery.data],
   );
   const checkoutForChannel = React.useCallback(
     (channelId: string) => {
@@ -202,6 +213,17 @@ export function CodingSessionHireHost() {
  * Separate from the sourcing above so the thing under test is the thing that
  * runs: a test mounts this with injected `deps` and drives real 44221 events
  * through the real hook, real policy and real seat plan.
+ *
+ * **It renders nothing, but it no longer throws anything away.** This
+ * component used to take the hook's `outcomes` and drop them on the floor: the
+ * host answered hires in the app shell where no session screen is mounted, so
+ * a hire could be read, judged, refused and forgotten with nothing on any
+ * screen and nothing in any log (ledger draft 97, live 2026-08-30). The hook
+ * now publishes every outcome as it lands — see
+ * `readCodingSessionHireOutcomes` — and the umbrella's disposition strip
+ * renders the counts. Rendering them *here* is not an option: this sits in the
+ * shell, above every route, and a shell that painted would paint on every
+ * screen in the app.
  */
 export function CodingSessionHireRunner(
   props: UseCodingSessionHireInput,
