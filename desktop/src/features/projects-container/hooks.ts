@@ -54,6 +54,8 @@ import {
   sortProjectContainers,
   type ProjectContainer,
 } from "./lib/projectContainerModel";
+import { useProjectOrder } from "./lib/projectOrderStore";
+import { applyProjectOrder } from "./lib/projectOrderStorage";
 
 export type { ProjectContainer };
 
@@ -279,11 +281,26 @@ export function partitionRepos(
 export function useProjectContainers(options?: { enabled?: boolean }) {
   const containersQuery = useProjectContainersQuery(options);
   const reposQuery = useProjectsQuery();
+  const { order } = useProjectOrder();
 
-  const projects = React.useMemo(
-    () => containersQuery.data ?? [],
-    [containersQuery.data],
-  );
+  // `fetchProjectContainers` sorts alphabetically (General first); the user's
+  // dragged order is a permutation layered on here, because the fetch runs
+  // outside React and cannot read the order store. Applying it at this single
+  // choke point means the sidebar, the manage panel, the projects view, and
+  // the container screen all inherit it without re-sorting.
+  //
+  // General is held out of the permutation rather than trusted to sit at the
+  // head of the saved order: it is the fallback bucket for unclaimed items,
+  // not a peer project, and a saved order that predates it (or omits it) must
+  // not be able to push it down the list.
+  const projects = React.useMemo(() => {
+    const all = containersQuery.data ?? [];
+    const general = all.filter(
+      (project) => project.dtag === GENERAL_PROJECT_DTAG,
+    );
+    const rest = all.filter((project) => project.dtag !== GENERAL_PROJECT_DTAG);
+    return [...general, ...applyProjectOrder(rest, order)];
+  }, [containersQuery.data, order]);
   // NIP-MP projects are multi-repo; containers curate individual repo
   // announcements, so flatten and dedup by address.
   const repos = React.useMemo(

@@ -4,6 +4,7 @@ import {
   ChevronDown,
   FileText,
   FolderKanban,
+  GripVertical,
   Hash,
   Lock,
   Plus,
@@ -108,6 +109,8 @@ export function ProjectSidebarGroup({
   onNewShell,
   remoteTerminals,
   onObserveShell,
+  dragHandleProps,
+  isDragging,
 }: {
   project: ProjectContainer;
   /** True for the locally-synthesized General bucket that exists before the
@@ -151,6 +154,12 @@ export function ProjectSidebarGroup({
   /** Other members' shared terminals in this project (NIP-ST announces). */
   remoteTerminals?: RemoteTerminal[];
   onObserveShell?: (terminal: RemoteTerminal) => void;
+  /** Sortable listeners for the reorder grip. Absent means this group
+   * cannot be dragged — General is pinned above the sortable list. The
+   * header itself is a button that opens the project, so the drag stays
+   * handle-only. */
+  dragHandleProps?: React.HTMLAttributes<HTMLElement>;
+  isDragging?: boolean;
 }) {
   const { unreadChannelIds, onMarkChannelRead } = channelHandlers;
   const forumEnabled = useFeatureEnabled("forum");
@@ -274,8 +283,12 @@ export function ProjectSidebarGroup({
 
   return (
     <SidebarGroup
-      className="group/sidebar-section py-0 pl-4"
+      className={cn(
+        "group/sidebar-section py-0 pl-4",
+        isDragging && "opacity-30",
+      )}
       data-project-tinted={project.color ? "" : undefined}
+      data-sidebar-drag-state={isDragging ? "dragging" : undefined}
       data-testid={`project-group-${project.dtag}`}
       style={projectTintVars(project.color)}
     >
@@ -316,6 +329,17 @@ export function ProjectSidebarGroup({
           </SidebarMenuItem>
         </SidebarMenu>
         <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+          {dragHandleProps ? (
+            <button
+              type="button"
+              aria-label={`Reorder ${project.name}`}
+              data-testid={`project-drag-handle-${project.dtag}`}
+              className="flex size-6 cursor-grab touch-none items-center justify-center rounded-md text-sidebar-foreground/45 opacity-0 transition-colors hover:text-sidebar-foreground focus-visible:opacity-100 group-hover/sidebar-section:opacity-100 active:cursor-grabbing"
+              {...dragHandleProps}
+            >
+              <GripVertical className="size-4" />
+            </button>
+          ) : null}
           {onRequestCreate || onNewShell || onNewCodingSession || hasUnread ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

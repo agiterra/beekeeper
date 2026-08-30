@@ -364,3 +364,146 @@ test("private projects publish access tags and show a lock badge", async ({
     page.getByTestId("edit-project-container-members-recipient-field"),
   ).toHaveCount(0);
 });
+
+// ── Project ordering ─────────────────────────────────────────────────────────
+
+const OWNER = "deadbeef".repeat(8);
+
+/** Two containers whose alphabetical order is the reverse of their age. */
+function seedOrderingProjects(page: import("@playwright/test").Page) {
+  return page.addInitScript(
+    ({ owner }) => {
+      window.localStorage.setItem(
+        "buzz-feature-overrides-v1",
+        JSON.stringify({ projects: true }),
+      );
+      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+        {
+          id: "seeded-project-zulu",
+          kind: 30621,
+          pubkey: owner,
+          // Oldest head, last alphabetically.
+          created_at: 1_700_000_000,
+          content: "",
+          tags: [
+            ["d", "zulu"],
+            ["name", "Zulu"],
+          ],
+        },
+        {
+          id: "seeded-project-alpha",
+          kind: 30621,
+          pubkey: owner,
+          // Newest head, first alphabetically. Under the old creation-time
+          // sort this sat below Zulu — and every sub-item added to a project
+          // republished its head, moving it the same way.
+          created_at: 1_800_000_000,
+          content: "",
+          tags: [
+            ["d", "alpha"],
+            ["name", "Alpha"],
+          ],
+        },
+      ];
+    },
+    { owner: OWNER },
+  );
+}
+
+/**
+ * The rendered sidebar project order, by dtag. The prefix also matches each
+ * group's collapse toggle (`project-group-toggle-<dtag>`), so those are
+ * dropped.
+ */
+function projectOrder(page: import("@playwright/test").Page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll("[data-testid^='project-group-']")]
+      .map((el) =>
+        el.getAttribute("data-testid")?.replace("project-group-", ""),
+      )
+      .filter(
+        (dtag): dtag is string => Boolean(dtag) && !dtag.startsWith("toggle-"),
+      ),
+  );
+}
+
+test("project order is alphabetical and ignores the head timestamp", async ({
+  page,
+}) => {
+  await seedOrderingProjects(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByTestId("project-group-alpha")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("project-group-zulu")).toBeVisible();
+
+  // General pinned first, then A→Z — not oldest-head-first, which would put
+  // Zulu ahead of Alpha.
+  // General pinned first, then A→Z over every project including the seeded
+  // mock `buzz` container — not oldest-head-first, which would put Zulu first.
+  await expect
+    .poll(() => projectOrder(page))
+    .toEqual(["general", "alpha", "buzz", "zulu"]);
+
+  // General is the fallback bucket, not a peer project: no reorder grip.
+  await expect(page.getByTestId("project-drag-handle-general")).toHaveCount(0);
+  await expect(page.getByTestId("project-drag-handle-alpha")).toBeVisible();
+});
+
+test("dragging a project reorders the sidebar and persists the order", async ({
+  page,
+}) => {
+  await seedOrderingProjects(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByTestId("project-group-zulu")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect
+    .poll(() => projectOrder(page))
+    .toEqual(["general", "alpha", "buzz", "zulu"]);
+
+  const handle = page.getByTestId("project-drag-handle-zulu");
+  await page.getByTestId("project-group-zulu").hover();
+  const handleBox = await handle.boundingBox();
+  const targetBox = await page.getByTestId("project-group-alpha").boundingBox();
+  expect(handleBox && targetBox).toBeTruthy();
+  if (!handleBox || !targetBox) throw new Error("missing drag geometry");
+
+  const startX = handleBox.x + handleBox.width / 2;
+  const startY = handleBox.y + handleBox.height / 2;
+  const targetY = targetBox.y + 8;
+
+  // dnd-kit's PointerSensor needs a 6px activation distance before it picks
+  // the drag up, so nudge first and then move in small steps.
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX, startY - 3, { steps: 3 });
+  await page.mouse.move(startX, targetY, { steps: 20 });
+  await page.mouse.up();
+
+  await expect
+    .poll(() => projectOrder(page))
+    .toEqual(["general", "zulu", "alpha", "buzz"]);
+
+  // The chosen order is written through to the relay-scoped local blob (the
+  // encrypted kind:30078 publish behind it is debounced 2s and mocked here).
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const key = Object.keys(window.localStorage).find((candidate) =>
+          candidate.startsWith("buzz-project-order.v1:"),
+        );
+        if (!key) return null;
+        const raw = window.localStorage.getItem(key);
+        return raw
+          ? ((JSON.parse(raw) as { order: string[] }).order?.slice(0, 2) ??
+              null)
+          : null;
+      }),
+    )
+    .toEqual([`${OWNER}:zulu`, `${OWNER}:alpha`]);
+});

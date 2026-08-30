@@ -431,7 +431,22 @@ export function partitionByChannelProject<
   return { byProject, unclaimed };
 }
 
-/** Sort projects for display: General first, then by creation time. */
+/**
+ * Sort projects for display: General first, then alphabetically by name.
+ *
+ * Deliberately NOT by `createdAt`. A container's `createdAt` is the live
+ * head's `event.created_at`, and every sub-item added to a project (channel,
+ * forum, coding session, repo) republishes that head through
+ * `addProjectMembers` — so a creation-time sort made the project jump position
+ * each time something was added to it. NIP-33 replacement keeps only the
+ * highest `created_at` per slot, so the old stamp cannot be preserved on
+ * republish; a name sort is the stable key. A user-chosen order layers on top
+ * of this base order (`applyProjectOrder`).
+ *
+ * Compares lowercased code units rather than `localeCompare` so every client
+ * derives the same order regardless of locale — the same reasoning as
+ * `compareChannelsByName` in the sidebar's channel sort.
+ */
 export function sortProjectContainers(
   projects: ProjectContainer[],
 ): ProjectContainer[] {
@@ -439,7 +454,10 @@ export function sortProjectContainers(
     const aGeneral = a.dtag === GENERAL_PROJECT_DTAG ? 0 : 1;
     const bGeneral = b.dtag === GENERAL_PROJECT_DTAG ? 0 : 1;
     if (aGeneral !== bGeneral) return aGeneral - bGeneral;
-    if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+    const aName = a.name.toLowerCase();
+    const bName = b.name.toLowerCase();
+    if (aName < bName) return -1;
+    if (aName > bName) return 1;
     return a.id.localeCompare(b.id);
   });
 }

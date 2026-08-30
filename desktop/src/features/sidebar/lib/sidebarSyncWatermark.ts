@@ -1,7 +1,8 @@
 /**
- * Persisted remote-head watermark for sidebar-preference sync managers.
+ * Persisted remote-head watermark for the encrypted per-user preference sync
+ * managers.
  *
- * Each manager (sections, sort, stars, mutes) persists the highest
+ * Each manager (sections, sort, stars, mutes, project order) persists the highest
  * `created_at` it has ever observed from the relay under a key scoped to
  * pubkey + relay + blob type.  On the next boot the manager reads this value
  * back: if it is > 0 a remote blob has existed before and seed-publishing
@@ -96,7 +97,8 @@ export type BootstrapResult<T> =
   | { action: "hold" };
 
 /**
- * Shared boot policy for all four sidebar-preference sync managers.
+ * Shared boot policy for every encrypted per-user preference sync manager
+ * (the four sidebar ones plus the projects sidebar's order blob).
  *
  * Each manager calls this from its `bootstrap()` method, supplying its
  * surface-specific fetch, publish, and local-store accessors.  The full

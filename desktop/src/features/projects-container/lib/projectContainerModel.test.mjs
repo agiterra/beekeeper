@@ -335,21 +335,42 @@ test("partitionByChannelProject groups by the channel's owning project", () => {
   );
 });
 
-test("sortProjectContainers puts general first, then by age", () => {
+test("sortProjectContainers puts general first, then by name", () => {
   const general = eventToProjectContainer(
-    makeProjectEvent({ dtag: "general", createdAt: 500 }),
+    makeProjectEvent({ dtag: "general", name: "General", createdAt: 500 }),
   );
-  const older = eventToProjectContainer(
-    makeProjectEvent({ dtag: "older", createdAt: 100 }),
+  const zebra = eventToProjectContainer(
+    makeProjectEvent({ dtag: "zebra", name: "Zebra", createdAt: 100 }),
   );
-  const newer = eventToProjectContainer(
-    makeProjectEvent({ dtag: "newer", createdAt: 300 }),
+  const apple = eventToProjectContainer(
+    makeProjectEvent({ dtag: "apple", name: "apple", createdAt: 300 }),
   );
-  const sorted = sortProjectContainers([newer, general, older]);
+  const sorted = sortProjectContainers([zebra, general, apple]);
+  // Case-insensitive, and creation order (zebra oldest) is not consulted.
   assert.deepEqual(
     sorted.map((project) => project.dtag),
-    ["general", "older", "newer"],
+    ["general", "apple", "zebra"],
   );
+});
+
+test("sortProjectContainers order survives a republish of the head", () => {
+  // The regression this sort exists for: adding a sub-item republishes the
+  // kind:30621 head with a fresh created_at, which used to move the project.
+  const build = (createdAt) => [
+    eventToProjectContainer(
+      makeProjectEvent({ dtag: "general", name: "General", createdAt: 1 }),
+    ),
+    eventToProjectContainer(
+      makeProjectEvent({ dtag: "alpha", name: "Alpha", createdAt: 10 }),
+    ),
+    eventToProjectContainer(
+      makeProjectEvent({ dtag: "beta", name: "Beta", createdAt }),
+    ),
+  ];
+  const before = sortProjectContainers(build(20)).map((p) => p.dtag);
+  const after = sortProjectContainers(build(9_999)).map((p) => p.dtag);
+  assert.deepEqual(before, ["general", "alpha", "beta"]);
+  assert.deepEqual(after, before);
 });
 
 test("displayProjectsWithGeneral prepends the local placeholder without a real general", () => {

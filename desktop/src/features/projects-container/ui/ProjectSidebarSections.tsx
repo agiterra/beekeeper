@@ -40,6 +40,11 @@ import {
   displayProjectsWithGeneral,
 } from "../lib/projectContainerModel";
 import { useProjectCollapse } from "../lib/projectCollapseStorage";
+import { useProjectOrder } from "../lib/projectOrderStore";
+import {
+  ProjectSidebarDndContext,
+  SortableProjectShell,
+} from "./ProjectSidebarDnd";
 import { useProjectSessionFilters } from "../lib/projectSessionFilterStorage";
 import { useCreateProjectContainerMutation } from "../useCreateProjectContainer";
 import { useGeneralProjectMigration } from "../useGeneralProjectMigration";
@@ -165,6 +170,28 @@ export function ProjectSidebarSections({
     [projects],
   );
 
+  // General is the fallback bucket for unclaimed items, not a peer project:
+  // it stays pinned above the sortable list and carries no drag handle.
+  const { reorderProjects } = useProjectOrder();
+  const pinnedProjects = React.useMemo(
+    () =>
+      displayProjects.filter(
+        (project) =>
+          project.dtag === GENERAL_PROJECT_DTAG ||
+          project.id === LOCAL_GENERAL_ID,
+      ),
+    [displayProjects],
+  );
+  const sortableProjects = React.useMemo(
+    () =>
+      displayProjects.filter(
+        (project) =>
+          project.dtag !== GENERAL_PROJECT_DTAG &&
+          project.id !== LOCAL_GENERAL_ID,
+      ),
+    [displayProjects],
+  );
+
   const handleOpenProject = React.useCallback(
     (project: ProjectContainer) => {
       void goProject(project.id);
@@ -205,6 +232,117 @@ export function ProjectSidebarSections({
     onSelectChannel: handleSelectChannel,
   };
 
+  /**
+   * One project group. `drag` is supplied only for the sortable projects —
+   * General renders through the same path without it, so it gets no grip.
+   */
+  const renderProject = (
+    project: ProjectContainer,
+    drag?: {
+      dragHandleProps: React.HTMLAttributes<HTMLElement>;
+      isDragging: boolean;
+    },
+  ) => {
+    const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
+    const isFallback = project.id === LOCAL_GENERAL_ID;
+    // Unclaimed forums/shells always land in General — they must belong
+    // to a project, and General is the sweep target.
+    const forums = forumEnabled
+      ? [
+          ...(forumsByProject.get(project.id) ?? []),
+          ...(isGeneral ? unclaimedForums : []),
+        ]
+      : [];
+    const shellSessions = builtinShellEnabled
+      ? allShellSessions.filter(
+          (session) =>
+            session.projectRef === project.address ||
+            ((isFallback || isGeneral) && !session.projectRef),
+        )
+      : [];
+    const remoteTerminals =
+      builtinShellEnabled && !isFallback
+        ? (remoteTerminalsIndex.get(project.address) ?? [])
+        : [];
+    return (
+      <ProjectSidebarGroup
+        key={project.id}
+        dragHandleProps={drag?.dragHandleProps}
+        isDragging={drag?.isDragging}
+        project={project}
+        isFallback={isFallback}
+        codingSessions={[
+          ...(sessionBuckets.byProject.get(project.id) ?? []),
+          ...(isGeneral ? sessionBuckets.unclaimed : []),
+          // Each half is sorted, the concat is not: without a re-sort,
+          // General's unclaimed sessions always trail claimed ones and a
+          // working unclaimed session can be capped out of the shelf.
+        ].sort(compareProjectCodingSessionEntries)}
+        streamChannels={[
+          ...(channelsByProject.get(project.id) ?? []),
+          ...(isGeneral ? globalChannels : []),
+        ]}
+        forumChannels={forums}
+        channelHandlers={groupChannelHandlers}
+        collapsed={collapse.isProjectCollapsed(project.id)}
+        currentPubkey={currentPubkey}
+        sessionFilter={sessionFilters.getFilter(project.id)}
+        onSessionFilterChange={(filter) =>
+          sessionFilters.setFilter(project.id, filter)
+        }
+        onToggleCollapsed={() => collapse.toggleProject(project.id)}
+        onRequestCloseCodingSession={(entry) => {
+          if (!entry.sessionRef || !entry.genesisRef) return;
+          codingSessionClosureDialog.requestClosure({
+            action: "closed",
+            channelId: entry.channelId,
+            genesisRef: entry.genesisRef,
+            label: entry.label,
+            sessionRef: entry.sessionRef,
+          });
+        }}
+        onRequestArchiveCodingSession={(entry) => {
+          if (!entry.sessionRef || !entry.genesisRef) return;
+          codingSessionClosureDialog.requestClosure({
+            action: "archived",
+            channelId: entry.channelId,
+            genesisRef: entry.genesisRef,
+            label: entry.label,
+            sessionRef: entry.sessionRef,
+          });
+        }}
+        onRequestReopenCodingSession={(entry) => {
+          if (!entry.sessionRef || !entry.genesisRef) return;
+          codingSessionClosureDialog.requestClosure({
+            action: "open",
+            channelId: entry.channelId,
+            genesisRef: entry.genesisRef,
+            label: entry.label,
+            sessionRef: entry.sessionRef,
+          });
+        }}
+        onOpenCodingSession={({ channelId, generationId }) =>
+          void goCodingSession(channelId, generationId)
+        }
+        onOpenProject={() => handleOpenProject(project)}
+        onNewCodingSession={() => void goNewProjectCodingSession(project.id)}
+        onRequestCreate={(kind) => setCreateRequest({ kind, project })}
+        shellSessions={shellSessions}
+        activeShellSessionId={activeShellSessionId}
+        onOpenShell={handleOpenShell}
+        onRequestRenameShell={shellDialogs.requestRename}
+        onRequestCloseShell={shellDialogs.requestClose}
+        onNewShell={
+          builtinShellEnabled
+            ? () => handleNewShell(project, Boolean(isFallback))
+            : undefined
+        }
+        remoteTerminals={remoteTerminals}
+        onObserveShell={handleObserveShell}
+      />
+    );
+  };
+
   return (
     <>
       {/* Pull the Projects heading up against the primary menu above it —
@@ -233,106 +371,17 @@ export function ProjectSidebarSections({
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
-      {displayProjects.map((project) => {
-        const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
-        const isFallback = project.id === LOCAL_GENERAL_ID;
-        // Unclaimed forums/shells always land in General — they must belong
-        // to a project, and General is the sweep target.
-        const forums = forumEnabled
-          ? [
-              ...(forumsByProject.get(project.id) ?? []),
-              ...(isGeneral ? unclaimedForums : []),
-            ]
-          : [];
-        const shellSessions = builtinShellEnabled
-          ? allShellSessions.filter(
-              (session) =>
-                session.projectRef === project.address ||
-                ((isFallback || isGeneral) && !session.projectRef),
-            )
-          : [];
-        const remoteTerminals =
-          builtinShellEnabled && !isFallback
-            ? (remoteTerminalsIndex.get(project.address) ?? [])
-            : [];
-        return (
-          <ProjectSidebarGroup
-            key={project.id}
-            project={project}
-            isFallback={isFallback}
-            codingSessions={[
-              ...(sessionBuckets.byProject.get(project.id) ?? []),
-              ...(isGeneral ? sessionBuckets.unclaimed : []),
-              // Each half is sorted, the concat is not: without a re-sort,
-              // General's unclaimed sessions always trail claimed ones and a
-              // working unclaimed session can be capped out of the shelf.
-            ].sort(compareProjectCodingSessionEntries)}
-            streamChannels={[
-              ...(channelsByProject.get(project.id) ?? []),
-              ...(isGeneral ? globalChannels : []),
-            ]}
-            forumChannels={forums}
-            channelHandlers={groupChannelHandlers}
-            collapsed={collapse.isProjectCollapsed(project.id)}
-            currentPubkey={currentPubkey}
-            sessionFilter={sessionFilters.getFilter(project.id)}
-            onSessionFilterChange={(filter) =>
-              sessionFilters.setFilter(project.id, filter)
-            }
-            onToggleCollapsed={() => collapse.toggleProject(project.id)}
-            onRequestCloseCodingSession={(entry) => {
-              if (!entry.sessionRef || !entry.genesisRef) return;
-              codingSessionClosureDialog.requestClosure({
-                action: "closed",
-                channelId: entry.channelId,
-                genesisRef: entry.genesisRef,
-                label: entry.label,
-                sessionRef: entry.sessionRef,
-              });
-            }}
-            onRequestArchiveCodingSession={(entry) => {
-              if (!entry.sessionRef || !entry.genesisRef) return;
-              codingSessionClosureDialog.requestClosure({
-                action: "archived",
-                channelId: entry.channelId,
-                genesisRef: entry.genesisRef,
-                label: entry.label,
-                sessionRef: entry.sessionRef,
-              });
-            }}
-            onRequestReopenCodingSession={(entry) => {
-              if (!entry.sessionRef || !entry.genesisRef) return;
-              codingSessionClosureDialog.requestClosure({
-                action: "open",
-                channelId: entry.channelId,
-                genesisRef: entry.genesisRef,
-                label: entry.label,
-                sessionRef: entry.sessionRef,
-              });
-            }}
-            onOpenCodingSession={({ channelId, generationId }) =>
-              void goCodingSession(channelId, generationId)
-            }
-            onOpenProject={() => handleOpenProject(project)}
-            onNewCodingSession={() =>
-              void goNewProjectCodingSession(project.id)
-            }
-            onRequestCreate={(kind) => setCreateRequest({ kind, project })}
-            shellSessions={shellSessions}
-            activeShellSessionId={activeShellSessionId}
-            onOpenShell={handleOpenShell}
-            onRequestRenameShell={shellDialogs.requestRename}
-            onRequestCloseShell={shellDialogs.requestClose}
-            onNewShell={
-              builtinShellEnabled
-                ? () => handleNewShell(project, Boolean(isFallback))
-                : undefined
-            }
-            remoteTerminals={remoteTerminals}
-            onObserveShell={handleObserveShell}
-          />
-        );
-      })}
+      {pinnedProjects.map((project) => renderProject(project))}
+      <ProjectSidebarDndContext
+        projects={sortableProjects}
+        onReorderProjects={reorderProjects}
+      >
+        {sortableProjects.map((project) => (
+          <SortableProjectShell key={project.id} projectId={project.id}>
+            {(drag) => renderProject(project, drag)}
+          </SortableProjectShell>
+        ))}
+      </ProjectSidebarDndContext>
       {shellDialogs.dialogs}
       {codingSessionClosureDialog.dialog}
 

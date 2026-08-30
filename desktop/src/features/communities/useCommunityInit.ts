@@ -43,6 +43,7 @@ import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/l
 import { resetPendingCodingSessionTurns } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import { resetCodingSessionIngressStores } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
 import { resetProjectPulseState } from "@/features/project-pulse";
+import { resetProjectOrderStore } from "@/features/projects-container/lib/projectOrderStore";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 import { relaySelfQueryKey } from "@/features/moderation/lib/relaySelf";
 
@@ -127,6 +128,12 @@ async function resetCommunityState({
   // names no relay: carrying them across a switch would paint one community's
   // claims and observed commits under another community's project.
   resetProjectPulseState();
+  // The user's project order is a list of `<owner>:<dtag>` ids and a live
+  // subscription to one relay's kind:30078 blob. Carrying it across a switch
+  // would order the new community's sidebar by the old community's drags —
+  // and leave the previous relay's sync manager publishing into the shared
+  // relayClient singleton.
+  resetProjectOrderStore();
 }
 
 type CommunityInitResult =
