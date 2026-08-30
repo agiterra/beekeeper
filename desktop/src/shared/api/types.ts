@@ -977,3 +977,18 @@ export type GlobalAgentConfigSaveResult = {
   /** Number of agents whose stop succeeded but respawn failed. */
   failed_restart_count: number;
 };
+
+// ── Project files ─────────────────────────────────────────────────────────────
+
+/**
+ * One allowlisted file read out of a project checkout on this computer.
+ *
+ * Mirrors the Rust `ProjectFileRead` in
+ * `desktop/src-tauri/src/commands/project_files.rs`.
+ */
+export type ProjectFileRead = {
+  /** The absolute, symlink-resolved path the bytes came from. */
+  path: string;
+  /** The file's contents, as UTF-8. */
+  text: string;
+};

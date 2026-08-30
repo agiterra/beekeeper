@@ -494,12 +494,18 @@ export function compareRegistryToCatalog(
 /**
  * The badge's whole state.
  *
- * `rows: null` means this host could not read the registry — which is the
- * state the desktop is in today and says so in as many words, because the
- * only project-file access the app has returns directory listings, never file
- * content (`shared/api/tauriTeams.ts:331`). A badge that rendered "fresh" on
- * the strength of having compared nothing would be the exact defect this
- * whole surface exists to prevent.
+ * `rows: null` means this host could not read the registry, and
+ * `unreadableBecause` carries the reader's own sentence — a missing project,
+ * a missing file, a file this build cannot parse. Since ledger 97(C) the
+ * desktop *can* read `team/model-registry.yaml`
+ * (`features/coding-sessions/lib/codingSessionRegistrySource.ts`), so this is
+ * a real failure to report rather than a permanent gap to describe.
+ *
+ * Every state that read a file names how many rows it read. A badge that said
+ * only "no provider catalog" would read identically whether the registry had
+ * been opened or not, and a badge that rendered "fresh" on the strength of
+ * having compared nothing is the exact defect this whole surface exists to
+ * prevent.
  */
 export function resolveRegistryStaleness(input: {
   /** Registry rows, or null when the registry could not be read at all. */
@@ -529,29 +535,29 @@ export function resolveRegistryStaleness(input: {
         "A registry was read and it lists no execution targets, so there is nothing to check the catalog against.",
     };
   }
+  const named =
+    typeof input.version === "number"
+      ? `Registry v${input.version}`
+      : "Registry";
+  const read = `${named} \u00b7 ${input.rows.length} rows`;
   if (input.offered === null) {
     return {
       state: "unknown",
       reason: "no-catalog",
-      label: "Registry: unknown (no provider catalog)",
-      detail:
-        "No provider has published a kind:44222 catalog here yet, so there is nothing to check the registry against.",
+      label: `${read} \u00b7 no provider catalog yet`,
+      detail: `${input.rows.length} registry rows were read here, but no provider has published a kind:44222 catalog yet, so there is nothing to check them against.`,
     };
   }
   const { unregistered, dormant, covered } = compareRegistryToCatalog(
     input.rows,
     input.offered,
   );
-  const named =
-    typeof input.version === "number"
-      ? `Registry v${input.version}`
-      : "Registry";
   if (unregistered.length === 0) {
     return {
       state: "fresh",
       covered,
       dormant,
-      label: `${named} covers the catalog`,
+      label: `${read} \u00b7 covers the catalog`,
       detail:
         `Every offered execution target has a registry row (${covered} ids).` +
         (dormant.length > 0
@@ -563,7 +569,7 @@ export function resolveRegistryStaleness(input: {
     state: "stale",
     unregistered,
     dormant,
-    label: `${named} stale — ${unregistered.length} offered with no row`,
+    label: `${read} \u00b7 ${unregistered.length} offered with no row`,
     detail:
       `Offered here and in no registry row: ${unregistered.join(", ")}.` +
       (dormant.length > 0
