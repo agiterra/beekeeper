@@ -6,6 +6,14 @@
 //! `providerAuthorityPubkey`, which is what stops a command addressed to one
 //! adapter from being served by another sharing the channel.
 //!
+//! **The wire schema itself lives in
+//! [`buzz_core::coding_session_catalog`]**, with the reader that enforces it.
+//! This module is the publisher: it turns this host's configuration into one
+//! of those catalogs and decides when a new revision is due. Keeping the
+//! definition in `buzz-core` is what lets `bee sessions catalog` and `bee
+//! sessions rubric check` read the offer without holding a second idea of
+//! what it is.
+//!
 //! # Why canonical bytes, not just a revision
 //!
 //! `cspc-key` digests the exact signed content, and the consumer re-serializes
@@ -21,70 +29,60 @@
 //! keeping the highest revision per signer therefore never has to guess whether
 //! two revisions differ in substance.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+pub use buzz_core::coding_session_catalog::{
+    to_canonical_json, Catalog, CatalogModel, CatalogProject, CatalogProvider, CATALOG_SCHEMA,
+    MAX_ALLOWED_MODELS, MAX_CATALOG_CONTENT_BYTES, MAX_PROJECTS, MAX_PROVIDERS,
+};
 
 use crate::commands::ProjectsFile;
 use crate::config::Config;
+use crate::context_window::{context_window_for_model, model_family_for_model};
 use crate::payload::Capabilities;
 
-/// Schema string on every catalog advertisement.
-pub const CATALOG_SCHEMA: &str = "buzz-coding-session-provider-catalog/v1";
-
-/// NIP-CSPC bound on `providers[]`.
-pub const MAX_PROVIDERS: usize = 32;
-/// NIP-CSPC bound on `allowedModels[]`.
-pub const MAX_ALLOWED_MODELS: usize = 64;
-/// NIP-CSPC bound on `projects[]`.
-pub const MAX_PROJECTS: usize = 512;
-
-/// One catalog advertisement.
+/// The one model vendor a runtime slug or driver slug can serve.
 ///
-/// Field order is the wire order; `serde_json::to_string` preserves declaration
-/// order, which is what makes [`to_canonical_json`] canonical.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Catalog {
-    /// Always [`CATALOG_SCHEMA`].
-    pub schema: String,
-    /// Monotonic per (channel, signer). Positive.
-    pub revision: u64,
-    /// Every session target this signer offers, sorted by `providerInstanceRef`.
-    pub providers: Vec<CatalogProvider>,
-    /// Optional narrowing by project. Omitted entirely when empty, which is the
-    /// standalone-session case: every listed provider serves every session.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub projects: Vec<CatalogProject>,
+/// A runtime that takes its provider from configuration — Goose, `buzz-agent`
+/// — can serve several, so it is deliberately absent and its models publish no
+/// `vendor` at all. This mirrors `CODING_SESSION_RUNTIME_VENDORS` in
+/// `desktop/src/features/coding-sessions/lib/codingSessionCrew.ts`, which is
+/// the rule the family check already applies to a seat.
+const RUNTIME_VENDORS: &[(&str, &str)] = &[
+    ("claude", "anthropic"),
+    ("claude-agent-acp", "anthropic"),
+    ("claude-code-acp", "anthropic"),
+    ("codex", "openai"),
+    ("codex-acp", "openai"),
+];
+
+/// The vendor behind a runtime, or `None` when the runtime can serve several.
+fn vendor_for_runtime(runtime: &str, driver: &str) -> Option<&'static str> {
+    let runtime = runtime.trim().to_ascii_lowercase();
+    let driver = driver.trim().to_ascii_lowercase();
+    RUNTIME_VENDORS
+        .iter()
+        .find(|(slug, _)| *slug == runtime || *slug == driver)
+        .map(|(_, vendor)| *vendor)
 }
 
-/// One offered provider instance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CatalogProvider {
-    /// Unique within the catalog; a create command names it.
-    pub provider_instance_ref: String,
-    /// Driver slug, matching the `cs-target` this provider mints.
-    pub driver: String,
-    /// Runtime behind the driver.
-    pub runtime: String,
-    /// Model used when a create names none.
-    pub default_model: String,
-    /// Accepted models. `allowedModels[0] == defaultModel`, remainder sorted.
-    pub allowed_models: Vec<String>,
-    /// What this provider can be asked to do.
-    pub capabilities: Capabilities,
-}
-
-/// One project-scoped narrowing of `providers[]`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CatalogProject {
-    /// NIP-MP project coordinate.
-    pub project_ref: String,
-    /// Repository within it, or `null`.
-    pub repo_ref: Option<String>,
-    /// `providerInstanceRef` values, sorted, no duplicates.
-    pub providers: Vec<String>,
+/// Describe one offered model id with everything this host actually knows.
+///
+/// Every field is a fact from a named source or it is absent: the window comes
+/// from [`context_window_for_model`], the family from
+/// [`model_family_for_model`], and the vendor from the runtime that can only
+/// serve one. Nothing is inferred from the spelling of an id, because a reader
+/// cannot tell an inferred fact from a measured one — the whole reason the
+/// context-window table refuses to guess.
+fn describe_model(id: &str, runtime: &str, driver: &str) -> CatalogModel {
+    CatalogModel {
+        context_window: context_window_for_model(id),
+        family: model_family_for_model(id).map(str::to_owned),
+        vendor: vendor_for_runtime(runtime, driver).map(str::to_owned),
+        deprecated: None,
+        ..CatalogModel::new(id)
+    }
 }
 
 /// The revision-independent body, digested to decide whether a bump is due.
@@ -115,6 +113,13 @@ pub fn build(config: &Config, projects_file: &ProjectsFile, revision: u64) -> Ca
             allowed_models.dedup();
             allowed_models.truncate(MAX_ALLOWED_MODELS.saturating_sub(1));
             allowed_models.insert(0, descriptor.default_model.clone());
+            // Sparse by construction: an id this host knows nothing about
+            // contributes no row, so the table never implies knowledge.
+            let models: Vec<CatalogModel> = allowed_models
+                .iter()
+                .map(|model| describe_model(model, &descriptor.runtime, &descriptor.driver))
+                .filter(|model| !model.is_bare())
+                .collect();
             CatalogProvider {
                 provider_instance_ref: descriptor.instance_ref.clone(),
                 driver: descriptor.driver.clone(),
@@ -124,6 +129,7 @@ pub fn build(config: &Config, projects_file: &ProjectsFile, revision: u64) -> Ca
                 capabilities: descriptor
                     .capabilities
                     .unwrap_or_else(|| Capabilities::v1_for_runtime(&descriptor.runtime)),
+                models,
             }
         })
         .collect();
@@ -164,17 +170,38 @@ pub fn build(config: &Config, projects_file: &ProjectsFile, revision: u64) -> Ca
     });
     projects.truncate(MAX_PROJECTS);
 
-    Catalog {
+    let mut catalog = Catalog {
         schema: CATALOG_SCHEMA.to_owned(),
         revision,
         providers,
         projects,
-    }
+    };
+    drop_metadata_if_oversized(&mut catalog);
+    catalog
 }
 
-/// Serialize a catalog to its exact signed bytes.
-pub fn to_canonical_json(catalog: &Catalog) -> Result<String, serde_json::Error> {
-    serde_json::to_string(catalog)
+/// Drop every per-model row rather than publish a body the relay will refuse.
+///
+/// The offer outranks its description. 32 providers × 64 described models can
+/// push the signed body past the relay's 256 KiB ceiling for kind 44222, and a
+/// rejected catalog makes *every* model on this host invisible — a far worse
+/// outcome than losing the context windows. So when the full body will not
+/// fit, the metadata goes and `allowedModels` stays.
+///
+/// This is all-or-nothing on purpose: trimming rows until it fits would make
+/// which models carry a window depend on how many other providers happen to be
+/// configured, and a reader has no way to tell that kind of silent truncation
+/// from "nobody knows this id".
+fn drop_metadata_if_oversized(catalog: &mut Catalog) {
+    let fits = to_canonical_json(catalog)
+        .map(|json| json.len() <= MAX_CATALOG_CONTENT_BYTES)
+        .unwrap_or(false);
+    if fits {
+        return;
+    }
+    for provider in &mut catalog.providers {
+        provider.models.clear();
+    }
 }
 
 /// Digest everything except the revision.
@@ -281,7 +308,7 @@ mod tests {
         );
         let json = to_canonical_json(&catalog).expect("serialize");
         assert!(json.starts_with(
-            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":3,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"model-b","allowedModels":["model-b","model-a","model-c"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true}}]"#
+            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":3,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"model-b","allowedModels":["model-b","model-a","model-c"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true},"models":[{"id":"model-b","vendor":"anthropic"},{"id":"model-a","vendor":"anthropic"},{"id":"model-c","vendor":"anthropic"}]}]"#
         ));
         // projects[] sorted by projectRef, each with a null repoRef.
         let alpha = json
@@ -325,7 +352,7 @@ mod tests {
         );
         let json = to_canonical_json(&catalog).expect("serialize");
         assert!(json.starts_with(
-            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true}},{"providerInstanceRef":"codex-primary","driver":"codex-acp","runtime":"codex","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":false}}]"#
+            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true},"models":[{"id":"default","vendor":"anthropic"}]},{"providerInstanceRef":"codex-primary","driver":"codex-acp","runtime":"codex","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":false},"models":[{"id":"default","vendor":"openai"}]}]"#
         ));
         assert!(json.contains(r#""providers":["claude-primary","codex-primary"]"#));
     }
@@ -426,5 +453,147 @@ mod tests {
         let first = fingerprint(Some(&path)).expect("fingerprint");
         std::fs::write(&path, b"{\"version\":1}").expect("write");
         assert_ne!(first, fingerprint(Some(&path)).expect("fingerprint"));
+    }
+
+    /// The metadata is a description of the offer, never an addition to it:
+    /// every row names an `allowedModels` id, in that order, and the whole
+    /// thing re-parses through the canonical reader that ships it.
+    #[test]
+    fn per_model_metadata_describes_the_real_ids_and_reparses() {
+        let catalog = build(
+            &config("opus[1m]", &["sonnet", "haiku", "does-not-exist"]),
+            &ProjectsFile::default(),
+            2,
+        );
+        let provider = &catalog.providers[0];
+        assert_eq!(
+            provider.allowed_models,
+            vec!["opus[1m]", "does-not-exist", "haiku", "sonnet"]
+        );
+        let described: Vec<&str> = provider
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect();
+        // `does-not-exist` still gets a row, because the runtime's single
+        // vendor is a fact about it even when nothing knows its window.
+        assert_eq!(
+            described,
+            vec!["opus[1m]", "does-not-exist", "haiku", "sonnet"]
+        );
+        let opus = &provider.models[0];
+        assert_eq!(opus.context_window, Some(1_000_000));
+        assert_eq!(opus.family.as_deref(), Some("opus"));
+        assert_eq!(opus.vendor.as_deref(), Some("anthropic"));
+        let unknown = &provider.models[1];
+        assert_eq!(unknown.context_window, None);
+        assert_eq!(unknown.family, None);
+        assert_eq!(unknown.vendor.as_deref(), Some("anthropic"));
+        // No adapter reports deprecation, so nothing claims it.
+        assert!(provider
+            .models
+            .iter()
+            .all(|model| model.deprecated.is_none()));
+
+        let json = to_canonical_json(&catalog).expect("serialize");
+        let reparsed =
+            buzz_core::coding_session_catalog::parse_catalog(&json).expect("canonical reader");
+        assert_eq!(reparsed, catalog);
+    }
+
+    /// A runtime that takes its provider from configuration can serve several
+    /// vendors, so it names none — and with nothing else known about the id,
+    /// the row disappears rather than being padded out.
+    #[test]
+    fn a_multi_vendor_runtime_publishes_no_vendor_and_no_empty_rows() {
+        let mut goose = claude_descriptor("house-model", &[]);
+        goose.instance_ref = "goose-primary".into();
+        goose.driver = "goose-acp".into();
+        goose.runtime = "goose".into();
+        let catalog = build(
+            &config_with_runtimes(vec![goose]),
+            &ProjectsFile::default(),
+            1,
+        );
+        assert_eq!(catalog.providers[0].allowed_models, vec!["house-model"]);
+        assert!(catalog.providers[0].models.is_empty());
+        let json = to_canonical_json(&catalog).expect("serialize");
+        assert!(
+            !json.contains("\"models\""),
+            "unexpected models key: {json}"
+        );
+        buzz_core::coding_session_catalog::parse_catalog(&json).expect("canonical reader");
+    }
+
+    /// Two ids on the same runtime, one recognized and one not: the sparse
+    /// half is what proves the table is not filling itself in.
+    #[test]
+    fn an_unrecognized_id_publishes_no_window_and_no_family() {
+        let mut codex = claude_descriptor("gpt-5.6-sol", &["gpt-9-unreleased"]);
+        codex.instance_ref = "codex-primary".into();
+        codex.driver = "codex-acp".into();
+        codex.runtime = "codex".into();
+        let catalog = build(
+            &config_with_runtimes(vec![codex]),
+            &ProjectsFile::default(),
+            1,
+        );
+        let models = &catalog.providers[0].models;
+        assert_eq!(models[0].id, "gpt-5.6-sol");
+        assert_eq!(models[0].context_window, Some(400_000));
+        assert_eq!(models[0].family.as_deref(), Some("gpt-5.6"));
+        assert_eq!(models[0].vendor.as_deref(), Some("openai"));
+        assert_eq!(models[1].id, "gpt-9-unreleased");
+        assert_eq!(models[1].context_window, None);
+        assert_eq!(models[1].family, None);
+        assert_eq!(models[1].vendor.as_deref(), Some("openai"));
+    }
+
+    /// The digest tracks the metadata too: a host that learns a window has
+    /// changed what it advertises and owes a revision bump.
+    #[test]
+    fn the_body_digest_tracks_per_model_metadata() {
+        let known = build(&config("opus[1m]", &[]), &ProjectsFile::default(), 1);
+        let unknown = build(&config("opus-unheard-of", &[]), &ProjectsFile::default(), 1);
+        assert_ne!(body_digest(&known), body_digest(&unknown));
+    }
+
+    /// The offer outranks its description: a body that would not fit under the
+    /// relay's 256 KiB ceiling sheds its metadata rather than being refused
+    /// whole, which would make every model on the host invisible.
+    #[test]
+    fn an_oversized_body_sheds_its_metadata_and_keeps_the_offer() {
+        // 32 providers each offering the full 64 ids, every one of them an id
+        // the provider knows a window, a family and a vendor for — the worst
+        // case the bounds allow. The ids are sized so the *offer* fits
+        // comfortably and only the description pushes it over.
+        let runtimes: Vec<RuntimeDescriptor> = (0..MAX_PROVIDERS)
+            .map(|index| {
+                let mut descriptor = claude_descriptor("gpt-5.6-sol", &[]);
+                descriptor.instance_ref = format!("codex-{index:03}");
+                descriptor.driver = "codex-acp".into();
+                descriptor.runtime = "codex".into();
+                descriptor.allowed_models = (0..MAX_ALLOWED_MODELS)
+                    .map(|model| format!("gpt-5.6-{}{model:03}", "m".repeat(24)))
+                    .collect();
+                descriptor.default_model = descriptor.allowed_models[0].clone();
+                descriptor
+            })
+            .collect();
+        let catalog = build(&config_with_runtimes(runtimes), &ProjectsFile::default(), 1);
+        let json = to_canonical_json(&catalog).expect("serialize");
+        assert!(
+            json.len() <= MAX_CATALOG_CONTENT_BYTES,
+            "body is {} bytes",
+            json.len()
+        );
+        assert!(catalog.providers.iter().all(|p| p.models.is_empty()));
+        // The offer itself is untouched — that is the half that must survive.
+        assert_eq!(catalog.providers.len(), MAX_PROVIDERS);
+        assert_eq!(
+            catalog.providers[0].allowed_models.len(),
+            MAX_ALLOWED_MODELS
+        );
+        buzz_core::coding_session_catalog::parse_catalog(&json).expect("canonical reader");
     }
 }

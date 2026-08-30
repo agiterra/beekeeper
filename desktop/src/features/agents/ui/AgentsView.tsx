@@ -29,6 +29,7 @@ import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import { resolveRubricStaleness } from "@/features/agents/lib/rubricStaleness";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
 import {
@@ -62,6 +63,21 @@ export function AgentsView() {
   // With no project at all nothing is resolved and the dialog is unchanged.
   const rolePacksProject = useRolePacksProject();
   const activeProject = rolePacksProject.project;
+  // The lead's model rubric, checked against the models actually on offer —
+  // Brian's ruling: the rubric stays, and it gets checked rather than trusted.
+  //
+  // This renderer cannot read a role pack's files. The only role-pack access
+  // the app has is `scanProjectRolePacks` and `pickCrewRolePacksDirectory`
+  // (desktop/src/shared/api/tauriTeams.ts:327 and :341), and both return a
+  // role, a name and a `packDir` — never file content. So the badge says "pack
+  // not readable" out loud instead of rendering nothing, and points at the
+  // command that can answer it. `resolveRubricStaleness` holds the whole rule
+  // and is the same comparison `bee sessions rubric check` makes, so the day a
+  // reader exists this call site is the only thing that changes.
+  const rubricStaleness = React.useMemo(
+    () => resolveRubricStaleness({ rubricText: null, offered: null }),
+    [],
+  );
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -217,7 +233,19 @@ export function AgentsView() {
                 </DropdownMenu>
               </>
             }
-            description="Set up and manage your agents."
+            description={
+              <>
+                Set up and manage your agents.{" "}
+                <span
+                  className="ml-1 inline-block whitespace-nowrap rounded border border-border px-1.5 py-0.5 align-middle text-2xs"
+                  data-rubric-state={rubricStaleness.state}
+                  data-testid="rubric-stale-badge"
+                  title={rubricStaleness.detail}
+                >
+                  {rubricStaleness.label}
+                </span>
+              </>
+            }
             title="Agents"
           />
           <div className="flex flex-col gap-8">

@@ -600,3 +600,114 @@ test("catalog relay filters are native-only, author-governed, and channel-scoped
     [filter],
   );
 });
+
+/**
+ * Per-model metadata rides the same bytes as the offer, in the optional tail
+ * after `capabilities`. It describes ids `allowedModels` already carries; it
+ * never adds one, because the catalog is the only list of models on offer and
+ * a row outside it would make an unoffered model look offered.
+ */
+test("per-model metadata is accepted as the optional tail of a provider", () => {
+  const described = catalog({
+    providers: [
+      provider({
+        models: [
+          {
+            id: "claude-opus-5",
+            contextWindow: 1000000,
+            family: "opus",
+            vendor: "anthropic",
+          },
+          { id: "claude-sonnet-4-6", vendor: "anthropic" },
+        ],
+      }),
+    ],
+  });
+  assert.deepEqual(
+    parseCodingSessionProviderCatalog(JSON.stringify(described)),
+    described,
+  );
+
+  // Sparse is the honest state: describing one id says nothing about the rest.
+  const sparse = catalog({
+    providers: [
+      provider({
+        models: [{ id: "claude-sonnet-4-6", contextWindow: 200000 }],
+      }),
+    ],
+  });
+  assert.deepEqual(
+    parseCodingSessionProviderCatalog(JSON.stringify(sparse)),
+    sparse,
+  );
+});
+
+test("a model row outside the offer, out of order, or empty is refused", () => {
+  for (const invalid of [
+    // Names an id `allowedModels` never offered.
+    catalog({
+      providers: [
+        provider({ models: [{ id: "gpt-5.6-sol", vendor: "openai" }] }),
+      ],
+    }),
+    // Out of `allowedModels` order — one catalog would have two byte forms.
+    catalog({
+      providers: [
+        provider({
+          models: [
+            { id: "claude-sonnet-4-6", vendor: "anthropic" },
+            { id: "claude-opus-5", vendor: "anthropic" },
+          ],
+        }),
+      ],
+    }),
+    // Duplicated id.
+    catalog({
+      providers: [
+        provider({
+          models: [
+            { id: "claude-opus-5", vendor: "anthropic" },
+            { id: "claude-opus-5", vendor: "anthropic" },
+          ],
+        }),
+      ],
+    }),
+    // A row that adds no fact beyond the id.
+    catalog({ providers: [provider({ models: [{ id: "claude-opus-5" }] })] }),
+    // An empty list is never canonical: the producer omits the key.
+    catalog({ providers: [provider({ models: [] })] }),
+    // A zero window is a measurement nobody made, not a small window.
+    catalog({
+      providers: [
+        provider({ models: [{ id: "claude-opus-5", contextWindow: 0 }] }),
+      ],
+    }),
+    // Key order inside a row is load-bearing too.
+    catalog({
+      providers: [
+        provider({
+          models: [{ vendor: "anthropic", id: "claude-opus-5" }],
+        }),
+      ],
+    }),
+    // `models` must sit after `capabilities`, not before it.
+    catalog({
+      providers: [
+        {
+          providerInstanceRef: "claude-primary",
+          driver: "claude-agent-acp",
+          runtime: "claude",
+          defaultModel: "claude-opus-5",
+          allowedModels: ["claude-opus-5"],
+          models: [{ id: "claude-opus-5", vendor: "anthropic" }],
+          capabilities: provider().capabilities,
+        },
+      ],
+    }),
+  ]) {
+    assert.equal(
+      parseCodingSessionProviderCatalog(JSON.stringify(invalid)),
+      null,
+    );
+  }
+});

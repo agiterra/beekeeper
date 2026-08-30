@@ -39,6 +39,23 @@ export type CodingSessionProviderCapabilities = {
   plan: boolean;
 };
 
+/**
+ * What the publisher knows about one offered model id.
+ *
+ * Every field beyond `id` is optional and absent means **nobody said** — never
+ * a default. A window that was never measured is omitted rather than guessed,
+ * because a percentage computed against a guessed denominator renders exactly
+ * like a measured one.
+ */
+export type CodingSessionProviderCatalogModel = {
+  /** The id, exactly as it appears in `allowedModels`. */
+  id: string;
+  contextWindow?: number;
+  family?: string;
+  vendor?: string;
+  deprecated?: boolean;
+};
+
 export type CodingSessionProviderCatalogProvider = {
   providerInstanceRef: string;
   driver: string;
@@ -46,6 +63,16 @@ export type CodingSessionProviderCatalogProvider = {
   defaultModel: string;
   allowedModels: string[];
   capabilities: CodingSessionProviderCapabilities;
+  /**
+   * Per-model description of ids `allowedModels` already offers.
+   *
+   * Sparse and optional: rows appear in `allowedModels` order, name only ids
+   * on that list, and each carries at least one fact beyond its id. It
+   * **describes** the offer and never extends it — `allowedModels` is the
+   * whole list of models on offer, and a row outside it would make an
+   * unoffered model look offered.
+   */
+  models?: CodingSessionProviderCatalogModel[];
 };
 
 /** A project-scoped narrowing: which offered providers serve this project. */
@@ -577,7 +604,7 @@ function parseProvider(
         "allowedModels",
         "capabilities",
       ],
-      [],
+      ["models"],
     ) ||
     !boundedNonblank(value.providerInstanceRef) ||
     !boundedNonblank(value.driver) ||
@@ -620,6 +647,10 @@ function parseProvider(
   ) {
     return null;
   }
+  const described = Object.hasOwn(value, "models")
+    ? parseCatalogModels(value.models, models)
+    : undefined;
+  if (Object.hasOwn(value, "models") && !described) return null;
   return {
     providerInstanceRef: value.providerInstanceRef,
     driver: value.driver,
@@ -634,7 +665,81 @@ function parseProvider(
       diff: capabilities.diff,
       plan: capabilities.plan,
     },
+    ...(described ? { models: described } : {}),
   };
+}
+
+/**
+ * Parse `models[]` against the offer it describes.
+ *
+ * One cursor walks `allowedModels`, so order, membership and uniqueness are
+ * all decided by the same pass: a row naming an id the offer does not carry —
+ * or carrying one out of order, or twice — has no place to land and the whole
+ * catalog is refused. That is the rule that keeps this table a description of
+ * the offer rather than a second, quieter offer of its own.
+ */
+function parseCatalogModels(
+  value: unknown,
+  allowedModels: readonly string[],
+): CodingSessionProviderCatalogModel[] | null {
+  // An empty list is never canonical: the producer omits the key.
+  if (
+    !Array.isArray(value) ||
+    value.length < 1 ||
+    value.length > allowedModels.length
+  ) {
+    return null;
+  }
+  const models: CodingSessionProviderCatalogModel[] = [];
+  let cursor = 0;
+  for (const raw of value) {
+    if (
+      !isPlainRecord(raw) ||
+      !hasOrderedKeySubsequence(
+        raw,
+        ["id"],
+        ["contextWindow", "family", "vendor", "deprecated"],
+      ) ||
+      // A row that adds no fact beyond the id is a second way to encode one
+      // offer; `allowedModels` already named it.
+      Object.keys(raw).length < 2 ||
+      !boundedNonblank(raw.id)
+    ) {
+      return null;
+    }
+    if (
+      Object.hasOwn(raw, "contextWindow") &&
+      (!Number.isSafeInteger(raw.contextWindow) ||
+        Number(raw.contextWindow) <= 0)
+    ) {
+      return null;
+    }
+    if (Object.hasOwn(raw, "family") && !boundedNonblank(raw.family))
+      return null;
+    if (Object.hasOwn(raw, "vendor") && !boundedNonblank(raw.vendor))
+      return null;
+    if (
+      Object.hasOwn(raw, "deprecated") &&
+      typeof raw.deprecated !== "boolean"
+    ) {
+      return null;
+    }
+    const offset = allowedModels.indexOf(raw.id, cursor);
+    if (offset < 0) return null;
+    cursor = offset + 1;
+    models.push({
+      id: raw.id,
+      ...(Object.hasOwn(raw, "contextWindow")
+        ? { contextWindow: raw.contextWindow as number }
+        : {}),
+      ...(Object.hasOwn(raw, "family") ? { family: raw.family as string } : {}),
+      ...(Object.hasOwn(raw, "vendor") ? { vendor: raw.vendor as string } : {}),
+      ...(Object.hasOwn(raw, "deprecated")
+        ? { deprecated: raw.deprecated as boolean }
+        : {}),
+    });
+  }
+  return models;
 }
 
 function parseExactCatalogTags(tags: string[][]): {
@@ -730,6 +835,33 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * bytes are re-serialized from this parse, so a reordered payload that decoded
  * to the same object would fail the digest check with no explanation.
  */
+/**
+ * Like {@link hasOrderedKeys}, but the optional keys may be any *subsequence*
+ * of the declared tail rather than a prefix of it.
+ *
+ * A model row carries whichever facts are known, so `{ id, vendor }` is as
+ * canonical as `{ id, contextWindow, vendor }`. Relative order still binds:
+ * one set of facts has exactly one byte form.
+ */
+function hasOrderedKeySubsequence(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const actual = Object.keys(value);
+  if (actual.length < required.length) return false;
+  for (let index = 0; index < required.length; index += 1) {
+    if (actual[index] !== required[index]) return false;
+  }
+  let cursor = 0;
+  for (const key of actual.slice(required.length)) {
+    const offset = optional.indexOf(key, cursor);
+    if (offset < 0) return false;
+    cursor = offset + 1;
+  }
+  return true;
+}
+
 function hasOrderedKeys(
   value: Record<string, unknown>,
   required: readonly string[],
