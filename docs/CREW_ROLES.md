@@ -21,7 +21,7 @@ on it — all seven pass clean today (`Valid.`, exit 0).
 
 | role | does | never does |
 | --- | --- | --- |
-| **lead** | rules on the wire (a `sessions send` to the seat **plus** a Pulse entry), never in its transcript; writes briefs, reads reports and diffs, hires a runner for every long gate, keeps the live check and the ruling for itself, merges tier-0/1, keeps the ledger honest, ends a mission out loud and stops there | writes feature code; reads a builder's exploration; runs a gate a runner could run; invents lanes the mission did not ask for; lets a finished mission read as a stalled one |
+| **lead** | rules on the wire (a `sessions send` to the seat **plus** a Pulse entry), never in its transcript; writes briefs, chooses models from a versioned rubric checked against the live catalog, reads reports and diffs, hires a runner for every long gate, keeps the live check and the ruling for itself, merges tier-0/1, keeps the ledger honest, ends a mission out loud and stops there | writes feature code; reads a builder's exploration; runs a gate a runner could run; invents lanes the mission did not ask for; lets a finished mission read as a stalled one |
 | **architect** | one-sitting shape verdicts: right design, or a simpler one | redesigns at length; writes code |
 | **builder** | implements one locked brief inside its lane's exclusive files; self-verifies; reports raw facts | redesigns; touches files outside its lane; commits to `main` |
 | **verifier** | one pass over a tier-2 diff against the brief's named constraints; a terminal verdict | re-argues a disposition; reviews tier-0/1 |
