@@ -34,7 +34,7 @@ use crate::coding_session_command::{
     CodingSessionTarget, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
 };
 use crate::coding_session_payload::ACTOR_ROLE_PAIR;
-use crate::coding_session_routing::Routing;
+use crate::coding_session_routing::{HireRoutingRequest, RoutingRecord};
 use crate::kind::KIND_PROJECT;
 
 /// The currently supported coding-session lifecycle command envelope schema.
@@ -137,11 +137,11 @@ pub enum CodingSessionLifecycleAction {
         /// are: creates signed before the router existed must stay valid
         /// forever, so the key is omitted rather than written as an explicit
         /// `null` when nothing routed. When present it must be *complete* —
-        /// [`crate::coding_session_routing::Routing::is_complete`] — because a
+        /// [`crate::coding_session_routing::RoutingRecord::is_complete`] — because a
         /// create is the answer, not the question: a record with a null
         /// `chosen` on a create would claim a decision nobody made.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        routing: Option<Routing>,
+        routing: Option<RoutingRecord>,
     },
     /// Ask this umbrella's host to seat a new agent on a role (plan D14).
     ///
@@ -179,18 +179,25 @@ pub enum CodingSessionLifecycleAction {
         /// prefixes it), so it is required and non-empty:
         /// 1..=[`MAX_LIFECYCLE_INITIAL_TURN_BYTES`] bytes.
         brief: String,
-        /// The routing record behind this request, or absent when nothing
+        /// The routing **request** behind this hire, or absent when nothing
         /// routed (Brian's ruling of 2026-08-30).
         ///
-        /// The one additive key on an otherwise exact seven-key action. A lead
-        /// may carry only the *question* — `class`, `tier`, `risk`, `profile`,
-        /// `override`, with every router-filled answer `null` — and let the
-        /// host's router fill the rest; or it may carry a complete decision it
-        /// made itself. Either way the record travels onto the seated create
-        /// the host publishes, so a seat can always be asked why it is the
-        /// model it is.
+        /// The one additive key on an otherwise exact seven-key action, and a
+        /// [`HireRoutingRequest`] rather than a [`RoutingRecord`]: a hire
+        /// carries the *question* — a class and a risk triple — because only
+        /// the founder's host can see its own live kind:44222 catalog, and
+        /// only the host may therefore decide. The requester's own local
+        /// answer may ride along as [`HireRoutingRequest::proposed`], labelled
+        /// informational and binding nothing.
+        ///
+        /// The two were one type until 2026-08-30, and the cost of that was
+        /// exact: the CLI emitted the record here, the desktop host accepted
+        /// only the request, and every routed hire was classified malformed
+        /// and dropped without a kind:44220, a log line or a pixel (ledger
+        /// draft 97). A record on a hire is now refused *by the name of the
+        /// key that does not belong*.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        routing: Option<Routing>,
+        routing: Option<HireRoutingRequest>,
     },
     /// Reattach a disconnected, non-stopped execution as a new generation.
     #[serde(rename = "session.resume")]
@@ -413,6 +420,9 @@ pub fn decode_coding_session_lifecycle_command(
                 .map(Vec::as_slice)
                 .collect();
             require_exact_field_forms(action, &forms, "action")?;
+            if let Some(routing) = action.get("routing") {
+                require_routing_record_shape(routing)?;
+            }
             if action.get("genesisRef").is_some()
                 && (action.get("sessionRef").and_then(Value::as_str).is_none()
                     || action.get("genesisRef").and_then(Value::as_str).is_none())
@@ -423,11 +433,21 @@ pub fn decode_coding_session_lifecycle_command(
                 );
             }
         }
-        Some("session.hire") => require_exact_field_forms(
-            action,
-            &[HIRE_ACTION_FORM, HIRE_ACTION_FORM_ROUTED],
-            "action",
-        )?,
+        Some("session.hire") => {
+            require_exact_field_forms(
+                action,
+                &[HIRE_ACTION_FORM, HIRE_ACTION_FORM_ROUTED],
+                "action",
+            )?;
+            // Checked here, before serde, because serde's own
+            // `deny_unknown_fields` error is collapsed below into the single
+            // sentence "malformed coding-session lifecycle command payload".
+            // That sentence is exactly what a host answered nothing to on
+            // 2026-08-30: a lead cannot act on it. Name the key.
+            if let Some(routing) = action.get("routing") {
+                require_hire_routing_request_shape(routing)?;
+            }
+        }
         Some("session.resume" | "session.stop") => require_exact_fields(
             action,
             &["type", "session", "providerAuthorityPubkey"],
@@ -442,6 +462,203 @@ pub fn decode_coding_session_lifecycle_command(
         .map_err(|_| "malformed coding-session lifecycle command payload".to_string())?;
     payload.validate()?;
     Ok(payload)
+}
+
+/// The keys of `object` that `allowed` does not name, ordered by `wire_order`
+/// first and then alphabetically, so the sentence a lead reads is stable.
+fn stray_keys(
+    object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+    wire_order: &[&str],
+) -> Vec<String> {
+    let mut stray: Vec<String> = object
+        .keys()
+        .filter(|key| !allowed.contains(&key.as_str()))
+        .cloned()
+        .collect();
+    stray.sort_by_key(|key| {
+        (
+            wire_order
+                .iter()
+                .position(|known| known == key)
+                .unwrap_or(usize::MAX),
+            key.clone(),
+        )
+    });
+    stray
+}
+
+/// `"a", "b"` — the keys as a lead reads them.
+fn quoted(keys: &[String]) -> String {
+    keys.iter()
+        .map(|key| format!("{key:?}"))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+/// [`quoted`] over borrowed keys.
+fn quoted_refs(keys: &[&String]) -> String {
+    keys.iter()
+        .map(|key| format!("{key:?}"))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+/// Every key a `session.hire`'s `routing` may carry, in wire order.
+///
+/// The hire carries the routing **request**. `class` and `risk` are required;
+/// the rest are omitted when they have nothing to say.
+pub const HIRE_ROUTING_REQUEST_KEYS: &[&str] = &[
+    "class",
+    "risk",
+    "profile",
+    "override",
+    "challengerSample",
+    "reviewFlags",
+    "proposed",
+];
+
+/// Every key a `session.create`'s `routing` may carry, in wire order.
+///
+/// The create carries the routing **record**: the first thirteen are always
+/// written, `null` where the answer is genuinely absent, and
+/// `proposedDisagreement` is written only when the host overruled the
+/// requester's `proposed`.
+pub const ROUTING_RECORD_KEYS: &[&str] = &[
+    "class",
+    "tier",
+    "risk",
+    "profile",
+    "chosen",
+    "runnerUp",
+    "reason",
+    "reviewRequired",
+    "reviewReasons",
+    "challengerSample",
+    "override",
+    "registryVersion",
+    "catalogRevision",
+    "proposedDisagreement",
+];
+
+/// The three keys a request's `risk` carries. No `score`: the product is
+/// arithmetic the host does, and a score a requester could set is a number
+/// that can disagree with its own factors.
+const HIRE_ROUTING_RISK_KEYS: &[&str] = &["impact", "uncertainty", "irreversibility"];
+
+/// Refuse a routing **record** on a `session.hire`, naming the key.
+///
+/// This is the fix for the failure of 2026-08-30 09:52: `bee sessions hire`
+/// emitted the record, the desktop host's parser accepted only the request,
+/// and the hire was classified malformed and dropped with no answer of any
+/// kind. Serde would refuse it too, but the decoder collapses serde's error
+/// into one unactionable sentence — so the offending key is named here, with
+/// the way out, before serde ever runs.
+fn require_hire_routing_request_shape(routing: &Value) -> Result<(), String> {
+    let object = routing.as_object().ok_or_else(|| {
+        "action.routing on a hire must be an object: the routing request \
+         {class, risk, …}. Run `bee sessions route` and hire again with the request shape \
+         (`bee sessions hire --help`)"
+            .to_owned()
+    })?;
+    // Every offending key at once, in wire order. Naming one at a time turns
+    // a fix into a loop of re-signed hires, each answered by the next key.
+    let stray = stray_keys(object, HIRE_ROUTING_REQUEST_KEYS, ROUTING_RECORD_KEYS);
+    if !stray.is_empty() {
+        let from_the_record: Vec<&String> = stray
+            .iter()
+            .filter(|key| ROUTING_RECORD_KEYS.contains(&key.as_str()))
+            .collect();
+        return Err(format!(
+            "action.routing on a hire is the routing REQUEST, and {} {} not one of its keys \
+             ({}){}. Run `bee sessions route` and hire again with the request shape \
+             (`bee sessions hire --help`)",
+            quoted(&stray),
+            if stray.len() == 1 { "is" } else { "are" },
+            HIRE_ROUTING_REQUEST_KEYS.join(", "),
+            if from_the_record.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " — {} belong{} to the routing record the host writes on the create",
+                    quoted_refs(&from_the_record),
+                    if from_the_record.len() == 1 { "s" } else { "" }
+                )
+            }
+        ));
+    }
+    for required in ["class", "risk"] {
+        if !object.contains_key(required) {
+            return Err(format!(
+                "action.routing on a hire must carry {required:?}: the lead names a class and \
+                 a risk triple, and the host routes. Run `bee sessions route` and hire again \
+                 with the request shape (`bee sessions hire --help`)"
+            ));
+        }
+    }
+    let risk = object
+        .get("risk")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            "action.routing.risk on a hire must be an object of impact, uncertainty and \
+         irreversibility. Run `bee sessions route` and hire again with the request shape \
+         (`bee sessions hire --help`)"
+                .to_owned()
+        })?;
+    for key in risk.keys() {
+        if HIRE_ROUTING_RISK_KEYS.contains(&key.as_str()) {
+            continue;
+        }
+        return Err(format!(
+            "action.routing.risk on a hire carries {key:?}, which is not one of its three \
+             factors ({}){}. Run `bee sessions route` and hire again with the request shape \
+             (`bee sessions hire --help`)",
+            HIRE_ROUTING_RISK_KEYS.join(", "),
+            if key == "score" {
+                " — the product belongs to the record the host writes, so that a score can \
+                 never disagree with its own factors"
+            } else {
+                ""
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse a routing **request** on a `session.create`, naming the key.
+///
+/// The mirror of [`require_hire_routing_request_shape`]. A create is the
+/// answer; a create carrying only the question would put a decision on the
+/// wire that nobody made.
+fn require_routing_record_shape(routing: &Value) -> Result<(), String> {
+    let object = routing
+        .as_object()
+        .ok_or_else(|| "action.routing on a create must be an object".to_owned())?;
+    let stray = stray_keys(object, ROUTING_RECORD_KEYS, HIRE_ROUTING_REQUEST_KEYS);
+    if !stray.is_empty() {
+        let from_the_request: Vec<&String> = stray
+            .iter()
+            .filter(|key| HIRE_ROUTING_REQUEST_KEYS.contains(&key.as_str()))
+            .collect();
+        return Err(format!(
+            "action.routing on a create is the routing RECORD, and {} {} not one of its keys \
+             ({}){}",
+            quoted(&stray),
+            if stray.len() == 1 { "is" } else { "are" },
+            ROUTING_RECORD_KEYS.join(", "),
+            if from_the_request.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " — {} belong{} to the routing request a hire carries; the host routes \
+                     and writes the record",
+                    quoted_refs(&from_the_request),
+                    if from_the_request.len() == 1 { "s" } else { "" }
+                )
+            }
+        ));
+    }
+    Ok(())
 }
 
 /// Check that `project_ref` is a canonical NIP-MP project coordinate.
@@ -601,6 +818,14 @@ pub const HIRE_REFUSAL_CODES: &[&str] = &[
     // available" and "the cheapest that fits" are both wrong answers to a
     // requirement nothing meets.
     "HIRE_NO_ROUTE",
+    // The hire's `routing` did not parse against the request shape. Named
+    // rather than dropped, because dropping it is the bug this code exists
+    // to close: on 2026-08-30 a routed hire the relay had accepted was
+    // classified malformed by the host and discarded with no 44220, no log
+    // line and nothing on screen, and the lead waited fifteen minutes for an
+    // answer that was never going to come (ledger draft 97). A request that
+    // gets no answer is a crash with better manners.
+    "HIRE_MALFORMED",
 ];
 
 /// The three historical create key sets, oldest first, before the additive
@@ -810,6 +1035,8 @@ fn validate_target(target: &CodingSessionTarget) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding_session_routing::HireRoutingRequest;
+    use serde_json::json;
 
     /// A syntactically valid project coordinate: 64 lowercase hex, then a `d` tag.
     fn project_coordinate() -> String {
@@ -1661,7 +1888,41 @@ mod tests {
         assert_eq!(unique, seen.len(), "a refusal code is listed twice");
     }
 
-    // ── the routing record (Brian's ruling of 2026-08-30) ─────────────────
+    // ── the routing contract (Brian's ruling of 2026-08-30) ───────────────
+    //
+    // Two shapes, not one. A hire carries the routing REQUEST; a create and a
+    // kind:44223 carry the routing RECORD. Until 2026-08-30 they were one
+    // type, `bee sessions hire` emitted the record on a hire, the desktop
+    // host accepted only the request — and every routed hire was classified
+    // malformed and dropped without a word (ledger draft 97). The tests below
+    // are the shape of that fix.
+
+    /// Repository root, for the shared fixtures three implementations pin to.
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+    }
+
+    fn hire_request_fixture() -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(
+                repo_root().join("testdata/routing/hire-request-fixture.json"),
+            )
+            .expect("read testdata/routing/hire-request-fixture.json"),
+        )
+        .expect("the hire-request fixture is JSON")
+    }
+
+    fn create_record_fixture() -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(
+                repo_root().join("testdata/routing/create-record-fixture.json"),
+            )
+            .expect("read testdata/routing/create-record-fixture.json"),
+        )
+        .expect("the create-record fixture is JSON")
+    }
 
     /// The exact eight-key hire action a routed lead signs.
     fn routed_hire_content(routing_json: &str) -> String {
@@ -1677,19 +1938,179 @@ mod tests {
         r#"{"class":"builder","tier":"standard","risk":{"impact":3,"uncertainty":3,"irreversibility":2,"score":18},"profile":null,"chosen":{"provider":"claude-primary","model":"sonnet","effort":"medium"},"runnerUp":null,"reason":"claude-primary/sonnet cleared the builder gate and is the cheapest expected accepted completion","reviewRequired":false,"reviewReasons":[],"challengerSample":false,"override":null,"registryVersion":1,"catalogRevision":7}"#
     }
 
-    /// A hire may carry a routing record, and it round-trips byte-exact.
+    /// The smallest honest request: a class and a risk triple, nothing else.
+    fn question_only_json() -> &'static str {
+        r#"{"class":"builder","risk":{"impact":3,"uncertainty":3,"irreversibility":2}}"#
+    }
+
+    /// Every request in the shared fixture decodes on a hire and round-trips
+    /// key-for-key. The CLI's emitter and the desktop's parser are pinned to
+    /// the same file, so the three agree by construction rather than by
+    /// somebody remembering to keep them in step.
     #[test]
-    fn a_hire_may_carry_a_routing_record_and_round_trips_byte_exact() {
-        let content = routed_hire_content(full_routing_json());
+    fn every_request_in_the_shared_fixture_is_accepted_on_a_hire() {
+        let fixture = hire_request_fixture();
+        let requests = fixture["requests"].as_array().expect("requests");
+        assert_eq!(requests.len(), 3, "the contract names three requests");
+        for case in requests {
+            let name = case["name"].as_str().expect("name");
+            let routing = &case["routing"];
+            let content = routed_hire_content(&routing.to_string());
+            let decoded = decode_coding_session_lifecycle_command(&content)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let CodingSessionLifecycleAction::SessionHire { routing: got, .. } = &decoded.action
+            else {
+                panic!("{name}: expected a hire")
+            };
+            let got = got.as_ref().unwrap_or_else(|| panic!("{name}: no routing"));
+            // Key-for-key, both directions: an extra key is refused by
+            // `deny_unknown_fields` above, and a dropped one shows up here.
+            assert_eq!(
+                &serde_json::to_value(got).expect("reserialize"),
+                routing,
+                "{name}"
+            );
+        }
+    }
+
+    /// The keys a request writes, and the order it writes them in. A parser
+    /// that reads by position, a diff a human reads — both depend on it.
+    #[test]
+    fn a_request_writes_its_keys_in_the_documented_order() {
+        let fixture = hire_request_fixture();
+        let order: Vec<String> = fixture["keyOrder"]
+            .as_array()
+            .expect("keyOrder")
+            .iter()
+            .map(|key| key.as_str().expect("key").to_owned())
+            .collect();
+        // Every optional key at once, so the order is checked over all seven.
+        let request = HireRoutingRequest {
+            class: "architect".to_owned(),
+            risk: crate::coding_session_routing::Risk {
+                impact: 5,
+                uncertainty: 4,
+                irreversibility: 4,
+            },
+            profile: Some([("taste".to_owned(), 4.5)].into_iter().collect()),
+            r#override: Some(crate::coding_session_routing::RoutingOverride {
+                model: "gpt-5.6-sol[high]".to_owned(),
+                effort: None,
+                because: "the lead asked for Sol by name".to_owned(),
+            }),
+            challenger_sample: true,
+            review_flags: vec!["contractChange".to_owned()],
+            proposed: None,
+        };
+        let wire = serde_json::to_string(&request).expect("serialize");
+        let mut cursor = 0usize;
+        for key in &order {
+            if key == "proposed" {
+                continue;
+            }
+            let needle = format!("\"{key}\":");
+            let at = wire
+                .find(&needle)
+                .unwrap_or_else(|| panic!("{key} missing from {wire}"));
+            assert!(at >= cursor, "{key} is out of order in {wire}");
+            cursor = at;
+        }
+        // And `risk` carries three keys, never the record's `score`.
+        assert!(
+            wire.contains(r#""risk":{"impact":5,"uncertainty":4,"irreversibility":4}"#),
+            "{wire}"
+        );
+    }
+
+    /// The 2026-08-30 09:52 drop, as a test. The record on a hire is refused,
+    /// and the refusal NAMES the key that does not belong — anything less
+    /// leaves a lead re-sending the same request forever.
+    #[test]
+    fn the_record_on_a_hire_is_refused_by_the_key_that_does_not_belong() {
+        let fixture = hire_request_fixture();
+        for case in fixture["rejected"].as_array().expect("rejected") {
+            let name = case["name"].as_str().expect("name");
+            let key = case["offendingKey"].as_str().expect("offendingKey");
+            let content = routed_hire_content(&case["routing"].to_string());
+            let error = decode_coding_session_lifecycle_command(&content)
+                .expect_err(&format!("{name} must be refused"));
+            assert!(
+                error.contains(key),
+                "{name}: the refusal must name {key:?}, said {error:?}"
+            );
+            // And it must point at the way out, not merely at the mistake.
+            assert!(
+                error.contains("bee sessions route"),
+                "{name}: the refusal must say how to fix it, said {error:?}"
+            );
+        }
+    }
+
+    /// The request shape is refused on a create for the same reason in
+    /// reverse: a create that carried only the question would put a decision
+    /// on the wire that nobody made.
+    #[test]
+    fn the_request_on_a_create_is_refused_by_the_key_that_does_not_belong() {
+        let fixture = create_record_fixture();
+        for case in fixture["rejected"].as_array().expect("rejected") {
+            let name = case["name"].as_str().expect("name");
+            let key = case["offendingKey"].as_str().expect("offendingKey");
+            let content = seated_create_content(&case["routing"].to_string());
+            let error = decode_coding_session_lifecycle_command(&content)
+                .expect_err(&format!("{name} must be refused"));
+            assert!(
+                error.contains(key),
+                "{name}: the refusal must name {key:?}, said {error:?}"
+            );
+        }
+    }
+
+    /// Every record in the shared fixture decodes on a create and round-trips
+    /// key-for-key, including the fourteenth key `proposedDisagreement`.
+    #[test]
+    fn every_record_in_the_shared_fixture_is_accepted_on_a_create() {
+        let fixture = create_record_fixture();
+        let records = fixture["records"].as_array().expect("records");
+        assert_eq!(records.len(), 3, "the contract names three records");
+        let mut disagreements = 0;
+        for case in records {
+            let name = case["name"].as_str().expect("name");
+            let routing = &case["routing"];
+            let content = seated_create_content(&routing.to_string());
+            let decoded = decode_coding_session_lifecycle_command(&content)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let CodingSessionLifecycleAction::SessionCreate { routing: got, .. } = &decoded.action
+            else {
+                panic!("{name}: expected a create")
+            };
+            let got = got.as_ref().unwrap_or_else(|| panic!("{name}: no routing"));
+            assert!(got.is_complete(), "{name}: a create carries the answer");
+            if got.proposed_disagreement.is_some() {
+                disagreements += 1;
+            }
+            assert_eq!(
+                &serde_json::to_value(got).expect("reserialize"),
+                routing,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            disagreements, 1,
+            "one fixture record must disclose a disagreement, or the key is untested"
+        );
+    }
+
+    /// A hire may carry only the question, and it round-trips byte-exact.
+    #[test]
+    fn a_hire_may_carry_the_question_alone_and_round_trips_byte_exact() {
+        let content = routed_hire_content(question_only_json());
         let decoded = decode_coding_session_lifecycle_command(&content).expect("a routed hire");
         let CodingSessionLifecycleAction::SessionHire { routing, .. } = &decoded.action else {
             panic!("expected a hire")
         };
-        let routing = routing.as_ref().expect("a routing record");
+        let routing = routing.as_ref().expect("a routing request");
         assert_eq!(routing.class, "builder");
-        assert_eq!(routing.tier, "standard");
-        assert_eq!(routing.risk.score, 18);
-        assert!(routing.is_complete());
+        assert_eq!(routing.risk.score(), 18);
         assert_eq!(
             serde_json::to_string(&decoded).expect("reserialize"),
             content
@@ -1700,67 +2121,67 @@ mod tests {
     /// a lead making a request.
     #[test]
     fn the_unrouted_seven_key_hire_is_still_accepted() {
-        let decoded =
-            decode_coding_session_lifecycle_command(&valid_hire_content()).expect("a hire");
+        let session = session_reference();
+        let genesis = "12".repeat(32);
+        let content = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"hire-1","action":{{"type":"session.hire","sessionRef":"{session}","genesisRef":"{genesis}","role":"builder","providerInstanceRef":null,"model":null,"brief":"Rebase the lane and run the gate."}}}}"#
+        );
+        let decoded = decode_coding_session_lifecycle_command(&content).expect("an unrouted hire");
         let CodingSessionLifecycleAction::SessionHire { routing, .. } = &decoded.action else {
             panic!("expected a hire")
         };
         assert_eq!(*routing, None);
         // …and `routing` is omitted rather than written as an explicit null,
-        // so the seven-key form is byte-identical to what shipped before.
+        // so the bytes an old consumer sees are unchanged.
         assert_eq!(
             serde_json::to_string(&decoded).expect("reserialize"),
-            valid_hire_content()
+            content
         );
     }
 
-    /// A hire may carry only the question — the lead's class, tier, risk —
-    /// and leave every router-filled answer null.
-    #[test]
-    fn a_hire_may_carry_the_question_without_the_answer() {
-        let question = r#"{"class":"builder","tier":"standard","risk":{"impact":3,"uncertainty":3,"irreversibility":2,"score":18},"profile":null,"chosen":null,"runnerUp":null,"reason":null,"reviewRequired":null,"reviewReasons":[],"challengerSample":false,"override":null,"registryVersion":null,"catalogRevision":null}"#;
-        let content = routed_hire_content(question);
-        let decoded = decode_coding_session_lifecycle_command(&content).expect("a hire");
-        let CodingSessionLifecycleAction::SessionHire { routing, .. } = &decoded.action else {
-            panic!("expected a hire")
-        };
-        assert!(!routing.as_ref().expect("routing").is_complete());
+    /// The seated, routed create content the record tests decode.
+    fn seated_create_content(routing_json: &str) -> String {
+        let session = session_reference();
+        let genesis = "12".repeat(32);
+        let authority = "ab".repeat(32);
+        let actor = "cd".repeat(32);
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":"{session}","genesisRef":"{genesis}","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{authority}","model":"sonnet","title":null,"initialTurn":null,"actor":"{actor}","role":"builder","routing":{routing_json}}}}}"#
+        )
     }
 
-    /// A create may carry the record too, on every historical form, seated or
-    /// not — that is how the answer reaches the seat's own row.
+    /// A create may carry the record on every historical form, seated or not —
+    /// that is how the answer reaches the seat's own row.
     #[test]
     fn a_create_may_carry_a_routing_record_on_every_form() {
+        let record: Value = serde_json::from_str(full_routing_json()).expect("routing");
         for base in CREATE_ACTION_FORMS {
             for seated in [false, true] {
                 let mut action = serde_json::Map::new();
                 for key in *base {
                     let value = match *key {
-                        "type" => Value::String("session.create".into()),
-                        "providerInstanceRef" => Value::String("claude-primary".into()),
-                        "providerAuthorityPubkey" => Value::String("ab".repeat(32)),
-                        "sessionRef" => Value::String(session_reference()),
-                        "genesisRef" => Value::String("12".repeat(32)),
+                        "type" => json!("session.create"),
+                        "providerInstanceRef" => json!("claude-primary"),
+                        "providerAuthorityPubkey" => json!("ab".repeat(32)),
+                        "sessionRef" => json!(session_reference()),
+                        "genesisRef" => json!("12".repeat(32)),
                         _ => Value::Null,
                     };
                     action.insert((*key).to_owned(), value);
                 }
                 if seated {
-                    action.insert("actor".into(), Value::String("cd".repeat(32)));
-                    action.insert("role".into(), Value::String("builder".into()));
+                    action.insert("actor".into(), json!("cd".repeat(32)));
+                    action.insert("role".into(), json!("builder"));
                 }
-                action.insert(
-                    "routing".into(),
-                    serde_json::from_str(full_routing_json()).expect("routing"),
-                );
-                let payload = serde_json::json!({
+                action.insert("routing".into(), record.clone());
+                let content = json!({
                     "schema": CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
                     "commandId": "create-1",
                     "action": Value::Object(action),
-                });
-                let content = serde_json::to_string(&payload).expect("json");
-                let decoded = decode_coding_session_lifecycle_command(&content)
-                    .unwrap_or_else(|error| panic!("{content}: {error}"));
+                })
+                .to_string();
+                let decoded =
+                    decode_coding_session_lifecycle_command(&content).expect("a routed create");
                 let CodingSessionLifecycleAction::SessionCreate { routing, .. } = &decoded.action
                 else {
                     panic!("expected a create")
@@ -1770,19 +2191,27 @@ mod tests {
         }
     }
 
+    /// A create carrying only the question is refused: a create records the
+    /// decision, and a null `chosen` there would claim one nobody made.
+    #[test]
+    fn a_create_carrying_an_incomplete_record_is_refused() {
+        let incomplete = full_routing_json().replace(
+            r#""chosen":{"provider":"claude-primary","model":"sonnet","effort":"medium"}"#,
+            r#""chosen":null"#,
+        );
+        let error = decode_coding_session_lifecycle_command(&seated_create_content(&incomplete))
+            .expect_err("an incomplete record on a create is refused");
+        assert!(error.contains("chosen"), "{error}");
+    }
+
     /// The record is validated, not merely carried: an effort the router is
     /// forbidden to purchase is refused at the wire.
     #[test]
-    fn a_hire_naming_an_effort_above_high_is_refused() {
-        for forbidden in ["xhigh", "max", "ultra"] {
-            let routing = full_routing_json().replace(
-                r#""effort":"medium""#,
-                &format!(r#""effort":"{forbidden}""#),
-            );
-            let error = decode_coding_session_lifecycle_command(&routed_hire_content(&routing))
-                .expect_err("must refuse");
-            assert!(error.contains("human override only"), "{error}");
-        }
+    fn a_create_naming_an_effort_above_high_is_refused() {
+        let routing = full_routing_json().replace(r#""effort":"medium""#, r#""effort":"xhigh""#);
+        let error = decode_coding_session_lifecycle_command(&seated_create_content(&routing))
+            .expect_err("xhigh is human override only");
+        assert!(error.contains("human override only"), "{error}");
     }
 
     /// A risk score that does not equal its own factors is a record that
@@ -1790,9 +2219,9 @@ mod tests {
     #[test]
     fn a_routing_record_whose_score_contradicts_its_factors_is_refused() {
         let routing = full_routing_json().replace(r#""score":18"#, r#""score":19"#);
-        let error = decode_coding_session_lifecycle_command(&routed_hire_content(&routing))
-            .expect_err("must refuse");
-        assert!(error.contains("impact"), "{error}");
+        let error = decode_coding_session_lifecycle_command(&seated_create_content(&routing))
+            .expect_err("a self-contradicting score is refused");
+        assert!(error.contains("score"), "{error}");
     }
 
     /// An unknown key inside `routing` is refused rather than dropped: a
@@ -1804,7 +2233,26 @@ mod tests {
             r#""class":"builder""#,
             r#""class":"builder","surprise":true"#,
         );
-        assert!(decode_coding_session_lifecycle_command(&routed_hire_content(&routing)).is_err());
+        assert!(decode_coding_session_lifecycle_command(&seated_create_content(&routing)).is_err());
+        let request = question_only_json().replace(
+            r#""class":"builder""#,
+            r#""class":"builder","surprise":true"#,
+        );
+        assert!(decode_coding_session_lifecycle_command(&routed_hire_content(&request)).is_err());
+    }
+
+    /// A review flag nobody defined is refused by name, never dropped: a
+    /// trigger the wire swallows is a review the lead believes it asked for
+    /// and did not get.
+    #[test]
+    fn an_unknown_review_flag_is_refused_by_name() {
+        let request = question_only_json().replace(
+            r#""irreversibility":2}"#,
+            r#""irreversibility":2},"reviewFlags":["looksHard"]"#,
+        );
+        let error = decode_coding_session_lifecycle_command(&routed_hire_content(&request))
+            .expect_err("an unknown review flag is refused");
+        assert!(error.contains("looksHard"), "{error}");
     }
 
     /// `HIRE_NO_ROUTE` is the honest answer when nothing clears the bar: not a
@@ -1813,6 +2261,17 @@ mod tests {
     fn no_route_is_a_refusal_code_of_its_own() {
         assert!(
             HIRE_REFUSAL_CODES.contains(&"HIRE_NO_ROUTE"),
+            "codes: {HIRE_REFUSAL_CODES:?}"
+        );
+    }
+
+    /// `HIRE_MALFORMED` is the answer to the failure that produced this
+    /// contract: a hire whose `routing` did not parse used to be dropped in
+    /// silence. A request that gets no answer is the bug, not the parse.
+    #[test]
+    fn malformed_is_a_refusal_code_of_its_own() {
+        assert!(
+            HIRE_REFUSAL_CODES.contains(&"HIRE_MALFORMED"),
             "codes: {HIRE_REFUSAL_CODES:?}"
         );
     }

@@ -2530,23 +2530,38 @@ pub enum SessionsCmd {
     /// at all). Exit codes follow: 0 created, 1 refused/failed, 2 relay
     /// error, 5 seating/unconfirmed.
     ///
-    /// ROUTING. Pass `--class` and `--risk i,u,i` and the CLI routes the hire
-    /// before it signs it: it reads `team/model-registry.yaml` and the live
-    /// kind:44222 catalog, applies the hard requirements and the class gate,
-    /// derives the tier and the effort from the risk, and picks the cheapest
-    /// expected accepted completion among what is left. The decision rides on
-    /// the request as a `routing` object and is echoed onto the seat's create
-    /// and its kind:44223 metadata, so the seat can always be asked why it is
-    /// the model it is. When nothing clears the bar the hire is not signed at
-    /// all: exit 4, naming the binding trait and the best score anything
-    /// available really has (the same fact a host answers HIRE_NO_ROUTE).
-    /// `--model` alongside `--class` is an explicit human override: it is
-    /// still checked against the catalog, it is recorded as an override with
-    /// your `--because`, and it is never silently substituted.
+    /// ROUTING — the hire asks, the host answers. Pass `--class` and
+    /// `--risk i,u,i` and the hire carries a routing REQUEST: the class, the
+    /// risk triple, and whatever you asked for with `--profile`,
+    /// `--review-flags` and `--challenger-sample`. It carries no model, no
+    /// provider and no effort, because only the founder's host can see its own
+    /// live kind:44222 catalog, and only the host may therefore decide. The
+    /// host routes, writes the decision as a `routing` RECORD on the seat's
+    /// create and its kind:44223 metadata, and the seat can then always be
+    /// asked why it is the model it is.
+    ///
+    /// This command still runs the router locally — reading
+    /// `team/model-registry.yaml` and the catalog it can see — but only for
+    /// disclosure: the answer is attached to the request as `proposed`, and
+    /// the host must say so on the create (`routing.proposedDisagreement`) if
+    /// it lands somewhere else. A local router that cannot answer is reported
+    /// as `proposedUnavailable` and does NOT block the hire: refusing here for
+    /// a target this machine cannot see would be a refusal nobody asked for.
+    /// Read the object a hire attaches with
+    /// `bee --format json sessions route … | jq .proposed` — never `.routing`,
+    /// which is the host's answer shape and is refused on a hire.
+    ///
+    /// `--override-model` with `--because` is the one way a hire dictates a
+    /// target. It is checked against the catalog, recorded as an override, and
+    /// never silently substituted; the host's own pick survives on the create
+    /// as `runnerUp`. Only an override sets the hire's top-level `model` and
+    /// `providerInstanceRef`. `--model` without `--class` is still an unrouted
+    /// hire and carries no `routing` at all.
     ///
     /// A refusal's `code` is one of HIRE_OFF, HIRE_ROLE_NOT_ALLOWED,
     /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_ROLE_BUSY,
-    /// HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED, HIRE_NO_ROUTE or
+    /// HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED, HIRE_NO_ROUTE,
+    /// HIRE_MALFORMED or
     /// HIRE_STALE, and
     /// the detail carries the remedy for it. HIRE_NO_IDENTITY and
     /// HIRE_ROLE_BUSY are two different facts: the first means the host holds
@@ -2564,6 +2579,11 @@ pub enum SessionsCmd {
     /// that risk tier; the reason names the binding trait and the best score
     /// available, and the answer is a different class, a different risk
     /// assessment, or an explicit override — never a quiet demotion.
+    /// HIRE_MALFORMED means the hire's `routing` did not parse, and the reason
+    /// names the failing key. It exists because on 2026-08-30 a routed hire the
+    /// relay had accepted was classified malformed by the host and dropped with
+    /// no answer at all, and a request that gets no answer is a crash with
+    /// better manners.
     #[command(
         after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request."
     )]
@@ -2585,14 +2605,14 @@ pub enum SessionsCmd {
         /// when omitted
         #[arg(long = "provider-instance")]
         provider_instance: Option<String>,
-        /// Model the seat should run; the chosen identity's own when omitted.
-        /// Alongside --class this is an OVERRIDE of the router and needs
-        /// --because.
+        /// Model the seat should run on an UNROUTED hire; the chosen
+        /// identity's own when omitted. To override a routed hire, pass
+        /// --override-model with --because instead.
         #[arg(long)]
         model: Option<String>,
         /// Capability class to route for: lead, architect, builder, runner,
-        /// ui_designer, researcher, verifier, poker. With --risk, the CLI
-        /// routes the hire and puts the decision on the wire.
+        /// ui_designer, researcher, verifier, poker. With --risk, the hire
+        /// carries the routing request and the host decides.
         #[arg(long, requires = "risk")]
         class: Option<String>,
         /// Risk as `impact,uncertainty,irreversibility`, each 1-5. The tier
@@ -2608,9 +2628,14 @@ pub enum SessionsCmd {
         /// Deliberately route a challenger for this class and mark the record
         #[arg(long = "challenger-sample", requires = "class")]
         challenger_sample: bool,
-        /// Why you are overriding the router. Required with --model --class:
+        /// Catalog id to run instead of whatever the host's router chooses.
+        /// The one way a hire dictates a target; needs --class, --risk and
+        /// --because.
+        #[arg(long = "override-model", requires = "class", requires = "because")]
+        override_model: Option<String>,
+        /// Why you are overriding the router. Required with --override-model:
         /// an unexplained override is indistinguishable from a bug.
-        #[arg(long, requires = "model")]
+        #[arg(long, requires = "class")]
         because: Option<String>,
         /// File holding the brief, or `-` to read it from stdin
         #[arg(long, conflicts_with = "content")]

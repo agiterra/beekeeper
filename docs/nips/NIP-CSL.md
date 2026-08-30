@@ -367,8 +367,8 @@ host decides, and the seat it produces is an ordinary seated `session.create`.
 }
 ```
 
-Exactly these seven keys, or those seven plus `routing` (the fork amendment
-below). `providerInstanceRef` and `model` are nullable and
+Exactly these seven keys, or those seven plus `routing` — the routing
+**request**, never the routing record (the fork amendment below). `providerInstanceRef` and `model` are nullable and
 **structurally required** — written as explicit `null` when the requester
 leaves the choice to the host — for the same reason `projectRef` is. The
 others are required non-null strings: `sessionRef` is a canonical lowercase
@@ -406,7 +406,7 @@ On refusal the host answers the requesting seat with a `kind:44220` turn whose
 text is exactly `hire refused: <CODE> — <reason>`, where `<CODE>` is one of
 `HIRE_OFF`, `HIRE_ROLE_NOT_ALLOWED`, `HIRE_LIMIT`, `HIRE_NO_IDENTITY`,
 `HIRE_ROLE_BUSY`, `HIRE_PROVIDER_NOT_ALLOWED`, `HIRE_MODEL_NOT_OFFERED`,
-`HIRE_NO_ROUTE`, or
+`HIRE_NO_ROUTE`, `HIRE_MALFORMED`, or
 `HIRE_STALE`, and shows the same line in the umbrella as a
 system row. The codes are the constants
 `HIRE_REFUSAL_CODES` in `crates/buzz-core/src/coding_session_lifecycle_command.rs`;
@@ -427,9 +427,66 @@ Brian's ruling of 2026-08-30: **"The lead chooses the capability required. The
 router chooses the execution target."** The thing chosen is a provider + model +
 effort, chosen by a stated procedure, and the record of that choice travels with
 the work. `session.hire` therefore takes one additive key, `routing`; the
-resulting `session.create` echoes it, and so does the seat's kind:44223
-metadata. A seat can always be asked why it is the model it is, from the wire
-alone.
+resulting `session.create` echoes the decision, and so does the seat's
+kind:44223 metadata. A seat can always be asked why it is the model it is, from
+the wire alone.
+
+**`routing` is two different shapes, and which one is legal depends on the
+action.** A `session.hire` carries the routing **REQUEST** — the question. A
+`session.create` and a kind:44223 carry the routing **RECORD** — the answer.
+Only the founder's host may write the record, because only the host can see its
+own live kind:44222 catalog. Publishing the record on a hire is refused, by the
+name of the key that does not belong, and vice versa.
+
+That was one shape until 2026-08-30, and the cost was exact: a CLI emitted the
+record on a hire, a host accepted only the request, and every routed hire was
+classified malformed and **dropped with no answer of any kind** — no
+kind:44220, no log line, nothing rendered — while the lead waited. Two shapes
+is how that stops being possible to write.
+
+#### The request, on `session.hire`
+
+```json
+{
+  "class": "builder",
+  "risk": { "impact": 3, "uncertainty": 3, "irreversibility": 2 },
+  "profile": { "taste": 4.5 },
+  "override": { "model": "gpt-5.6-terra[medium]", "effort": null, "because": "…" },
+  "challengerSample": true,
+  "reviewFlags": ["contractChange", "leadRequests"],
+  "proposed": {
+    "chosen": { "provider": "claude-primary", "model": "sonnet", "effort": "medium" },
+    "runnerUp": { "provider": "codex-primary", "model": "gpt-5.6-luna[medium]", "effort": "medium" },
+    "reason": "…",
+    "registryVersion": 1,
+    "catalogRevision": 7
+  }
+}
+```
+
+* `class` and `risk` are **required**. Everything else is **omitted** when it
+  has nothing to say — never written as an explicit `null`. This is the
+  opposite convention from the record below, and deliberately so: a question
+  states only what was asked.
+* `risk` here carries **three** keys and no `score`. The product is arithmetic
+  the host does; a `score` a requester could set is a number that can disagree
+  with its own factors.
+* `reviewFlags` are tokens from the §6 trigger list —
+  `securityBoundary`, `contractChange`, `outsidePlan`, `builderUncertain`,
+  `testsInsufficient`, `leadRequests`. A token nobody defined is refused **by
+  name**, never dropped: a trigger the wire swallows is a review the lead
+  believes it asked for and did not get.
+* `proposed` is the requester's own local routing decision. It is
+  **informational**. It never binds the host, whose live catalog may
+  legitimately differ; when the host lands elsewhere it says so on the create
+  in `routing.proposedDisagreement`.
+* `override` is the **only** way a hire dictates an execution target, and
+  `because` is required. The hire's top-level `model` and `providerInstanceRef`
+  are set only when `override` is present, and then they equal `override.model`.
+  A routed hire that filled them in with the requester's own proposal would be
+  dictating a target while claiming to ask a question.
+
+#### The record, on `session.create` and kind:44223
 
 ```json
 {
@@ -449,12 +506,22 @@ alone.
 }
 ```
 
-**Exactly these thirteen keys, always all of them.** Unlike the additive keys
-elsewhere in this document, `routing`'s *own* fields are never omitted: a field
-whose answer is not known yet is written as an explicit `null`. That gives a
-strict observer one shape to accept instead of a family of them. The key
-`routing` itself **is** omitted — never written as `null` — when nothing routed,
-so a hire or create signed before the router existed stays byte-valid forever.
+**Exactly these thirteen keys, always all of them, plus an optional
+fourteenth.** Unlike the additive keys elsewhere in this document, the record's
+*own* fields are never omitted: a field whose answer is not known is written as
+an explicit `null`. That gives a strict observer one shape to accept instead of
+a family of them. The key `routing` itself **is** omitted — never written as
+`null` — when nothing routed, so a hire or create signed before the router
+existed stays byte-valid forever.
+
+The fourteenth key is `proposedDisagreement`: one sentence, written by the host
+**only** when its own choice differs from the `proposed` the hire carried, and
+omitted entirely otherwise, so a record with nothing to disclose is
+byte-identical to the thirteen-key form. Honouring an `override` is not a
+disagreement — that difference is the requester's own instruction, not the
+host's judgment. A host that routes elsewhere and says nothing leaves a lead
+reading its own proposal back as though it had been honoured, which is the
+whole reason `proposed` is on the wire.
 
 * `class` is the capability the lead named. The lead never names a model.
 * `tier` is `fast` | `standard` | `deep`, **derived** from `risk`: 1–8, 9–39,
@@ -487,24 +554,35 @@ so a hire or create signed before the router existed stays byte-valid forever.
   produced this. `catalogRevision` is `null` when more than one signer published,
   because two hosts share no revision counter.
 
-**A hire may carry the question; a create must carry the answer.** On a
-`session.hire` every router-filled field may be `null` — the lead states the
-class, the tier and the risk and lets the host's router decide. On a
-`session.create` the record must be *complete*: `chosen`, `reason`,
-`reviewRequired` and `registryVersion` all non-null. A create is the record of a
-decision that was made; a null `chosen` there would claim a decision nobody made.
+**A hire carries the question; a create must carry the answer.** A
+`session.hire` carries a routing request and nothing else — it has no `tier`,
+no `chosen`, no `reason`, and a `risk` of three factors. On a `session.create`
+the record must be *complete*: `chosen`, `reason`, `reviewRequired` and
+`registryVersion` all non-null. A create is the record of a decision that was
+made; a null `chosen` there would claim a decision nobody made.
+
+**`HIRE_MALFORMED`.** A hire whose `routing` does not parse against the request
+shape is answered `HIRE_MALFORMED`, and the reason names the failing key. It is
+never dropped and never left unanswered: a request that gets no answer is a
+crash with better manners, and that is exactly what happened on 2026-08-30
+before this code existed.
 
 **`HIRE_NO_ROUTE`.** When nothing the live catalog offers clears the class gate
 at that risk tier, the host answers `HIRE_NO_ROUTE` and the reason names the
 binding trait, the minimum it wanted, and the best score anything available
 actually has. It is deliberately a refusal rather than a quiet demotion: *"the
 smartest available model"* and *"the cheapest that fits"* are both wrong answers
-to a requirement nothing meets. `bee sessions hire --class …` routes locally
-before it signs, so that request is usually never published at all.
+to a requirement nothing meets. `bee sessions hire --class …` runs the router
+locally too, but only to attach `proposed`: the host's catalog is the one that
+decides, so a local no-route is reported rather than used to refuse a hire the
+host might well have served.
 
 The schema, the gates and the selection order live in
 `crates/buzz-core/src/coding_session_routing.rs`; the rows and their provenance
-live in `team/model-registry.yaml`.
+live in `team/model-registry.yaml`. The two shapes are pinned byte-for-byte by
+`testdata/routing/hire-request-fixture.json` and
+`testdata/routing/create-record-fixture.json`, which `buzz-core`'s validator,
+the CLI's emitter and the desktop's parser all read.
 
 **Deployment order.** The relay validates 44221 with `deny_unknown_fields` and
 a closed action list, so a `session.hire` is only valid once the relay carrying
