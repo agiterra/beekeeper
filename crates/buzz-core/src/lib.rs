@@ -42,6 +42,9 @@ pub mod coding_session_routing;
 /// Runtime descriptors shared by the desktop host and the coding-session
 /// provider sidecar (`BUZZ_CSP_RUNTIMES`).
 pub mod coding_session_runtime;
+/// NIP-CSTX: signed, append-only team transactions inside a coding session
+/// (44244).
+pub mod coding_session_team_transaction;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;

@@ -1,0 +1,112 @@
+{
+  "schema": "buzz-coding-session-team-transaction-conformance/v1",
+  "vectors": [
+    {
+      "name": "valid-assignment-with-non-uuid-command",
+      "valid": true,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "assignment",
+        "supersedes": null,
+        "deliveryCommandId": "wake-builder-1",
+        "body": {
+          "assigneeActor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "assigneeRole": "builder-secondary",
+          "objective": "Implement the shared vector",
+          "brief": "Decode this vector identically in every client.",
+          "branch": null,
+          "baseSha": null,
+          "fileOwnership": [],
+          "acceptanceSteps": ["run the conformance fixture"]
+        }
+      }
+    },
+    {
+      "name": "valid-refutation",
+      "valid": true,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "verdict",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "subtype": "refutation",
+          "assignmentRef": "1111111111111111111111111111111111111111111111111111111111111111",
+          "reportRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "decision": "not-refuted",
+          "summary": "No refutation found",
+          "findings": [],
+          "requiredAction": null
+        }
+      }
+    },
+    {
+      "name": "invalid-missing-common-command-key",
+      "valid": false,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "assignment",
+        "supersedes": null,
+        "body": {
+          "assigneeActor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "assigneeRole": "builder",
+          "objective": "Missing envelope field",
+          "brief": "This vector must fail.",
+          "branch": null,
+          "baseSha": null,
+          "fileOwnership": [],
+          "acceptanceSteps": []
+        }
+      }
+    },
+    {
+      "name": "invalid-role-underscore",
+      "valid": false,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "assignment",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "assigneeActor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "assigneeRole": "build_er",
+          "objective": "Reject the role",
+          "brief": "This vector must fail.",
+          "branch": null,
+          "baseSha": null,
+          "fileOwnership": [],
+          "acceptanceSteps": []
+        }
+      }
+    },
+    {
+      "name": "invalid-refutation-approval",
+      "valid": false,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "verdict",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "subtype": "refutation",
+          "assignmentRef": "1111111111111111111111111111111111111111111111111111111111111111",
+          "reportRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "decision": "approve",
+          "summary": "Refutation cannot approve",
+          "findings": [],
+          "requiredAction": null
+        }
+      }
+    }
+  ]
+}
