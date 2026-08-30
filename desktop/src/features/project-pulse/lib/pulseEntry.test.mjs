@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   MAX_PULSE_CODE_AREAS,
+  MAX_PULSE_COST_SEATS,
   MAX_PULSE_CODE_AREA_BYTES,
   MAX_PULSE_TEXT_BYTES,
   decodePulseEntry,
@@ -264,4 +265,121 @@ test("the coordinate and session ref read back off the event", () => {
     null,
     "no coordinate closes the gate, it does not open it",
   );
+});
+
+const BUILDER =
+  "cc00000000000000000000000000000000000000000000000000000000000022";
+const REFUTER =
+  "dd00000000000000000000000000000000000000000000000000000000000033";
+
+const costContent = (cost) => content({ cost });
+
+test("a costless entry decodes to a null cost", () => {
+  const decoded = decodePulseEntry(content());
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.entry.cost, null);
+});
+
+test("a cost decodes with its seats and its total", () => {
+  const decoded = decodePulseEntry(
+    costContent({
+      seats: [
+        {
+          actor: BUILDER,
+          role: "builder",
+          model: "opus-5[1m]",
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 100,
+          cacheWriteTokens: 20,
+          toolCalls: 9,
+          turns: 3,
+        },
+      ],
+      totalTokens: 135,
+    }),
+  );
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.entry.cost.seats.length, 1);
+  assert.equal(decoded.entry.cost.seats[0].role, "builder");
+  assert.equal(decoded.entry.cost.seats[0].turns, 3);
+  assert.equal(decoded.entry.cost.totalTokens, 135);
+});
+
+test("an empty cost, an empty seat, and an unknown cost key are rejected", () => {
+  assert.match(
+    decodePulseEntry(costContent({})).error,
+    /must report something/,
+  );
+  assert.match(
+    decodePulseEntry(costContent({ seats: [{}] })).error,
+    /seat must report something/,
+  );
+  assert.equal(decodePulseEntry(costContent({ costUsd: 1.5 })).ok, false);
+  assert.equal(
+    decodePulseEntry(costContent({ seats: [{ actor: BUILDER, spend: 1 }] })).ok,
+    false,
+  );
+});
+
+test("a total that does not equal the seats it lists is rejected", () => {
+  const decoded = decodePulseEntry(
+    costContent({
+      seats: [{ actor: BUILDER, inputTokens: 10, outputTokens: 5 }],
+      totalTokens: 900,
+    }),
+  );
+  assert.equal(decoded.ok, false);
+  assert.match(decoded.error, /totalTokens 900 does not equal/);
+});
+
+test("a repeated seat and a malformed actor are rejected", () => {
+  assert.match(
+    decodePulseEntry(
+      costContent({
+        seats: [
+          { actor: BUILDER, turns: 1 },
+          { actor: BUILDER, turns: 1 },
+        ],
+      }),
+    ).error,
+    /repeats cost seat/,
+  );
+  assert.match(
+    decodePulseEntry(
+      costContent({ seats: [{ actor: BUILDER.toUpperCase(), turns: 1 }] }),
+    ).error,
+    /64-character lowercase hex/,
+  );
+});
+
+test("too many seats and blank labels are rejected", () => {
+  const seats = Array.from({ length: MAX_PULSE_COST_SEATS + 1 }, (_, i) => ({
+    role: `r${i}`,
+    turns: 1,
+  }));
+  assert.match(decodePulseEntry(costContent({ seats })).error, /more than/);
+  assert.match(
+    decodePulseEntry(costContent({ seats: [{ role: "  ", turns: 1 }] })).error,
+    /role/,
+  );
+  assert.match(
+    decodePulseEntry(costContent({ seats: [{ model: "", turns: 1 }] })).error,
+    /model/,
+  );
+});
+
+test("a cost survives the signed envelope validator", () => {
+  const decoded = validatePulseEntryEnvelope(
+    event({
+      content: costContent({
+        seats: [
+          { actor: BUILDER, turns: 2 },
+          { actor: REFUTER, turns: 1 },
+        ],
+      }),
+    }),
+  );
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.entry.cost.seats.length, 2);
 });

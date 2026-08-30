@@ -48,6 +48,12 @@ pub const MAX_PULSE_CODE_AREA_BYTES: usize = 256;
 /// or the content field.
 pub const MAX_PULSE_BRANCH_BYTES: usize = 256;
 
+/// Maximum number of seats one entry's `cost` may account for.
+pub const MAX_PULSE_COST_SEATS: usize = 64;
+
+/// Maximum UTF-8 byte length of a cost seat's `role` or `model` label.
+pub const MAX_PULSE_COST_LABEL_BYTES: usize = 256;
+
 /// The closed content key set. Mirrors [`PulseEntry`]'s serde names; the
 /// first decode pass checks against it so an unknown key is reported as such
 /// rather than as a generic parse failure.
@@ -58,6 +64,7 @@ const PULSE_ENTRY_FIELDS: &[&str] = &[
     "codeAreas",
     "branch",
     "supersedes",
+    "cost",
 ];
 
 /// What an entry claims about its author's work.
@@ -116,12 +123,130 @@ impl FromStr for PulseEntryType {
     }
 }
 
+/// What one seat spent producing the work an entry claims.
+///
+/// Every field is optional and every unreported one is **omitted**, never
+/// serialized as `null` or `0` — the same rule
+/// [`crate::coding_session_payload::TurnUsageReport`] follows on the wire it
+/// is folded from, and for the same reason: "the driver did not report it" and
+/// "the driver measured zero" are different facts.
+///
+/// The four token counts are the provider's own per-turn numbers summed across
+/// the seat's turns. `inputTokens`, `cacheReadTokens` and `cacheWriteTokens`
+/// are disjoint prompt-side partitions (the `TurnUsageReport` convention), so
+/// adding all four to `outputTokens` double-counts nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PulseCostSeat {
+    /// The seat's agent pubkey, lowercase 64-hex, when the work ran as a seat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    /// The role slug the seat held, when one was published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// The effective model, when the provider named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Fresh (uncached) prompt tokens, summed over the seat's turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Tokens the model produced, summed over the seat's turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Prompt tokens served from the provider's cache, summed over the turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    /// Prompt tokens written into the provider's cache, summed over the turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    /// Tool calls the seat opened, summed over the turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<u64>,
+    /// Turns that carried a usage block. Never a count of turns the seat took
+    /// — a turn whose provider reported nothing is not counted here, because
+    /// this number exists to say how much of the cost was measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<u64>,
+}
+
+impl PulseCostSeat {
+    /// Whether this seat reports nothing at all — neither an identity nor a
+    /// number. Such a seat is a rejection, not a silent drop.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The seat's four token counts added together, or `None` when the seat
+    /// reported none of them.
+    ///
+    /// Saturating on the (practically impossible) overflow of four `u64`
+    /// counts: a clamped total is closer to the truth than a wrapped one.
+    pub fn token_sum(&self) -> Option<u64> {
+        let parts = [
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_read_tokens,
+            self.cache_write_tokens,
+        ];
+        parts.iter().any(Option::is_some).then(|| {
+            parts
+                .into_iter()
+                .flatten()
+                .fold(0u64, |total, part| total.saturating_add(part))
+        })
+    }
+}
+
+/// What the work an entry claims cost, per seat.
+///
+/// The whole object is optional on [`PulseEntry`] and is **omitted** when
+/// nothing on the wire measured the work. It is never published as an empty
+/// object or as a set of zeros: a zero here would assert that a lane cost
+/// nothing, which is a different claim from "nobody measured it".
+///
+/// `totalTokens` is defined as the sum of every listed seat's
+/// [`PulseCostSeat::token_sum`]. When `seats` is non-empty the two must agree,
+/// so a reader can add the seats up and get the headline back; a `totalTokens`
+/// beside seats that do not add up to it is rejected rather than rendered.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PulseCost {
+    /// One row per seat that contributed, in the publisher's chosen order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seats: Vec<PulseCostSeat>,
+    /// Every listed seat's tokens added together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+}
+
+impl PulseCost {
+    /// Whether this cost reports nothing at all.
+    pub fn is_empty(&self) -> bool {
+        self.seats.is_empty() && self.total_tokens.is_none()
+    }
+
+    /// The sum of every listed seat's tokens, or `None` when no seat reported
+    /// any token count.
+    pub fn seat_token_sum(&self) -> Option<u64> {
+        let sums: Vec<u64> = self
+            .seats
+            .iter()
+            .filter_map(PulseCostSeat::token_sum)
+            .collect();
+        (!sums.is_empty()).then(|| {
+            sums.into_iter()
+                .fold(0u64, |total, part| total.saturating_add(part))
+        })
+    }
+}
+
 /// Strict public JSON carried by a Pulse entry (kind 44240).
 ///
-/// `codeAreas`, `branch`, and `supersedes` are the three optionals; the
-/// canonical builder always emits all six keys (an empty array and explicit
-/// `null`s), and a payload that omits an optional decodes to the same value as
-/// one that spells it out. Unknown keys are rejected.
+/// `codeAreas`, `branch`, and `supersedes` are the three nullable optionals;
+/// the canonical builder always emits those six keys (an empty array and
+/// explicit `null`s), and a payload that omits one decodes to the same value
+/// as one that spells it out. `cost` is the seventh key and is *omitted*
+/// rather than nulled when absent. Unknown keys are rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PulseEntry {
@@ -151,6 +276,15 @@ pub struct PulseEntry {
     /// consumers against `conformance/project-pulse-fold/`.
     #[serde(default)]
     pub supersedes: Option<String>,
+    /// What the work this entry claims cost, per seat, or `None`.
+    ///
+    /// The seventh key and the only one the canonical builder omits entirely
+    /// when it is absent, so a costless entry is byte-identical to the shape
+    /// that shipped before this field existed. Numbers here come from usage
+    /// blocks the providers signed; an entry whose session published no usage
+    /// omits `cost` rather than publishing zeros.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<PulseCost>,
 }
 
 /// Strictly decode and validate Pulse entry content.
@@ -422,14 +556,99 @@ fn normalize_and_validate(entry: &mut PulseEntry) -> Result<(), String> {
         validate_branch(branch)?;
     }
     if let Some(supersedes) = entry.supersedes.as_deref() {
-        if supersedes.len() != 64
-            || !supersedes
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if !is_lowercase_hex64(supersedes) {
             return Err(
                 "pulse entry supersedes must be a 64-character lowercase hex event id".to_owned(),
             );
+        }
+    }
+    if let Some(cost) = entry.cost.as_ref() {
+        validate_cost(cost)?;
+    }
+    Ok(())
+}
+
+/// `true` for exactly 64 lowercase hex characters.
+fn is_lowercase_hex64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Validate one cost seat label (`role` or `model`).
+fn validate_cost_label(field: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("pulse cost seat {field} must not be blank"));
+    }
+    if value.len() > MAX_PULSE_COST_LABEL_BYTES {
+        return Err(format!(
+            "pulse cost seat {field} exceeds {MAX_PULSE_COST_LABEL_BYTES} bytes"
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!(
+            "pulse cost seat {field} must not contain control characters"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate an entry's `cost`.
+///
+/// Four rules, all of them honesty rules:
+///
+/// 1. A `cost` that reports nothing is a rejection — a costless entry omits
+///    the key rather than publishing an empty object.
+/// 2. A seat that reports nothing is a rejection, for the same reason.
+/// 3. A seat is named once. The same `actor` twice would double-count the
+///    lane, and silently merging the rows would hide that it happened.
+/// 4. `totalTokens` must equal the seats it sits beside (see [`PulseCost`]),
+///    including the case where no seat reported a token count and there is
+///    therefore no total to state.
+fn validate_cost(cost: &PulseCost) -> Result<(), String> {
+    if cost.is_empty() {
+        return Err("pulse entry cost must report something".to_owned());
+    }
+    if cost.seats.len() > MAX_PULSE_COST_SEATS {
+        return Err(format!(
+            "pulse entry cost lists more than {MAX_PULSE_COST_SEATS} seats"
+        ));
+    }
+    let mut seen: HashSet<&str> = HashSet::with_capacity(cost.seats.len());
+    for seat in &cost.seats {
+        if seat.is_empty() {
+            return Err("pulse entry cost seat must report something".to_owned());
+        }
+        if let Some(actor) = seat.actor.as_deref() {
+            if !is_lowercase_hex64(actor) {
+                return Err(
+                    "pulse cost seat actor must be a 64-character lowercase hex pubkey".to_owned(),
+                );
+            }
+            if !seen.insert(actor) {
+                return Err(format!("pulse entry cost repeats cost seat {actor:?}"));
+            }
+        }
+        if let Some(role) = seat.role.as_deref() {
+            validate_cost_label("role", role)?;
+        }
+        if let Some(model) = seat.model.as_deref() {
+            validate_cost_label("model", model)?;
+        }
+    }
+    if !cost.seats.is_empty() {
+        let summed = cost.seat_token_sum();
+        if cost.total_tokens.is_some() && cost.total_tokens != summed {
+            let total = cost.total_tokens.unwrap_or_default();
+            return Err(match summed {
+                Some(summed) => format!(
+                    "pulse entry cost totalTokens {total} does not equal the {summed} its seats report"
+                ),
+                None => format!(
+                    "pulse entry cost totalTokens {total} does not equal the seats it lists, which report no tokens at all"
+                ),
+            });
         }
     }
     Ok(())
@@ -942,5 +1161,137 @@ mod tests {
             &[&["pu-v", PULSE_ENTRY_TAG_VERSION], &["pu-type", "plan"]],
         );
         assert_eq!(pulse_entry_project_coordinate(&none), None);
+    }
+
+    // ── cost ─────────────────────────────────────────────────────────────
+
+    const SEAT: &str = "cc00000000000000000000000000000000000000000000000000000000000022";
+    const SEAT_TWO: &str = "dd00000000000000000000000000000000000000000000000000000000000033";
+
+    fn cost_content(cost: &str) -> String {
+        content_with(&format!(
+            r#","codeAreas":[],"branch":null,"supersedes":null,"cost":{cost}"#
+        ))
+    }
+
+    #[test]
+    fn a_costless_entry_is_byte_identical_to_the_pre_cost_shape() {
+        let entry = decode_pulse_entry(&valid_content()).expect("valid entry decodes");
+        assert_eq!(entry.cost, None);
+        assert_eq!(
+            serde_json::to_string(&entry).expect("entry serializes"),
+            valid_content()
+        );
+    }
+
+    #[test]
+    fn accepts_a_cost_with_seats_and_a_matching_total() {
+        let content = cost_content(&format!(
+            r#"{{"seats":[{{"actor":"{SEAT}","role":"builder","model":"opus-5[1m]","inputTokens":10,"outputTokens":5,"cacheReadTokens":100,"cacheWriteTokens":20,"toolCalls":9,"turns":3}}],"totalTokens":135}}"#
+        ));
+        let entry = decode_pulse_entry(&content).expect("cost decodes");
+        let cost = entry.cost.expect("cost present");
+        assert_eq!(cost.seats.len(), 1);
+        assert_eq!(cost.seats[0].actor.as_deref(), Some(SEAT));
+        assert_eq!(cost.seats[0].role.as_deref(), Some("builder"));
+        assert_eq!(cost.seats[0].turns, Some(3));
+        assert_eq!(cost.total_tokens, Some(135));
+        assert_eq!(cost.seat_token_sum(), Some(135));
+    }
+
+    #[test]
+    fn accepts_a_seat_that_reports_only_some_of_the_counts() {
+        let content = cost_content(&format!(
+            r#"{{"seats":[{{"actor":"{SEAT}","outputTokens":7}}]}}"#
+        ));
+        let entry = decode_pulse_entry(&content).expect("partial seat decodes");
+        let cost = entry.cost.expect("cost present");
+        assert_eq!(cost.seats[0].input_tokens, None);
+        assert_eq!(cost.seats[0].output_tokens, Some(7));
+        assert_eq!(cost.total_tokens, None);
+        assert_eq!(cost.seat_token_sum(), Some(7));
+    }
+
+    #[test]
+    fn rejects_an_empty_cost_object_and_an_empty_seat() {
+        assert!(decode_pulse_entry(&cost_content("{}"))
+            .unwrap_err()
+            .contains("cost must report something"));
+        assert!(decode_pulse_entry(&cost_content(r#"{"seats":[{}]}"#))
+            .unwrap_err()
+            .contains("cost seat must report something"));
+    }
+
+    #[test]
+    fn rejects_a_total_that_does_not_equal_the_seats_it_lists() {
+        let content = cost_content(&format!(
+            r#"{{"seats":[{{"actor":"{SEAT}","inputTokens":10,"outputTokens":5}}],"totalTokens":900}}"#
+        ));
+        assert!(decode_pulse_entry(&content)
+            .unwrap_err()
+            .contains("totalTokens 900 does not equal"));
+    }
+
+    #[test]
+    fn rejects_a_repeated_seat_and_a_malformed_actor() {
+        let repeated = cost_content(&format!(
+            r#"{{"seats":[{{"actor":"{SEAT}","turns":1}},{{"actor":"{SEAT}","turns":1}}]}}"#
+        ));
+        assert!(decode_pulse_entry(&repeated)
+            .unwrap_err()
+            .contains("repeats cost seat"));
+
+        let upper = cost_content(&format!(
+            r#"{{"seats":[{{"actor":"{}","turns":1}}]}}"#,
+            SEAT.to_uppercase()
+        ));
+        assert!(decode_pulse_entry(&upper)
+            .unwrap_err()
+            .contains("64-character lowercase hex"));
+    }
+
+    #[test]
+    fn rejects_too_many_seats_and_unknown_cost_keys() {
+        let seats: Vec<String> = (0..=MAX_PULSE_COST_SEATS)
+            .map(|index| format!(r#"{{"role":"r{index}","turns":1}}"#))
+            .collect();
+        let many = cost_content(&format!(r#"{{"seats":[{}]}}"#, seats.join(",")));
+        assert!(decode_pulse_entry(&many).unwrap_err().contains("more than"));
+
+        assert!(decode_pulse_entry(&cost_content(r#"{"costUsd":1.5}"#)).is_err());
+        assert!(
+            decode_pulse_entry(&cost_content(r#"{"seats":[{"actor":null,"spend":1}]}"#)).is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_a_blank_role_or_model_on_a_seat() {
+        assert!(
+            decode_pulse_entry(&cost_content(r#"{"seats":[{"role":"  ","turns":1}]}"#))
+                .unwrap_err()
+                .contains("role")
+        );
+        assert!(
+            decode_pulse_entry(&cost_content(r#"{"seats":[{"model":"","turns":1}]}"#))
+                .unwrap_err()
+                .contains("model")
+        );
+    }
+
+    #[test]
+    fn a_cost_survives_the_signed_envelope_validator() {
+        let content = cost_content(&format!(
+            r#"{{"seats":[{{"actor":"{SEAT}","turns":2}},{{"actor":"{SEAT_TWO}","turns":1}}]}}"#
+        ));
+        let event = event_with(
+            &content,
+            &[
+                &["a", COORD],
+                &["pu-v", PULSE_ENTRY_TAG_VERSION],
+                &["pu-type", "plan"],
+            ],
+        );
+        let entry = validate_pulse_entry_envelope(&event).expect("cost-bearing entry validates");
+        assert_eq!(entry.cost.expect("cost").seats.len(), 2);
     }
 }

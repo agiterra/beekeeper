@@ -22,7 +22,7 @@ import {
   formatPulseEntryType,
   pulseEntryReference,
 } from "../lib/pulseFormat";
-import type { PulseEntryType } from "../lib/pulseEntry.ts";
+import type { PulseCost, PulseEntryType } from "../lib/pulseEntry.ts";
 import type { PulseDigestEntry, PulseDigestSession } from "../lib/pulseFold.ts";
 
 /**
@@ -52,6 +52,34 @@ const ENTRY_TREATMENT: Record<
   milestone: { badge: "bg-muted text-foreground", card: "", Icon: Flag },
   note: { badge: "bg-muted text-foreground", card: "", Icon: StickyNote },
 };
+
+/** Compact a token count the way the seat cards do: `940`, `193k`, `2.4M`. */
+function compactTokens(tokens: number): string {
+  if (tokens < 1_000) return `${tokens}`;
+  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  const millions = tokens / 1_000_000;
+  return `${millions < 10 ? millions.toFixed(1) : Math.round(millions)}M`;
+}
+
+/**
+ * The one-line cost suffix — `Σ 193k tok · 2 seats`.
+ *
+ * Returns `null` when there is nothing measured to say, so an entry published
+ * without a cost renders no line at all rather than a zero. Each half appears
+ * only when the entry carried it: a cost with seats but no total prints the
+ * seat count alone, because a total nobody summed is a number nothing
+ * measured.
+ */
+export function formatPulseCostSummary(cost: PulseCost | null): string | null {
+  if (!cost) return null;
+  const parts: string[] = [];
+  if (cost.totalTokens !== null && cost.totalTokens !== undefined) {
+    parts.push(`\u03a3 ${compactTokens(cost.totalTokens)} tok`);
+  }
+  const seats = cost.seats.length;
+  if (seats > 0) parts.push(`${seats} seat${seats === 1 ? "" : "s"}`);
+  return parts.length > 0 ? parts.join(" \u00b7 ") : null;
+}
 
 /** One qualifier sentence — the lines that keep this screen honest. */
 function QualifierLine({
@@ -132,6 +160,7 @@ export function PulseEntryRow({
   const session = entry.sessionRef
     ? (sessionsByRef?.get(entry.sessionRef) ?? null)
     : null;
+  const cost = formatPulseCostSummary(entry.cost ?? null);
 
   return (
     <li
@@ -210,6 +239,18 @@ export function PulseEntryRow({
           </span>
         ))}
       </div>
+
+      {/* What the work cost, when the entry carried it. Absent means nobody
+          measured it — never rendered as a zero. */}
+      {cost ? (
+        <p
+          className="mt-2 text-2xs text-muted-foreground"
+          data-testid="pulse-entry-cost"
+          title="Folded from the turn usage this session's providers signed."
+        >
+          {cost}
+        </p>
+      ) : null}
 
       {/* This entry was retired by its own author's later entry — say who and
           when, rather than leaving a dimmed card to carry the whole fact. */}

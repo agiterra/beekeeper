@@ -60,11 +60,21 @@ bee sessions send --channel <channel-uuid> --session-ref <umbrella-uuid> \
 
 ```
 bee pulse update --project <coordinate> --kind milestone --session <umbrella-uuid> \
+  --cost-from <channel-uuid>:<umbrella-uuid> --cost-seat <builder-pubkey8> \
   --content "<lane> — <verdict> @ <sha> — <next>"
 ```
 
 `--kind blocker` for a `BLOCK`. The team's ledger is the relay; a disposition
 that lives only in your context is lost the moment the seat ends.
+
+**Every milestone and blocker for a lane carries `--cost-seat <builder>`**, so
+the ledger says what that lane cost as well as what it produced. The
+mission-complete milestone carries `--cost-from <channel-uuid>:<umbrella-uuid>`
+with **no** `--cost-seat`, so it totals the whole session's seats.
+
+The numbers are folded from the turn usage the providers signed — nothing is
+estimated. A read that finds none prints `"cost": null` with a `costNote` and
+publishes the entry without a cost; do not substitute a number of your own.
 
 Writing the verdict in your own transcript is neither publish. To the seat it
 is indistinguishable from a lead that has stopped working — on 2026-08-29 an
