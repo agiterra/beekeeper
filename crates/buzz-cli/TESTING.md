@@ -1158,7 +1158,7 @@ Both stay a single `#h`-scoped `POST /query` with explicit `kinds`.
 
 ---
 
-### 6.16 The model catalog, and the rubric checked against it
+### 6.16 The model catalog, and the registry checked against it
 
 `bee sessions catalog` prints the live kind:44222 provider catalog. **That
 catalog is the only list of models this product offers.** A create, a hire, or
@@ -1199,78 +1199,206 @@ so one that starts to needs no schema change.
   wrong order — the reader compares bytes, so it comes back
   `catalog body does not re-serialize to its own bytes …`.
 
-`bee sessions rubric check` compares the lead pack's written rubric to that
-same catalog. A rubric is a good instrument and a stale one is a quiet lie, so
-it is versioned, written down, and checked — never silently patched.
+`bee sessions registry check` compares the **model registry** to that same
+catalog. Brian's ruling of 2026-08-30 replaced item 94's flat rubric table with
+`team/model-registry.yaml`: eleven execution targets, ten 1-5 operational
+priors each, and a `rating` block on every row saying `operational_opinion` /
+`confidence: low` with its author and date. Nothing may render those priors as
+measurements.
 
 ```bash
-# From inside a checkout; the rubric is found by walking up from $PWD.
-bee sessions rubric check --channel "$CHANNEL_ID"
+# From inside a checkout; the registry is found by walking up from $PWD.
+bee sessions registry check --channel "$CHANNEL_ID"
 
 # Or name it.
-bee --format compact sessions rubric check --channel "$CHANNEL_ID" \
-  --rubric ./personas/roles/lead/skills/choose-model/SKILL.md
+bee --format compact sessions registry check --channel "$CHANNEL_ID" \
+  --registry ./team/model-registry.yaml
 ```
 
-**The rubric block.** The rubric lives at
-`personas/roles/lead/skills/choose-model/SKILL.md` inside a fenced block whose
-info string starts with `rubric`, optionally followed by the rubric's version:
+**The two directions are deliberately not symmetric, and only one fails.**
 
-~~~text
-```rubric v3
-| tier | role(s) | provider | model id | reason |
-| --- | --- | --- | --- | --- |
-| deep | lead, architect | claude-primary | opus[1m] | long-context planning |
-| fast | builder, runner | claude-primary | sonnet | throughput |
-| any  | poker | * | haiku | cheap adversarial passes |
-```
-~~~
+- `stale` — execution targets the catalog offers today that **no registry row
+  covers**. This is staleness: a target on offer with nothing behind it, which
+  the lead will reach for anyway. Exit **4**.
+- `dormant` — registry rows the catalog does **not** offer today. **Legal, and
+  exit 0.** The registry is allowed to hold an opinion about a model this host
+  is not serving right now — a model coming back, or a second host's inventory.
+  A dormant row is reported and never counted against freshness.
+- `variants` — offered ids a row covers by the base rule without naming
+  literally. Informational.
 
-Five columns in that order. The header row and the Markdown alignment row are
-skipped. `*` in the provider column means whichever provider offers the id, and
-covers it on every provider that does. Backticks around a cell are markdown and
-are stripped. A block with **no** version is accepted and reports `null`: a
-missing version is a fact about the rubric, not a reason to refuse it.
-
-**What it prints, and the exit code.** Two lists:
-
-- `notOffered` — `provider/model` a rubric row names that the catalog does not
-  offer.
-- `unassigned` — `provider/model` the catalog offers that no rubric row names.
-
-Exit **0** when both are empty, **4** otherwise. `--format json` also carries
-`rubricVersion`, the full `offered` list, `catalogs` (signer + revision +
-eventId per signer), and `catalogRevision` — which is `null` whenever more than
-one signer published, because two hosts share no revision counter and naming
-one number would name a revision nothing has.
+A bracket suffix is a variant of its base: `gpt-5.6-sol[high]` and
+`gpt-5.6-sol[max]` are one model at two effort levels, and a row naming
+`gpt-5.6-sol` has decided about both. `default` is a provider's pointer at
+whatever the host is set to — never a row, never a gap.
 
 **Verify:**
 
-- With the rubric matching the catalog: exit 0, `"stale": false`, both lists
-  empty. Confirm with `echo $?`.
+- With the shipped registry against the live catalog: exit 0, `"isStale":
+  false`, `stale` and `dormant` both empty, and 33 entries under `variants`
+  (the effort brackets). Confirm with `echo $?`.
 - Add a model to the provider's `BUZZ_CSP_RUNTIMES` (or let a runtime discover
-  a new one) and re-run: the new id shows up under `unassigned` and the exit
-  code is 4. **This is the "what happens when a new model gets added?" case** —
-  the rubric does not silently absorb it and the command does not pass.
-- Point the rubric at an id no provider offers: it shows up under `notOffered`,
-  exit 4, and nothing anywhere maps it onto a similar id.
-- Run it from a subdirectory with no `--rubric`: it still finds the rubric by
+  a new one) and re-run: the new id shows up under `stale` and the exit code is
+  4. **This is the "what happens when a new model gets added?" case** — the
+  registry does not silently absorb it and the command does not pass.
+- Stop a provider so its models leave the catalog: its rows show up under
+  `dormant` and the exit code is still **0**. A registry that knows a model
+  nobody is serving today is not a stale registry, and a check that said
+  otherwise would be red every time a host went down.
+- Run it from a subdirectory with no `--registry`: it still finds the file by
   walking up. Run it somewhere with no checkout: it fails naming **every**
   directory it tried.
-- An empty catalog does not pass: every row lands in `notOffered`. "Nothing to
-  compare against" is not "the rubric is fine".
 
-**Where the same rule lives on the desktop.** `resolveRubricStaleness` in
-`desktop/src/features/agents/lib/rubricStaleness.ts` applies the identical
-comparison for the Agents screen badge
-(`data-testid="rubric-stale-badge"`). Today that badge reads **"Rubric:
-unknown (pack not readable)"** on every launch, and that is the honest state
-rather than a bug in the badge: the renderer has no way to read a role pack's
-files. The only role-pack access the app has is `scanProjectRolePacks` and
-`pickCrewRolePacksDirectory` (`desktop/src/shared/api/tauriTeams.ts:327` and
-`:341`), and both return a role, a name and a `packDir` — never file content.
-The badge says so out loud and points at this command; when a pack-file reader
-exists, the one call site in `AgentsView.tsx` is all that changes.
+### 6.17 Routing — which execution target, and why
+
+> "The lead chooses the capability required. The router chooses the execution
+> target."
+>
+> "Select the least expensive execution target whose expected failure mode is
+> acceptable for the task."
+
+`bee sessions route` is that router. You name a **class** and a **risk triple**;
+it names the provider, the model and the effort. **There is no `--model` on
+this command** — a lead that names a model has skipped the only step that can
+be checked.
+
+```bash
+# A standard builder job.
+bee sessions route --channel "$CHANNEL_ID" --class builder --risk 3,3,2
+
+# A bounded mechanical job, which is the only kind Spark may take.
+bee sessions route --channel "$CHANNEL_ID" --class runner --risk 1,1,1 --scope bounded
+
+# Deliberately sample a challenger, and mark the record so the result counts.
+bee sessions route --channel "$CHANNEL_ID" --class builder --risk 3,3,2 --challenger-sample
+
+# A verifier for work a codex builder did: cross-provider by rule.
+bee sessions route --channel "$CHANNEL_ID" --class verifier --risk 3,3,2 \
+  --counterpart-provider codex-primary
+
+# Just the routing record, the same object that rides on a hire.
+bee --format compact sessions route --channel "$CHANNEL_ID" --class architect --risk 5,4,4
+```
+
+**The order, and why it is an order rather than a score.** Live catalog →
+hard requirements (modality, tools, context window, known failure modes,
+per-target constraints) → class gate (every numeric minimum) → risk tier →
+effort → **then** the cheapest expected accepted completion among the
+survivors. Cost and speed are consulted only after every gate has passed, so
+they can never compensate for a capability deficit. There is no weighted
+product anywhere in it, and `capability_match × cost_efficiency × velocity` is
+the thing the ruling explicitly forbids.
+
+**The tier is derived, never passed.** Risk = impact × uncertainty ×
+irreversibility, each 1-5, so 1-125: **1-8 FAST** (effort `low`), **9-39
+STANDARD** (`medium`), **40-125 DEEP** (`high`). `--tier` is refused with that
+explanation rather than accepted — a tier a caller can set is a risk assessment
+nobody made. The router never purchases `xhigh`, `max` or `ultra`; those are
+human override only, and `Effort` in
+`crates/buzz-core/src/coding_session_routing.rs` cannot even hold them. It also
+never escalates effort after a failure: a failed high goes to a **different
+target or a reviewer**, not to more thinking tokens on the same model.
+
+**Review is not a synonym for deep.** `reviewRequired` fires on the spec's own
+trigger list — risk ≥ 40, irreversibility ≥ 4, or any of
+`securityBoundary`, `contractChange`, `outsidePlan`, `builderUncertain`,
+`testsInsufficient`, `leadRequests` under `--review-flags`. A cheap fast job
+that touches an auth boundary needs a reviewer; an expensive deep job does not
+on that ground alone.
+
+**The cost formula, spelled out.** `--format json` prints it verbatim under
+`costFormula`:
+
+```text
+cost_prior    = 6 − costEfficiency     (1.0 cheapest … 5.0 dearest)
+latency_prior = 6 − velocity           (1.0 fastest  … 5.0 slowest)
+retry_prior   = expected attempts to acceptance (1.0 for everything until telemetry)
+
+expected_cost = retry_prior × (cost_prior + latency_prior)
+```
+
+The two priors add because they are two costs paid on the same attempt; the
+retry prior multiplies because it counts attempts. **List price is not a term.**
+It is recorded per row and printed as `listPriceUsdPerM`, because the ruling is
+that our real cost is quota lanes (Claude subscription vs Codex plan), not API
+list price. A target whose `costEfficiency` nobody scored is ranked on latency
+alone, **after** every target that has a cost prior — never guessed cheap.
+
+**Verify:**
+
+- `--class builder --risk 3,3,2` → `claude-primary/sonnet`, effort `medium`,
+  tier `standard`. Terra appears in the table as `rejected` with standing
+  `challenger`, because a challenger holds no route until sampled.
+- Add `--challenger-sample` to that same command → `codex-primary/gpt-5.6-terra[medium]`
+  and `"challengerSample": true` in the record. That is the Terra question
+  answered: it demonstrates a purpose on sampled jobs, and the record says the
+  result should be attributed to a sample.
+- `--class architect --risk 5,4,4` → `codex-primary/gpt-5.6-sol[high]`, runner-up
+  `claude-primary/opus[1m]`, `reviewRequired: true` with reasons
+  `["risk 80 >= 40", "irreversibility 4 >= 4"]`.
+- `--class runner --risk 1,1,1` **without** `--scope`: Spark is `rejected` and
+  the detail says the task's scope was never stated. **Unstated is not
+  bounded.** Add `--scope bounded` and it becomes `eligible` — and still is not
+  chosen, because Brian recorded **no** cost prior for it and a target with no
+  cost prior cannot win a cheapest-completion comparison. That is disclosed in
+  the table (`"costPrior": null`), never smoothed into a guess.
+- `--class lead --risk 4,4,3`: exactly three targets are eligible —
+  `gpt-5.6-sol`, `opus[1m]`, `claude-fable-5[1m]` — which is Brian's §4 seed.
+  Haiku is the cheapest thing in the registry and is `rejected`: cost cannot buy
+  its way past a class gate.
+- `--class runner --risk 1,1,1 --profile '{"taste":5.0}'`: **exit 4**, and the
+  message names the binding trait, the minimum it wanted, the best score
+  anything available actually has, and one line per rejected row. It does not
+  fall back to the smartest model, and it does not fall back at all.
+- Every rejected row in `--format json` carries a `detail` sentence. A rejection
+  with no reason is a bug.
+- Any fact that gated a candidate carries its provenance under `factsUsed`. Note
+  that `tools` is **lane-drafted** — the 44222 catalog publishes no tool
+  metadata — and the researcher gate depends on it. If those values are wrong,
+  that gate is wrong, and `factsProvenance` in the registry says so out loud.
+
+**Routing a hire.** `bee sessions hire --class builder --risk 3,3,2 …` routes
+before it signs: the decision rides on the request as a `routing` object, is
+echoed onto the seat's create and onto its kind:44223 metadata, and a hire
+nothing can serve is **never published** — exit 4 locally rather than a request
+that sits waiting to be refused `HIRE_NO_ROUTE`.
+
+`--model` alongside `--class` is an explicit human override. It still has to
+name something the catalog offers, `--because` is required (an unexplained
+override is indistinguishable from a bug), and the router's own pick survives
+in the record as `runnerUp` so the table shows what was displaced.
+
+```bash
+bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --role builder --risk 3,3,2 --class builder --content 'Rebase the lane.'
+
+bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --role builder --class builder --risk 3,3,2 \
+  --model 'opus[1m]' --because 'Brian asked for Opus on this one' \
+  --content 'Rebase the lane.'
+```
+
+**The fixture both implementations are pinned to.**
+`testdata/routing/live-catalog-665076ce.json` holds the real 46-pair catalog
+this relay served on 2026-08-30 plus six recorded decisions. The Rust router
+asserts them in
+`crates/buzz-core/src/coding_session_routing.rs::every_recorded_decision_in_the_fixture_still_holds`,
+and the desktop router pins to the same file, so the two cannot silently
+disagree. A change in routing behaviour has to be a deliberate edit to that
+file.
+
+**Where the same rule lives on the desktop.** The Agents screen carries a
+staleness badge (`data-testid="rubric-stale-badge"`) whose module applies the
+identical comparison this command makes, pinned to the same
+`testdata/routing/live-catalog-665076ce.json` fixture, so the two cannot drift.
+Today that badge reads **"unknown (pack not readable)"** on every launch, and
+that is the honest state rather than a bug in the badge: the renderer has no way
+to read a role pack's files. The only role-pack access the app has is
+`scanProjectRolePacks` and `pickCrewRolePacksDirectory`
+(`desktop/src/shared/api/tauriTeams.ts:327` and `:341`), and both return a role,
+a name and a `packDir` — never file content. The badge says so out loud and
+points at this command; when a pack-file reader exists, the one call site in
+`AgentsView.tsx` is all that changes.
 
 ---
 

@@ -885,6 +885,17 @@ pub struct SessionMetadata {
     /// before this amendment keep accepting every shape they already knew.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_budget: Option<TurnBudget>,
+    /// Why this seat runs the model it runs — the routing record echoed from
+    /// the create that seated it (Brian's ruling of 2026-08-30).
+    ///
+    /// The fifth independent additive key, emitted only when the create
+    /// carried one, never as an explicit `null`. It exists so the question
+    /// "why is this seat on that model" is answerable from the seat's own row
+    /// rather than by hunting for the create that made it — and so an answer
+    /// that cannot be explained from the wire is visibly absent instead of
+    /// quietly assumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<crate::coding_session_routing::Routing>,
 }
 
 /// How much of an umbrella's turn budget has been spent (D9).
@@ -1836,6 +1847,7 @@ mod tests {
             relay_reachable: None,
             verified_at: None,
             turn_budget: None,
+            routing: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -1905,6 +1917,7 @@ mod tests {
             relay_reachable: None,
             verified_at: None,
             turn_budget: None,
+            routing: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -2251,6 +2264,7 @@ mod tests {
             relay_reachable: None,
             verified_at: None,
             turn_budget: None,
+            routing: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(

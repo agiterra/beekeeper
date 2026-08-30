@@ -1695,6 +1695,13 @@ pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
             "re-run with a model id the reason lists, or drop --model and take the identity's own"
         }
         "HIRE_STALE" => "hire again: this request sat unanswered past the host's window",
+        // Not a retry and not a downgrade. Nothing on offer clears the gate,
+        // so the way forward is a different requirement or a stated override —
+        // "the next model down" is exactly the answer the ruling forbids.
+        "HIRE_NO_ROUTE" => {
+            "nothing offered clears that class at that risk tier: hire a different class, \
+             re-assess the risk, or override deliberately with --model and --because"
+        }
         _ => return None,
     })
 }
@@ -1919,9 +1926,14 @@ pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
 
 /// Build the exact `session.hire` payload `bee sessions hire` signs.
 ///
-/// Separate from the command so the seven-key shape is asserted byte-for-byte
-/// in a unit test: the relay validates 44221 with `deny_unknown_fields`, so a
-/// key more or a key fewer is not a lint, it is a rejected request.
+/// Separate from the command so the shape is asserted byte-for-byte in a unit
+/// test: the relay validates 44221 with `deny_unknown_fields`, so a key more or
+/// a key fewer is not a lint, it is a rejected request.
+///
+/// `routing` is the one additive key (Brian's ruling of 2026-08-30). It is
+/// omitted entirely — never written as an explicit `null` — when nothing
+/// routed, so an unrouted hire is byte-identical to the seven-key form that
+/// shipped before the router existed.
 #[allow(clippy::too_many_arguments)]
 pub fn hire_payload(
     command_id: &str,
@@ -1931,6 +1943,7 @@ pub fn hire_payload(
     provider_instance_ref: Option<&str>,
     model: Option<&str>,
     brief: &str,
+    routing: Option<buzz_core::coding_session_routing::Routing>,
 ) -> buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
     buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
         schema:
@@ -1944,6 +1957,7 @@ pub fn hire_payload(
             provider_instance_ref: provider_instance_ref.map(str::to_owned),
             model: model.map(str::to_owned),
             brief: brief.to_owned(),
+            routing,
         },
     }
 }

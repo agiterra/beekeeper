@@ -63,7 +63,8 @@ pub mod crew_cmds;
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
-pub mod rubric;
+pub mod registry;
+pub mod route;
 
 /// Item kinds the 44225 contract recognizes. Anything else is counted as
 /// `other` rather than dropped — a provider that learns a new item kind must
@@ -2357,6 +2358,12 @@ pub async fn dispatch(
             role,
             provider_instance,
             model,
+            class,
+            risk,
+            profile,
+            review_flags,
+            challenger_sample,
+            because,
             brief,
             content,
             no_wait,
@@ -2372,6 +2379,14 @@ pub async fn dispatch(
                 brief.as_deref(),
                 content.as_deref(),
                 no_wait,
+                &crew_cmds::HireRouting {
+                    class,
+                    risk,
+                    profile,
+                    review_flags,
+                    challenger_sample,
+                    because,
+                },
             )
             .await
         }
@@ -2396,11 +2411,58 @@ pub async fn dispatch(
             crew_cmds::cmd_status(client, &channel, json_lines, format).await
         }
         SessionsCmd::Catalog { channel } => catalog::cmd_catalog(client, &channel, format).await,
-        SessionsCmd::Rubric(cmd) => match cmd {
-            crate::RubricCmd::Check { channel, rubric } => {
-                rubric::cmd_rubric_check(client, &channel, rubric.as_deref(), format).await
+        SessionsCmd::Registry(cmd) => match cmd {
+            crate::RegistryCmd::Check { channel, registry } => {
+                registry::cmd_registry_check(client, &channel, registry.as_deref(), format).await
             }
         },
+        SessionsCmd::Route {
+            channel,
+            class,
+            risk,
+            profile,
+            review_flags,
+            challenger_sample,
+            scope,
+            context_need,
+            counterpart_provider,
+            registry,
+            tier,
+            dry_run: _,
+        } => {
+            // The tier is derived from the risk and is never passed in: a tier
+            // a caller can set is a risk assessment nobody made. Refused with
+            // the reason rather than silently ignored.
+            if let Some(tier) = tier {
+                return Err(CliError::Usage(format!(
+                    "--tier is not accepted (you passed {tier:?}): the tier is derived from \
+                     --risk impact,uncertainty,irreversibility. 1-8 fast, 9-39 standard, \
+                     40-125 deep. Pass the risk you actually assessed."
+                )));
+            }
+            // Required, but checked here rather than by the parser so that a
+            // caller reaching for `--tier` is told why the tier is derived
+            // instead of being told a different flag is missing.
+            let risk = risk.ok_or_else(|| {
+                CliError::Usage(
+                    "--risk impact,uncertainty,irreversibility is required: the tier and the \
+                     effort are derived from it, and a class with no risk is a capability nobody \
+                     priced"
+                        .to_owned(),
+                )
+            })?;
+            let request = route::build_request(
+                &class,
+                &risk,
+                profile.as_deref(),
+                review_flags.as_deref(),
+                challenger_sample,
+                scope.as_deref(),
+                context_need,
+                counterpart_provider.as_deref(),
+            )?;
+            route::cmd_route(client, &channel, registry.as_deref(), &request, format).await
+        }
     }
 }
 
@@ -2447,6 +2509,7 @@ mod tests {
             relay_reachable: None,
             verified_at: None,
             turn_budget: None,
+            routing: None,
         }
     }
 

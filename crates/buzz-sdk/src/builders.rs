@@ -5757,6 +5757,7 @@ mod tests {
                 initial_turn: None,
                 actor: None,
                 role: None,
+                routing: None,
             },
         }
     }
@@ -5818,6 +5819,7 @@ mod tests {
                 provider_instance_ref: None,
                 model: None,
                 brief: "Rebase the lane and run the gate.".into(),
+                routing: None,
             },
         };
         let event = build_coding_session_lifecycle_command(channel, &payload)

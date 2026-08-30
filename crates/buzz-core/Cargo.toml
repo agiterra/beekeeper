@@ -15,6 +15,7 @@ base64     = { workspace = true }
 nostr      = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }   # team/model-registry.yaml only; parsing, no I/O
 thiserror  = { workspace = true }
 uuid       = { workspace = true }
 chrono     = { workspace = true }

@@ -1,7 +1,7 @@
 //! `bee sessions catalog` — read the live kind:44222 provider catalog.
 //!
 //! The catalog is the only list of models this product offers. Everything that
-//! picks a model — a create, a hire, the lead's rubric — is answerable against
+//! picks a model — a create, a hire, the router — is answerable against
 //! it, and until this command existed the only way to see it was to query the
 //! relay by hand and read raw JSON. A model id that is not in here is not on
 //! offer; the honest response to one is to name it and refuse, never to map it
@@ -56,28 +56,6 @@ pub struct CatalogSnapshot {
 }
 
 impl CatalogSnapshot {
-    /// Every `(providerInstanceRef, model id)` pair any signer offers.
-    ///
-    /// The union, deliberately: the question a create or a rubric asks is
-    /// "does anything here serve this id", and one signer offering it is
-    /// enough for the answer to be yes.
-    pub fn offered_pairs(&self) -> Vec<(String, String)> {
-        let mut pairs: Vec<(String, String)> = self
-            .records
-            .iter()
-            .flat_map(|record| record.catalog.providers.iter())
-            .flat_map(|provider| {
-                provider
-                    .allowed_models
-                    .iter()
-                    .map(|model| (provider.provider_instance_ref.clone(), model.clone()))
-            })
-            .collect();
-        pairs.sort();
-        pairs.dedup();
-        pairs
-    }
-
     /// What each provider's `default` alias resolves to, by
     /// `providerInstanceRef`.
     ///
@@ -342,7 +320,10 @@ mod tests {
         assert_eq!(snapshot.records.len(), 1);
         assert_eq!(snapshot.records[0].catalog.revision, 2);
         assert_eq!(
-            snapshot.offered_pairs(),
+            super::super::route::offers(&snapshot)
+                .into_iter()
+                .map(|offer| (offer.provider, offer.model))
+                .collect::<Vec<(String, String)>>(),
             vec![
                 ("claude-primary".to_owned(), "haiku".to_owned()),
                 ("claude-primary".to_owned(), "sonnet".to_owned()),
@@ -370,7 +351,10 @@ mod tests {
         ]);
         assert_eq!(snapshot.records.len(), 2);
         assert_eq!(
-            snapshot.offered_pairs(),
+            super::super::route::offers(&snapshot)
+                .into_iter()
+                .map(|offer| (offer.provider, offer.model))
+                .collect::<Vec<(String, String)>>(),
             vec![
                 ("claude-primary".to_owned(), "opus[1m]".to_owned()),
                 ("codex-primary".to_owned(), "gpt-5.6-sol".to_owned()),
@@ -378,7 +362,7 @@ mod tests {
         );
     }
 
-    /// What the `default` alias points at, per provider. `rubric check` never
+    /// What the `default` alias points at, per provider. `registry check` never
     /// counts the alias as an unassigned model, so this is the only place a
     /// reader learns which id it actually names — including the honest ugly
     /// case where a provider's own `defaultModel` is the string `default`.

@@ -367,9 +367,8 @@ host decides, and the seat it produces is an ordinary seated `session.create`.
 }
 ```
 
-Exactly these seven keys, no historical forms and nothing additive: the action
-is new with the relay that validates it, so there is no older signer whose
-shape must keep working. `providerInstanceRef` and `model` are nullable and
+Exactly these seven keys, or those seven plus `routing` (the fork amendment
+below). `providerInstanceRef` and `model` are nullable and
 **structurally required** — written as explicit `null` when the requester
 leaves the choice to the host — for the same reason `projectRef` is. The
 others are required non-null strings: `sessionRef` is a canonical lowercase
@@ -406,7 +405,8 @@ appears in a `kind:44224`.
 On refusal the host answers the requesting seat with a `kind:44220` turn whose
 text is exactly `hire refused: <CODE> — <reason>`, where `<CODE>` is one of
 `HIRE_OFF`, `HIRE_ROLE_NOT_ALLOWED`, `HIRE_LIMIT`, `HIRE_NO_IDENTITY`,
-`HIRE_ROLE_BUSY`, `HIRE_PROVIDER_NOT_ALLOWED`, `HIRE_MODEL_NOT_OFFERED`, or
+`HIRE_ROLE_BUSY`, `HIRE_PROVIDER_NOT_ALLOWED`, `HIRE_MODEL_NOT_OFFERED`,
+`HIRE_NO_ROUTE`, or
 `HIRE_STALE`, and shows the same line in the umbrella as a
 system row. The codes are the constants
 `HIRE_REFUSAL_CODES` in `crates/buzz-core/src/coding_session_lifecycle_command.rs`;
@@ -420,6 +420,82 @@ the role and every identity that *is* it is already seated in this umbrella:
 nothing is broken and nothing needs installing, so the reason names that seat
 and the remedy is for the requesting seat to address it — `bee sessions send
 --session-ref <umbrella-uuid> --to <role>` — rather than hire again.
+
+### Fork amendment: `routing` — why *this* execution target
+
+Brian's ruling of 2026-08-30: **"The lead chooses the capability required. The
+router chooses the execution target."** The thing chosen is a provider + model +
+effort, chosen by a stated procedure, and the record of that choice travels with
+the work. `session.hire` therefore takes one additive key, `routing`; the
+resulting `session.create` echoes it, and so does the seat's kind:44223
+metadata. A seat can always be asked why it is the model it is, from the wire
+alone.
+
+```json
+{
+  "class": "builder",
+  "tier": "standard",
+  "risk": { "impact": 3, "uncertainty": 3, "irreversibility": 2, "score": 18 },
+  "profile": null,
+  "chosen": { "provider": "claude-primary", "model": "sonnet", "effort": "medium" },
+  "runnerUp": { "provider": "codex-primary", "model": "gpt-5.6-luna[medium]", "effort": "medium" },
+  "reason": "claude-primary/sonnet cleared the builder gate (…) and is the cheapest expected accepted completion at standard/medium (2.9 vs 2.0 …)",
+  "reviewRequired": false,
+  "reviewReasons": [],
+  "challengerSample": false,
+  "override": null,
+  "registryVersion": 1,
+  "catalogRevision": 7
+}
+```
+
+**Exactly these thirteen keys, always all of them.** Unlike the additive keys
+elsewhere in this document, `routing`'s *own* fields are never omitted: a field
+whose answer is not known yet is written as an explicit `null`. That gives a
+strict observer one shape to accept instead of a family of them. The key
+`routing` itself **is** omitted — never written as `null` — when nothing routed,
+so a hire or create signed before the router existed stays byte-valid forever.
+
+* `class` is the capability the lead named. The lead never names a model.
+* `tier` is `fast` | `standard` | `deep`, **derived** from `risk`: 1–8, 9–39,
+  40–125. It is never independently asserted, and `risk.score` must equal
+  `impact × uncertainty × irreversibility` or the payload is refused.
+* `chosen.effort` is `low` | `medium` | `high` and nothing else. `xhigh`, `max`
+  and `ultra` are human override only; a payload naming one is refused at the
+  wire, not merely discouraged. Where the catalog publishes an effort variant
+  (`gpt-5.6-sol[high]`) the chosen `model` carries the effort itself; where it
+  does not (`sonnet`), `effort` is the tier's policy and the `reason` says so
+  rather than implying the wire carries it.
+* `reviewRequired` follows the review trigger list, **not** the tier. A record
+  claiming `reviewRequired: false` while `reviewReasons` lists triggers that
+  fired is refused: it disagrees with itself.
+* `challengerSample` marks a decision that deliberately routed a challenger, so
+  its outcome can be attributed later rather than read as a normal route.
+* `override` is a human overruling the router. `because` is required and
+  non-blank — an unexplained override is indistinguishable from a bug — and the
+  router's own pick survives as `runnerUp` so nothing is hidden.
+* `registryVersion` and `catalogRevision` say which registry and which catalog
+  produced this. `catalogRevision` is `null` when more than one signer published,
+  because two hosts share no revision counter.
+
+**A hire may carry the question; a create must carry the answer.** On a
+`session.hire` every router-filled field may be `null` — the lead states the
+class, the tier and the risk and lets the host's router decide. On a
+`session.create` the record must be *complete*: `chosen`, `reason`,
+`reviewRequired` and `registryVersion` all non-null. A create is the record of a
+decision that was made; a null `chosen` there would claim a decision nobody made.
+
+**`HIRE_NO_ROUTE`.** When nothing the live catalog offers clears the class gate
+at that risk tier, the host answers `HIRE_NO_ROUTE` and the reason names the
+binding trait, the minimum it wanted, and the best score anything available
+actually has. It is deliberately a refusal rather than a quiet demotion: *"the
+smartest available model"* and *"the cheapest that fits"* are both wrong answers
+to a requirement nothing meets. `bee sessions hire --class …` routes locally
+before it signs, so that request is usually never published at all.
+
+The schema, the gates and the selection order live in
+`crates/buzz-core/src/coding_session_routing.rs`; the rows and their provenance
+live in `team/model-registry.yaml`.
 
 **Deployment order.** The relay validates 44221 with `deny_unknown_fields` and
 a closed action list, so a `session.hire` is only valid once the relay carrying

@@ -3229,6 +3229,11 @@ impl Provider {
                     used: self.state.turns_used(session_ref),
                     limit: self.config.turn_budget,
                 }),
+            // Not echoed yet: the create's routing record is not carried on
+            // the persisted `SessionRecord`, so this provider has nothing to
+            // publish here. `None` is that fact — never a stand-in for a
+            // decision nobody handed us.
+            routing: None,
         }
     }
 
