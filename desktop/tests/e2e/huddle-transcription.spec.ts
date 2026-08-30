@@ -819,12 +819,22 @@ test("assigns distinct agent voices and exposes compact per-agent controls", asy
   });
   expect(new Set(assignedVoices).size).toBe(2);
 
-  await page.getByRole("button", { name: "Voice settings for alice" }).click();
-  await waitForAnimations(page);
+  // One click, one chance: when it lands while the roster row is re-rendering
+  // the menu never reaches data-state="open" and the assertion below burns its
+  // 5 s and fails the test. Measured: 1 failure in 10 runs of this test alone,
+  // and it is what the full smoke returned at 632939d5. Retry the open instead.
   const voiceMenu = page.locator(
     '[data-testid="huddle-agent-voice-menu-content"][data-state="open"]',
   );
-  await expect(voiceMenu).toBeVisible();
+  await expect(async () => {
+    if ((await voiceMenu.count()) === 0) {
+      await page
+        .getByRole("button", { name: "Voice settings for alice" })
+        .click();
+      await waitForAnimations(page);
+    }
+    await expect(voiceMenu).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
   await expect(
     voiceMenu.getByText("Agent text-to-speech", { exact: true }),
   ).toBeVisible();
