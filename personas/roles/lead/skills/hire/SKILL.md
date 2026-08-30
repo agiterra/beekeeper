@@ -69,8 +69,8 @@ bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
 - `--channel` / `--session-ref` — the same pair as `sessions send`; both
   required, because a role slug is unique only inside one umbrella.
 - `--role` — lowercase slug, `[a-z0-9-]`, 1–64 chars, matching an installed pack.
-- `--class` — the execution class you classified: `builder`, `architect`,
-  `runner`, `verifier`, `ui_designer`, `researcher`.
+- `--class` — the class you classified: `builder`, `architect`, `runner`,
+  `verifier`, `ui_designer`, `researcher` (`poker` is lane-drafted, not spec §4).
 - `--risk` — impact, uncertainty, irreversibility, each 1–5. The router
   multiplies them and derives the tier and the effort; **you never pass a tier
   and never pass an effort.**
@@ -117,7 +117,7 @@ The host publishes the grant itself, right after the create receipt. So:
 The create the host publishes carries the whole routing record back — the same
 object you sent, filled in:
 
-- `chosen` — `{ provider, model, effort }`, the execution target that ran.
+- `chosen` — `{ provider, model, effort }`, the execution target it seated.
 - `runnerUp` — the target that would have run instead, or `null`.
 - `reason` — one sentence naming the gates it cleared and why it was cheapest.
 - `reviewRequired` / `reviewReasons` — including the two the router computes.
