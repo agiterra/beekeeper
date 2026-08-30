@@ -47,6 +47,43 @@ pub(crate) fn context_window_for_model(model: &str) -> Option<u64> {
         .map(|(_, window)| *window)
 }
 
+/// Model family for an id this provider recognizes, or `None`.
+///
+/// A *family* groups ids that are the same model at different sizes or point
+/// releases — `opus`, `sonnet`, `gpt-5.6`. It is published in the kind:44222
+/// catalog next to the context window so a picker can group an offer without
+/// holding its own model list.
+///
+/// Like [`context_window_for_model`] this is a **table, not a parse**. Nothing
+/// here splits an id on a hyphen and calls the head a family: `claude-fable-5`
+/// would become `claude`, `gpt-5.6-codex` would become `gpt`, and both would
+/// read to a consumer exactly like a fact somebody checked. An id this table
+/// does not name has no family, and the catalog omits the field.
+pub(crate) fn model_family_for_model(model: &str) -> Option<&'static str> {
+    /// Exact ids this project seats agents on.
+    const EXACT: &[(&str, &str)] = &[
+        ("claude-fable-5[1m]", "fable"),
+        ("opus[1m]", "opus"),
+        ("opus", "opus"),
+        ("sonnet", "sonnet"),
+        ("haiku", "haiku"),
+    ];
+    /// Id prefixes whose members share a family.
+    const PREFIX: &[(&str, &str)] = &[("gpt-5.6-", "gpt-5.6")];
+
+    let model = model.trim();
+    // `default` names a choice rather than a model, exactly as it does for the
+    // window: the family behind it changes with the runtime's catalog.
+    if model.is_empty() || model == "default" {
+        return None;
+    }
+    EXACT
+        .iter()
+        .find(|(id, _)| *id == model)
+        .or_else(|| PREFIX.iter().find(|(id, _)| model.starts_with(id)))
+        .map(|(_, family)| *family)
+}
+
 #[cfg(test)]
 mod tests {
     use super::context_window_for_model;
@@ -88,5 +125,19 @@ mod tests {
     fn an_unknown_model_has_no_window() {
         assert_eq!(context_window_for_model("some-model-nobody-shipped"), None);
         assert_eq!(context_window_for_model(""), None);
+    }
+
+    /// The family table names ids; it never splits one on a hyphen. A parse
+    /// would turn `claude-fable-5[1m]` into `claude` and `gpt-5.6-codex` into
+    /// `gpt`, and publish both as though somebody had checked.
+    #[test]
+    fn the_family_table_names_ids_rather_than_parsing_them() {
+        use super::model_family_for_model;
+        assert_eq!(model_family_for_model("claude-fable-5[1m]"), Some("fable"));
+        assert_eq!(model_family_for_model("opus[1m]"), Some("opus"));
+        assert_eq!(model_family_for_model("gpt-5.6-codex"), Some("gpt-5.6"));
+        assert_eq!(model_family_for_model("claude-3-opus-20240229"), None);
+        assert_eq!(model_family_for_model("default"), None);
+        assert_eq!(model_family_for_model(""), None);
     }
 }

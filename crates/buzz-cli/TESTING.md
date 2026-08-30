@@ -1158,6 +1158,122 @@ Both stay a single `#h`-scoped `POST /query` with explicit `kinds`.
 
 ---
 
+### 6.16 The model catalog, and the rubric checked against it
+
+`bee sessions catalog` prints the live kind:44222 provider catalog. **That
+catalog is the only list of models this product offers.** A create, a hire, or
+a rubric row naming an id that is not in it is naming something nobody is
+serving, and the right answer is to say so and refuse — never to translate the
+id onto a neighbouring one that happens to be offered.
+
+```bash
+# Every provider/model pair on offer in this channel.
+bee sessions catalog --channel "$CHANNEL_ID"
+
+# The narrow view: provider, model, default flag, window, vendor.
+bee --format compact sessions catalog --channel "$CHANNEL_ID"
+```
+
+**What each field means.** `contextWindow`, `family`, `vendor` and `deprecated`
+are per-model metadata the publisher carries only where it knows the fact:
+`contextWindow` from the driver's own report or the provider's recorded table
+(`crates/buzz-session-provider/src/context_window.rs`), `family` from the same
+kind of table, `vendor` from a runtime that can serve exactly one. `null` in
+any of them means **nobody said** — it is never a default a caller may assume,
+and the publisher omits a fact rather than guessing it. `deprecated` is `null`
+on every row today because no adapter reports deprecation; the field is there
+so one that starts to needs no schema change.
+
+**Verify, on a host running the provider:**
+
+- Every id the picker offers appears here, and nothing else does. Cross-check
+  against a live seat: `bee --format compact sessions status --channel
+  "$CHANNEL_ID"` prints the `model` a running execution is actually on, and
+  that string must be one of the ids this command lists.
+- `--format json` names the `signer`, `revision` and `eventId` on every row.
+  Two provider hosts in one channel are **two** catalogs with two independent
+  revision counters, and this command reconciles nothing: expect rows from both
+  signers, not a merged one.
+- A catalog body that does not parse is listed under `malformed` with the exact
+  reason, not skipped. To see it, publish a 44222 whose body has its keys in the
+  wrong order — the reader compares bytes, so it comes back
+  `catalog body does not re-serialize to its own bytes …`.
+
+`bee sessions rubric check` compares the lead pack's written rubric to that
+same catalog. A rubric is a good instrument and a stale one is a quiet lie, so
+it is versioned, written down, and checked — never silently patched.
+
+```bash
+# From inside a checkout; the rubric is found by walking up from $PWD.
+bee sessions rubric check --channel "$CHANNEL_ID"
+
+# Or name it.
+bee --format compact sessions rubric check --channel "$CHANNEL_ID" \
+  --rubric ./personas/roles/lead/skills/choose-model/SKILL.md
+```
+
+**The rubric block.** The rubric lives at
+`personas/roles/lead/skills/choose-model/SKILL.md` inside a fenced block whose
+info string starts with `rubric`, optionally followed by the rubric's version:
+
+~~~text
+```rubric v3
+| tier | role(s) | provider | model id | reason |
+| --- | --- | --- | --- | --- |
+| deep | lead, architect | claude-primary | opus[1m] | long-context planning |
+| fast | builder, runner | claude-primary | sonnet | throughput |
+| any  | poker | * | haiku | cheap adversarial passes |
+```
+~~~
+
+Five columns in that order. The header row and the Markdown alignment row are
+skipped. `*` in the provider column means whichever provider offers the id, and
+covers it on every provider that does. Backticks around a cell are markdown and
+are stripped. A block with **no** version is accepted and reports `null`: a
+missing version is a fact about the rubric, not a reason to refuse it.
+
+**What it prints, and the exit code.** Two lists:
+
+- `notOffered` — `provider/model` a rubric row names that the catalog does not
+  offer.
+- `unassigned` — `provider/model` the catalog offers that no rubric row names.
+
+Exit **0** when both are empty, **4** otherwise. `--format json` also carries
+`rubricVersion`, the full `offered` list, `catalogs` (signer + revision +
+eventId per signer), and `catalogRevision` — which is `null` whenever more than
+one signer published, because two hosts share no revision counter and naming
+one number would name a revision nothing has.
+
+**Verify:**
+
+- With the rubric matching the catalog: exit 0, `"stale": false`, both lists
+  empty. Confirm with `echo $?`.
+- Add a model to the provider's `BUZZ_CSP_RUNTIMES` (or let a runtime discover
+  a new one) and re-run: the new id shows up under `unassigned` and the exit
+  code is 4. **This is the "what happens when a new model gets added?" case** —
+  the rubric does not silently absorb it and the command does not pass.
+- Point the rubric at an id no provider offers: it shows up under `notOffered`,
+  exit 4, and nothing anywhere maps it onto a similar id.
+- Run it from a subdirectory with no `--rubric`: it still finds the rubric by
+  walking up. Run it somewhere with no checkout: it fails naming **every**
+  directory it tried.
+- An empty catalog does not pass: every row lands in `notOffered`. "Nothing to
+  compare against" is not "the rubric is fine".
+
+**Where the same rule lives on the desktop.** `resolveRubricStaleness` in
+`desktop/src/features/agents/lib/rubricStaleness.ts` applies the identical
+comparison for the Agents screen badge
+(`data-testid="rubric-stale-badge"`). Today that badge reads **"Rubric:
+unknown (pack not readable)"** on every launch, and that is the honest state
+rather than a bug in the badge: the renderer has no way to read a role pack's
+files. The only role-pack access the app has is `scanProjectRolePacks` and
+`pickCrewRolePacksDirectory` (`desktop/src/shared/api/tauriTeams.ts:327` and
+`:341`), and both return a role, a name and a `packDir` — never file content.
+The badge says so out loud and points at this command; when a pack-file reader
+exists, the one call site in `AgentsView.tsx` is all that changes.
+
+---
+
 ## 7. Error Path Testing
 
 Verify the CLI produces correct JSON on stderr and correct exit codes.

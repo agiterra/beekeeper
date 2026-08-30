@@ -12,6 +12,9 @@ pub mod channel;
 /// NIP-CSAT (draft): append-only coding-session authority-chain transitions
 /// (44228) — one `grant-operator` step at a time today.
 pub mod coding_session_authority_transition;
+/// NIP-CSPC: the kind:44222 provider catalog wire schema and its canonical
+/// reader — the only list of models this product offers.
+pub mod coding_session_catalog;
 /// Append-only coding-session closure revisions (44230): provider-independent
 /// shared close/reopen state rooted at the session genesis.
 pub mod coding_session_closure;

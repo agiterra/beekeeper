@@ -2630,6 +2630,92 @@ pub enum SessionsCmd {
         #[arg(skip)]
         format_explicit: bool,
     },
+    /// Print the live provider catalog (kind 44222) — every model on offer.
+    ///
+    /// This is the *only* list of models this product offers. A create, a
+    /// hire, or a rubric row naming an id that is not here is naming something
+    /// nobody is serving: the answer is to say so and refuse, never to
+    /// translate the id onto a neighbouring one that happens to be offered.
+    ///
+    /// One row per provider instance and model. `contextWindow`, `family`,
+    /// `vendor` and `deprecated` are per-model metadata the publisher carries
+    /// only where it knows the fact — `null` there means **nobody said**, not
+    /// a default a caller may assume.
+    ///
+    /// Each provider host signs its own catalog with its own revision counter,
+    /// so nothing is reconciled here: each signer's newest catalog (highest
+    /// revision, ties broken on created_at then event id) contributes its rows,
+    /// and `--format json` names the signer and revision on every row. A
+    /// catalog whose body does not parse is listed under `malformed` rather
+    /// than skipped, because a provider whose models cannot be read is a
+    /// provider whose models are invisible.
+    #[command(
+        after_help = "Examples:\n  bee sessions catalog --channel <uuid>\n  bee --format compact sessions catalog --channel <uuid>"
+    )]
+    Catalog {
+        /// Channel UUID the providers publish their catalogs into
+        #[arg(long)]
+        channel: String,
+    },
+    /// The lead's model rubric, checked against the live catalog.
+    #[command(subcommand)]
+    Rubric(RubricCmd),
+}
+
+/// `bee sessions rubric` — keep the written rubric honest about the offer.
+#[derive(Subcommand)]
+pub enum RubricCmd {
+    /// Compare every rubric row to the live kind:44222 catalog.
+    ///
+    /// A rubric is a good instrument and a stale one is a quiet lie: it names
+    /// a model nobody serves, or it omits one that arrived last week, and
+    /// either way a lead reads it and picks wrong. This command never edits
+    /// the rubric and never translates an id — it prints two lists and exits
+    /// non-zero when either is non-empty:
+    ///
+    ///   `not offered: <ids>`  — rows naming a `provider/model` the catalog
+    ///   does not offer.
+    ///
+    ///   `unassigned: <ids>`   — `provider/model` pairs the catalog offers
+    ///   that no row names.
+    ///
+    /// Exit 0 when both are empty, 4 otherwise. `--format json` carries both
+    /// lists, the rubric's version, the offered pairs, and the catalog
+    /// revision (`null` when more than one signer published, because two hosts
+    /// share no revision counter).
+    ///
+    /// THE RUBRIC BLOCK. The rubric lives in the lead role pack at
+    /// `personas/roles/lead/skills/choose-model/SKILL.md`, inside a Markdown
+    /// fenced block (three backticks) whose info string starts with the word
+    /// `rubric` and whose optional next token is the rubric's version — so the
+    /// opening line reads `rubric v3` after the fence. Inside the fence is a
+    /// five-column table, in this order:
+    ///
+    /// | tier | role(s) | provider | model id | reason |
+    ///
+    /// | deep | lead, architect | claude-primary | opus[1m] | planning |
+    ///
+    /// | fast | builder | claude-primary | sonnet | throughput |
+    ///
+    /// | any | poker | * | haiku | cheap adversarial passes |
+    ///
+    /// A Markdown alignment row and the header row are skipped. `*` in the
+    /// provider column means whichever provider offers the id. Backticks
+    /// around a cell are markdown and are stripped. A block with no version is
+    /// accepted and reports `null`: a missing version is a fact about the
+    /// rubric, not a reason to refuse it.
+    #[command(
+        after_help = "Examples:\n  bee sessions rubric check --channel <uuid>\n  bee --format compact sessions rubric check --channel <uuid> --rubric ./personas/roles/lead/skills/choose-model/SKILL.md\n\nWith no --rubric, the nearest ancestor of the working directory holding\npersonas/roles/lead/skills/choose-model/SKILL.md is used, and a failure to\nfind one names every directory that was tried."
+    )]
+    Check {
+        /// Channel UUID the providers publish their catalogs into
+        #[arg(long)]
+        channel: String,
+        /// Path to the rubric document; resolved from the working directory
+        /// upwards when omitted
+        #[arg(long)]
+        rubric: Option<String>,
+    },
 }
 
 /// Delivery class for `bee sessions send`.
@@ -3290,6 +3376,7 @@ mod tests {
         assert_eq!(
             names(&cmd, "sessions"),
             vec![
+                "catalog",
                 "create",
                 "doctor",
                 "export",
@@ -3299,6 +3386,7 @@ mod tests {
                 "list",
                 "revoke",
                 "roster",
+                "rubric",
                 "send",
                 "status",
                 "tools",
@@ -3346,7 +3434,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 13),
+            ("sessions", 15),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

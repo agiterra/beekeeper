@@ -56,12 +56,14 @@ use crate::client::BuzzClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 
+pub mod catalog;
 pub mod crew;
 pub mod crew_cmds;
 #[cfg(test)]
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
+pub mod rubric;
 
 /// Item kinds the 44225 contract recognizes. Anything else is counted as
 /// `other` rather than dropped — a provider that learns a new item kind must
@@ -2393,6 +2395,12 @@ pub async fn dispatch(
             );
             crew_cmds::cmd_status(client, &channel, json_lines, format).await
         }
+        SessionsCmd::Catalog { channel } => catalog::cmd_catalog(client, &channel, format).await,
+        SessionsCmd::Rubric(cmd) => match cmd {
+            crate::RubricCmd::Check { channel, rubric } => {
+                rubric::cmd_rubric_check(client, &channel, rubric.as_deref(), format).await
+            }
+        },
     }
 }
 
