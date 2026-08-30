@@ -20,7 +20,7 @@ version was written from the ledger, not from a live read** — the relay refuse
 an unauthenticated 44222 query at the time it was written, so treat the first
 `rubric check` of your batch as the thing that confirms it, not as a formality.
 
-```rubric
+```rubric v3
 | tier | role(s) | provider | model id | reason |
 | --- | --- | --- | --- | --- |
 | frontier | lead | claude-primary | claude-fable-5[1m] | every brief, report and diff of a whole batch has to sit in one context and still be ruled on; the million-token window is the capability that decides it |

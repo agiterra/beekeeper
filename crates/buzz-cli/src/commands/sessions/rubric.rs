@@ -584,4 +584,35 @@ More prose.
             "unexpected: {error}"
         );
     }
+
+    /// The cross-lane contract: the rubric this repository actually ships must
+    /// parse with the parser this command actually runs, and must carry the
+    /// version its own prose claims. A rubric whose fence forgot its version
+    /// reports `rubricVersion: null` while the page above it says "Version 3",
+    /// and a reader then cannot tell which of the two is stale.
+    #[test]
+    fn the_shipped_rubric_parses_and_carries_its_version() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(DEFAULT_RUBRIC_RELATIVE_PATH);
+        let document = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        let rubric = parse_rubric(&document)
+            .unwrap_or_else(|error| panic!("{} does not parse: {error}", path.display()));
+        assert!(
+            rubric.version.is_some(),
+            "the shipped rubric has no version on its fence line, so `rubric check` reports null"
+        );
+        assert!(!rubric.rows.is_empty(), "the shipped rubric has no rows");
+        // Every row names a concrete id: no aliases, no "default", no blanks.
+        for row in &rubric.rows {
+            assert!(
+                !row.model.eq_ignore_ascii_case("default"),
+                "row {:?} names \"default\" instead of a catalog id",
+                row.tier
+            );
+            assert!(!row.roles.is_empty(), "row {:?} names no role", row.tier);
+        }
+    }
 }
