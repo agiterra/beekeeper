@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
+
 import {
   KIND_HUDDLE_ENDED,
   KIND_HUDDLE_STARTED,
@@ -1584,6 +1586,35 @@ test("create ephemeral stream shows sidebar and header affordances", async ({
   ).toBeVisible();
 });
 
+/**
+ * Pick "Temporary" in the create-channel Type dropdown, tolerating a menu that
+ * is still settling.
+ *
+ * The menu itself is not the problem: probed on this very dialog it stayed
+ * mounted and visible for a full 3 s untouched (count=1, visible=true at every
+ * 100 ms sample), and inserting that wait made the test pass 3/3. What fails is
+ * the click — Playwright holds the action while the option's box keeps moving
+ * ("element is not stable", twice), then force-retries and the interaction
+ * itself detaches the content, after which it waits out the whole 30 s test
+ * timeout. Measured on this spec: 5 failures in 15 runs.
+ *
+ * So bound each attempt instead of letting one swallow the test, reopen the
+ * menu if an attempt closed it, and assert the outcome the caller actually
+ * needs — the trigger reading "Temporary".
+ */
+async function selectTemporaryChannelType(
+  page: import("@playwright/test").Page,
+) {
+  const trigger = page.getByTestId("create-channel-channel-type");
+  const option = page.getByLabel("Temporary channel");
+  await expect(async () => {
+    if ((await option.count()) === 0) await trigger.click();
+    await waitForAnimations(page);
+    await option.click({ timeout: 5_000 });
+    await expect(trigger).toContainText("Temporary");
+  }).toPass({ timeout: 20_000 });
+}
+
 test("ephemeral countdown refreshes when switching channels after a clock jump", async ({
   page,
 }) => {
@@ -1601,8 +1632,7 @@ test("ephemeral countdown refreshes when switching channels after a clock jump",
     await page
       .getByTestId("create-channel-description")
       .fill("Auto-cleaned test stream");
-    await page.getByTestId("create-channel-channel-type").click();
-    await page.getByLabel("Temporary channel").click();
+    await selectTemporaryChannelType(page);
     await page.getByTestId("create-channel-submit").click();
     await expect(page.getByTestId("chat-title")).toContainText(channelName);
   }

@@ -100,7 +100,12 @@ test("profile hover uses the channel hover surface", async ({ page }) => {
 
   const profile = page.getByTestId("sidebar-profile-card");
   const channel = page.getByTestId("channel-random");
+  // Both surfaces carry `transition-colors`, so reading the computed colour
+  // straight after `hover()` samples the transition mid-flight — the reference
+  // came out rgba(0, 0, 0, 0.016) against a settled rgba(0, 0, 0, 0.04). Let
+  // the hover transition finish before sampling.
   await channel.hover();
+  await waitForAnimations(page);
   const channelHoverColor = await channel.evaluate(
     (element) => getComputedStyle(element).backgroundColor,
   );

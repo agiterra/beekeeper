@@ -39,8 +39,11 @@ test.beforeEach(async ({ page }, testInfo) => {
 test("opens a profile from a community member avatar", async ({ page }) => {
   await page.getByRole("button", { name: "Open profile for alice" }).click();
 
+  // Pulse is a Dashboard tab, not its own route: `/pulse` is kept only as a
+  // redirect for older links (src/app/routes/pulse.tsx:8-16), so opening a
+  // profile from settings lands on `/?tab=pulse&profile=<pubkey>`.
   await expect(page).toHaveURL(
-    new RegExp(`/pulse\\?profile=${TEST_IDENTITIES.alice.pubkey}$`),
+    new RegExp(`\\?tab=pulse&profile=${TEST_IDENTITIES.alice.pubkey}$`),
   );
   await expect(page.getByTestId("user-profile-panel")).toBeVisible();
 });

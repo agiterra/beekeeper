@@ -1335,9 +1335,17 @@ test("pushed local branch can open a pull request", async ({ page }) => {
   await expect(
     page.getByTestId("create-pull-request-compare-branch"),
   ).toHaveValue("feature/projects-workflow");
-  await page
-    .getByTestId("create-pull-request-title")
-    .fill("Complete the Projects git workflow");
+  // CreateProjectWorkItemDialog focuses its Title input from a
+  // `setTimeout(…, 50)` on open (CreateProjectWorkItemDialog.tsx:53-63). Fill
+  // before that lands and the deferred focus can arrive between Playwright's
+  // focus-on-Description and its insertText, so the description is typed into
+  // the Title instead and `subject` comes out "…git workflowAdds the missing
+  // desktop write path." Measured on this test: 4 failures in 15 runs, every
+  // one that exact concatenation. No person types inside 50 ms of a dialog
+  // opening; wait for the focus the product does set.
+  const prTitle = page.getByTestId("create-pull-request-title");
+  await expect(prTitle).toBeFocused();
+  await prTitle.fill("Complete the Projects git workflow");
   await page
     .getByTestId("create-pull-request-body")
     .fill("Adds the missing desktop write path.");
@@ -1375,9 +1383,10 @@ test("project issue can be created from the issues header", async ({
 
   await page.getByRole("tab", { name: "Issues", exact: true }).click();
   await page.getByRole("button", { name: "New issue" }).click();
-  await page
-    .getByTestId("create-issue-title")
-    .fill("Document the broken workflow");
+  // Same deferred Title focus as the pull-request dialog above.
+  const issueTitle = page.getByTestId("create-issue-title");
+  await expect(issueTitle).toBeFocused();
+  await issueTitle.fill("Document the broken workflow");
   await page
     .getByTestId("create-issue-body")
     .fill("The project workflow needs a clear repair path.");

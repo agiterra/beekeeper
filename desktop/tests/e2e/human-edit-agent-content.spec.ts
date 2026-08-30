@@ -142,7 +142,7 @@ test("owner can delete their owned agent's message", async ({ page }) => {
   await expect(agentRow).toBeHidden({ timeout: 5_000 });
 });
 
-test("owner does NOT see Edit or Delete for an unowned agent's message", async ({
+test("owner sees no Edit and only a moderator Delete for an unowned agent's message", async ({
   page,
 }) => {
   // "mock-agents-charlie" is seeded in #agents for CHARLIE_PUBKEY.
@@ -166,9 +166,15 @@ test("owner does NOT see Edit or Delete for an unowned agent's message", async (
   await expect(
     page.getByTestId(`edit-message-${charlieMessageId}`),
   ).toHaveCount(0);
+  // The mock identity manages this community, so the ownership gate does not
+  // remove the delete item — it downgrades it. messageManageAuthority returns
+  // "moderator" (useMessageDeleteAffordance.ts:63-72), which publishes the
+  // kind:9005 moderator event instead of the author's own kind:5 delete and
+  // never grants Edit. Pinning the LABEL is what keeps the gate honest: an
+  // ownership regression would render "Delete message" here.
   await expect(
     page.getByTestId(`delete-message-${charlieMessageId}`),
-  ).toHaveCount(0);
+  ).toHaveText("Delete as moderator");
 });
 
 // ─── Thread-panel gate ────────────────────────────────────────────────────────

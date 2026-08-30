@@ -1,6 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
+
+// `get_channels` has a second caller at boot that these tests do not own: the
+// one-shot General-project migration asks for a full, hashless list
+// (src/features/projects-container/useGeneralProjectMigration.ts:45 and :183)
+// once the relay connects, and it is anchored in ProjectSidebarSections
+// (ProjectSidebarSections.tsx:94), which mounts only while the Projects
+// experiment is on. Its payload is indistinguishable from a sidebar hashless
+// fallback, so leaving it on turns every exact `getChannelsPayloads` assertion
+// below into "the snapshot query plus whatever else asked" — the passing cases
+// only pass by racing the migration. The snapshot/hash boot path itself lives
+// in useChannelsQuery (features/channels/hooks.ts:363-435) and is identical
+// either way; Projects only changes how the resulting channels are grouped.
+test.beforeEach(async ({ page }) => {
+  await overridePreviewFeatures(page, { projects: false });
+});
 
 const RELAY_URL = "ws://localhost:3000";
 const OTHER_RELAY_URL = "ws://localhost:3001";

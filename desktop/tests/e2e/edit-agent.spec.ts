@@ -385,9 +385,14 @@ test.describe("edit agent dialog", () => {
     await page.goto("/");
     await openDashboardTab(page, "agents");
 
-    // Persona-linked agents render grouped under the persona's card name.
+    // A persona card that has an instance behind it is titled with the
+    // INSTANCE's name, not the pack's — resolveAgentCardTitle
+    // (src/features/agents/lib/agentCardTitle.ts:16-21), because the card's
+    // avatar, model, status and click target all resolve to that instance.
+    // The persona name still titles the actions menu (PersonaActionsMenu),
+    // which acts on the definition.
     const agentButton = page.getByRole("button", {
-      name: "Edit E2E Persona agent profile",
+      name: `${AGENT_NAME} agent profile`,
     });
     await expect(agentButton).toBeVisible({ timeout: 10_000 });
     await agentButton.click();
