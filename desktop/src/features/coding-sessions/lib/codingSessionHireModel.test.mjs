@@ -5,6 +5,7 @@ import {
   codingSessionHireModelNotice,
   describeCodingSessionHireModelRefusal,
   resolveCodingSessionHireModel,
+  resolveCodingSessionSeatIdentityModel,
 } from "./codingSessionHireModel.ts";
 
 const CATALOG = [
@@ -90,4 +91,66 @@ test("an exact match discloses nothing — there is nothing to disclose", () => 
     null,
   );
   assert.equal(codingSessionHireModelNotice("claude-primary", null), null);
+});
+
+// Item 90 lane C: identity-model matching against the catalog was exact
+// string, so a record naming `claude-fable-5` fell back to the runtime default
+// even though the catalog publishes `claude-fable-5[1m]` — the same id with the
+// window suffix the runtime appends.
+test("a vendor id the catalog publishes with a window suffix translates", () => {
+  assert.deepEqual(resolveCodingSessionHireModel("claude-fable-5", CATALOG), {
+    kind: "translated",
+    model: "claude-fable-5[1m]",
+    requested: "claude-fable-5",
+  });
+  assert.deepEqual(resolveCodingSessionHireModel("opus", CATALOG), {
+    kind: "translated",
+    model: "opus[1m]",
+    requested: "opus",
+  });
+  assert.deepEqual(resolveCodingSessionHireModel("claude-opus-5", CATALOG), {
+    kind: "translated",
+    model: "opus[1m]",
+    requested: "claude-opus-5",
+  });
+});
+
+test("the create path reads an identity's model through the same table", () => {
+  // Exactly offered: used, nothing to disclose.
+  assert.deepEqual(
+    resolveCodingSessionSeatIdentityModel({
+      agentModel: "opus[1m]",
+      allowedModels: CATALOG,
+      selectionExplicit: false,
+    }),
+    { model: "opus[1m]", note: null },
+  );
+  // Translated: used, and said out loud.
+  const translated = resolveCodingSessionSeatIdentityModel({
+    agentModel: "claude-fable-5",
+    allowedModels: CATALOG,
+    selectionExplicit: false,
+  });
+  assert.equal(translated.model, "claude-fable-5[1m]");
+  assert.match(translated.note ?? "", /claude-fable-5\[1m\]/);
+  // A model the runtime genuinely does not offer keeps the old sentence.
+  const refused = resolveCodingSessionSeatIdentityModel({
+    agentModel: "gpt-5.6-terra",
+    allowedModels: CATALOG,
+    selectionExplicit: false,
+  });
+  assert.equal(refused.model, null);
+  assert.match(refused.note ?? "", /does not offer/);
+  // The person's own pick, an empty record and an unread catalog all ask for
+  // nothing — unchanged.
+  for (const input of [
+    { agentModel: "opus[1m]", allowedModels: CATALOG, selectionExplicit: true },
+    { agentModel: null, allowedModels: CATALOG, selectionExplicit: false },
+    { agentModel: "opus[1m]", allowedModels: [], selectionExplicit: false },
+  ]) {
+    assert.deepEqual(resolveCodingSessionSeatIdentityModel(input), {
+      model: null,
+      note: null,
+    });
+  }
 });

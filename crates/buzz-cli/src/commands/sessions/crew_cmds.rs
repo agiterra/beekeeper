@@ -932,6 +932,16 @@ impl ContextLoad {
     }
 }
 
+/// The `--format compact` cell printed when nothing on the wire has said how
+/// full a seat's context is — a real em dash (U+2014), not two hyphens.
+///
+/// `--format json` prints `null` for the same state. Pinned as a const, and
+/// checked against `bee sessions status --help` by
+/// `status_help_prints_the_same_unknown_cell_the_rows_do`: item 89's help text
+/// described this cell as `'--'`, which is not a string the command has ever
+/// printed, so a reader grepping for it found nothing.
+pub const CONTEXT_UNKNOWN_CELL: &str = "\u{2014}";
+
 /// Fold this execution's transcript into its current context load.
 ///
 /// Newest item wins within each source, ordered by `(seq, created_at)` — the
@@ -1018,7 +1028,8 @@ pub fn status_row(
     // every execution here and would make every founder identical.
     let founding = founders.of(&execution.target);
     // How full this seat's context is, from the wire only. `None` renders as
-    // an em dash and as JSON `null`: nothing has said, which is not zero.
+    // [`CONTEXT_UNKNOWN_CELL`] and as JSON `null`: nothing has said, which is
+    // not zero.
     let context = context_load(execution, transcripts);
     match format {
         crate::OutputFormat::Compact => json!({
@@ -1031,7 +1042,7 @@ pub fn status_row(
             "turnBudget": turn_budget_line,
             "context": context
                 .map(|context| Value::String(context.render()))
-                .unwrap_or_else(|| Value::String("\u{2014}".to_owned())),
+                .unwrap_or_else(|| Value::String(CONTEXT_UNKNOWN_CELL.to_owned())),
         }),
         crate::OutputFormat::Json => json!({
             "target": execution.target_key,
@@ -1193,4 +1204,40 @@ pub async fn cmd_status(
         })
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CONTEXT_UNKNOWN_CELL;
+    use clap::CommandFactory;
+
+    /// The help and the rows must name the same string for "nothing has said".
+    ///
+    /// Item 89's `after_help` said `'--' means nothing on the wire has said`,
+    /// while `status_row` printed an em dash. A person who reads the help and
+    /// then greps their output for `--` finds nothing, and a person who sees
+    /// the em dash has nothing in the help to look it up under. This asserts
+    /// the two agree, in the only direction that can be checked: the help
+    /// quotes the literal the code emits.
+    #[test]
+    fn status_help_prints_the_same_unknown_cell_the_rows_do() {
+        let cli = crate::Cli::command();
+        let sessions = cli
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "sessions")
+            .expect("sessions command");
+        let status = sessions
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "status")
+            .expect("sessions status command");
+        let help = status.clone().render_long_help().to_string();
+        assert!(
+            help.contains(&format!("'{CONTEXT_UNKNOWN_CELL}'")),
+            "the help must quote the cell the rows print ({CONTEXT_UNKNOWN_CELL}):\n{help}"
+        );
+        assert!(
+            !help.contains("'--'"),
+            "'--' is not a cell this command prints:\n{help}"
+        );
+    }
 }

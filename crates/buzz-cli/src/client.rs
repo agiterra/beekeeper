@@ -988,13 +988,7 @@ impl BuzzClient {
                                     .map(str::to_string)
                             })
                             .unwrap_or(body_text);
-                        let message = if status == 403 && std::env::var("BUZZ_AUTH_TAG").is_ok() {
-                            format!(
-                                "{message} (BUZZ_AUTH_TAG is set — it may be stale or revoked; try unsetting it)"
-                            )
-                        } else {
-                            message
-                        };
+                        let message = decorate_refusal(message);
                         return Err(CliError::Relay {
                             status,
                             body: message,
@@ -1268,22 +1262,272 @@ impl BuzzClient {
                         .map(|s| s.to_string())
                 })
                 .unwrap_or(body);
-            if status == 403 && std::env::var("BUZZ_AUTH_TAG").is_ok() {
-                let message = format!(
-                    "{message} (BUZZ_AUTH_TAG is set — it may be stale or revoked; try unsetting it)"
-                );
-                return Err(CliError::Relay {
-                    status,
-                    body: message,
-                });
-            }
             return Err(CliError::Relay {
                 status,
-                body: message,
+                body: decorate_refusal(message),
             });
         }
         Ok(resp.text().await?)
     }
+}
+
+/// One gate the relay refuses at, and the sentence that names it.
+///
+/// `marker` is a substring of the relay's own refusal text — the relay is the
+/// only authority on why it said no, so the table matches on what it actually
+/// wrote rather than re-deriving the decision here.
+struct RefusalGate {
+    /// A substring that identifies the gate in the relay's refusal text.
+    marker: &'static str,
+    /// One sentence naming the gate that refused and what would change it.
+    /// Never advice about a *different* gate, and never advice to drop the
+    /// owner attestation (item 92: a seat was told to unset the attestation
+    /// its `git push` had just succeeded with).
+    remedy: &'static str,
+    /// The sentence to use instead when this process carries an owner
+    /// attestation, for the one gate whose answer depends on it.
+    attested_remedy: Option<&'static str>,
+}
+
+/// The membership gate's sentence when this process carries no attestation.
+const REMEDY_MEMBERSHIP: &str =
+    "the relay's membership gate refused this key: it is not a relay member, and an owner or \
+     admin must add it";
+
+/// The membership gate's sentence when `BUZZ_AUTH_TAG` is set.
+///
+/// An attested seat is admitted *through its owner*
+/// (`buzz-relay/src/api/mod.rs` `check_relay_membership`): an attestation that
+/// does not verify, and an owner who is not a member, are the same 403. Both
+/// possibilities are named, and neither of them is fixed by dropping the tag.
+const REMEDY_MEMBERSHIP_ATTESTED: &str =
+    "the relay's membership gate refused this key: an owner-attested seat is admitted through its \
+     owner, so either the owner attestation does not verify for this key or that owner is not a \
+     relay member — ask the operator to re-mint it or to add the owner, and keep the attestation, \
+     it is what carries the owner's grant";
+
+/// Every gate this CLI can name, most specific marker first.
+///
+/// First match wins, so a marker that is a substring of another must come
+/// after it. A refusal matching nothing earns no advice at all — see
+/// [`refusal_with_remedy`].
+const REFUSAL_GATES: &[RefusalGate] = &[
+    RefusalGate {
+        marker: "relay_membership_required",
+        remedy: REMEDY_MEMBERSHIP,
+        attested_remedy: Some(REMEDY_MEMBERSHIP_ATTESTED),
+    },
+    RefusalGate {
+        marker: "not a relay member",
+        remedy: REMEDY_MEMBERSHIP,
+        attested_remedy: Some(REMEDY_MEMBERSHIP_ATTESTED),
+    },
+    RefusalGate {
+        marker: "or a granted operator may",
+        remedy: "this key holds no grant for that session: only its founder, or a pubkey the \
+                 founder granted, may steer it — `bee sessions grant` is what mints one",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "only the session founder may",
+        remedy: "this key is not that session's founder: closing, archiving and reopening a \
+                 standalone session are the founder's alone, and no grant widens them",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "only a current project member may reopen",
+        remedy: "the project gate refused this: reopening a session inside a project is for that \
+                 project's current members",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "no coding-session genesis in this channel claims that sessionRef",
+        remedy: "the channel named on this request holds no genesis for that session, so nothing \
+                 in it can authorize the request: name the channel the session was created in",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "coding-session events require channel membership",
+        remedy: "the channel-membership gate refused this key: coding-session writes need active \
+                 membership of the channel, which a channel owner or member must add",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "not a channel member",
+        remedy: "the channel-membership gate refused this key: a channel owner or member must add \
+                 it to that channel",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "token does not have access to this channel",
+        remedy: "the NIP-43 token on this request is scoped to other channels: re-issue it for \
+                 this channel",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "p-gated",
+        remedy: "the p-gate refused this filter: p-gated kinds are readable only with your own \
+                 pubkey in `#p`, and a filter that names no `kinds` at all reaches this gate too",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "agent-engram reads require",
+        remedy: "the agent-engram gate refused this filter: engram reads must name your own \
+                 pubkey in `authors` or `#p`",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "author-only kinds require",
+        remedy: "the author-only gate refused this filter: these kinds are readable only with \
+                 `authors` set to your own pubkey",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "insufficient scope",
+        remedy: "the NIP-43 scope gate refused this write: the token does not carry the scope \
+                 this kind needs — re-issue it with that scope",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "require a global token",
+        remedy: "this is a relay-global command and the token on the request is channel-scoped: \
+                 re-issue a global token",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "channel-scoped tokens cannot publish global events",
+        remedy: "this event carries no channel, and the token on the request is channel-scoped: \
+                 re-issue a global token, or address the event to a channel",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "moderator access required",
+        remedy: "the moderation gate refused this read: only a relay moderator may open the \
+                 moderation queue",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "you are banned from this community",
+        remedy: "the moderation gate refused this key: it is banned from this community, and an \
+                 owner or admin must lift the ban",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "you are timed out until",
+        remedy: "the moderation gate refused this key: it is timed out until the moment named \
+                 above, and writes resume on their own after it",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "community writes are fenced",
+        remedy: "the community write fence refused this write: an operator set the fence, and \
+                 nothing about this key lifts it",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "project write access required",
+        remedy: "the project gate refused this write: only a member of that project may write to \
+                 it",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "belongs to a private project",
+        remedy: "the project gate refused this read: the channel belongs to a private project, \
+                 which only its members can see",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "relay-only kind",
+        remedy: "the relay writes that kind itself: no client key can publish it",
+        attested_remedy: None,
+    },
+    RefusalGate {
+        marker: "event pubkey does not match authenticated identity",
+        remedy: "the event is signed by a different key than the request authenticated as: sign \
+                 it with the key in `BUZZ_PRIVATE_KEY`",
+        attested_remedy: None,
+    },
+];
+
+/// The relay refusals this table claims to name a gate for, verbatim.
+///
+/// Kept as data so `every_named_gate_still_appears_in_the_relays_sources` can
+/// check both directions against the relay's own sources: every string here
+/// still exists there (a remedy cannot silently stop firing), and every string
+/// here earns a remedy (the list cannot drift ahead of the table). Each entry
+/// is a prefix of, or equal to, a literal in `crates/buzz-relay/src`.
+#[cfg(test)]
+pub(crate) const RELAY_REFUSALS_THE_CLI_NAMES: &[&str] = &[
+    // api/mod.rs — enforce_relay_membership
+    "relay_membership_required",
+    // api/git/transport.rs, handlers/auth.rs
+    "restricted: not a relay member",
+    // handlers/ingest.rs — coding-session authority
+    "restricted: only a session founder or a granted operator may steer",
+    "restricted: only the session founder or a granted operator may hire",
+    "restricted: no coding-session genesis in this channel claims that sessionRef",
+    "restricted: only the session founder may close this session",
+    "restricted: only the session founder may archive this session",
+    "restricted: only the session founder may reopen a standalone session",
+    "restricted: only a current project member may reopen this session",
+    "restricted: coding-session events require channel membership",
+    "restricted: not a channel member",
+    "restricted: token does not have access to this channel",
+    // api/bridge.rs — /query and /count authorization
+    "restricted: p-gated kinds require #p tag matching your pubkey",
+    "restricted: agent-engram reads require authors=[self] or #p=[self]",
+    "restricted: author-only kinds require authors=[self]",
+    "restricted: moderator access required",
+    // handlers/ingest.rs — NIP-43 token shape
+    "restricted: insufficient scope",
+    "restricted: relay admin commands require a global token, not a channel-scoped token",
+    "restricted: leave requests require a global token",
+    "restricted: channel-scoped tokens cannot publish global events",
+    // handlers/ingest.rs — moderation and fences
+    "blocked: you are banned from this community",
+    "restricted: you are timed out until",
+    "restricted: community writes are fenced",
+    // handlers/ingest.rs — projects and relay-only kinds
+    "restricted: project write access required",
+    "restricted: channel belongs to a private project",
+    "restricted: relay-only kind",
+    "invalid: event pubkey does not match authenticated identity",
+];
+
+/// Append the CLI's remedy to a refusal the relay just returned.
+///
+/// Reads `BUZZ_AUTH_TAG` only to know whether this process carries an owner
+/// attestation at all; the tag's value is never printed.
+fn decorate_refusal(message: String) -> String {
+    refusal_with_remedy(&message, std::env::var("BUZZ_AUTH_TAG").is_ok())
+}
+
+/// The relay's refusal, plus one sentence naming the gate that refused it.
+///
+/// A refusal this table does not recognise is returned **verbatim**: the relay
+/// is the authority on its own gates, and advice about the wrong one is worse
+/// than none. That is the whole lesson of item 92, where every 403 carried
+/// "BUZZ_AUTH_TAG … try unsetting it" — advice that would have cost a seat the
+/// git access it demonstrably had.
+///
+/// The remedy is not conditioned on the HTTP status. The same gate answers
+/// with different statuses depending on the path: a coding-session authority
+/// refusal is `IngestError::Rejected` and reaches `POST /events` as a 400
+/// (`buzz-relay/src/handlers/ingest.rs`, the `check_coding_session_membership`
+/// call site), while the membership gate answers 403. The person needs the
+/// same sentence either way, and no status is ever changed by this function.
+pub(crate) fn refusal_with_remedy(message: &str, attested: bool) -> String {
+    let Some(gate) = REFUSAL_GATES
+        .iter()
+        .find(|gate| message.contains(gate.marker))
+    else {
+        return message.to_string();
+    };
+    let remedy = match gate.attested_remedy {
+        Some(attested_remedy) if attested => attested_remedy,
+        _ => gate.remedy,
+    };
+    format!("{message} — {remedy}")
 }
 
 /// Normalize a relay URL: ws:// → http://, wss:// → https://, strip trailing slash.
@@ -2304,9 +2548,115 @@ mod retry_policy_tests {
 mod tests {
     use super::{
         advance_query_cursor, create_response_with_id_if_accepted, extract_relay_response_field,
-        BuzzClient,
+        refusal_with_remedy, BuzzClient, RELAY_REFUSALS_THE_CLI_NAMES,
     };
     use nostr::{EventBuilder, Keys, Kind, Tag};
+
+    // ---- refusal remedies: every 403 names the gate that refused ----
+
+    /// A membership refusal names the membership gate, not the attestation.
+    ///
+    /// Item 92 (2026-08-29): a hired seat ran `bee git check`, got
+    /// `relay_membership_required`, was told its `BUZZ_AUTH_TAG` "may be stale
+    /// or revoked; try unsetting it" — and then pushed successfully with that
+    /// same attestation. The advice would have cost it the access it had.
+    #[test]
+    fn a_membership_refusal_names_the_membership_gate() {
+        let refused = refusal_with_remedy("relay_membership_required", false);
+        assert!(
+            refused.contains("not a relay member"),
+            "the gate must be named: {refused}"
+        );
+        let attested = refusal_with_remedy("relay_membership_required", true);
+        assert!(
+            attested.contains("owner") && attested.contains("member"),
+            "an attested seat is told whose membership to check: {attested}"
+        );
+    }
+
+    /// No remedy, for any refusal the relay can emit, ever advises dropping
+    /// the owner attestation.
+    #[test]
+    fn no_remedy_ever_tells_a_seat_to_unset_its_attestation() {
+        for reason in RELAY_REFUSALS_THE_CLI_NAMES {
+            for attested in [false, true] {
+                let text = refusal_with_remedy(reason, attested);
+                assert!(
+                    !text.contains("unset"),
+                    "never advise unsetting the attestation: {text}"
+                );
+                assert!(
+                    !text.contains("stale or revoked"),
+                    "never guess at the reason: {text}"
+                );
+            }
+        }
+    }
+
+    /// A grant refusal names the grant and the command that mints one.
+    #[test]
+    fn a_grant_refusal_names_the_grant() {
+        let text = refusal_with_remedy(
+            "restricted: only the session founder or a granted operator may hire",
+            true,
+        );
+        assert!(
+            text.contains("grant") && text.contains("bee sessions grant"),
+            "a grant refusal names the grant: {text}"
+        );
+    }
+
+    /// A refusal the table does not know is passed through verbatim — no
+    /// advice at all beats advice about the wrong gate.
+    #[test]
+    fn an_unknown_refusal_carries_no_advice() {
+        let raw = "the relay said something this CLI has never seen";
+        for attested in [false, true] {
+            assert_eq!(refusal_with_remedy(raw, attested), raw);
+        }
+    }
+
+    /// Every gate the table names must still exist in the relay's own
+    /// sources: a marker the relay stopped emitting is a remedy that silently
+    /// stops firing, which is exactly the failure this table exists to fix.
+    #[test]
+    fn every_named_gate_still_appears_in_the_relays_sources() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("buzz-relay")
+            .join("src");
+        assert!(
+            root.is_dir(),
+            "the relay sources are the parity list; expected {}",
+            root.display()
+        );
+        let mut sources = String::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir).expect("relay source dir is readable");
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    sources.push_str(&std::fs::read_to_string(&path).expect("relay source"));
+                }
+            }
+        }
+        for reason in RELAY_REFUSALS_THE_CLI_NAMES {
+            assert!(
+                sources.contains(reason),
+                "the relay no longer emits {reason:?}; the remedy that names it is dead"
+            );
+        }
+        for reason in RELAY_REFUSALS_THE_CLI_NAMES {
+            assert_ne!(
+                refusal_with_remedy(reason, false),
+                *reason,
+                "{reason:?} is in the parity list but earns no remedy"
+            );
+        }
+    }
 
     #[test]
     fn query_cursor_uses_last_events_composite_sort_key() {
