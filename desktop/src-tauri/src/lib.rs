@@ -34,6 +34,7 @@ mod nostr_bind;
 pub mod nostr_convert;
 mod prevent_sleep;
 mod ptt_shortcut;
+mod readiness_auth;
 mod relay;
 mod relay_admission;
 mod reset;

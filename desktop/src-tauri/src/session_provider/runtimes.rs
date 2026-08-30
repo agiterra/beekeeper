@@ -113,6 +113,34 @@ pub(crate) struct CodingSessionProviderRuntime {
     pub capabilities: Capabilities,
 }
 
+/// Fail-closed auth state for readiness diagnostics.
+///
+/// The picker intentionally treats an inconclusive probe optimistically; a
+/// launch gate may not. This parallel contract preserves Unknown exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StrictRuntimeAuthState {
+    Ready,
+    NeedsAuth,
+    Missing,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StrictRuntimeDiagnostic {
+    pub instance_ref: String,
+    pub runtime: String,
+    pub label: String,
+    pub adapter_path: Option<String>,
+    /// Version probing is not yet a side-effect-free contract for every
+    /// adapter. Absence is explicit rather than guessed from a filename.
+    pub adapter_version: Option<String>,
+    pub auth: StrictRuntimeAuthState,
+    /// Live model discovery is provider/wire work, never this local inventory.
+    pub model_probe: String,
+}
+
 /// Resolve the first installed adapter command for a table row.
 fn resolve_adapter(runtime: &HostRuntime) -> Option<PathBuf> {
     runtime
@@ -236,6 +264,33 @@ fn classify_auth_state(
     }
 }
 
+/// Static runtime metadata for the side-effect-free readiness inventory.
+///
+/// This performs no PATH lookup and runs no adapter, login shell, auth CLI,
+/// or model probe. Install/auth/model state remains Unknown until an already
+/// trusted provider-signed catalog is folded into the local report.
+pub(crate) fn runtime_readiness_metadata() -> Vec<StrictRuntimeDiagnostic> {
+    let mut rows = HOST_RUNTIMES
+        .iter()
+        .map(|runtime| {
+            let registry = known_acp_runtime_exact(runtime.runtime_id);
+            StrictRuntimeDiagnostic {
+                instance_ref: runtime.instance_ref.to_string(),
+                runtime: runtime.runtime_id.to_string(),
+                label: registry
+                    .map(|entry| entry.label.to_string())
+                    .unwrap_or_else(|| runtime.runtime_id.to_string()),
+                adapter_path: None,
+                adapter_version: None,
+                auth: StrictRuntimeAuthState::Unknown,
+                model_probe: "unobserved".into(),
+            }
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| left.instance_ref.cmp(&right.instance_ref));
+    rows
+}
+
 /// The full picker list: one entry per table row, installed or not, sorted by
 /// instance ref. Runs the fast CLI auth probes but never spawns ACP adapters.
 pub(crate) fn list_runtimes() -> Vec<CodingSessionProviderRuntime> {
@@ -326,6 +381,18 @@ mod tests {
             Ready
         );
         assert_eq!(classify_auth_state(true, None, None), Ready);
+    }
+
+    #[test]
+    fn readiness_metadata_never_resolves_or_probes() {
+        let rows = runtime_readiness_metadata();
+        assert_eq!(rows.len(), HOST_RUNTIMES.len());
+        assert!(rows.iter().all(|row| {
+            row.adapter_path.is_none()
+                && row.adapter_version.is_none()
+                && row.auth == StrictRuntimeAuthState::Unknown
+                && row.model_probe == "unobserved"
+        }));
     }
 
     /// Discovery is per adapter-capability, not per favourite runtime.

@@ -39,6 +39,7 @@ mod runtime_types;
 pub(crate) mod snapshot_avatar;
 pub(crate) mod spawn_snapshot;
 pub(crate) mod storage;
+pub(crate) mod storage_readiness;
 pub(crate) mod team_events;
 mod team_repair;
 pub(crate) use team_repair::team_persona_key;
@@ -87,6 +88,9 @@ pub use runtime::*;
 pub use runtime_commands::*;
 pub use runtime_types::*;
 pub use storage::*;
+pub(crate) use storage_readiness::{
+    load_managed_agent_readiness_metadata, ManagedAgentReadinessMetadata,
+};
 pub use teams::*;
 pub use types::*;
 

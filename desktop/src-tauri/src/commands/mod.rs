@@ -69,6 +69,7 @@ mod relay_reconnect;
 #[cfg(unix)]
 mod shell_sessions;
 mod social;
+mod team_readiness;
 mod team_snapshot;
 mod teams;
 mod updater;
@@ -129,6 +130,7 @@ pub use relay_reconnect::*;
 #[cfg(unix)]
 pub use shell_sessions::*;
 pub use social::*;
+pub use team_readiness::*;
 pub use team_snapshot::*;
 pub use teams::*;
 pub use updater::*;

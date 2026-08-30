@@ -98,6 +98,15 @@ pub struct CodingSessionProviderState {
     next_id: AtomicU64,
 }
 
+/// The strongest process fact readiness can prove without touching disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodingSessionProviderProcessState {
+    NotSupervised,
+    Backoff,
+    Live { pid: u32 },
+    Unknown,
+}
+
 /// The person's session settings as one value.
 ///
 /// Read once per supervisor, not per respawn, and carried together because
@@ -125,6 +134,28 @@ struct SupervisorHandle {
 }
 
 impl CodingSessionProviderState {
+    /// Inspect the already-live supervisor only. This does not start, stop, or
+    /// wait for a process and distinguishes a live child from a backoff-owned
+    /// supervision slot.
+    pub(crate) fn readiness_process_state(
+        &self,
+        expected_pubkey: &str,
+    ) -> CodingSessionProviderProcessState {
+        let Ok(guard) = self.inner.lock() else {
+            return CodingSessionProviderProcessState::Unknown;
+        };
+        let Some(handle) = guard.as_ref() else {
+            return CodingSessionProviderProcessState::NotSupervised;
+        };
+        if handle.stop.load(Ordering::Acquire) || handle.provider_pubkey != expected_pubkey {
+            return CodingSessionProviderProcessState::NotSupervised;
+        }
+        match handle.child_pid.load(Ordering::Acquire) {
+            0 => CodingSessionProviderProcessState::Backoff,
+            pid => CodingSessionProviderProcessState::Live { pid },
+        }
+    }
+
     /// The session ceiling the running provider was started with.
     ///
     /// `None` when nothing is supervised, or when the child was started with
@@ -763,5 +794,47 @@ pub(crate) fn start_provider_if_provisioned(app: &AppHandle, relay_url: &str) {
 pub(crate) fn shutdown_coding_session_provider(app: &AppHandle) {
     if let Some(state) = app.try_state::<CodingSessionProviderState>() {
         stop_provider(&state);
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    #[test]
+    fn readiness_process_state_distinguishes_backoff_from_live_child() {
+        let state = CodingSessionProviderState::default();
+        assert_eq!(
+            state.readiness_process_state("provider"),
+            CodingSessionProviderProcessState::NotSupervised
+        );
+
+        let child_pid = Arc::new(AtomicU32::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        state.install(SupervisorHandle {
+            id: 1,
+            provider_pubkey: "provider".into(),
+            stop: Arc::clone(&stop),
+            child_pid: Arc::clone(&child_pid),
+            settings: ProviderRunSettings::default(),
+        });
+        assert_eq!(
+            state.readiness_process_state("provider"),
+            CodingSessionProviderProcessState::Backoff
+        );
+        child_pid.store(42, Ordering::Release);
+        assert_eq!(
+            state.readiness_process_state("provider"),
+            CodingSessionProviderProcessState::Live { pid: 42 }
+        );
+        assert_eq!(
+            state.readiness_process_state("another-provider"),
+            CodingSessionProviderProcessState::NotSupervised
+        );
+        stop.store(true, Ordering::Release);
+        assert_eq!(
+            state.readiness_process_state("provider"),
+            CodingSessionProviderProcessState::NotSupervised
+        );
     }
 }

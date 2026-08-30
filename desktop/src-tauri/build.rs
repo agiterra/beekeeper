@@ -7,7 +7,137 @@ include!("src/managed_agents/reserved_env_keys.rs");
 
 use base64::Engine as _;
 
+fn git_output_raw(repo: &std::path::Path, args: &[&str]) -> Option<String> {
+    let mut child = std::process::Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut stdout = String::new();
+    std::io::Read::read_to_string(child.stdout.as_mut()?, &mut stdout).ok()?;
+    Some(stdout.trim().to_string())
+}
+
+fn git_output(repo: &std::path::Path, args: &[&str]) -> Option<String> {
+    git_output_raw(repo, args).filter(|value| !value.is_empty())
+}
+
+fn git_exit(repo: &std::path::Path, args: &[&str]) -> Option<i32> {
+    let mut child = std::process::Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) => return status.code(),
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+fn watch_git_path(repo: &std::path::Path, path: &str) {
+    let path = std::path::PathBuf::from(path);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        repo.join(path)
+    };
+    println!("cargo:rerun-if-changed={}", resolved.display());
+}
+
+fn expose_source_revision() {
+    let manifest = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").unwrap_or_else(|| ".".into()),
+    );
+    let repo = manifest.join("../..");
+
+    if let Some(head_path) = git_output(&repo, &["rev-parse", "--git-path", "HEAD"]) {
+        watch_git_path(&repo, &head_path);
+    }
+    if let Some(index_path) = git_output(&repo, &["rev-parse", "--git-path", "index"]) {
+        watch_git_path(&repo, &index_path);
+    }
+    if let Some(packed_refs) = git_output(&repo, &["rev-parse", "--git-path", "packed-refs"]) {
+        watch_git_path(&repo, &packed_refs);
+    }
+    if let Some(symbolic_ref) = git_output(&repo, &["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(ref_path) = git_output(&repo, &["rev-parse", "--git-path", &symbolic_ref]) {
+            watch_git_path(&repo, &ref_path);
+        }
+    }
+    if let Some(sha) = git_output(&repo, &["rev-parse", "HEAD"]) {
+        println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_SOURCE_SHA={sha}");
+    }
+
+    let tracked = git_exit(&repo, &["diff-index", "--quiet", "HEAD", "--"]);
+    let untracked = git_exit(
+        &repo,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--error-unmatch",
+            "--",
+            "*",
+        ],
+    );
+    // A dirty observation is durable evidence about this binary's build. A
+    // clean observation is deliberately not embedded: Cargo cannot cheaply
+    // watch every untracked/worktree path, so a later edit could otherwise
+    // leave a stale false-clean claim in an incrementally rebuilt binary.
+    if tracked == Some(1) || untracked == Some(0) {
+        println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_SOURCE_DIRTY=1");
+    }
+}
+
 fn main() {
+    expose_source_revision();
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_URL");
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_HTTP");
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");

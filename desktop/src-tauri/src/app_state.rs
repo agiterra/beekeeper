@@ -17,6 +17,8 @@ pub(crate) use crate::identity_storage::{IdentityStorage, RecoveryState, Resolve
 use crate::managed_agents::config_bridge::SessionConfigCache;
 use crate::managed_agents::{ManagedAgentPairRuntime, ManagedAgentRuntimeKey};
 
+mod readiness;
+pub(crate) use readiness::KEYCHAIN_UNAVAILABLE;
 pub struct AppState {
     pub keys: Mutex<Keys>,
     /// Durable backend holding `keys`. Updated after the key write and before
@@ -295,14 +297,12 @@ impl AppState {
         }
     }
 
-    /// Return the active identity keys if they are in a signable state.
-    ///
-    /// Returns `Err` when the identity is in a lost state (`identity_lost`
+    /// Return active identity keys, or `Err` when the identity is lost
+    /// (`identity_lost`
     /// — ephemeral key, user must re-import their nsec) or when the keyring
     /// is locked (`keyring_locked` — key is held in a keyring that is
     /// unavailable this boot). All signing and publish commands must call
-    /// this instead of locking `state.keys` directly, so that recovery mode
-    /// blocks publishing under an invalid or inaccessible identity.
+    /// this instead of locking `state.keys` directly.
     pub fn signing_keys(&self) -> Result<Keys, String> {
         if self
             .identity_lost

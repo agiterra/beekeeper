@@ -242,6 +242,74 @@ fn workdir_store_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("coding-session-workdirs.json"))
 }
 
+/// Resolve the desktop workdir store without creating its parent directory.
+pub(crate) fn workdir_store_path_readonly(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("failed to resolve app config dir: {error}"))?
+        .join("coding-session-workdirs.json"))
+}
+
+/// Read an explicit workdir store path without mutating the filesystem.
+pub(crate) fn load_workdir_store_readonly_from(
+    path: &Path,
+) -> Result<CodingSessionWorkdirStore, String> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(CodingSessionWorkdirStore::default());
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to read coding-session workdir store: {error}"
+            ));
+        }
+    };
+    if file
+        .metadata()
+        .map_err(|error| format!("failed to inspect coding-session workdir store: {error}"))?
+        .len()
+        > 1024 * 1024
+    {
+        return Err("coding-session workdir store exceeds readiness limit".into());
+    }
+    let store: CodingSessionWorkdirStore = serde_json::from_reader(file)
+        .map_err(|error| format!("failed to parse coding-session workdir store: {error}"))?;
+    if store.version != WORKDIR_STORE_VERSION {
+        return Err(format!(
+            "unsupported coding-session workdir store version: {}",
+            store.version
+        ));
+    }
+    if store.by_project.len() > 4096
+        || store.by_channel.len() > 4096
+        || store.mru.len() > MAX_MRU_ENTRIES
+        || store.pending.len() > MAX_PENDING_HINTS
+    {
+        return Err("coding-session workdir store exceeds readiness record limits".into());
+    }
+    let paths = store
+        .by_project
+        .values()
+        .chain(store.by_channel.values())
+        .map(|entry| &entry.path)
+        .chain(store.mru.iter().map(|entry| &entry.path))
+        .chain(store.pending.values());
+    if paths.into_iter().any(|path| !path.is_absolute()) {
+        return Err("coding-session workdir store contains a relative path".into());
+    }
+    Ok(store)
+}
+
+/// Read the host-local project checkout inventory. This path never creates the
+/// config directory and never materializes a provider view.
+pub(crate) fn load_workdir_store_readonly(
+    app: &AppHandle,
+) -> Result<CodingSessionWorkdirStore, String> {
+    load_workdir_store_readonly_from(&workdir_store_path_readonly(app)?)
+}
+
 /// Read the record, treating a missing file as the empty steady state.
 pub(crate) fn load_workdir_store(app: &AppHandle) -> Result<CodingSessionWorkdirStore, String> {
     let path = workdir_store_path(app)?;

@@ -6,10 +6,29 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE,
   codingSessionCrewProviderNote,
+  codingSessionCrewReadinessRoles,
   CodingSessionCrewLaunchSteps,
   CodingSessionCrewRoster,
   CodingSessionCrewSkillNotice,
 } from "./NewCodingSessionCrewTab.tsx";
+
+test("readiness roles come from the team definition before local seats resolve", () => {
+  assert.deepEqual(
+    codingSessionCrewReadinessRoles({
+      id: "portable-team",
+      name: "Portable team",
+      crew: {
+        primary: "missing-lead",
+        seats: [
+          { personaId: "missing-lead", role: " Lead " },
+          { personaId: "missing-builder", role: "builder" },
+          { personaId: "other-lead", role: "LEAD" },
+        ],
+      },
+    }),
+    ["builder", "lead"],
+  );
+});
 
 const SEATS = [
   {

@@ -245,6 +245,7 @@ pub(crate) fn invoke_handler(
         duplicate_channel_template,
         list_teams,
         create_team,
+        team_readiness,
         install_crew_role_packs,
         pick_crew_role_packs_directory,
         scan_project_role_packs_directory,

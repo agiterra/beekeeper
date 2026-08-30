@@ -27,13 +27,28 @@ import {
   resolveCodingSessionCrewSeats,
   type CodingSessionCrewTeam,
 } from "../lib/codingSessionCrewTeams";
+import {
+  normalizeTeamReadinessRoles,
+  teamReadinessLaunchGate,
+} from "../lib/teamReadinessModel";
+import { useProjectTeamReadiness } from "../lib/useProjectTeamReadiness";
 import { NewCodingSessionModelDisclosure } from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
+import { TeamReadinessCard } from "./TeamReadinessCard";
 import { useCodingSessionCrewLaunch } from "./useCodingSessionCrewLaunch";
 import { codingSessionCreateModelLabel } from "./useNewCodingSessionCreate";
 
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
+
+/** Read launch roles from the published team definition, before local seats resolve. */
+export function codingSessionCrewReadinessRoles(
+  team: CodingSessionCrewTeam | null,
+): string[] {
+  return normalizeTeamReadinessRoles(
+    team?.crew.seats.map((seat) => seat.role) ?? [],
+  );
+}
 
 /**
  * What Launch actually does, said before it is pressed.
@@ -193,6 +208,21 @@ export function NewCodingSessionCrewTab({
   }, [managedAgentsQuery.data, model, selectedTeam]);
 
   const seats = resolution?.seats ?? null;
+  const selectedRoles = React.useMemo(
+    () => codingSessionCrewReadinessRoles(selectedTeam),
+    [selectedTeam],
+  );
+  const teamReadiness = useProjectTeamReadiness({
+    projectRef,
+    checkoutPath: defaultWorkdir,
+    selectedRoles,
+  });
+  const cachedReadinessGate = teamReadinessLaunchGate({
+    projectRef,
+    loading: teamReadiness.isLoading,
+    error: teamReadiness.readError,
+    readiness: teamReadiness.readiness,
+  });
   const provider = React.useMemo(
     () => ({
       allowedModels: providerAllowedModels,
@@ -235,6 +265,12 @@ export function NewCodingSessionCrewTab({
     workdir: workdir.trim().length > 0 ? workdir.trim() : null,
     title: title.trim().length > 0 ? title.trim() : null,
   });
+  const interactionLocked =
+    disabled ||
+    isLaunching ||
+    teamReadiness.isPreparing ||
+    teamReadiness.isScanning ||
+    teamReadiness.isLaunchPreflighting;
 
   // Every reason the button is off, in one sentence — and the same expression
   // the button is disabled on, so a disabled control can never be silent.
@@ -247,12 +283,37 @@ export function NewCodingSessionCrewTab({
     isLaunching,
     goal,
   });
-  const canLaunch = refusal === null && launchBlock === null;
+  const canLaunch =
+    refusal === null && launchBlock === null && !interactionLocked;
 
+  const readFreshForLaunch = teamReadiness.readFreshForLaunch;
   const handleLaunch = React.useCallback(() => {
     if (!canLaunch || !selectedTeam || !seats) return;
     setLaunchError(null);
     void (async () => {
+      let freshReadiness: Awaited<ReturnType<typeof readFreshForLaunch>>;
+      try {
+        freshReadiness = await readFreshForLaunch();
+      } catch (error) {
+        setLaunchError(
+          error instanceof Error
+            ? `Launch readiness check failed: ${error.message}`
+            : "Launch readiness check failed.",
+        );
+        return;
+      }
+      const freshGate = teamReadinessLaunchGate({
+        projectRef,
+        loading: false,
+        error: null,
+        readiness: freshReadiness,
+      });
+      if (!freshGate.allowed) {
+        setLaunchError(
+          `Launch blocked by fresh Team Readiness: ${freshGate.reason ?? "the project is not prepared"}`,
+        );
+        return;
+      }
       try {
         const result = await launch({
           channelId,
@@ -303,6 +364,7 @@ export function NewCodingSessionCrewTab({
     projectRef,
     provider,
     providerAuthorityPubkey,
+    readFreshForLaunch,
     seats,
     selectedTeam,
     useWorktree,
@@ -323,7 +385,7 @@ export function NewCodingSessionCrewTab({
         <select
           className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
           data-testid="new-coding-session-crew-team"
-          disabled={disabled || isLaunching || crewTeams.length === 0}
+          disabled={interactionLocked || crewTeams.length === 0}
           id="coding-session-crew-team"
           onChange={(event) => setTeamId(event.target.value)}
           value={selectedTeam?.id ?? ""}
@@ -368,6 +430,28 @@ export function NewCodingSessionCrewTab({
         {codingSessionCrewProjectNote(projectName)}
       </p>
 
+      {projectRef ? (
+        <TeamReadinessCard
+          loading={teamReadiness.isLoading}
+          externalBusy={
+            disabled || isLaunching || teamReadiness.isLaunchPreflighting
+          }
+          names={teamReadiness.names}
+          onBeginPrepare={() => void teamReadiness.beginPrepare()}
+          onCancelPrepare={teamReadiness.cancelPrepare}
+          onConfirmPrepare={() => void teamReadiness.confirmPrepare()}
+          onNameChange={teamReadiness.setName}
+          prepareError={teamReadiness.prepareError}
+          prepareSteps={teamReadiness.prepareSteps}
+          preparing={teamReadiness.isPreparing}
+          readError={teamReadiness.readError}
+          readiness={teamReadiness.readiness}
+          scan={teamReadiness.scan}
+          scanning={teamReadiness.isScanning}
+          selectedRoles={selectedRoles}
+        />
+      ) : null}
+
       {selectedTeam ? (
         <CodingSessionCrewRoster
           primaryPersonaId={selectedTeam.crew.primary}
@@ -384,7 +468,7 @@ export function NewCodingSessionCrewTab({
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
           {refusal}
         </p>
-      ) : launchBlock ? (
+      ) : launchBlock || cachedReadinessGate.reason ? (
         // Not destructive: nothing is wrong, something is missing. But never
         // silent — a disabled Launch with no sentence under it is the front
         // door refusing without saying why (item 79).
@@ -392,7 +476,7 @@ export function NewCodingSessionCrewTab({
           className="text-2xs text-muted-foreground"
           data-testid="new-coding-session-crew-blocked"
         >
-          {launchBlock}
+          {launchBlock ?? cachedReadinessGate.reason}
         </p>
       ) : null}
 
@@ -406,7 +490,7 @@ export function NewCodingSessionCrewTab({
         <Textarea
           className="min-h-32"
           data-testid="new-coding-session-crew-goal"
-          disabled={disabled || isLaunching}
+          disabled={interactionLocked}
           id="coding-session-crew-goal"
           onChange={(event) => setGoal(event.target.value)}
           placeholder="What is this team for?"
@@ -426,7 +510,7 @@ export function NewCodingSessionCrewTab({
         </label>
         <Input
           data-testid="new-coding-session-crew-title"
-          disabled={disabled || isLaunching}
+          disabled={interactionLocked}
           id="coding-session-crew-title"
           onChange={(event) => setTitle(event.target.value)}
           placeholder="What is this session for?"
@@ -436,7 +520,7 @@ export function NewCodingSessionCrewTab({
 
       <NewCodingSessionWorkdirField
         channelId={channelId}
-        disabled={disabled || isLaunching}
+        disabled={interactionLocked}
         fallbackPath={defaultWorkdir}
         onChange={setWorkdir}
         projectKey={projectRef}
@@ -445,7 +529,7 @@ export function NewCodingSessionCrewTab({
 
       <NewCodingSessionWorktreeField
         checked={useWorktree}
-        disabled={disabled || isLaunching}
+        disabled={interactionLocked}
         name={worktreeName}
         onCheckedChange={setUseWorktree}
         onNameChange={setWorktreeName}
@@ -484,12 +568,14 @@ export function NewCodingSessionCrewTab({
           onClick={handleLaunch}
           type="button"
         >
-          {isLaunching ? (
+          {isLaunching || teamReadiness.isLaunchPreflighting ? (
             <LoaderCircle className="animate-spin motion-reduce:animate-none" />
           ) : (
             <Users />
           )}
-          Launch team
+          {teamReadiness.isLaunchPreflighting
+            ? "Checking readiness…"
+            : "Launch team"}
         </Button>
       </div>
     </div>

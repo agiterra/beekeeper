@@ -536,6 +536,34 @@ fn existing_agent_for<'a>(
     })
 }
 
+/// Compute the exact drift basis an installed identity should carry for this
+/// pack and its host-owned display name, without mutating either store.
+pub(crate) fn role_pack_source_version(pack: &DiscoveredRolePack, display_name: &str) -> String {
+    let definition = AgentDefinition {
+        id: String::new(),
+        display_name: display_name.to_string(),
+        avatar_url: pack.avatar_url.clone(),
+        system_prompt: pack.system_prompt.clone(),
+        runtime: pack.runtime.clone(),
+        model: pack.model.clone(),
+        provider: pack.provider.clone(),
+        name_pool: Vec::new(),
+        is_builtin: false,
+        is_active: true,
+        shared: false,
+        source_team: None,
+        source_team_persona_slug: None,
+        catalog_source: None,
+        env_vars: Default::default(),
+        respond_to: None,
+        respond_to_allowlist: Vec::new(),
+        parallelism: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+    super::persona_events::persona_snapshot(&definition).source_version
+}
+
 /// A definition id that is free, derived from the persona name.
 fn mint_definition_id(persona_name: &str, definitions: &[AgentDefinition]) -> String {
     let base = format!("{CREW_ROLE_ID_PREFIX}{persona_name}");
