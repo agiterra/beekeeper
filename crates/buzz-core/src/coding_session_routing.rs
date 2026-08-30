@@ -584,6 +584,28 @@ impl ReviewFlags {
         }
         Ok(())
     }
+
+    /// The flags that are set, by wire name, in spec §6 order.
+    ///
+    /// The inverse of [`set`](Self::set). Order is the spec's, not the
+    /// caller's, so two hires that assert the same triggers put the same
+    /// bytes on the wire.
+    pub fn names(&self) -> Vec<String> {
+        let set = [
+            self.security_boundary,
+            self.contract_change,
+            self.outside_plan,
+            self.builder_uncertain,
+            self.tests_insufficient,
+            self.lead_requests,
+        ];
+        REVIEW_FLAG_NAMES
+            .iter()
+            .zip(set)
+            .filter(|(_, on)| *on)
+            .map(|(name, _)| (*name).to_owned())
+            .collect()
+    }
 }
 
 /// One routing question.
@@ -603,6 +625,69 @@ pub struct RouteRequest {
     pub challenger_sample: bool,
     /// For a cross-provider class: the provider the compared class chose.
     pub counterpart_provider: Option<String>,
+}
+
+impl RouteRequest {
+    /// The routing question a hire asked, as the router's own request.
+    ///
+    /// The host calls this: it takes the lead's [`HireRoutingRequest`] and
+    /// routes it against *its* catalog. Nothing about the requester's
+    /// [`ProposedRouting`] crosses over — a proposal is disclosure, never
+    /// input, or the host would be re-deriving the requester's answer instead
+    /// of making its own.
+    ///
+    /// # Errors
+    ///
+    /// A sentence naming the field that was wrong, from
+    /// [`HireRoutingRequest::validate`].
+    pub fn from_hire_routing(request: &HireRoutingRequest) -> Result<Self, String> {
+        request.validate()?;
+        Ok(Self {
+            class: request.class.clone(),
+            risk: request.risk,
+            profile: request.profile.clone().unwrap_or_default(),
+            needs: TaskNeeds::default(),
+            review_flags: request.review_flag_set()?,
+            challenger_sample: request.challenger_sample,
+            counterpart_provider: None,
+        })
+    }
+}
+
+/// One sentence for [`RoutingRecord::proposed_disagreement`], or `None` when
+/// the host landed exactly where the requester proposed.
+///
+/// The host calls this after routing. Saying nothing when the two differ is
+/// the failure this exists to prevent: a lead that proposed Sonnet and reads
+/// the create back without a word has no way to learn its host disagreed.
+pub fn describe_proposed_disagreement(
+    record: &RoutingRecord,
+    proposed: &ProposedRouting,
+) -> Option<String> {
+    let chosen = record.chosen.as_ref()?;
+    if *chosen == proposed.chosen {
+        return None;
+    }
+    // An override is the requester's own instruction, not the host's
+    // judgment. Reporting "this host routed elsewhere" for a target the
+    // requester itself named would be a disagreement nobody had.
+    if record
+        .r#override
+        .as_ref()
+        .is_some_and(|over| over.model == chosen.model)
+    {
+        return None;
+    }
+    Some(format!(
+        "the requester proposed {}/{} ({}); this host routed {}/{} ({}) against its own live \
+         catalog and registry, and the host's decision is the one that ran",
+        proposed.chosen.provider,
+        proposed.chosen.model,
+        proposed.chosen.effort,
+        chosen.provider,
+        chosen.model,
+        chosen.effort,
+    ))
 }
 
 impl Default for Risk {
@@ -714,7 +799,7 @@ pub struct RoutingDecision {
     /// standing band, then the dormant and rejected rows in label order.
     pub candidates: Vec<Candidate>,
     /// The decision, ready for the wire.
-    pub record: Routing,
+    pub record: RoutingRecord,
     /// The class gate that was applied.
     pub minimums: BTreeMap<String, f64>,
     /// A caution the class carries, if any.
@@ -817,17 +902,31 @@ impl std::error::Error for RouteError {}
 
 // ── the wire record ──────────────────────────────────────────────────────────
 
-/// The `routing` object carried on `session.hire`, echoed onto the resulting
-/// `session.create` and onto the seat's kind:44223 metadata.
+/// The routing **record**: the answer, carried on `session.create` and echoed
+/// onto the seat's kind:44223 metadata.
 ///
-/// **One key set, always.** Every field is written, `null` where the answer is
-/// not known yet, so a strict observer has exactly one shape to accept. A hire
-/// signed by a lead may carry only the question — `class`, `tier`, `risk`,
-/// `profile`, `override` — with the router-filled answers `null`; the create
-/// the host publishes must carry all of them ([`Routing::is_complete`]).
+/// A hire never carries this. A hire carries a
+/// [`HireRoutingRequest`] — the *question* — and the founder's host is the
+/// only thing that routes, because only the host can see its own live
+/// kind:44222 catalog. The requester's own local decision travels beside the
+/// question as [`ProposedRouting`], clearly labelled as informational, and the
+/// host discloses any disagreement with it in
+/// [`proposed_disagreement`](Self::proposed_disagreement).
+///
+/// That split is not decoration. Until 2026-08-30 both halves were this one
+/// type, the CLI emitted the record on a hire, and the desktop host accepted
+/// only the request — so every routed hire was classified malformed and
+/// dropped in silence (ledger draft 97). Two types is how that stops being
+/// possible to write.
+///
+/// **One key set, always.** Every field below is written, `null` where the
+/// answer is not known, so a strict observer has exactly one shape to accept.
+/// The single exception is `proposedDisagreement`, which is omitted when the
+/// host agreed with the requester — a record with nothing to disclose is then
+/// byte-identical to the thirteen-key form consumers already accept.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Routing {
+pub struct RoutingRecord {
     /// The capability class the lead named.
     pub class: String,
     /// `fast` | `standard` | `deep`, derived from `risk`, never passed in.
@@ -857,6 +956,17 @@ pub struct Routing {
     /// The catalog revision it was intersected with, or `null` when more than
     /// one signer published and there is therefore no single number.
     pub catalog_revision: Option<u64>,
+    /// One sentence, written by the host, when its own choice differs from the
+    /// [`ProposedRouting`] the requester attached to the hire.
+    ///
+    /// Omitted — never written as an explicit `null` — when they agree or when
+    /// nothing was proposed, so a record with nothing to disclose keeps the
+    /// exact thirteen-key shape every consumer already accepts. Present, it is
+    /// the host saying out loud that it overruled the requester and why; a
+    /// silent divergence would leave a lead reading its own proposal back as
+    /// though it had been honoured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_disagreement: Option<String>,
 }
 
 /// The risk triple as it rides on the wire.
@@ -897,16 +1007,217 @@ pub struct RoutingOverride {
     pub because: String,
 }
 
+// ── the wire request ─────────────────────────────────────────────────────────
+
+/// `false` — the serde predicate that keeps an unset `challengerSample` off the
+/// wire, so an ordinary hire carries the smallest honest key set.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// The routing **request**: the question, carried on `session.hire`.
+///
+/// > "The lead chooses the capability required. The router chooses the
+/// > execution target."
+///
+/// This type is that sentence as a struct. A lead names a class and a risk
+/// triple; it does not name a model, a provider or an effort. The founder's
+/// host — the only party that can see its own live kind:44222 catalog — routes
+/// and writes the [`RoutingRecord`] onto the create it publishes.
+///
+/// The requester may still run the router locally (`bee sessions route`) and
+/// attach what it got as [`proposed`](Self::proposed). That is *informational*:
+/// it lets a lead see the decision it expected beside the one the host made,
+/// and it obliges the host to disclose any disagreement
+/// ([`RoutingRecord::proposed_disagreement`]). It never binds the host, whose
+/// catalog may legitimately differ from the requester's.
+///
+/// The only way a hire dictates an execution target is
+/// [`override`](Self::override) — and an override must say `because`, because
+/// an unexplained override is indistinguishable from a bug.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HireRoutingRequest {
+    /// The capability class the lead named: `builder`, `architect`, `lead`, …
+    pub class: String,
+    /// Impact × uncertainty × irreversibility, each 1–5.
+    ///
+    /// Deliberately [`Risk`] and not [`RoutingRisk`]: the request carries the
+    /// three factors and **no** `score`. The product is arithmetic the host
+    /// does, and a `score` a requester could set is a number that can disagree
+    /// with its own factors.
+    pub risk: Risk,
+    /// Extra per-trait minimums on top of the class gate, or omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<BTreeMap<String, f64>>,
+    /// A deliberate human override of the router, or omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#override: Option<RoutingOverride>,
+    /// `true` to spend this job on a challenger (spec §8). Omitted when false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub challenger_sample: bool,
+    /// The spec §6 review triggers the lead asserts, by name.
+    ///
+    /// Tokens from [`REVIEW_FLAG_NAMES`]; omitted when empty. Names rather
+    /// than a struct of six booleans, because the wire should not have to be
+    /// re-cut every time the spec grows a trigger.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_flags: Vec<String>,
+    /// The requester's own local routing decision, or omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<ProposedRouting>,
+}
+
+/// What the requester's own router chose, attached to a hire for disclosure.
+///
+/// Informational, always. The host routes for itself and may land somewhere
+/// else; when it does it says so in
+/// [`RoutingRecord::proposed_disagreement`] rather than quietly substituting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProposedRouting {
+    /// The execution target the requester's router chose.
+    pub chosen: RoutingTarget,
+    /// Its runner-up, or omitted when there was no second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_up: Option<RoutingTarget>,
+    /// One sentence naming the gates cleared and why this was cheapest.
+    pub reason: String,
+    /// `version` of the registry the requester read.
+    pub registry_version: u32,
+    /// The catalog revision it was intersected with, or `null` when more than
+    /// one signer published and there is therefore no single number.
+    pub catalog_revision: Option<u64>,
+}
+
+/// `profile` carries `f64` minimums, so `Eq` cannot be derived. Sound for the
+/// same reason [`RoutingRecord`]'s is: JSON has no `NaN` literal and
+/// [`HireRoutingRequest::validate`] refuses a minimum outside `1..=5`.
+impl Eq for HireRoutingRequest {}
+
+impl HireRoutingRequest {
+    /// Check every bound and token.
+    ///
+    /// # Errors
+    ///
+    /// A sentence naming the field that was wrong.
+    pub fn validate(&self) -> Result<(), String> {
+        bounded_token("routing.class", &self.class)?;
+        self.risk
+            .validate()
+            .map_err(|detail| format!("routing.{detail}"))?;
+        if let Some(profile) = &self.profile {
+            validate_profile(profile)?;
+        }
+        if self.review_flags.len() > MAX_ROUTING_REVIEW_REASONS {
+            return Err(format!(
+                "routing.reviewFlags holds {} entries; at most {MAX_ROUTING_REVIEW_REASONS}",
+                self.review_flags.len()
+            ));
+        }
+        // Refused by name rather than ignored: a trigger the host silently
+        // drops is a review the lead believes it asked for and did not get.
+        let mut flags = ReviewFlags::default();
+        for flag in &self.review_flags {
+            flags
+                .set(flag)
+                .map_err(|detail| format!("routing.reviewFlags: {detail}"))?;
+        }
+        if let Some(over) = &self.r#override {
+            validate_override(over)?;
+        }
+        if let Some(proposed) = &self.proposed {
+            validate_routing_target("routing.proposed.chosen", &proposed.chosen)?;
+            if let Some(runner_up) = &proposed.runner_up {
+                validate_routing_target("routing.proposed.runnerUp", runner_up)?;
+            }
+            validate_reason("routing.proposed.reason", &proposed.reason)?;
+        }
+        Ok(())
+    }
+
+    /// The §6 triggers as the router's own struct.
+    ///
+    /// # Errors
+    ///
+    /// The unknown token, with the accepted list.
+    pub fn review_flag_set(&self) -> Result<ReviewFlags, String> {
+        let mut flags = ReviewFlags::default();
+        for flag in &self.review_flags {
+            flags.set(flag)?;
+        }
+        Ok(flags)
+    }
+}
+
+/// Shared bounds for the extra trait minimums a lead may ask for.
+fn validate_profile(profile: &BTreeMap<String, f64>) -> Result<(), String> {
+    if profile.len() > MAX_ROUTING_PROFILE_ENTRIES {
+        return Err(format!(
+            "routing.profile holds {} entries; at most {MAX_ROUTING_PROFILE_ENTRIES}",
+            profile.len()
+        ));
+    }
+    for (name, minimum) in profile {
+        bounded_token("routing.profile key", name)?;
+        if !(1.0..=5.0).contains(minimum) {
+            return Err(format!(
+                "routing.profile.{name} is {minimum}, outside 1..=5"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Shared bounds for one execution target on the wire.
+fn validate_routing_target(field: &str, target: &RoutingTarget) -> Result<(), String> {
+    bounded_token(&format!("{field}.provider"), &target.provider)?;
+    bounded_token(&format!("{field}.model"), &target.model)?;
+    if !matches!(target.effort.as_str(), "low" | "medium" | "high") {
+        return Err(format!(
+            "{field}.effort is {:?}; the router only ever purchases low, medium or high — \
+             xhigh, max and ultra are human override only",
+            target.effort
+        ));
+    }
+    Ok(())
+}
+
+/// Shared bounds for a one-sentence explanation.
+fn validate_reason(field: &str, reason: &str) -> Result<(), String> {
+    if reason.trim().is_empty() || reason.len() > MAX_ROUTING_REASON_BYTES {
+        return Err(format!(
+            "{field} must be 1..={MAX_ROUTING_REASON_BYTES} non-blank bytes"
+        ));
+    }
+    Ok(())
+}
+
+/// Shared bounds for a human's override of the router.
+fn validate_override(over: &RoutingOverride) -> Result<(), String> {
+    bounded_token("routing.override.model", &over.model)?;
+    if let Some(effort) = &over.effort {
+        bounded_token("routing.override.effort", effort)?;
+    }
+    if over.because.trim().is_empty() || over.because.len() > MAX_ROUTING_REASON_BYTES {
+        return Err(format!(
+            "routing.override.because must be 1..={MAX_ROUTING_REASON_BYTES} non-blank bytes: \
+             an unexplained override is indistinguishable from a bug"
+        ));
+    }
+    Ok(())
+}
+
 /// `profile` carries `f64` minimums, so `Eq` cannot be derived — but the
 /// enclosing lifecycle action is `Eq`, and this record must ride inside it.
 ///
 /// The implementation is sound because a non-reflexive float can never get
 /// here: JSON has no `NaN` literal, so a decoded record's minimums are always
-/// finite, and [`Routing::validate`] refuses a hand-built record whose minimum
+/// finite, and [`RoutingRecord::validate`] refuses a hand-built record whose minimum
 /// is outside `1..=5` — a range check `NaN` also fails.
-impl Eq for Routing {}
+impl Eq for RoutingRecord {}
 
-impl Routing {
+impl RoutingRecord {
     /// `true` when every router-filled field is answered — the shape a
     /// `session.create` and a kind:44223 must carry.
     pub fn is_complete(&self) -> bool {
@@ -941,40 +1252,15 @@ impl Routing {
         .validate()
         .map_err(|detail| format!("routing.{detail}"))?;
         if let Some(profile) = &self.profile {
-            if profile.len() > MAX_ROUTING_PROFILE_ENTRIES {
-                return Err(format!(
-                    "routing.profile holds {} entries; at most {MAX_ROUTING_PROFILE_ENTRIES}",
-                    profile.len()
-                ));
-            }
-            for (name, minimum) in profile {
-                bounded_token("routing.profile key", name)?;
-                if !(1.0..=5.0).contains(minimum) {
-                    return Err(format!(
-                        "routing.profile.{name} is {minimum}, outside 1..=5"
-                    ));
-                }
-            }
+            validate_profile(profile)?;
         }
         for (field, target) in [("chosen", &self.chosen), ("runnerUp", &self.runner_up)] {
             if let Some(target) = target {
-                bounded_token(&format!("routing.{field}.provider"), &target.provider)?;
-                bounded_token(&format!("routing.{field}.model"), &target.model)?;
-                if !matches!(target.effort.as_str(), "low" | "medium" | "high") {
-                    return Err(format!(
-                        "routing.{field}.effort is {:?}; the router only ever purchases low, \
-                         medium or high — xhigh, max and ultra are human override only",
-                        target.effort
-                    ));
-                }
+                validate_routing_target(&format!("routing.{field}"), target)?;
             }
         }
         if let Some(reason) = &self.reason {
-            if reason.trim().is_empty() || reason.len() > MAX_ROUTING_REASON_BYTES {
-                return Err(format!(
-                    "routing.reason must be 1..={MAX_ROUTING_REASON_BYTES} non-blank bytes"
-                ));
-            }
+            validate_reason("routing.reason", reason)?;
         }
         if self.review_reasons.len() > MAX_ROUTING_REVIEW_REASONS {
             return Err(format!(
@@ -992,18 +1278,28 @@ impl Routing {
             );
         }
         if let Some(over) = &self.r#override {
-            bounded_token("routing.override.model", &over.model)?;
-            if let Some(effort) = &over.effort {
-                bounded_token("routing.override.effort", effort)?;
-            }
-            if over.because.trim().is_empty() || over.because.len() > MAX_ROUTING_REASON_BYTES {
-                return Err(format!(
-                    "routing.override.because must be 1..={MAX_ROUTING_REASON_BYTES} non-blank \
-                     bytes: an unexplained override is indistinguishable from a bug"
-                ));
-            }
+            validate_override(over)?;
+        }
+        if let Some(disagreement) = &self.proposed_disagreement {
+            validate_reason("routing.proposedDisagreement", disagreement)?;
         }
         Ok(())
+    }
+
+    /// This record as the [`ProposedRouting`] a hire attaches, or `None` when
+    /// the decision is not complete enough to propose anything.
+    ///
+    /// Used by `bee sessions hire`: the CLI routes locally, then attaches the
+    /// answer to the *question* it sends, so the host can disclose a
+    /// disagreement instead of the lead silently reading its own guess back.
+    pub fn as_proposed(&self) -> Option<ProposedRouting> {
+        Some(ProposedRouting {
+            chosen: self.chosen.clone()?,
+            runner_up: self.runner_up.clone(),
+            reason: self.reason.clone()?,
+            registry_version: self.registry_version?,
+            catalog_revision: self.catalog_revision,
+        })
     }
 }
 
@@ -1275,7 +1571,7 @@ pub fn route(
         &uncomparable,
     );
 
-    let record = Routing {
+    let record = RoutingRecord {
         class: request.class.clone(),
         tier: tier_name.clone(),
         risk: RoutingRisk {
@@ -1312,6 +1608,9 @@ pub fn route(
         r#override: None,
         registry_version: Some(registry.version),
         catalog_revision,
+        // Only the host that compared its own answer with a requester's
+        // `proposed` can fill this, and it is never the router's to guess.
+        proposed_disagreement: None,
     };
 
     let ranked_order: Vec<String> = ranked.iter().map(|c| c.label()).collect();
@@ -2446,14 +2745,14 @@ mod tests {
         decision.record.validate().expect("valid");
         assert!(decision.record.is_complete());
         // Round-trips byte for byte.
-        let again: Routing = serde_json::from_str(&json).expect("decode");
+        let again: RoutingRecord = serde_json::from_str(&json).expect("decode");
         assert_eq!(again, decision.record);
     }
 
     /// A hire may carry only the question; the router fills the rest.
     #[test]
     fn a_hire_shaped_record_is_valid_but_not_complete() {
-        let question = Routing {
+        let question = RoutingRecord {
             class: "builder".into(),
             tier: "standard".into(),
             risk: RoutingRisk {
@@ -2472,6 +2771,7 @@ mod tests {
             r#override: None,
             registry_version: None,
             catalog_revision: None,
+            proposed_disagreement: None,
         };
         question.validate().expect("valid");
         assert!(!question.is_complete());
@@ -2505,7 +2805,7 @@ mod tests {
     /// about the same object, and the validator refuses it.
     #[test]
     fn a_record_cannot_claim_no_review_while_listing_triggers() {
-        let mut record = Routing {
+        let mut record = RoutingRecord {
             class: "builder".into(),
             tier: "standard".into(),
             risk: RoutingRisk {
@@ -2524,6 +2824,7 @@ mod tests {
             r#override: None,
             registry_version: None,
             catalog_revision: None,
+            proposed_disagreement: None,
         };
         assert!(record.validate().is_err());
         record.review_required = Some(true);
@@ -2533,7 +2834,7 @@ mod tests {
     /// An override with no explanation is indistinguishable from a bug.
     #[test]
     fn an_override_must_say_why() {
-        let mut record = Routing {
+        let mut record = RoutingRecord {
             class: "builder".into(),
             tier: "standard".into(),
             risk: RoutingRisk {
@@ -2556,6 +2857,7 @@ mod tests {
             }),
             registry_version: None,
             catalog_revision: None,
+            proposed_disagreement: None,
         };
         let error = record.validate().expect_err("must refuse");
         assert!(error.contains("indistinguishable from a bug"), "{error}");
@@ -2571,7 +2873,7 @@ mod tests {
     #[test]
     fn an_unknown_key_in_a_routing_record_is_refused_rather_than_ignored() {
         let json = r#"{"class":"builder","tier":"standard","risk":{"impact":1,"uncertainty":1,"irreversibility":1,"score":1},"profile":null,"chosen":null,"runnerUp":null,"reason":null,"reviewRequired":null,"reviewReasons":[],"challengerSample":false,"override":null,"registryVersion":null,"catalogRevision":null,"surprise":true}"#;
-        assert!(serde_json::from_str::<Routing>(json).is_err());
+        assert!(serde_json::from_str::<RoutingRecord>(json).is_err());
     }
 
     #[test]
@@ -2883,7 +3185,7 @@ mod tests {
     fn a_record_the_desktop_router_wrote_is_one_this_crate_accepts() {
         const FROM_DESKTOP: &str = r#"{"class":"architect","tier":"deep","risk":{"impact":5,"uncertainty":4,"irreversibility":4,"score":80},"chosen":{"provider":"codex-primary","model":"gpt-5.6-sol[high]","effort":"high"},"runnerUp":{"provider":"claude-primary","model":"opus[1m]","effort":"high"},"reason":"cleared the architect gates (reasoning≥4.7, judgment≥4.7, discipline≥4.5, context≥4.5, verification≥4.5) and the deep tier's high effort; incumbent, cheaper than claude-primary/opus[1m].","reviewRequired":true,"reviewReasons":["risk 80 >= 40","irreversibility 4 >= 4","securityBoundary"],"challengerSample":false,"override":null,"registryVersion":1,"catalogRevision":7}"#;
 
-        let record: Routing = serde_json::from_str(FROM_DESKTOP)
+        let record: RoutingRecord = serde_json::from_str(FROM_DESKTOP)
             .expect("buzz-core deserializes the desktop router's own record");
         record
             .validate()
@@ -3009,5 +3311,246 @@ mod tests {
                 "{label} challengerSample"
             );
         }
+    }
+    // ── the request / record split (ledger draft 97) ──────────────────────
+
+    fn a_request() -> HireRoutingRequest {
+        HireRoutingRequest {
+            class: "builder".to_owned(),
+            risk: Risk {
+                impact: 3,
+                uncertainty: 3,
+                irreversibility: 2,
+            },
+            profile: None,
+            r#override: None,
+            challenger_sample: false,
+            review_flags: Vec::new(),
+            proposed: None,
+        }
+    }
+
+    /// The smallest request writes two keys and no more. Everything optional
+    /// is omitted rather than written as an explicit `null`, so a hire that
+    /// asks a plain question looks like a plain question on the wire.
+    #[test]
+    fn the_smallest_request_writes_only_class_and_risk() {
+        assert_eq!(
+            serde_json::to_string(&a_request()).expect("serialize"),
+            r#"{"class":"builder","risk":{"impact":3,"uncertainty":3,"irreversibility":2}}"#
+        );
+    }
+
+    /// An override with no `because` is refused. An unexplained override is
+    /// indistinguishable from a bug — including on the request, where until
+    /// now only the record checked it.
+    #[test]
+    fn a_request_override_must_say_because() {
+        let mut request = a_request();
+        request.r#override = Some(RoutingOverride {
+            model: "gpt-5.6-terra[medium]".to_owned(),
+            effort: None,
+            because: "   ".to_owned(),
+        });
+        let error = request.validate().expect_err("a blank because is refused");
+        assert!(error.contains("because"), "{error}");
+        assert!(error.contains("indistinguishable from a bug"), "{error}");
+    }
+
+    /// A review flag nobody defined is refused by name. A trigger the wire
+    /// swallows is a review the lead believes it asked for and did not get.
+    #[test]
+    fn a_request_review_flag_is_refused_by_name_not_dropped() {
+        let mut request = a_request();
+        request.review_flags = vec!["contractChange".to_owned(), "looksHard".to_owned()];
+        let error = request.validate().expect_err("an unknown flag is refused");
+        assert!(error.contains("looksHard"), "{error}");
+        assert!(
+            error.contains("contractChange"),
+            "the list is printed: {error}"
+        );
+    }
+
+    /// The host routes the question, and nothing about the requester's own
+    /// answer crosses into the request it routes: a proposal is disclosure,
+    /// never input.
+    #[test]
+    fn a_hire_request_becomes_a_route_request_without_its_proposal() {
+        let mut request = a_request();
+        request.profile = Some([("taste".to_owned(), 4.5)].into_iter().collect());
+        request.challenger_sample = true;
+        request.review_flags = vec!["contractChange".to_owned()];
+        request.proposed = Some(ProposedRouting {
+            chosen: RoutingTarget {
+                provider: "claude-primary".to_owned(),
+                model: "sonnet".to_owned(),
+                effort: "medium".to_owned(),
+            },
+            runner_up: None,
+            reason: "the requester's own local decision".to_owned(),
+            registry_version: 1,
+            catalog_revision: Some(7),
+        });
+        let routed = RouteRequest::from_hire_routing(&request).expect("a route request");
+        assert_eq!(routed.class, "builder");
+        assert_eq!(routed.risk.score(), 18);
+        assert_eq!(routed.profile.get("taste"), Some(&4.5));
+        assert!(routed.challenger_sample);
+        assert!(routed.review_flags.contract_change);
+        // No field of `RouteRequest` can carry the proposal, and that is the
+        // point: the host re-derives its own answer.
+        assert_eq!(routed.counterpart_provider, None);
+        assert_eq!(routed.needs, TaskNeeds::default());
+    }
+
+    /// A host that lands somewhere else says so. A silent divergence would
+    /// leave a lead reading its own proposal back as though it had been
+    /// honoured — which is the whole reason `proposed` is on the wire.
+    #[test]
+    fn a_host_that_overrules_a_proposal_discloses_it() {
+        let proposed = ProposedRouting {
+            chosen: RoutingTarget {
+                provider: "claude-primary".to_owned(),
+                model: "opus[1m]".to_owned(),
+                effort: "high".to_owned(),
+            },
+            runner_up: None,
+            reason: "the requester's own local decision".to_owned(),
+            registry_version: 1,
+            catalog_revision: Some(7),
+        };
+        let mut record = RoutingRecord {
+            class: "architect".to_owned(),
+            tier: "deep".to_owned(),
+            risk: RoutingRisk {
+                impact: 5,
+                uncertainty: 4,
+                irreversibility: 4,
+                score: 80,
+            },
+            profile: None,
+            chosen: Some(RoutingTarget {
+                provider: "codex-primary".to_owned(),
+                model: "gpt-5.6-sol[high]".to_owned(),
+                effort: "high".to_owned(),
+            }),
+            runner_up: None,
+            reason: Some("cheapest that cleared the architect gate".to_owned()),
+            review_required: Some(true),
+            review_reasons: vec!["risk 80 >= 40".to_owned()],
+            challenger_sample: false,
+            r#override: None,
+            registry_version: Some(1),
+            catalog_revision: Some(7),
+            proposed_disagreement: None,
+        };
+        let sentence =
+            describe_proposed_disagreement(&record, &proposed).expect("a disagreement to disclose");
+        assert!(sentence.contains("claude-primary/opus[1m]"), "{sentence}");
+        assert!(
+            sentence.contains("codex-primary/gpt-5.6-sol[high]"),
+            "{sentence}"
+        );
+        record.proposed_disagreement = Some(sentence);
+        record.validate().expect("a valid record");
+
+        // Agreement discloses nothing, so the record keeps its thirteen keys.
+        let agreed = RoutingRecord {
+            chosen: Some(proposed.chosen.clone()),
+            proposed_disagreement: None,
+            ..record.clone()
+        };
+        assert_eq!(describe_proposed_disagreement(&agreed, &proposed), None);
+        assert!(
+            !serde_json::to_string(&agreed)
+                .expect("serialize")
+                .contains("proposedDisagreement"),
+            "an agreed record must not write the fourteenth key"
+        );
+    }
+
+    /// An override is the requester's own instruction, so honouring it is not
+    /// a disagreement. Reporting one would be the host claiming a judgment it
+    /// never made.
+    #[test]
+    fn honouring_an_override_is_not_a_disagreement() {
+        let proposed = ProposedRouting {
+            chosen: RoutingTarget {
+                provider: "claude-primary".to_owned(),
+                model: "sonnet".to_owned(),
+                effort: "medium".to_owned(),
+            },
+            runner_up: None,
+            reason: "the requester's own local decision".to_owned(),
+            registry_version: 1,
+            catalog_revision: Some(7),
+        };
+        let record = RoutingRecord {
+            class: "builder".to_owned(),
+            tier: "standard".to_owned(),
+            risk: RoutingRisk {
+                impact: 3,
+                uncertainty: 3,
+                irreversibility: 2,
+                score: 18,
+            },
+            profile: None,
+            chosen: Some(RoutingTarget {
+                provider: "codex-primary".to_owned(),
+                model: "gpt-5.6-terra[medium]".to_owned(),
+                effort: "medium".to_owned(),
+            }),
+            runner_up: Some(proposed.chosen.clone()),
+            reason: Some("human override: buying a measurement on a challenger".to_owned()),
+            review_required: Some(false),
+            review_reasons: Vec::new(),
+            challenger_sample: false,
+            r#override: Some(RoutingOverride {
+                model: "gpt-5.6-terra[medium]".to_owned(),
+                effort: None,
+                because: "buying a measurement on a challenger".to_owned(),
+            }),
+            registry_version: Some(1),
+            catalog_revision: Some(7),
+            proposed_disagreement: None,
+        };
+        assert_eq!(describe_proposed_disagreement(&record, &proposed), None);
+    }
+
+    /// A record only proposes something once it has an answer to propose.
+    #[test]
+    fn an_unanswered_record_proposes_nothing() {
+        let mut record = RoutingRecord {
+            class: "builder".to_owned(),
+            tier: "standard".to_owned(),
+            risk: RoutingRisk {
+                impact: 3,
+                uncertainty: 3,
+                irreversibility: 2,
+                score: 18,
+            },
+            profile: None,
+            chosen: None,
+            runner_up: None,
+            reason: None,
+            review_required: None,
+            review_reasons: Vec::new(),
+            challenger_sample: false,
+            r#override: None,
+            registry_version: None,
+            catalog_revision: None,
+            proposed_disagreement: None,
+        };
+        assert_eq!(record.as_proposed(), None);
+        record.chosen = Some(RoutingTarget {
+            provider: "claude-primary".to_owned(),
+            model: "sonnet".to_owned(),
+            effort: "medium".to_owned(),
+        });
+        record.reason = Some("cleared the builder gate".to_owned());
+        record.registry_version = Some(1);
+        let proposed = record.as_proposed().expect("a proposal");
+        assert_eq!(proposed.chosen.model, "sonnet");
+        assert_eq!(proposed.registry_version, 1);
     }
 }

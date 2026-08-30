@@ -142,6 +142,22 @@ pub fn parse_review_flags(text: &str) -> Result<ReviewFlags, CliError> {
     Ok(flags)
 }
 
+/// Parse `--review-flags a,b` into the spec §6 trigger names, in the order
+/// [`REVIEW_FLAG_NAMES`](buzz_core::coding_session_routing::REVIEW_FLAG_NAMES)
+/// lists them.
+///
+/// The wire carries names rather than six booleans, so the shape does not have
+/// to be re-cut every time the spec grows a trigger. Duplicates collapse; an
+/// unknown token is refused by name rather than dropped, because a trigger the
+/// wire swallows is a review the lead believes it asked for and did not get.
+///
+/// # Errors
+///
+/// [`CliError::Usage`] naming the unknown token and listing the accepted ones.
+pub fn parse_review_flag_names(text: &str) -> Result<Vec<String>, CliError> {
+    Ok(parse_review_flags(text)?.names())
+}
+
 /// Build the request every routing entry point shares.
 ///
 /// # Errors
@@ -228,6 +244,16 @@ pub fn decision_report(decision: &RoutingDecision, registry_path: &str) -> Value
         // One line a human can read without decoding the record.
         "summary": summary(decision),
         "routing": record,
+        // The same decision in the shape a hire actually carries it: a hire
+        // sends the routing REQUEST, and this is the `proposed` block inside
+        // it. Printed beside the record so nobody has to translate one into
+        // the other by hand — copying the record onto a hire is exactly the
+        // mistake that dropped a routed hire in silence on 2026-08-30
+        // (ledger draft 97).
+        "proposed": decision
+            .record
+            .as_proposed()
+            .and_then(|proposed| serde_json::to_value(proposed).ok()),
         "gate": decision.minimums,
         "classNote": decision.class_note,
         // Set when the class is a lane's draft rather than Brian's ruling.
@@ -540,5 +566,45 @@ mod tests {
         assert_eq!(offers[0].context_window, Some(1_000_000));
         // Nobody said, for sonnet — and `None` is that fact, never a default.
         assert_eq!(offers[1].context_window, None);
+    }
+
+    /// `bee sessions route --format json` prints the decision twice: as the
+    /// record, and as the `proposed` block a hire actually carries.
+    ///
+    /// A lead that copies `routing` onto a hire is emitting the record, and
+    /// the record on a hire is what the host dropped in silence on 2026-08-30
+    /// (ledger draft 97). The shape it should copy is printed beside it.
+    #[test]
+    fn the_route_report_prints_the_shape_a_hire_carries() {
+        use buzz_core::coding_session_routing::{route, ProposedRouting, RouteRequest};
+
+        let decision = route(
+            &shipped(),
+            &live_offer(),
+            &RouteRequest {
+                class: "builder".to_owned(),
+                risk: parse_risk("3,3,2").expect("risk"),
+                ..RouteRequest::default()
+            },
+            Some(7),
+        )
+        .expect("a route");
+        let report = decision_report(&decision, "team/model-registry.yaml");
+
+        let proposed: ProposedRouting =
+            serde_json::from_value(report["proposed"].clone()).expect("a proposal");
+        assert_eq!(proposed.chosen.provider, "claude-primary");
+        assert_eq!(proposed.chosen.model, "sonnet");
+        assert_eq!(proposed.registry_version, 1);
+        assert_eq!(proposed.catalog_revision, Some(7));
+
+        // It is the proposal, not the record: none of the record's own keys
+        // survive into it.
+        let object = report["proposed"].as_object().expect("object");
+        for key in ["tier", "risk", "class", "reviewRequired", "reviewReasons"] {
+            assert!(!object.contains_key(key), "proposed carries {key:?}");
+        }
+        // And the record is still printed in full beside it.
+        assert_eq!(report["routing"]["tier"], serde_json::json!("standard"));
     }
 }

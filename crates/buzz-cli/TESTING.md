@@ -1276,7 +1276,8 @@ bee sessions route --channel "$CHANNEL_ID" --class builder --risk 3,3,2 --challe
 bee sessions route --channel "$CHANNEL_ID" --class verifier --risk 3,3,2 \
   --counterpart-provider codex-primary
 
-# Just the routing record, the same object that rides on a hire.
+# Just the routing record — the host's answer shape, NOT what a hire carries.
+# For the object a hire attaches, read `.proposed` from --format json.
 bee --format compact sessions route --channel "$CHANNEL_ID" --class architect --risk 5,4,4
 ```
 
@@ -1357,16 +1358,43 @@ alone, **after** every target that has a cost prior — never guessed cheap.
   metadata — and the researcher gate depends on it. If those values are wrong,
   that gate is wrong, and `factsProvenance` in the registry says so out loud.
 
-**Routing a hire.** `bee sessions hire --class builder --risk 3,3,2 …` routes
-before it signs: the decision rides on the request as a `routing` object, is
-echoed onto the seat's create and onto its kind:44223 metadata, and a hire
-nothing can serve is **never published** — exit 4 locally rather than a request
-that sits waiting to be refused `HIRE_NO_ROUTE`.
+**Routing a hire — the hire asks, the host answers.** A hire carries the
+routing **REQUEST**, never the routing record:
 
-`--model` alongside `--class` is an explicit human override. It still has to
-name something the catalog offers, `--because` is required (an unexplained
-override is indistinguishable from a bug), and the router's own pick survives
-in the record as `runnerUp` so the table shows what was displaced.
+```json
+{"class":"builder","risk":{"impact":3,"uncertainty":3,"irreversibility":2},
+ "proposed":{"chosen":{"provider":"claude-primary","model":"sonnet","effort":"medium"},
+             "runnerUp":{"provider":"codex-primary","model":"gpt-5.6-luna[medium]","effort":"medium"},
+             "reason":"…","registryVersion":1,"catalogRevision":7}}
+```
+
+`class` and `risk` are required. `profile`, `override`, `challengerSample`,
+`reviewFlags` and `proposed` are **omitted** when they have nothing to say —
+never written as an explicit `null`. `risk` carries **three** keys and no
+`score`: the product is arithmetic the host does, and a score a requester can
+set is a number that can disagree with its own factors.
+
+`bee sessions hire --class builder --risk 3,3,2 …` still runs the router
+locally, but only for **disclosure**: what it got is attached as `proposed`,
+the host routes for itself against its own live catalog, and any disagreement
+comes back on the create as `routing.proposedDisagreement`. A local router that
+cannot answer (no readable registry, a catalog this machine cannot fetch, a
+class nothing here clears) is **not** fatal — the hire goes out without
+`proposed` and the CLI's own output says why, under `proposedUnavailable`. The
+founder's host is the one that decides, and refusing here for a target *this*
+machine cannot see would be a refusal nobody asked for.
+
+The hire's top-level `model` and `providerInstanceRef` are written **only** for
+an override, and then they equal `override.model`. A routed hire that filled
+them in with its own pick would be dictating a target while claiming to ask a
+question — which is exactly what shipped on 2026-08-30 and was dropped in
+silence.
+
+`--override-model` is the one way a hire dictates a target. It needs `--class`,
+`--risk` and `--because` (an unexplained override is indistinguishable from a
+bug), and it must name something the catalog offers; the router's own pick
+survives on the create's record as `runnerUp` so the table shows what was
+displaced.
 
 ```bash
 bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
@@ -1374,9 +1402,40 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
 
 bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
   --role builder --class builder --risk 3,3,2 \
-  --model 'opus[1m]' --because 'Brian asked for Opus on this one' \
+  --override-model 'opus[1m]' --because 'Brian asked for Opus on this one' \
   --content 'Rebase the lane.'
 ```
+
+`--model` **without** `--class` is still an unrouted hire: no `routing` key at
+all, and the hire is byte-identical to the seven-key form that shipped before
+the router existed.
+
+**Verify:**
+
+- `bee --format json sessions route … | jq .proposed` is exactly the object a
+  hire attaches. Copy *that*, never `.routing` — the record on a hire is
+  refused by the relay, by the key that does not belong.
+- A hire whose `routing` does not parse is answered `HIRE_MALFORMED`, and the
+  reason names the failing key. It is never dropped: on 2026-08-30 a routed
+  hire the relay had accepted was classified malformed by the host and
+  discarded with no kind:44220, no log line and nothing on screen, and the
+  lead waited fifteen minutes for an answer that was never coming.
+- `bee sessions hire --override-model X` without `--because` exits 1 naming
+  the missing flag; without `--class` it exits 1 pointing at `--model` for an
+  unrouted hire.
+
+**The shared fixtures, and what they pin.**
+`testdata/routing/hire-request-fixture.json` holds three requests (a fast
+builder with no override; a standard builder with an override and its
+`because`; a deep architect with review flags, a profile and a challenger
+sample) plus the two shapes that must be refused. Its counterpart
+`testdata/routing/create-record-fixture.json` holds the three records that
+answer them, including one that discloses a `proposedDisagreement`. Three
+implementations read those two files: `buzz-core`'s validator
+(`crates/buzz-core/src/coding_session_lifecycle_command.rs`), this CLI's
+emitter (`crates/buzz-cli/src/commands/sessions/crew_tests.rs`) and the
+desktop's parser. That is what makes them one contract rather than three that
+happen to agree today.
 
 **The fixture both implementations are pinned to.**
 `testdata/routing/live-catalog-665076ce.json` holds the real 46-pair catalog

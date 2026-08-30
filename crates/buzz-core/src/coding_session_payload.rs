@@ -895,7 +895,7 @@ pub struct SessionMetadata {
     /// that cannot be explained from the wire is visibly absent instead of
     /// quietly assumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub routing: Option<crate::coding_session_routing::Routing>,
+    pub routing: Option<crate::coding_session_routing::RoutingRecord>,
 }
 
 /// How much of an umbrella's turn budget has been spent (D9).

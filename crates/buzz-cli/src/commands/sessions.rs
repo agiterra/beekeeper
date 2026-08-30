@@ -2363,6 +2363,7 @@ pub async fn dispatch(
             profile,
             review_flags,
             challenger_sample,
+            override_model,
             because,
             brief,
             content,
@@ -2385,6 +2386,7 @@ pub async fn dispatch(
                     profile,
                     review_flags,
                     challenger_sample,
+                    override_model,
                     because,
                 },
             )

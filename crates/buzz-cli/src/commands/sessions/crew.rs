@@ -1700,7 +1700,16 @@ pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
         // "the next model down" is exactly the answer the ruling forbids.
         "HIRE_NO_ROUTE" => {
             "nothing offered clears that class at that risk tier: hire a different class, \
-             re-assess the risk, or override deliberately with --model and --because"
+             re-assess the risk, or override deliberately with --override-model and --because"
+        }
+        // The remedy names the failing key, because the whole point of this
+        // code is that the host stops dropping a hire it cannot parse. Before
+        // 2026-08-30 this refusal did not exist and the hire simply vanished
+        // (ledger draft 97); the sentence the host writes carries the key,
+        // and this is what the lead does about it.
+        "HIRE_MALFORMED" => {
+            "the hire's routing did not parse: <key> — run `bee sessions route` and hire again \
+             with the request shape (`bee sessions hire --help`)"
         }
         _ => return None,
     })
@@ -1930,8 +1939,15 @@ pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
 /// test: the relay validates 44221 with `deny_unknown_fields`, so a key more or
 /// a key fewer is not a lint, it is a rejected request.
 ///
-/// `routing` is the one additive key (Brian's ruling of 2026-08-30). It is
-/// omitted entirely — never written as an explicit `null` — when nothing
+/// `routing` is the one additive key (Brian's ruling of 2026-08-30), and it is
+/// a [`HireRoutingRequest`](buzz_core::coding_session_routing::HireRoutingRequest)
+/// — the *question* — not the routing record. The host routes, because only
+/// the host can see its own live kind:44222 catalog. Emitting the record here
+/// is exactly the 2026-08-30 09:52 failure: the desktop host's parser accepted
+/// only the request, so a hire the relay had accepted was classified malformed
+/// and dropped with no answer at all (ledger draft 97).
+///
+/// It is omitted entirely — never written as an explicit `null` — when nothing
 /// routed, so an unrouted hire is byte-identical to the seven-key form that
 /// shipped before the router existed.
 #[allow(clippy::too_many_arguments)]
@@ -1943,7 +1959,7 @@ pub fn hire_payload(
     provider_instance_ref: Option<&str>,
     model: Option<&str>,
     brief: &str,
-    routing: Option<buzz_core::coding_session_routing::Routing>,
+    routing: Option<buzz_core::coding_session_routing::HireRoutingRequest>,
 ) -> buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
     buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
         schema:

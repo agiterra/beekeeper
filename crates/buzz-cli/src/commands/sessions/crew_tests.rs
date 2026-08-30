@@ -2543,77 +2543,85 @@ fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
     );
 }
 
-/// A routed hire is the same seven keys plus `routing`, in that order, and the
-/// relay's own decoder accepts it. Brian's ruling of 2026-08-30.
+/// A routed hire is the same seven keys plus `routing`, in that order, and
+/// `routing` is the REQUEST — never the record. Brian's ruling of 2026-08-30,
+/// as corrected by the drop of 2026-08-30 09:52 (ledger draft 97).
 #[test]
-fn a_routed_hire_appends_the_routing_record_as_an_eighth_key() {
-    use buzz_core::coding_session_routing::{
-        parse_registry, route, OfferedTarget, Risk, RouteRequest,
-    };
-
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let registry = parse_registry(
-        &std::fs::read_to_string(root.join("team/model-registry.yaml")).expect("read"),
-    )
-    .expect("parse");
-    let fixture: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("testdata/routing/live-catalog-665076ce.json"))
-            .expect("read"),
-    )
-    .expect("json");
-    let offered: Vec<OfferedTarget> = fixture["offered"]
-        .as_array()
-        .expect("offered")
-        .iter()
-        .map(|pair| {
-            OfferedTarget::new(
-                pair["providerInstanceRef"].as_str().expect("provider"),
-                pair["model"].as_str().expect("model"),
-            )
-        })
-        .collect();
-    let decision = route(
-        &registry,
-        &offered,
-        &RouteRequest {
-            class: "builder".to_owned(),
-            risk: Risk {
-                impact: 3,
-                uncertainty: 3,
-                irreversibility: 2,
-            },
-            ..RouteRequest::default()
-        },
-        Some(7),
-    )
-    .expect("a route");
+fn a_routed_hire_appends_the_routing_request_as_an_eighth_key() {
+    use buzz_core::coding_session_routing::{HireRoutingRequest, ProposedRouting, RoutingTarget};
 
     let genesis = "12".repeat(32);
+    let request = HireRoutingRequest {
+        class: "builder".to_owned(),
+        risk: buzz_core::coding_session_routing::Risk {
+            impact: 3,
+            uncertainty: 3,
+            irreversibility: 2,
+        },
+        profile: None,
+        r#override: None,
+        challenger_sample: false,
+        review_flags: Vec::new(),
+        proposed: Some(ProposedRouting {
+            chosen: RoutingTarget {
+                provider: "claude-primary".to_owned(),
+                model: "sonnet".to_owned(),
+                effort: "medium".to_owned(),
+            },
+            runner_up: None,
+            reason: "claude-primary/sonnet cleared the builder gate".to_owned(),
+            registry_version: 1,
+            catalog_revision: Some(7),
+        }),
+    };
+    // No override, so the hire names no target at all: the host routes.
     let payload = hire_payload(
         "hire-3",
         UMBRELLA_HIRE,
         &genesis,
         "builder",
-        Some("claude-primary"),
-        Some("sonnet"),
+        None,
+        None,
         "Rebase the lane.",
-        Some(decision.record.clone()),
+        Some(request),
     );
     let content = serde_json::to_string(&payload).expect("serialize");
     assert!(
         content.contains(r#""brief":"Rebase the lane.","routing":{"class":"builder""#),
         "routing must be the eighth key, after the brief: {content}"
     );
-    // Every key is written, `null` where unanswered, so a strict observer has
-    // one shape to accept rather than a family of them.
-    assert!(content.contains(r#""profile":null"#), "{content}");
-    assert!(content.contains(r#""override":null"#), "{content}");
+    // The request's risk has three factors and no `score`: the product is the
+    // host's arithmetic, and a score a requester sets can disagree with its
+    // own factors.
     assert!(
-        content.contains(
-            r#""chosen":{"provider":"claude-primary","model":"sonnet","effort":"medium"}"#
-        ),
+        content.contains(r#""risk":{"impact":3,"uncertainty":3,"irreversibility":2}"#),
+        "{content}"
+    );
+    // None of the record's keys are at the top of a hire's `routing` — that
+    // exact set is what the desktop host's parser refused in silence for
+    // fifteen minutes. (They are legal *inside* `proposed`, which is why this
+    // reads the object rather than grepping the bytes.)
+    let emitted: serde_json::Value = serde_json::from_str(&content).expect("json");
+    let routing = emitted["action"]["routing"].as_object().expect("routing");
+    for key in [
+        "tier",
+        "chosen",
+        "runnerUp",
+        "reason",
+        "reviewRequired",
+        "reviewReasons",
+        "registryVersion",
+        "catalogRevision",
+        "proposedDisagreement",
+    ] {
+        assert!(
+            !routing.contains_key(key),
+            "a hire must not carry the record's {key:?}: {content}"
+        );
+    }
+    // The requester's own decision rides as `proposed`, clearly nested.
+    assert!(
+        content.contains(r#""proposed":{"chosen":{"provider":"claude-primary""#),
         "{content}"
     );
     // And the relay's own strict decoder accepts it.
@@ -2624,6 +2632,66 @@ fn a_routed_hire_appends_the_routing_record_as_an_eighth_key() {
         .expect("decodes"),
         payload
     );
+}
+
+/// Every request in the shared fixture is one this CLI emits byte-for-byte.
+///
+/// `testdata/routing/hire-request-fixture.json` pins three implementations:
+/// `buzz-core`'s validator, this emitter and the desktop's parser. Reading it
+/// here is what keeps them one contract rather than three that agree today.
+#[test]
+fn the_cli_emits_every_shared_fixture_request_byte_for_byte() {
+    use buzz_core::coding_session_routing::HireRoutingRequest;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    let fixture: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("testdata/routing/hire-request-fixture.json"))
+            .expect("read the shared hire-request fixture"),
+    )
+    .expect("json");
+    let cases = fixture["requests"].as_array().expect("requests");
+    assert_eq!(cases.len(), 3, "the contract names three requests");
+    let genesis = "12".repeat(32);
+    for case in cases {
+        let name = case["name"].as_str().expect("name");
+        let request: HireRoutingRequest = serde_json::from_value(case["routing"].clone())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        // An override is the one thing that writes the hire's top level, and
+        // it writes the override's own model — never the router's pick.
+        let model = request.r#override.as_ref().map(|over| over.model.clone());
+        let payload = hire_payload(
+            "hire-fixture",
+            UMBRELLA_HIRE,
+            &genesis,
+            "builder",
+            model.as_ref().map(|_| "codex-primary"),
+            model.as_deref(),
+            "Rebase the lane.",
+            Some(request.clone()),
+        );
+        let content = serde_json::to_string(&payload).expect("serialize");
+        let decoded =
+            buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                &content,
+            )
+            .unwrap_or_else(|error| panic!("{name}: the relay refuses this hire: {error}"));
+        assert_eq!(decoded, payload, "{name}");
+        // The emitted request is the fixture's, key for key.
+        let emitted: serde_json::Value = serde_json::from_str(&content).expect("json");
+        assert_eq!(emitted["action"]["routing"], case["routing"], "{name}");
+        // And an unrouted hire's top level stays null unless an override
+        // named a target.
+        assert_eq!(
+            emitted["action"]["model"],
+            match &model {
+                Some(model) => serde_json::json!(model),
+                None => serde_json::Value::Null,
+            },
+            "{name}: the top level names a model only for an override"
+        );
+    }
 }
 
 /// The exit-code table `bee sessions hire --help` prints is the one the
@@ -2673,6 +2741,17 @@ fn every_contract_refusal_code_has_a_remedy_this_cli_can_print() {
     assert!(
         !no_route.to_lowercase().contains("next model"),
         "{no_route}"
+    );
+    // The refusal that exists because a hire used to vanish. Its remedy has
+    // to carry two things: the placeholder for the key the host names, and
+    // the command that produces a request shape that parses. Without both, a
+    // lead reads "malformed" and re-sends the identical bytes.
+    let malformed = hire_refusal_remedy("HIRE_MALFORMED").expect("HIRE_MALFORMED has a remedy");
+    assert!(malformed.contains("<key>"), "{malformed}");
+    assert!(malformed.contains("bee sessions route"), "{malformed}");
+    assert!(
+        malformed.contains("bee sessions hire --help"),
+        "{malformed}"
     );
     // An invented code is not known, and the report says nothing rather than
     // guessing a remedy for it.
