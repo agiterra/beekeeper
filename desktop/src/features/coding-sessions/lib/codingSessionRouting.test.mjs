@@ -69,6 +69,17 @@ test("risk is impact × uncertainty × irreversibility, and the tier is the band
   assert.equal(codingSessionRiskTier(model, 125), "deep");
 });
 
+test("a record without extra trait minimums writes profile null", () => {
+  const decision = route();
+  assert.equal(decision.ok, true);
+  assert.equal(Object.hasOwn(decision.record, "profile"), true);
+  assert.equal(decision.record.profile, null);
+
+  const profiled = route({ profile: { verification: 4.7 } });
+  assert.equal(profiled.ok, true);
+  assert.deepEqual(profiled.record.profile, { verification: 4.7 });
+});
+
 test("the router buys exactly three efforts and never xhigh, max or ultra", () => {
   assert.deepEqual(ROUTING_EFFORT_FOR_TIER, {
     fast: "low",

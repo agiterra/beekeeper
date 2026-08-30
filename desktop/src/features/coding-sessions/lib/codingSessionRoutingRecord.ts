@@ -42,10 +42,11 @@ export type CodingSessionRoutingRecord = {
    * Extra trait minimums the lead asked for.
    *
    * `null` — not absent — is what buzz-core and the CLI emit when the lead
-   * asked for none (`Routing::profile` is an `Option` with no
-   * `skip_serializing_if`, `crates/buzz-core/src/coding_session_routing.rs:838`),
-   * so an observer that accepted only an object refused every record the CLI
-   * ever wrote. Absent is accepted too, for a producer that omits it.
+   * asked for none (`RoutingRecord::profile` is an `Option` with no
+   * `skip_serializing_if`, `crates/buzz-core/src/coding_session_routing.rs:937`).
+   * The desktop producer writes the same shape so its create and the
+   * provider-signed 44223 carry byte-identical records. Absent remains accepted
+   * for backward compatibility with records written before item 99.
    */
   profile?: Partial<Record<RoutingTrait, number>> | null;
   chosen: RoutedExecutionTarget;

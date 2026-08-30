@@ -5741,9 +5741,37 @@ written and `bash -n` clean but **was not executed** — that harness needs
       two host-level regression cases (eligible Codex identity wins; Claude-only
       inventory discloses fallback), the existing router suite, TypeScript,
       Biome, and the full desktop unit/DOM suite: **6,923 passed, 0 failed**.
-      **Still owed:** one post-relaunch live verifier hire with both Claude and
-      Codex verifier identities available, then read the create and 44223 from
-      the wire to prove the chosen provider differs from the builder's.
+      **Live accepted at `f5843828`:** in the fresh TestingTeams umbrella
+      `683d55b3-d34e-410d-874a-55f9082d2631`, Helios first hired builder
+      `1ddd35c6…8b5e` onto `claude-primary/sonnet`, then hired verifier
+      `3b6f55c2…7364` onto `codex-primary/gpt-5.6-sol[medium]`, with no model,
+      provider, tier, effort or override on either request. The verifier create
+      `33123d8727cdf3789cb880500f33baf28ce9b41c61994cf8ee0438249483a9e8`
+      records catalog revision 8 and says `failure-mode diversity: the verifier
+      runs on codex, not the builder's claude vendor.` Provider diversity is
+      therefore proven on the wire. The exact create/44223 comparison exposed
+      the separate item 99 defect below.
+
+99. **The verifier create and its provider-signed 44223 disagreed by one null
+    field, so item 97's “exact echo” claim was too strong (2026-08-30).** Helios
+    and the founder independently compared the wire bytes. Verifier create
+    `33123d8727cdf3789cb880500f33baf28ce9b41c61994cf8ee0438249483a9e8`
+    carried a 669-byte routing object with no `profile` key; provider metadata
+    `c6d68ba276cd844826825946970cee3f8747ce2e395e7cceb989950b8932fdc6`,
+    signed by `1958c6c4…b9644`, carried the otherwise identical 684-byte object
+    with `"profile":null` after `risk`. Every substantive value matched, but
+    byte-for-byte equality did not.
+    - **Cause:** the desktop router omitted `profile` when the request had no
+      extra trait minimums (`codingSessionRouting.ts:414`), while Rust's
+      `RoutingRecord::profile` is an `Option` without `skip_serializing_if`
+      (`crates/buzz-core/src/coding_session_routing.rs:937`) and therefore
+      serializes the provider echo as explicit null.
+    - **Fix:** the desktop producer now writes `profile: null` for that case and
+      retains an object when minima exist. The strict reader still accepts an
+      absent key for old records, but new creates and 44223 metadata share the
+      canonical Rust shape. Pinned by a router regression test. **Still owed:**
+      one post-relaunch live routed hire whose create and 44223 routing slices
+      are byte-identical.
 
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
@@ -5791,7 +5819,7 @@ than replace them, and it is not started.
 - ~~**The model picker must not be faked, and the rubric must match it** (Brian's ruling, 2026-08-29 evening, and its amendment)~~ **DONE 2026-08-30 — see §2 item 94:** the alias tables are deleted in the hire host and the create picker (`swat17/no-aliases`), the kind:44222 catalog now carries per-model metadata and is read by `bee sessions catalog` and `bee sessions rubric check` (`swat17/catalog-and-check`), and the lead pack's `choose-model` skill is a versioned rubric naming real catalog ids with four explicit rules for what happens when a new model appears (`swat17/rubric`). An id the catalog does not offer is disclosed and refused, never mapped; a stale rubric is surfaced (check exit 4, Pulse note, Agents badge), never silently patched. **Not proven live** — no seat on this machine could read a real 44222 catalog while the ruling was executed, so the first `bee sessions rubric check` of the next batch is what confirms the eight rows.
 - ~~**Routing — the lead classifies, the router chooses the execution target** (Brian's ruling, 2026-08-30, `review-2026-08-30/routing-spec.md`)~~ **DONE 2026-08-30 — see §2 item 95:** the lead pack no longer names a model anywhere (`swat18/lead-classifies`), `team/model-registry.yaml` plus `bee sessions registry check` / `bee sessions route` land the registry and the router in the crates with `routing` on the 44221 hire/create wire (`swat18/registry`), and the desktop hire host routes and the seat's provenance popover shows the decision (`swat18/router-host`). Gated at `dadcbad2`. **This one redeploys hive** — the relay validates 44221 through `buzz-core` and the schema moved.
 - ~~**Live proof owed: a Keystone hire with `--class builder` at the standard tier whose create carries the routing record.**~~ **DONE 2026-08-30:** Keystone re-ran `review-2026-08-30/brief-routing-proof-lane1.md` unchanged, independently accepted and verified the one-commit lane at `a00554e8b5d4763a132b9181bfa26eec7bbeaeed`, and reported the full hire → host route → create → seat chain on the wire. The later Helios verifier run in §2 item 98 independently proves the create and 44223 now carry the same complete routing record; item 97's persistence/echo acceptance is closed.
-- **Live proof owed from §2 item 98:** after landing and relaunching this fix, have Helios hire a standard-risk verifier while a Claude builder is live and both Claude and Codex verifier identities are available. The create's chosen provider must differ from the builder's, its reason must name failure-mode diversity, and the provider-signed 44223 must echo that exact routing record.
+- ~~**Live proof owed from §2 item 98: cross-provider verifier routing.**~~ **DONE at `f5843828`:** Helios hired a live Claude builder and the host independently chose a Codex verifier; the signed create names failure-mode diversity (item 98). **The exact-echo clause found item 99:** the create omitted `profile` while 44223 wrote `profile:null`. The producer fix is implemented; one post-relaunch byte-identical create/44223 proof remains.
 - **Morning: stop the idle seats in Task Management Goals, fast-forward the live checkout (item 93 changed buzz-core → tauri relaunch), cargo build -p buzz-cli, relaunch.**
 
 **Read §2 item 84 first (2026-08-28 evening).** The designer seat is now

@@ -411,9 +411,13 @@ export function routeCodingSession(
     class: className,
     tier,
     risk: { ...input.risk, score },
-    ...(input.profile && Object.keys(input.profile).length > 0
-      ? { profile: input.profile }
-      : {}),
+    // RoutingRecord::profile is an Option without skip_serializing_if, so the
+    // provider's Rust-signed 44223 writes `null` when no profile was asked for.
+    // Keep the create byte-identical instead of letting JSON.stringify omit it.
+    profile:
+      input.profile && Object.keys(input.profile).length > 0
+        ? input.profile
+        : null,
     chosen,
     runnerUp,
     reason,
