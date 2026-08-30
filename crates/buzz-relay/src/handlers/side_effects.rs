@@ -973,7 +973,8 @@ pub async fn emit_system_message(
 /// second receipt. The receipt is a `kind:40099` system message (the
 /// existing relay-signed-emission pattern) naming exactly the facts a
 /// consumer needs to establish the new canonical head: the genesis, the
-/// accepted transition, its sequence number, its type, and the grantee.
+/// accepted transition, its sequence number, its type, and the grantee. Seat
+/// transition receipts additionally echo their required role.
 async fn handle_coding_session_authority_transition_accepted(
     tenant: &TenantContext,
     event: &Event,
@@ -990,20 +991,18 @@ async fn handle_coding_session_authority_transition_accepted(
     state.invalidate_session_authority_caches();
     state.invalidate_all_accessible_channels(tenant);
 
-    emit_system_message(
-        tenant,
-        state,
-        channel_id,
-        serde_json::json!({
-            "type": "coding_session_authority_transition_accepted",
-            "genesisRef": payload.genesis_ref,
-            "acceptedEventId": event.id.to_hex(),
-            "seq": payload.seq,
-            "transitionType": payload.transition_type,
-            "granteePubkey": payload.grantee_pubkey,
-        }),
-    )
-    .await
+    let mut receipt = serde_json::json!({
+        "type": "coding_session_authority_transition_accepted",
+        "genesisRef": payload.genesis_ref,
+        "acceptedEventId": event.id.to_hex(),
+        "seq": payload.seq,
+        "transitionType": payload.transition_type,
+        "granteePubkey": payload.grantee_pubkey,
+    });
+    if let (Some(object), Some(role)) = (receipt.as_object_mut(), payload.role) {
+        object.insert("role".into(), serde_json::Value::String(role));
+    }
+    emit_system_message(tenant, state, channel_id, receipt).await
 }
 
 /// Sign and fan out a fresh relay-signed `kind:39005` thread-summary overlay

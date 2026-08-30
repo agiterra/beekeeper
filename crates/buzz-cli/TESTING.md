@@ -1608,6 +1608,38 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 68 | `events query` | ☐ | `--kinds` required (verbatim refusal, exit 1); compact row survives non-JSON content; empty result → `[]`, exit 0 |
 | 70 | `sessions hire` (44221 `session.hire`) | ☑ | founder + granted-operator accepted, stranger and unknown-umbrella refused by the relay, host `created` (exit 0) and `refused`/HIRE_OFF (exit 1), `--no-wait` unconfirmed (exit 5). Open: the `failed`/`seating` outcomes and the old-relay sentence |
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
+| 71 | `sessions assign/report/verdict/acknowledge/complete/block` | ☐ | Body accepts inline JSON, `@path`, or stdin; malformed/wrong-operation body is refused before write; `complete` refuses without an acknowledged approving disposition |
+| 72 | `sessions operation get/list` | ☐ | Exact `h`/`d`/genesis scope; signed provenance retained; exclusions, conflicts, settlement and canonical terminal disclosed |
+| 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; shared `deliveryCommandId`; failed wake leaves stored operation visible and delivery unconfirmed |
+
+---
+
+## Signed team transactions (kind 44244)
+
+Operation bodies are the exact NIP-CSTX `body` object, not free-form prose:
+
+```bash
+bee sessions assign --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS" --body @assignment.json --wake-to builder
+
+bee sessions operation list --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS"
+```
+
+Use `--wake-to` only when a provider execution should be notified. The CLI
+stores the signed 44244 first, then sends a kind 44220 pointer. The pointer is
+not the assignment: recipients fetch and verify the operation named by its
+`operationId`. `--delivery-command-id` may preselect the shared correlation id;
+otherwise `--wake-to` mints one and writes it into both records.
+
+The CLI verifies the genesis founder, every transaction signature, the relay's
+NIP-11 `self` identity, and every kind-40099 receipt backing the contiguous
+accepted kind-44228 authority chain. Receipt and transition id/genesis/seq/type/
+grantee/role facts must agree exactly. Active operator grants and
+`grant-seat`/`revoke-seat` role seats populate the fold context; raw
+unreceipted transitions and lifecycle kind 44221/44223 data never substitute
+for authority. A missing accepted seat grant remains visibly unauthorized.
+Host-side automatic seat grant after hire is not part of this slice.
 
 ---
 

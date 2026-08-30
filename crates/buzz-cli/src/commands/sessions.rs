@@ -63,6 +63,7 @@ pub mod crew_cmds;
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
+pub mod operations;
 pub mod registry;
 pub mod route;
 
@@ -1924,7 +1925,7 @@ pub struct AuthorityReceipt {
     pub accepted_event_id: String,
     /// The chain's sequence number this receipt confirms.
     pub seq: u32,
-    /// Transition type (`grant-operator` | `grant-viewer` | `revoke`).
+    /// Transition type. Unknown/additive types still advance the accepted head.
     pub transition_type: String,
     /// The pubkey the transition targeted.
     pub grantee_pubkey: String,
@@ -2295,6 +2296,43 @@ pub async fn dispatch(
         SessionsCmd::Roster { channel, genesis } => {
             cmd_authority_roster(client, &channel, &genesis).await
         }
+        SessionsCmd::Assign(args) => operations::cmd_write(
+            client,
+            args,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Assignment,
+        )
+        .await,
+        SessionsCmd::Report(args) => operations::cmd_write(
+            client,
+            args,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Report,
+        )
+        .await,
+        SessionsCmd::Verdict(args) => operations::cmd_write(
+            client,
+            args,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Verdict,
+        )
+        .await,
+        SessionsCmd::Acknowledge(args) => operations::cmd_write(
+            client,
+            args,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::Acknowledgement,
+        )
+        .await,
+        SessionsCmd::Complete(args) => operations::cmd_write(
+            client,
+            args,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::MissionCompleted,
+        )
+        .await,
+        SessionsCmd::Block(args) => operations::cmd_write(
+            client,
+            args,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::MissionBlocked,
+        )
+        .await,
+        SessionsCmd::Operation(cmd) => operations::cmd_read(client, cmd).await,
         SessionsCmd::Send {
             channel,
             to,
@@ -4023,6 +4061,39 @@ mod tests {
         assert_eq!(state.grants.len(), 1);
         assert_eq!(
             state.grants.get(&bob).map(String::as_str),
+            Some("collaborator")
+        );
+    }
+
+    #[test]
+    fn legacy_authority_reader_advances_past_additive_seat_links() {
+        let genesis = "a".repeat(64);
+        let actor = "c".repeat(64);
+        let seat_receipt = json!({
+            "id": "receipt-1",
+            "kind": 40099,
+            "content": json!({
+                "type": "coding_session_authority_transition_accepted",
+                "genesisRef": genesis,
+                "acceptedEventId": "1".repeat(64),
+                "seq": 1,
+                "transitionType": "grant-seat",
+                "granteePubkey": actor,
+                "role": "verifier",
+            }).to_string(),
+        });
+        let events = vec![
+            seat_receipt,
+            receipt_event_40099(&genesis, &"2".repeat(64), 2, "grant-operator", &actor),
+        ];
+        let state = fold_authority_receipts(decode_authority_receipts(&events, &genesis));
+        assert_eq!(state.head_seq, 2);
+        assert_eq!(
+            state.head_event_id.as_deref(),
+            Some("2".repeat(64).as_str())
+        );
+        assert_eq!(
+            state.grants.get(&actor).map(String::as_str),
             Some("collaborator")
         );
     }

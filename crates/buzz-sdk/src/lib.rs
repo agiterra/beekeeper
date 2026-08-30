@@ -14,6 +14,7 @@
 
 pub mod builders;
 pub mod coding_session;
+pub mod coding_session_team_transaction;
 pub mod mentions;
 pub mod nip_oa;
 

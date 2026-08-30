@@ -1,0 +1,347 @@
+use buzz_core::coding_session_authority_transition::{
+    CodingSessionAuthorityTransitionPayload, CodingSessionAuthorityTransitionType,
+    CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+};
+use buzz_core::coding_session_team_transaction::{
+    CodingSessionTeamAssignment, CodingSessionTeamTransactionBody,
+};
+use buzz_core::kind::{
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_SYSTEM_MESSAGE,
+};
+use buzz_sdk::coding_session_team_transaction::{
+    build_coding_session_team_transaction, coding_session_team_transaction_payload,
+};
+use nostr::{Event, EventBuilder, Keys, Kind, Tag, Timestamp};
+use serde_json::{json, Value};
+
+use super::*;
+
+const CHANNEL: &str = "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86";
+const SESSION: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const GENESIS: &str = "abababababababababababababababababababababababababababababababab";
+
+fn authority_event(
+    signer: &Keys,
+    transition_type: CodingSessionAuthorityTransitionType,
+    grantee: &str,
+    seq: u32,
+    previous: Option<&Event>,
+    role: Option<&str>,
+) -> Event {
+    let payload = match transition_type {
+        CodingSessionAuthorityTransitionType::GrantSeat => {
+            CodingSessionAuthorityTransitionPayload::new_grant_seat(
+                GENESIS,
+                previous.map(|event| event.id.to_hex()),
+                seq,
+                grantee,
+                role.expect("seat role"),
+            )
+        }
+        CodingSessionAuthorityTransitionType::RevokeSeat => {
+            CodingSessionAuthorityTransitionPayload::new_revoke_seat(
+                GENESIS,
+                previous.map(|event| event.id.to_hex()),
+                seq,
+                grantee,
+                role.expect("seat role"),
+            )
+        }
+        _ => CodingSessionAuthorityTransitionPayload::new(
+            transition_type,
+            GENESIS,
+            previous.map(|event| event.id.to_hex()),
+            seq,
+            grantee,
+        ),
+    };
+    EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        serde_json::to_string(&payload).expect("payload"),
+    )
+    .tags([
+        Tag::parse(["h", CHANNEL]).expect("h"),
+        Tag::parse(["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION]).expect("version"),
+        Tag::parse(["csat-genesis", GENESIS]).expect("genesis"),
+    ])
+    .sign_with_keys(signer)
+    .expect("transition")
+}
+
+fn receipt_value(transition: &Event) -> Value {
+    let payload = decode_coding_session_authority_transition(&transition.content)
+        .expect("transition payload");
+    let mut content = json!({
+        "type": AUTHORITY_ACCEPTANCE_RECEIPT_TYPE,
+        "genesisRef": payload.genesis_ref,
+        "acceptedEventId": transition.id.to_hex(),
+        "seq": payload.seq,
+        "transitionType": payload.transition_type,
+        "granteePubkey": payload.grantee_pubkey,
+    });
+    if let (Some(object), Some(role)) = (content.as_object_mut(), payload.role) {
+        object.insert("role".into(), Value::String(role));
+    }
+    content
+}
+
+fn receipt_event(content: Value, relay: &Keys, created_at: u64) -> Event {
+    EventBuilder::new(
+        Kind::Custom(KIND_SYSTEM_MESSAGE as u16),
+        content.to_string(),
+    )
+    .tags([Tag::parse(["h", CHANNEL]).expect("h")])
+    .custom_created_at(Timestamp::from(created_at))
+    .sign_with_keys(relay)
+    .expect("receipt")
+}
+
+fn assignment_event(genesis: &str) -> Event {
+    let body = CodingSessionTeamTransactionBody::Assignment(CodingSessionTeamAssignment {
+        assignee_actor: "cd".repeat(32),
+        assignee_role: "builder".into(),
+        objective: "Implement the slice".into(),
+        brief: "Use the exact signed context.".into(),
+        branch: None,
+        base_sha: None,
+        file_ownership: vec![],
+        acceptance_steps: vec!["cargo test -p buzz-cli".into()],
+    });
+    let payload = coding_session_team_transaction_payload(SESSION, genesis, None, None, body);
+    build_coding_session_team_transaction(CHANNEL, payload)
+        .expect("builder")
+        .sign_with_keys(&Keys::generate())
+        .expect("assignment")
+}
+
+#[test]
+fn transaction_query_and_defense_filter_pin_exact_genesis() {
+    assert_eq!(
+        transaction_query_filter(CHANNEL, SESSION, GENESIS),
+        json!({
+            "kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION],
+            "#h": [CHANNEL],
+            "#d": [SESSION],
+            "#cstx-genesis": [GENESIS],
+        })
+    );
+    let requested = assignment_event(GENESIS);
+    let poison = assignment_event(&"99".repeat(32));
+    let requested_value = serde_json::to_value(&requested).expect("event JSON");
+    let poison_value = serde_json::to_value(&poison).expect("event JSON");
+    assert!(transaction_value_matches_context(
+        &requested_value,
+        CHANNEL,
+        SESSION,
+        GENESIS,
+    ));
+    assert!(!transaction_value_matches_context(
+        &poison_value,
+        CHANNEL,
+        SESSION,
+        GENESIS,
+    ));
+    assert!(transaction_matches_context(
+        &requested, CHANNEL, SESSION, GENESIS
+    ));
+    assert!(!transaction_matches_context(
+        &poison, CHANNEL, SESSION, GENESIS
+    ));
+}
+
+#[test]
+fn only_receipt_backed_transitions_project_authority() {
+    let founder = Keys::generate();
+    let operator = Keys::generate().public_key().to_hex();
+    let transition = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantOperator,
+        &operator,
+        1,
+        None,
+        None,
+    );
+    let relay = Keys::generate();
+    let empty = project_receipt_backed_authority_chain(
+        std::slice::from_ref(&transition),
+        &[],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .expect("raw unaccepted transition is ignored");
+    assert!(empty.grants.is_empty());
+
+    let receipt = receipt_event(receipt_value(&transition), &relay, 1_700_000_001);
+    let projected = project_receipt_backed_authority_chain(
+        &[transition],
+        &[receipt],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .expect("accepted grant");
+    assert!(projected
+        .grants
+        .iter()
+        .any(|grant| grant.actor_pubkey == operator && grant.may_steer));
+}
+
+#[test]
+fn forged_or_wrong_relay_receipts_are_rejected() {
+    let founder = Keys::generate();
+    let transition = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantOperator,
+        &Keys::generate().public_key().to_hex(),
+        1,
+        None,
+        None,
+    );
+    let relay = Keys::generate();
+    let impostor = Keys::generate();
+    let wrong_signer = receipt_event(receipt_value(&transition), &impostor, 1_700_000_001);
+    assert!(project_receipt_backed_authority_chain(
+        std::slice::from_ref(&transition),
+        &[wrong_signer],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .is_err());
+
+    let valid = receipt_event(receipt_value(&transition), &relay, 1_700_000_002);
+    let mut forged_json = serde_json::to_value(valid).expect("event JSON");
+    let mut forged_content: Value =
+        serde_json::from_str(forged_json["content"].as_str().expect("receipt content"))
+            .expect("receipt JSON");
+    forged_content["granteePubkey"] = Value::String("99".repeat(32));
+    forged_json["content"] = Value::String(forged_content.to_string());
+    let forged: Event = serde_json::from_value(forged_json).expect("forged event shape");
+    assert!(project_receipt_backed_authority_chain(
+        &[transition],
+        &[forged],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .is_err());
+}
+
+#[test]
+fn receipt_cannot_activate_a_transition_with_an_invalid_signature() {
+    let founder = Keys::generate();
+    let transition = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantOperator,
+        &Keys::generate().public_key().to_hex(),
+        1,
+        None,
+        None,
+    );
+    let relay = Keys::generate();
+    let receipt = receipt_event(receipt_value(&transition), &relay, 1_700_000_003);
+    let mut forged_json = serde_json::to_value(transition).expect("event JSON");
+    let mut forged_content: Value =
+        serde_json::from_str(forged_json["content"].as_str().expect("transition content"))
+            .expect("transition JSON");
+    forged_content["granteePubkey"] = Value::String("99".repeat(32));
+    forged_json["content"] = Value::String(forged_content.to_string());
+    let forged_transition: Event =
+        serde_json::from_value(forged_json).expect("forged transition shape");
+    assert!(project_receipt_backed_authority_chain(
+        &[forged_transition],
+        &[receipt],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .is_err());
+}
+
+#[test]
+fn mismatched_receipt_facts_are_rejected() {
+    let founder = Keys::generate();
+    let worker = Keys::generate().public_key().to_hex();
+    let transition = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantSeat,
+        &worker,
+        1,
+        None,
+        Some("verifier"),
+    );
+    let relay = Keys::generate();
+    for (index, mutate) in ["id", "role", "type"].into_iter().enumerate() {
+        let mut content = receipt_value(&transition);
+        match mutate {
+            "id" => content["acceptedEventId"] = Value::String("99".repeat(32)),
+            "role" => content["role"] = Value::String("builder".into()),
+            "type" => content["transitionType"] = Value::String("revoke-seat".into()),
+            _ => unreachable!(),
+        }
+        let receipt = receipt_event(content, &relay, 1_700_000_010 + index as u64);
+        assert!(
+            project_receipt_backed_authority_chain(
+                std::slice::from_ref(&transition),
+                &[receipt],
+                CHANNEL,
+                GENESIS,
+                &founder.public_key().to_hex(),
+                &relay.public_key().to_hex(),
+            )
+            .is_err(),
+            "{mutate} mismatch must fail"
+        );
+    }
+}
+
+#[test]
+fn gaps_and_duplicate_conflicts_are_rejected() {
+    let founder = Keys::generate();
+    let first = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantOperator,
+        &Keys::generate().public_key().to_hex(),
+        1,
+        None,
+        None,
+    );
+    let second = authority_event(
+        &founder,
+        CodingSessionAuthorityTransitionType::GrantViewer,
+        &Keys::generate().public_key().to_hex(),
+        2,
+        Some(&first),
+        None,
+    );
+    let relay = Keys::generate();
+    let second_receipt = receipt_event(receipt_value(&second), &relay, 1_700_000_020);
+    assert!(project_receipt_backed_authority_chain(
+        &[first.clone(), second.clone()],
+        &[second_receipt],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .is_err());
+
+    let first_receipt = receipt_event(receipt_value(&first), &relay, 1_700_000_021);
+    let duplicate = receipt_event(receipt_value(&first), &relay, 1_700_000_022);
+    assert!(project_receipt_backed_authority_chain(
+        &[first, second],
+        &[first_receipt, duplicate],
+        CHANNEL,
+        GENESIS,
+        &founder.public_key().to_hex(),
+        &relay.public_key().to_hex(),
+    )
+    .is_err());
+}

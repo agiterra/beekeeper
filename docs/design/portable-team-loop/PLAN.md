@@ -235,7 +235,12 @@ bee sessions operation get|list
 
 `complete` refuses when referenced assignments lack an acknowledged approving
 verdict. Provider inbox context carries only operation ID/type; full records are
-fetched from the signed session.
+fetched from the signed session. Operation authority is projected from the
+accepted NIP-CSAT chain: additive `grant-seat`/`revoke-seat` links carry the
+exact normalized role, while the existing operator grant supplies
+`may_steer`. Lifecycle metadata never substitutes for a missing signed seat
+grant. Automatic host seat grant after a successful hire is a later provider
+slice; until then a missing grant is disclosed as unauthorized.
 
 ### Stage 3 — Parallel Mission UI
 

@@ -2415,6 +2415,21 @@ pub enum SessionsCmd {
         #[arg(long)]
         genesis: String,
     },
+    /// Publish a signed team assignment (kind 44244).
+    Assign(TeamTransactionWriteArgs),
+    /// Publish a signed assignment report (kind 44244).
+    Report(TeamTransactionWriteArgs),
+    /// Publish a signed refutation or disposition (kind 44244).
+    Verdict(TeamTransactionWriteArgs),
+    /// Acknowledge receipt of a governing disposition (kind 44244).
+    Acknowledge(TeamTransactionWriteArgs),
+    /// Publish mission completion after locally verifying every approval chain.
+    Complete(TeamTransactionWriteArgs),
+    /// Publish an explicit terminal blocker (kind 44244).
+    Block(TeamTransactionWriteArgs),
+    /// Read signed team operations and their deterministic fold.
+    #[command(subcommand)]
+    Operation(TeamOperationCmd),
     /// Send a turn to a coding-session execution (kind 44220).
     ///
     /// `--to` names one execution three ways, tried in that order: an exact
@@ -2814,6 +2829,64 @@ pub enum SessionsCmd {
         /// exists so a caller that habitually passes it is not refused.
         #[arg(long = "dry-run")]
         dry_run: bool,
+    },
+}
+
+/// Common envelope and JSON-body input for one typed team transaction.
+#[derive(clap::Args, Clone)]
+pub struct TeamTransactionWriteArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id.
+    #[arg(long)]
+    pub genesis: String,
+    /// Exact operation body as JSON, `@path`, or `-` for stdin.
+    #[arg(long)]
+    pub body: String,
+    /// Same-author correction event id; never a causal workflow reference.
+    #[arg(long)]
+    pub supersedes: Option<String>,
+    /// Existing 44220 command id used to correlate provider delivery.
+    #[arg(long = "delivery-command-id")]
+    pub delivery_command_id: Option<String>,
+    /// Execution target or role to wake after the transaction is stored.
+    #[arg(long = "wake-to")]
+    pub wake_to: Option<String>,
+}
+
+/// Signed team-operation read commands.
+#[derive(Subcommand)]
+pub enum TeamOperationCmd {
+    /// Fetch one signed operation plus its canonical fold status.
+    Get {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id.
+        #[arg(long)]
+        genesis: String,
+        /// Exact operation event id.
+        #[arg(long)]
+        id: String,
+    },
+    /// List signed operations with exclusions, conflicts, and terminal state.
+    List {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id.
+        #[arg(long)]
+        genesis: String,
     },
 }
 
@@ -3517,7 +3590,11 @@ mod tests {
         assert_eq!(
             names(&cmd, "sessions"),
             vec![
+                "acknowledge",
+                "assign",
+                "block",
                 "catalog",
+                "complete",
                 "create",
                 "doctor",
                 "export",
@@ -3525,14 +3602,17 @@ mod tests {
                 "hire",
                 "inbox",
                 "list",
+                "operation",
                 "registry",
+                "report",
                 "revoke",
                 "roster",
                 "route",
                 "send",
                 "status",
                 "tools",
-                "transcript"
+                "transcript",
+                "verdict"
             ]
         );
         assert_eq!(
@@ -3576,7 +3656,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 16),
+            ("sessions", 23),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

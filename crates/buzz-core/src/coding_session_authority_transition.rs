@@ -5,11 +5,12 @@
 //! authority chain — the sequence of decisions about who may steer a session
 //! after its [`crate::coding_session_genesis`] founded it.
 //!
-//! # Three transition types today
+//! # Closed transition types today
 //!
-//! `grant-operator`, `grant-viewer`, and `revoke` are implemented — see
-//! [`CodingSessionAuthorityTransitionType`]. The type is carried as a string
-//! enum precisely so further types (`transfer`, `takeover`) are additive
+//! `grant-operator`, `grant-viewer`, `revoke`, `grant-seat`, and `revoke-seat`
+//! are implemented — see [`CodingSessionAuthorityTransitionType`]. The type
+//! is carried as a string enum precisely so further types (`transfer`,
+//! `takeover`) are additive
 //! later: adding a variant does not change the shape of an existing,
 //! already-signed transition, and a relay that only understands the current
 //! set correctly rejects any other value as unknown rather than guessing at
@@ -17,13 +18,14 @@
 //!
 //! # The chain, not just the link
 //!
-//! A transition's content is exactly five fields: `genesisRef` (the session's
+//! A legacy grant transition's content is exactly five fields: `genesisRef` (the session's
 //! genesis event id — never a `sessionRef` label, for the same reason genesis
 //! itself is resolved only by id, see the module doc on
 //! [`crate::coding_session_genesis`]), `prevAccepted` (the previous accepted
 //! transition's event id, or `null` for the chain's first link), `seq` (a
 //! sequence number starting at 1 and incrementing by exactly one per accepted
-//! transition), `type`, and `granteePubkey`.
+//! transition), `type`, and `granteePubkey`. Seat transitions add the one
+//! required `role` field; legacy payloads keep their original exact shape.
 //!
 //! This module validates a transition's *self-consistency* only — that its
 //! fields are well-formed and that `seq`/`prevAccepted` agree with each other
@@ -50,9 +52,10 @@ use serde_json::Value;
 pub const CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION: &str = "csat1-1";
 /// Maximum UTF-8 byte length for the complete signed event content.
 ///
-/// Content is five fixed fields, the largest realistic encoding (two 64-hex
-/// event ids, a small integer, the longest transition type, and a 64-hex
-/// pubkey) totalling well under 300 bytes — the same "no room to grow"
+/// Content is five fixed fields for legacy transitions and six for seat
+/// transitions. The largest realistic encoding (two 64-hex event ids, a small
+/// integer, the longest transition type, a 64-hex pubkey, and a role slug)
+/// totals well under 400 bytes — the same "no room to grow"
 /// reasoning as genesis's content ceiling.
 pub const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES: usize = 512;
 
@@ -73,6 +76,10 @@ pub enum CodingSessionAuthorityTransitionType {
     /// holds. The relay refuses a revoke naming a pubkey with no live grant —
     /// a no-op link would burn a `seq` for nothing.
     Revoke,
+    /// Grants one actor an authoritative team role seat.
+    GrantSeat,
+    /// Revokes one actor's exact authoritative team role seat.
+    RevokeSeat,
 }
 
 /// Durable coding-session authority-transition JSON payload.
@@ -98,6 +105,9 @@ pub struct CodingSessionAuthorityTransitionPayload {
     /// Pubkey (64-character lowercase hex) this transition targets: the
     /// grantee for `grant-*`, the pubkey losing its grant for `revoke`.
     pub grantee_pubkey: String,
+    /// Required normalized role for seat transitions; absent on legacy grant transitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 impl CodingSessionAuthorityTransitionPayload {
@@ -115,6 +125,43 @@ impl CodingSessionAuthorityTransitionPayload {
             seq,
             transition_type,
             grantee_pubkey: grantee_pubkey.into(),
+            role: None,
+        }
+    }
+
+    /// Build an authoritative role-seat grant.
+    pub fn new_grant_seat(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_pubkey: impl Into<String>,
+        role: impl Into<String>,
+    ) -> Self {
+        Self {
+            transition_type: CodingSessionAuthorityTransitionType::GrantSeat,
+            genesis_ref: genesis_ref.into(),
+            prev_accepted,
+            seq,
+            grantee_pubkey: grantee_pubkey.into(),
+            role: Some(role.into()),
+        }
+    }
+
+    /// Build an authoritative role-seat revocation.
+    pub fn new_revoke_seat(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_pubkey: impl Into<String>,
+        role: impl Into<String>,
+    ) -> Self {
+        Self {
+            transition_type: CodingSessionAuthorityTransitionType::RevokeSeat,
+            genesis_ref: genesis_ref.into(),
+            prev_accepted,
+            seq,
+            grantee_pubkey: grantee_pubkey.into(),
+            role: Some(role.into()),
         }
     }
 
@@ -155,6 +202,24 @@ impl CodingSessionAuthorityTransitionPayload {
             return Err("seq must be exactly 1 if and only if prevAccepted is null".into());
         }
         validate_event_id_hex("granteePubkey", &self.grantee_pubkey)?;
+        match self.transition_type {
+            CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat => {
+                let role = self
+                    .role
+                    .as_deref()
+                    .ok_or_else(|| "seat transition requires role".to_owned())?;
+                crate::coding_session_lifecycle_command::validate_role_slug(role)
+                    .map_err(|error| error.replace("action.role", "role"))?;
+            }
+            CodingSessionAuthorityTransitionType::GrantOperator
+            | CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke => {
+                if self.role.is_some() {
+                    return Err("non-seat authority transition must not carry role".into());
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -176,9 +241,10 @@ fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
 
 /// Strictly decode and validate signed authority-transition content.
 ///
-/// Exactly one shape is accepted: `{genesisRef, prevAccepted, seq, type,
-/// granteePubkey}` — nothing between, nothing beyond, and `prevAccepted`'s
-/// key must be present even though its value may be `null`. A `type` value
+/// Legacy transitions accept exactly `{genesisRef, prevAccepted, seq, type,
+/// granteePubkey}`; seat transitions accept exactly those keys plus required
+/// `role`. Nothing between or beyond is accepted, and `prevAccepted`'s key
+/// must be present even though its value may be `null`. A `type` value
 /// outside the pinned [`CodingSessionAuthorityTransitionType`] vocabulary
 /// fails to decode and is rejected the same as any other malformed field.
 pub fn decode_coding_session_authority_transition(
@@ -196,9 +262,22 @@ pub fn decode_coding_session_authority_transition(
         "coding-session authority-transition payload must be an object".to_string()
     })?;
 
-    const EXPECTED: [&str; 5] = ["genesisRef", "prevAccepted", "seq", "type", "granteePubkey"];
-    let complete = EXPECTED.iter().all(|key| object.contains_key(*key));
-    let recognized = object.keys().all(|key| EXPECTED.contains(&key.as_str()));
+    const LEGACY_EXPECTED: [&str; 5] =
+        ["genesisRef", "prevAccepted", "seq", "type", "granteePubkey"];
+    const SEAT_EXPECTED: [&str; 6] = [
+        "genesisRef",
+        "prevAccepted",
+        "seq",
+        "type",
+        "granteePubkey",
+        "role",
+    ];
+    let expected: &[&str] = match object.get("type").and_then(Value::as_str) {
+        Some("grant-seat" | "revoke-seat") => &SEAT_EXPECTED,
+        _ => &LEGACY_EXPECTED,
+    };
+    let complete = expected.iter().all(|key| object.contains_key(*key));
+    let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     if !complete || !recognized {
         return Err(
             "coding-session authority-transition payload has missing or unsupported fields".into(),
@@ -400,6 +479,58 @@ mod tests {
             let payload = decode_coding_session_authority_transition(&content)
                 .unwrap_or_else(|e| panic!("type {name} should decode: {e}"));
             assert_eq!(payload.transition_type, expected);
+        }
+
+        for (name, expected) in [
+            (
+                "grant-seat",
+                CodingSessionAuthorityTransitionType::GrantSeat,
+            ),
+            (
+                "revoke-seat",
+                CodingSessionAuthorityTransitionType::RevokeSeat,
+            ),
+        ] {
+            let content = format!(
+                r#"{{"genesisRef":"{genesis_ref}","prevAccepted":null,"seq":1,"type":"{name}","granteePubkey":"{grantee}","role":"active-verifier"}}"#
+            );
+            let payload = decode_coding_session_authority_transition(&content)
+                .unwrap_or_else(|e| panic!("type {name} should decode: {e}"));
+            assert_eq!(payload.transition_type, expected);
+            assert_eq!(payload.role.as_deref(), Some("active-verifier"));
+        }
+    }
+
+    #[test]
+    fn seat_shapes_are_exact_and_legacy_shapes_remain_unchanged() {
+        let genesis_ref = event_id_hex("ab");
+        let grantee = event_id_hex("cd");
+        let seat = format!(
+            r#"{{"genesisRef":"{genesis_ref}","prevAccepted":null,"seq":1,"type":"grant-seat","granteePubkey":"{grantee}","role":"verifier"}}"#
+        );
+        assert!(decode_coding_session_authority_transition(&seat).is_ok());
+
+        let mut missing_role: Value = serde_json::from_str(&seat).unwrap();
+        missing_role.as_object_mut().unwrap().remove("role");
+        assert!(decode_coding_session_authority_transition(&missing_role.to_string()).is_err());
+
+        let mut extra: Value = serde_json::from_str(&seat).unwrap();
+        extra["note"] = Value::String("smuggled".into());
+        assert!(decode_coding_session_authority_transition(&extra.to_string()).is_err());
+
+        let legacy_with_role = format!(
+            r#"{{"genesisRef":"{genesis_ref}","prevAccepted":null,"seq":1,"type":"grant-operator","granteePubkey":"{grantee}","role":"lead"}}"#
+        );
+        assert!(decode_coding_session_authority_transition(&legacy_with_role).is_err());
+
+        for role in ["Lead", "active_verifier", "", "lead role"] {
+            let invalid = format!(
+                r#"{{"genesisRef":"{genesis_ref}","prevAccepted":null,"seq":1,"type":"grant-seat","granteePubkey":"{grantee}","role":"{role}"}}"#
+            );
+            assert!(
+                decode_coding_session_authority_transition(&invalid).is_err(),
+                "role {role:?} must be rejected"
+            );
         }
     }
 

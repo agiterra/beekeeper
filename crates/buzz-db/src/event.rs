@@ -2432,6 +2432,17 @@ pub enum AuthorityTransitionRefusal {
     /// chain — a no-op link would burn a `seq` for nothing, so it is refused
     /// rather than accepted-and-ignored.
     NoSuchGrant,
+    /// Seat transition signer is neither founder, active operator, nor an
+    /// active lead acting within the subordinate-seat boundary.
+    SignerNotAuthorized,
+    /// A lead attempted to mint or revoke lead authority.
+    LeadCannotManageLead,
+    /// A seat grant attempted to appoint its own signer.
+    SelfNomination,
+    /// A seat revocation named no active seat for the actor.
+    NoSuchSeat,
+    /// A seat revocation's role did not match the actor's active role.
+    SeatRoleMismatch,
 }
 
 /// Outcome of an attempted coding-session authority-transition (kind 44228)
@@ -2522,6 +2533,7 @@ struct StoredAuthorityTransition {
     seq: u32,
     transition_type: CodingSessionAuthorityTransitionType,
     grantee_pubkey: String,
+    role: Option<String>,
 }
 
 /// Fold accepted transitions (already sorted or not — sorted here) up to but
@@ -2546,9 +2558,39 @@ fn fold_authority_grants(
             CodingSessionAuthorityTransitionType::Revoke => {
                 grants.remove(&t.grantee_pubkey);
             }
+            CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
         }
     }
     grants
+}
+
+fn fold_authority_seats(
+    transitions: &[StoredAuthorityTransition],
+    before_seq: u32,
+) -> std::collections::HashMap<String, String> {
+    let mut ordered: Vec<&StoredAuthorityTransition> = transitions
+        .iter()
+        .filter(|transition| transition.seq < before_seq)
+        .collect();
+    ordered.sort_by_key(|transition| transition.seq);
+    let mut seats = std::collections::HashMap::new();
+    for transition in ordered {
+        match transition.transition_type {
+            CodingSessionAuthorityTransitionType::GrantSeat => {
+                if let Some(role) = &transition.role {
+                    seats.insert(transition.grantee_pubkey.clone(), role.clone());
+                }
+            }
+            CodingSessionAuthorityTransitionType::RevokeSeat => {
+                seats.remove(&transition.grantee_pubkey);
+            }
+            CodingSessionAuthorityTransitionType::GrantOperator
+            | CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke => {}
+        }
+    }
+    seats
 }
 
 /// Every already-stored authority transition for `genesis_ref` in this
@@ -2596,6 +2638,7 @@ async fn stored_authority_transitions_tx(
                 seq: payload.seq,
                 transition_type: payload.transition_type,
                 grantee_pubkey: payload.grantee_pubkey,
+                role: payload.role,
             })
         })
         .collect())
@@ -2635,9 +2678,8 @@ pub async fn insert_coding_session_authority_transition_event(
     let genesis_ref = coding_session_authority_transition_genesis_ref(event)?.to_owned();
     let payload =
         decode_coding_session_authority_transition(&event.content).map_err(DbError::InvalidData)?;
-    // All three pinned transition types are chain links with identical
-    // envelope/authorization rules; their per-type meaning is applied to the
-    // grant ACL below, after the chain checks pass.
+    // Every pinned transition type is a chain link with the same envelope and
+    // linkage rules. Signer standing and per-type meaning are applied below.
 
     let lock_key = coding_session_authority_lock_key(community_id, channel_id, &genesis_ref);
     let id_bytes = event.id.as_bytes();
@@ -2697,10 +2739,45 @@ pub async fn insert_coding_session_authority_transition_event(
     }
 
     let owner_pubkey = current_coding_session_authority_owner(&genesis_event);
-    if event.pubkey.as_bytes() != owner_pubkey.as_slice() {
+    let signer_hex = event.pubkey.to_hex();
+    let grants_before = fold_authority_grants(&others, payload.seq);
+    let seats_before = fold_authority_seats(&others, payload.seq);
+    let signer_is_owner = event.pubkey.as_bytes() == owner_pubkey.as_slice();
+    let signer_is_operator = grants_before.get(&signer_hex) == Some(&"operator");
+    let signer_is_lead = seats_before.get(&signer_hex).map(String::as_str) == Some("lead");
+    let is_seat_transition = matches!(
+        payload.transition_type,
+        CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+    );
+    if !is_seat_transition && !signer_is_owner {
         tx.rollback().await?;
         return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
             refusal: AuthorityTransitionRefusal::SignerNotOwner { owner_pubkey },
+        });
+    }
+    if is_seat_transition && !(signer_is_owner || signer_is_operator || signer_is_lead) {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::SignerNotAuthorized,
+        });
+    }
+    if payload.transition_type == CodingSessionAuthorityTransitionType::GrantSeat
+        && payload.grantee_pubkey == signer_hex
+    {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::SelfNomination,
+        });
+    }
+    if signer_is_lead
+        && !signer_is_owner
+        && !signer_is_operator
+        && payload.role.as_deref() == Some("lead")
+    {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::LeadCannotManageLead,
         });
     }
 
@@ -2709,13 +2786,29 @@ pub async fn insert_coding_session_authority_transition_event(
     // keeps resubmission idempotent: a replayed revoke recomputes the same
     // pre-state it was originally validated against, even though its own
     // application already emptied the grant.
-    if payload.transition_type == CodingSessionAuthorityTransitionType::Revoke {
-        let grants_before = fold_authority_grants(&others, payload.seq);
-        if !grants_before.contains_key(&payload.grantee_pubkey) {
-            tx.rollback().await?;
-            return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
-                refusal: AuthorityTransitionRefusal::NoSuchGrant,
-            });
+    if payload.transition_type == CodingSessionAuthorityTransitionType::Revoke
+        && !grants_before.contains_key(&payload.grantee_pubkey)
+    {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::NoSuchGrant,
+        });
+    }
+    if payload.transition_type == CodingSessionAuthorityTransitionType::RevokeSeat {
+        match seats_before.get(&payload.grantee_pubkey) {
+            None => {
+                tx.rollback().await?;
+                return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                    refusal: AuthorityTransitionRefusal::NoSuchSeat,
+                });
+            }
+            Some(role) if Some(role.as_str()) != payload.role.as_deref() => {
+                tx.rollback().await?;
+                return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                    refusal: AuthorityTransitionRefusal::SeatRoleMismatch,
+                });
+            }
+            Some(_) => {}
         }
     }
 
@@ -2780,6 +2873,8 @@ pub async fn insert_coding_session_authority_transition_event(
                 .execute(&mut *tx)
                 .await?;
             }
+            CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
         }
     }
 

@@ -210,6 +210,61 @@ async fn submit_with(
     Ok(merged)
 }
 
+/// Publish the provider wake paired with an already-stored team transaction.
+///
+/// The 44220 text is deliberately a tiny routing pointer. The provider must
+/// fetch and verify the signed 44244 record rather than trust command prose.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn send_team_operation_wake(
+    client: &BuzzClient,
+    channel_id: &str,
+    to: &str,
+    session_ref: &str,
+    command_id: &str,
+    operation_id: &str,
+    operation_type: &str,
+) -> Result<Value, CliError> {
+    validate_uuid(channel_id)?;
+    validate_session_ref(session_ref).map_err(CliError::Usage)?;
+    let channel = Uuid::parse_str(channel_id)
+        .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
+    let facts = fetch_crew_facts(client, channel_id).await?;
+    let execution = resolve_send_target(&facts.executions, to, Some(session_ref))?;
+    let text = team_operation_wake_text(operation_id, operation_type)?;
+    let payload = CodingSessionCommandPayload {
+        schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),
+        command_id: command_id.to_owned(),
+        target: execution.target.clone(),
+        action: CodingSessionAction::ThreadTurnStart {
+            text,
+            deliver: CodingSessionDelivery::Boundary,
+        },
+    };
+    let event = client.sign_event_unchecked(build_turn_command(channel, &payload)?)?;
+    submit_with(
+        client,
+        event,
+        "team-operation wake already accepted",
+        json!({
+            "commandId": command_id,
+            "operationId": operation_id,
+            "operationType": operation_type,
+            "target": execution.target_key,
+            "seat": execution.seat_label(),
+            "status": "unconfirmed",
+        }),
+    )
+    .await
+}
+
+fn team_operation_wake_text(operation_id: &str, operation_type: &str) -> Result<String, CliError> {
+    serde_json::to_string(&json!({
+        "operationId": operation_id,
+        "type": operation_type,
+    }))
+    .map_err(|error| CliError::Other(format!("operation wake serialization failed: {error}")))
+}
+
 /// Publish one signed coding-session event and print the write response,
 /// merged with the crew fields the caller needs to follow it up.
 async fn publish_with(
@@ -1426,7 +1481,7 @@ pub async fn cmd_status(
 
 #[cfg(test)]
 mod tests {
-    use super::CONTEXT_UNKNOWN_CELL;
+    use super::{team_operation_wake_text, CONTEXT_UNKNOWN_CELL};
     use clap::CommandFactory;
 
     /// The help and the rows must name the same string for "nothing has said".
@@ -1457,5 +1512,20 @@ mod tests {
             !help.contains("'--'"),
             "'--' is not a cell this command prints:\n{help}"
         );
+    }
+
+    #[test]
+    fn team_operation_wake_contains_only_the_signed_record_pointer() {
+        let operation_id = "ab".repeat(32);
+        let text = team_operation_wake_text(&operation_id, "assignment").expect("wake JSON");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("decode wake");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "operationId": operation_id,
+                "type": "assignment",
+            })
+        );
+        assert_eq!(value.as_object().expect("object").len(), 2);
     }
 }

@@ -273,10 +273,12 @@ roles or grants from transaction prose. The exact v1 matrix is:
 | `acknowledgement` | the assigned actor of the acknowledged governing disposition |
 | `mission.completed`, `mission.blocked` | founder, active `lead`, or active operator grant with `may_steer` |
 
-An operator grant qualifies only when the supplied active signed grant includes
-`may_steer`; viewer or otherwise non-steering grants do not qualify. Role seats
-must be active in the supplied signed seat projection. The event signature is
-always the signer; the body never claims authority.
+An operator grant qualifies only when the supplied active accepted NIP-CSAT
+grant includes `may_steer`; viewer or otherwise non-steering grants do not
+qualify. Role seats must be active in the supplied accepted NIP-CSAT
+`grant-seat`/`revoke-seat` projection. Kind 44221/44223 lifecycle metadata is
+not authority and an absent seat grant is unauthorized, never inferred. The
+event signature is always the signer; the body never claims authority.
 
 ## Validation boundary and deterministic fold
 

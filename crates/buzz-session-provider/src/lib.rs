@@ -2949,6 +2949,11 @@ impl Provider {
                     record.granted_operators.remove(&accepted.grantee_pubkey);
                     record.granted_viewers.remove(&accepted.grantee_pubkey);
                 }
+                // Seat authority is consumed by NIP-CSTX readers, not by the
+                // provider's steering ACL. The accepted link still advances
+                // `authority_seq` below so later legacy grants do not stall.
+                CodingSessionAuthorityTransitionType::GrantSeat
+                | CodingSessionAuthorityTransitionType::RevokeSeat => {}
             }
             record.authority_seq = accepted.seq;
         })?;

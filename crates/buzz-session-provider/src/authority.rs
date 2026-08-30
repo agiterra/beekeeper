@@ -12,9 +12,10 @@
 //! 2. **The accepted kind 44228 transition itself**, resolved by the explicit
 //!    `acceptedEventId` reference carried inside the verified receipt — never
 //!    by tag query — and checked for signature, payload linkage back to the
-//!    same genesis, envelope shape, and signer (the session owner:
-//!    `grant-operator` never moves ownership, so the owner is always the
-//!    genesis signer the provider already recorded as `founder_pubkey`).
+//!    same genesis and envelope shape. Legacy steering-grant links additionally
+//!    bind the signer to the session owner. Additive seat links are authorized
+//!    by the relay receipt and ignored semantically by this steering reader,
+//!    while still advancing its contiguous accepted head.
 //!
 //! Unaccepted 44228s, tag-query projections, and ordering heuristics are
 //! never inputs. Receipts fold strictly by `seq`: a grant applies only when it
@@ -162,9 +163,11 @@ pub fn verify_acceptance_receipt(
 /// through `query_event_by_id`, which already verified the signature and the
 /// id/kind match. This check binds the two artifacts together: the payload
 /// restates exactly the facts the receipt asserted, the envelope is the
-/// three-tag shape the relay validated at ingest, and the signer is the
-/// session owner (`grant-operator` never moves ownership, so the owner is
-/// the genesis signer throughout).
+/// three-tag shape the relay validated at ingest. Legacy grant transition
+/// signers are additionally bound to the session owner; additive seat links
+/// rely on the relay-signed acceptance receipt for chain authorization and are
+/// ignored semantically by this steering-ACL reader while still advancing its
+/// accepted head.
 pub fn verify_accepted_transition(
     event: &Event,
     accepted: &AcceptedTransition,
@@ -180,14 +183,20 @@ pub fn verify_accepted_transition(
     if event.id.to_hex() != accepted.accepted_event_id {
         return Err("resolved transition id does not match the receipt".into());
     }
-    if event.pubkey.to_hex() != owner_pubkey {
+    let payload = decode_coding_session_authority_transition(&event.content)
+        .map_err(|error| format!("accepted transition payload is invalid: {error}"))?;
+    let legacy_owner_only = matches!(
+        payload.transition_type,
+        CodingSessionAuthorityTransitionType::GrantOperator
+            | CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke
+    );
+    if legacy_owner_only && event.pubkey.to_hex() != owner_pubkey {
         return Err(format!(
             "accepted transition signer {} is not the session owner {owner_pubkey}",
             event.pubkey.to_hex()
         ));
     }
-    let payload = decode_coding_session_authority_transition(&event.content)
-        .map_err(|error| format!("accepted transition payload is invalid: {error}"))?;
     if payload.genesis_ref != accepted.genesis_ref {
         return Err("accepted transition names a different genesis than its receipt".into());
     }

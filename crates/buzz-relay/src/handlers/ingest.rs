@@ -18,10 +18,11 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
-    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
-    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
-    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
+    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
+    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
+    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
     KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
@@ -358,8 +359,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // Coding sessions: the operator-signed session origin, goal/name
-        // revisions, authority-chain transitions, and closure facts
-        // (44226–44230),
+        // revisions, authority-chain transitions, closure facts (44226–44230),
+        // and signed team transactions (44244),
         // the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
@@ -376,7 +377,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
-        | KIND_CODING_SESSION_TRANSCRIPT => Ok(Scope::MessagesWrite),
+        | KIND_CODING_SESSION_TRANSCRIPT
+        | KIND_CODING_SESSION_TEAM_TRANSACTION => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -734,10 +736,11 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
             | KIND_CODING_SESSION_CLOSURE
+            | KIND_CODING_SESSION_TEAM_TRANSACTION
     )
 }
 
-/// Returns `true` for the eleven coding-session kinds (44220–44230).
+/// Returns `true` for every persistent coding-session kind.
 ///
 /// One predicate for the strict-membership gate and the tests, so a new
 /// kind cannot be added to one gate and forgotten by another.
@@ -755,6 +758,7 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
             | KIND_CODING_SESSION_CLOSURE
+            | KIND_CODING_SESSION_TEAM_TRANSACTION
     )
 }
 
@@ -2957,6 +2961,21 @@ fn coding_session_authority_transition_refusal_result(
         buzz_db::AuthorityTransitionRefusal::NoSuchGrant => {
             "invalid: revoke names a pubkey with no live grant on this session".to_string()
         }
+        buzz_db::AuthorityTransitionRefusal::SignerNotAuthorized => {
+            "invalid: signer lacks active authority to manage session seats".to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::LeadCannotManageLead => {
+            "invalid: an active lead cannot grant or revoke lead authority".to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::SelfNomination => {
+            "invalid: a seat grant cannot nominate its own signer".to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::NoSuchSeat => {
+            "invalid: revoke-seat names an actor with no active seat".to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::SeatRoleMismatch => {
+            "invalid: revoke-seat role does not match the actor's active seat".to_string()
+        }
     };
     IngestResult {
         event_id: event_id_hex,
@@ -3946,6 +3965,13 @@ async fn ingest_event_inner(
         };
         validate_coding_session_closure_authority(tenant, state, &event, closure_channel, &payload)
             .await?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_TEAM_TRANSACTION {
+        buzz_core::coding_session_team_transaction::validate_coding_session_team_transaction_envelope(
+            &event,
+        )
+        .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
     // The four provider-authored coding-session kinds get no envelope
@@ -7476,11 +7502,11 @@ mod tests {
         );
     }
 
-    // ---- Coding sessions (44220–44230) -------------------------------------
+    // ---- Coding sessions ---------------------------------------------------
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 11] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 12] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -7492,14 +7518,15 @@ mod tests {
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
         KIND_CODING_SESSION_NAME,
         KIND_CODING_SESSION_CLOSURE,
+        KIND_CODING_SESSION_TEAM_TRANSACTION,
     ];
 
     #[test]
-    fn coding_session_predicate_covers_exactly_44220_to_44230() {
+    fn coding_session_predicate_covers_the_registered_session_kinds() {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44230).contains(&kind),
+                (44220..=44230).contains(&kind) || kind == KIND_CODING_SESSION_TEAM_TRANSACTION,
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -8698,6 +8725,30 @@ mod tests {
                     owner_pubkey: owner.clone(),
                 },
                 "current owner",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::NoSuchGrant,
+                "no live grant",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SignerNotAuthorized,
+                "authority",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::LeadCannotManageLead,
+                "lead",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SelfNomination,
+                "own signer",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::NoSuchSeat,
+                "no active seat",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SeatRoleMismatch,
+                "does not match",
             ),
         ];
 

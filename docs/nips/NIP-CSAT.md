@@ -3,7 +3,8 @@
 `draft` `optional` `relay`
 
 `kind:44228` is one append-only link in one coding session's **authority
-chain** — the sequence of decisions about who may steer or read a session
+chain** — the sequence of decisions about who may steer, read, or hold a
+signed team role seat in a session
 after its genesis (`kind:44226`, [NIP-CSG](NIP-CSG.md)) founded it. The chain
 is rooted at the genesis event **id** (never a `sessionRef` label, for the
 same resolution-by-id reason genesis itself pins), and every accepted link is
@@ -11,8 +12,8 @@ confirmed by a relay-signed acceptance receipt.
 
 ## Transition event (`kind:44228`)
 
-Content is public JSON with exactly five fields — nothing between, nothing
-beyond:
+Legacy grant content is public JSON with exactly five fields — nothing
+between, nothing beyond:
 
 ```json
 {
@@ -31,6 +32,10 @@ beyond:
   `seq == 1` if and only if `prevAccepted` is `null`.
 - `granteePubkey` is the transition's target: the grantee for `grant-*`, the
   pubkey losing its grant for `revoke`.
+- `grant-seat` and `revoke-seat` use an exact six-key shape: the five keys
+  above plus required `"role":"<normalized slug>"`. Legacy transition shapes
+  remain exactly five keys and reject `role`. A role is exactly
+  `[a-z0-9-]{1,64}`.
 
 The event has exactly these three ordered, two-field tags — an envelope
 mirroring genesis's own:
@@ -62,6 +67,10 @@ other value as unknown rather than guessing at its meaning.
 - **`revoke`** — removes whatever grant (operator or viewer) `granteePubkey`
   currently holds. A revoke naming a pubkey with **no live grant is refused**
   (`NoSuchGrant`): a no-op link would burn a `seq` for nothing.
+- **`grant-seat`** — makes `granteePubkey` the active holder of exact `role`.
+  It replaces that actor's prior seat, if any. Self-nomination is refused.
+- **`revoke-seat`** — removes the actor's exact active `role`. A missing seat
+  or role mismatch is refused rather than burning a sequence number.
 
 Re-granting an already-granted pubkey with a different tier is a regrade, not
 an error: the later accepted link wins.
@@ -80,9 +89,11 @@ answer:
    on an empty chain), and `seq` must be exactly head + 1 (`StaleHead` /
    `SeqMismatch`). A transition that lost a race is refused with the expected
    linkage named, so the publisher can refetch and resubmit.
-3. The signer must be the session's **owner** — today the genesis signer
-   (`SignerNotOwner`). The payload never restates the signer's identity; the
-   signature settles it.
+3. Legacy `grant-operator`, `grant-viewer`, and `revoke` links remain founder
+   signed. Seat links may be signed by the founder, an active operator grant
+   with `may_steer`, or an active `lead` seat. A lead may manage only non-lead
+   seats and cannot mint or revoke lead authority. Self-nomination is refused.
+   The payload never restates the signer's identity; the signature settles it.
 4. A `revoke` must name a pubkey with a live grant (`NoSuchGrant`).
 
 On acceptance the relay publishes a relay-signed **acceptance receipt** — a
@@ -100,6 +111,12 @@ consumer needs to establish the new canonical head:
 }
 ```
 
+For `grant-seat` and `revoke-seat`, the receipt adds required `"role"` echoing
+the accepted link. Legacy receipts retain their original exact facts. An older
+consumer may ignore the new seat transition semantics, but it must still
+advance its accepted chain head/sequence so a later legacy grant does not
+stall behind an accepted seat link.
+
 A resubmission of an already-accepted transition is answered `duplicate:` and
 mints no second receipt. Consumers reconstruct the live grant set by folding
 receipts in `seq` order; providers additionally verify each receipt is signed
@@ -108,16 +125,29 @@ by the relay's own key before trusting it (lighter clients may match by
 
 ## Capabilities
 
-| Capability | Founder (genesis signer) | Operator grantee | Viewer grantee |
-|------------|--------------------------|------------------|----------------|
-| Steer the session (commands, goal edits, transitions) | ✓ | ✓ (commands; not transitions) | — |
-| Read the session's transport channel | ✓ | ✓ | ✓ |
+| Capability | Founder | Operator grantee | Viewer grantee | Lead seat |
+|------------|---------|------------------|----------------|-----------|
+| Steer session commands | ✓ | ✓ | — | ✓ |
+| Read transport channel | ✓ | ✓ | ✓ | via membership/grant |
+| Manage any role seat | ✓ | ✓ | — | — |
+| Manage non-lead seats | ✓ | ✓ | — | ✓ |
 
 **Steer** = founder or live operator grantee. **Read** = project member (via
 the session's project, per [NIP-MP](NIP-MP.md)) or **any** live grantee —
 a viewer grant is precisely transport-channel read access for someone outside
-the project. Extending the chain itself (publishing 44228s) remains
-owner-only in this revision.
+the project. Legacy grant transitions remain founder-only. Seat transitions
+use the accepted-chain authority matrix above; no unsigned registry or
+kind:44221/kind:44223 metadata can create role authority.
+
+## Deterministic seat projection
+
+Clients derive `actor -> role` only from accepted `grant-seat`/`revoke-seat`
+links in the contiguous relay-receipted chain. They verify transition and
+receipt signatures, exact channel/session genesis scope, `seq`, and
+`prevAccepted`, then apply links in order. A later seat grant changes that
+actor's role; a matching revoke removes it. Stale, revoked, wrong-channel, or
+wrong-genesis links confer no authority. If no accepted seat link exists, the
+actor is unauthorized; clients never infer a role from lifecycle metadata.
 
 ## Viewer read scope — a documented tradeoff
 
