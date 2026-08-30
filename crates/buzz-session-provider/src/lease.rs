@@ -117,6 +117,7 @@ mod tests {
             granted_viewers: BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            routing: None,
             resume_cursor: None,
             title: None,
             created_at_ms: 1,

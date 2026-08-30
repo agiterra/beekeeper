@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use buzz_core::coding_session_command::CodingSessionTarget;
+use buzz_core::coding_session_routing::RoutingRecord;
 
 use crate::session::BootstrapTransport;
 
@@ -205,6 +206,10 @@ pub struct SessionRecord {
     pub authority_seq: u32,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
+    /// The host's routing decision from the create, or `None` for an
+    /// unrouted or pre-field session.
+    #[serde(default)]
+    pub routing: Option<RoutingRecord>,
     /// Opaque ACP session id used only to reattach this host's adapter.
     /// Never published or passed through the adapter environment.
     #[serde(default)]
@@ -845,6 +850,7 @@ mod tests {
             granted_viewers: BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            routing: None,
             resume_cursor: None,
             title: None,
             created_at_ms: 1_700_000_000_000,
@@ -964,11 +970,13 @@ mod tests {
         let object = value.as_object_mut().expect("object");
         object.remove("generationCommandId");
         object.remove("nextLeaseSequence");
+        object.remove("routing");
 
         let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
 
         assert_eq!(loaded.generation_command_id(), "create-s1");
         assert_eq!(loaded.next_lease_sequence, 1);
+        assert_eq!(loaded.routing, None);
     }
 
     #[test]

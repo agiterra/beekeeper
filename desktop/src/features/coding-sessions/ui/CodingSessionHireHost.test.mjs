@@ -13,6 +13,7 @@
  * written but never mounted (item 81, lane H residual).
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 
 import { JSDOM } from "jsdom";
@@ -113,6 +114,7 @@ async function signedHire({
   createdAt = HIRE_CREATED_AT,
   role = "builder",
   providerInstanceRef = "claude-primary",
+  routing,
 } = {}) {
   const { buildCodingSessionHireEvent } = await import(
     "../lib/codingSessionHireWire.ts"
@@ -129,6 +131,7 @@ async function signedHire({
         providerInstanceRef,
         model,
         brief: "Take the badge lane. Red test first.",
+        ...(routing === undefined ? {} : { routing }),
       }),
     },
     LEAD_SECRET,
@@ -142,6 +145,8 @@ async function harness({
   policy,
   runtimes = [CLAUDE_RUNTIME],
   modelCatalogs = new Map([["claude-primary", CLAUDE_CATALOG]]),
+  catalogForHire,
+  registryForProject,
   agents = [
     {
       pubkey: ADA_PUBKEY,
@@ -233,6 +238,7 @@ async function harness({
   const view = render(
     React.createElement(CodingSessionHireRunner, {
       agents,
+      ...(catalogForHire === undefined ? {} : { catalogForHire }),
       channelIds: [CHANNEL_ID],
       modelCatalogs,
       checkoutForChannel: () => "/Users/brian/Projects/beekeeper",
@@ -240,6 +246,7 @@ async function harness({
       operatorPubkey: OPERATOR_PUBKEY,
       policy: policy ?? DEFAULT_CODING_SESSION_HIRE_POLICY,
       providerAuthorityPubkey: PROVIDER_PUBKEY,
+      ...(registryForProject === undefined ? {} : { registryForProject }),
       runtimes,
       targetForActor: (channelId, actorPubkey) =>
         channelId === CHANNEL_ID && actorPubkey === LEAD_PUBKEY
@@ -538,6 +545,68 @@ test("the hired seat's create carries the umbrella's project", async () => {
     JSON.parse(create.content).action.projectRef,
     "30621:owner:beekeeper",
   );
+  host.teardown();
+});
+
+test("a routed hire reads its own project and records the signed channel catalog revision", async () => {
+  const projectRef = "30621:owner:beekeeper";
+  const catalogReads = [];
+  const registryReads = [];
+  const registryText = readFileSync(
+    new URL("../../../../../team/model-registry.yaml", import.meta.url),
+    "utf8",
+  );
+  const host = await harness({
+    umbrellas: [
+      {
+        ...UMBRELLA,
+        executions: [
+          {
+            activeGeneration: {
+              agentRef: LEAD_PUBKEY,
+              role: "lead",
+              status: "running",
+              projectRef,
+            },
+          },
+        ],
+      },
+    ],
+    catalogForHire: (input) => {
+      catalogReads.push(input);
+      return {
+        modelCatalogs: new Map([["claude-primary", CLAUDE_CATALOG]]),
+        catalogRevision: 12,
+        eventId: "1".repeat(64),
+      };
+    },
+    registryForProject: async (input) => {
+      registryReads.push(input);
+      return {
+        kind: "readable",
+        text: registryText,
+        label: "/checkout/team/model-registry.yaml",
+      };
+    },
+  });
+
+  await host.deliver(
+    await signedHire({
+      routing: {
+        class: "builder",
+        risk: { impact: 1, uncertainty: 1, irreversibility: 2 },
+      },
+    }),
+  );
+
+  assert.deepEqual(catalogReads, [{ channelId: CHANNEL_ID, projectRef }]);
+  assert.deepEqual(registryReads, [projectRef]);
+  const [create] = host.of(44221);
+  assert.ok(create, "the routed hire was not seated");
+  const action = JSON.parse(create.content).action;
+  assert.equal(action.projectRef, projectRef);
+  assert.equal(action.routing.catalogRevision, 12);
+  assert.ok(CLAUDE_CATALOG.includes(action.routing.chosen.model));
   host.teardown();
 });
 

@@ -33,10 +33,12 @@ import {
 } from "../lib/codingSessionHirePolicy";
 import type { CodingSessionRegistrySource } from "../lib/codingSessionHireRouting";
 import {
+  codingSessionHireUmbrellaProjectRef,
   isCodingSessionHireAuthorized,
   selectUnansweredCodingSessionHires,
   type CodingSessionHireSeatPlan,
 } from "../lib/codingSessionHireSeat";
+import type { CodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
 import {
   classifyCodingSessionHireEvent,
   type CodingSessionHireClassification,
@@ -239,8 +241,7 @@ export type UseCodingSessionHireInput = {
   runtimes: readonly CodingSessionProviderRuntime[];
   /**
    * What each runtime actually offers, by instance ref — the
-   * `coding_session_provider_models` answer, which is the same catalog the
-   * create dialog's model picker is built from.
+   * provider-signed kind:44222 catalog for this hire's channel.
    *
    * A ref with no entry is a catalog this host never read, and refuses
    * nothing: a refusal built on a list nobody loaded would be a claim about
@@ -248,18 +249,27 @@ export type UseCodingSessionHireInput = {
    */
   modelCatalogs?: ReadonlyMap<string, readonly string[]>;
   /**
+   * Resolve the signed 44222 source for the request's own channel and project.
+   * The host uses this instead of one app-global catalog so the model list and
+   * recorded revision are one reproducible fact.
+   */
+  catalogForHire?: (input: {
+    channelId: string;
+    projectRef: string | null;
+  }) => CodingSessionHireCatalogSource | null;
+  /**
    * This host's copy of the shared model registry (`team/model-registry.yaml`),
    * or the reason it has none.
    *
-   * There is no Tauri command that reads a file out of a project checkout —
-   * the only role-pack access the app has returns a role, a name and a
-   * directory, never file content (`shared/api/tauriTeams.ts:331`, `:350`) —
-   * so the real host supplies `unreadable` today and a hire that asks to be
-   * routed is refused `HIRE_NO_ROUTE` rather than routed against a copy
-   * compiled into the app. The day a reader exists, this input is the only
-   * thing that changes.
+   * The real host uses {@link registryForProject}; this scalar remains the
+   * pure runner's test seam. Neither path ever routes against a copy compiled
+   * into the app.
    */
   registry?: CodingSessionRegistrySource;
+  /** Read the registry from the umbrella's project checkout for each hire. */
+  registryForProject?: (
+    projectRef: string | null,
+  ) => Promise<CodingSessionRegistrySource>;
   /** The 44222 revision behind {@link modelCatalogs}, when one was read. */
   catalogRevision?: number | null;
   /** Where each seat's worktree is cut from, by channel. Host-local. */
@@ -572,6 +582,21 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             .filter(([, role]) => role === "operator")
             .map(([pubkey]) => pubkey)
         : [];
+      const projectRef = codingSessionHireUmbrellaProjectRef(umbrella);
+      const catalogSource = current.input.catalogForHire?.({
+        channelId: request.channelId,
+        projectRef,
+      });
+      const modelCatalogs =
+        catalogSource?.modelCatalogs ??
+        current.input.modelCatalogs ??
+        new Map();
+      const registry = current.input.registryForProject
+        ? await current.input.registryForProject(projectRef)
+        : (current.input.registry ?? {
+            kind: "unreadable" as const,
+            why: "this host was given no registry source for the umbrella's project",
+          });
 
       const answer = planCodingSessionHireAnswer({
         request,
@@ -598,7 +623,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         // The provider's own catalogs, never the runtime table's placeholder
         // list. An instance ref missing from this map is a catalog nobody
         // read, and refuses nothing.
-        modelCatalogs: current.input.modelCatalogs ?? new Map(),
+        modelCatalogs,
         // Which runtime slug each instance ref is, so an identity that runs
         // on codex is seated on codex.
         providerRuntimeSlugs: new Map(
@@ -608,11 +633,11 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           ]),
         ),
         providerAuthorityPubkey,
-        registry: current.input.registry ?? {
-          kind: "unreadable",
-          why: "this desktop cannot read project files, so it has never loaded team/model-registry.yaml",
-        },
-        catalogRevision: current.input.catalogRevision ?? null,
+        registry,
+        catalogRevision:
+          catalogSource?.catalogRevision ??
+          current.input.catalogRevision ??
+          null,
         commandId: hireDeps.newSeatCommandId(),
         now: hireDeps.now(),
       });

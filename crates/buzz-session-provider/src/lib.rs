@@ -1540,6 +1540,7 @@ impl Provider {
             granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
+            routing: plan.routing.clone(),
             resume_cursor: Some(startup.acp_session_id.clone()),
             title: plan.title.clone(),
             created_at_ms: now_ms(),
@@ -3229,11 +3230,7 @@ impl Provider {
                     used: self.state.turns_used(session_ref),
                     limit: self.config.turn_budget,
                 }),
-            // Not echoed yet: the create's routing record is not carried on
-            // the persisted `SessionRecord`, so this provider has nothing to
-            // publish here. `None` is that fact — never a stand-in for a
-            // decision nobody handed us.
-            routing: None,
+            routing: record.and_then(|record| record.routing.clone()),
         }
     }
 
@@ -5154,6 +5151,55 @@ mod tests {
         signed_lifecycle_event(channel_id, content)
     }
 
+    fn create_event_with_routing(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+    ) -> (Event, buzz_core::coding_session_routing::RoutingRecord) {
+        let routing = serde_json::from_value(serde_json::json!({
+            "class": "builder",
+            "tier": "fast",
+            "risk": {
+                "impact": 1,
+                "uncertainty": 1,
+                "irreversibility": 2,
+                "score": 2
+            },
+            "profile": null,
+            "chosen": {
+                "provider": "claude-primary",
+                "model": "sonnet",
+                "effort": "low"
+            },
+            "runnerUp": null,
+            "reason": "the signed catalog and registry selected this target",
+            "reviewRequired": false,
+            "reviewReasons": [],
+            "challengerSample": false,
+            "override": null,
+            "registryVersion": 1,
+            "catalogRevision": 12
+        }))
+        .expect("routing record");
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "model": "sonnet",
+                "title": "Ship it",
+                "initialTurn": null,
+                "routing": routing,
+            },
+        })
+        .to_string();
+        (signed_lifecycle_event(channel_id, content), routing)
+    }
+
     /// A create claiming an umbrella *and* carrying a first turn, signed by
     /// whichever key the caller names — the shape a delegated seat sends.
     fn create_event_with_umbrella_and_turn(
@@ -5493,6 +5539,7 @@ mod tests {
             granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            routing: None,
             resume_cursor: None,
             title: None,
             created_at_ms: now_ms(),
@@ -9438,6 +9485,7 @@ mod tests {
                     granted_viewers: std::collections::BTreeSet::new(),
                     authority_seq: 0,
                     model: None,
+                    routing: None,
                     resume_cursor: Some("private-acp-cursor".into()),
                     title: None,
                     created_at_ms: now_ms(),
@@ -11254,6 +11302,30 @@ done
                 .capabilities
                 .thread_steer
         );
+    }
+
+    #[tokio::test]
+    async fn a_create_routing_record_is_persisted_and_echoed_in_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let (create, routing) = create_event_with_routing(&provider, channel_id, "create-routed");
+
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("handle routed create");
+        let record = provider.state().sessions().next().expect("session record");
+        assert_eq!(record.routing.as_ref(), Some(&routing));
+
+        let metadata = provider.metadata_for(
+            &record.target(&provider.config.instance_id),
+            SessionStatus::Idle,
+        );
+        assert_eq!(metadata.routing, Some(routing));
     }
 
     /// A `NO_LIVE_EXECUTION` drop is an answer, and an answer is given once.

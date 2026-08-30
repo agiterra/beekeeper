@@ -21,13 +21,12 @@ import type { CodingSessionRegistrySource } from "./codingSessionHireRouting";
  *
  * # Where the file is read from
  *
- * From the project checkout the Agents tab already resolves
- * (`features/agents/lib/rolePacksProject.ts` → `useRolePacksProject`), named
- * by its NIP-MP coordinate (`ProjectContainer.address`, e.g.
- * `30621:<owner>:<dtag>`). The host turns that coordinate into a directory
- * through the same record the Agents tab ordered its projects by —
- * `CodingSessionWorkdirStore::by_project` — so the file this reads is the file
- * in the checkout the operator is actually looking at.
+ * From the project coordinate the caller owns. The Agents tab passes the
+ * project it is showing; the hire host passes the hired umbrella's project.
+ * Both resolve the NIP-MP coordinate (for example
+ * `30621:<owner>:<dtag>`) through `CodingSessionWorkdirStore::by_project`, so
+ * neither surface can silently substitute whatever project another UI last
+ * selected.
  *
  * # Every no-answer is an answer
  *

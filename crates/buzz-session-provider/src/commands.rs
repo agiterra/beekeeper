@@ -21,6 +21,7 @@ use buzz_core::coding_session_command::{
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
 };
+use buzz_core::coding_session_routing::RoutingRecord;
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
 use crate::payload::{
@@ -185,6 +186,8 @@ pub struct CreatePlan {
     pub title: Option<String>,
     /// First turn to deliver after creation, or `None`.
     pub initial_turn: Option<String>,
+    /// The host's routing decision, echoed onto the seat's kind:44223.
+    pub routing: Option<RoutingRecord>,
     /// The agent seat this execution runs as, or `None` for a human-created
     /// execution.
     ///
@@ -443,13 +446,7 @@ pub fn decide_lifecycle(
         initial_turn,
         actor,
         role,
-        // The create may carry a routing record (NIP-CSL, Brian's ruling of
-        // 2026-08-30). This provider does not yet carry it onto the seat's
-        // kind:44223 metadata — doing so needs a field on the persisted
-        // `SessionRecord`, which is a separate change. Bound and ignored here
-        // rather than echoed, so nothing publishes a routing claim this crate
-        // did not actually receive.
-        routing: _,
+        routing,
     } = &payload.action
     else {
         unreachable!()
@@ -557,6 +554,7 @@ pub fn decide_lifecycle(
         model: model.clone(),
         title: title.clone(),
         initial_turn: initial_turn.clone(),
+        routing: routing.clone(),
         actor: actor.clone(),
         role: role.clone(),
     }))
@@ -1109,6 +1107,7 @@ mod tests {
             granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: None,
+            routing: None,
             resume_cursor: None,
             title: None,
             created_at_ms: 0,

@@ -7,7 +7,6 @@ import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
 import {
-  getCodingSessionProviderModels,
   getCodingSessionProviderRuntimes,
   getCodingSessionProviderStatus,
 } from "@/shared/api/tauriSessionProvider";
@@ -16,10 +15,11 @@ import {
   useCodingSessionHire,
   type UseCodingSessionHireInput,
 } from "../hooks/useCodingSessionHire";
-import { useRolePacksProject } from "@/features/agents/ui/useRolePacksProject";
 import { readModelRegistry } from "../lib/codingSessionRegistrySource";
 import { useGlobalCodingSessionCatalog } from "../useCodingSessionCatalog";
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel";
+import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
+import { resolveCodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
 
 /**
  * The one place `session.hire` is answered.
@@ -57,46 +57,6 @@ export function CodingSessionHireHost() {
     queryKey: ["coding-session-workdir-state"],
     queryFn: getCodingSessionWorkdirState,
   });
-  // What each ready runtime actually offers, straight from the provider —
-  // `list_runtimes()` publishes a hardcoded `["default"]` for every row
-  // (`session_provider/runtimes.rs:269`), so the runtime table can say which
-  // runtimes exist but never which models they run. This is the same command
-  // the create dialog's picker is built from, so a hire and a hand-made
-  // session are judged against one list.
-  const readyInstanceRefs = useStableArrayShallow(
-    React.useMemo(
-      () =>
-        (runtimes.data ?? [])
-          .filter((runtime) => runtime.authState === "ready")
-          .map((runtime) => runtime.instanceRef)
-          .sort(),
-      [runtimes.data],
-    ),
-  );
-  const modelCatalogsQuery = useQuery({
-    queryKey: ["coding-session-provider-model-catalogs", readyInstanceRefs],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        readyInstanceRefs.map(async (instanceRef) => {
-          // One adapter that will not answer must not cost the others their
-          // catalog — and a runtime with no catalog refuses no model at all.
-          const models = await getCodingSessionProviderModels(
-            instanceRef,
-          ).catch(() => null);
-          return models === null
-            ? null
-            : ([instanceRef, models.allowedModels] as const);
-        }),
-      );
-      return entries.filter((entry) => entry !== null);
-    },
-    enabled: readyInstanceRefs.length > 0,
-  });
-  const modelCatalogs = React.useMemo(
-    () => new Map<string, readonly string[]>(modelCatalogsQuery.data ?? []),
-    [modelCatalogsQuery.data],
-  );
-
   const channelIds = useStableArrayShallow(
     React.useMemo(
       () =>
@@ -111,6 +71,20 @@ export function CodingSessionHireHost() {
       [channelsQuery.data],
     ),
   );
+  const providerCatalog = useCodingSessionProviderCatalog(channelIds);
+  const catalogForHire = React.useCallback(
+    (input: { channelId: string; projectRef: string | null }) => {
+      const signerPubkey = providerStatus.data?.providerPubkey;
+      if (!signerPubkey) return null;
+      return resolveCodingSessionHireCatalogSource({
+        entries: providerCatalog.entries,
+        channelId: input.channelId,
+        signerPubkey,
+        projectRef: input.projectRef,
+      });
+    },
+    [providerCatalog.entries, providerStatus.data?.providerPubkey],
+  );
   const catalog = useGlobalCodingSessionCatalog(channelIds, {
     authorityMode: "open",
   });
@@ -124,31 +98,6 @@ export function CodingSessionHireHost() {
   );
 
   const workdirState = workdirs.data ?? null;
-  // The shared model registry, or the honest reason this host has none.
-  //
-  // The router needs `team/model-registry.yaml` out of the project checkout,
-  // and the project it belongs to is the one the Agents tab already resolves
-  // (`features/agents/lib/rolePacksProject.ts`) — the same answer the role-pack
-  // installer and the registry badge use, so a routed hire and a badge can
-  // never be talking about two different checkouts. `readModelRegistry` reads
-  // it when a reader is installed and answers `unreadable`, naming the path,
-  // when one is not. Either way nothing is ever routed against a registry copy
-  // compiled into the app, which nobody could check against the file the team
-  // edits.
-  const rolePacksProject = useRolePacksProject();
-  const projectRef = rolePacksProject.project?.address ?? null;
-  const registryQuery = useQuery({
-    queryKey: ["coding-session-model-registry", projectRef],
-    queryFn: () => readModelRegistry(projectRef),
-  });
-  const registry = React.useMemo(
-    () =>
-      registryQuery.data ?? {
-        kind: "unreadable" as const,
-        why: "this host has not finished reading the model registry yet.",
-      },
-    [registryQuery.data],
-  );
   const checkoutForChannel = React.useCallback(
     (channelId: string) => {
       if (workdirState === null) return null;
@@ -194,11 +143,11 @@ export function CodingSessionHireHost() {
   return (
     <CodingSessionHireRunner
       agents={managedAgents.data ?? []}
+      catalogForHire={catalogForHire}
       channelIds={channelIds}
       checkoutForChannel={checkoutForChannel}
-      modelCatalogs={modelCatalogs}
       operatorPubkey={identityQuery.data?.pubkey ?? null}
-      registry={registry}
+      registryForProject={readModelRegistry}
       providerAuthorityPubkey={providerStatus.data?.providerPubkey ?? null}
       runtimes={runtimes.data ?? []}
       targetForActor={targetForActor}
