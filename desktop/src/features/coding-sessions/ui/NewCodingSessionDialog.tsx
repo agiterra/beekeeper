@@ -40,6 +40,8 @@ import {
   NewCodingSessionModelDisclosure,
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
+  newCodingSessionEffectiveModel,
+  newCodingSessionSeatModelBlocksCreate,
   resolveNewCodingSessionSeatModel,
 } from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionAgentSeatField } from "./NewCodingSessionAgentSeatField";
@@ -323,14 +325,22 @@ export function NewCodingSessionForm({
   // A seated identity carries a model on its own record, and preselecting the
   // adapter default over it is how a seat was created naming `default` (item
   // 89a): the picker starts on the identity's model when the runtime has it.
+  // When the runtime does *not* publish it, nothing is preselected and the
+  // create waits — falling to the runtime default here is the create half of
+  // the fake match Brian's 2026-08-29 ruling removed.
   const seatedModel = resolveNewCodingSessionSeatModel({
     agentModel:
       managedAgents.find((agent) => agent.pubkey === seatDraft.actor)?.model ??
       null,
     allowedModels: modelCatalog?.allowedModels ?? [],
+    providerInstanceRef:
+      selectedTarget?.provider.providerInstanceRef ?? "this runtime",
     selectionExplicit: modelSelection.explicit,
   });
-  const effectiveModel = seatedModel.model ?? providerModel;
+  const effectiveModel = newCodingSessionEffectiveModel({
+    seatModel: seatedModel,
+    providerModel,
+  });
 
   const [workdir, setWorkdir] = React.useState("");
   const [useWorktree, setUseWorktree] = React.useState(true);
@@ -393,6 +403,9 @@ export function NewCodingSessionForm({
     selectedTarget !== null &&
     isNewCodingSessionTargetReady(selectedTarget) &&
     seatDraft.error === null &&
+    // A seated identity whose record names a model this runtime does not
+    // publish has no honest model to create on until the person picks one.
+    !newCodingSessionSeatModelBlocksCreate(seatedModel) &&
     !draftOverCap;
 
   const handleSubmit = React.useCallback(() => {

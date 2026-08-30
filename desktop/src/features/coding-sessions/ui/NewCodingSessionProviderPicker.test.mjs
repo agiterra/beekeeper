@@ -6,6 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   NewCodingSessionModelDisclosure,
   NewCodingSessionProviderPicker,
+  newCodingSessionEffectiveModel,
+  newCodingSessionSeatModelBlocksCreate,
   resolveNewCodingSessionSeatModel,
 } from "./NewCodingSessionProviderPicker.tsx";
 
@@ -160,9 +162,10 @@ test("seating an identity preselects the model its record names", () => {
     resolveNewCodingSessionSeatModel({
       agentModel: "opus[1m]",
       allowedModels: ["default", "opus[1m]", "sonnet"],
+      providerInstanceRef: "claude-primary",
       selectionExplicit: false,
     }),
-    { model: "opus[1m]", note: null },
+    { model: "opus[1m]", note: null, mustPick: false },
   );
 });
 
@@ -171,21 +174,31 @@ test("a model the person picked outranks the identity's record", () => {
     resolveNewCodingSessionSeatModel({
       agentModel: "opus[1m]",
       allowedModels: ["default", "opus[1m]", "sonnet"],
+      providerInstanceRef: "claude-primary",
       selectionExplicit: true,
     }),
-    { model: null, note: null },
+    { model: null, note: null, mustPick: false },
   );
 });
 
-test("an identity whose model this runtime cannot run is said out loud", () => {
+// Brian's ruling, 2026-08-29: falling silently to the runtime default here was
+// the create half of the fake match. Nothing is preselected, the record's id is
+// named, and the create waits for a real pick.
+test("an identity whose model this runtime cannot run blocks the create and says why", () => {
   const resolved = resolveNewCodingSessionSeatModel({
     agentModel: "gpt-5.6-terra",
     allowedModels: ["default", "opus[1m]"],
+    providerInstanceRef: "claude-primary",
     selectionExplicit: false,
   });
   assert.equal(resolved.model, null);
-  assert.match(resolved.note ?? "", /gpt-5\.6-terra/);
-  assert.match(resolved.note ?? "", /does not offer/);
+  assert.equal(resolved.mustPick, true);
+  assert.equal(
+    resolved.note,
+    "This identity's record names gpt-5.6-terra, which claude-primary does " +
+      "not offer. Pick a model; the record keeps gpt-5.6-terra until you " +
+      "change it on the Agents screen.",
+  );
 });
 
 test("an identity with no model on its record asks for nothing", () => {
@@ -193,10 +206,45 @@ test("an identity with no model on its record asks for nothing", () => {
     resolveNewCodingSessionSeatModel({
       agentModel: null,
       allowedModels: ["default", "opus[1m]"],
+      providerInstanceRef: "claude-primary",
       selectionExplicit: false,
     }),
-    { model: null, note: null },
+    { model: null, note: null, mustPick: false },
   );
+});
+
+// The dialog's Create button and the id it would write both hang off this, so
+// it is asserted where it can be read rather than left implicit in JSX.
+test("a blocked seat model leaves the create with no model to write", () => {
+  const blocked = resolveNewCodingSessionSeatModel({
+    agentModel: "gpt-5.6-terra",
+    allowedModels: ["default", "opus[1m]"],
+    providerInstanceRef: "claude-primary",
+    selectionExplicit: false,
+  });
+  assert.equal(
+    newCodingSessionEffectiveModel({
+      seatModel: blocked,
+      providerModel: "opus[1m]",
+    }),
+    null,
+  );
+  assert.equal(newCodingSessionSeatModelBlocksCreate(blocked), true);
+  // One hand-picked model later, the same seat is free to create.
+  const picked = resolveNewCodingSessionSeatModel({
+    agentModel: "gpt-5.6-terra",
+    allowedModels: ["default", "opus[1m]"],
+    providerInstanceRef: "claude-primary",
+    selectionExplicit: true,
+  });
+  assert.equal(
+    newCodingSessionEffectiveModel({
+      seatModel: picked,
+      providerModel: "opus[1m]",
+    }),
+    "opus[1m]",
+  );
+  assert.equal(newCodingSessionSeatModelBlocksCreate(picked), false);
 });
 
 test("a record naming a model this runtime lacks is said, not swallowed", () => {

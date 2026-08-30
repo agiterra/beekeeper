@@ -14,7 +14,10 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionModelFavorites";
 import { codingSessionProviderBaseModels } from "@/features/coding-sessions/lib/codingSessionModelPickerModel";
 import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
-import { resolveCodingSessionSeatIdentityModel } from "../lib/codingSessionHireModel";
+import {
+  resolveCodingSessionSeatIdentityModel,
+  type CodingSessionSeatIdentityModel,
+} from "../lib/codingSessionHireModel";
 import {
   codingSessionAuthRemediation,
   formatCodingSessionProviderLabel,
@@ -293,29 +296,56 @@ export function NewCodingSessionModelDisclosure({
  * A managed agent's record names a model; the create dialog used to ignore it
  * and preselect the adapter's own default, which on claude-primary is the id
  * `default` — so seating an identity produced a session that named no model at
- * all (item 89a, live twice on 2026-08-28).
+ * all (item 89a, live twice on 2026-08-28). Then item 90 lane C matched the
+ * record through an alias table, which made an unoffered id *look* offered.
  *
- * Three answers, all of them said out loud rather than guessed at: the
- * record's model when this runtime publishes it, nothing when the person has
- * chosen a model by hand (their pick outranks the record), and nothing *plus a
- * note* when the record names a model this runtime does not offer — a silent
- * downgrade to the runtime default is the same class of lie as the id it would
- * replace.
+ * Brian's ruling, 2026-08-29: the provider's published `allowedModels` — the
+ * same list this picker renders — is the only model list, and a record naming
+ * something else is disclosed and refused, never mapped. So there are three
+ * answers and none of them is a substitution: the record's model when this
+ * runtime publishes it exactly; nothing when the person has chosen a model by
+ * hand (their pick outranks the record) or the record names none; and nothing
+ * *plus a disclosure and a held Create button* when the record names a model
+ * this runtime does not publish. A silent fall to the runtime default is the
+ * same class of lie as the id it would replace.
  *
  * The matching itself is {@link resolveCodingSessionSeatIdentityModel}, the
- * same table the hire host reads an identity's model through: matching here by
- * exact string is what made a record saying `claude-fable-5` unrunnable on a
- * runtime publishing `claude-fable-5[1m]` (item 90 lane C).
+ * same exact-match check the hire host reads an identity's model through.
  */
 export function resolveNewCodingSessionSeatModel(input: {
   /** The seated identity's own model id, or null when it names none. */
   agentModel: string | null;
   /** Model ids the selected runtime actually publishes. */
   allowedModels: readonly string[];
+  /** This computer's name for the runtime, used in the disclosure. */
+  providerInstanceRef: string;
   /** Whether the person has picked a model by hand. */
   selectionExplicit: boolean;
-}): { model: string | null; note: string | null } {
+}): CodingSessionSeatIdentityModel {
   return resolveCodingSessionSeatIdentityModel(input);
+}
+
+/**
+ * The id this create would write right now, or `null` when it has none.
+ *
+ * Exported rather than inlined in the dialog because it is the one line that
+ * decides whether an unoffered record quietly becomes the runtime default —
+ * the exact bug the ruling names — and a line like that belongs somewhere a
+ * test can read it.
+ */
+export function newCodingSessionEffectiveModel(input: {
+  seatModel: CodingSessionSeatIdentityModel;
+  providerModel: string | null;
+}): string | null {
+  if (input.seatModel.mustPick) return null;
+  return input.seatModel.model ?? input.providerModel;
+}
+
+/** Does this seat's model leave the create with nothing honest to write? */
+export function newCodingSessionSeatModelBlocksCreate(
+  seatModel: CodingSessionSeatIdentityModel,
+): boolean {
+  return seatModel.mustPick;
 }
 
 /** The remediation a failed receipt asks for: which runtime, and how to fix it. */

@@ -186,7 +186,11 @@ test("a hire whose model the runtime cannot offer is refused, with the list", ()
   assert.match(result.reason, /claude-fable-5\[1m\]/);
 });
 
-test("a translated model reaches the seat plan with its disclosure", () => {
+// Brian's ruling, 2026-08-29: no alias translation anywhere. A catalog that
+// publishes `sonnet` does not publish `claude-sonnet-5`, so this reaches the
+// same refusal as any other unoffered id — it used to reach the seat plan on
+// `sonnet` with a disclosure attached.
+test("a vendor alias the catalog does not publish never reaches a seat plan", () => {
   const result = answer({
     request: {
       ...REQUEST,
@@ -194,9 +198,10 @@ test("a translated model reaches the seat plan with its disclosure", () => {
     },
     modelCatalogs: new Map([["claude-primary", ["default", "sonnet"]]]),
   });
-  assert.equal(result.kind, "seat");
-  assert.equal(result.plan.model, "sonnet");
-  assert.match(result.plan.modelNotice, /claude-sonnet-5/);
+  assert.equal(result.kind, "refused");
+  assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
+  assert.match(result.reason, /claude-sonnet-5/);
+  assert.match(result.reason, /default, sonnet/);
 });
 
 test("a substituted model is disclosed in the umbrella, naming the seat's role", () => {
