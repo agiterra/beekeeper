@@ -1,4 +1,23 @@
 /**
+ * Does this team's model registry still cover the models on offer?
+ *
+ * Renamed from `rubricStaleness.ts` on 2026-08-30, when Brian's routing ruling
+ * replaced the flat rubric with a registry plus a router. The badge's question
+ * changed with it, and the change runs in one direction only:
+ *
+ * > **Stale means a live offered execution target has no registry row.** A
+ * > registry row the catalog does not offer today is *dormant*, and dormant is
+ * > not stale (spec §10). The old rubric check counted both directions; this
+ * > one counts one, and says how many dormant rows it saw without letting them
+ * > colour the badge.
+ *
+ * The rubric comparison below is kept as-is, because it is still the desktop
+ * mirror of `bee sessions rubric check` and the two are pinned to one fixture
+ * (`testdata/rubric/live-catalog-665076ce.json`). Deleting it here would
+ * silently end that agreement.
+ *
+ * ---
+ *
  * Is the lead's model rubric still true about the models on offer?
  *
  * Brian's ruling: the rubric stays — it works — but it has to be checked, and
@@ -374,5 +393,181 @@ export function resolveRubricStaleness(input: {
     ]
       .filter((sentence) => sentence.length > 0)
       .join(" "),
+  };
+}
+
+/**
+ * A registry row, reduced to what the coverage check needs.
+ *
+ * `provider` is the catalog's `providerInstanceRef`; `model` is the base id
+ * the registry names. Effort variants are settings of a base, not different
+ * models, so a row for `gpt-5.6-sol` covers `gpt-5.6-sol[high]`.
+ */
+export type RegistryCoverageRow = {
+  provider: string;
+  model: string;
+};
+
+/** Why the registry badge could say nothing. */
+export type RegistryStalenessUnknownReason =
+  /** No command on this host can read the registry file. */
+  | "registry-unreadable"
+  /** A file was read and it is not a registry this build understands. */
+  | "registry-unparseable"
+  /** No provider has published a catalog here yet. */
+  | "no-catalog";
+
+export type RegistryStaleness =
+  | {
+      state: "unknown";
+      reason: RegistryStalenessUnknownReason;
+      label: string;
+      detail: string;
+    }
+  | {
+      state: "fresh";
+      /** Offered ids with a row, and rows with no live offer. */
+      covered: number;
+      dormant: string[];
+      label: string;
+      detail: string;
+    }
+  | {
+      state: "stale";
+      /** `provider/model` the catalog offers and no registry row covers. */
+      unregistered: string[];
+      dormant: string[];
+      label: string;
+      detail: string;
+    };
+
+/**
+ * Which offered targets have no registry row, and which rows are dormant.
+ *
+ * Asymmetric on purpose, and the asymmetry *is* spec §10:
+ *
+ * - **Unregistered is what makes the badge stale.** A live offered target no
+ *   row covers is a target the router cannot reason about at all — it will
+ *   never be chosen, and nobody is told why.
+ * - **Dormant never makes the badge stale.** A row for a model this host does
+ *   not offer today is the registry remembering something, which is the
+ *   behaviour the ruling asked for. It is counted and named, never scored.
+ *
+ * The `default` alias is not a model and is skipped, exactly as the rubric
+ * check skips it.
+ */
+export function compareRegistryToCatalog(
+  rows: readonly RegistryCoverageRow[],
+  offered: readonly RubricOfferedPair[],
+): { unregistered: string[]; dormant: string[]; covered: number } {
+  const unregistered = new Set<string>();
+  let covered = 0;
+  for (const pair of offered) {
+    if (pair.model.toLowerCase() === DEFAULT_ALIAS) continue;
+    const hit = rows.some(
+      (row) =>
+        providerMatches(row.provider, pair.providerInstanceRef) &&
+        baseId(row.model) === baseId(pair.model),
+    );
+    if (hit) {
+      covered += 1;
+      continue;
+    }
+    unregistered.add(pairLabel(pair.providerInstanceRef, baseId(pair.model)));
+  }
+  const dormant = new Set<string>();
+  for (const row of rows) {
+    const live = offered.some(
+      (pair) =>
+        providerMatches(row.provider, pair.providerInstanceRef) &&
+        baseId(pair.model) === baseId(row.model),
+    );
+    if (!live) dormant.add(pairLabel(row.provider, row.model));
+  }
+  return {
+    unregistered: [...unregistered].sort(),
+    dormant: [...dormant].sort(),
+    covered,
+  };
+}
+
+/**
+ * The badge's whole state.
+ *
+ * `rows: null` means this host could not read the registry — which is the
+ * state the desktop is in today and says so in as many words, because the
+ * only project-file access the app has returns directory listings, never file
+ * content (`shared/api/tauriTeams.ts:331`). A badge that rendered "fresh" on
+ * the strength of having compared nothing would be the exact defect this
+ * whole surface exists to prevent.
+ */
+export function resolveRegistryStaleness(input: {
+  /** Registry rows, or null when the registry could not be read at all. */
+  rows: readonly RegistryCoverageRow[] | null;
+  /** Why it could not be read. Rendered verbatim when `rows` is null. */
+  unreadableBecause?: string | null;
+  /** The registry's own version, when one was read. */
+  version?: number | null;
+  offered: readonly RubricOfferedPair[] | null;
+}): RegistryStaleness {
+  if (input.rows === null) {
+    return {
+      state: "unknown",
+      reason: "registry-unreadable",
+      label: "Registry: unknown (not readable)",
+      detail:
+        input.unreadableBecause?.trim() ||
+        "This app cannot read team/model-registry.yaml from here, so the registry cannot be checked against the catalog.",
+    };
+  }
+  if (input.rows.length === 0) {
+    return {
+      state: "unknown",
+      reason: "registry-unparseable",
+      label: "Registry: unknown (no rows)",
+      detail:
+        "A registry was read and it lists no execution targets, so there is nothing to check the catalog against.",
+    };
+  }
+  if (input.offered === null) {
+    return {
+      state: "unknown",
+      reason: "no-catalog",
+      label: "Registry: unknown (no provider catalog)",
+      detail:
+        "No provider has published a kind:44222 catalog here yet, so there is nothing to check the registry against.",
+    };
+  }
+  const { unregistered, dormant, covered } = compareRegistryToCatalog(
+    input.rows,
+    input.offered,
+  );
+  const named =
+    typeof input.version === "number"
+      ? `Registry v${input.version}`
+      : "Registry";
+  if (unregistered.length === 0) {
+    return {
+      state: "fresh",
+      covered,
+      dormant,
+      label: `${named} covers the catalog`,
+      detail:
+        `Every offered execution target has a registry row (${covered} ids).` +
+        (dormant.length > 0
+          ? ` ${dormant.length} rows are dormant — the registry knows them and this host does not offer them today, which is not staleness: ${dormant.join(", ")}.`
+          : ""),
+    };
+  }
+  return {
+    state: "stale",
+    unregistered,
+    dormant,
+    label: `${named} stale — ${unregistered.length} offered with no row`,
+    detail:
+      `Offered here and in no registry row: ${unregistered.join(", ")}.` +
+      (dormant.length > 0
+        ? ` ${dormant.length} rows are dormant and do not count: ${dormant.join(", ")}.`
+        : ""),
   };
 }

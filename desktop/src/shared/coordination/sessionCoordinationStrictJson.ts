@@ -121,9 +121,17 @@ export function hasStrictLifecycleCommandJson(
     ];
     // The seated forms buzz-core accepts: every unseated form plus the
     // `actor`/`role` pair, which travels together or not at all.
-    return hasExactFields(action, [
+    const seatForms = [
       ...unseated,
       ...unseated.map((form) => [...form, "actor", "role"]),
+    ];
+    // The 2026-08-30 routing amendment, trailing and independent — so every
+    // seat form doubles rather than being replaced. Enumerating fewer would
+    // drop every routed create on the floor, which on this surface is not a
+    // strictness nuance but a blank session list.
+    return hasExactFields(action, [
+      ...seatForms,
+      ...seatForms.map((form) => [...form, "routing"]),
     ]);
   }
   return (
@@ -171,7 +179,9 @@ export function hasStrictLifecycleCommandValues(
       boundedNullable(action.initialTurn, 12 * 1024) &&
       sessionRefValid &&
       genesisValid &&
-      seatValid
+      seatValid &&
+      (!Object.hasOwn(action, "routing") ||
+        hasStrictRoutingRecord(action.routing))
     );
   }
   return hasStrictSessionTargetValues(action.session);
@@ -254,13 +264,14 @@ export function hasStrictLeaseValues(
 /**
  * Every field set `buzz-core`'s `decode_coding_session_metadata` accepts.
  *
- * Four independent additive amendments have landed on the metadata payload —
- * the `sessionRef` echo, the agent seat's `role`, D9's `turnBudget`, and B1's
- * four coordinate facts (which travel all-four-or-none) — and each is present
- * or absent on its own, so the base key set has **sixteen** valid shapes, not
- * four. Enumerating fewer silently drops every event carrying an amendment
- * this list forgot, which is a whole-surface outage rather than a strictness
- * nuance: the reader sees no sessions at all.
+ * Five independent additive amendments have landed on the metadata payload —
+ * the `sessionRef` echo, the agent seat's `role`, D9's `turnBudget`, B1's four
+ * coordinate facts (which travel all-four-or-none), and the 2026-08-30
+ * `routing` record — and each is present or absent on its own, so the base key
+ * set has **thirty-two** valid shapes, not five. Enumerating fewer silently
+ * drops every event carrying an amendment this list forgot, which is a
+ * whole-surface outage rather than a strictness nuance: the reader sees no
+ * sessions at all.
  */
 function metadataFieldForms(): string[][] {
   const base = [
@@ -282,6 +293,7 @@ function metadataFieldForms(): string[][] {
     ["role"],
     ["turnBudget"],
     METADATA_FACT_FIELDS,
+    ["routing"],
   ];
   const forms: string[][] = [];
   for (let mask = 0; mask < 1 << amendments.length; mask += 1) {
@@ -379,6 +391,13 @@ export function hasStrictMetadataJson(
   ) {
     return false;
   }
+  if (
+    Object.hasOwn(content, "routing") &&
+    content.routing !== null &&
+    !hasStrictRoutingRecord(content.routing)
+  ) {
+    return false;
+  }
   const capabilityKeys = [
     "threadTurnStart",
     "threadTurnInterrupt",
@@ -415,6 +434,161 @@ export function isStrictMetadataContent(source: string): boolean {
   } catch {
     return false;
   }
+}
+
+const ROUTING_EFFORTS = new Set(["low", "medium", "high"]);
+const ROUTING_TIERS = new Set(["fast", "standard", "deep"]);
+const ROUTING_REVIEW_TRIGGERS = new Set([
+  "risk>=40",
+  "irreversibility>=4",
+  "security-auth-data-boundary",
+  "architecture-schema-public-contract",
+  "builder-outside-plan",
+  "builder-reports-uncertainty",
+  "tests-cannot-verify",
+  "lead-requested",
+]);
+const ROUTING_TRAITS = new Set([
+  "reasoning",
+  "coding",
+  "taste",
+  "judgment",
+  "agency",
+  "discipline",
+  "context",
+  "verification",
+  "velocity",
+  "costEfficiency",
+]);
+const ROUTING_RECORD_FIELDS = [
+  "class",
+  "tier",
+  "risk",
+  "chosen",
+  "runnerUp",
+  "reason",
+  "reviewRequired",
+  "reviewReasons",
+  "challengerSample",
+  "override",
+  "registryVersion",
+  "catalogRevision",
+];
+
+/**
+ * The `routing` record, closed and checked.
+ *
+ * Mirrors `isStrictCodingSessionRoutingRecord` in
+ * `features/coding-sessions/lib/codingSessionRouting.ts`, and is written out
+ * again here rather than imported because this module is loaded by the
+ * conformance binder under plain `node --test` and stays dependency-free.
+ *
+ * Two checks are worth naming, because both are the honesty of the record
+ * rather than its shape:
+ *
+ * - `risk.score` must equal `impact × uncertainty × irreversibility`. A record
+ *   whose score disagrees with its own factors is not a rounding difference,
+ *   it is a claim nobody can reproduce.
+ * - `chosen.effort` must be one the router is allowed to buy. `xhigh`, `max`
+ *   and `ultra` are human-override only (spec §2); a record asserting one as
+ *   a routed effort is refused rather than displayed.
+ */
+export function hasStrictRoutingRecord(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const allowed = new Set([...ROUTING_RECORD_FIELDS, "profile"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) return false;
+  if (ROUTING_RECORD_FIELDS.some((key) => !Object.hasOwn(value, key))) {
+    return false;
+  }
+  if (
+    typeof value.class !== "string" ||
+    !/^[a-z0-9_-]{1,64}$/.test(value.class)
+  ) {
+    return false;
+  }
+  if (!ROUTING_TIERS.has(value.tier as string)) return false;
+  if (!isRoutingRisk(value.risk)) return false;
+  if (!isRoutingTarget(value.chosen)) return false;
+  if (value.runnerUp !== null && !isRoutingTarget(value.runnerUp)) return false;
+  if (!boundedString(value.reason, MAX_REFERENCE_BYTES)) return false;
+  if (typeof value.reviewRequired !== "boolean") return false;
+  if (
+    !Array.isArray(value.reviewReasons) ||
+    value.reviewReasons.some((entry) => !ROUTING_REVIEW_TRIGGERS.has(entry))
+  ) {
+    return false;
+  }
+  if (value.reviewRequired !== value.reviewReasons.length > 0) return false;
+  if (typeof value.challengerSample !== "boolean") return false;
+  if (value.override !== null && !isRoutingOverride(value.override)) {
+    return false;
+  }
+  if (!Number.isSafeInteger(value.registryVersion)) return false;
+  if (
+    value.catalogRevision !== null &&
+    !(
+      Number.isSafeInteger(value.catalogRevision) &&
+      (value.catalogRevision as number) > 0
+    )
+  ) {
+    return false;
+  }
+  if (!Object.hasOwn(value, "profile")) return true;
+  return (
+    isPlainObject(value.profile) &&
+    Object.entries(value.profile).every(
+      ([trait, minimum]) =>
+        ROUTING_TRAITS.has(trait) &&
+        typeof minimum === "number" &&
+        Number.isFinite(minimum) &&
+        minimum >= 1 &&
+        minimum <= 5,
+    )
+  );
+}
+
+function isRoutingRisk(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const keys = ["impact", "uncertainty", "irreversibility", "score"];
+  if (Object.keys(value).length !== keys.length) return false;
+  if (keys.some((key) => !Number.isSafeInteger(value[key]))) return false;
+  for (const key of ["impact", "uncertainty", "irreversibility"]) {
+    const factor = value[key] as number;
+    if (factor < 1 || factor > 5) return false;
+  }
+  return (
+    value.score ===
+    (value.impact as number) *
+      (value.uncertainty as number) *
+      (value.irreversibility as number)
+  );
+}
+
+function isRoutingTarget(value: unknown): boolean {
+  return (
+    isPlainObject(value) &&
+    Object.keys(value).length === 3 &&
+    boundedString(value.provider, MAX_REFERENCE_BYTES) &&
+    boundedString(value.model, MAX_REFERENCE_BYTES) &&
+    ROUTING_EFFORTS.has(value.effort as string)
+  );
+}
+
+function isRoutingOverride(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (
+    Object.keys(value).some(
+      (key) => !["model", "effort", "because"].includes(key),
+    )
+  ) {
+    return false;
+  }
+  if (!boundedString(value.model, MAX_REFERENCE_BYTES)) return false;
+  if (!boundedString(value.because, MAX_REFERENCE_BYTES)) return false;
+  return (
+    !Object.hasOwn(value, "effort") ||
+    ROUTING_EFFORTS.has(value.effort as string)
+  );
 }
 
 /** Strict closure content check matching buzz-core's decoder. */

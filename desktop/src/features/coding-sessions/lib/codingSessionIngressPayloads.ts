@@ -5,6 +5,10 @@
 import { isCodingSessionRoleSlug } from "./codingSessionActorSeat";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import { encodeStructuredKey } from "./codingSessionKeys";
+import {
+  isStrictCodingSessionRoutingRecord,
+  type CodingSessionRoutingRecord,
+} from "./codingSessionRouting";
 import type {
   CodingSessionCapabilities,
   CodingSessionStatus,
@@ -220,6 +224,11 @@ export type BuzzCodingSessionMetadataV1 = {
   title: string | null;
   agentRef: string | null;
   role?: string;
+  /**
+   * The routing decision that chose this seat's execution target, echoed by
+   * the provider from the create it acted on. Absent on an unrouted seat.
+   */
+  routing?: CodingSessionRoutingRecord;
   provider: string | null;
   runtime: string | null;
   model: string | null;
@@ -519,6 +528,7 @@ export function parseBuzzCodingSessionMetadata(
     "sessionRef",
     "role",
     "turnBudget",
+    "routing",
     ...factFields,
   ] as const;
   if (
@@ -587,6 +597,18 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // Same discipline as `role` and `turnBudget`: a present, non-null `routing`
+  // that is not the closed record is corruption, and the payload is refused
+  // rather than decoded with the decision quietly dropped. A seat that read
+  // as unrouted because its record was malformed would be a seat whose model
+  // nobody could account for — with nothing anywhere saying so.
+  if (
+    Object.hasOwn(value, "routing") &&
+    value.routing !== null &&
+    !isStrictCodingSessionRoutingRecord(value.routing)
+  ) {
+    return null;
+  }
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
@@ -632,6 +654,12 @@ export function parseBuzzCodingSessionMetadata(
     ...(typeof value.role === "string" ? { role: value.role } : {}),
     ...(isCodingSessionTurnBudget(value.turnBudget, value.sessionRef)
       ? { turnBudget: value.turnBudget }
+      : {}),
+    // Same treatment as `role` and `turnBudget`: an explicit `null` is how
+    // serde writes an absent `Option`, so it is read as absent rather than as
+    // a claim that this seat was routed to nothing.
+    ...(isStrictCodingSessionRoutingRecord(value.routing)
+      ? { routing: value.routing as CodingSessionRoutingRecord }
       : {}),
     ...(hasFacts
       ? {

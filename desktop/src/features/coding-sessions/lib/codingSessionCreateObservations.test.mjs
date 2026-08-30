@@ -642,3 +642,71 @@ test("a seated create (actor + role) is a create, and joins like any other", () 
     );
   }
 });
+
+/**
+ * The routing amendment, on the authority stream.
+ *
+ * A routed create must bind authority exactly as an unrouted one does, and a
+ * `routing` that is not the closed record must be malformed rather than
+ * ignored — the desktop must not give a smuggled payload a more permissive
+ * meaning than the relay that validates it with `deny_unknown_fields`.
+ */
+const ROUTING_RECORD = {
+  class: "builder",
+  tier: "standard",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
+  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
+  runnerUp: null,
+  reason: "cleared the builder gates and was the cheapest of them.",
+  reviewRequired: false,
+  reviewReasons: [],
+  challengerSample: false,
+  override: null,
+  registryVersion: 1,
+  catalogRevision: null,
+};
+
+function routedCreateEvent(routing) {
+  const event = createEvent();
+  const payload = JSON.parse(event.content);
+  payload.action.routing = routing;
+  return finalizeEvent(
+    {
+      kind: event.kind,
+      created_at: event.created_at,
+      tags: event.tags,
+      content: JSON.stringify(payload),
+    },
+    FOUNDER_SECRET,
+  );
+}
+
+test("a routed create still classifies as a create", () => {
+  const classified = classifyCodingSessionCreateEvent(
+    routedCreateEvent(ROUTING_RECORD),
+    new Set([CHANNEL_ID]),
+  );
+  assert.equal(classified.kind, "create");
+  assert.equal(classified.signerPubkey, FOUNDER_PUBKEY);
+});
+
+test("a routing object that is not the closed record is malformed", () => {
+  for (const routing of [
+    null,
+    { class: "builder" },
+    {
+      ...ROUTING_RECORD,
+      chosen: { ...ROUTING_RECORD.chosen, effort: "ultra" },
+    },
+    { ...ROUTING_RECORD, smuggled: true },
+  ]) {
+    assert.equal(
+      classifyCodingSessionCreateEvent(
+        routedCreateEvent(routing),
+        new Set([CHANNEL_ID]),
+      ).kind,
+      "malformed",
+      `accepted ${JSON.stringify(routing)}`,
+    );
+  }
+});

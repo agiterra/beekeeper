@@ -47,6 +47,7 @@ import {
   type CodingSessionCommandTarget,
 } from "./codingSessionCommand";
 import type { CodingSessionIngressAuthority } from "./codingSessionIngressAuthority";
+import { isStrictCodingSessionRoutingRecord } from "./codingSessionRouting";
 import { encodeStructuredKey } from "./codingSessionKeys";
 import {
   CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
@@ -205,6 +206,18 @@ export function classifyCodingSessionCreateEvent(
   const hasActor = Object.hasOwn(payload.action, "actor");
   const hasRole = Object.hasOwn(payload.action, "role");
   if (hasActor !== hasRole) return { kind: "malformed" };
+  // The 2026-08-30 routing amendment, trailing and optional. A create nobody
+  // routed keeps exactly the key set every reader before this already
+  // accepted; a routed one carries the whole decision, and a `routing` that
+  // is not the closed record is malformed rather than ignored — a smuggled
+  // one must not be able to mean more here than at the relay.
+  const hasRouting = Object.hasOwn(payload.action, "routing");
+  if (
+    hasRouting &&
+    !isStrictCodingSessionRoutingRecord(payload.action.routing)
+  ) {
+    return { kind: "malformed" };
+  }
   const createKeys = [
     "type",
     "projectRef",
@@ -217,6 +230,7 @@ export function classifyCodingSessionCreateEvent(
     "title",
     "initialTurn",
     ...(hasActor ? ["actor", "role"] : []),
+    ...(hasRouting ? ["routing"] : []),
   ];
   if (
     !hasExactKeys(payload.action, createKeys) ||

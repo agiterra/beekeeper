@@ -153,3 +153,136 @@ void _writeCanonical(Object? value, StringBuffer buffer, int depth) {
   }
   buffer.write(jsonEncode(value));
 }
+
+const _routingEfforts = {'low', 'medium', 'high'};
+const _routingTiers = {'fast', 'standard', 'deep'};
+const _routingReviewTriggers = {
+  'risk>=40',
+  'irreversibility>=4',
+  'security-auth-data-boundary',
+  'architecture-schema-public-contract',
+  'builder-outside-plan',
+  'builder-reports-uncertainty',
+  'tests-cannot-verify',
+  'lead-requested',
+};
+const _routingTraits = {
+  'reasoning',
+  'coding',
+  'taste',
+  'judgment',
+  'agency',
+  'discipline',
+  'context',
+  'verification',
+  'velocity',
+  'costEfficiency',
+};
+const _routingRecordFields = [
+  'class',
+  'tier',
+  'risk',
+  'chosen',
+  'runnerUp',
+  'reason',
+  'reviewRequired',
+  'reviewReasons',
+  'challengerSample',
+  'override',
+  'registryVersion',
+  'catalogRevision',
+];
+const _maxRoutingReferenceBytes = 2 * 1024;
+final RegExp _routingClassPattern = RegExp(r'^[a-z0-9_-]{1,64}$');
+
+/// The `routing` record a routed 44221 create and its 44223 metadata carry
+/// (Brian's routing ruling, 2026-08-30).
+///
+/// Written out here rather than shared with the desktop because this app
+/// shares no code with it; the rule is identical. Two of the checks are about
+/// honesty rather than shape:
+///
+/// * `risk.score` must be `impact × uncertainty × irreversibility` — a record
+///   whose score disagrees with its own factors is a claim nobody can redo.
+/// * `chosen.effort` must be one the router is allowed to buy. `xhigh`, `max`
+///   and `ultra` are human-override only, so a record presenting one as a
+///   routed effort is refused rather than shown.
+bool isStrictRoutingRecord(Object? value) {
+  if (value is! Map<String, dynamic>) return false;
+  final allowed = {..._routingRecordFields, 'profile'};
+  if (value.keys.any((key) => !allowed.contains(key))) return false;
+  if (_routingRecordFields.any((key) => !value.containsKey(key))) return false;
+  final className = value['class'];
+  if (className is! String || !_routingClassPattern.hasMatch(className)) {
+    return false;
+  }
+  if (!_routingTiers.contains(value['tier'])) return false;
+  if (!_isRoutingRisk(value['risk'])) return false;
+  if (!_isRoutingTarget(value['chosen'])) return false;
+  if (value['runnerUp'] != null && !_isRoutingTarget(value['runnerUp'])) {
+    return false;
+  }
+  if (!boundedNonempty(value['reason'], _maxRoutingReferenceBytes)) {
+    return false;
+  }
+  final reviewRequired = value['reviewRequired'];
+  if (reviewRequired is! bool) return false;
+  final reasons = value['reviewReasons'];
+  if (reasons is! List ||
+      reasons.any((entry) => !_routingReviewTriggers.contains(entry))) {
+    return false;
+  }
+  if (reviewRequired != reasons.isNotEmpty) return false;
+  if (value['challengerSample'] is! bool) return false;
+  if (value['override'] != null && !_isRoutingOverride(value['override'])) {
+    return false;
+  }
+  if (value['registryVersion'] is! int) return false;
+  final revision = value['catalogRevision'];
+  if (revision != null && (revision is! int || revision <= 0)) return false;
+  if (!value.containsKey('profile')) return true;
+  final profile = value['profile'];
+  if (profile is! Map<String, dynamic>) return false;
+  return profile.entries.every(
+    (entry) =>
+        _routingTraits.contains(entry.key) &&
+        entry.value is num &&
+        (entry.value as num) >= 1 &&
+        (entry.value as num) <= 5,
+  );
+}
+
+bool _isRoutingRisk(Object? value) {
+  if (value is! Map<String, dynamic>) return false;
+  const keys = ['impact', 'uncertainty', 'irreversibility', 'score'];
+  if (value.length != keys.length) return false;
+  if (keys.any((key) => value[key] is! int)) return false;
+  for (final key in ['impact', 'uncertainty', 'irreversibility']) {
+    final factor = value[key]! as int;
+    if (factor < 1 || factor > 5) return false;
+  }
+  return value['score'] ==
+      (value['impact']! as int) *
+          (value['uncertainty']! as int) *
+          (value['irreversibility']! as int);
+}
+
+bool _isRoutingTarget(Object? value) =>
+    value is Map<String, dynamic> &&
+    value.length == 3 &&
+    boundedNonempty(value['provider'], _maxRoutingReferenceBytes) &&
+    boundedNonempty(value['model'], _maxRoutingReferenceBytes) &&
+    _routingEfforts.contains(value['effort']);
+
+bool _isRoutingOverride(Object? value) {
+  if (value is! Map<String, dynamic>) return false;
+  if (value.keys.any((key) => !['model', 'effort', 'because'].contains(key))) {
+    return false;
+  }
+  if (!boundedNonempty(value['model'], _maxRoutingReferenceBytes)) return false;
+  if (!boundedNonempty(value['because'], _maxRoutingReferenceBytes)) {
+    return false;
+  }
+  return !value.containsKey('effort') ||
+      _routingEfforts.contains(value['effort']);
+}

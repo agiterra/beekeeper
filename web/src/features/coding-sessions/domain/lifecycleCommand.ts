@@ -15,6 +15,7 @@ import {
   decodeTarget,
   hasExactKeys,
   hasOwnKey,
+  isStrictRoutingRecord,
   hasRequiredAndOptionalKeys,
   isCodingSessionSessionRef,
   isExactProviderAuthorityPubkey,
@@ -166,7 +167,13 @@ function decodeCreate(
       "genesisRef",
       "actor",
       "role",
+      // The 2026-08-30 routing amendment. Optional and trailing: an unrouted
+      // create is the same shape it always was, and a routed one is read
+      // rather than dropped — a strict list that forgets an amendment does
+      // not render a nuance, it renders an empty session list.
+      "routing",
     ]) ||
+    (hasOwnKey(action, "routing") && !isStrictRoutingRecord(action.routing)) ||
     !nullableBounded(action.projectRef, MAX_REFERENCE_BYTES) ||
     !nullableBounded(action.repoRef, MAX_REFERENCE_BYTES) ||
     !nullableBounded(action.model, MAX_REFERENCE_BYTES) ||

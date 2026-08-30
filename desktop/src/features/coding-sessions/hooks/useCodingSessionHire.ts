@@ -29,6 +29,7 @@ import {
   readCodingSessionHirePolicy,
   type CodingSessionHirePolicy,
 } from "../lib/codingSessionHirePolicy";
+import type { CodingSessionRegistrySource } from "../lib/codingSessionHireRouting";
 import {
   selectUnansweredCodingSessionHires,
   type CodingSessionHireSeatPlan,
@@ -236,6 +237,21 @@ export type UseCodingSessionHireInput = {
    * the model dressed up as a claim about the catalog.
    */
   modelCatalogs?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * This host's copy of the shared model registry (`team/model-registry.yaml`),
+   * or the reason it has none.
+   *
+   * There is no Tauri command that reads a file out of a project checkout —
+   * the only role-pack access the app has returns a role, a name and a
+   * directory, never file content (`shared/api/tauriTeams.ts:331`, `:350`) —
+   * so the real host supplies `unreadable` today and a hire that asks to be
+   * routed is refused `HIRE_NO_ROUTE` rather than routed against a copy
+   * compiled into the app. The day a reader exists, this input is the only
+   * thing that changes.
+   */
+  registry?: CodingSessionRegistrySource;
+  /** The 44222 revision behind {@link modelCatalogs}, when one was read. */
+  catalogRevision?: number | null;
   /** Where each seat's worktree is cut from, by channel. Host-local. */
   checkoutForChannel: (channelId: string) => string | null;
   /** Targets to answer a requesting seat's refusal turn to, by pubkey. */
@@ -395,6 +411,11 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           ]),
         ),
         providerAuthorityPubkey,
+        registry: current.input.registry ?? {
+          kind: "unreadable",
+          why: "this desktop cannot read project files, so it has never loaded team/model-registry.yaml",
+        },
+        catalogRevision: current.input.catalogRevision ?? null,
         commandId: hireDeps.newSeatCommandId(),
         now: hireDeps.now(),
       });
@@ -448,6 +469,10 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
               model: plan.model,
               title: plan.title,
               initialTurn: plan.initialTurn,
+              // The router's decision, verbatim and on the wire. A seat whose
+              // model cannot be explained from the events is a seat running
+              // weights nobody can account for.
+              routing: plan.routing,
             }),
           );
           await hireDeps.publisher.publishEvent(

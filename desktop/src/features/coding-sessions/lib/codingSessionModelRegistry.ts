@@ -1,0 +1,378 @@
+/**
+ * The shared model registry: its shape on disk, and the reader that refuses
+ * anything it cannot vouch for.
+ *
+ * `team/model-registry.yaml` is the team's own artefact — Brian's operational
+ * priors for every execution target, the class gates of the routing spec §4,
+ * and the risk bands. It is split out of the router
+ * (`codingSessionRouting.ts`) because reading a file and choosing a target are
+ * two jobs, and only one of them has an opinion.
+ *
+ * Two rules the reader holds, both from spec §10 and §1:
+ *
+ * - **Every no-answer is an answer.** A registry that will not parse, or that
+ *   is a version this build does not understand, comes back as `why` — never
+ *   as a partially-read registry and never as a built-in fallback. A host that
+ *   routed on a copy compiled into the app would be making decisions nobody
+ *   could check against the file the team edits.
+ * - **`null` is "no prior", never "average".** A trait a row has no number for
+ *   stays null all the way through, and the router excludes the row from any
+ *   class that gates on it rather than inventing a middle score.
+ *
+ * The registry does not get to redefine the effort ladder: spec §2 fixes
+ * FAST/STANDARD/DEEP to low/medium/high, and a file claiming otherwise is
+ * refused rather than obeyed.
+ */
+import { parse as parseYaml } from "yaml";
+
+/** The ten scored traits, in the spec's own order (§1). */
+export const ROUTING_TRAITS = [
+  "reasoning",
+  "coding",
+  "taste",
+  "judgment",
+  "agency",
+  "discipline",
+  "context",
+  "verification",
+  "velocity",
+  "costEfficiency",
+] as const;
+
+export type RoutingTrait = (typeof ROUTING_TRAITS)[number];
+
+/** The three risk bands. Marked `seed_policy` in the spec, not truth. */
+export type RoutingTier = "fast" | "standard" | "deep";
+
+/**
+ * The three efforts the router may buy.
+ *
+ * `xhigh`, `max`, `ultra` and every equivalent are human-override only until
+ * our own telemetry shows they buy something (spec §2).
+ */
+export type RoutingEffort = "low" | "medium" | "high";
+
+/** Spec §2, as a table: the only automatic effort purchases there are. */
+export const ROUTING_EFFORT_FOR_TIER: Readonly<
+  Record<RoutingTier, RoutingEffort>
+> = Object.freeze({ fast: "low", standard: "medium", deep: "high" });
+
+/** Risk inputs, 1–5 each. */
+export type RoutingRisk = {
+  impact: number;
+  uncertainty: number;
+  irreversibility: number;
+};
+
+/** A registry class: its gates, and what it factually requires. */
+export type RegistryClass = {
+  minimums: Partial<Record<RoutingTrait, number>>;
+  requires?: {
+    multimodal?: boolean;
+    tools?: readonly string[];
+  };
+  /** This class must not share a vendor with that one, where possible. */
+  crossProviderOf?: string;
+  /** True for a class this repo drafted rather than one Brian ruled on. */
+  laneDrafted?: boolean;
+};
+
+/** Hard constraints a single target carries, beyond its class's. */
+export type RegistryTargetConstraints = {
+  ambiguityMax?: number;
+  irreversibilityMax?: number;
+  scope?: string;
+};
+
+/** The non-scored, factual half of a row. Kept apart from the scores (§1). */
+export type RegistryTargetFacts = {
+  multimodal?: boolean | null;
+  contextWindow?: number | null;
+  tools?: readonly string[] | null;
+  priceUsdPerM?: { input: number; output: number } | null;
+  quotaClass?: string | null;
+  knownFailureModes: readonly string[];
+  constraints?: RegistryTargetConstraints;
+};
+
+/** Where a row's numbers came from. Every row carries one (§10). */
+export type RegistryRating = {
+  status: string;
+  confidence: string;
+  author: string;
+  date: string;
+};
+
+/** One registry row: an execution target minus its effort. */
+export type RegistryTarget = {
+  provider: string;
+  model: string;
+  /** 1–5 operational priors. `null` is "no prior", never "average". */
+  scores: Partial<Record<RoutingTrait, number | null>>;
+  facts: RegistryTargetFacts;
+  /**
+   * Incumbency per class, in either of the two spellings the ruling uses:
+   * a tier-qualified key (`builder-fast: incumbent`) or a tier-qualified
+   * value (`builder: incumbent-deep`).
+   */
+  status: Readonly<Record<string, string>>;
+  rating: RegistryRating;
+};
+
+/** The whole registry file. */
+export type ModelRegistry = {
+  version: number;
+  updatedAt: string | null;
+  traits: readonly RoutingTrait[];
+  tiers: Readonly<
+    Record<
+      RoutingTier,
+      { risk: readonly [number, number]; effort: RoutingEffort }
+    >
+  >;
+  classes: Readonly<Record<string, RegistryClass>>;
+  targets: readonly RegistryTarget[];
+};
+
+/** The version of the registry contract this build understands. */
+export const MODEL_REGISTRY_VERSION = 1;
+
+/** `impact × uncertainty × irreversibility`, the spec's §5 product. */
+export function codingSessionRiskScore(risk: RoutingRisk): number {
+  return risk.impact * risk.uncertainty * risk.irreversibility;
+}
+
+/** The band a score falls in, or null when it falls outside every band. */
+export function codingSessionRiskTier(
+  registry: ModelRegistry,
+  score: number,
+): RoutingTier | null {
+  for (const tier of ["fast", "standard", "deep"] as const) {
+    const band = registry.tiers[tier];
+    if (band && score >= band.risk[0] && score <= band.risk[1]) return tier;
+  }
+  return null;
+}
+
+/**
+ * Read the shared registry file.
+ *
+ * Total and explicit: anything it cannot read comes back as `why`, because a
+ * host that fell back to a built-in copy would be routing on numbers nobody
+ * on this machine can see. A version this build does not understand is
+ * refused for the same reason.
+ */
+export function parseModelRegistry(
+  text: string,
+): { ok: true; registry: ModelRegistry } | { ok: false; why: string } {
+  let document: unknown;
+  try {
+    document = parseYaml(text);
+  } catch (error) {
+    return {
+      ok: false,
+      why: `the registry is not valid YAML: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  if (!isRecord(document)) {
+    return { ok: false, why: "the registry is not a YAML mapping" };
+  }
+  if (document.version !== MODEL_REGISTRY_VERSION) {
+    return {
+      ok: false,
+      why:
+        `the registry is version ${String(document.version)}; this build ` +
+        `reads version ${MODEL_REGISTRY_VERSION}`,
+    };
+  }
+  const tiers = readTiers(document.tiers);
+  if (tiers === null) return { ok: false, why: "the registry has no tiers" };
+  const classes = readClasses(document.classes);
+  if (classes === null)
+    return { ok: false, why: "the registry has no classes" };
+  const targets = readTargets(document.targets);
+  if (targets === null || targets.length === 0) {
+    return { ok: false, why: "the registry lists no execution targets" };
+  }
+  return {
+    ok: true,
+    registry: {
+      version: MODEL_REGISTRY_VERSION,
+      updatedAt:
+        typeof document.updatedAt === "string" ? document.updatedAt : null,
+      traits: ROUTING_TRAITS,
+      tiers,
+      classes,
+      targets,
+    },
+  };
+}
+
+function readTiers(value: unknown): ModelRegistry["tiers"] | null {
+  if (!isRecord(value)) return null;
+  const bands: Partial<
+    Record<
+      RoutingTier,
+      { risk: readonly [number, number]; effort: RoutingEffort }
+    >
+  > = {};
+  for (const tier of ["fast", "standard", "deep"] as const) {
+    const row = value[tier];
+    if (
+      !isRecord(row) ||
+      !Array.isArray(row.risk) ||
+      row.risk.length !== 2 ||
+      typeof row.risk[0] !== "number" ||
+      typeof row.risk[1] !== "number" ||
+      // The registry does not get to redefine the effort ladder: spec §2 fixes
+      // FAST/STANDARD/DEEP to low/medium/high, and a file claiming otherwise
+      // is refused rather than obeyed.
+      row.effort !== ROUTING_EFFORT_FOR_TIER[tier]
+    ) {
+      return null;
+    }
+    bands[tier] = {
+      risk: [row.risk[0], row.risk[1]] as const,
+      effort: ROUTING_EFFORT_FOR_TIER[tier],
+    };
+  }
+  const { fast, standard, deep } = bands;
+  if (fast === undefined || standard === undefined || deep === undefined) {
+    return null;
+  }
+  return { fast, standard, deep };
+}
+
+function readClasses(value: unknown): ModelRegistry["classes"] | null {
+  if (!isRecord(value)) return null;
+  const classes: Record<string, RegistryClass> = {};
+  for (const [name, row] of Object.entries(value)) {
+    if (!isRecord(row)) continue;
+    const requires = isRecord(row.requires) ? row.requires : null;
+    classes[name] = {
+      minimums: readMinimums(row.minimums),
+      ...(requires === null
+        ? {}
+        : {
+            requires: {
+              ...(typeof requires.multimodal === "boolean"
+                ? { multimodal: requires.multimodal }
+                : {}),
+              ...(Array.isArray(requires.tools)
+                ? { tools: requires.tools.filter(isNonEmptyString) }
+                : {}),
+            },
+          }),
+      ...(typeof row.crossProviderOf === "string"
+        ? { crossProviderOf: row.crossProviderOf }
+        : {}),
+      ...(row.laneDrafted === true ? { laneDrafted: true } : {}),
+    };
+  }
+  return Object.keys(classes).length > 0 ? classes : null;
+}
+
+function readMinimums(value: unknown): Partial<Record<RoutingTrait, number>> {
+  const minimums: Partial<Record<RoutingTrait, number>> = {};
+  if (!isRecord(value)) return minimums;
+  for (const trait of ROUTING_TRAITS) {
+    const minimum = value[trait];
+    if (typeof minimum === "number") minimums[trait] = minimum;
+  }
+  return minimums;
+}
+
+function readTargets(value: unknown): RegistryTarget[] | null {
+  if (!Array.isArray(value)) return null;
+  const targets: RegistryTarget[] = [];
+  for (const row of value) {
+    if (
+      !isRecord(row) ||
+      !isNonEmptyString(row.provider) ||
+      !isNonEmptyString(row.model) ||
+      !isRecord(row.rating)
+    ) {
+      return null;
+    }
+    const scores: Partial<Record<RoutingTrait, number | null>> = {};
+    const rawScores = isRecord(row.scores) ? row.scores : {};
+    for (const trait of ROUTING_TRAITS) {
+      const score = rawScores[trait];
+      scores[trait] = typeof score === "number" ? score : null;
+    }
+    targets.push({
+      provider: row.provider,
+      model: row.model,
+      scores,
+      facts: readFacts(row.facts),
+      status: readStatus(row.status),
+      rating: {
+        status: String(row.rating.status ?? ""),
+        confidence: String(row.rating.confidence ?? ""),
+        author: String(row.rating.author ?? ""),
+        date: String(row.rating.date ?? ""),
+      },
+    });
+  }
+  return targets;
+}
+
+function readFacts(value: unknown): RegistryTargetFacts {
+  const facts: RegistryTargetFacts = { knownFailureModes: [] };
+  if (!isRecord(value)) return facts;
+  if (typeof value.multimodal === "boolean")
+    facts.multimodal = value.multimodal;
+  if (typeof value.contextWindow === "number") {
+    facts.contextWindow = value.contextWindow;
+  }
+  if (Array.isArray(value.tools)) {
+    facts.tools = value.tools.filter(isNonEmptyString);
+  }
+  if (
+    isRecord(value.priceUsdPerM) &&
+    typeof value.priceUsdPerM.input === "number" &&
+    typeof value.priceUsdPerM.output === "number"
+  ) {
+    facts.priceUsdPerM = {
+      input: value.priceUsdPerM.input,
+      output: value.priceUsdPerM.output,
+    };
+  }
+  if (isNonEmptyString(value.quotaClass)) facts.quotaClass = value.quotaClass;
+  if (Array.isArray(value.knownFailureModes)) {
+    facts.knownFailureModes = value.knownFailureModes.filter(isNonEmptyString);
+  }
+  if (isRecord(value.constraints)) {
+    const constraints: RegistryTargetConstraints = {};
+    if (typeof value.constraints.ambiguityMax === "number") {
+      constraints.ambiguityMax = value.constraints.ambiguityMax;
+    }
+    if (typeof value.constraints.irreversibilityMax === "number") {
+      constraints.irreversibilityMax = value.constraints.irreversibilityMax;
+    }
+    if (isNonEmptyString(value.constraints.scope)) {
+      constraints.scope = value.constraints.scope;
+    }
+    facts.constraints = constraints;
+  }
+  return facts;
+}
+
+function readStatus(value: unknown): Record<string, string> {
+  const status: Record<string, string> = {};
+  if (!isRecord(value)) return status;
+  for (const [key, entry] of Object.entries(value)) {
+    if (isNonEmptyString(entry)) status[key] = entry;
+  }
+  return status;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

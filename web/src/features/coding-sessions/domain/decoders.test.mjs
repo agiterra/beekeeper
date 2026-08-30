@@ -492,3 +492,96 @@ test("a seated 44221 create (actor + role) parses; half a seat or a bad slug is 
     );
   }
 });
+
+/**
+ * The 2026-08-30 routing amendment, and the two amendments this observer was
+ * already dropping.
+ *
+ * `role` and `turnBudget` have shipped in buzz-core and on the desktop for
+ * weeks; this decoder's optional-key list never grew to match, so every
+ * seated session and every budgeted umbrella decoded to `null` here — the
+ * failure the desktop's own comment warns about, which is a blank session
+ * list rather than a strictness nuance. All three are read now.
+ */
+const ROUTING = {
+  class: "builder",
+  tier: "standard",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
+  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
+  runnerUp: null,
+  reason: "cleared the builder gates and was the cheapest of them.",
+  reviewRequired: false,
+  reviewReasons: [],
+  challengerSample: false,
+  override: null,
+  registryVersion: 1,
+  catalogRevision: null,
+};
+
+test("metadata carrying a seat's role is read, not dropped", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataJson({ agentRef: "d".repeat(64), role: "builder" }),
+  );
+  assert.equal(parsed?.role, "builder");
+  assert.equal(
+    parseBuzzCodingSessionMetadata(metadataJson({ role: "builder" })),
+    null,
+    "a role with no actor is a claim about a seat nobody holds",
+  );
+});
+
+test("metadata carrying an umbrella's turn budget is read, not dropped", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataJson({
+      sessionRef: SESSION_REF,
+      turnBudget: { used: 3, limit: 20 },
+    }),
+  );
+  assert.deepEqual(parsed?.turnBudget, { used: 3, limit: 20 });
+  assert.equal(
+    parseBuzzCodingSessionMetadata(
+      metadataJson({ turnBudget: { used: 3, limit: 20 } }),
+    ),
+    null,
+    "a budget bounds an umbrella, so it needs one",
+  );
+});
+
+test("metadata carrying a routing record is read, and a malformed one refused", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataJson({ routing: ROUTING }),
+  );
+  assert.deepEqual(parsed?.routing, ROUTING);
+  for (const routing of [
+    { class: "builder" },
+    { ...ROUTING, chosen: { ...ROUTING.chosen, effort: "xhigh" } },
+    { ...ROUTING, risk: { ...ROUTING.risk, score: 1 } },
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(metadataJson({ routing })),
+      null,
+      `decoded ${JSON.stringify(routing)}`,
+    );
+  }
+});
+
+test("a routed create is read, and a malformed routing record is not", () => {
+  const signer = newSigner();
+  assert.ok(
+    parseCodingSessionLifecycleCommand(
+      createEvent(signer, {
+        providerAuthorityPubkey: signer.pubkey,
+        routing: ROUTING,
+      }),
+    ),
+  );
+  assert.equal(
+    parseCodingSessionLifecycleCommand(
+      createEvent(signer, {
+        providerAuthorityPubkey: signer.pubkey,
+        routing: { class: "builder" },
+      }),
+    ),
+    null,
+  );
+});

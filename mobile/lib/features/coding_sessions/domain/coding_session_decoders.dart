@@ -98,7 +98,20 @@ CodingSessionDecoded<CodingSessionMetadata> decodeCodingSessionMetadata(
   // validated here so an amended payload is not read as corruption, then
   // dropped — this observer surfaces no code coordinates in v1.
   const facts = ['observedCommit', 'dirty', 'relayReachable', 'verifiedAt'];
-  const optional = [...summaries, 'sessionRef', ...facts];
+  // Every additive amendment buzz-core has landed on this payload. `role`,
+  // `turnBudget` and the 2026-08-30 `routing` record were all missing from
+  // this list, so a seated, budgeted or routed session decoded as corruption
+  // here and vanished from the observer — a forgotten amendment is a blank
+  // session list, not a strictness nuance. This app surfaces none of the three
+  // in v1; they are named so an amended payload is read rather than dropped.
+  const optional = [
+    ...summaries,
+    'sessionRef',
+    'role',
+    'turnBudget',
+    'routing',
+    ...facts,
+  ];
   if (!isPlainRecord(value)) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
@@ -107,6 +120,15 @@ CodingSessionDecoded<CodingSessionMetadata> decodeCodingSessionMetadata(
   final payload = value! as Map<String, dynamic>;
   if (!hasRequiredAndOptionalKeys(payload, required, optional) ||
       payload['schema'] != codingSessionMetadataSchema) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  // The three amendments above are read but not surfaced; a present, non-null
+  // one that is malformed is still corruption and is refused, exactly as the
+  // desktop and the relay refuse it.
+  if (payload['routing'] != null &&
+      !isStrictRoutingRecord(payload['routing'])) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
     );

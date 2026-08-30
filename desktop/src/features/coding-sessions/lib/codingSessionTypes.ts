@@ -1,3 +1,4 @@
+import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionTurnBudget } from "./codingSessionIngressPayloads";
 import type { CodingSessionProjectedTranscriptItem } from "./codingSessionTranscriptItems";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
@@ -71,6 +72,14 @@ export type CodingSessionCatalogRecord = {
    * not "unlimited".
    */
   turnBudget: CodingSessionTurnBudget | null;
+  /**
+   * The routing decision that chose this seat's execution target, as the
+   * provider echoed it into 44223 — or null when nothing routed this seat.
+   *
+   * Null is "this seat was not routed", never "routed to nothing". A seat the
+   * person created by hand carries none and says none.
+   */
+  routing: CodingSessionRoutingRecord | null;
   capabilities: CodingSessionCapabilities | null;
 };
 

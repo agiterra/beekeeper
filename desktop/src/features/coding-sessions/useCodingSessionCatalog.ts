@@ -346,6 +346,10 @@ export function mergeTrustedCodingSessionIngress(
       // the umbrella's furthest count below, because the provider only ever
       // publishes it on the acting execution.
       turnBudget: metadata?.turnBudget ?? null,
+      // The router's decision, straight off the 44223 the provider signed.
+      // Nothing here re-derives it: a seat's routing is a fact the wire
+      // carries or does not.
+      routing: metadata?.routing ?? null,
       capabilities: metadata?.capabilities ?? null,
     } satisfies CodingSessionCatalogRecord;
   });

@@ -331,6 +331,9 @@ function synthesizePendingEntry(
     agentRef: null,
     role: null,
     turnBudget: null,
+    // A pending create has not been routed by anything this client can see:
+    // the seat's routing arrives with the provider's 44223, not before it.
+    routing: null,
     capabilities: null,
   };
   return {

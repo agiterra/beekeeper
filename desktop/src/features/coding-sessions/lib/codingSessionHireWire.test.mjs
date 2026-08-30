@@ -226,3 +226,90 @@ test("publishing against a relay that accepts it hands back the command id", asy
   assert.equal(published.commandId, "csl-hire-1");
   assert.match(published.eventId, /^[0-9a-f]{64}$/);
 });
+
+/**
+ * The 2026-08-30 routing amendment.
+ *
+ * Two accepted key sets, not one growing set: a hire that predates the router
+ * is still seven keys and still read, and a routed one carries `routing`
+ * last. What a lead may put there is a *request* — a class and a risk — and
+ * never a chosen model, because "the lead chooses the capability required;
+ * the router chooses the execution target".
+ */
+const ROUTING_REQUEST = {
+  class: "builder",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+};
+
+test("an unrouted hire is byte-identical to the seven-key form", () => {
+  const withKey = buildCodingSessionHireEvent(
+    hireInput({ routing: undefined }),
+  );
+  const without = buildCodingSessionHireEvent(hireInput());
+  assert.equal(withKey.content, without.content);
+  assert.equal(JSON.parse(without.content).action.routing, undefined);
+});
+
+test("a routed hire round-trips with its routing request", () => {
+  const classified = classifyCodingSessionHireEvent(
+    signHire({ routing: ROUTING_REQUEST }),
+    ALLOWED,
+  );
+  assert.equal(classified.kind, "hire");
+  assert.deepEqual(classified.action.routing, ROUTING_REQUEST);
+  // Trailing, so every earlier key keeps its position.
+  assert.deepEqual(
+    Object.keys(
+      JSON.parse(signHire({ routing: ROUTING_REQUEST }).content).action,
+    ),
+    [
+      "type",
+      "sessionRef",
+      "genesisRef",
+      "role",
+      "providerInstanceRef",
+      "model",
+      "brief",
+      "routing",
+    ],
+  );
+});
+
+test("a routing request the relay would refuse is malformed here too", () => {
+  for (const routing of [
+    { class: "builder" },
+    { class: "builder", risk: { impact: 3, uncertainty: 3 } },
+    {
+      class: "builder",
+      risk: { impact: 0, uncertainty: 3, irreversibility: 2 },
+    },
+    {
+      ...ROUTING_REQUEST,
+      chosen: { provider: "p", model: "m", effort: "low" },
+    },
+    { ...ROUTING_REQUEST, override: { model: "sonnet" } },
+    { ...ROUTING_REQUEST, tier: "ultra" },
+  ]) {
+    const event = signHire();
+    const payload = JSON.parse(event.content);
+    payload.action.routing = routing;
+    assert.equal(
+      classifyCodingSessionHireEvent(
+        { ...event, content: JSON.stringify(payload) },
+        ALLOWED,
+      ).kind,
+      "malformed",
+      `accepted ${JSON.stringify(routing)}`,
+    );
+  }
+});
+
+test("the builder refuses a routing request rather than signing it", () => {
+  assert.throws(
+    () =>
+      validateCodingSessionHireInput(
+        hireInput({ routing: { class: "builder" } }),
+      ),
+    /action\.routing/,
+  );
+});

@@ -326,3 +326,53 @@ test("every relay rejection fails the create without a second signature", async 
     assert.equal(signerCalls, 1);
   }
 });
+
+// The routing amendment: trailing, optional, and refused rather than signed
+// when it is not the closed record the relay accepts.
+const ROUTING = {
+  class: "builder",
+  tier: "standard",
+  risk: { impact: 3, uncertainty: 3, irreversibility: 2, score: 18 },
+  chosen: { provider: "claude-primary", model: "sonnet", effort: "medium" },
+  runnerUp: null,
+  reason: "cleared the builder gates and was the cheapest of them.",
+  reviewRequired: false,
+  reviewReasons: [],
+  challengerSample: false,
+  override: null,
+  registryVersion: 1,
+  catalogRevision: null,
+};
+
+test("an unrouted create keeps the exact bytes it had before routing existed", () => {
+  assert.equal(
+    buildCodingSessionCreateEvent({ ...input, routing: null }).content,
+    buildCodingSessionCreateEvent(input).content,
+  );
+  assert.equal(
+    buildCodingSessionCreateEvent({ ...input, routing: undefined }).content,
+    buildCodingSessionCreateEvent(input).content,
+  );
+});
+
+test("a routed create carries the record last", () => {
+  const action = JSON.parse(
+    buildCodingSessionCreateEvent({ ...input, routing: ROUTING }).content,
+  ).action;
+  assert.deepEqual(action.routing, ROUTING);
+  assert.equal(Object.keys(action).at(-1), "routing");
+});
+
+test("a routing record the relay would refuse is never signed", () => {
+  for (const routing of [
+    { class: "builder" },
+    { ...ROUTING, chosen: { ...ROUTING.chosen, effort: "max" } },
+    { ...ROUTING, smuggled: true },
+  ]) {
+    assert.throws(
+      () => buildCodingSessionCreateEvent({ ...input, routing }),
+      /action\.routing/,
+      `signed ${JSON.stringify(routing)}`,
+    );
+  }
+});

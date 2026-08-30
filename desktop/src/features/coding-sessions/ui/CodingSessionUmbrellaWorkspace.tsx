@@ -16,6 +16,7 @@ import {
   buildCodingSessionTurnByline,
   CODING_SESSION_UNKNOWN_ACTOR,
 } from "@/features/coding-sessions/lib/codingSessionTurnByline";
+import { listCodingSessionRoutedSeats } from "@/features/coding-sessions/lib/codingSessionRoutedSeats";
 import {
   listCodingSessionUmbrellaParticipants,
   type CodingSessionActorNameResolver,
@@ -262,6 +263,10 @@ export function UmbrellaCodingSessionWorkspace({
       })),
     [umbrella.executions, workspaceActorName],
   );
+  const routedSeats = React.useMemo(
+    () => listCodingSessionRoutedSeats(umbrella.executions),
+    [umbrella.executions],
+  );
   const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
     () => [
       {
@@ -429,6 +434,7 @@ export function UmbrellaCodingSessionWorkspace({
           channelName={channelName}
           compact={isNarrow || headerCompact}
           contextLoads={contextLoads}
+          routedSeats={routedSeats}
           founderDetails={
             umbrella.founderPubkey ? (
               <CodingSessionFounderLine

@@ -169,6 +169,7 @@ export function createEvent(signer, options = {}) {
     initialTurn: null,
     ...(options.actor === undefined ? {} : { actor: options.actor }),
     ...(options.role === undefined ? {} : { role: options.role }),
+    ...(options.routing === undefined ? {} : { routing: options.routing }),
   };
   return sign(signer, {
     kind: 44221,

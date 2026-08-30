@@ -561,4 +561,98 @@ void main() {
       );
     });
   });
+
+  // The 2026-08-30 routing amendment, plus the two amendments this decoder was
+  // already dropping: a seated session's `role` and an umbrella's
+  // `turnBudget`. All three ship in buzz-core and on the desktop; until now a
+  // payload carrying any of them decoded as corruption here and the session
+  // vanished from the observer.
+  group('additive metadata amendments', () {
+    Map<String, Object?> routingRecord() => <String, Object?>{
+      'class': 'builder',
+      'tier': 'standard',
+      'risk': <String, Object?>{
+        'impact': 3,
+        'uncertainty': 3,
+        'irreversibility': 2,
+        'score': 18,
+      },
+      'chosen': <String, Object?>{
+        'provider': 'claude-primary',
+        'model': 'sonnet',
+        'effort': 'medium',
+      },
+      'runnerUp': null,
+      'reason': 'cleared the builder gates and was the cheapest of them.',
+      'reviewRequired': false,
+      'reviewReasons': <Object?>[],
+      'challengerSample': false,
+      'override': null,
+      'registryVersion': 1,
+      'catalogRevision': null,
+    };
+
+    test('a seated, budgeted, routed metadata payload still decodes', () {
+      final decoded = decodeCodingSessionMetadata(
+        metadataEvent(
+          agentRef: 'd' * 64,
+          role: 'builder',
+          sessionRef: sessionRefA,
+          turnBudget: <String, Object?>{'used': 3, 'limit': 20},
+          routing: routingRecord(),
+        ),
+      );
+      expect(decoded.value, isNotNull);
+      expect(decoded.value!.model, 'opus');
+    });
+
+    test('a malformed routing record is refused, never quietly dropped', () {
+      final bad = <Map<String, Object?>>[
+        <String, Object?>{'class': 'builder'},
+        routingRecord()
+          ..['chosen'] = <String, Object?>{
+            'provider': 'claude-primary',
+            'model': 'sonnet',
+            'effort': 'xhigh',
+          },
+        routingRecord()
+          ..['risk'] = <String, Object?>{
+            'impact': 3,
+            'uncertainty': 3,
+            'irreversibility': 2,
+            'score': 19,
+          },
+      ];
+      for (final routing in bad) {
+        expect(
+          decodeCodingSessionMetadata(metadataEvent(routing: routing)).reason,
+          CodingSessionDecodeReason.malformedPayload,
+          reason: jsonEncode(routing),
+        );
+      }
+    });
+
+    test('a routed create decodes, and a malformed one is refused', () {
+      expect(
+        decodeCodingSessionCreate(
+          createEvent(
+            commandId: 'cmd-1',
+            sessionRef: sessionRefA,
+            genesisRef: genesisEventIdA,
+            routing: routingRecord(),
+          ),
+        ).value,
+        isNotNull,
+      );
+      expect(
+        decodeCodingSessionCreate(
+          createEvent(
+            commandId: 'cmd-1',
+            routing: <String, Object?>{'class': 'builder'},
+          ),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+    });
+  });
 }

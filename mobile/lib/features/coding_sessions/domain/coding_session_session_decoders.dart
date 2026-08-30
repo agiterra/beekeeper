@@ -102,6 +102,15 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
       CodingSessionDecodeReason.malformedPayload,
     );
   }
+  // The 2026-08-30 routing amendment: trailing, optional, and either the
+  // closed record or corruption. An unrouted create keeps the exact key set
+  // every reader before this already accepted.
+  final hasRouting = action.containsKey('routing');
+  if (hasRouting && !isStrictRoutingRecord(action['routing'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
   final createKeys = [
     'type',
     'projectRef',
@@ -115,6 +124,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
     'initialTurn',
     if (hasActor) 'actor',
     if (hasActor) 'role',
+    if (hasRouting) 'routing',
   ];
   if (!hasExactKeys(action, createKeys) || (hasGenesisRef && !hasSessionRef)) {
     return const CodingSessionDecoded.failed(

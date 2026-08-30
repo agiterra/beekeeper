@@ -17,6 +17,15 @@
  * 2. **Policy next**, producing one of the five contract codes, which is
  *    published back to the requesting seat as a turn.
  * 3. **The seat last** — a create carrying the brief as its first turn.
+ *
+ * Since 2026-08-30 there is a fourth step between 2 and 3, and only for a
+ * hire that asked for it: **the router**. The lead names a class and a risk,
+ * never a model; this host intersects its registry with the live catalog of
+ * the runtime the chosen identity runs on, picks the cheapest execution
+ * target that cleared every gate, and puts the whole decision — class, tier,
+ * risk, chosen, runner-up, reason, review triggers — on the seat's create.
+ * A routed hire that cannot be routed is refused `HIRE_NO_ROUTE`; it is never
+ * seated on a guess.
  */
 import {
   decideCodingSessionHire,
@@ -35,6 +44,10 @@ import {
   type CodingSessionHireSeatPlan,
   type CodingSessionHireUmbrellaLike,
 } from "./codingSessionHireSeat";
+import {
+  resolveCodingSessionHireRouting,
+  type CodingSessionRegistrySource,
+} from "./codingSessionHireRouting";
 import type { CodingSessionHireRequest } from "./codingSessionHireWire";
 
 /**
@@ -86,6 +99,17 @@ export type CodingSessionHireAnswerInput = {
   modelCatalogs?: ReadonlyMap<string, readonly string[]>;
   /** Runtime slug by instance ref, so an identity's own runtime can match. */
   providerRuntimeSlugs?: ReadonlyMap<string, string>;
+  /**
+   * This host's copy of `team/model-registry.yaml`, or the reason it has
+   * none. Only a hire that asks to be routed is affected by it.
+   */
+  registry?: CodingSessionRegistrySource;
+  /** The 44222 revision the catalogs came from, when the host read one. */
+  catalogRevision?: number | null;
+  /** The seat this hire's seat will review, for the cross-provider rule. */
+  routingPeer?: { className: string; provider: string } | null;
+  /** The lead's by-rule challenger sample, marked on the routing record. */
+  sampleChallenger?: boolean;
   /**
    * This host's clock, Unix seconds. Supplied so the staleness window is a
    * fact of the call rather than of when the module happened to run.
@@ -152,6 +176,7 @@ export function planCodingSessionHireAnswer(
     ...(input.providerRuntimeSlugs
       ? { providerRuntimeSlugs: input.providerRuntimeSlugs }
       : {}),
+    ...(request.action.routing === undefined ? {} : { routed: true }),
   });
   if (!decision.ok) {
     return {
@@ -159,6 +184,32 @@ export function planCodingSessionHireAnswer(
       code: decision.code,
       reason: decision.reason,
       text: formatCodingSessionHireRefusal(decision),
+    };
+  }
+
+  // The router runs after the identity and the runtime are settled, because
+  // the identity decides the runtime and the runtime decides the catalog: a
+  // target chosen against another vendor's offer is a target this host would
+  // then have to quietly ignore.
+  const routing = resolveCodingSessionHireRouting({
+    request: request.action.routing,
+    requestedModel: request.action.model,
+    registry: input.registry ?? {
+      kind: "unreadable",
+      why: "this host was given no registry source",
+    },
+    providerInstanceRef: decision.providerInstanceRef,
+    offeredModels: input.modelCatalogs?.get(decision.providerInstanceRef) ?? [],
+    catalogRevision: input.catalogRevision ?? null,
+    ...(input.routingPeer ? { peer: input.routingPeer } : {}),
+    ...(input.sampleChallenger === true ? { sampleChallenger: true } : {}),
+  });
+  if (routing.kind === "refused") {
+    const refusal = { code: routing.code, reason: routing.reason };
+    return {
+      kind: "refused",
+      ...refusal,
+      text: formatCodingSessionHireRefusal(refusal),
     };
   }
 
@@ -181,9 +232,17 @@ export function planCodingSessionHireAnswer(
       identity: decision.identity,
       providerInstanceRef: decision.providerInstanceRef,
       providerAuthorityPubkey: input.providerAuthorityPubkey,
-      model: decision.model,
+      // A routed seat runs the target the router chose; an unrouted one runs
+      // what it always ran. Neither is a substitution nobody named: the
+      // routing record is published with the create and says which gates the
+      // model cleared and why it was the cheapest of them.
+      model:
+        routing.kind === "routed"
+          ? routing.record.chosen.model
+          : decision.model,
       modelNotice: decision.modelNotice,
       providerNotice: decision.providerNotice,
+      routing: routing.kind === "routed" ? routing.record : null,
       seatOrdinal: codingSessionHireSeatOrdinal(liveSeats, decision.role),
     }),
   };
