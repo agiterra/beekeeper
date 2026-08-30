@@ -5704,6 +5704,47 @@ written and `bash -n` clean but **was not executed** — that harness needs
       inside a code span. That spec was also emitting two byte-identical PNGs
       (01 and 02 both shot the whole workspace); 02 is scoped to its row now.
 
+98. **A verifier's cross-provider promise stopped at the pure router; the live
+    hire host never supplied the builder it was meant to differ from
+    (2026-08-30).** This was found by running the product, not by reading the
+    implementation. A new Codex lead named **Helios** (`gpt-5.6-sol`) was
+    seated in TestingTeams and asked for an ordinary routed verifier with
+    `--class verifier --risk 3,3,2`, naming no model or provider. The founder
+    accepted hire `2f06020547f5e88ba149ad66be5fa8296f2628bdf6007395a44c19f03f9c3caa`
+    and created `eba70571bd63f43c4e631615911c168e2590ca3f4464558f2223727760a14110`.
+    The create and provider's current 44223
+    (`3e0dc53a8a8e443cee669b7a8a79f992bc928ccd268aef60765664b5911e9681`)
+    carry the same complete item-97 routing record, including registry version
+    1 and catalog revision 8 — so item 97's persistence/echo work is accepted
+    live. But the host chose `claude-primary/opus[1m]` for the verifier while
+    the existing builder was also on Claude, despite Helios proposing
+    `codex-primary/gpt-5.6-sol[medium]`.
+    - **Cause:** `team/model-registry.yaml` says verifier
+      `crossProviderOf: builder`, and `codingSessionRouting.ts` already applies
+      that gate when it receives a `peer`; `codingSessionHireAnswer.ts` exposed
+      an optional `routingPeer`, but no production caller ever populated it.
+      The verifier persona simultaneously claimed different-vendor seating
+      "is enforced before launch." The implementation and its self-description
+      disagreed.
+    - **Fix:** the host now reads the live umbrella's active execution provider
+      for the registry's counterpart role. Before choosing an identity, it
+      probes each allowed different-vendor runtime against that runtime's own
+      live catalog and the same registry, then prefers an eligible identity
+      whose pinned runtime can run the route. Identity still decides runtime
+      (item 88(i)); this does not put a Codex model on a Claude identity. If no
+      eligible cross-provider identity/runtime exists, work still proceeds as
+      routing spec §4 requires, but the routing reason now says
+      `no eligible cross-provider target` instead of pretending diversity.
+      Multiple live counterpart vendors are deliberately not guessed; an
+      explicit peer remains required for that ambiguous case.
+    - The verifier persona now states the same conditional contract. Pinned by
+      two host-level regression cases (eligible Codex identity wins; Claude-only
+      inventory discloses fallback), the existing router suite, TypeScript,
+      Biome, and the full desktop unit/DOM suite: **6,923 passed, 0 failed**.
+      **Still owed:** one post-relaunch live verifier hire with both Claude and
+      Codex verifier identities available, then read the create and 44223 from
+      the wire to prove the chosen provider differs from the builder's.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -5749,8 +5790,8 @@ than replace them, and it is not started.
 - ~~**The desktop Playwright smoke suite is broken on `main` and nothing catches it** (§2 item 90 Open)~~ **DONE** — 85 failed → 26 failed at `7936cc7c` (§2 item 91 lane 6), root causes named at the harness rather than papered over, and `just smoke` added at Justfile:372. It is deliberately still not a `just ci` dependency. ~~The 26 that remain are listed in item 91.~~ **DONE 2026-08-29 — see §2 item 93 lane C:** all 26 fixed, every one a harness fault and none a product fault, and the full smoke at that lane's HEAD `f64bfc8b` is 3 failed / 1 skipped / 1148 passed (39.0m); none of the 26 recurred across four full runs (4,608 test executions). What remains is a tail of independent, load-sensitive timing flakes, three of them named in item 93's Open list, plus three brand/dead-code product findings the triage turned up.
 - ~~**The model picker must not be faked, and the rubric must match it** (Brian's ruling, 2026-08-29 evening, and its amendment)~~ **DONE 2026-08-30 — see §2 item 94:** the alias tables are deleted in the hire host and the create picker (`swat17/no-aliases`), the kind:44222 catalog now carries per-model metadata and is read by `bee sessions catalog` and `bee sessions rubric check` (`swat17/catalog-and-check`), and the lead pack's `choose-model` skill is a versioned rubric naming real catalog ids with four explicit rules for what happens when a new model appears (`swat17/rubric`). An id the catalog does not offer is disclosed and refused, never mapped; a stale rubric is surfaced (check exit 4, Pulse note, Agents badge), never silently patched. **Not proven live** — no seat on this machine could read a real 44222 catalog while the ruling was executed, so the first `bee sessions rubric check` of the next batch is what confirms the eight rows.
 - ~~**Routing — the lead classifies, the router chooses the execution target** (Brian's ruling, 2026-08-30, `review-2026-08-30/routing-spec.md`)~~ **DONE 2026-08-30 — see §2 item 95:** the lead pack no longer names a model anywhere (`swat18/lead-classifies`), `team/model-registry.yaml` plus `bee sessions registry check` / `bee sessions route` land the registry and the router in the crates with `routing` on the 44221 hire/create wire (`swat18/registry`), and the desktop hire host routes and the seat's provenance popover shows the decision (`swat18/router-host`). Gated at `dadcbad2`. **This one redeploys hive** — the relay validates 44221 through `buzz-core` and the schema moved.
-- **Live proof owed: a Keystone hire with `--class builder` at the standard tier whose create carries the routing record.** **Partly answered and re-opened by §2 item 96:** the fast-tier half WAS run live on 2026-08-30 and the relay accepted the hire, but the host dropped it silently (draft 97). Nothing else in item 95 has been run against the real relay — lane A's live-shaped run used a stub relay in `/tmp` and `BUZZ_RELAY_URL`/`BUZZ_PRIVATE_KEY` were both unset. Note the exact command: `--tier` is refused by design (the tier is derived), so the standard tier is `--risk 3,3,2`. Do it after hive redeploys, and check the seat's provenance popover shows the `routed:` line.
-- **Live proof owed: re-run Keystone's hire in TestingTeams unchanged after relaunch** (brief `review-2026-08-30/brief-routing-proof-lane1.md`); expect a create carrying the routing record and a `codex-primary/gpt-5.6-luna[low]` seat. This is the proof §2 item 96 exists to make possible: the same hire, the same command, no edits — a create with `routing` on it, or a published `HIRE_MALFORMED`/`HIRE_NO_ROUTE` naming the key. **This batch changes `buzz-core`'s 44221 validation again, so hive redeploys first.**
+- ~~**Live proof owed: a Keystone hire with `--class builder` at the standard tier whose create carries the routing record.**~~ **DONE 2026-08-30:** Keystone re-ran `review-2026-08-30/brief-routing-proof-lane1.md` unchanged, independently accepted and verified the one-commit lane at `a00554e8b5d4763a132b9181bfa26eec7bbeaeed`, and reported the full hire → host route → create → seat chain on the wire. The later Helios verifier run in §2 item 98 independently proves the create and 44223 now carry the same complete routing record; item 97's persistence/echo acceptance is closed.
+- **Live proof owed from §2 item 98:** after landing and relaunching this fix, have Helios hire a standard-risk verifier while a Claude builder is live and both Claude and Codex verifier identities are available. The create's chosen provider must differ from the builder's, its reason must name failure-mode diversity, and the provider-signed 44223 must echo that exact routing record.
 - **Morning: stop the idle seats in Task Management Goals, fast-forward the live checkout (item 93 changed buzz-core → tauri relaunch), cargo build -p buzz-cli, relaunch.**
 
 **Read §2 item 84 first (2026-08-28 evening).** The designer seat is now

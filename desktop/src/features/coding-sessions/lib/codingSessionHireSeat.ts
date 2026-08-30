@@ -171,6 +171,8 @@ export type CodingSessionHireUmbrellaLike = {
       agentRef: string | null;
       role: string | null;
       status: CodingSessionStatus;
+      /** Runtime instance that actually runs this generation, when observed. */
+      provider?: string | null;
       /** The execution's own generation id, when the catalog carries one. */
       generationId?: string | null;
       /** The project this execution's create signed, when it named one. */

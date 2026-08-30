@@ -225,6 +225,14 @@ export type CodingSessionHireDecisionInput = {
    * that is a human override and an override still has to name a real id.
    */
   routed?: boolean;
+  /**
+   * Runtime instances preferred for this identity choice, in host order.
+   *
+   * This is a preference, not permission: the candidate must still own the
+   * requested role, be free in this umbrella, have the best available pack,
+   * and resolve to a runtime the host can actually seat.
+   */
+  preferredProviderInstanceRefs?: readonly string[];
 };
 
 /**
@@ -629,8 +637,9 @@ function describeLiveSeat(seat: CodingSessionHireLiveSeat): string {
  * are two processes signing as the same agent, and nothing downstream can tell
  * their turns apart.
  *
- * Deterministic: a staged pack beats an unstaged one, then name, then pubkey —
- * so the same request answered twice picks the same identity.
+ * Deterministic: a staged pack beats an unstaged one, then a caller's runtime
+ * preference, then name, then pubkey — so the same request answered twice
+ * picks the same identity.
  */
 function chooseIdentity(
   role: string,
@@ -647,6 +656,8 @@ function chooseIdentity(
   eligible.sort(
     (left, right) =>
       packRank(left) - packRank(right) ||
+      providerPreferenceRank(left, input) -
+        providerPreferenceRank(right, input) ||
       left.name.localeCompare(right.name) ||
       left.pubkey.localeCompare(right.pubkey),
   );
@@ -655,6 +666,18 @@ function chooseIdentity(
 
 function packRank(candidate: CodingSessionHireCandidate): number {
   return candidate.hasRolePack === false ? 1 : 0;
+}
+
+function providerPreferenceRank(
+  candidate: CodingSessionHireCandidate,
+  input: CodingSessionHireDecisionInput,
+): number {
+  const preferred = input.preferredProviderInstanceRefs;
+  if (preferred === undefined || preferred.length === 0) return 0;
+  const provider = chooseProvider(input, candidate);
+  if (!provider.ok) return 1;
+  const index = preferred.indexOf(provider.ref);
+  return index < 0 ? preferred.length + 1 : index;
 }
 
 function readStringList(value: unknown): string[] | null {

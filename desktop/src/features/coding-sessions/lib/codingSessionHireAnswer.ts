@@ -36,6 +36,7 @@ import {
 } from "./codingSessionHirePolicy";
 import {
   buildCodingSessionHireSeatPlan,
+  CODING_SESSION_HIRE_ENDED_STATUSES,
   codingSessionHireSeatOrdinal,
   codingSessionHireUmbrellaProjectRef,
   isCodingSessionHireAuthorized,
@@ -48,6 +49,7 @@ import {
   resolveCodingSessionHireRouting,
   type CodingSessionRegistrySource,
 } from "./codingSessionHireRouting";
+import { parseModelRegistry } from "./codingSessionRouting";
 import type { CodingSessionHireRequest } from "./codingSessionHireWire";
 
 /**
@@ -162,6 +164,23 @@ export function planCodingSessionHireAnswer(
   }
 
   const liveSeats = listCodingSessionHireLiveSeats(umbrella);
+  const registry = input.registry ?? {
+    kind: "unreadable" as const,
+    why: "this host was given no registry source",
+  };
+  const routingPeer =
+    input.routingPeer === undefined
+      ? inferCodingSessionHireRoutingPeer({
+          request,
+          umbrella,
+          registry,
+        })
+      : input.routingPeer;
+  const preferredProviderInstanceRefs = preferredRoutingProviders({
+    input,
+    registry,
+    peer: routingPeer,
+  });
   const decision = decideCodingSessionHire({
     request: {
       role: request.action.role,
@@ -177,6 +196,9 @@ export function planCodingSessionHireAnswer(
       ? { providerRuntimeSlugs: input.providerRuntimeSlugs }
       : {}),
     ...(request.action.routing === undefined ? {} : { routed: true }),
+    ...(preferredProviderInstanceRefs.length === 0
+      ? {}
+      : { preferredProviderInstanceRefs }),
   });
   if (!decision.ok) {
     return {
@@ -194,14 +216,11 @@ export function planCodingSessionHireAnswer(
   const routing = resolveCodingSessionHireRouting({
     request: request.action.routing,
     requestedModel: request.action.model,
-    registry: input.registry ?? {
-      kind: "unreadable",
-      why: "this host was given no registry source",
-    },
+    registry,
     providerInstanceRef: decision.providerInstanceRef,
     offeredModels: input.modelCatalogs?.get(decision.providerInstanceRef) ?? [],
     catalogRevision: input.catalogRevision ?? null,
-    ...(input.routingPeer ? { peer: input.routingPeer } : {}),
+    ...(routingPeer ? { peer: routingPeer } : {}),
     ...(input.sampleChallenger === true ? { sampleChallenger: true } : {}),
   });
   if (routing.kind === "refused") {
@@ -246,6 +265,77 @@ export function planCodingSessionHireAnswer(
       seatOrdinal: codingSessionHireSeatOrdinal(liveSeats, decision.role),
     }),
   };
+}
+
+function inferCodingSessionHireRoutingPeer(input: {
+  request: CodingSessionHireRequest;
+  umbrella: CodingSessionHireUmbrellaLike;
+  registry: CodingSessionRegistrySource;
+}): { className: string; provider: string } | null {
+  const routing = input.request.action.routing;
+  if (routing === undefined || input.registry.kind !== "readable") return null;
+  const parsed = parseModelRegistry(input.registry.text);
+  if (!parsed.ok) return null;
+  const peerClass = parsed.registry.classes[routing.class]?.crossProviderOf;
+  if (peerClass === undefined) return null;
+
+  const providers = new Set<string>();
+  for (const execution of input.umbrella.executions) {
+    const generation = execution.activeGeneration;
+    if (
+      generation.role !== peerClass ||
+      CODING_SESSION_HIRE_ENDED_STATUSES.includes(generation.status)
+    ) {
+      continue;
+    }
+    const provider = generation.provider?.trim();
+    if (provider) providers.add(provider);
+  }
+  // One role spanning multiple vendors does not identify which seat this
+  // verifier reviews. The request needs an explicit peer in that case; never
+  // pick whichever execution happened to fold first.
+  if (providers.size !== 1) return null;
+  const provider = providers.values().next().value;
+  return provider === undefined ? null : { className: peerClass, provider };
+}
+
+function preferredRoutingProviders(input: {
+  input: CodingSessionHireAnswerInput;
+  registry: CodingSessionRegistrySource;
+  peer: { className: string; provider: string } | null;
+}): string[] {
+  const request = input.input.request.action;
+  if (request.routing === undefined || input.peer === null) return [];
+  const allowed = input.input.policy.allowedProviderInstanceRefs;
+  return input.input.availableProviderInstanceRefs.filter((provider) => {
+    if (allowed !== null && !allowed.includes(provider)) return false;
+    if (
+      providerVendor(provider) === providerVendor(input.peer?.provider ?? "")
+    ) {
+      return false;
+    }
+    return (
+      resolveCodingSessionHireRouting({
+        request: request.routing,
+        requestedModel: request.model,
+        registry: input.registry,
+        providerInstanceRef: provider,
+        offeredModels: input.input.modelCatalogs?.get(provider) ?? [],
+        catalogRevision: input.input.catalogRevision ?? null,
+        peer: input.peer,
+        ...(input.input.sampleChallenger === true
+          ? { sampleChallenger: true }
+          : {}),
+      }).kind === "routed"
+    );
+  });
+}
+
+function providerVendor(providerInstanceRef: string): string {
+  const separator = providerInstanceRef.lastIndexOf("-");
+  return separator <= 0
+    ? providerInstanceRef
+    : providerInstanceRef.slice(0, separator);
 }
 
 /**

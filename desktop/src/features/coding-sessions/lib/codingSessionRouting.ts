@@ -325,7 +325,10 @@ export function routeCodingSession(
   // leaves somebody standing. "Prefer a different failure mode" must never
   // become "refuse the work".
   const crossProviderOf = classGate.crossProviderOf;
-  const peerProvider = input.peer?.provider ?? null;
+  const peerProvider =
+    crossProviderOf !== undefined && input.peer?.className === crossProviderOf
+      ? input.peer.provider
+      : null;
   let pool = standingPool;
   if (crossProviderOf !== undefined && peerProvider !== null) {
     const peerVendor = vendorOf(peerProvider);
@@ -391,6 +394,16 @@ export function routeCodingSession(
     reason =
       `human override: ${override.because.trim()} — the router would have ` +
       `chosen ${first.target.provider}/${first.target.model}.`;
+  }
+  if (crossProviderOf !== undefined && peerProvider !== null) {
+    reason +=
+      vendorOf(chosen.provider) === vendorOf(peerProvider)
+        ? ` no eligible cross-provider target was available on this host, so ` +
+          `the ${className} shares ${vendorOf(peerProvider)} with the ` +
+          `${crossProviderOf} it reviews.`
+        : ` failure-mode diversity: the ${className} runs on ` +
+          `${vendorOf(chosen.provider)}, not the ${crossProviderOf}'s ` +
+          `${vendorOf(peerProvider)} vendor.`;
   }
 
   const reviewReasons = reviewReasonsFor(score, input.risk, input.review);

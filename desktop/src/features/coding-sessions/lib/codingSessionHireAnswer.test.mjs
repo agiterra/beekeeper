@@ -320,6 +320,125 @@ test("a routed hire puts the whole decision on the seat", () => {
   assert.equal(result.plan.routing.reviewRequired, false);
 });
 
+test("a routed verifier automatically prefers an eligible identity from another vendor", () => {
+  const result = answer({
+    request: {
+      ...routedRequest({
+        class: "verifier",
+        risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+      }),
+      action: {
+        ...routedRequest({
+          class: "verifier",
+          risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+        }).action,
+        role: "verifier",
+      },
+    },
+    umbrella: {
+      ...UMBRELLA,
+      executions: [
+        ...UMBRELLA.executions,
+        {
+          activeGeneration: {
+            agentRef: ADA,
+            role: "builder",
+            status: "running",
+            provider: "claude-primary",
+          },
+        },
+      ],
+    },
+    candidates: [
+      {
+        pubkey: "3".repeat(64),
+        name: "A Claude verifier",
+        homeRole: "verifier",
+        hasRolePack: true,
+        runtime: "claude",
+      },
+      {
+        pubkey: "4".repeat(64),
+        name: "Z Codex verifier",
+        homeRole: "verifier",
+        hasRolePack: true,
+        runtime: "codex",
+      },
+    ],
+    availableProviderInstanceRefs: ["claude-primary", "codex-primary"],
+    providerRuntimeSlugs: new Map([
+      ["claude-primary", "claude"],
+      ["codex-primary", "codex"],
+    ]),
+    registry: READABLE_REGISTRY,
+    modelCatalogs: new Map([
+      ...CLAUDE_CATALOG,
+      ["codex-primary", ["gpt-5.6-sol[medium]"]],
+    ]),
+    catalogRevision: 12,
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.actor, "4".repeat(64));
+  assert.equal(result.plan.providerInstanceRef, "codex-primary");
+  assert.equal(result.plan.routing.chosen.provider, "codex-primary");
+  assert.match(result.plan.routing.reason, /failure-mode diversity/);
+});
+
+test("a routed verifier discloses when this host has no eligible cross-vendor identity", () => {
+  const result = answer({
+    request: {
+      ...routedRequest({
+        class: "verifier",
+        risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+      }),
+      action: {
+        ...routedRequest({
+          class: "verifier",
+          risk: { impact: 3, uncertainty: 3, irreversibility: 2 },
+        }).action,
+        role: "verifier",
+      },
+    },
+    umbrella: {
+      ...UMBRELLA,
+      executions: [
+        ...UMBRELLA.executions,
+        {
+          activeGeneration: {
+            agentRef: ADA,
+            role: "builder",
+            status: "running",
+            provider: "claude-primary",
+          },
+        },
+      ],
+    },
+    candidates: [
+      {
+        pubkey: "3".repeat(64),
+        name: "Claude verifier",
+        homeRole: "verifier",
+        hasRolePack: true,
+        runtime: "claude",
+      },
+    ],
+    availableProviderInstanceRefs: ["claude-primary", "codex-primary"],
+    providerRuntimeSlugs: new Map([
+      ["claude-primary", "claude"],
+      ["codex-primary", "codex"],
+    ]),
+    registry: READABLE_REGISTRY,
+    modelCatalogs: new Map([
+      ...CLAUDE_CATALOG,
+      ["codex-primary", ["gpt-5.6-sol[medium]"]],
+    ]),
+    catalogRevision: 12,
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.providerInstanceRef, "claude-primary");
+  assert.match(result.plan.routing.reason, /no eligible cross-provider target/);
+});
+
 test("a routed hire this host cannot route is refused HIRE_NO_ROUTE", () => {
   const result = answer({
     request: routedRequest({
