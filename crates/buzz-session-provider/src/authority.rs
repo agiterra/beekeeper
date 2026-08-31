@@ -14,8 +14,8 @@
 //!    by tag query — and checked for signature, payload linkage back to the
 //!    same genesis and envelope shape. Legacy steering-grant links additionally
 //!    bind the signer to the session owner. Additive seat links are authorized
-//!    by the relay receipt and ignored semantically by this steering reader,
-//!    while still advancing its contiguous accepted head.
+//!    by the relay receipt and folded separately from steering grants while
+//!    still advancing the same contiguous accepted head.
 //!
 //! Unaccepted 44228s, tag-query projections, and ordering heuristics are
 //! never inputs. Receipts fold strictly by `seq`: a grant applies only when it
@@ -23,6 +23,8 @@
 //! rather than a guess. The functions here are pure decisions over
 //! already-fetched events; the querying and state mutation live on
 //! [`crate::Provider`].
+
+use std::collections::{BTreeMap, HashSet};
 
 use nostr::Event;
 use serde::Deserialize;
@@ -54,6 +56,8 @@ pub struct AcceptedTransition {
     /// Pubkey the transition targets: the grantee for `grant-*`, the pubkey
     /// losing its grant for `revoke`.
     pub grantee_pubkey: String,
+    /// Exact normalized role for seat transitions; absent for legacy grants.
+    pub role: Option<String>,
 }
 
 /// Raw receipt content. Unknown extra fields are tolerated (the relay may
@@ -68,6 +72,17 @@ struct ReceiptContent {
     seq: u32,
     transition_type: CodingSessionAuthorityTransitionType,
     grantee_pubkey: String,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+/// Current facts derived from a complete, verified accepted authority chain.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CurrentAuthority {
+    /// Active steering grants, actor pubkey to accepted grant event id.
+    pub operator_grants: BTreeMap<String, String>,
+    /// Active seats, actor pubkey to `(role, accepted grant event id)`.
+    pub seats: BTreeMap<String, (String, String)>,
 }
 
 /// Whether a system message's content claims to be an authority-transition
@@ -147,12 +162,29 @@ pub fn verify_acceptance_receipt(
     if content.seq == 0 {
         return Err("acceptance receipt seq must start at 1".into());
     }
+    let is_seat = matches!(
+        content.transition_type,
+        CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat
+    );
+    if is_seat != content.role.is_some() {
+        return Err(if is_seat {
+            "seat acceptance receipt must carry role".into()
+        } else {
+            "non-seat acceptance receipt must not carry role".into()
+        });
+    }
+    if let Some(role) = content.role.as_deref() {
+        buzz_core::coding_session_lifecycle_command::validate_role_slug(role)
+            .map_err(|error| error.replace("action.role", "receipt.role"))?;
+    }
     Ok(AcceptedTransition {
         genesis_ref: content.genesis_ref,
         accepted_event_id: content.accepted_event_id,
         seq: content.seq,
         transition_type: content.transition_type,
         grantee_pubkey: content.grantee_pubkey,
+        role: content.role,
     })
 }
 
@@ -166,7 +198,7 @@ pub fn verify_acceptance_receipt(
 /// three-tag shape the relay validated at ingest. Legacy grant transition
 /// signers are additionally bound to the session owner; additive seat links
 /// rely on the relay-signed acceptance receipt for chain authorization and are
-/// ignored semantically by this steering-ACL reader while still advancing its
+/// folded separately from steering grants while still advancing the same
 /// accepted head.
 pub fn verify_accepted_transition(
     event: &Event,
@@ -183,6 +215,9 @@ pub fn verify_accepted_transition(
     if event.id.to_hex() != accepted.accepted_event_id {
         return Err("resolved transition id does not match the receipt".into());
     }
+    event
+        .verify()
+        .map_err(|error| format!("accepted transition signature is invalid: {error}"))?;
     let payload = decode_coding_session_authority_transition(&event.content)
         .map_err(|error| format!("accepted transition payload is invalid: {error}"))?;
     let legacy_owner_only = matches!(
@@ -209,6 +244,9 @@ pub fn verify_accepted_transition(
     if payload.transition_type != accepted.transition_type {
         return Err("accepted transition type does not match its receipt".into());
     }
+    if payload.role != accepted.role {
+        return Err("accepted transition role does not match its receipt".into());
+    }
     let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
     if tags.len() != 3 || tags.iter().any(|tag| tag.len() != 2) {
         return Err("accepted transition must carry exactly three two-field tags".into());
@@ -223,6 +261,80 @@ pub fn verify_accepted_transition(
         return Err("accepted transition csat-genesis does not match its receipt".into());
     }
     Ok(())
+}
+
+/// Fold a complete verified accepted chain into current steering grants and seats.
+///
+/// Each tuple must contain a receipt already checked by
+/// [`verify_acceptance_receipt`] and its exact transition already checked by
+/// [`verify_accepted_transition`]. This function additionally proves chain
+/// contiguity and `prevAccepted` linkage before exposing any authority.
+pub fn fold_current_authority(
+    links: &[(AcceptedTransition, Event)],
+) -> Result<CurrentAuthority, String> {
+    let mut ordered = Vec::with_capacity(links.len());
+    for (accepted, event) in links {
+        let payload = decode_coding_session_authority_transition(&event.content)
+            .map_err(|error| format!("accepted transition payload is invalid: {error}"))?;
+        ordered.push((accepted, payload));
+    }
+    ordered.sort_by_key(|(accepted, _)| accepted.seq);
+    let mut previous: Option<String> = None;
+    let mut state = CurrentAuthority::default();
+    let mut seen_seq = HashSet::new();
+    for (index, (accepted, payload)) in ordered.into_iter().enumerate() {
+        let expected_seq = (index + 1) as u32;
+        if accepted.seq != expected_seq || !seen_seq.insert(accepted.seq) {
+            return Err(format!(
+                "accepted authority chain is not contiguous at seq {expected_seq}"
+            ));
+        }
+        if payload.prev_accepted != previous {
+            return Err(format!(
+                "accepted transition {} does not extend the previous head",
+                accepted.accepted_event_id
+            ));
+        }
+        match accepted.transition_type {
+            CodingSessionAuthorityTransitionType::GrantOperator => {
+                state.operator_grants.insert(
+                    accepted.grantee_pubkey.clone(),
+                    accepted.accepted_event_id.clone(),
+                );
+            }
+            CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke => {
+                state.operator_grants.remove(&accepted.grantee_pubkey);
+            }
+            CodingSessionAuthorityTransitionType::GrantSeat => {
+                let role = accepted
+                    .role
+                    .clone()
+                    .ok_or_else(|| "verified grant-seat receipt has no role".to_owned())?;
+                state.seats.insert(
+                    accepted.grantee_pubkey.clone(),
+                    (role, accepted.accepted_event_id.clone()),
+                );
+            }
+            CodingSessionAuthorityTransitionType::RevokeSeat => {
+                let role = accepted
+                    .role
+                    .as_deref()
+                    .ok_or_else(|| "verified revoke-seat receipt has no role".to_owned())?;
+                if state
+                    .seats
+                    .get(&accepted.grantee_pubkey)
+                    .is_some_and(|(active, _)| active == role)
+                {
+                    state.seats.remove(&accepted.grantee_pubkey);
+                } else {
+                    return Err("revoke-seat does not match the active accepted seat".into());
+                }
+            }
+        }
+        previous = Some(accepted.accepted_event_id.clone());
+    }
+    Ok(state)
 }
 
 #[cfg(test)]
@@ -273,6 +385,40 @@ mod tests {
             .expect("builder")
             .sign_with_keys(keys)
             .expect("sign transition")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seat_transition_event(
+        keys: &Keys,
+        channel_id: Uuid,
+        genesis_ref: &str,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee: &str,
+        role: &str,
+        revoke: bool,
+    ) -> Event {
+        let payload = if revoke {
+            buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_revoke_seat(
+                genesis_ref.to_owned(),
+                prev_accepted,
+                seq,
+                grantee.to_owned(),
+                role.to_owned(),
+            )
+        } else {
+            buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_grant_seat(
+                genesis_ref.to_owned(),
+                prev_accepted,
+                seq,
+                grantee.to_owned(),
+                role.to_owned(),
+            )
+        };
+        buzz_sdk::builders::build_coding_session_authority_transition(channel_id, &payload)
+            .expect("builder")
+            .sign_with_keys(keys)
+            .expect("sign seat transition")
     }
 
     #[test]
@@ -345,6 +491,37 @@ mod tests {
         );
         assert!(verify_acceptance_receipt(&unknown_transition, &relay_hex, channel_id).is_err());
 
+        let missing_seat_role = receipt_event(
+            &relay,
+            channel_id,
+            serde_json::json!({
+                "type": ACCEPTANCE_RECEIPT_TYPE,
+                "genesisRef": "ab".repeat(32),
+                "acceptedEventId": "cd".repeat(32),
+                "seq": 1,
+                "transitionType": "grant-seat",
+                "granteePubkey": "ef".repeat(32),
+            })
+            .to_string(),
+        );
+        assert!(verify_acceptance_receipt(&missing_seat_role, &relay_hex, channel_id).is_err());
+
+        let legacy_role = receipt_event(
+            &relay,
+            channel_id,
+            serde_json::json!({
+                "type": ACCEPTANCE_RECEIPT_TYPE,
+                "genesisRef": "ab".repeat(32),
+                "acceptedEventId": "cd".repeat(32),
+                "seq": 1,
+                "transitionType": "grant-operator",
+                "granteePubkey": "ef".repeat(32),
+                "role": "lead",
+            })
+            .to_string(),
+        );
+        assert!(verify_acceptance_receipt(&legacy_role, &relay_hex, channel_id).is_err());
+
         // Malformed ids and a zero seq.
         for content in [
             receipt_content("not-hex", &"cd".repeat(32), 1, &"ef".repeat(32)),
@@ -369,6 +546,7 @@ mod tests {
             seq: 1,
             transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
             grantee_pubkey: grantee.clone(),
+            role: None,
         };
         verify_accepted_transition(
             &transition,
@@ -393,6 +571,7 @@ mod tests {
             seq: 1,
             transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
             grantee_pubkey: grantee.clone(),
+            role: None,
         };
 
         // Signed by someone other than the owner.
@@ -435,5 +614,69 @@ mod tests {
         assert!(
             verify_accepted_transition(&transition, &accepted, Uuid::new_v4(), &owner_hex).is_err()
         );
+
+        let mut invalid_signature = transition.clone();
+        invalid_signature.content.push(' ');
+        assert!(
+            verify_accepted_transition(&invalid_signature, &accepted, channel_id, &owner_hex)
+                .expect_err("tampered transition must fail")
+                .contains("signature is invalid")
+        );
+    }
+
+    #[test]
+    fn accepted_seat_chain_folds_role_parity_and_revocation() {
+        let founder = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let actor = "ef".repeat(32);
+        let grant = seat_transition_event(
+            &founder,
+            channel_id,
+            &genesis_ref,
+            None,
+            1,
+            &actor,
+            "builder",
+            false,
+        );
+        let revoke = seat_transition_event(
+            &founder,
+            channel_id,
+            &genesis_ref,
+            Some(grant.id.to_hex()),
+            2,
+            &actor,
+            "builder",
+            true,
+        );
+        let links = vec![
+            (
+                AcceptedTransition {
+                    genesis_ref: genesis_ref.clone(),
+                    accepted_event_id: grant.id.to_hex(),
+                    seq: 1,
+                    transition_type: CodingSessionAuthorityTransitionType::GrantSeat,
+                    grantee_pubkey: actor.clone(),
+                    role: Some("builder".into()),
+                },
+                grant,
+            ),
+            (
+                AcceptedTransition {
+                    genesis_ref,
+                    accepted_event_id: revoke.id.to_hex(),
+                    seq: 2,
+                    transition_type: CodingSessionAuthorityTransitionType::RevokeSeat,
+                    grantee_pubkey: actor,
+                    role: Some("builder".into()),
+                },
+                revoke,
+            ),
+        ];
+        assert!(fold_current_authority(&links)
+            .expect("contiguous accepted chain")
+            .seats
+            .is_empty());
     }
 }

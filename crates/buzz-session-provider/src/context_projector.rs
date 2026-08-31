@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use buzz_acp::relay::RestClient;
 
+use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
     CodingSessionTarget, CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES,
@@ -361,6 +362,8 @@ struct CandidateHistory {
 struct Grant {
     grantee: String,
     accepted_at: u64,
+    transition_type:
+        buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType,
 }
 
 /// Fetch, group, and verify the complete bounded relay fact set for a session.
@@ -568,6 +571,25 @@ async fn query_kind_partition(
         query_kind_partition_page(rest, channel_id, kind, until)
     })
     .await
+}
+
+/// Fetch one complete channel-scoped control-kind partition.
+///
+/// Team wake routing uses this same authenticated, paged seam so an accepted
+/// authority link or transaction cannot disappear behind the relay's first
+/// page. A saturated partition is an explicit refusal, never partial truth.
+pub(crate) async fn query_complete_kind_partition(
+    rest: &RestClient,
+    channel_id: Uuid,
+    kind: u32,
+) -> Result<Vec<Event>, ContextProjectionError> {
+    let partition = query_kind_partition(rest, channel_id, kind).await?;
+    if partition.saturated {
+        return Err(ContextProjectionError::Bound(format!(
+            "relay kind-{kind} partition could not be exhausted within {MAX_CONTROL_PARTITION_PAGES} pages of {RELAY_QUERY_PAGE_LIMIT} rows"
+        )));
+    }
+    Ok(partition.events)
 }
 
 async fn query_kind_partition_page(
@@ -1617,10 +1639,23 @@ fn inbox_sender_roles(seats: &[SeatFacts]) -> HashMap<&str, &str> {
 /// of `commands::operator_may_steer`, and the same predicate
 /// [`verify_lifecycle_command`] applies to a create or a resume.
 fn signer_may_steer(signer: &str, created_at: u64, founder: &str, grants: &[Grant]) -> bool {
-    signer == founder
-        || grants
-            .iter()
-            .any(|grant| grant.grantee == signer && grant.accepted_at <= created_at)
+    if signer == founder {
+        return true;
+    }
+    let mut active = false;
+    for grant in grants
+        .iter()
+        .filter(|grant| grant.grantee == signer && grant.accepted_at <= created_at)
+    {
+        match grant.transition_type {
+            CodingSessionAuthorityTransitionType::GrantOperator => active = true,
+            CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke => active = false,
+            CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+        }
+    }
+    active
 }
 
 /// The key one inbox item joins its receipts on.
@@ -2103,6 +2138,7 @@ fn verify_authority_chain(
         grants.push(Grant {
             grantee: accepted.grantee_pubkey,
             accepted_at,
+            transition_type: accepted.transition_type,
         });
     }
     Ok(grants)
@@ -3074,6 +3110,7 @@ mod tests {
             &[Grant {
                 grantee: grantee.public_key().to_hex(),
                 accepted_at: 100,
+                transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
             }],
             &mut notes,
         )
@@ -3088,6 +3125,7 @@ mod tests {
             &[Grant {
                 grantee: grantee.public_key().to_hex(),
                 accepted_at: 101,
+                transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
             }],
             &mut notes,
         )
@@ -3096,6 +3134,46 @@ mod tests {
             too_late.is_empty(),
             "a grant accepted a second later cannot retroactively admit it"
         );
+    }
+
+    #[test]
+    fn an_accepted_role_seat_never_becomes_steering_authority() {
+        let fixture = fixture(0);
+        let founder = fixture.founder.clone();
+        let grantee = Keys::generate();
+        let seats = vec![SeatFacts {
+            target: fixture.target.clone(),
+            provider_authority: fixture.provider.public_key().to_hex(),
+            actor: Some(grantee.public_key().to_hex()),
+            role: Some("builder".into()),
+            status: CodingSessionContextSeatStatus::Active,
+            last_signed_seq: None,
+            last_signed_at_ms: None,
+        }];
+        let mut input = fixture.input;
+        input.turn_commands = vec![turn_command(
+            input.channel_id,
+            "turn-seat-only",
+            &fixture.target,
+            "this must not be admitted",
+            CodingSessionDelivery::Boundary,
+            100,
+            &grantee,
+        )];
+        let mut notes = Vec::new();
+        let projected = project_inbox(
+            &input,
+            &seats,
+            &founder.public_key().to_hex(),
+            &[Grant {
+                grantee: grantee.public_key().to_hex(),
+                accepted_at: 99,
+                transition_type: CodingSessionAuthorityTransitionType::GrantSeat,
+            }],
+            &mut notes,
+        )
+        .expect("projection");
+        assert!(projected.is_empty());
     }
 
     /// A retired seat must not name the role a live sender holds now.

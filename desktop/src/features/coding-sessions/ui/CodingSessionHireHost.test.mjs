@@ -159,6 +159,7 @@ async function harness({
   umbrellas = [UMBRELLA],
   now = HIRE_CREATED_AT,
   receiptError = null,
+  receiptInstanceRef = "claude-primary",
   grantError = null,
 } = {}) {
   const { act, render } = await import("@testing-library/react");
@@ -220,12 +221,12 @@ async function harness({
       if (receiptError !== null) throw new Error(receiptError);
       return {
         driver: "claude",
-        instanceId: "claude-primary",
+        instanceId: receiptInstanceRef,
         sessionId: `${channelId}:${commandId}`,
         generation: 1,
       };
     },
-    grantOperator: async (input) => {
+    ensureOperatorGrant: async (input) => {
       steps.push("grant");
       grants.push(input);
       if (grantError !== null) throw new Error(grantError);
@@ -298,8 +299,15 @@ test("a hire is answered in order, and the seat it creates is granted", async ()
     "publish:44221",
     "receipt",
     "grant",
+    "grant",
   ]);
   assert.deepEqual(host.grants, [
+    {
+      channelId: CHANNEL_ID,
+      genesisRef: GENESIS_REF,
+      // Provider wake is made authoritative before the actor can report.
+      granteePubkey: PROVIDER_PUBKEY,
+    },
     {
       channelId: CHANNEL_ID,
       genesisRef: GENESIS_REF,
@@ -428,14 +436,14 @@ test("a grant that fails is said to the lead and to the umbrella, never silently
   assert.deepEqual(payload.target, LEAD_TARGET);
   assert.equal(
     payload.action.text,
-    "seated, but not granted: the relay refused the transition — it cannot report until granted",
+    "seated, but not granted: provider wake authority: the relay refused the transition — it cannot report until granted",
   );
 
   const [notice] = host.of(9);
   assert.ok(notice, "the umbrella was never told");
   assert.match(
     notice.content,
-    /^Hired a builder — seated, but not granted: the relay refused the transition — it cannot report until granted$/,
+    /^Hired a builder — seated, but not granted: provider wake authority: the relay refused the transition — it cannot report until granted$/,
   );
   host.teardown();
 });
@@ -454,6 +462,18 @@ test("a create receipt that never lands is disclosed as ungranted, not as grante
   assert.match(
     JSON.parse(turn.content).action.text,
     /^seated, but not granted: The provider did not answer within the wait — it cannot report until granted$/,
+  );
+  host.teardown();
+});
+
+test("a receipt for another provider instance cannot trigger authority grants", async () => {
+  const host = await harness({ receiptInstanceRef: "remote-claude" });
+  await host.deliver(await signedHire());
+
+  assert.equal(host.steps.includes("grant"), false);
+  assert.match(
+    JSON.parse(host.of(44220)[0].content).action.text,
+    /provider receipt targeted remote-claude, not the requested claude-primary/,
   );
   host.teardown();
 });

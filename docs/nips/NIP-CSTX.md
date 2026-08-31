@@ -118,6 +118,62 @@ grammar: `[a-z0-9-]+`, 1 through 64 bytes. The typed assignment remains
 `Authored, delivery unconfirmed` until the existing command/receipt path proves
 delivery.
 
+### Provider-owned durable wake
+
+A provider MAY maintain a durable wake intent for an operation or for a
+provider-signed terminal turn that still owes a required report. This is not a
+second authority system:
+
+- the provider signer MUST be the founder or hold an active receipt-backed
+  `grant-operator` on the exact genesis;
+- the founder-held create/hire client SHOULD ensure that provider grant only
+  after the expected provider's verified create receipt (and signed metadata
+  where the create flow waits for metadata). It MUST extend the canonical
+  accepted chain, confirm the relay-signed acceptance receipt, and treat an
+  already-active operator grant as an idempotent success before granting the
+  seat actor. The provider MUST NOT self-grant and no client-side projection
+  bypasses relay admission;
+- a report intent belongs only to the provider that owns the reporting actor's
+  exact active receipt-backed generation. Other providers seeing the same
+  channel record MUST remain inert. On startup that owning provider MUST
+  exhaust the stored kind-44244 partition before relying on the live replay
+  window, so an offline interval cannot erase the durable push obligation;
+- the destination MUST be the one active accepted `lead` seat, joined to an
+  exact provider target through its authorized create, provider-signed create
+  receipt, and provider-signed metadata; zero, multiple, or unverifiable lead
+  targets remain pending and emit nothing;
+- a report wake carries only `{operationId,type}` and uses a new deterministic
+  command id derived from the report event and exact lead target. It MUST NOT
+  reuse the report's `deliveryCommandId`, which may name an earlier command or
+  another target;
+- a terminal diagnostic is allowed only when the completed turn's exact
+  `commandId` is a verified `{operationId,type:"assignment"}` pointer to an
+  active canonical assignment whose `deliveryCommandId`, assignee actor, and
+  assignee role all match that turn. Ordinary hire/READY and prose turns never
+  imply a missing report;
+- a canonical signed report by that actor, referencing that exact assignment,
+  inside the assignment turn suppresses the diagnostic. A parallel report for
+  another assignment, or an unauthorized, excluded, or malformed record, does
+  not suppress it;
+- relay acceptance alone does not retire the intent. A verified target-provider
+  `turn_queued`, `turn_started`, `turn_refused`, `turn_dropped`, or exact prompt
+  echo does. A crash replays the same signed attempt; once its freshness horizon
+  expires, a fresh target-bound command id and signature are required.
+  `turn_degraded` and `interrupt_delivered` are not settlement: neither proves
+  that this boundary prompt was queued, started, refused, or dropped.
+
+The terminal diagnostic pointer is bounded public JSON:
+
+```json
+{
+  "schema": "buzz-team-wake/v1",
+  "type": "turn_ended_without_required_operation",
+  "terminalEventId": "<provider-signed 44225 event id>",
+  "seatRole": "builder",
+  "causedByCommandId": "<exact assignment turn command id>"
+}
+```
+
 ### `report`
 
 ```json

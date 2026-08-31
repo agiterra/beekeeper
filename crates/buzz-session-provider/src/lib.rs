@@ -47,6 +47,7 @@ mod reachability;
 pub mod redaction_vault;
 pub mod session;
 pub mod state;
+mod team_wake;
 pub mod transcript;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -72,8 +73,9 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
@@ -148,6 +150,9 @@ const REPLAY_GRACE_SECS: u64 = 600;
 /// stored-event burst, short enough that a live turn sent seconds after
 /// startup is not noticeably delayed. See [`ReplayWindow`].
 const REPLAY_REORDER_WINDOW: Duration = Duration::from_millis(1_500);
+/// Give an agent-authored report one normal relay round trip to arrive before
+/// a provider terminal becomes a diagnostic wake.
+const TEAM_WAKE_REPORT_GRACE_MS: i64 = 4_000;
 
 /// The `turn_dropped` code for an interrupt-class turn the mailbox had no room
 /// for.
@@ -347,6 +352,12 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.flush_pending_leases(&publisher).await {
                     tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
                 }
+                if let Err(error) = provider.discover_one_team_wake_partition().await {
+                    tracing::warn!(target: "csp::team_wake", "stored team transaction discovery remains pending: {error}");
+                }
+                if let Err(error) = provider.process_one_team_wake(&publisher).await {
+                    tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
+                }
             }
             // The replay reorder window closing is a delivery, not a timer
             // tick: the turns it holds are already the operator's, they are
@@ -448,6 +459,9 @@ pub struct Provider {
     pubkey_hex: String,
     state: StateStore,
     outbox: Outbox,
+    team_wakes: team_wake::WakeIntentStore,
+    /// Channels whose complete stored 44244 partition was scanned this run.
+    team_wake_scanned_channels: HashSet<Uuid>,
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
     /// Sender for the queue [`Provider::next_session_event`] drains.
@@ -667,12 +681,15 @@ impl Provider {
         let pubkey_hex = config.pubkey_hex();
         let state = StateStore::open(&config.state_dir, config.command_horizon.as_secs())?;
         let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
+        let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
         Ok(Self {
             config,
             pubkey_hex,
             state,
             outbox,
+            team_wakes,
+            team_wake_scanned_channels: HashSet::new(),
             sessions: SessionManager::new(events_tx.clone()),
             session_events,
             session_events_tx: events_tx,
@@ -777,20 +794,58 @@ impl Provider {
                 if let Some(command_id) = &open_turn.command_id {
                     self.state.consume_command(command_id, now_secs())?;
                 }
-                self.enqueue_transcript(
-                    record.channel_id,
-                    &target,
-                    Some(&open_turn.turn_id),
-                    payload::result_item(
-                        payload::ResultSubtype::Error,
-                        u64::try_from(now_ms().saturating_sub(open_turn.started_at_ms))
-                            .unwrap_or_default(),
-                        "provider terminated mid-turn",
-                        payload::TurnCost::default(),
-                        payload::TurnUsageReport::default(),
-                    ),
-                    Priority::High,
-                )?;
+                let already_captured = open_turn.command_id.as_deref().is_some_and(|command_id| {
+                    self.team_wakes.has_terminal_command(command_id, &target)
+                });
+                if !already_captured {
+                    let terminal_at_ms = now_ms();
+                    let terminal = self.enqueue_transcript_with_id(
+                        record.channel_id,
+                        &target,
+                        Some(&open_turn.turn_id),
+                        payload::result_item(
+                            payload::ResultSubtype::Error,
+                            u64::try_from(terminal_at_ms.saturating_sub(open_turn.started_at_ms))
+                                .unwrap_or_default(),
+                            "provider terminated mid-turn",
+                            payload::TurnCost::default(),
+                            payload::TurnUsageReport::default(),
+                        ),
+                        Priority::High,
+                    )?;
+                    if let (
+                        Some((_, terminal_event_id)),
+                        Some(actor),
+                        Some(role),
+                        Some(session_ref),
+                        Some(genesis_ref),
+                        Some(caused_by_command_id),
+                    ) = (
+                        terminal,
+                        record.actor.clone(),
+                        record.role.clone().filter(|role| role != "lead"),
+                        record.session_ref.clone(),
+                        record.genesis_ref.clone(),
+                        open_turn.command_id.clone(),
+                    ) {
+                        self.team_wakes.enqueue(
+                            team_wake::WakeScope {
+                                channel_ref: record.channel_id,
+                                session_ref,
+                                genesis_ref,
+                            },
+                            team_wake::WakeSource::Terminal {
+                                terminal_event_id,
+                                actor_pubkey: actor,
+                                role,
+                                caused_by_command_id,
+                                source_target: target.clone(),
+                                prompt_at_ms: Some(open_turn.started_at_ms),
+                                terminal_at_ms,
+                            },
+                        )?;
+                    }
+                }
             }
             self.state.update_session(&record.session_id, |record| {
                 record.open_turn = None;
@@ -894,6 +949,7 @@ impl Provider {
             kinds: Some(vec![
                 KIND_CODING_SESSION_COMMAND,
                 KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+                KIND_CODING_SESSION_TEAM_TRANSACTION,
                 KIND_SYSTEM_MESSAGE,
             ]),
             require_mention: false,
@@ -1178,6 +1234,9 @@ impl Provider {
             KIND_SYSTEM_MESSAGE => {
                 self.on_authority_receipt(channel_id, event, relay).await?;
             }
+            KIND_CODING_SESSION_TEAM_TRANSACTION => {
+                self.on_team_transaction(channel_id, event)?;
+            }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");
                 return Ok(());
@@ -1199,6 +1258,317 @@ impl Provider {
             None => created_at,
         };
         self.state.record_watermark(channel_id, mark)?;
+        Ok(())
+    }
+
+    /// Persist a structurally valid report as an untrusted wake candidate.
+    ///
+    /// Authorization is deliberately deferred to the complete core fold in
+    /// [`Provider::process_one_team_wake`]. Persisting first closes the crash
+    /// window between relay delivery and fold/query work without treating the
+    /// event's self-description as authority.
+    fn on_team_transaction(&mut self, channel_id: Uuid, event: &Event) -> anyhow::Result<()> {
+        let payload =
+            buzz_core::coding_session_team_transaction::validate_coding_session_team_transaction_envelope(event)
+                .map_err(anyhow::Error::msg)?;
+        if !matches!(
+            payload.body,
+            buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionBody::Report(_)
+        ) {
+            return Ok(());
+        }
+        self.team_wakes.enqueue(
+            team_wake::WakeScope {
+                channel_ref: channel_id,
+                session_ref: payload.session_ref,
+                genesis_ref: payload.genesis_ref,
+            },
+            team_wake::WakeSource::Report {
+                operation_id: event.id.to_hex(),
+                operation_type: team_wake::report_operation_type().as_str().to_owned(),
+                author_pubkey: event.pubkey.to_hex(),
+                created_at: event.created_at.as_secs(),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Backfill one complete stored team-transaction partition after startup.
+    ///
+    /// The live subscription closes the post-subscribe race; this scan closes
+    /// the older-than-replay-window gap when a provider was offline. A channel
+    /// is marked only after a complete-or-error authenticated query, so a
+    /// saturated or unavailable relay can never turn partial history into a
+    /// successful discovery pass.
+    async fn discover_one_team_wake_partition(&mut self) -> anyhow::Result<()> {
+        let Some(channel_id) = self
+            .subscribed
+            .iter()
+            .find(|channel_id| !self.team_wake_scanned_channels.contains(channel_id))
+            .copied()
+        else {
+            return Ok(());
+        };
+        let Some(rest) = self.rest_client.clone() else {
+            return Ok(());
+        };
+        let events = context_projector::query_complete_kind_partition(
+            &rest,
+            channel_id,
+            KIND_CODING_SESSION_TEAM_TRANSACTION,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        for event in events {
+            self.on_team_transaction(channel_id, &event)?;
+        }
+        self.team_wake_scanned_channels.insert(channel_id);
+        Ok(())
+    }
+
+    /// Resolve and attempt one durable team wake from complete signed facts.
+    ///
+    /// One per runtime tick bounds relay work. Every refusal leaves the intent
+    /// durable with a stable reason; only a verified outcome, a canonical
+    /// report suppressing a terminal diagnostic, or a definitively excluded
+    /// report retires it.
+    async fn process_one_team_wake(
+        &mut self,
+        publisher: &RelayEventPublisher,
+    ) -> anyhow::Result<()> {
+        let Some(mut intent) = self.team_wakes.pending().first().cloned() else {
+            return Ok(());
+        };
+        let Some(rest) = self.rest_client.clone() else {
+            intent.last_reason = Some("relay_query_unavailable".into());
+            self.team_wakes.defer_first(intent)?;
+            return Ok(());
+        };
+        let Some(relay_self) = self.relay_self.clone() else {
+            intent.last_reason = Some("relay_identity_unavailable".into());
+            self.team_wakes.defer_first(intent)?;
+            return Ok(());
+        };
+        let snapshot = match team_wake::fetch_verified_snapshot(&rest, &relay_self, &intent.scope)
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                tracing::warn!(target: "csp::team_wake", %error, "team wake facts are not currently provable");
+                intent.last_reason = Some("verified_snapshot_unavailable".into());
+                self.team_wakes.defer_first(intent)?;
+                return Ok(());
+            }
+        };
+
+        if !team_wake::provider_may_wake(
+            &self.pubkey_hex,
+            &snapshot.founder_pubkey,
+            &snapshot.authority,
+        ) {
+            intent.last_reason = Some("provider_not_explicitly_authorized".into());
+            self.team_wakes.defer_first(intent)?;
+            return Ok(());
+        }
+
+        match &intent.source {
+            team_wake::WakeSource::Report {
+                operation_id,
+                author_pubkey,
+                ..
+            } => {
+                if !snapshot
+                    .included_reports
+                    .iter()
+                    .any(|report| report.event_id == *operation_id)
+                {
+                    if snapshot
+                        .team_events
+                        .iter()
+                        .any(|event| event.id.to_hex() == *operation_id)
+                    {
+                        tracing::info!(target: "csp::team_wake", %operation_id, "discarding excluded team report wake candidate");
+                        self.team_wakes.retire(0)?;
+                    } else {
+                        intent.last_reason = Some("report_not_query_visible".into());
+                        self.team_wakes.defer_first(intent)?;
+                    }
+                    return Ok(());
+                }
+                let source_target = match team_wake::resolve_actor_target(
+                    &snapshot.package,
+                    author_pubkey,
+                ) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        tracing::info!(target: "csp::team_wake", %error, "team report source has no exact active provider target");
+                        intent.last_reason = Some("report_source_target_not_exact".into());
+                        self.team_wakes.defer_first(intent)?;
+                        return Ok(());
+                    }
+                };
+                let locally_owned = source_target.instance_id == self.config.instance_id
+                    && self
+                        .state
+                        .session(&source_target.session_id)
+                        .is_some_and(|record| {
+                            record.actor.as_deref() == Some(author_pubkey.as_str())
+                                && self.target_for(record) == source_target
+                        });
+                if !locally_owned {
+                    // Every provider can see the channel report. Only the
+                    // provider that owns the reporting generation may mint its
+                    // durable push; the exact remote lead remains a valid
+                    // target after this ownership check.
+                    self.team_wakes.retire(0)?;
+                    return Ok(());
+                }
+            }
+            team_wake::WakeSource::Terminal {
+                actor_pubkey,
+                role,
+                caused_by_command_id,
+                source_target,
+                prompt_at_ms,
+                terminal_at_ms,
+                ..
+            } => {
+                let context = team_wake::fold_context(
+                    &intent.scope,
+                    &snapshot.founder_pubkey,
+                    &snapshot.authority,
+                );
+                let assignment_ref = match team_wake::turn_requires_report(
+                    &snapshot.package,
+                    &snapshot.team_events,
+                    &context,
+                    caused_by_command_id,
+                    source_target,
+                    actor_pubkey,
+                    role,
+                ) {
+                    team_wake::TurnReportRequirement::NotRequired => {
+                        self.team_wakes.retire(0)?;
+                        return Ok(());
+                    }
+                    team_wake::TurnReportRequirement::Unknown(reason) => {
+                        intent.last_reason = Some(reason.into());
+                        self.team_wakes.defer_first(intent)?;
+                        return Ok(());
+                    }
+                    team_wake::TurnReportRequirement::Required { assignment_ref } => assignment_ref,
+                };
+                if team_wake::report_suppresses_terminal(
+                    &snapshot.included_reports,
+                    &assignment_ref,
+                    actor_pubkey,
+                    *prompt_at_ms,
+                    *terminal_at_ms,
+                ) {
+                    self.team_wakes.retire(0)?;
+                    return Ok(());
+                }
+                if now_ms().saturating_sub(*terminal_at_ms) < TEAM_WAKE_REPORT_GRACE_MS {
+                    intent.last_reason = Some("report_grace_pending".into());
+                    self.team_wakes.defer_first(intent)?;
+                    return Ok(());
+                }
+            }
+        }
+
+        let target = match team_wake::resolve_lead_target(&snapshot.package, &snapshot.authority) {
+            Ok(target) => target,
+            Err(error) => {
+                tracing::info!(target: "csp::team_wake", %error, "team wake has no exact active lead target");
+                intent.last_reason = Some("lead_target_not_exact".into());
+                self.team_wakes.defer_first(intent)?;
+                return Ok(());
+            }
+        };
+
+        if intent.target.as_ref().is_some_and(|old| old != &target) {
+            intent.target = None;
+            intent.command_id = None;
+            intent.signed_event = None;
+            intent.relay_accepted_at = None;
+            intent.attempt = intent.attempt.saturating_add(1);
+        }
+        intent.target = Some(target.clone());
+        if intent.command_id.is_none() {
+            intent.command_id = Some(team_wake::command_id(
+                intent.source.event_id(),
+                &target,
+                intent.attempt,
+            ));
+        }
+        let command_id = intent
+            .command_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("team wake command id was not resolved"))?;
+        let expected_wake_text = team_wake::wake_text(&intent.source)
+            .map_err(|error| anyhow::anyhow!("team wake pointer could not be encoded: {error}"))?;
+        if team_wake::command_outcome(&snapshot.package, &command_id, &target).is_some()
+            || team_wake::command_echoed(
+                &snapshot.package,
+                &command_id,
+                &target,
+                &expected_wake_text,
+            )
+        {
+            self.team_wakes.retire(0)?;
+            return Ok(());
+        }
+        if intent.relay_accepted_at.is_none() {
+            intent.relay_accepted_at =
+                team_wake::observed_command_at(&snapshot.package, &command_id, &target);
+        }
+        if let Some(accepted_at) = intent.relay_accepted_at {
+            if now_secs().saturating_sub(accepted_at) <= self.config.command_horizon.as_secs() {
+                self.team_wakes.defer_first(intent)?;
+                return Ok(());
+            }
+            intent.attempt = intent.attempt.saturating_add(1);
+            intent.command_id = Some(team_wake::command_id(
+                intent.source.event_id(),
+                &target,
+                intent.attempt,
+            ));
+            intent.signed_event = None;
+            intent.relay_accepted_at = None;
+        }
+
+        if intent.signed_event.is_none() {
+            let event = team_wake::build_wake_event(
+                &self.config.keys,
+                &intent.scope,
+                &intent.source,
+                target,
+                intent
+                    .command_id
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("team wake retry has no command id"))?,
+            )
+            .map_err(anyhow::Error::msg)?;
+            intent.signed_event = Some(event);
+            // Persist the exact signed attempt before it can reach the relay.
+            self.team_wakes.replace(0, intent.clone())?;
+        }
+        let Some(event) = intent.signed_event.clone() else {
+            intent.last_reason = Some("signed_attempt_unavailable".into());
+            self.team_wakes.defer_first(intent)?;
+            return Ok(());
+        };
+        match publisher.publish(event).await {
+            Ok(()) => {
+                intent.relay_accepted_at = Some(now_secs());
+                intent.last_reason = Some("awaiting_provider_outcome".into());
+            }
+            Err(error) => {
+                tracing::warn!(target: "csp::team_wake", %error, "team wake publish failed; exact signed attempt remains durable");
+                intent.last_reason = Some("publish_retry_pending".into());
+            }
+        }
+        self.team_wakes.defer_first(intent)?;
         Ok(())
     }
 
@@ -3608,6 +3978,19 @@ impl Provider {
         item: serde_json::Value,
         priority: Priority,
     ) -> anyhow::Result<Option<u64>> {
+        Ok(self
+            .enqueue_transcript_with_id(channel_id, target, turn_id, item, priority)?
+            .map(|(event_seq, _)| event_seq))
+    }
+
+    fn enqueue_transcript_with_id(
+        &mut self,
+        channel_id: Uuid,
+        target: &CodingSessionTarget,
+        turn_id: Option<&str>,
+        item: serde_json::Value,
+        priority: Priority,
+    ) -> anyhow::Result<Option<(u64, String)>> {
         let workspace_root = self
             .state
             .session(&target.session_id)
@@ -3642,13 +4025,14 @@ impl Provider {
         let content = serde_json::to_string(&envelope)?;
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?
             .sign_with_keys(&self.config.keys)?;
+        let event_id = event.id.to_hex();
         self.outbox.enqueue(
             KIND_CODING_SESSION_TRANSCRIPT,
             &coding_session_transcript_semantic_key(target, event_seq),
             priority,
             event,
         )?;
-        Ok(Some(event_seq))
+        Ok(Some((event_seq, event_id)))
     }
 
     /// Note the recoverable redactions this item carried, for this host only.
@@ -3829,6 +4213,28 @@ impl Provider {
                     .state
                     .session(&session_id)
                     .and_then(|record| record.model.clone());
+                let team_terminal = self.state.session(&session_id).and_then(|record| {
+                    let actor = record.actor.clone()?;
+                    let role = record.role.clone()?;
+                    let session_ref = record.session_ref.clone()?;
+                    let genesis_ref = record.genesis_ref.clone()?;
+                    let open_turn = record.open_turn.as_ref()?;
+                    let caused_by_command_id = open_turn.command_id.clone()?;
+                    (role != "lead").then(|| {
+                        (
+                            team_wake::WakeScope {
+                                channel_ref: record.channel_id,
+                                session_ref,
+                                genesis_ref,
+                            },
+                            actor,
+                            role,
+                            caused_by_command_id,
+                            target.clone(),
+                            Some(open_turn.started_at_ms),
+                        )
+                    })
+                });
                 let (item, status) = turn_result(
                     &outcome,
                     duration_ms,
@@ -3836,7 +4242,32 @@ impl Provider {
                     tool_calls,
                     model.as_deref(),
                 );
-                self.enqueue_transcript(channel_id, &target, Some(&turn_id), item, Priority::High)?;
+                let terminal_at_ms = now_ms();
+                let terminal = self.enqueue_transcript_with_id(
+                    channel_id,
+                    &target,
+                    Some(&turn_id),
+                    item,
+                    Priority::High,
+                )?;
+                if let (
+                    Some((_, terminal_event_id)),
+                    Some((scope, actor, role, caused_by_command_id, source_target, prompt_at_ms)),
+                ) = (terminal, team_terminal)
+                {
+                    self.team_wakes.enqueue(
+                        scope,
+                        team_wake::WakeSource::Terminal {
+                            terminal_event_id,
+                            actor_pubkey: actor,
+                            role,
+                            caused_by_command_id,
+                            source_target,
+                            prompt_at_ms,
+                            terminal_at_ms,
+                        },
+                    )?;
+                }
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = None;
                 })?;
@@ -4898,6 +5329,77 @@ mod tests {
             .await
             .expect("connect test relay");
         (relay, queries, server)
+    }
+
+    #[tokio::test]
+    async fn startup_scan_recovers_a_stored_report_outside_live_replay() {
+        use buzz_core::coding_session_team_transaction::{
+            CodingSessionTeamReport, CodingSessionTeamTransactionBody,
+        };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let actor = Keys::generate();
+        let session_ref = Uuid::new_v4().to_string();
+        let genesis_ref = "ab".repeat(32);
+        let payload =
+            buzz_sdk::coding_session_team_transaction::coding_session_team_transaction_payload(
+                session_ref.clone(),
+                genesis_ref,
+                None,
+                None,
+                CodingSessionTeamTransactionBody::Report(CodingSessionTeamReport {
+                    assignment_ref: "11".repeat(32),
+                    summary: "Stored while the provider was offline".into(),
+                    branch: None,
+                    base_sha: None,
+                    head_sha: None,
+                    files: Vec::new(),
+                    tests: Vec::new(),
+                    red_before_green: None,
+                    deviations: Vec::new(),
+                    residuals: Vec::new(),
+                    anomalies: Vec::new(),
+                }),
+            );
+        let report =
+            buzz_sdk::coding_session_team_transaction::build_coding_session_team_transaction(
+                &channel_id.to_string(),
+                payload,
+            )
+            .expect("builder")
+            .sign_with_keys(&actor)
+            .expect("sign report");
+        let provider_keys = Keys::generate();
+        let (relay, queries, server) = spawn_test_relay(&provider_keys, Some(report.clone())).await;
+        let mut provider = Provider::new(config_of(
+            provider_keys,
+            &dir.path().join("state"),
+            None,
+            "missing-agent".into(),
+        ))
+        .expect("provider");
+        provider.set_rest_client(relay.rest_client());
+        provider.subscribed.insert(channel_id);
+
+        provider
+            .discover_one_team_wake_partition()
+            .await
+            .expect("complete startup scan");
+        assert_eq!(provider.team_wakes.pending().len(), 1);
+        assert_eq!(
+            provider.team_wakes.pending()[0].source.event_id(),
+            report.id.to_hex()
+        );
+        let query_count = queries.lock().expect("queries").len();
+        provider
+            .discover_one_team_wake_partition()
+            .await
+            .expect("already scanned");
+        assert_eq!(queries.lock().expect("queries").len(), query_count);
+
+        relay.shutdown().await;
+        server.abort();
     }
 
     fn test_operator_keys() -> &'static Keys {

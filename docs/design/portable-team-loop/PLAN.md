@@ -248,6 +248,32 @@ key verifies founder-signed create and exact provider/target/metadata parity,
 then appends the seat grant itself. A missing or failed grant is disclosed as
 `created_ungranted`; it never triggers a hidden re-hire or provider self-mint.
 
+Provider-owned wake delivery is a durable semantic intent, not a Desktop poll
+or a pre-signed outbox item. The provider must hold an accepted `may_steer`
+grant (or be the founder), resolve exactly one active lead from the accepted
+seat chain plus receipt-backed provider metadata across provider instances,
+and re-resolve that target after restart or generation change. Only the
+provider owning the reporting actor's exact active generation may push, and it
+backfills the complete stored 44244 partition on startup rather than trusting
+the bounded live replay window. An included signed report wakes with only its
+operation ID/type; the wake command ID is derived from that report and exact
+target rather than reusing the assignment command ID. A terminal diagnostic is
+eligible only when the finished turn was opened by an exact assignment pointer
+whose canonical assignment binds the same command, actor, and role; READY and
+ordinary hire responses never imply a missing report. Only a report for that
+exact assignment suppresses it. Missing transaction or authority facts stay
+pending and disclosed. A provider receipt (`queued`, `started`, `refused`, or
+`dropped`) or exact prompt echo settles the intent; relay acceptance alone does
+not. Degradation and interrupt-delivery receipts are progress for other
+delivery semantics, not settlement of this boundary wake.
+The founder-held Desktop create/hire path establishes that authority: only
+after the expected provider's accepted create receipt (and, on first launch,
+its exact signed metadata) does it append a receipt-backed `grant-operator`
+for that provider authority, then the seat actor. It first folds the accepted
+chain so recovery is idempotent, and names any provider- or actor-grant failure
+instead of treating the created seat as fully available. Providers never sign
+their own grants and the relay authority matrix remains the admission gate.
+
 ### Stage 3 — Parallel Mission UI
 
 After the transaction decoder and readiness JSON contracts freeze:

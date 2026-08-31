@@ -17,7 +17,7 @@ import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/
 import { ensureActorChannelMembership } from "@/features/coding-sessions/lib/actorSeatChannelMembership";
 import { publishSeatedCodingSessionCreate } from "@/features/coding-sessions/lib/codingSessionSeatedCreate";
 import type { CodingSessionActorSeat } from "@/features/coding-sessions/lib/codingSessionActorSeat";
-import { publishCodingSessionAuthorityTransition } from "@/features/coding-sessions/lib/codingSessionRoster";
+import { ensureCodingSessionCreateOperatorGrants } from "@/features/coding-sessions/lib/codingSessionOperatorGrant";
 import {
   clearCodingSessionActorSeat,
   stageCodingSessionActorSeat,
@@ -305,14 +305,18 @@ export function useNewCodingSessionCreate({
     const established = establishedCodingSessionTarget(lifecycle);
     if (!established) return null;
     const targetKey = buildCodingSessionTargetKey(established);
+    const providerAuthorityPubkey = scoped?.input.providerAuthorityPubkey;
+    if (!providerAuthorityPubkey) return null;
     return (
       exactSessionCatalog.entries.find(
         (entry) =>
           entry.commandTarget &&
-          buildCodingSessionTargetKey(entry.commandTarget) === targetKey,
+          buildCodingSessionTargetKey(entry.commandTarget) === targetKey &&
+          entry.providerAuthorityPubkey === providerAuthorityPubkey &&
+          entry.metadataAuthorityPubkey === providerAuthorityPubkey,
       )?.generationId ?? null
     );
-  }, [exactSessionCatalog.entries, lifecycle]);
+  }, [exactSessionCatalog.entries, lifecycle, scoped]);
 
   // The signed-fact resolution is clock-free by design, so the deadline lives
   // here: any open-ended wait (provider accept, metadata, catalog join) that
@@ -351,42 +355,45 @@ export function useNewCodingSessionCreate({
     // must not survive to steer some later command that happens to reuse the
     // id.
     void clearCodingSessionCreateHint(scoped.input.commandId).catch(() => {});
-    // Authority is the existing chain (D7): a seat may steer a sibling only
-    // if its pubkey holds grant-operator on this umbrella. The receipt has
-    // landed, so the grant is published now — and a failure is said out
-    // loud, because a seat that silently cannot steer looks like an idle
-    // agent.
+    // The catalog join above is exact signed metadata from this create's
+    // provider. Only now may the founder grant that provider durable wake
+    // authority, followed by the actor's steering authority on the same
+    // receipt-backed chain.
     const seatActor = scoped.input.actor;
     const seatGenesis = scoped.input.genesisRef;
     if (seatActor) {
       // The provider deletes its own copy of the staged seat at spawn, so
       // this is only the cleanup for the paths where it did not.
       void clearCodingSessionActorSeat(scoped.input.commandId).catch(() => {});
+    }
+    void (async () => {
       if (!seatGenesis) {
         toast.error(
-          "The agent seat was created, but this session has no genesis to " +
-            "grant against — it cannot steer its siblings.",
+          "The session was created, but it has no genesis to grant against — provider wake and seat steering remain unavailable.",
         );
       } else {
-        void publishCodingSessionAuthorityTransition({
+        const grantResult = await ensureCodingSessionCreateOperatorGrants({
           channelId: scoped.input.channelId,
           genesisRef: seatGenesis,
-          type: "grant-operator",
-          granteePubkey: seatActor,
-        }).catch((error: unknown) => {
-          toast.error(
-            `The agent seat was created but could not be granted operator: ${
-              error instanceof Error ? error.message : String(error)
-            } It can work, but not steer its siblings until you grant it in People.`,
-          );
+          providerAuthorityPubkey: scoped.input.providerAuthorityPubkey,
+          actorPubkey: seatActor ?? null,
         });
+        if (!grantResult.ok) {
+          const label =
+            grantResult.failed === "provider"
+              ? "provider wake authority"
+              : "agent operator authority";
+          toast.error(
+            `The session was created but could not receive ${label}: ${grantResult.reason} Grant it in People before relying on provider wake or sibling steering.`,
+          );
+        }
       }
-    }
-    clearDurableCodingSessionCreate(scopeId);
-    onCreated({
-      channelId: scoped.input.channelId,
-      generationId: resolvedGenerationId,
-    });
+      clearDurableCodingSessionCreate(scopeId);
+      onCreated({
+        channelId: scoped.input.channelId,
+        generationId: resolvedGenerationId,
+      });
+    })();
   }, [lifecycle, onCreated, resolvedGenerationId, scopeId, scoped]);
 
   // Host deps for a seated create, stable so the submit callback is.

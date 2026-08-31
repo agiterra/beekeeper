@@ -50,10 +50,8 @@ import {
   createCodingSessionLifecycleCommandId,
 } from "../lib/codingSessionLifecycleCommand";
 import { subscribeToObservedCodingSessionEvents } from "../lib/codingSessionObservedEvents";
-import {
-  fetchCodingSessionRosterFold,
-  publishCodingSessionAuthorityTransition,
-} from "../lib/codingSessionRoster";
+import { fetchCodingSessionRosterFold } from "../lib/codingSessionRoster";
+import { ensureCodingSessionOperatorGrant } from "../lib/codingSessionOperatorGrant";
 import {
   publishSeatedCodingSessionCreate,
   type SeatedCodingSessionCreateDeps,
@@ -178,8 +176,8 @@ export type CodingSessionHireDeps = {
     commandId: string;
     providerAuthorityPubkey: string;
   }) => Promise<CodingSessionCommandTarget>;
-  /** Extend the umbrella's authority chain with `grant-operator` for a seat. */
-  grantOperator: (input: {
+  /** Ensure a receipt-backed `grant-operator` for a provider or seat actor. */
+  ensureOperatorGrant: (input: {
     channelId: string;
     genesisRef: string;
     granteePubkey: string;
@@ -204,11 +202,8 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
   signer: signRelayEvent,
   publisher: relayClient,
   awaitSeatReceipt: (input) => awaitCodingSessionCreateReceipt(input),
-  grantOperator: async (input) => {
-    await publishCodingSessionAuthorityTransition({
-      ...input,
-      type: "grant-operator",
-    });
+  ensureOperatorGrant: async (input) => {
+    await ensureCodingSessionOperatorGrant(input);
   },
   newSeatCommandId: createCodingSessionLifecycleCommandId,
   newTurnCommandId: createCodingSessionCommandId,
@@ -756,7 +751,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
 }
 
 /**
- * Confirm the seat, then grant its actor operator authority.
+ * Confirm the seat, then grant its provider and actor operator authority.
  *
  * Returns null when both landed, or the reason the seat is ungranted. Never
  * throws: a failure here does not un-create the seat, and swallowing it would
@@ -767,21 +762,43 @@ async function grantSeat(
   deps: CodingSessionHireDeps,
 ): Promise<string | null> {
   try {
-    await deps.awaitSeatReceipt({
+    const target = await deps.awaitSeatReceipt({
       channelId: plan.channelId,
       commandId: plan.commandId,
       providerAuthorityPubkey: plan.providerAuthorityPubkey,
     });
-    await deps.grantOperator({
+    if (target.instanceId !== plan.providerInstanceRef) {
+      throw new Error(
+        `the provider receipt targeted ${target.instanceId}, not the requested ${plan.providerInstanceRef}`,
+      );
+    }
+  } catch (error) {
+    return grantFailureReason(error);
+  }
+  try {
+    await deps.ensureOperatorGrant({
+      channelId: plan.channelId,
+      genesisRef: plan.genesisRef,
+      granteePubkey: plan.providerAuthorityPubkey,
+    });
+  } catch (error) {
+    return `provider wake authority: ${grantFailureReason(error)}`;
+  }
+  try {
+    await deps.ensureOperatorGrant({
       channelId: plan.channelId,
       genesisRef: plan.genesisRef,
       granteePubkey: plan.actor,
     });
     return null;
   } catch (error) {
-    const said = error instanceof Error ? error.message.trim() : String(error);
-    return said.length > 0 ? said : "the grant did not go out";
+    return `seat actor authority: ${grantFailureReason(error)}`;
   }
+}
+
+function grantFailureReason(error: unknown): string {
+  const said = error instanceof Error ? error.message.trim() : String(error);
+  return said.length > 0 ? said : "the grant did not go out";
 }
 
 /**
