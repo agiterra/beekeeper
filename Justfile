@@ -436,39 +436,27 @@ test-genesis: _ensure-services
 test-unit:
     #!/usr/bin/env bash
     set -euo pipefail
+    # The whole workspace, not a hand-kept package list.
+    #
+    # This used to enumerate nine `-p` targets, and everything outside that
+    # list — buzz-relay (1032 tests), buzz-acp (836), buzz-session-provider
+    # (419), buzz-sdk (306), git-credential-nostr and a dozen more, ~3,375
+    # tests — ran in no local gate at all. Only `.woodpecker/gate.yml` ever
+    # executed them, so the only way to find a failure there was to push and
+    # watch CI go red. That is exactly how both flakes fixed in the commit that
+    # widened this recipe reached `main`. The list was also hand-mirrored into
+    # `scripts/run-tests.sh` and free to drift from it.
+    #
+    # Every test that needs Postgres, Redis or MinIO is `#[ignore]`d with a
+    # reason, so this stays infra-free: measured green with DATABASE_URL and
+    # REDIS_URL both pointed at a dead port. Keep it that way — if you add a
+    # test that needs a service, mark it, do not re-narrow this command.
+    #
+    # All targets rather than --lib: buzz-conformance's replay fixtures,
+    # buzz-cli, buzz-push-gateway and buzz-backend-kubernetes carry infra-free
+    # coverage in tests/ that --lib would drop.
     if command -v cargo-nextest &>/dev/null; then
-        cargo nextest run -p buzz-core -p buzz-auth --lib
-        cargo nextest run -p buzz-voice --lib
-        cargo nextest run -p buzz-cli
-        # buzz-db migrator/lint tests: pure SQL-parsing unit tests (no infra).
-        # They guard the embedded-migrator invariant (exactly the consolidated
-        # 0001; cutover/backfill stays an operator script, not startup state)
-        # and the tenant-scoping lints. The Postgres-backed buzz-db tests are
-        # #[ignore]d, so --lib runs only the infra-free set. Without this gate a
-        # stray file in migrations/ or a broken lint ships green.
-        cargo nextest run -p buzz-db --lib
-        # Multi-tenant conformance gate (buzz-conformance): the independent
-        # replay checker + golden fixtures. No infra — pure in-process trace
-        # replay — so it belongs in the unit job. Run all targets (lib + the
-        # tests/replay_fixtures.rs integration test), not just --lib.
-        cargo nextest run -p buzz-conformance
-        # Gateway unit and black-box HTTP tests are infra-free. Postgres-backed
-        # contract/race tests run in the dedicated CI job below.
-        cargo nextest run -p buzz-push-gateway
-        # Kubernetes backend provider: the decision layers (state machine, GC
-        # planner, env precedence, naming, wire) are pure functions with a fake
-        # substrate, so they belong in the unit job. Enumerated explicitly
-        # because nothing in CI runs `cargo test --workspace` — workspace
-        # membership alone buys clippy/check, not a single executed test.
-        cargo nextest run -p buzz-backend-kubernetes
-        # buzz-agent model-capabilities corpus: the Rust half of the
-        # cross-language drift guard. `model_capabilities.rs` embeds
-        # scripts/model-capabilities.json + scripts/normative-corpus.json via
-        # include_str! and replays all 103 vectors as pure in-process tests (no
-        # infra). Enumerated explicitly because nothing in CI runs
-        # `cargo test --workspace`; without this step a manifest edit that
-        # diverges Rust from the corpus ships green.
-        cargo nextest run -p buzz-agent --lib
+        cargo nextest run --workspace
     else
         ./scripts/run-tests.sh unit
     fi

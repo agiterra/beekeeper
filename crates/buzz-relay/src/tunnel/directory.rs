@@ -674,13 +674,35 @@ mod tests {
             .expect("create redis pool")
     }
 
+    /// The Redis-backed directory, or `None` when Redis is unreachable.
+    ///
+    /// Callers return early on `None`, which means the test reports **passed**
+    /// without asserting anything. That is tolerable on a dev machine with no
+    /// Docker, but in a run summary it is indistinguishable from real coverage,
+    /// so the skip is announced on stderr and — where Redis is supposed to be
+    /// present — turned into a failure.
+    ///
+    /// Set `BUZZ_TEST_REQUIRE_REDIS=1` anywhere Redis is a declared service
+    /// (`.woodpecker/gate.yml` does) so a missing or broken service can never
+    /// again be read as a green run.
     async fn redis_directory_if_available() -> Option<SessionDirectory> {
+        fn unavailable(why: &str) -> Option<SessionDirectory> {
+            assert!(
+                !std::env::var("BUZZ_TEST_REQUIRE_REDIS").is_ok_and(|v| v != "0"),
+                "BUZZ_TEST_REQUIRE_REDIS is set but Redis is unusable ({why}); \
+                 refusing to skip and report a pass"
+            );
+            eprintln!("SKIP: {} needs Redis ({why})", module_path!());
+            None
+        }
         let pool = pool();
-        let mut conn = pool.get().await.ok()?;
-        redis::cmd("PING")
-            .query_async::<String>(&mut *conn)
-            .await
-            .ok()?;
+        let mut conn = match pool.get().await {
+            Ok(conn) => conn,
+            Err(e) => return unavailable(&format!("pool: {e}")),
+        };
+        if let Err(e) = redis::cmd("PING").query_async::<String>(&mut *conn).await {
+            return unavailable(&format!("ping: {e}"));
+        }
         Some(SessionDirectory::with_lease_ttl(
             pool,
             Duration::from_millis(150),

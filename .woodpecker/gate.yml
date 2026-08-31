@@ -118,6 +118,11 @@ steps:
       BUZZ_S3_ENDPOINT: http://minio:9000
       BUZZ_S3_ACCESS_KEY: buzz_dev
       BUZZ_S3_SECRET_KEY: buzz_dev_secret
+      # The Redis-gated tunnel/mesh tests return early — reporting a pass
+      # without asserting — when Redis is unreachable. Redis is a declared
+      # service here, so a skip means the service is broken, not absent: this
+      # turns that case into a failure instead of a silent green.
+      BUZZ_TEST_REQUIRE_REDIS: "1"
     commands:
       # The repo pins its toolchain via hermit shims in bin/
       - export PATH="$CI_WORKSPACE/bin:$PATH"
