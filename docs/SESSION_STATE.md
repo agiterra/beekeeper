@@ -5773,6 +5773,46 @@ written and `bash -n` clean but **was not executed** — that harness needs
       one post-relaunch live routed hire whose create and 44223 routing slices
       are byte-identical.
 
+100. **A child turn became idle in TeamTest without waking its lead, and the
+     Mission surface obscured the handoff (fixed 2026-08-31 at
+     `d0fba9c16be503df5da63a5fabfefcec3bdcd7e7`).** Bob answered `READY` and
+     its provider published the terminal transcript, but Helios remained idle:
+     no addressed 44220 existed, so the lead could only discover the result by
+     an explicit relay read. Polling and persona reminders are ruled out.
+     - **Delivery:** the founder's open desktop now derives wake candidates
+       only from signed canonical 44244 reports or trusted provider terminal
+       transcript entries (`codingSessionTeamWake.ts:251`). A report produces
+       the existing identifier-only operation pointer; a terminal turn without
+       the required report produces an explicit
+       `turn_ended_without_required_operation` diagnostic
+       (`codingSessionTeamWake.ts:292`). `READY`, idle, and terminal status do
+       not become completion. The event-driven hook has no polling loop
+       (`useCodingSessionTeamWake.ts:56`), publishes one boundary-delivered
+       44220, persists relay-accepted delivery as pending, and clears it only
+       when the lead's provider-signed prompt echo carries the same command id.
+       A remount retries the same deterministic id. The pure regression pins
+       READY/idle, canonical report suppression, pending-until-echo, and an
+       already-echoed delivery at `codingSessionTeamWake.test.mjs:219,252,288,334`.
+     - **Hierarchy:** Conversation/Mission now lives in the one session header
+       and Brief/Live/Trace leads the participant strip
+       (`CodingSessionUmbrellaWorkspace.tsx:603,617`); inline Inspector no
+       longer repeats its own heading (`CodingSessionMissionInspector.tsx:63`);
+       canonical assignment → report → verdict → acknowledgement is an explicit
+       arrowed flow (`CodingSessionMissionTransactionCard.tsx:145`). Buzz theme
+       tokens remain authoritative; the supplied mock's colors were not copied.
+     - **Boundary:** this is an app-owned durable outbox, not a provider daemon.
+       It consumes no model turns or context and catches up from signed history
+       after an initialized team session remount; it cannot wake while the
+       founder desktop has never initialized that session's local cursor. A
+       provider-owned offline outbox would remove that final availability
+       dependency and remains a later hardening slice, not hidden by this fix.
+     - **Evidence:** 118 focused model/DOM tests passed; the fresh Mission
+       Playwright build passed 7/7 including restart recovery, narrow/dark, and
+       all three densities; TypeScript, Biome, px-text, file-size, and
+       `git diff --check` passed. The touched 1,187-line `.mjs` test was split
+       below the written 1,000-line ceiling even though the current size script
+       does not scan `.mjs`.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
