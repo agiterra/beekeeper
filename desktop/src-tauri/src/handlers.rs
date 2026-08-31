@@ -206,6 +206,7 @@ pub(crate) fn invoke_handler(
         managed_agents::actor_seats::clear_coding_session_actor_seat,
         start_managed_agent,
         stop_managed_agent,
+        restart_managed_agent,
         set_agent_managed_profiles,
         set_managed_agent_start_on_app_launch,
         set_managed_agent_auto_restart,

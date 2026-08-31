@@ -89,6 +89,29 @@ export type NewCodingSessionProjectContext = {
   ensureChannelId: () => Promise<string>;
 };
 
+type NewCodingSessionTargetsInput = Parameters<
+  typeof resolveNewCodingSessionTargets
+>[0];
+
+/** Resolve click-time selection only from the freshly probed runtime snapshot. */
+export function resolveRefreshedNewCodingSessionTarget(input: {
+  catalogs: NewCodingSessionTargetsInput["catalogs"];
+  channelId: string | null;
+  localProvider: NewCodingSessionTargetsInput["localProvider"];
+  selectedTargetKey: string | null;
+  selectionExplicit: boolean;
+}): NewCodingSessionTarget | null {
+  return resolveSelectedNewCodingSessionTarget({
+    targets: resolveNewCodingSessionTargets({
+      catalogs: input.catalogs,
+      channelId: input.channelId,
+      localProvider: input.localProvider,
+    }),
+    selectedTargetKey: input.selectedTargetKey,
+    selectionExplicit: input.selectionExplicit,
+  });
+}
+
 /**
  * Create a coding session that belongs to a channel, and optionally to the
  * project that channel serves.
@@ -221,6 +244,7 @@ export function NewCodingSessionForm({
     providerModelsByInstanceRef,
     publishError,
     retryExact,
+    refreshProviderState,
     seat: signedSeat,
     seatPackStaged,
     stalled,
@@ -270,6 +294,28 @@ export function NewCodingSessionForm({
     selectedTargetKey: targetSelection.key,
     selectionExplicit: targetSelection.explicit,
   });
+  const refreshRuntimeTarget = React.useCallback(async () => {
+    const refreshed = await refreshProviderState();
+    return resolveRefreshedNewCodingSessionTarget({
+      catalogs: providerCatalog.entries,
+      channelId: targetChannelId,
+      localProvider: refreshed.status.providerPubkey
+        ? {
+            providerPubkey: refreshed.status.providerPubkey,
+            runtimes: refreshed.runtimes,
+            modelsByInstanceRef: refreshed.modelsByInstanceRef,
+          }
+        : null,
+      selectedTargetKey: targetSelection.key,
+      selectionExplicit: targetSelection.explicit,
+    });
+  }, [
+    providerCatalog.entries,
+    refreshProviderState,
+    targetSelection.explicit,
+    targetSelection.key,
+    targetChannelId,
+  ]);
   const [modelSelection, setModelSelection] = React.useState<{
     value: string | null;
     explicit: boolean;
@@ -621,6 +667,8 @@ export function NewCodingSessionForm({
               selectedTarget?.provider.runtime ??
               null
             }
+            runtimeTarget={selectedTarget}
+            refreshRuntimeTarget={refreshRuntimeTarget}
           />
         </div>
       </>

@@ -22,6 +22,18 @@ export async function stopManagedAgent(pubkey: string): Promise<ManagedAgent> {
   return fromRawManagedAgent(response);
 }
 
+/** Restart a managed identity so refreshed persona and role-pack files are live. */
+export async function restartManagedAgent(
+  pubkey: string,
+  expectedRelayUrl: string,
+): Promise<ManagedAgent> {
+  const response = await invokeTauri<RawManagedAgent>("restart_managed_agent", {
+    pubkey,
+    expectedRelayUrl,
+  });
+  return fromRawManagedAgent(response);
+}
+
 export async function setManagedAgentStartOnAppLaunch(
   pubkey: string,
   startOnAppLaunch: boolean,

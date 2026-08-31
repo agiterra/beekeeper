@@ -264,6 +264,16 @@ describe("install team roles — failure copy", () => {
     assert.doesNotMatch(message, /folder/);
   });
 
+  it("names a community switch as a relay-scope failure", () => {
+    const message = crewRolesFailureMessage({
+      failure: "relay",
+      detail: "active relay changed while the install was running",
+    });
+    assert.match(message, /^The active community changed/);
+    assert.match(message, /active relay changed/);
+    assert.doesNotMatch(message, /folder/);
+  });
+
   it("reads the stage off a thrown Tauri error's payload", () => {
     const error = new Error('{"failure":"keys","detail":"keychain is locked"}');
     error.payload = { failure: "keys", detail: "keychain is locked" };

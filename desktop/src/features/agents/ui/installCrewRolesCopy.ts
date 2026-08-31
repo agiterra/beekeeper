@@ -239,6 +239,7 @@ const CREW_ROLE_FAILURE_SENTENCE: Record<CrewRoleInstallFailureStage, string> =
     folder: "That folder could not be read",
     keys: "No agent key could be minted, so nothing was installed",
     store: "The packs were read, but this computer could not save them",
+    relay: "The active community changed before installation completed",
   };
 
 /** `true` when `value` is the structured failure the backend returns. */

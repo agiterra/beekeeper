@@ -211,23 +211,30 @@ export function useNewCodingSessionCreate({
    * refetch IS a re-probe — this is how a completed sign-in becomes visible
    * without restarting the app.
    */
-  const refreshProviderRuntimes = React.useCallback(async () => {
+  const refreshProviderState = React.useCallback(async () => {
+    const status = await getCodingSessionProviderStatus();
+    setProviderStatus(status);
     let latest: CodingSessionProviderRuntime[] = [];
+    const latestModels = new Map<
+      string,
+      { defaultModel: string; allowedModels: string[] }
+    >();
     await loadCodingSessionProviderRuntimes({
       onRuntimes: (runtimes) => {
         latest = runtimes;
         setProviderRuntimes(runtimes);
       },
       onModels: (instanceRef, models) => {
-        setProviderModelsByInstanceRef((previous) => {
-          const next = new Map(previous);
-          next.set(instanceRef, models);
-          return next;
-        });
+        latestModels.set(instanceRef, models);
       },
     });
-    return latest;
+    setProviderModelsByInstanceRef(latestModels);
+    return { status, runtimes: latest, modelsByInstanceRef: latestModels };
   }, []);
+  const refreshProviderRuntimes = React.useCallback(
+    async () => (await refreshProviderState()).runtimes,
+    [refreshProviderState],
+  );
 
   // Post-Connect login watch: nothing signals when a person finishes the
   // vendor's sign-in, so poll the probe until the launched runtime reports
@@ -645,6 +652,7 @@ export function useNewCodingSessionCreate({
     providerModelsByInstanceRef,
     publishError,
     refreshProviderRuntimes,
+    refreshProviderState,
     resolvedGenerationId,
     retryExact,
     seat,

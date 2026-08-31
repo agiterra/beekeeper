@@ -3,6 +3,10 @@ import type {
   TeamReadinessResponse,
   TeamReadinessState,
 } from "@/shared/api/tauriTeamReadiness";
+import {
+  isNewCodingSessionTargetReady,
+  type NewCodingSessionTarget,
+} from "./newCodingSessionModel";
 
 export type TeamReadinessLaunchGate = {
   allowed: boolean;
@@ -44,6 +48,8 @@ export function teamReadinessLaunchGate(input: {
   loading: boolean;
   error: string | null;
   readiness: TeamReadinessResponse | null;
+  /** The exact target selected by the create picker; omitted outside creation UI. */
+  runtimeTarget?: NewCodingSessionTarget | null;
 }): TeamReadinessLaunchGate {
   if (input.projectRef === null) return { allowed: true, reason: null };
   if (input.loading) {
@@ -135,6 +141,24 @@ export function teamReadinessLaunchGate(input: {
     input.readiness.provider.provisioned &&
     input.readiness.provider.process === "live"
   ) {
+    if (input.runtimeTarget === null) {
+      return {
+        allowed: false,
+        reason:
+          "No installed and authenticated coding-session runtime target is available on this computer.",
+      };
+    }
+    if (
+      input.runtimeTarget !== undefined &&
+      !isNewCodingSessionTargetReady(input.runtimeTarget)
+    ) {
+      return {
+        allowed: false,
+        reason:
+          input.runtimeTarget.availability?.hint ??
+          "The selected coding-session runtime is not ready.",
+      };
+    }
     return { allowed: true, reason: null };
   }
   if (

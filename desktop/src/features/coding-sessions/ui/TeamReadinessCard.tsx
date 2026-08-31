@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import type { ProjectRolePacksScan } from "@/shared/api/tauriTeams";
+import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
 import type {
   TeamReadinessFact,
   TeamReadinessResponse,
@@ -49,7 +50,9 @@ export function TeamReadinessCard(props: {
   preparing: boolean;
   prepareSteps: readonly TeamReadinessPrepareStep[];
   prepareError: string | null;
+  prepareWarning: string | null;
   externalBusy: boolean;
+  runtimeTarget: NewCodingSessionTarget | null;
 }) {
   const groups = groupTeamReadinessFacts(props.readiness?.facts ?? []);
   const firstSessionGate = teamReadinessLaunchGate({
@@ -57,6 +60,7 @@ export function TeamReadinessCard(props: {
     loading: props.loading,
     error: props.readError,
     readiness: props.readiness,
+    runtimeTarget: props.runtimeTarget,
   });
   const firstReady = firstSessionGate.allowed;
   const fullReady =
@@ -311,6 +315,15 @@ export function TeamReadinessCard(props: {
         >
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           {props.prepareError}
+        </p>
+      ) : null}
+      {props.prepareWarning ? (
+        <p
+          className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300"
+          role="status"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          {props.prepareWarning}
         </p>
       ) : null}
     </section>

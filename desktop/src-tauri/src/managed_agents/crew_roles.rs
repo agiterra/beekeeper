@@ -238,6 +238,8 @@ pub enum CrewRoleInstallFailure {
     Keys,
     /// A store — personas, managed agents, or teams — could not be saved.
     Store,
+    /// The active community no longer matches the relay the caller pinned.
+    Relay,
 }
 
 /// A failed install: the stage that failed, and the cause verbatim.
@@ -271,6 +273,14 @@ impl CrewRoleInstallError {
     pub fn store(detail: impl Into<String>) -> Self {
         Self {
             failure: CrewRoleInstallFailure::Store,
+            detail: detail.into(),
+        }
+    }
+
+    /// The caller's relay scope changed before the install completed.
+    pub fn relay(detail: impl Into<String>) -> Self {
+        Self {
+            failure: CrewRoleInstallFailure::Relay,
             detail: detail.into(),
         }
     }

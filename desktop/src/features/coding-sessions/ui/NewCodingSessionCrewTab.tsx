@@ -22,6 +22,10 @@ import {
 } from "../lib/codingSessionCrewLaunch";
 import { codingSessionLeadWorktreeName } from "../lib/codingSessionWorktreeName";
 import {
+  isNewCodingSessionTargetReady,
+  type NewCodingSessionTarget,
+} from "../lib/newCodingSessionModel";
+import {
   listCodingSessionCrewTeams,
   resolveCodingSessionCrewSeats,
   type CodingSessionCrewTeam,
@@ -29,6 +33,7 @@ import {
 import {
   normalizeTeamReadinessRoles,
   teamReadinessLaunchGate,
+  type TeamReadinessLaunchGate,
 } from "../lib/teamReadinessModel";
 import { useProjectTeamReadiness } from "../lib/useProjectTeamReadiness";
 import { NewCodingSessionModelDisclosure } from "./NewCodingSessionProviderPicker";
@@ -84,6 +89,35 @@ export function codingSessionCrewLaunchEnabled(input: {
     input.launchBlock === null &&
     !input.interactionLocked
   );
+}
+
+/** Re-read both launch authorities at click time; cached UI state is never enough. */
+export async function codingSessionCrewFreshLaunchGate(input: {
+  projectRef: string | null;
+  refreshRuntimeTarget: () => Promise<NewCodingSessionTarget | null>;
+  readFreshReadiness: () => Promise<
+    Awaited<
+      ReturnType<
+        ReturnType<typeof useProjectTeamReadiness>["readFreshForLaunch"]
+      >
+    >
+  >;
+}): Promise<{
+  gate: TeamReadinessLaunchGate;
+  runtimeTarget: NewCodingSessionTarget | null;
+}> {
+  const runtimeTarget = await input.refreshRuntimeTarget();
+  const readiness = await input.readFreshReadiness();
+  return {
+    gate: teamReadinessLaunchGate({
+      projectRef: input.projectRef,
+      loading: false,
+      error: null,
+      readiness,
+      runtimeTarget,
+    }),
+    runtimeTarget,
+  };
 }
 
 /** Validate only the seat this provider will actually create. */
@@ -176,6 +210,8 @@ export function NewCodingSessionCrewTab({
   providerInstanceRef,
   providerLabel,
   providerAllowedModels,
+  runtimeTarget,
+  refreshRuntimeTarget,
   model,
 }: {
   channelId: string | null;
@@ -217,6 +253,9 @@ export function NewCodingSessionCrewTab({
    * string nothing verified. An empty list is a refusal, not a pass.
    */
   providerAllowedModels: readonly string[];
+  /** The exact installed/authenticated target selected by the create picker. */
+  runtimeTarget: NewCodingSessionTarget | null;
+  refreshRuntimeTarget: () => Promise<NewCodingSessionTarget | null>;
   model: string | null;
 }) {
   const crewTeamsQuery = useQuery({
@@ -286,12 +325,22 @@ export function NewCodingSessionCrewTab({
     // session being launched here. Before the first channel exists, native
     // readiness preserves the explicit awaiting-first-session state.
     channelIds: channelId === null ? [] : [channelId],
+    refreshRuntimeTargets: async () => {
+      const refreshed = await refreshRuntimeTarget();
+      if (!refreshed || !isNewCodingSessionTargetReady(refreshed)) {
+        throw new Error(
+          refreshed?.availability?.hint ??
+            "Provider setup completed, but no installed and authenticated runtime target is ready.",
+        );
+      }
+    },
   });
   const cachedReadinessGate = teamReadinessLaunchGate({
     projectRef,
     loading: teamReadiness.isLoading,
     error: teamReadiness.readError,
     readiness: teamReadiness.readiness,
+    runtimeTarget,
   });
   const provider = React.useMemo(
     () => ({
@@ -332,8 +381,6 @@ export function NewCodingSessionCrewTab({
 
   const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
     ensureChannelId,
-    providerInstanceRef,
-    providerAuthorityPubkey,
     workdir: workdir.trim().length > 0 ? workdir.trim() : null,
     title: title.trim().length > 0 ? title.trim() : null,
   });
@@ -367,47 +414,49 @@ export function NewCodingSessionCrewTab({
     if (!canLaunch || !selectedTeam || !launchSeats) return;
     setLaunchError(null);
     void (async () => {
-      let freshReadiness: Awaited<ReturnType<typeof readFreshForLaunch>>;
       try {
-        freshReadiness = await readFreshForLaunch();
-      } catch (error) {
-        setLaunchError(
-          error instanceof Error
-            ? `Launch readiness check failed: ${error.message}`
-            : "Launch readiness check failed.",
-        );
-        return;
-      }
-      const freshGate = teamReadinessLaunchGate({
-        projectRef,
-        loading: false,
-        error: null,
-        readiness: freshReadiness,
-      });
-      if (!freshGate.allowed) {
-        setLaunchError(
-          `Launch blocked by fresh Team Readiness: ${freshGate.reason ?? "the project is not prepared"}`,
-        );
-        return;
-      }
-      try {
-        const result = await launch({
-          channelId,
-          goal,
-          seats: launchSeats,
-          // The downstream launch selector historically compared `lead`
-          // exactly. Supplying the already-selected lead as its fallback keeps
-          // free-form role casing from switching the actual create to another
-          // seat after readiness and provider validation passed.
-          primaryPersonaId: launchPrimaryPersonaId,
+        const fresh = await codingSessionCrewFreshLaunchGate({
           projectRef,
-          provider,
-          workdir: workdir.trim().length > 0 ? workdir.trim() : null,
-          leadWorktree:
-            useWorktree && worktreeName.trim().length > 0
-              ? { name: worktreeName.trim(), source: worktreeSource }
-              : null,
+          refreshRuntimeTarget,
+          readFreshReadiness: readFreshForLaunch,
         });
+        if (!fresh.gate.allowed || fresh.runtimeTarget === null) {
+          setLaunchError(
+            `Launch blocked by fresh Team Readiness: ${fresh.gate.reason ?? "the project is not prepared"}`,
+          );
+          return;
+        }
+        const freshProvider = {
+          allowedModels: fresh.runtimeTarget.provider.allowedModels,
+          instanceRef: fresh.runtimeTarget.provider.providerInstanceRef,
+          label: fresh.runtimeTarget.availability?.label ?? null,
+        };
+        const freshProviderRefusal = codingSessionCrewProviderRefusal({
+          lead: selectedLead,
+          provider: freshProvider,
+        });
+        if (freshProviderRefusal) {
+          setLaunchError(
+            `Launch blocked by refreshed provider: ${freshProviderRefusal}`,
+          );
+          return;
+        }
+        const result = await launch(
+          {
+            channelId,
+            goal,
+            seats: launchSeats,
+            primaryPersonaId: launchPrimaryPersonaId,
+            projectRef,
+            provider: freshProvider,
+            workdir: workdir.trim().length > 0 ? workdir.trim() : null,
+            leadWorktree:
+              useWorktree && worktreeName.trim().length > 0
+                ? { name: worktreeName.trim(), source: worktreeSource }
+                : null,
+          },
+          fresh.runtimeTarget,
+        );
         // The channel the launch settled on: for a project's first session it
         // is the one the launch just published, not the null it was handed.
         if (result.ok && result.channelId) {
@@ -419,7 +468,7 @@ export function NewCodingSessionCrewTab({
             generationId:
               codingSessionCrewLeadDestination({
                 result,
-                providerAuthorityPubkey,
+                providerAuthorityPubkey: fresh.runtimeTarget.signerPubkey,
               })?.generationId ?? null,
           });
         } else if (result.ok) {
@@ -444,9 +493,9 @@ export function NewCodingSessionCrewTab({
     launchSeats,
     onLaunched,
     projectRef,
-    provider,
-    providerAuthorityPubkey,
     readFreshForLaunch,
+    refreshRuntimeTarget,
+    selectedLead,
     selectedTeam,
     useWorktree,
     workdir,
@@ -523,6 +572,7 @@ export function NewCodingSessionCrewTab({
           onConfirmPrepare={() => void teamReadiness.confirmPrepare()}
           onNameChange={teamReadiness.setName}
           prepareError={teamReadiness.prepareError}
+          prepareWarning={teamReadiness.prepareWarning}
           prepareSteps={teamReadiness.prepareSteps}
           preparing={teamReadiness.isPreparing}
           readError={teamReadiness.readError}
@@ -530,6 +580,7 @@ export function NewCodingSessionCrewTab({
           scan={teamReadiness.scan}
           scanning={teamReadiness.isScanning}
           selectedRoles={selectedRoles}
+          runtimeTarget={runtimeTarget}
         />
       ) : null}
 

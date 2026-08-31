@@ -1,9 +1,12 @@
 import type { TeamReadinessResponse } from "@/shared/api/tauriTeamReadiness";
+import type { InstalledCrewRole } from "@/shared/api/tauriTeams";
 
 export type TeamReadinessPrepareStepId =
   | "install_roles"
+  | "start_roles"
   | "provision_provider"
   | "start_provider"
+  | "refresh_runtime"
   | "reread_readiness";
 export type TeamReadinessPrepareStep = {
   id: TeamReadinessPrepareStepId;
@@ -14,8 +17,10 @@ export type TeamReadinessPrepareStep = {
 
 export type TeamReadinessPrepareDependencies = {
   installRoles: () => Promise<void>;
+  startRoles: () => Promise<void>;
   provisionProvider: () => Promise<void>;
   startProvider: () => Promise<void>;
+  refreshRuntime: () => Promise<void>;
   rereadReadiness: () => Promise<TeamReadinessResponse>;
 };
 
@@ -26,16 +31,55 @@ const INITIAL_STEPS: TeamReadinessPrepareStep[] = [
     state: "pending",
   },
   {
+    id: "start_roles",
+    label: "Start the selected managed role identities",
+    state: "pending",
+  },
+  {
     id: "provision_provider",
     label: "Provision the provider identity",
     state: "pending",
   },
   { id: "start_provider", label: "Start the provider", state: "pending" },
+  {
+    id: "refresh_runtime",
+    label: "Refresh provider runtime and sign-in state",
+    state: "pending",
+  },
   { id: "reread_readiness", label: "Re-read Team Readiness", state: "pending" },
 ];
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Start exactly the installed identities required by this launch, failing closed. */
+export async function startSelectedInstalledRoleIdentities(input: {
+  installed: readonly InstalledCrewRole[];
+  selectedRoles: readonly string[];
+  start: (pubkey: string) => Promise<unknown>;
+}): Promise<void> {
+  const roles = [
+    ...new Set(
+      input.selectedRoles
+        .map((role) => role.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ].sort();
+  for (const role of roles) {
+    const matches = input.installed.filter(
+      (entry) => entry.role.trim().toLowerCase() === role,
+    );
+    if (
+      matches.length !== 1 ||
+      !/^[0-9a-f]{64}$/.test(matches[0].agentPubkey)
+    ) {
+      throw new Error(
+        `Prepare could not resolve one installed managed identity for the selected ${role} role. Re-scan the role packs and try again.`,
+      );
+    }
+    await input.start(matches[0].agentPubkey);
+  }
 }
 
 /** Run named existing mutations in order and always finish with a fresh read. */
@@ -66,8 +110,10 @@ export async function prepareProjectForTeams(input: {
   let readiness: TeamReadinessResponse | null = null;
   try {
     await run("install_roles", input.dependencies.installRoles);
+    await run("start_roles", input.dependencies.startRoles);
     await run("provision_provider", input.dependencies.provisionProvider);
     await run("start_provider", input.dependencies.startProvider);
+    await run("refresh_runtime", input.dependencies.refreshRuntime);
   } catch (cause) {
     error = errorMessage(cause);
     const running = steps.find((step) => step.state === "running");

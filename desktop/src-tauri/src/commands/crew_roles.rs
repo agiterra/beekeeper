@@ -25,6 +25,21 @@ use crate::{
     util::now_iso,
 };
 
+fn crew_role_install_relay_for_active(
+    active: &str,
+    expected: &str,
+) -> Result<String, CrewRoleInstallError> {
+    crate::session_provider::commands::provider_command_relay_for_active(active, Some(expected))
+        .map_err(CrewRoleInstallError::relay)
+}
+
+fn crew_role_install_relay(
+    state: &AppState,
+    expected: &str,
+) -> Result<String, CrewRoleInstallError> {
+    crew_role_install_relay_for_active(&relay_ws_url_with_override(state), expected)
+}
+
 /// A chosen folder, together with what one scan of it found.
 ///
 /// The scan travels with the pick because the dialog asks a name per role pack
@@ -147,8 +162,10 @@ pub async fn install_crew_role_packs(
     state: State<'_, AppState>,
     directory: String,
     names: Option<HashMap<String, String>>,
+    expected_relay_url: String,
 ) -> Result<InstallCrewRolePacksResponse, CrewRoleInstallError> {
     let names = names.unwrap_or_default();
+    let pinned_relay = crew_role_install_relay(&state, &expected_relay_url)?;
     let owner_keys = state.signing_keys().map_err(CrewRoleInstallError::keys)?;
     let directory = directory.trim().to_string();
     if directory.is_empty() {
@@ -263,10 +280,10 @@ pub async fn install_crew_role_packs(
 
     // Ledger 80 (e): a seat's name on the wire is its identity's kind:0
     // profile, so an install that names an identity and stops has renamed it
-    // only on this computer. Failures are reported, never swallowed and never
-    // fatal — the stores are already written, and claiming the install failed
-    // would be its own untruth.
-    let workspace_relay = relay_ws_url_with_override(&state);
+    // only on this computer. Profile failures are reported explicitly in the
+    // response because the stores are already written; callers that require a
+    // fully prepared identity must treat `profile_sync_error` as incomplete.
+    crew_role_install_relay(&state, &pinned_relay)?;
     let mut failures: Vec<String> = Vec::new();
     for profile in profiles {
         let keys = match nostr::Keys::parse(&profile.private_key_nsec) {
@@ -279,8 +296,9 @@ pub async fn install_crew_role_packs(
                 continue;
             }
         };
+        crew_role_install_relay(&state, &pinned_relay)?;
         let relay_url =
-            crate::relay::effective_agent_relay_url(&profile.record_relay_url, &workspace_relay);
+            crate::relay::effective_agent_relay_url(&profile.record_relay_url, &pinned_relay);
         if let Err(error) = sync_managed_agent_profile(
             &state,
             &relay_url,
@@ -293,6 +311,7 @@ pub async fn install_crew_role_packs(
         {
             failures.push(format!("{}: {error}", profile.display_name));
         }
+        crew_role_install_relay(&state, &pinned_relay)?;
     }
     if !failures.is_empty() {
         response.profile_sync_error = Some(format!(
@@ -314,4 +333,27 @@ struct PendingProfilePublish {
     record_relay_url: String,
     avatar_url: Option<String>,
     auth_tag: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::crew_role_install_relay_for_active;
+    use crate::managed_agents::crew_roles::CrewRoleInstallFailure;
+
+    #[test]
+    fn install_and_profile_publish_reject_a_to_b_community_switch() {
+        assert_eq!(
+            crew_role_install_relay_for_active(
+                "wss://relay-a.example/",
+                " WSS://RELAY-A.EXAMPLE ",
+            )
+            .expect("same relay"),
+            "WSS://RELAY-A.EXAMPLE",
+        );
+        let error =
+            crew_role_install_relay_for_active("wss://relay-b.example", "wss://relay-a.example")
+                .expect_err("community switch must fail closed");
+        assert_eq!(error.failure, CrewRoleInstallFailure::Relay);
+        assert!(error.detail.contains("active community changed"));
+    }
 }

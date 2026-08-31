@@ -8,6 +8,7 @@ import { acpAuthMethodsQueryKey } from "@/features/agents/hooks";
 import {
   NewCodingSessionChannelPicker,
   NewCodingSessionProjectDestination,
+  resolveRefreshedNewCodingSessionTarget,
 } from "./NewCodingSessionDialog.tsx";
 import {
   NewCodingSessionProviderPicker,
@@ -54,6 +55,49 @@ const targets = [
     },
   },
 ];
+
+test("click refresh uses newly authenticated runtime models and capabilities", () => {
+  const fresh = resolveRefreshedNewCodingSessionTarget({
+    catalogs: [],
+    channelId: "channel-a",
+    localProvider: {
+      providerPubkey: "b".repeat(64),
+      runtimes: [
+        {
+          instanceRef: "codex-primary",
+          runtime: "codex",
+          driver: "codex-acp",
+          label: "Codex",
+          authState: "ready",
+          defaultModel: "default",
+          allowedModels: ["default"],
+          capabilities: { ...capabilities, context: true, diff: true },
+        },
+      ],
+      modelsByInstanceRef: new Map([
+        [
+          "codex-primary",
+          {
+            defaultModel: "gpt-5.6-sol",
+            allowedModels: ["gpt-5.6-sol", "gpt-5.6-terra"],
+          },
+        ],
+      ]),
+    },
+    selectedTargetKey: null,
+    selectionExplicit: false,
+  });
+
+  assert.equal(fresh.availability.state, "ready");
+  assert.equal(fresh.provider.providerInstanceRef, "codex-primary");
+  assert.equal(fresh.provider.defaultModel, "gpt-5.6-sol");
+  assert.deepEqual(fresh.provider.allowedModels, [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+  ]);
+  assert.equal(fresh.provider.capabilities.context, true);
+  assert.equal(fresh.provider.capabilities.diff, true);
+});
 
 test("the channel picker lists member channels and says where the transcript lands", () => {
   const markup = renderToStaticMarkup(

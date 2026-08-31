@@ -7,6 +7,7 @@ import {
   CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE,
   codingSessionCrewLeadSeat,
   codingSessionCrewLaunchEnabled,
+  codingSessionCrewFreshLaunchGate,
   codingSessionCrewLaunchSeats,
   codingSessionCrewProviderRefusal,
   codingSessionCrewProviderNote,
@@ -15,7 +16,23 @@ import {
   CodingSessionCrewRoster,
   CodingSessionCrewSkillNotice,
 } from "./NewCodingSessionCrewTab.tsx";
+import { codingSessionCrewLaunchRuntimeBinding } from "./useCodingSessionCrewLaunch.ts";
 import { leadSeat as selectDownstreamLaunchLead } from "../lib/codingSessionCrewLaunch.ts";
+
+const readyRuntimeTarget = {
+  selectionKey: "target",
+  channelId: "channel",
+  signerPubkey: "d".repeat(64),
+  provider: {
+    providerInstanceRef: "codex-primary",
+    runtime: "codex",
+    defaultModel: "gpt-5.6-sol",
+    allowedModels: ["gpt-5.6-sol"],
+    capabilities: { threadTurnStart: true },
+  },
+  availability: { state: "ready", label: "Codex", hint: null },
+  isLocalProvider: true,
+};
 
 test("readiness evaluates only the lead this launch creates", () => {
   assert.deepEqual(
@@ -70,6 +87,89 @@ test("cached unknown readiness visibly keeps Launch disabled before fresh prefli
       refusal: null,
     }),
     true,
+  );
+});
+
+test("click-time preflight rejects a provider that died after the cached gate", async () => {
+  const calls = [];
+  const gate = await codingSessionCrewFreshLaunchGate({
+    projectRef: "project",
+    refreshRuntimeTarget: async () => {
+      calls.push("runtime");
+      return null;
+    },
+    readFreshReadiness: async () => {
+      calls.push("readiness");
+      return {
+        readyForFirstSession: true,
+        status: "awaiting_first_session",
+        blockingCodes: [],
+        unknownCodes: [],
+        awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+        facts: [],
+        provider: { provisioned: true, process: "live" },
+      };
+    },
+  });
+  assert.deepEqual(calls, ["runtime", "readiness"]);
+  assert.equal(gate.gate.allowed, false);
+  assert.match(gate.gate.reason, /installed and authenticated/);
+  assert.equal(gate.runtimeTarget, null);
+});
+
+test("click-time preflight returns the exact refreshed target for launch binding", async () => {
+  const staleClaude = {
+    ...readyRuntimeTarget,
+    selectionKey: "claude",
+    signerPubkey: "a".repeat(64),
+    provider: {
+      ...readyRuntimeTarget.provider,
+      providerInstanceRef: "claude-primary",
+      runtime: "claude",
+    },
+  };
+  const freshCodex = {
+    ...readyRuntimeTarget,
+    selectionKey: "codex",
+    signerPubkey: "b".repeat(64),
+    provider: {
+      ...readyRuntimeTarget.provider,
+      providerInstanceRef: "codex-primary",
+      runtime: "codex",
+    },
+  };
+  const selectedBeforeClick = staleClaude;
+  const fresh = await codingSessionCrewFreshLaunchGate({
+    projectRef: "project",
+    refreshRuntimeTarget: async () => freshCodex,
+    readFreshReadiness: async () => ({
+      readyForFirstSession: true,
+      status: "awaiting_first_session",
+      blockingCodes: [],
+      unknownCodes: [],
+      awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+      facts: [],
+      provider: { provisioned: true, process: "live" },
+    }),
+  });
+  assert.equal(fresh.gate.allowed, true);
+  assert.equal(
+    selectedBeforeClick.provider.providerInstanceRef,
+    "claude-primary",
+  );
+  assert.equal(fresh.runtimeTarget, freshCodex);
+  assert.equal(
+    fresh.runtimeTarget.provider.providerInstanceRef,
+    "codex-primary",
+  );
+  assert.equal(fresh.runtimeTarget.signerPubkey, "b".repeat(64));
+  assert.deepEqual(codingSessionCrewLaunchRuntimeBinding(fresh.runtimeTarget), {
+    providerAuthorityPubkey: "b".repeat(64),
+    providerInstanceRef: "codex-primary",
+  });
+  assert.notDeepEqual(
+    codingSessionCrewLaunchRuntimeBinding(fresh.runtimeTarget),
+    codingSessionCrewLaunchRuntimeBinding(selectedBeforeClick),
   );
 });
 

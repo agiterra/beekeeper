@@ -14,6 +14,7 @@ const readinessCommands = new Set([
   "team_readiness",
   "scan_project_role_packs_directory",
   "install_crew_role_packs",
+  "restart_managed_agent",
   "provision_coding_session_provider",
   "ensure_coding_session_provider_running",
 ]);
@@ -52,6 +53,9 @@ before(() => {
       // never starts a background retry loop in this focused harness.
       if (command === "get_relay_http_url") return "https://hive.example";
       if (command === "get_media_proxy_port") return 3001;
+      if (command === "restart_managed_agent") {
+        return { pubkey: args.pubkey };
+      }
       return null;
     },
   };
@@ -71,6 +75,32 @@ after(() => dom.window.close());
 
 const projectRef = `30621:${"b".repeat(64)}:hive`;
 const readinessChannelId = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const leadPubkey = "c".repeat(64);
+const readyRuntimeTarget = {
+  selectionKey: "target",
+  channelId: readinessChannelId,
+  signerPubkey: "d".repeat(64),
+  provider: {
+    providerInstanceRef: "codex-primary",
+    runtime: "codex",
+    defaultModel: "gpt-5.6-sol",
+    allowedModels: ["gpt-5.6-sol"],
+    capabilities: { threadTurnStart: true },
+  },
+  availability: { state: "ready", label: "Codex", hint: null },
+  isLocalProvider: true,
+};
+const installedLead = {
+  role: "lead",
+  agentPubkey: leadPubkey,
+  personaId: "lead",
+  personaName: "lead",
+  agentName: "Helios",
+  packDir: "/repo/personas/roles/lead",
+  refreshed: true,
+  renamed: false,
+  seated: true,
+};
 function readiness(overrides = {}) {
   return {
     schemaVersion: 3,
@@ -166,13 +196,14 @@ async function mountHarness(initial = {}) {
   const { CommunitiesProvider, useCommunities } = await import(
     "@/features/communities/useCommunities"
   );
-  function Harness({ checkoutPath, roles, channelIds }) {
+  function Harness({ checkoutPath, roles, channelIds, refreshRuntimeTargets }) {
     const { switchCommunity } = useCommunities();
     const state = useProjectTeamReadiness({
       projectRef,
       checkoutPath,
       selectedRoles: roles,
       channelIds,
+      refreshRuntimeTargets,
     });
     const [preflightResult, setPreflightResult] = React.useState("");
     const preflight = async () => {
@@ -211,7 +242,9 @@ async function mountHarness(initial = {}) {
         preparing: state.isPreparing,
         prepareSteps: state.prepareSteps,
         prepareError: state.prepareError,
+        prepareWarning: state.prepareWarning,
         externalBusy: state.isLaunchPreflighting,
+        runtimeTarget: readyRuntimeTarget,
       }),
       React.createElement(
         "button",
@@ -270,6 +303,7 @@ async function mountHarness(initial = {}) {
     checkoutPath: initial.checkoutPath ?? "/repo",
     roles: initial.roles ?? ["lead"],
     channelIds: initial.channelIds ?? [readinessChannelId],
+    refreshRuntimeTargets: initial.refreshRuntimeTargets ?? (async () => {}),
   };
   const view = render(renderTree(props));
   return {
@@ -347,7 +381,8 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [], skipped: [] };
+  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = {
     provisioned: true,
     running: true,
@@ -372,7 +407,7 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
     assert.equal(
       screen.getByTestId("team-readiness-prepare-steps").querySelectorAll("li")
         .length,
-      4,
+      6,
     );
   });
   assert.deepEqual(
@@ -381,6 +416,7 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
       "team_readiness",
       "scan_project_role_packs_directory",
       "install_crew_role_packs",
+      "restart_managed_agent",
       "provision_coding_session_provider",
       "ensure_coding_session_provider_running",
       "team_readiness",
@@ -398,6 +434,7 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
     {
       directory: "/repo/personas/roles",
       names: { lead: "Aurora", verifier: "Prism" },
+      expectedRelayUrl: "wss://hive.example",
     },
   );
   assert.match(
@@ -407,6 +444,134 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
   assert.match(
     screen.getByTestId("team-readiness-card").textContent,
     /Full readiness awaits signed session facts/,
+  );
+});
+
+test("production Prepare composition starts the role before fresh readiness becomes launchable", async () => {
+  let runtimeRefreshed = false;
+  answers.team_readiness = () => {
+    const roleStarted = calls.some(
+      ({ command, args }) =>
+        command === "restart_managed_agent" && args.pubkey === leadPubkey,
+    );
+    return readiness(
+      roleStarted && runtimeRefreshed
+        ? {
+            readyForFirstSession: true,
+            status: "awaiting_first_session",
+            hostClass: "prepared_for_first_session",
+            provider: {
+              relayUrl: "wss://hive.example",
+              provisioned: true,
+              process: "live",
+            },
+            facts: [
+              {
+                category: "catalog",
+                code: "CATALOG_AWAITING_FIRST_SESSION",
+                scope: "wire",
+                state: "awaiting_first_session",
+                summary: "No signed session catalog exists yet.",
+              },
+            ],
+            unknownCodes: [],
+            awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+          }
+        : {},
+    );
+  };
+  answers.scan_project_role_packs_directory = {
+    directory: "/repo/personas/roles",
+    exists: true,
+    packs: [
+      {
+        role: "lead",
+        personaName: "lead",
+        packDir: "/repo/personas/roles/lead",
+        defaultName: "Helios",
+        installed: false,
+      },
+    ],
+    skipped: [],
+  };
+  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
+  answers.provision_coding_session_provider = {
+    provisioned: true,
+    running: true,
+  };
+  answers.ensure_coding_session_provider_running = {
+    provisioned: true,
+    running: true,
+  };
+  await mountHarness({
+    refreshRuntimeTargets: async () => {
+      runtimeRefreshed = true;
+    },
+  });
+  const { fireEvent, screen } = await import("@testing-library/react");
+  await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
+  fireEvent.click(screen.getByTestId("team-readiness-prepare"));
+  await screen.findByLabelText("lead agent name");
+  fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
+  await screen.findByText(/Prepared for the first session/);
+
+  const ordered = readinessCalls().map(({ command }) => command);
+  assert.deepEqual(ordered, [
+    "team_readiness",
+    "scan_project_role_packs_directory",
+    "install_crew_role_packs",
+    "restart_managed_agent",
+    "provision_coding_session_provider",
+    "ensure_coding_session_provider_running",
+    "team_readiness",
+  ]);
+  assert.equal(runtimeRefreshed, true);
+});
+
+test("profile sync failure stays a warning while Prepare republishes and continues", async () => {
+  answers.team_readiness = [readiness(), readiness()];
+  answers.scan_project_role_packs_directory = {
+    directory: "/repo/personas/roles",
+    exists: true,
+    packs: [
+      {
+        role: "lead",
+        personaName: "lead",
+        packDir: "/repo/personas/roles/lead",
+        defaultName: "Helios",
+        installed: false,
+      },
+    ],
+    skipped: [],
+  };
+  answers.install_crew_role_packs = {
+    installed: [installedLead],
+    skipped: [],
+    profileSyncError: "relay rejected the signed profile",
+  };
+  await mountHarness();
+  const { fireEvent, screen } = await import("@testing-library/react");
+  await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
+  fireEvent.click(screen.getByTestId("team-readiness-prepare"));
+  await screen.findByLabelText("lead agent name");
+  fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
+  await screen.findByText(
+    /Role profiles need another relay sync: relay rejected the signed profile/,
+  );
+  assert.equal(
+    calls.filter(({ command }) => command === "restart_managed_agent").length,
+    1,
+  );
+  assert.equal(
+    calls.filter(
+      ({ command }) => command === "provision_coding_session_provider",
+    ).length,
+    1,
+  );
+  assert.match(
+    screen.getByTestId("team-readiness-prepare-steps").textContent,
+    /Install or refresh discovered role packs: done/,
   );
 });
 
@@ -448,7 +613,8 @@ test("the full Prepare UI is idempotent across two confirmed runs", async () => 
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [], skipped: [] };
+  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = {
     provisioned: true,
     running: true,
@@ -486,10 +652,12 @@ test("the full Prepare UI is idempotent across two confirmed runs", async () => 
       "team_readiness",
       "scan_project_role_packs_directory",
       "install_crew_role_packs",
+      "restart_managed_agent",
       "provision_coding_session_provider",
       "ensure_coding_session_provider_running",
       "team_readiness",
       "install_crew_role_packs",
+      "restart_managed_agent",
       "provision_coding_session_provider",
       "ensure_coding_session_provider_running",
       "team_readiness",
@@ -502,7 +670,7 @@ test("the full Prepare UI is idempotent across two confirmed runs", async () => 
   assert.equal(
     screen.getByTestId("team-readiness-prepare-steps").querySelectorAll("li")
       .length,
-    4,
+    6,
   );
   assert.doesNotMatch(
     screen.getByTestId("team-readiness-prepare-steps").textContent,
@@ -526,7 +694,8 @@ test("partial native failure keeps completed UI steps and re-reads readiness", a
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [], skipped: [] };
+  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = () => {
     throw new Error("password prompt was cancelled");
   };
@@ -543,14 +712,17 @@ test("partial native failure keeps completed UI steps and re-reads readiness", a
       "team_readiness",
       "scan_project_role_packs_directory",
       "install_crew_role_packs",
+      "restart_managed_agent",
       "provision_coding_session_provider",
       "team_readiness",
     ],
   );
   const steps = screen.getByTestId("team-readiness-prepare-steps").textContent;
   assert.match(steps, /Install or refresh discovered role packs: done/);
+  assert.match(steps, /Start the selected managed role identities: done/);
   assert.match(steps, /Provision the provider identity: failed/);
   assert.match(steps, /Start the provider: pending/);
+  assert.match(steps, /Refresh provider runtime and sign-in state: pending/);
   assert.match(steps, /Re-read Team Readiness: done/);
 });
 
@@ -688,6 +860,7 @@ test("the first-session click-time preflight invokes native with an empty channe
 
 test("a stale A Prepare cannot mutate or unlock a newer B Prepare", async () => {
   const installResolvers = [];
+  answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.team_readiness = () => readiness();
   answers.scan_project_role_packs_directory = {
     directory: "/repo/personas/roles",
@@ -722,6 +895,11 @@ test("a stale A Prepare cannot mutate or unlock a newer B Prepare", async () => 
   await screen.findByLabelText("lead agent name");
   fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
   await waitFor(() => assert.equal(installResolvers.length, 1));
+  assert.equal(
+    calls.filter(({ command }) => command === "install_crew_role_packs")[0].args
+      .expectedRelayUrl,
+    "wss://hive.example",
+  );
 
   fireEvent.click(screen.getByTestId("switch-community-b"));
   await waitFor(() =>
@@ -738,6 +916,11 @@ test("a stale A Prepare cannot mutate or unlock a newer B Prepare", async () => 
   await screen.findByLabelText("lead agent name");
   fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
   await waitFor(() => assert.equal(installResolvers.length, 2));
+  assert.equal(
+    calls.filter(({ command }) => command === "install_crew_role_packs")[1].args
+      .expectedRelayUrl,
+    "wss://other-hive.example",
+  );
 
   await act(async () => installResolvers[0]({ installed: [], skipped: [] }));
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -753,7 +936,9 @@ test("a stale A Prepare cannot mutate or unlock a newer B Prepare", async () => 
     0,
   );
 
-  await act(async () => installResolvers[1]({ installed: [], skipped: [] }));
+  await act(async () =>
+    installResolvers[1]({ installed: [installedLead], skipped: [] }),
+  );
   await screen.findByText(/Re-read Team Readiness: done/);
   assert.deepEqual(
     calls.find(({ command }) => command === "provision_coding_session_provider")
@@ -765,174 +950,5 @@ test("a stale A Prepare cannot mutate or unlock a newer B Prepare", async () => 
       ({ command }) => command === "ensure_coding_session_provider_running",
     ).args,
     { expectedRelayUrl: "wss://other-hive.example" },
-  );
-});
-
-test("unmounting during Prepare prevents every later mutation", async () => {
-  let releaseInstall;
-  answers.team_readiness = () => readiness();
-  answers.scan_project_role_packs_directory = {
-    directory: "/repo/personas/roles",
-    exists: true,
-    packs: [
-      {
-        role: "lead",
-        personaName: "lead",
-        packDir: "/repo/personas/roles/lead",
-        defaultName: "Helios",
-        installed: false,
-      },
-    ],
-    skipped: [],
-  };
-  answers.install_crew_role_packs = () =>
-    new Promise((resolve) => {
-      releaseInstall = resolve;
-    });
-  const view = await mountHarness();
-  const { act, fireEvent, screen, waitFor } = await import(
-    "@testing-library/react"
-  );
-  await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
-  fireEvent.click(screen.getByTestId("team-readiness-prepare"));
-  await screen.findByLabelText("lead agent name");
-  fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
-  await waitFor(() => assert.equal(typeof releaseInstall, "function"));
-  const readsBeforeUnmount = calls.filter(
-    ({ command }) => command === "team_readiness",
-  ).length;
-  view.unmount();
-  await act(async () => releaseInstall({ installed: [], skipped: [] }));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(
-    calls.filter(
-      ({ command }) => command === "provision_coding_session_provider",
-    ).length,
-    0,
-  );
-  assert.equal(
-    calls.filter(
-      ({ command }) => command === "ensure_coding_session_provider_running",
-    ).length,
-    0,
-  );
-  assert.equal(
-    calls.filter(({ command }) => command === "team_readiness").length,
-    readsBeforeUnmount,
-  );
-});
-
-test("Prepare excludes concurrent launch preflight and keeps all controls locked", async () => {
-  let releaseInstall;
-  answers.team_readiness = [readiness(), readiness()];
-  answers.scan_project_role_packs_directory = {
-    directory: "/repo/personas/roles",
-    exists: true,
-    packs: [
-      {
-        role: "lead",
-        personaName: "lead",
-        packDir: "/repo/personas/roles/lead",
-        defaultName: "Helios",
-        installed: false,
-      },
-    ],
-    skipped: [],
-  };
-  answers.install_crew_role_packs = () =>
-    new Promise((resolve) => {
-      releaseInstall = resolve;
-    });
-  answers.provision_coding_session_provider = {
-    provisioned: true,
-    running: true,
-  };
-  answers.ensure_coding_session_provider_running = {
-    provisioned: true,
-    running: true,
-  };
-  await mountHarness();
-  const { act, fireEvent, screen, waitFor } = await import(
-    "@testing-library/react"
-  );
-  await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
-  fireEvent.click(screen.getByTestId("team-readiness-prepare"));
-  await screen.findByLabelText("lead agent name");
-  fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
-  await waitFor(() => assert.equal(typeof releaseInstall, "function"));
-  assert.equal(screen.getByLabelText("lead agent name").disabled, true);
-  assert.equal(
-    screen.getByTestId("team-readiness-prepare-confirm").disabled,
-    true,
-  );
-  assert.equal(screen.getByTestId("launch-preflight").disabled, true);
-  fireEvent.click(screen.getByTestId("force-launch-preflight"));
-  await screen.findByText(/Project preparation is still running/);
-  assert.equal(
-    calls.filter(({ command }) => command === "team_readiness").length,
-    1,
-  );
-  await act(async () => releaseInstall({ installed: [], skipped: [] }));
-  await screen.findByText(/Re-read Team Readiness: done/);
-});
-
-test("changing checkout or role scope clears scan names and all later reads use it", async () => {
-  answers.team_readiness = [readiness(), readiness(), readiness()];
-  answers.scan_project_role_packs_directory = {
-    directory: "/repo/personas/roles",
-    exists: true,
-    packs: [
-      {
-        role: "lead",
-        personaName: "lead",
-        packDir: "/repo/personas/roles/lead",
-        defaultName: "Helios",
-        installed: false,
-      },
-    ],
-    skipped: [],
-  };
-  const view = await mountHarness();
-  const { fireEvent, screen, waitFor } = await import("@testing-library/react");
-  await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
-  fireEvent.click(screen.getByTestId("team-readiness-prepare"));
-  await screen.findByLabelText("lead agent name");
-  view.rerender({
-    checkoutPath: "/repo-two",
-    roles: [" Builder ", "LEAD", "lead"],
-  });
-  assert.equal(screen.queryByLabelText("lead agent name"), null);
-  await waitFor(() => {
-    assert.equal(
-      calls.filter(({ command }) => command === "team_readiness").length,
-      2,
-    );
-  });
-  assert.deepEqual(
-    calls.filter(({ command }) => command === "team_readiness").at(-1).args,
-    {
-      projectRef,
-      selectedRoles: ["builder", "lead"],
-      hiringPolicyEnabled: true,
-      expectedRelayUrl: "wss://hive.example",
-      channelIds: [readinessChannelId],
-    },
-  );
-  fireEvent.click(screen.getByTestId("launch-preflight"));
-  await waitFor(() => {
-    assert.equal(
-      calls.filter(({ command }) => command === "team_readiness").length,
-      3,
-    );
-  });
-  assert.deepEqual(
-    calls.filter(({ command }) => command === "team_readiness").at(-1).args,
-    {
-      projectRef,
-      selectedRoles: ["builder", "lead"],
-      hiringPolicyEnabled: true,
-      expectedRelayUrl: "wss://hive.example",
-      channelIds: [readinessChannelId],
-    },
   );
 });

@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { readCodingSessionHirePolicy } from "@/features/coding-sessions/lib/codingSessionHirePolicy";
 import { useCommunities } from "@/features/communities/useCommunities";
+import { restartManagedAgent } from "@/shared/api/tauriManagedAgents";
 import {
   ensureCodingSessionProviderRunning,
   provisionCodingSessionProvider,
@@ -10,6 +11,7 @@ import {
 import {
   installCrewRolePacks,
   scanProjectRolePacks,
+  type InstalledCrewRole,
   type ProjectRolePacksScan,
 } from "@/shared/api/tauriTeams";
 import {
@@ -18,6 +20,7 @@ import {
 } from "@/shared/api/tauriTeamReadiness";
 import {
   prepareProjectForTeams,
+  startSelectedInstalledRoleIdentities,
   type TeamReadinessPrepareStep,
 } from "./teamReadinessPrepare";
 import { normalizeTeamReadinessRoles } from "./teamReadinessModel";
@@ -53,6 +56,7 @@ export function useProjectTeamReadiness(input: {
   checkoutPath: string | null;
   selectedRoles: readonly string[];
   channelIds: readonly string[];
+  refreshRuntimeTargets: () => Promise<unknown>;
 }) {
   const { activeCommunity } = useCommunities();
   const queryClient = useQueryClient();
@@ -127,6 +131,9 @@ export function useProjectTeamReadiness(input: {
     TeamReadinessPrepareStep[]
   >([]);
   const [prepareError, setPrepareError] = React.useState<string | null>(null);
+  const [prepareWarning, setPrepareWarning] = React.useState<string | null>(
+    null,
+  );
   const [isScanning, setIsScanning] = React.useState(false);
   const [isPreparing, setIsPreparing] = React.useState(false);
   const [isLaunchPreflighting, setIsLaunchPreflighting] = React.useState(false);
@@ -186,6 +193,7 @@ export function useProjectTeamReadiness(input: {
     setNamesState(null);
     setPrepareSteps([]);
     setPrepareError(null);
+    setPrepareWarning(null);
     setIsScanning(false);
     setIsPreparing(false);
     setIsLaunchPreflighting(false);
@@ -220,6 +228,7 @@ export function useProjectTeamReadiness(input: {
     scanningRef.current = true;
     setIsScanning(true);
     setPrepareError(null);
+    setPrepareWarning(null);
     try {
       const result = await scanProjectRolePacks(checkoutPath);
       requireCurrentOperation(generation);
@@ -265,11 +274,36 @@ export function useProjectTeamReadiness(input: {
     preparingRef.current = true;
     setIsPreparing(true);
     setPrepareError(null);
+    setPrepareWarning(null);
+    let installedRoles: readonly InstalledCrewRole[] = [];
     const result = await prepareProjectForTeams({
       dependencies: {
         installRoles: async () => {
           requireCurrentOperation(generation);
-          await installCrewRolePacks(scan.directory, names);
+          const installed = await installCrewRolePacks(
+            scan.directory,
+            names,
+            relayUrl,
+          );
+          requireCurrentOperation(generation);
+          if (installed.profileSyncError)
+            setPrepareWarning(
+              `Role profiles need another relay sync: ${installed.profileSyncError}`,
+            );
+          installedRoles = installed.installed;
+        },
+        startRoles: async () => {
+          requireCurrentOperation(generation);
+          await startSelectedInstalledRoleIdentities({
+            installed: installedRoles,
+            selectedRoles,
+            start: async (pubkey) => {
+              requireCurrentOperation(generation);
+              const agent = await restartManagedAgent(pubkey, relayUrl);
+              requireCurrentOperation(generation);
+              return agent;
+            },
+          });
         },
         provisionProvider: async () => {
           requireCurrentOperation(generation);
@@ -278,6 +312,11 @@ export function useProjectTeamReadiness(input: {
         startProvider: async () => {
           requireCurrentOperation(generation);
           await ensureCodingSessionProviderRunning(relayUrl);
+        },
+        refreshRuntime: async () => {
+          requireCurrentOperation(generation);
+          await input.refreshRuntimeTargets();
+          requireCurrentOperation(generation);
         },
         rereadReadiness: () => {
           requireCurrentOperation(generation);
@@ -317,6 +356,7 @@ export function useProjectTeamReadiness(input: {
     scan,
     scopeKey,
     selectedRoles,
+    input.refreshRuntimeTargets,
   ]);
 
   const readFreshForLaunch = React.useCallback(async () => {
@@ -396,5 +436,6 @@ export function useProjectTeamReadiness(input: {
     readFreshForLaunch,
     prepareSteps,
     prepareError,
+    prepareWarning,
   };
 }

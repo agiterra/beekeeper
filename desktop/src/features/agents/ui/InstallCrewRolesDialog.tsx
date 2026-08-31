@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react";
 import * as React from "react";
 
+import { useCommunities } from "@/features/communities/useCommunities";
 import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
 import type {
   InstallCrewRolePacksResponse,
@@ -57,6 +58,8 @@ export type InstallCrewRolesProject = {
 };
 
 type InstallCrewRolesFormProps = {
+  /** Relay scope the native installer must remain pinned to. */
+  relayUrl: string;
   /**
    * The project showing when the dialog opened, or `null`/absent outside one.
    *
@@ -82,6 +85,7 @@ type InstallCrewRolesFormProps = {
  */
 export function InstallCrewRolesForm({
   project,
+  relayUrl,
   onInstalled,
   onClose,
   onBusyChange,
@@ -220,6 +224,7 @@ export function InstallCrewRolesForm({
       const installed = await installCrewRolePacks(
         picked.directory,
         crewRoleNamesMap(picked.packs, names),
+        relayUrl,
       );
       setResult(installed);
       if (!crewRolesFoundNothing(installed)) {
@@ -449,6 +454,7 @@ export function InstallCrewRolesDialog({
   onInstalled,
 }: InstallCrewRolesDialogProps) {
   const [isInstalling, setIsInstalling] = React.useState(false);
+  const { activeCommunity } = useCommunities();
 
   return (
     <Dialog
@@ -477,6 +483,7 @@ export function InstallCrewRolesDialog({
           onClose={() => onOpenChange(false)}
           onInstalled={onInstalled}
           project={project}
+          relayUrl={activeCommunity?.relayUrl ?? ""}
         />
       </DialogContent>
     </Dialog>

@@ -296,7 +296,7 @@ export type InstallCrewRolePacksResponse = {
 };
 
 /** Which stage of an install failed, as `CrewRoleInstallFailure` names it. */
-export type CrewRoleInstallFailureStage = "folder" | "keys" | "store";
+export type CrewRoleInstallFailureStage = "folder" | "keys" | "store" | "relay";
 
 /** A failed install: the stage that failed, and the cause verbatim. */
 export type CrewRoleInstallFailure = {
@@ -365,10 +365,12 @@ export async function pickCrewRolePacksDirectory(): Promise<PickedCrewRolePacks 
  */
 export async function installCrewRolePacks(
   directory: string,
-  names?: Record<string, string> | null,
+  names: Record<string, string> | null,
+  expectedRelayUrl: string,
 ): Promise<InstallCrewRolePacksResponse> {
   return invokeTauri<InstallCrewRolePacksResponse>("install_crew_role_packs", {
     directory,
     names: names ?? null,
+    expectedRelayUrl,
   });
 }

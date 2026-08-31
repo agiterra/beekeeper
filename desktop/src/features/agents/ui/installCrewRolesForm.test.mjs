@@ -109,6 +109,7 @@ async function mountForm(onInstalled = () => {}, props = {}) {
       React.createElement(InstallCrewRolesForm, {
         onClose: () => {},
         onInstalled,
+        relayUrl: "wss://hive.example",
         ...props,
       }),
     );
@@ -202,6 +203,7 @@ test("install submits a role→name map carrying the rename and every untouched 
   );
   assert.ok(call, "the install ran");
   assert.equal(call.args.directory, "/packs");
+  assert.equal(call.args.expectedRelayUrl, "wss://hive.example");
   assert.deepEqual(
     call.args.names,
     { lead: "Keystone", builder: "builder", designer: "Banksy" },

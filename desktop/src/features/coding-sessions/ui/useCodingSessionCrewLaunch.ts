@@ -34,6 +34,27 @@ import {
 import { publishCodingSessionAuthorityTransition } from "../lib/codingSessionRoster";
 import { publishSeatedCodingSessionCreate } from "../lib/codingSessionSeatedCreate";
 import { ensureProviderChannelMembership } from "../lib/providerChannelMembership";
+import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
+
+/** Bind a launch to the exact runtime target returned by click-time preflight. */
+export function codingSessionCrewLaunchRuntimeBinding(
+  runtimeTarget: NewCodingSessionTarget,
+): {
+  providerAuthorityPubkey: string;
+  providerInstanceRef: string;
+} {
+  const providerInstanceRef = runtimeTarget.provider.providerInstanceRef.trim();
+  const providerAuthorityPubkey = runtimeTarget.signerPubkey.trim();
+  if (
+    !providerInstanceRef ||
+    !/^[0-9a-f]{64}$/i.test(providerAuthorityPubkey)
+  ) {
+    throw new Error(
+      "No coding-session provider is available to run this team.",
+    );
+  }
+  return { providerAuthorityPubkey, providerInstanceRef };
+}
 
 /**
  * The crew launch, wired to this computer's relay, provider and keyring.
@@ -52,9 +73,6 @@ import { ensureProviderChannelMembership } from "../lib/providerChannelMembershi
  * exist.
  */
 export function useCodingSessionCrewLaunch(input: {
-  /** Provider that will run every seat. */
-  providerInstanceRef: string | null;
-  providerAuthorityPubkey: string | null;
   /**
    * Resolve — creating it if needed — the channel the team launches into.
    *
@@ -87,19 +105,15 @@ export function useCodingSessionCrewLaunch(input: {
   const launch = React.useCallback(
     async (
       launchInput: CodingSessionCrewLaunchInput,
+      runtimeTarget: NewCodingSessionTarget,
     ): Promise<CodingSessionCrewLaunchResult> => {
       const current = settings.current;
       setResult(null);
       setSteps(planCodingSessionCrewLaunch(launchInput));
       setIsLaunching(true);
       try {
-        if (!current.providerInstanceRef || !current.providerAuthorityPubkey) {
-          throw new Error(
-            "No coding-session provider is available to run this team.",
-          );
-        }
-        const providerInstanceRef = current.providerInstanceRef;
-        const providerAuthorityPubkey = current.providerAuthorityPubkey;
+        const { providerAuthorityPubkey, providerInstanceRef } =
+          codingSessionCrewLaunchRuntimeBinding(runtimeTarget);
         const launched = await launchCodingSessionCrew(launchInput, {
           ensureChannel: current.ensureChannelId ?? undefined,
           createLeadWorktree: createCodingSessionWorktree,

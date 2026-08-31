@@ -6,8 +6,12 @@ import {
   normalizeTeamReadinessRoles,
   teamReadinessLaunchGate,
 } from "./teamReadinessModel.ts";
+import { selectInitialNewCodingSessionTarget } from "./newCodingSessionModel.ts";
 import { teamReadinessScopeKey } from "./useProjectTeamReadiness.ts";
-import { prepareProjectForTeams } from "./teamReadinessPrepare.ts";
+import {
+  prepareProjectForTeams,
+  startSelectedInstalledRoleIdentities,
+} from "./teamReadinessPrepare.ts";
 
 function readiness(overrides = {}) {
   return {
@@ -293,21 +297,32 @@ test("Prepare invokes every named mutation in order and finishes with a fresh re
   const result = await prepareProjectForTeams({
     dependencies: {
       installRoles: async () => calls.push("install"),
+      startRoles: async () => calls.push("start roles"),
       provisionProvider: async () => calls.push("provision"),
       startProvider: async () => calls.push("start"),
+      refreshRuntime: async () => calls.push("refresh runtime"),
       rereadReadiness: async () => {
         calls.push("reread");
         return finalReadiness;
       },
     },
   });
-  assert.deepEqual(calls, ["install", "provision", "start", "reread"]);
+  assert.deepEqual(calls, [
+    "install",
+    "start roles",
+    "provision",
+    "start",
+    "refresh runtime",
+    "reread",
+  ]);
   assert.deepEqual(
     result.steps.map(({ id, state }) => ({ id, state })),
     [
       { id: "install_roles", state: "done" },
+      { id: "start_roles", state: "done" },
       { id: "provision_provider", state: "done" },
       { id: "start_provider", state: "done" },
+      { id: "refresh_runtime", state: "done" },
       { id: "reread_readiness", state: "done" },
     ],
   );
@@ -320,24 +335,28 @@ test("Prepare preserves completed steps after partial failure and still re-reads
   const result = await prepareProjectForTeams({
     dependencies: {
       installRoles: async () => calls.push("install"),
+      startRoles: async () => calls.push("start roles"),
       provisionProvider: async () => {
         calls.push("provision");
         throw new Error("macOS denied key access");
       },
       startProvider: async () => calls.push("start"),
+      refreshRuntime: async () => calls.push("refresh runtime"),
       rereadReadiness: async () => {
         calls.push("reread");
         return readiness();
       },
     },
   });
-  assert.deepEqual(calls, ["install", "provision", "reread"]);
+  assert.deepEqual(calls, ["install", "start roles", "provision", "reread"]);
   assert.deepEqual(
     result.steps.map(({ id, state }) => ({ id, state })),
     [
       { id: "install_roles", state: "done" },
+      { id: "start_roles", state: "done" },
       { id: "provision_provider", state: "failed" },
       { id: "start_provider", state: "pending" },
+      { id: "refresh_runtime", state: "pending" },
       { id: "reread_readiness", state: "done" },
     ],
   );
@@ -368,8 +387,10 @@ test("two full Prepare runs repeat named idempotent mutations and re-read withou
   });
   const dependencies = {
     installRoles: async () => calls.push("install"),
+    startRoles: async () => calls.push("start roles"),
     provisionProvider: async () => calls.push("provision"),
     startProvider: async () => calls.push("start"),
+    refreshRuntime: async () => calls.push("refresh runtime"),
     rereadReadiness: async () => {
       calls.push("reread");
       return structuredClone(prepared);
@@ -381,12 +402,16 @@ test("two full Prepare runs repeat named idempotent mutations and re-read withou
 
   assert.deepEqual(calls, [
     "install",
+    "start roles",
     "provision",
     "start",
+    "refresh runtime",
     "reread",
     "install",
+    "start roles",
     "provision",
     "start",
+    "refresh runtime",
     "reread",
   ]);
   assert.deepEqual(second, first);
@@ -394,9 +419,115 @@ test("two full Prepare runs repeat named idempotent mutations and re-read withou
     second.steps.map(({ id, state }) => ({ id, state })),
     [
       { id: "install_roles", state: "done" },
+      { id: "start_roles", state: "done" },
       { id: "provision_provider", state: "done" },
       { id: "start_provider", state: "done" },
+      { id: "refresh_runtime", state: "done" },
       { id: "reread_readiness", state: "done" },
     ],
+  );
+});
+
+test("Prepare starts the selected installed identity before readiness and the real picker can launch", async () => {
+  const leadPubkey = "c".repeat(64);
+  const installed = [
+    {
+      role: "lead",
+      agentPubkey: leadPubkey,
+      personaId: "lead",
+      personaName: "lead",
+      agentName: "Helios",
+      packDir: "/repo/roles/lead",
+      refreshed: false,
+      renamed: false,
+      seated: true,
+    },
+  ];
+  const live = new Set();
+  const runtimeTarget = selectInitialNewCodingSessionTarget([
+    {
+      selectionKey: "target",
+      channelId: "channel",
+      signerPubkey: "d".repeat(64),
+      provider: {
+        providerInstanceRef: "codex-primary",
+        runtime: "codex",
+        defaultModel: "gpt-5.6-sol",
+        allowedModels: ["gpt-5.6-sol"],
+        capabilities: { threadTurnStart: true },
+      },
+      availability: { state: "ready", label: "Codex", hint: null },
+      isLocalProvider: true,
+    },
+  ]);
+  const result = await prepareProjectForTeams({
+    dependencies: {
+      installRoles: async () => {},
+      startRoles: () =>
+        startSelectedInstalledRoleIdentities({
+          installed,
+          selectedRoles: ["lead"],
+          start: async (pubkey) => void live.add(pubkey),
+        }),
+      provisionProvider: async () => {},
+      startProvider: async () => {},
+      refreshRuntime: async () => {},
+      rereadReadiness: async () =>
+        readiness({
+          readyForFirstSession: live.has(leadPubkey),
+          status: "awaiting_first_session",
+          hostClass: "prepared_for_first_session",
+          provider: {
+            relayUrl: "wss://hive.example",
+            provisioned: true,
+            process: "live",
+          },
+          awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+        }),
+    },
+  });
+  assert.equal(live.has(leadPubkey), true);
+  assert.equal(
+    teamReadinessLaunchGate({
+      projectRef: result.readiness.projectRef,
+      loading: false,
+      error: null,
+      readiness: result.readiness,
+      runtimeTarget,
+    }).allowed,
+    true,
+  );
+});
+
+test("readiness cannot allow launch without the actual picker target", () => {
+  const prepared = readiness({
+    readyForFirstSession: true,
+    status: "awaiting_first_session",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+  });
+  const gate = teamReadinessLaunchGate({
+    projectRef: prepared.projectRef,
+    loading: false,
+    error: null,
+    readiness: prepared,
+    runtimeTarget: selectInitialNewCodingSessionTarget([]),
+  });
+  assert.equal(gate.allowed, false);
+  assert.match(gate.reason, /installed and authenticated/);
+});
+
+test("selected role start fails closed when install omitted the identity", async () => {
+  await assert.rejects(
+    startSelectedInstalledRoleIdentities({
+      installed: [],
+      selectedRoles: ["lead"],
+      start: async () => assert.fail("must not start an unresolved identity"),
+    }),
+    /could not resolve one installed managed identity/,
   );
 });

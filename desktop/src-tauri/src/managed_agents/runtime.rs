@@ -898,15 +898,14 @@ pub fn start_managed_agent_process(
     record: &mut ManagedAgentRecord,
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     owner_hex: Option<&str>,
+    pinned_relay_url: Option<&str>,
 ) -> Result<(), String> {
-    let relay_url = {
+    let active_relay_url = {
         use tauri::Manager;
         let state = app.state::<crate::app_state::AppState>();
-        crate::relay::effective_agent_relay_url(
-            &record.relay_url,
-            &crate::relay::relay_ws_url_with_override(&state),
-        )
+        crate::relay::relay_ws_url_with_override(&state)
     };
+    let relay_url = process_relay_url(&record.relay_url, &active_relay_url, pinned_relay_url);
     let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), &relay_url)?;
     if let Some(runtime) = runtimes.get_mut(&key) {
         if runtime
@@ -948,6 +947,21 @@ pub fn start_managed_agent_process(
 
     runtimes.insert(key, ManagedAgentPairRuntime::starting(process));
     Ok(())
+}
+
+fn process_relay_url(record: &str, active: &str, pinned: Option<&str>) -> String {
+    pinned
+        .map(str::to_owned)
+        .unwrap_or_else(|| crate::relay::effective_agent_relay_url(record, active))
+}
+
+#[cfg(test)]
+#[test]
+fn pinned_process_relay_survives_a_switch_after_recheck() {
+    assert_eq!(
+        process_relay_url("", "wss://relay-b.example", Some("wss://relay-a.example")),
+        "wss://relay-a.example"
+    );
 }
 
 mod effective_summary;
