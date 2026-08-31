@@ -39,6 +39,7 @@ import { installMockBridge } from "../helpers/bridge";
 import {
   assertConversationAndMissionLenses,
   assertMissionRestartRecovery,
+  assertNarrowMissionSurfaceHierarchy,
   buildGovernedMissionApprovalPhases,
 } from "./helpers/codingSessionMissionLensAssertions";
 
@@ -913,18 +914,7 @@ test("Mission remains accessible in dark, narrow, reduced-motion layout", async 
   await expect(mission).toBeFocused();
   await page.keyboard.press("Enter");
 
-  const inspector = page.getByTestId("coding-session-mission-inspector");
-  await expect(inspector).toBeVisible({ timeout: 15_000 });
-  await expect(inspector).toHaveAttribute("data-variant", "drawer");
-  await expect(inspector).toContainText(
-    "Mission inspector mounted with signed evidence.",
-  );
-  await waitForAnimations(page);
-  await inspector.screenshot({
-    path: `${SCREENSHOTS}/inspector-dark-narrow-drawer.png`,
-  });
-  await page.getByRole("button", { name: "Close" }).last().click();
-  await expect(inspector).toHaveCount(0);
+  await assertNarrowMissionSurfaceHierarchy(page, SCREENSHOTS);
 
   const participants = page.getByRole("navigation", {
     name: "Session participants",

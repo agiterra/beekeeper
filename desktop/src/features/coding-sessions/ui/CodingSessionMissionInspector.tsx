@@ -9,7 +9,6 @@ import {
   X,
 } from "lucide-react";
 
-import { renderCodingSessionContextLoad } from "@/features/coding-sessions/lib/codingSessionContextLoad";
 import type {
   CodingSessionMissionDisclosureInput,
   CodingSessionMissionGoalModel,
@@ -17,7 +16,6 @@ import type {
   CodingSessionMissionInspectorSection,
   CodingSessionMissionPlanStep,
   CodingSessionMissionStateInput,
-  CodingSessionMissionUsageInput,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/codingSessionParticipantAccent";
 import { cn } from "@/shared/lib/cn";
@@ -60,15 +58,6 @@ export function CodingSessionMissionInspector({
       data-testid="coding-session-mission-inspector"
       data-variant={variant}
     >
-      {variant === "drawer" ? (
-        <header className="shrink-0 border-b border-border/60 px-4 py-3">
-          <p className="text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
-            Mission
-          </p>
-          <h2 className="mt-0.5 text-sm font-semibold">Inspector</h2>
-        </header>
-      ) : null}
-
       {loading ? (
         <p
           className="border-b border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground"
@@ -312,10 +301,7 @@ export function CodingSessionMissionInspector({
                           {participant.label}
                         </span>
                         <span className="block truncate text-2xs text-muted-foreground">
-                          {participant.disposition} · context{" "}
-                          {renderCodingSessionContextLoad(
-                            participant.contextLoad,
-                          )}
+                          {participant.disposition}
                         </span>
                       </span>
                     </button>
@@ -324,32 +310,6 @@ export function CodingSessionMissionInspector({
               })}
             </ul>
           )}
-        </InspectorSection>
-
-        <InspectorSection
-          title="Context"
-          truncations={truncationsFor(model, "context")}
-        >
-          {model.contextFacts.length === 0 ? (
-            <EmptyCopy>
-              No report has published assignment or Git context.
-            </EmptyCopy>
-          ) : (
-            <dl className="space-y-2">
-              {model.contextFacts.map((fact) => (
-                <div key={fact.id}>
-                  <dt className="text-2xs font-medium text-muted-foreground">
-                    {fact.label} · {fact.authorLabel}
-                  </dt>
-                  <dd>
-                    <code className="break-all text-xs">{fact.value}</code>
-                  </dd>
-                  <SignedSource eventId={fact.sourceEventId} />
-                </div>
-              ))}
-            </dl>
-          )}
-          <Usage usage={model.usage} />
         </InspectorSection>
 
         <InspectorSection
@@ -511,7 +471,7 @@ function PlanSteps({
             {showProvenance && step.authorLabel && step.sourceEventId ? (
               <div className="mt-1">
                 <p className="text-2xs text-muted-foreground">
-                  Accepted from {step.authorLabel}
+                  Accepted from {visibleSourceAuthor(step.authorLabel)}
                 </p>
                 {step.sourceCreatedAt !== null && step.sourceIndex !== null ? (
                   <p className="text-2xs text-muted-foreground">
@@ -528,7 +488,14 @@ function PlanSteps({
                     </time>
                   </p>
                 ) : null}
-                <SignedSource eventId={step.sourceEventId} />
+                <SignedSource
+                  authorLabel={
+                    isRawSourceIdentifier(step.authorLabel)
+                      ? step.authorLabel
+                      : undefined
+                  }
+                  eventId={step.sourceEventId}
+                />
               </div>
             ) : null}
           </div>
@@ -727,41 +694,6 @@ function missionStatePresentation(state: CodingSessionMissionStateInput): {
   }
 }
 
-function Usage({ usage }: { usage: CodingSessionMissionUsageInput | null }) {
-  if (!usage) {
-    return (
-      <div className="mt-3 border-t border-border/50 pt-3">
-        <p className="text-2xs font-medium text-muted-foreground">Usage</p>
-        <EmptyCopy>Terminal usage not reported.</EmptyCopy>
-      </div>
-    );
-  }
-  const fields = [
-    ["Input", formatCount(usage.inputTokens)],
-    ["Output", formatCount(usage.outputTokens)],
-    ["Total", formatCount(usage.totalTokens)],
-    ["Tools", formatCount(usage.toolCalls)],
-    ["Cost", usage.costUsd === null ? null : `$${usage.costUsd.toFixed(2)}`],
-  ].filter((field): field is [string, string] => field[1] !== null);
-  return (
-    <div className="mt-3 border-t border-border/50 pt-3">
-      <p className="text-2xs font-medium text-muted-foreground">Usage</p>
-      <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
-        {fields.map(([label, value]) => (
-          <div
-            className="flex items-baseline justify-between gap-2"
-            key={label}
-          >
-            <dt className="text-2xs text-muted-foreground">{label}</dt>
-            <dd className="text-xs tabular-nums">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <SignedSource eventId={usage.sourceEventId} />
-    </div>
-  );
-}
-
 function Integrity({ model }: { model: CodingSessionMissionInspectorModel }) {
   const { integrity } = model;
   const clean =
@@ -838,17 +770,44 @@ function DisclosureList({
   );
 }
 
-function SignedSource({ eventId }: { eventId: string }) {
+function SignedSource({
+  authorLabel,
+  eventId,
+}: {
+  authorLabel?: string;
+  eventId: string;
+}) {
   return (
     <details className="mt-1 text-2xs text-muted-foreground">
       <summary className="w-fit cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         Signed source
       </summary>
-      <code className="mt-1 block break-all">{eventId}</code>
+      <dl className="mt-1 space-y-1">
+        {authorLabel ? (
+          <div>
+            <dt className="font-medium">Author</dt>
+            <dd>
+              <code className="block break-all">{authorLabel}</code>
+            </dd>
+          </div>
+        ) : null}
+        <div>
+          <dt className="font-medium">Event</dt>
+          <dd>
+            <code className="block break-all">{eventId}</code>
+          </dd>
+        </div>
+      </dl>
     </details>
   );
 }
 
-function formatCount(value: number | null): string | null {
-  return value === null ? null : value.toLocaleString();
+function visibleSourceAuthor(authorLabel: string): string {
+  return isRawSourceIdentifier(authorLabel)
+    ? `${authorLabel.slice(0, 8)}…${authorLabel.slice(-6)}`
+    : authorLabel;
+}
+
+function isRawSourceIdentifier(value: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(value);
 }

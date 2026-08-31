@@ -197,7 +197,19 @@ async function renderInspector(props) {
   };
 }
 
-test("panel and drawer variants expose the same honest Mission sections", async () => {
+async function renderContext(props) {
+  const React = (await import("react")).default;
+  const { cleanup, render } = await import("@testing-library/react");
+  const { CodingSessionMissionContext } = await import(
+    "./CodingSessionMissionContext.tsx"
+  );
+  return {
+    cleanup,
+    ...render(React.createElement(CodingSessionMissionContext, props)),
+  };
+}
+
+test("panel and drawer variants expose the same focused Inspector sections", async () => {
   for (const variant of ["panel", "drawer"]) {
     const view = await renderInspector({
       model: richModel(),
@@ -209,11 +221,7 @@ test("panel and drawer variants expose the same honest Mission sections", async 
         name: "Mission inspector",
       });
       assert.equal(inspector.dataset.variant, variant);
-      assert.equal(
-        view.queryByRole("heading", { name: "Inspector" }) !== null,
-        variant === "drawer",
-        "the inline host already labels its Inspector tab",
-      );
+      assert.equal(view.queryByRole("heading", { name: "Inspector" }), null);
       for (const heading of [
         "Current goal",
         "Mission state",
@@ -223,20 +231,12 @@ test("panel and drawer variants expose the same honest Mission sections", async 
         "Files",
         "Structured tests",
         "Team",
-        "Context",
         "Reports",
         "Integrity",
       ]) {
         assert.ok(view.getByRole("heading", { name: heading }));
       }
       assert.equal(view.getAllByText("Accepted from Helios · Lead").length, 2);
-      assert.ok(view.getByText("Implement the signed transaction projection."));
-      assert.ok(
-        view.getByText(
-          "Preserve the signed governance chain after completion.",
-        ),
-      );
-      assert.ok(view.getByText("Ownership · Helios · Lead"));
       assert.ok(view.getByText("Ship an honest Mission inspector."));
       assert.ok(view.getByLabelText("Bob · Builder seat-reported plan"));
       assert.ok(
@@ -247,12 +247,134 @@ test("panel and drawer variants expose the same honest Mission sections", async 
       assert.ok(view.getByText("keyboard focus verified"));
       assert.match(
         view.getByRole("button", { name: /Focus Bob · Builder/ }).textContent,
-        /context\s+1000\/10000 \(10%\)/,
+        /live/,
       );
+      assert.doesNotMatch(inspector.textContent, /context\s+1000\/10000/i);
       assert.equal(view.queryByText("Terminal usage not reported."), null);
     } finally {
       view.cleanup();
     }
+  }
+});
+
+test("Context is one separate panel with seat, signed work, and usage facts", async () => {
+  for (const variant of ["panel", "drawer"]) {
+    const view = await renderContext({ model: richModel(), variant });
+    try {
+      const context = view.getByRole("complementary", {
+        name: "Mission context",
+      });
+      assert.equal(context.dataset.variant, variant);
+      assert.equal(view.queryByRole("heading", { name: "Context" }), null);
+      for (const heading of [
+        "Seat context",
+        "Signed work context",
+        "Terminal usage",
+      ]) {
+        assert.ok(view.getByRole("heading", { name: heading }));
+      }
+      assert.ok(view.getByText("Bob · Builder"));
+      assert.ok(view.getByText("1000/10000 (10%)"));
+      assert.ok(view.getByText("Implement the signed transaction projection."));
+      assert.ok(
+        view.getByText(
+          "Preserve the signed governance chain after completion.",
+        ),
+      );
+      assert.ok(view.getByText("Ownership · Helios · Lead"));
+      assert.ok(view.getByText("singularity-stream"));
+      assert.ok(view.getByText("1,250"));
+      assert.ok(view.getAllByText("report-event").length > 0);
+      assert.ok(view.getByText("terminal-event"));
+    } finally {
+      view.cleanup();
+    }
+  }
+});
+
+test("Context keeps full signed identifiers behind their disclosure", async () => {
+  const author = "a".repeat(64);
+  const eventId = "b".repeat(64);
+  const rawValue = "c".repeat(64);
+  const model = deriveCodingSessionMissionInspectorModel(
+    input({
+      assignments: [
+        {
+          sourceEventId: eventId,
+          authorLabel: author,
+          assigneeRole: "builder",
+          objective: "Keep provenance readable.",
+          brief: "Reveal complete identifiers on demand.",
+          fileOwnership: ["desktop/src/context.tsx"],
+        },
+      ],
+      reports: [
+        {
+          sourceEventId: "report-event",
+          authorLabel: "Bob · Builder",
+          summary: "Keep this prose unchanged.",
+          assignmentRef: rawValue,
+          branch: "portable-team-loop",
+          baseSha: "3001e46a",
+          headSha: "860a0af7",
+          files: ["desktop/src/context.tsx"],
+          tests: [],
+        },
+      ],
+    }),
+  );
+  const view = await renderContext({ model, variant: "panel" });
+  try {
+    const context = view.getByRole("complementary", {
+      name: "Mission context",
+    });
+    const visibleLabels = [...context.querySelectorAll("dt")].map(
+      (label) => label.textContent,
+    );
+    assert.ok(visibleLabels.includes("Ownership · aaaaaaaa…aaaaaa"));
+    assert.equal(
+      visibleLabels.some((label) => label?.includes(author)),
+      false,
+    );
+
+    const rawAssignmentLabel = [...context.querySelectorAll("dt")].find(
+      (label) => label.textContent === "Assignment · Bob · Builder",
+    );
+    assert.ok(rawAssignmentLabel);
+    const rawAssignmentFact = rawAssignmentLabel.parentElement;
+    assert.equal(
+      rawAssignmentFact.querySelector(":scope > dd > code").textContent,
+      "cccccccc…cccccc",
+    );
+    assert.equal(
+      context.textContent.includes("Keep provenance readable."),
+      true,
+    );
+    assert.equal(context.textContent.includes("desktop/src/context.tsx"), true);
+    assert.equal(context.textContent.includes("portable-team-loop"), true);
+    assert.equal(context.textContent.includes("3001e46a"), true);
+
+    const rawValueDisclosure = rawAssignmentFact.querySelector("details");
+    assert.ok(rawValueDisclosure);
+    assert.equal(rawValueDisclosure.open, false);
+    assert.ok(rawValueDisclosure.textContent.includes(rawValue));
+    rawValueDisclosure.querySelector("summary").click();
+    assert.equal(rawValueDisclosure.open, true);
+    assert.ok(rawValueDisclosure.textContent.includes(rawValue));
+
+    const disclosure = [...context.querySelectorAll("details")].find(
+      (details) =>
+        details.textContent.includes(author) &&
+        details.textContent.includes(eventId),
+    );
+    assert.ok(disclosure);
+    assert.equal(disclosure.open, false);
+    disclosure.querySelector("summary").click();
+    assert.equal(disclosure.open, true);
+    assert.ok(disclosure.textContent.includes(author));
+    assert.ok(disclosure.textContent.includes(eventId));
+  } finally {
+    view.cleanup();
   }
 });
 
@@ -303,6 +425,45 @@ test("accepted-plan steps render their own signed source and author", async () =
   }
 });
 
+test("accepted-plan raw author keys stay compact until signed-source disclosure", async () => {
+  const author = "a".repeat(64);
+  const eventId = "b".repeat(64);
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(
+      input({
+        acceptedPlan: {
+          kind: "available",
+          steps: [
+            {
+              text: "Keep provenance readable",
+              sourceEventId: eventId,
+              authorLabel: author,
+              sourceCreatedAt: 10,
+              sourceIndex: 0,
+            },
+          ],
+        },
+      }),
+    ),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  try {
+    assert.ok(view.getByText("Accepted from aaaaaaaa…aaaaaa"));
+    const disclosure = view.container.querySelector("details");
+    assert.ok(disclosure);
+    assert.equal(disclosure.open, false);
+    assert.equal(disclosure.textContent.includes(author), true);
+    assert.equal(disclosure.textContent.includes(eventId), true);
+    disclosure.querySelector("summary").click();
+    assert.equal(disclosure.open, true);
+    assert.equal(disclosure.querySelectorAll("code")[0].textContent, author);
+    assert.equal(disclosure.querySelectorAll("code")[1].textContent, eventId);
+  } finally {
+    view.cleanup();
+  }
+});
+
 test("empty and unknown states disclose absence rather than rendering zeros", async () => {
   const view = await renderInspector({
     model: deriveCodingSessionMissionInspectorModel(input()),
@@ -317,7 +478,7 @@ test("empty and unknown states disclose absence rather than rendering zeros", as
     assert.ok(view.getByText("No signed edit activity observed."));
     assert.ok(view.getByText("No structured test results published."));
     assert.ok(view.getByText("No signed session seats projected."));
-    assert.ok(view.getByText("Terminal usage not reported."));
+    assert.equal(view.queryByText("Terminal usage not reported."), null);
     assert.ok(
       view.getByText("No rejected or conflicting transaction records."),
     );
@@ -470,8 +631,14 @@ test("inspector source uses only named rem-safe text utilities", async () => {
     new URL("./CodingSessionMissionInspector.tsx", import.meta.url),
     "utf8",
   );
+  const contextSource = await readFile(
+    new URL("./CodingSessionMissionContext.tsx", import.meta.url),
+    "utf8",
+  );
   assert.doesNotMatch(source, /text-\[[^\]]+\]/);
+  assert.doesNotMatch(contextSource, /text-\[[^\]]+\]/);
   assert.doesNotMatch(source, /#[0-9a-f]{3,8}\b/i);
+  assert.doesNotMatch(contextSource, /#[0-9a-f]{3,8}\b/i);
   assert.doesNotMatch(
     source,
     /(?:amber|yellow|red|destructive).*(?:participantAccent|executionKey)/i,
@@ -589,7 +756,7 @@ test("file and context facts expose exact provenance or the finalizer-owned Trac
   try {
     assert.ok(knownView.getAllByText("observed-edit-event").length > 0);
     assert.ok(knownView.getAllByText("report-event").length > 0);
-    assert.ok(knownView.getAllByText("assignment-event").length > 0);
+    assert.equal(knownView.queryByText("assignment-event"), null);
   } finally {
     knownView.cleanup();
   }

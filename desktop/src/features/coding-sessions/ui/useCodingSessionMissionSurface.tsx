@@ -16,11 +16,12 @@ import type { CodingSessionReachabilityResolver } from "@/features/coding-sessio
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import { shouldAutoOpenAgentsSurface } from "./CodingSessionUmbrellaWorkspaceModel";
+import { CodingSessionMissionContext } from "./CodingSessionMissionContext";
 import { CodingSessionMissionInspector } from "./CodingSessionMissionInspector";
 import type { CodingSessionSurfaceDescriptor } from "./CodingSessionSurfaceHost";
 
 export type CodingSessionMissionSurfaceResult = {
-  surface: CodingSessionSurfaceDescriptor | null;
+  surfaces: CodingSessionSurfaceDescriptor[];
   missionState: ReturnType<
     typeof deriveCodingSessionMissionInspectorModel
   >["missionState"];
@@ -141,26 +142,41 @@ export function useCodingSessionMissionSurface(input: {
     () => deriveCodingSessionMissionInspectorModel(inspectorInput),
     [inspectorInput],
   );
-  const surface = React.useMemo(
+  const surfaces = React.useMemo(
     () =>
       input.active
-        ? ({
-            id: "mission-inspector",
-            label: "Inspector",
-            content: (
-              <CodingSessionMissionInspector
-                errorMessage={evidence.errorMessage}
-                focusedExecutionKey={input.focusedExecutionKey}
-                loading={evidence.isLoading}
-                model={model}
-                onFocusParticipant={input.onFocusParticipant}
-                onOpenFileTrace={input.onOpenTrace}
-                onRefresh={evidence.refresh}
-                variant={input.isNarrow ? "drawer" : "panel"}
-              />
-            ),
-          } satisfies CodingSessionSurfaceDescriptor)
-        : null,
+        ? ([
+            {
+              id: "mission-inspector",
+              label: "Inspector",
+              content: (
+                <CodingSessionMissionInspector
+                  errorMessage={evidence.errorMessage}
+                  focusedExecutionKey={input.focusedExecutionKey}
+                  loading={evidence.isLoading}
+                  model={model}
+                  onFocusParticipant={input.onFocusParticipant}
+                  onOpenFileTrace={input.onOpenTrace}
+                  onRefresh={evidence.refresh}
+                  variant={input.isNarrow ? "drawer" : "panel"}
+                />
+              ),
+            },
+            {
+              id: "mission-context",
+              label: "Context",
+              content: (
+                <CodingSessionMissionContext
+                  errorMessage={evidence.errorMessage}
+                  loading={evidence.isLoading}
+                  model={model}
+                  onRefresh={evidence.refresh}
+                  variant={input.isNarrow ? "drawer" : "panel"}
+                />
+              ),
+            },
+          ] satisfies CodingSessionSurfaceDescriptor[])
+        : [],
     [
       evidence.errorMessage,
       evidence.isLoading,
@@ -174,49 +190,55 @@ export function useCodingSessionMissionSurface(input: {
     ],
   );
   return React.useMemo(
-    () => ({ surface, missionState: model.missionState }),
-    [model.missionState, surface],
+    () => ({ surfaces, missionState: model.missionState }),
+    [model.missionState, surfaces],
   );
 }
 
-/** Build the shared host registry while keeping Mission's tab Mission-only. */
+/** Build the lens-specific host registry; surfaces never leak across lenses. */
 export function useCodingSessionWorkspaceSurfaces(input: {
   actorNames: CodingSessionActorNameResolver;
-  missionSurface: CodingSessionSurfaceDescriptor | null;
+  mission: boolean;
+  missionSurfaces: readonly CodingSessionSurfaceDescriptor[];
   observedChanges: CodingSessionObservedChanges;
   resolveReachability: CodingSessionReachabilityResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }): CodingSessionSurfaceDescriptor[] {
   return React.useMemo(
-    () => [
-      ...(input.missionSurface ? [input.missionSurface] : []),
-      {
-        id: "agents",
-        label: "Agents",
-        count: input.umbrella.executions.length,
-        content: (
-          <CodingSessionExecutionRail
-            actorNames={input.actorNames}
-            resolveReachability={input.resolveReachability}
-            umbrella={input.umbrella}
-          />
-        ),
-      },
-      {
-        id: "changes",
-        label: "Observed changes",
-        count: input.observedChanges.files.length,
-        content: (
-          <CodingSessionChangesRail
-            files={input.observedChanges.files}
-            unreportedEditCount={input.observedChanges.unreportedEditCount}
-          />
-        ),
-      },
-    ],
+    () =>
+      input.mission
+        ? [...input.missionSurfaces]
+        : [
+            {
+              id: "agents",
+              label: "Agents",
+              count: input.umbrella.executions.length,
+              content: (
+                <CodingSessionExecutionRail
+                  actorNames={input.actorNames}
+                  resolveReachability={input.resolveReachability}
+                  umbrella={input.umbrella}
+                />
+              ),
+            },
+            {
+              id: "changes",
+              label: "Observed changes",
+              count: input.observedChanges.files.length,
+              content: (
+                <CodingSessionChangesRail
+                  files={input.observedChanges.files}
+                  unreportedEditCount={
+                    input.observedChanges.unreportedEditCount
+                  }
+                />
+              ),
+            },
+          ],
     [
       input.actorNames,
-      input.missionSurface,
+      input.mission,
+      input.missionSurfaces,
       input.observedChanges.files,
       input.observedChanges.unreportedEditCount,
       input.resolveReachability,
@@ -252,7 +274,12 @@ export function useCodingSessionMissionSurfaceActivation(input: {
   React.useEffect(() => {
     if (!input.mission) {
       openedRef.current = false;
-      if (input.activeTab === "mission-inspector") input.close();
+      if (
+        input.activeTab === "mission-inspector" ||
+        input.activeTab === "mission-context"
+      ) {
+        input.close();
+      }
       return;
     }
     if (!openedRef.current) {

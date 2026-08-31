@@ -48,6 +48,22 @@ export async function assertConversationAndMissionLenses(
   await expect(
     page.getByTestId("coding-session-umbrella-composer"),
   ).toBeVisible();
+  await expect(
+    page.getByTestId("coding-session-surface-toggle-changes"),
+  ).toBeVisible();
+  const focusTrigger = page.getByTestId("coding-session-agent-focus-trigger");
+  await expect(focusTrigger).toBeVisible();
+  await focusTrigger.click();
+  await expect(
+    page.getByTestId("coding-session-agent-details-toggle"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByTestId("coding-session-surface-toggle-mission-inspector"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("coding-session-surface-toggle-mission-context"),
+  ).toHaveCount(0);
   await waitForAnimations(page);
   await page.getByTestId("coding-session-umbrella-workspace").screenshot({
     path: `${harness.screenshots}/conversation.png`,
@@ -70,10 +86,105 @@ export async function assertConversationAndMissionLenses(
   await expect(inspector).toContainText(harness.observedFile);
   await expect(inspector).toContainText("Bob · Builder");
   await expect(inspector).toContainText("Parallax · Verifier");
+  await expect(inspector).not.toContainText("portable-team-loop");
+  const acceptedPlan = inspector.getByRole("list", {
+    name: "Accepted mission plan",
+  });
+  await expect(acceptedPlan).toContainText(
+    /Accepted from [0-9a-f]{8}…[0-9a-f]{6}/,
+  );
+  const acceptedPlanSource = acceptedPlan.locator("details").first();
+  const acceptedPlanSourceCodes = acceptedPlanSource.locator("code");
+  await expect(acceptedPlanSourceCodes).toHaveCount(2);
+  await expect(acceptedPlanSourceCodes.first()).toBeHidden();
+  await acceptedPlanSource.locator("summary").click();
+  await expect(acceptedPlanSourceCodes.first()).toBeVisible();
+  await expect(acceptedPlanSourceCodes.first()).toHaveText(/^[0-9a-f]{64}$/);
+  await acceptedPlanSource.locator("summary").click();
+  await expect(acceptedPlanSourceCodes.first()).toBeHidden();
+  const surfaceTabs = page.getByRole("tablist", {
+    name: "Session surface tabs",
+  });
+  await expect(surfaceTabs.getByRole("tab")).toHaveCount(2);
+  await expect(surfaceTabs.getByRole("tab", { name: "Inspector" })).toHaveCount(
+    1,
+  );
+  await expect(surfaceTabs.getByRole("tab", { name: "Context" })).toHaveCount(
+    1,
+  );
+  await expect(surfaceTabs.getByRole("tab", { name: "Agents" })).toHaveCount(0);
+  await expect(
+    surfaceTabs.getByRole("tab", { name: "Observed changes" }),
+  ).toHaveCount(0);
+  await expect(
+    inspector.getByRole("heading", { name: "Inspector", exact: true }),
+  ).toHaveCount(0);
   await waitForAnimations(page);
-  await inspector.screenshot({
+  const surfaceHost = page.getByTestId("coding-session-surface-host");
+  await surfaceHost.screenshot({
     path: `${harness.screenshots}/inspector-wide.png`,
   });
+
+  await surfaceTabs.getByRole("tab", { name: "Context" }).click();
+  const context = page.getByTestId("coding-session-mission-context");
+  await expect(context).toBeVisible();
+  await expect(inspector).toHaveCount(0);
+  await expect(context).toContainText("portable-team-loop");
+  await expect(context).toContainText("Signed work context");
+  await expect
+    .poll(() =>
+      context.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    )
+    .toBe(true);
+  const signedContextSource = context.locator("details").first();
+  const fullSourceIds = signedContextSource.locator("code");
+  await expect(fullSourceIds).toHaveCount(2);
+  await expect(fullSourceIds.first()).toBeHidden();
+  await expect(fullSourceIds.last()).toBeHidden();
+  await signedContextSource.locator("summary").click();
+  await expect(fullSourceIds.first()).toBeVisible();
+  await expect(fullSourceIds.first()).toHaveText(/^[0-9a-f]{64}$/);
+  await expect(fullSourceIds.last()).toBeVisible();
+  await expect(fullSourceIds.last()).toHaveText(/^[0-9a-f]{64}$/);
+  await signedContextSource.locator("summary").click();
+  await expect(fullSourceIds.first()).toBeHidden();
+  await expect(fullSourceIds.last()).toBeHidden();
+  const rawAssignmentFact = context
+    .locator("dt")
+    .filter({ hasText: /^Assignment · [0-9a-f]{8}…[0-9a-f]{6}$/ })
+    .locator("..");
+  await expect(rawAssignmentFact.locator(":scope > dd > code")).toHaveText(
+    /^[0-9a-f]{8}…[0-9a-f]{6}$/,
+  );
+  const rawValueDisclosure = rawAssignmentFact.locator(":scope > details");
+  const exactRawValue = rawValueDisclosure.locator("code").last();
+  await expect(exactRawValue).toBeHidden();
+  await rawValueDisclosure.locator("summary").click();
+  await expect(exactRawValue).toBeVisible();
+  await expect(exactRawValue).toHaveText(/^[0-9a-f]{64}$/);
+  await rawValueDisclosure.locator("summary").click();
+  await expect(exactRawValue).toBeHidden();
+  await expect(context).toContainText(
+    "Preserve Conversation and show only canonical Mission facts.",
+  );
+  await expect(context).toContainText(
+    "desktop/src/features/coding-sessions/ui/CodingSessionUmbrellaWorkspace.tsx",
+  );
+  await expect(context).toContainText("portable-team-loop");
+  await expect(
+    context.getByRole("heading", { name: "Context", exact: true }),
+  ).toHaveCount(0);
+  await waitForAnimations(page);
+  await surfaceHost.screenshot({
+    path: `${harness.screenshots}/context-wide.png`,
+  });
+  await conversation.click();
+  await expect(context).toHaveCount(0);
+  await expect(page.getByTestId("coding-session-surface-host")).toHaveCount(0);
+  await mission.click();
+  await expect(inspector).toBeVisible();
+  await surfaceTabs.getByRole("tab", { name: "Inspector" }).click();
+  await expect(inspector).toBeVisible();
   await expect(page.getByTestId("coding-session-participant-chip")).toHaveCount(
     2,
   );
@@ -191,6 +302,71 @@ export async function assertConversationAndMissionLenses(
   ).toContainText("The Mission hierarchy is sound.");
 }
 
+export async function assertNarrowMissionSurfaceHierarchy(
+  page: Page,
+  screenshots: string,
+) {
+  const inspector = page.getByTestId("coding-session-mission-inspector");
+  await expect(inspector).toBeVisible({ timeout: 15_000 });
+  await expect(inspector).toHaveAttribute("data-variant", "drawer");
+  await expect(inspector).toContainText(
+    "Mission inspector mounted with signed evidence.",
+  );
+  const sheetTabs = page.getByRole("tablist", {
+    name: "Session surface tabs",
+  });
+  await expect(sheetTabs.getByRole("tab")).toHaveCount(2);
+  await expect(sheetTabs.getByRole("tab", { name: "Inspector" })).toHaveCount(
+    1,
+  );
+  await expect(sheetTabs.getByRole("tab", { name: "Context" })).toHaveCount(1);
+  await expect(
+    inspector.getByRole("heading", { name: "Inspector", exact: true }),
+  ).toHaveCount(0);
+  await waitForAnimations(page);
+  const drawer = page.getByRole("dialog").filter({ has: sheetTabs });
+  await expect(drawer).toHaveCount(1);
+  await drawer.screenshot({
+    path: `${screenshots}/inspector-dark-narrow-drawer.png`,
+  });
+
+  await sheetTabs.getByRole("tab", { name: "Context" }).click();
+  const context = page.getByTestId("coding-session-mission-context");
+  await expect(context).toBeVisible();
+  await expect(context).toHaveAttribute("data-variant", "drawer");
+  await expect(context).toContainText("portable-team-loop");
+  const rawAssignmentFact = context
+    .locator("dt")
+    .filter({ hasText: /^Assignment · [0-9a-f]{8}…[0-9a-f]{6}$/ })
+    .locator("..");
+  await expect(rawAssignmentFact.locator(":scope > dd > code")).toHaveText(
+    /^[0-9a-f]{8}…[0-9a-f]{6}$/,
+  );
+  const rawValueDisclosure = rawAssignmentFact.locator(":scope > details");
+  const exactRawValue = rawValueDisclosure.locator("code").last();
+  await expect(exactRawValue).toBeHidden();
+  await rawValueDisclosure.locator("summary").click();
+  await expect(exactRawValue).toBeVisible();
+  await expect(exactRawValue).toHaveText(/^[0-9a-f]{64}$/);
+  await rawValueDisclosure.locator("summary").click();
+  await expect(exactRawValue).toBeHidden();
+  await expect
+    .poll(() =>
+      context.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    )
+    .toBe(true);
+  await expect(
+    context.getByRole("heading", { name: "Context", exact: true }),
+  ).toHaveCount(0);
+  await waitForAnimations(page);
+  await drawer.screenshot({
+    path: `${screenshots}/context-dark-narrow-drawer.png`,
+  });
+  await page.getByRole("button", { name: "Close" }).last().click();
+  await expect(inspector).toHaveCount(0);
+  await expect(context).toHaveCount(0);
+}
+
 type MissionRecoveryHarness = {
   baseEvents: RelayEvent[];
   channelName: string;
@@ -298,13 +474,19 @@ export async function assertMissionRestartRecovery(
   await expect(inspector).toContainText(
     "Mission inspector mounted with signed evidence.",
   );
-  await expect(inspector).toContainText("Mount the signed Mission inspector.");
-  await expect(inspector).toContainText(
-    "Preserve Conversation and show only canonical Mission facts.",
-  );
   await expect(inspector).toContainText("Run the real mock-bridge smoke test");
   await expect(inspector).toContainText(harness.observedFile);
   await expect(inspector).toContainText("Mission inspector smoke");
+  const surfaceTabs = page.getByRole("tablist", {
+    name: "Session surface tabs",
+  });
+  await surfaceTabs.getByRole("tab", { name: "Context" }).click();
+  const context = page.getByTestId("coding-session-mission-context");
+  await expect(context).toContainText("Mount the signed Mission inspector.");
+  await expect(context).toContainText(
+    "Preserve Conversation and show only canonical Mission facts.",
+  );
+  await surfaceTabs.getByRole("tab", { name: "Inspector" }).click();
 
   await page.reload();
   await harness.seedAndOpen(page);
@@ -399,8 +581,12 @@ export async function assertMissionRestartRecovery(
   await expect(inspector).toContainText(
     "Mission inspector mounted with signed evidence.",
   );
-  await expect(inspector).toContainText("Mount the signed Mission inspector.");
   await expect(inspector).toContainText("Run the real mock-bridge smoke test");
   await expect(inspector).toContainText(harness.observedFile);
   await expect(inspector).toContainText("Mission inspector smoke");
+  await surfaceTabs.getByRole("tab", { name: "Context" }).click();
+  await expect(context).toContainText("Mount the signed Mission inspector.");
+  await expect(context).toContainText(
+    "Preserve Conversation and show only canonical Mission facts.",
+  );
 }

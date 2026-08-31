@@ -440,7 +440,8 @@ export function UmbrellaCodingSessionWorkspace({
   });
   const surfaces = useCodingSessionWorkspaceSurfaces({
     actorNames: workspaceActorName,
-    missionSurface: missionSurfaceResult.surface,
+    mission,
+    missionSurfaces: missionSurfaceResult.surfaces,
     observedChanges,
     resolveReachability,
     umbrella,
@@ -577,10 +578,9 @@ export function UmbrellaCodingSessionWorkspace({
             .filter(
               (surfaceEntry) =>
                 surfaceEntry.id !== "agents" &&
-                !(
-                  surfaceEntry.id === "mission-inspector" &&
-                  surfaceHost.activeTab === "mission-inspector"
-                ),
+                (!mission ||
+                  (surfaceHost.activeTab === null &&
+                    surfaceEntry.id === "mission-inspector")),
             )
             .map((surfaceEntry) => ({
               id: surfaceEntry.id,
@@ -588,7 +588,8 @@ export function UmbrellaCodingSessionWorkspace({
               icon:
                 surfaceEntry.id === "agents"
                   ? "agents"
-                  : surfaceEntry.id === "mission-inspector"
+                  : surfaceEntry.id === "mission-inspector" ||
+                      surfaceEntry.id === "mission-context"
                     ? "inspector"
                     : "changes",
               count: surfaceEntry.count ?? 0,
