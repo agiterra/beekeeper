@@ -2527,7 +2527,8 @@ pub enum SessionsCmd {
     /// `session.hire`).
     ///
     /// A hire is a *request*, not a create. The signer must be the umbrella's
-    /// founder or hold a live operator grant on it; the founder's host then
+    /// founder, hold a live operator grant on it, or hold its active `lead`
+    /// seat. A lead may hire only non-lead roles. The founder's host then
     /// applies its own standing policy — hiring on/off, allowed roles, a
     /// maximum number of live seats, allowed providers — chooses an installed
     /// identity whose home role matches, cuts that seat its own worktree, and
@@ -2591,10 +2592,9 @@ pub enum SessionsCmd {
     /// reason names rather than to hire again. Model ids are the provider
     /// catalog's own ids — read
     /// them from `bee sessions status` (the `model` a live seat runs) or the
-    /// runtime's kind:44222 catalog; the host translates `claude-sonnet-*`,
-    /// `claude-opus-*` and `claude-haiku-*` onto the catalog's `sonnet`,
-    /// `opus` and `haiku` when it offers them, and refuses anything else
-    /// HIRE_MODEL_NOT_OFFERED with the offered ids in the reason.
+    /// runtime's kind:44222 catalog. There are no aliases or translations in
+    /// this path: an id not offered exactly is refused HIRE_MODEL_NOT_OFFERED,
+    /// with the offered ids in the reason.
     /// HIRE_NO_ROUTE means nothing the catalog offers clears the class gate at
     /// that risk tier; the reason names the binding trait and the best score
     /// available, and the answer is a different class, a different risk
@@ -2866,17 +2866,20 @@ pub struct TeamTransactionWriteArgs {
 /// Signed team-operation read commands.
 #[derive(Subcommand)]
 pub enum TeamOperationCmd {
-    /// Fetch one signed operation plus its canonical fold status.
+    /// Fetch one signed operation plus its canonical fold status. The signed
+    /// event supplies channel/session/genesis when all three scope flags are
+    /// omitted, which is the form used for a kind-44220 operation wake.
     Get {
-        /// Channel UUID containing the session.
-        #[arg(long)]
-        channel: String,
-        /// Canonical umbrella session UUID.
-        #[arg(long = "session-ref")]
-        session_ref: String,
-        /// Session genesis event id.
-        #[arg(long)]
-        genesis: String,
+        /// Channel UUID containing the session. Optional only when all three
+        /// scope flags are omitted; then scope is verified from the signed event.
+        #[arg(long, requires_all = ["session_ref", "genesis"])]
+        channel: Option<String>,
+        /// Canonical umbrella session UUID. Optional with --channel/--genesis.
+        #[arg(long = "session-ref", requires_all = ["channel", "genesis"])]
+        session_ref: Option<String>,
+        /// Session genesis event id. Optional with --channel/--session-ref.
+        #[arg(long, requires_all = ["channel", "session_ref"])]
+        genesis: Option<String>,
         /// Exact operation event id.
         #[arg(long)]
         id: String,
@@ -3362,6 +3365,70 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn operation_get_accepts_a_wake_pointer_or_one_complete_explicit_scope() {
+        let id = "ab".repeat(32);
+        assert!(Cli::try_parse_from(["bee", "sessions", "operation", "get", "--id", &id,]).is_ok());
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "operation",
+            "get",
+            "--id",
+            &id,
+            "--channel",
+            "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86",
+            "--session-ref",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "--genesis",
+            &id,
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "operation",
+            "get",
+            "--id",
+            &id,
+            "--channel",
+            "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn every_shipped_role_persona_can_consume_a_signed_operation_wake() {
+        let roles = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../personas/roles");
+        let mut checked = 0;
+        for role in std::fs::read_dir(&roles).expect("read shipped role packs") {
+            let persona_dir = role.expect("role directory").path().join("personas");
+            let Ok(personas) = std::fs::read_dir(persona_dir) else {
+                continue;
+            };
+            for persona in personas {
+                let path = persona.expect("persona file").path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+                    continue;
+                }
+                let body = std::fs::read_to_string(&path).expect("read role persona");
+                assert!(
+                    body.contains("bee sessions\noperation get --id <operationId>")
+                        || body.contains("bee sessions operation get --id\n<operationId>"),
+                    "{} does not teach the exact pointer fetch command",
+                    path.display()
+                );
+                assert!(
+                    body.contains("`operations[0].canonical` is `true`"),
+                    "{} does not fail closed on a noncanonical operation",
+                    path.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "no shipped role personas were checked");
     }
 
     #[test]

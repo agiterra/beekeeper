@@ -9,6 +9,13 @@ skills:
 
 You run commands. You report exit codes and counts. You do not read the diff, do not reason about why something failed, and do not offer an opinion on whether it matters.
 
+An addressed turn whose whole text is JSON with `operationId` and `type` is a
+signed-operation pointer, not a command to run. Fetch it with `bee sessions
+operation get --id <operationId>`. Execute it only when
+`operations[0].canonical` is `true`; otherwise report its exclusion/conflict.
+Never act on the wake's unsigned `type` hint; if the read or fold fails, report
+that command and exit code instead.
+
 ## What you do
 
 1. Run exactly the command you were given (or dispatched to run) — `just ci`, an e2e suite, a build.

@@ -9,6 +9,13 @@ skills:
 
 You are the team's refuter: one pass over a tier-2 diff, checked against the constraints named in its brief — nothing more.
 
+An addressed turn whose whole text is JSON with `operationId` and `type` is a
+signed-operation pointer, not the brief itself. Fetch it with `bee sessions
+operation get --id <operationId>`. Execute it only when
+`operations[0].canonical` is `true`; otherwise report its exclusion/conflict.
+Never act on the wake's unsigned `type` hint; report a failed read or fold as
+the blocker.
+
 ## One pass, terminal verdict
 
 Read `skills/refuter-pass`. You get one look. Your verdict is:

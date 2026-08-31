@@ -904,8 +904,9 @@ bee sessions create --channel "$CHANNEL_ID" --provider-instance x \
 
 # ── hire (plan D14) ───────────────────────────────────────────────────────
 # Publishes one 44221 `session.hire`: a REQUEST to the umbrella's host, not a
-# create. The relay checks authority on ingest (founder-or-grant on the
-# umbrella, the same standing a steer needs); the host applies its own policy
+# create. The relay checks authority on ingest: founder or active operator may
+# hire any role; an active lead seat may hire only a non-lead role. The host
+# applies its own policy
 # and answers by publishing a seated create — whose receipts are this hire's
 # receipts — or by refusing with a 44220 turn.
 bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
@@ -944,9 +945,9 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 #                  every identity that IS it is already seated in this
 #                  umbrella — brief that seat instead of hiring again),
 #                  HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED (the
-#                  model is not in the chosen provider's catalog and is no
-#                  alias the host could translate) or HIRE_STALE (the request
-#                  is older than the host's 15-minute answering window);
+#                  model is not exactly in the chosen provider's catalog;
+#                  this path has no aliases or translations) or HIRE_STALE
+#                  (the request is older than the host's 15-minute answering window);
 #                  "detail" appends the remedy for the code; exit 1
 #   failed       → the host seated it and the PROVIDER refused the create;
 #                  "code" is the receipt's own (e.g. ACTOR_UNAVAILABLE); exit 1
@@ -963,9 +964,9 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
 # → {"outcome":"unconfirmed","detail":"the relay stored the hire; --no-wait
 #     means nothing was asked what became of it"}; exit 5
 
-# An unauthorised signer is refused BY THE RELAY, on ingest:
-# stderr: "relay rejected event: restricted: only the session founder or a
-#          granted operator may hire"
+# An unauthorised signer (including a lead trying to hire another lead) is
+# refused BY THE RELAY, on ingest. The reason names the accepted founder /
+# operator / non-lead-only lead authority rule.
 
 # A relay that predates session.hire refuses the payload as MALFORMED. The CLI
 # must name the relay, never the request (WIRE RULE):
@@ -1032,7 +1033,7 @@ lane); **everything the CLI and the relay do is real.**
 | founder publishes a hire | `accepted:true`, event `3fe71e03…`; `--genesis` resolved from the channel automatically |
 | the stored bytes | read back from Postgres: `{"type":"session.hire","sessionRef":"5b7e1c2a…","genesisRef":"b13cbd5f…","role":"builder","providerInstanceRef":null,"model":null,"brief":"Rebase the lane and run the gate."}` — the seven keys, explicit nulls |
 | granted operator publishes a hire | `accepted:true`, event `3ad96681…` — a 44228 `collaborator` grant is enough |
-| a stranger publishes a hire | **relay** refuses on ingest: `relay error 400: restricted: only the session founder or a granted operator may hire`, exit 2 |
+| a stranger publishes a hire | **historical relay build** refused on ingest: `relay error 400: restricted: only the session founder or a granted operator may hire`, exit 2. Current acceptance also recognizes an active lead seat for non-lead hires; that matrix still needs the re-run tracked in row 70 below. |
 | a hire naming an umbrella no genesis claims (`--genesis` forced) | **relay** refuses: `restricted: no coding-session genesis in this channel claims that sessionRef, so nothing here can authorize a hire into it`, exit 2 |
 | the same, with `--genesis` omitted | refused locally before publishing: `not_found`, exit 1, message names the umbrella |
 | host answers with a seated create + `created` receipt | `outcome:"created"`, `seat.seat:"8b2bd4e6·runner"`, `seat.target:"coding-session/v1\|16:claude-agent-acp10:instance-114:runner-session1:1"`, exit **0** |
@@ -1614,11 +1615,11 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 66 | `sessions export` | ☐ | Files + manifest.json; non-empty `--out` refused with exit 1 |
 | 67 | turn-stage receipts (kind 44224, §6.13.1) | ☐ | NOT YET RUN LIVE — `sessions list`/`transcript` unaffected by a turn receipt on an otherwise-known or unknown target |
 | 68 | `events query` | ☐ | `--kinds` required (verbatim refusal, exit 1); compact row survives non-JSON content; empty result → `[]`, exit 0 |
-| 70 | `sessions hire` (44221 `session.hire`) | ☑ | founder + granted-operator accepted, stranger and unknown-umbrella refused by the relay, host `created` (exit 0) and `refused`/HIRE_OFF (exit 1), `--no-wait` unconfirmed (exit 5). Open: the `failed`/`seating` outcomes and the old-relay sentence |
+| 70 | `sessions hire` (44221 `session.hire`) | ☐ | Historical founder/operator run is recorded above. Re-run current receipt-backed authority: founder + operator any role; active lead non-lead only; revoked/stale/wrong-genesis refused; created includes an accepted exact-role `grant-seat`; `created_ungranted` is live and must not be rehired. Open: `failed`/`seating` and old-relay wording. |
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
 | 71 | `sessions assign/report/verdict/acknowledge/complete/block` | ☐ | Body accepts inline JSON, `@path`, or stdin; malformed/wrong-operation body is refused before write; `complete` refuses without an acknowledged approving disposition |
-| 72 | `sessions operation get/list` | ☐ | Exact `h`/`d`/genesis scope; signed provenance retained; exclusions, conflicts, settlement and canonical terminal disclosed |
-| 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; shared `deliveryCommandId`; failed wake leaves stored operation visible and delivery unconfirmed |
+| 72 | `sessions operation get/list` | ☐ | `get --id` verifies the exact signed 44244 and derives `h`/`d`/genesis scope from it; explicit scope remains all-three-or-none; signed provenance, exclusions, conflicts, settlement and canonical terminal disclosed |
+| 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; every installed seat pack tells the recipient to run `operation get --id`; shared `deliveryCommandId`; failed wake leaves stored operation visible and delivery unconfirmed |
 
 ---
 
@@ -1632,12 +1633,25 @@ bee sessions assign --channel "$CHANNEL" --session-ref "$SESSION" \
 
 bee sessions operation list --channel "$CHANNEL" --session-ref "$SESSION" \
   --genesis "$GENESIS"
+
+# The exact command a seat runs after receiving
+# {"operationId":"<id>","type":"assignment"} in a 44220 turn:
+bee sessions operation get --id "$OPERATION_ID" | jq .
+# Scope comes only from the verified signed 44244. Supplying scope manually is
+# still allowed, but it is all-three-or-none:
+bee sessions operation get --id "$OPERATION_ID" --channel "$CHANNEL" \
+  --session-ref "$SESSION" --genesis "$GENESIS" | jq .
 ```
 
 Use `--wake-to` only when a provider execution should be notified. The CLI
 stores the signed 44244 first, then sends a kind 44220 pointer. The pointer is
-not the assignment: recipients fetch and verify the operation named by its
-`operationId`. `--delivery-command-id` may preselect the shared correlation id;
+not the assignment: recipients run `bee sessions operation get --id <id>` and
+execute it only when `operations[0].canonical` is true; exclusions/conflicts are
+reported, not executed. The wake's unsigned `type` hint grants nothing. The CLI
+first queries the exact kind-44244 id, verifies id parity,
+signature, strict envelope and content, then uses its signed `h`, `d`, and
+`cstx-genesis` scope for the full fold. Managed seats need no unsigned scope
+environment. `--delivery-command-id` may preselect the shared correlation id;
 otherwise `--wake-to` mints one and writes it into both records.
 
 The CLI verifies the genesis founder, every transaction signature, the relay's
@@ -1647,7 +1661,12 @@ grantee/role facts must agree exactly. Active operator grants and
 `grant-seat`/`revoke-seat` role seats populate the fold context; raw
 unreceipted transitions and lifecycle kind 44221/44223 data never substitute
 for authority. A missing accepted seat grant remains visibly unauthorized.
-Host-side automatic seat grant after hire is not part of this slice.
+After a host returns a signed create, receipt, and matching metadata, the hiring
+CLI appends the exact actor/role `grant-seat` and reports `granted: true` only
+after relay acceptance is proven. `created_ungranted` preserves all seat
+evidence and means the live seat must not be hired again. Legacy
+`sessions grant --role collaborator|viewer` does not repair a missing role-seat
+transition.
 
 ---
 

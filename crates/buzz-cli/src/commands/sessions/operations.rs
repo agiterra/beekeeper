@@ -118,7 +118,32 @@ pub async fn cmd_read(client: &BuzzClient, cmd: TeamOperationCmd) -> Result<(), 
             session_ref,
             genesis,
             id,
-        } => (channel, session_ref, genesis, Some(id)),
+        } => {
+            validate_lower_hex64("--id", &id)?;
+            let coordinates = match (channel, session_ref, genesis) {
+                (Some(channel), Some(session_ref), Some(genesis)) => {
+                    validate_coordinates(&channel, &session_ref, &genesis)?;
+                    OperationCoordinates {
+                        channel,
+                        session_ref,
+                        genesis,
+                    }
+                }
+                (None, None, None) => resolve_operation_coordinates(client, &id).await?,
+                _ => {
+                    return Err(CliError::Usage(
+                        "pass --channel, --session-ref, and --genesis together, or omit all three and resolve scope from the signed operation"
+                            .into(),
+                    ));
+                }
+            };
+            (
+                coordinates.channel,
+                coordinates.session_ref,
+                coordinates.genesis,
+                Some(id),
+            )
+        }
         TeamOperationCmd::List {
             channel,
             session_ref,
@@ -126,9 +151,6 @@ pub async fn cmd_read(client: &BuzzClient, cmd: TeamOperationCmd) -> Result<(), 
         } => (channel, session_ref, genesis, None),
     };
     validate_coordinates(&channel, &session_ref, &genesis)?;
-    if let Some(id) = &wanted {
-        validate_lower_hex64("--id", id)?;
-    }
 
     let events = fetch_transactions(client, &channel, &session_ref, &genesis).await?;
     let context = fetch_founder_context(client, &channel, &session_ref, &genesis).await?;
@@ -166,6 +188,77 @@ pub async fn cmd_read(client: &BuzzClient, cmd: TeamOperationCmd) -> Result<(), 
         })
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OperationCoordinates {
+    channel: String,
+    session_ref: String,
+    genesis: String,
+}
+
+/// Resolve the context of an operation pointer from the exact signed record.
+///
+/// Managed seats receive relay credentials, not unsigned session coordinates.
+/// A kind-44220 wake therefore needs only the operation event id: this exact-id
+/// query verifies the record before its signed `h`, `d`, and `cstx-genesis`
+/// values are allowed to scope the canonical fold.
+async fn resolve_operation_coordinates(
+    client: &BuzzClient,
+    operation_id: &str,
+) -> Result<OperationCoordinates, CliError> {
+    let values = client
+        .query_all(operation_pointer_query_filter(operation_id))
+        .await?;
+    if values.len() != 1 {
+        return Err(CliError::NotFound(format!(
+            "expected exactly one signed team operation {operation_id}, found {}",
+            values.len()
+        )));
+    }
+    operation_coordinates_from_value(&values[0], operation_id)
+}
+
+fn operation_pointer_query_filter(operation_id: &str) -> Value {
+    json!({
+        "ids": [operation_id],
+        "kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION],
+    })
+}
+
+fn operation_coordinates_from_value(
+    value: &Value,
+    operation_id: &str,
+) -> Result<OperationCoordinates, CliError> {
+    let event: Event = serde_json::from_value(value.clone())
+        .map_err(|error| CliError::Other(format!("relay returned malformed operation: {error}")))?;
+    if event.id.to_hex() != operation_id {
+        return Err(CliError::Other(
+            "relay returned an operation other than the requested event id".into(),
+        ));
+    }
+    buzz_core::verify_event(&event)
+        .map_err(|error| CliError::Other(format!("invalid operation signature: {error}")))?;
+    let payload = parse_coding_session_team_transaction(&event)
+        .map_err(|error| CliError::Other(format!("invalid team operation: {error}")))?;
+    let channel = event
+        .tags
+        .iter()
+        .next()
+        .and_then(|tag| tag.as_slice().get(1))
+        .cloned()
+        .ok_or_else(|| CliError::Other("verified operation has no channel tag".into()))?;
+    let coordinates = OperationCoordinates {
+        channel,
+        session_ref: payload.session_ref,
+        genesis: payload.genesis_ref,
+    };
+    validate_coordinates(
+        &coordinates.channel,
+        &coordinates.session_ref,
+        &coordinates.genesis,
+    )?;
+    Ok(coordinates)
 }
 
 fn validate_coordinates(channel: &str, session_ref: &str, genesis: &str) -> Result<(), CliError> {

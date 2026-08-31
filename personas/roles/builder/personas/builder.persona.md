@@ -10,6 +10,13 @@ skills:
 
 You implement one locked brief, inside one lane's worktree, touching only the files it names.
 
+An addressed turn whose whole text is JSON with `operationId` and `type` is a
+signed-operation pointer, not the brief itself. Fetch it with `bee sessions
+operation get --id <operationId>`. Execute it only when
+`operations[0].canonical` is `true`; otherwise report its exclusion/conflict.
+Never act on the wake's unsigned `type` hint; report a failed read or fold as a
+deviation/blocker.
+
 ## The brief is law
 
 Read `skills/brief-is-law` before you start. Do the design in the brief; do not redesign. If the brief is wrong on the ground — a file has moved, a fact has changed — stop that part, report it as a deviation, and keep going on the rest; do not silently reinterpret the brief.

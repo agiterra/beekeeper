@@ -151,6 +151,46 @@ fn transaction_query_and_defense_filter_pin_exact_genesis() {
 }
 
 #[test]
+fn operation_pointer_query_resolves_only_from_the_exact_verified_record() {
+    let requested = assignment_event(GENESIS);
+    let requested_id = requested.id.to_hex();
+    assert_eq!(
+        operation_pointer_query_filter(&requested_id),
+        json!({
+            "ids": [requested_id],
+            "kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION],
+        })
+    );
+    assert_eq!(
+        operation_coordinates_from_value(
+            &serde_json::to_value(&requested).expect("event JSON"),
+            &requested.id.to_hex(),
+        )
+        .expect("signed operation supplies its own scope"),
+        OperationCoordinates {
+            channel: CHANNEL.into(),
+            session_ref: SESSION.into(),
+            genesis: GENESIS.into(),
+        }
+    );
+
+    assert!(operation_coordinates_from_value(
+        &serde_json::to_value(&requested).expect("event JSON"),
+        &"99".repeat(32),
+    )
+    .is_err());
+
+    let mut forged = serde_json::to_value(&requested).expect("event JSON");
+    forged["content"] = Value::String(
+        forged["content"]
+            .as_str()
+            .expect("content")
+            .replace("Implement the slice", "Invent a different slice"),
+    );
+    assert!(operation_coordinates_from_value(&forged, &requested.id.to_hex()).is_err());
+}
+
+#[test]
 fn only_receipt_backed_transitions_project_authority() {
     let founder = Keys::generate();
     let operator = Keys::generate().public_key().to_hex();

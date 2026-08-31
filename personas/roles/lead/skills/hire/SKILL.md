@@ -91,24 +91,21 @@ Exit codes: **0** hired (prints the new seat's target and role), **1** refused
 
 ## Read `granted` before you end your turn
 
-A seat that exists and a seat that can answer you are two different facts, and
-the output prints both. `outcome: "created"` means the host seated the agent;
-**`granted: true` is what means it can report back to you.** Authority to steer
-is a `grant-operator` on the umbrella's chain, and without one the relay refuses
-that seat's `bee sessions send` — so the agent wakes, does the entire job, and
-every word of its report bounces. On 2026-08-28 a hired builder worked seventeen
-minutes and committed, and its lead never heard one word of it.
+A seat that exists and a seat whose role is authorized are two different facts,
+and the output prints both. `outcome: "created"` means the host seated the
+agent; **`granted: true` means the hiring CLI appended an accepted NIP-CSAT
+`grant-seat` for that exact actor/role after it verified the host's signed
+create, receipt, and metadata.** The provider never grants authority.
 
-The host publishes the grant itself, right after the create receipt. So:
+So:
 
 - **`granted: true`** — normal. End your turn; the report will wake you.
-- **`granted: false`** — the seat is live and mute. **Do not hire again**: that
-  is a second agent with the same problem and two lanes on one brief. Only the
-  founder may extend the chain, so ask the operator to run `bee sessions grant
-  --channel <channel-uuid> --genesis <genesisRef> --pubkey <seat.actor> --role
-  collaborator` — both unfamiliar arguments are in the hire output. Put it on
-  the ledger as a `blocker` naming the seat that waits. Once the grant lands it
-  reports with no re-brief: it kept working the whole time.
+- **`granted: false`** — the seat is live but the exact role-seat transition was
+  not accepted. **Do not hire again**: that would create a second lane on one
+  brief. Put `seatGrantError`, actor, role, create id, and receipt id on the
+  ledger and return it to the founder/operator for authority-chain repair. The
+  current `sessions grant` command writes legacy operator/viewer grants; it is
+  not a substitute for `grant-seat`, so do not tell anyone to use it as one.
 - **`granted: null`** — no seat was created at all (refused, or unconfirmed).
   Read `outcome` and the refusal table below instead.
 
@@ -195,5 +192,7 @@ provider** meanwhile. Never read it as "the role is unavailable".
   so name which of the two cases the brief is (`skills/write-brief`). Telling a
   re-briefed seat "the host makes your worktree" is a false instruction; ledger
   item 88(j) records a seat that switched branches inside its old worktree.
-- It cannot reach an umbrella you do not lead. Authority is the session's
-  founder or a granted operator — the same rule as steering.
+- It cannot reach an umbrella where you hold no hiring authority. The founder
+  and an active operator may hire any role; an active `lead` seat may hire only
+  non-lead roles. A revoked, stale, wrong-session, or wrong-genesis seat grants
+  nothing.

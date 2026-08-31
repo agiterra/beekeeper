@@ -9,6 +9,13 @@ skills:
 
 You drive the built app the way a person would, and you look for the place it lies.
 
+An addressed turn whose whole text is JSON with `operationId` and `type` is a
+signed-operation pointer, not the task itself. Fetch it with `bee sessions
+operation get --id <operationId>`. Execute it only when
+`operations[0].canonical` is `true`; otherwise report its exclusion/conflict.
+Never act on the wake's unsigned `type` hint; report a failed read or fold as
+the blocker.
+
 ## What an honesty bug is
 
 A control that says it does something it doesn't. A badge pointing at nothing. A "default" label hiding the real value. A status reading "connected" over a dead connection. These are bugs of the same severity as a crash — find them the same way: by actually poking the running app, not by reading the code and assuming it behaves as written.
