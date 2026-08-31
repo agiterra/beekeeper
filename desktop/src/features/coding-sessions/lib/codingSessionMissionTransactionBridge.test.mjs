@@ -181,7 +181,7 @@ async function projectAcceptedNonterminal(events, assignments) {
       canonicalTerminal: null,
     }),
   );
-  return projectNativeTeamFoldToMissionInspector({ nativeFold }).missionState;
+  return projectNativeTeamFoldToMissionInspector({ nativeFold });
 }
 
 test("desktop decoder runs the canonical shared CSTX schema vectors", () => {
@@ -749,8 +749,45 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
     summary: "Signing is held",
     blockers: ["Keychain is locked"],
     requiredAction: "Unlock signing keys",
+    canonicalChain: [
+      {
+        type: "assignment",
+        sourceEventId: assignment.id,
+        authorPubkey: FOUNDER,
+        createdAt: 1,
+        summary: "Build the bridge",
+      },
+      {
+        type: "report",
+        sourceEventId: report.id,
+        authorPubkey: LEAD,
+        createdAt: 2,
+        summary: "Bridge is green",
+      },
+    ],
   });
-  assert.deepEqual(projected.acceptedPlan, { kind: "absent" });
+  assert.deepEqual(projected.acceptedPlan, {
+    kind: "available",
+    steps: [
+      {
+        text: "pnpm test",
+        sourceEventId: assignment.id,
+        authorLabel: FOUNDER,
+        sourceCreatedAt: 1,
+        sourceIndex: 0,
+      },
+    ],
+  });
+  assert.deepEqual(projected.assignments, [
+    {
+      sourceEventId: assignment.id,
+      authorLabel: FOUNDER,
+      assigneeRole: "builder",
+      objective: "Build the bridge",
+      brief: "Use the canonical fold.",
+      fileOwnership: ["desktop/src/features/coding-sessions/lib"],
+    },
+  ]);
 });
 
 test("accepted assignment chains preserve signed chronology and acknowledgement state", async () => {
@@ -848,10 +885,9 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     settled: false,
   };
 
-  const assigned = await projectAcceptedNonterminal(
-    [assignment],
-    [baseSettlement],
-  );
+  const assigned = (
+    await projectAcceptedNonterminal([assignment], [baseSettlement])
+  ).missionState;
   assert.equal(assigned.kind, "running");
   assert.equal(assigned.phase, "assigned");
   assert.deepEqual(
@@ -859,10 +895,9 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     ["assignment"],
   );
 
-  const reported = await projectAcceptedNonterminal(
-    [report, assignment],
-    [baseSettlement],
-  );
+  const reported = (
+    await projectAcceptedNonterminal([report, assignment], [baseSettlement])
+  ).missionState;
   assert.equal(reported.kind, "running");
   assert.equal(reported.phase, "reported");
   assert.deepEqual(
@@ -870,10 +905,12 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     ["assignment", "report"],
   );
 
-  const awaiting = await projectAcceptedNonterminal(
-    [disposition, assignment, report],
-    [baseSettlement],
-  );
+  const awaiting = (
+    await projectAcceptedNonterminal(
+      [disposition, assignment, report],
+      [baseSettlement],
+    )
+  ).missionState;
   assert.equal(awaiting.kind, "acknowledgement-required");
   assert.equal(awaiting.sourceEventId, disposition.id);
   assert.equal(awaiting.assignmentRef, assignment.id);
@@ -884,18 +921,20 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     ["assignment", "report", "disposition"],
   );
 
-  const acknowledged = await projectAcceptedNonterminal(
-    [acknowledgement, report, disposition, assignment],
-    [
-      {
-        assignmentEventId: assignment.id,
-        governedReportEventId: report.id,
-        dispositionEventId: disposition.id,
-        acknowledgementEventId: acknowledgement.id,
-        settled: true,
-      },
-    ],
-  );
+  const acknowledged = (
+    await projectAcceptedNonterminal(
+      [acknowledgement, report, disposition, assignment],
+      [
+        {
+          assignmentEventId: assignment.id,
+          governedReportEventId: report.id,
+          dispositionEventId: disposition.id,
+          acknowledgementEventId: acknowledgement.id,
+          settled: true,
+        },
+      ],
+    )
+  ).missionState;
   assert.equal(acknowledged.kind, "running");
   assert.equal(acknowledged.phase, "acknowledged");
   assert.equal(acknowledged.sourceEventId, acknowledgement.id);
@@ -903,4 +942,84 @@ test("accepted assignment chains preserve signed chronology and acknowledgement 
     acknowledged.canonicalChain.map(({ type }) => type),
     ["assignment", "report", "disposition", "acknowledgement"],
   );
+});
+
+test("multi-assignment accepted steps retain their own source and author regardless of input order", async () => {
+  const assignmentA = transaction(
+    {
+      schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      type: "assignment",
+      supersedes: null,
+      deliveryCommandId: "wake-builder-a",
+      body: {
+        assigneeActor: LEAD,
+        assigneeRole: "builder",
+        objective: "Build the projection",
+        brief: "Keep builder provenance.",
+        branch: null,
+        baseSha: null,
+        fileOwnership: ["desktop/src/a.ts"],
+        acceptanceSteps: ["Builder criterion"],
+      },
+    },
+    FOUNDER_SECRET,
+    10,
+  );
+  const assignmentB = transaction(
+    {
+      schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      type: "assignment",
+      supersedes: null,
+      deliveryCommandId: "wake-verifier-b",
+      body: {
+        assigneeActor: FOUNDER,
+        assigneeRole: "verifier",
+        objective: "Verify the projection",
+        brief: "Keep verifier provenance.",
+        branch: null,
+        baseSha: null,
+        fileOwnership: ["desktop/src/b.ts"],
+        acceptanceSteps: ["Verifier criterion"],
+      },
+    },
+    LEAD_SECRET,
+    20,
+  );
+  const settlements = [assignmentA, assignmentB].map((assignment) => ({
+    assignmentEventId: assignment.id,
+    governedReportEventId: null,
+    dispositionEventId: null,
+    acknowledgementEventId: null,
+    settled: false,
+  }));
+  const forward = await projectAcceptedNonterminal(
+    [assignmentA, assignmentB],
+    settlements,
+  );
+  const reversed = await projectAcceptedNonterminal(
+    [assignmentB, assignmentA],
+    [...settlements].reverse(),
+  );
+
+  assert.deepEqual(forward.acceptedPlan, reversed.acceptedPlan);
+  assert.deepEqual(forward.acceptedPlan.steps, [
+    {
+      text: "Builder criterion",
+      sourceEventId: assignmentA.id,
+      authorLabel: FOUNDER,
+      sourceCreatedAt: 10,
+      sourceIndex: 0,
+    },
+    {
+      text: "Verifier criterion",
+      sourceEventId: assignmentB.id,
+      authorLabel: LEAD,
+      sourceCreatedAt: 20,
+      sourceIndex: 0,
+    },
+  ]);
 });

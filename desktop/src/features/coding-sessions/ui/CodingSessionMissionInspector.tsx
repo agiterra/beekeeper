@@ -474,28 +474,26 @@ function AcceptedPlan({
   }
   return (
     <div>
-      {plan.authorLabel ? (
-        <p className="text-2xs text-muted-foreground">
-          Accepted from {plan.authorLabel}
-        </p>
-      ) : null}
       {plan.steps.length > 0 ? (
-        <PlanSteps ariaLabel="Accepted mission plan" steps={plan.steps} />
+        <PlanSteps
+          ariaLabel="Accepted mission plan"
+          showProvenance
+          steps={plan.steps}
+        />
       ) : (
         <EmptyCopy>{plan.label}</EmptyCopy>
       )}
-      {plan.sourceEventIds[0] ? (
-        <SignedSource eventId={plan.sourceEventIds[0]} />
-      ) : null}
     </div>
   );
 }
 
 function PlanSteps({
   ariaLabel,
+  showProvenance = false,
   steps,
 }: {
   ariaLabel: string;
+  showProvenance?: boolean;
   steps: readonly CodingSessionMissionPlanStep[];
 }) {
   return (
@@ -503,12 +501,35 @@ function PlanSteps({
       {steps.map((step, index) => (
         <li className="flex gap-2 text-xs" key={step.id}>
           <PlanStepStatus status={step.status} />
-          <span className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1">
             <span className="mr-1 text-muted-foreground tabular-nums">
               {index + 1}.
             </span>
             {step.text}
-          </span>
+            {showProvenance && step.authorLabel && step.sourceEventId ? (
+              <div className="mt-1">
+                <p className="text-2xs text-muted-foreground">
+                  Accepted from {step.authorLabel}
+                </p>
+                {step.sourceCreatedAt !== null && step.sourceIndex !== null ? (
+                  <p className="text-2xs text-muted-foreground">
+                    Signed criterion source index {step.sourceIndex} ·{" "}
+                    <time
+                      dateTime={new Date(
+                        step.sourceCreatedAt * 1000,
+                      ).toISOString()}
+                    >
+                      {new Date(step.sourceCreatedAt * 1000).toLocaleString(
+                        [],
+                        { dateStyle: "medium", timeStyle: "short" },
+                      )}
+                    </time>
+                  </p>
+                ) : null}
+                <SignedSource eventId={step.sourceEventId} />
+              </div>
+            ) : null}
+          </div>
         </li>
       ))}
     </ol>

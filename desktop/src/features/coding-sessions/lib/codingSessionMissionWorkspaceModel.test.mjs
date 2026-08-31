@@ -69,9 +69,15 @@ test("absent workspace facts remain absent and canonical evidence survives", () 
     ...emptyCodingSessionMissionInspectorInput(),
     acceptedPlan: {
       kind: "available",
-      sourceEventId: "plan-event",
-      authorLabel: "Lead",
-      steps: ["Run the gate"],
+      steps: [
+        {
+          text: "Run the gate",
+          sourceEventId: "plan-event",
+          authorLabel: "Lead",
+          sourceCreatedAt: 1,
+          sourceIndex: 0,
+        },
+      ],
     },
     reports: [
       {

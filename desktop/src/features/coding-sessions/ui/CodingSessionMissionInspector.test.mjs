@@ -51,10 +51,33 @@ function richModel() {
       },
       acceptedPlan: {
         kind: "available",
-        sourceEventId: "accepted-plan-event",
-        authorLabel: "Helios · Lead",
-        steps: ["Build the inspector", "Run focused tests"],
+        steps: [
+          {
+            text: "Build the inspector",
+            sourceEventId: "accepted-plan-event",
+            authorLabel: "Helios · Lead",
+            sourceCreatedAt: 1,
+            sourceIndex: 0,
+          },
+          {
+            text: "Run focused tests",
+            sourceEventId: "accepted-plan-event",
+            authorLabel: "Helios · Lead",
+            sourceCreatedAt: 1,
+            sourceIndex: 1,
+          },
+        ],
       },
+      assignments: [
+        {
+          sourceEventId: "accepted-plan-event",
+          authorLabel: "Helios · Lead",
+          assigneeRole: "builder",
+          objective: "Implement the signed transaction projection.",
+          brief: "Preserve the signed governance chain after completion.",
+          fileOwnership: ["desktop/src/inspector.tsx"],
+        },
+      ],
       seatPlans: [
         {
           executionKey: "builder",
@@ -201,7 +224,14 @@ test("panel and drawer variants expose the same honest Mission sections", async 
       ]) {
         assert.ok(view.getByRole("heading", { name: heading }));
       }
-      assert.ok(view.getByText("Accepted from Helios · Lead"));
+      assert.equal(view.getAllByText("Accepted from Helios · Lead").length, 2);
+      assert.ok(view.getByText("Implement the signed transaction projection."));
+      assert.ok(
+        view.getByText(
+          "Preserve the signed governance chain after completion.",
+        ),
+      );
+      assert.ok(view.getByText("Ownership · Helios · Lead"));
       assert.ok(view.getByText("Ship an honest Mission inspector."));
       assert.ok(view.getByLabelText("Bob · Builder seat-reported plan"));
       assert.ok(
@@ -218,6 +248,53 @@ test("panel and drawer variants expose the same honest Mission sections", async 
     } finally {
       view.cleanup();
     }
+  }
+});
+
+test("accepted-plan steps render their own signed source and author", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(
+      input({
+        acceptedPlan: {
+          kind: "available",
+          steps: [
+            {
+              text: "Verifier criterion",
+              sourceEventId: "assignment-b",
+              authorLabel: "Parallax · Verifier",
+              sourceCreatedAt: 123,
+              sourceIndex: 7,
+            },
+            {
+              text: "Builder criterion",
+              sourceEventId: "assignment-a",
+              authorLabel: "Bob · Builder",
+              sourceCreatedAt: 10,
+              sourceIndex: 0,
+            },
+          ],
+        },
+      }),
+    ),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  try {
+    assert.ok(view.getByText("Builder criterion"));
+    assert.ok(view.getByText("Accepted from Bob · Builder"));
+    assert.ok(view.getByText("assignment-a"));
+    assert.ok(view.getByText("Verifier criterion"));
+    assert.ok(view.getByText("Accepted from Parallax · Verifier"));
+    assert.ok(view.getByText("assignment-b"));
+    assert.ok(view.getByText(/Signed criterion source index 7/));
+    assert.equal(
+      view.container
+        .querySelector('time[datetime="1970-01-01T00:02:03.000Z"]')
+        ?.getAttribute("datetime"),
+      "1970-01-01T00:02:03.000Z",
+    );
+  } finally {
+    view.cleanup();
   }
 });
 
@@ -410,9 +487,15 @@ test("every plan state is exposed to assistive technology and unknown differs fr
     input({
       acceptedPlan: {
         kind: "available",
-        sourceEventId: "accepted-plan-event",
-        authorLabel: "Founder",
-        steps: ["Review the mission state"],
+        steps: [
+          {
+            text: "Review the mission state",
+            sourceEventId: "accepted-plan-event",
+            authorLabel: "Founder",
+            sourceCreatedAt: 1,
+            sourceIndex: 0,
+          },
+        ],
       },
       seatPlans: [
         {

@@ -39,6 +39,9 @@ type BlockedBody = {
 type AssignmentBody = {
   assigneeRole: string;
   objective: string;
+  brief: string;
+  fileOwnership: string[];
+  acceptanceSteps: string[];
 };
 
 type VerdictBody = {
@@ -122,6 +125,8 @@ function canonicalStep(
       authorPubkey: event.authorPubkey,
       createdAt: event.createdAt,
       summary: verdict.summary,
+      decision: verdict.decision,
+      requiredAction: verdict.requiredAction,
     };
   }
   const acknowledgement = body as AcknowledgementBody;
@@ -306,9 +311,55 @@ export function projectNativeTeamFoldToMissionInspector(input: {
         tests: body.tests.map((test) => ({ ...test })),
       };
     });
+  const assignmentEventIds = new Set(
+    fold.assignments.map((assignment) => assignment.assignmentEventId),
+  );
+  const assignmentEvents = included
+    .filter(
+      (event) =>
+        event.payload.type === "assignment" &&
+        assignmentEventIds.has(event.eventId),
+    )
+    .sort(compareTransactions);
+  const assignments = assignmentEvents.map((event) => {
+    const body = event.payload.body as AssignmentBody;
+    return {
+      sourceEventId: event.eventId,
+      authorLabel: event.authorPubkey,
+      assigneeRole: body.assigneeRole,
+      objective: body.objective,
+      brief: body.brief,
+      fileOwnership: [...body.fileOwnership],
+    };
+  });
+  const acceptedPlan =
+    assignmentEvents.length === 0
+      ? ({ kind: "absent" } as const)
+      : {
+          kind: "available" as const,
+          steps: assignmentEvents.flatMap((event) =>
+            (event.payload.body as AssignmentBody).acceptanceSteps.map(
+              (text, sourceIndex) => ({
+                text,
+                sourceEventId: event.eventId,
+                authorLabel: event.authorPubkey,
+                sourceCreatedAt: event.createdAt,
+                sourceIndex,
+              }),
+            ),
+          ),
+        };
   const terminal = fold.canonicalTerminal
     ? byId.get(fold.canonicalTerminal.eventId)
     : null;
+  const canonicalNonterminal = projectCanonicalNonterminalState({
+    included,
+    assignmentEventIds,
+  });
+  const canonicalChain =
+    "canonicalChain" in canonicalNonterminal
+      ? (canonicalNonterminal.canonicalChain ?? [])
+      : [];
   const missionState: CodingSessionMissionInspectorInput["missionState"] =
     terminal?.payload.type === "mission.completed"
       ? {
@@ -317,6 +368,7 @@ export function projectNativeTeamFoldToMissionInspector(input: {
           summary: (terminal.payload.body as CompletedBody).summary,
           landedShas: [...(terminal.payload.body as CompletedBody).landedShas],
           followUps: [...(terminal.payload.body as CompletedBody).followUps],
+          canonicalChain,
         }
       : terminal?.payload.type === "mission.blocked"
         ? {
@@ -326,19 +378,14 @@ export function projectNativeTeamFoldToMissionInspector(input: {
             blockers: [...(terminal.payload.body as BlockedBody).blockers],
             requiredAction: (terminal.payload.body as BlockedBody)
               .requiredAction,
+            canonicalChain,
           }
-        : projectCanonicalNonterminalState({
-            included,
-            assignmentEventIds: new Set(
-              fold.assignments.map(
-                (assignment) => assignment.assignmentEventId,
-              ),
-            ),
-          });
+        : canonicalNonterminal;
   const ingressRejections = input.ingressRejections ?? [];
   return {
     goal: { kind: "absent" },
-    acceptedPlan: { kind: "absent" },
+    acceptedPlan,
+    assignments,
     seatPlans: [],
     reports,
     observedChanges: { files: [], unreportedEditCount: 0 },

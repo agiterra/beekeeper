@@ -7,6 +7,7 @@ import type {
 import type { CodingSessionObservedChanges } from "./codingSessionTranscriptModel";
 
 export const MISSION_INSPECTOR_LIMITS = {
+  assignments: 100,
   acceptedPlanSteps: 100,
   contextFacts: 400,
   disclosureEventIds: 20,
@@ -15,6 +16,7 @@ export const MISSION_INSPECTOR_LIMITS = {
   fileSourceEventIds: 20,
   files: 500,
   filesPerReport: 200,
+  ownershipFilesPerAssignment: 100,
   goalSourceEventIds: 20,
   missionStateItems: 100,
   participants: 64,
@@ -61,11 +63,17 @@ export type CodingSessionAcceptedPlanInput =
   | { kind: "absent" }
   | {
       kind: "available";
-      sourceEventId: string;
-      authorLabel: string;
-      steps: readonly string[];
+      steps: readonly CodingSessionAcceptedPlanStepInput[];
     }
   | { kind: "conflict"; eventIds: readonly string[] };
+
+export type CodingSessionAcceptedPlanStepInput = {
+  text: string;
+  sourceEventId: string;
+  authorLabel: string;
+  sourceCreatedAt: number;
+  sourceIndex: number;
+};
 
 export type CodingSessionSeatPlanInput = {
   executionKey: string;
@@ -92,6 +100,15 @@ export type CodingSessionMissionReportInput = {
   tests: readonly CodingSessionStructuredTestInput[];
 };
 
+export type CodingSessionMissionAssignmentInput = {
+  sourceEventId: string;
+  authorLabel: string;
+  assigneeRole: string;
+  objective: string;
+  brief: string;
+  fileOwnership: readonly string[];
+};
+
 export type CodingSessionMissionCanonicalStep = {
   type:
     | "assignment"
@@ -103,6 +120,8 @@ export type CodingSessionMissionCanonicalStep = {
   authorPubkey: string;
   createdAt: number;
   summary: string;
+  decision?: string | null;
+  requiredAction?: string | null;
 };
 
 export type CodingSessionMissionStateInput =
@@ -136,6 +155,7 @@ export type CodingSessionMissionStateInput =
       summary: string;
       blockers: readonly string[];
       requiredAction: string;
+      canonicalChain: readonly CodingSessionMissionCanonicalStep[];
     }
   | {
       kind: "completed";
@@ -143,6 +163,7 @@ export type CodingSessionMissionStateInput =
       summary: string;
       landedShas: readonly string[];
       followUps: readonly string[];
+      canonicalChain: readonly CodingSessionMissionCanonicalStep[];
     }
   | { kind: "conflict"; eventIds: readonly string[] };
 
@@ -164,6 +185,7 @@ export type CodingSessionMissionDisclosureInput = {
 export type CodingSessionMissionInspectorInput = {
   goal: CodingSessionMissionGoalInput;
   acceptedPlan: CodingSessionAcceptedPlanInput;
+  assignments?: readonly CodingSessionMissionAssignmentInput[];
   seatPlans: readonly CodingSessionSeatPlanInput[];
   reports: readonly CodingSessionMissionReportInput[];
   observedChanges: CodingSessionObservedChanges;
@@ -194,6 +216,12 @@ export type CodingSessionMissionPlanStep = {
   text: string;
   /** null means the producer published no progress state; it is not pending. */
   status: CodingSessionTaskStatus | null;
+  sourceEventId: string | null;
+  authorLabel: string | null;
+  /** Signed event timestamp for accepted criteria; null for seat-local plans. */
+  sourceCreatedAt: number | null;
+  /** Zero-based position inside the signed assignment; null for seat-local plans. */
+  sourceIndex: number | null;
 };
 
 export type CodingSessionMissionPlanModel = {
@@ -238,7 +266,15 @@ export type CodingSessionMissionFileModel = {
 
 export type CodingSessionMissionContextFact = {
   id: string;
-  label: "Assignment" | "Branch" | "Base" | "Head";
+  label:
+    | "Assignment"
+    | "Assignment role"
+    | "Objective"
+    | "Brief"
+    | "Ownership"
+    | "Branch"
+    | "Base"
+    | "Head";
   value: string;
   sourceEventId: string;
   authorLabel: string;
@@ -289,6 +325,13 @@ export function deriveCodingSessionMissionInspectorModel(
     MISSION_INSPECTOR_LIMITS.reports,
     "reports",
     "structured reports",
+    truncations,
+  );
+  const assignments = cap(
+    input.assignments ?? [],
+    MISSION_INSPECTOR_LIMITS.assignments,
+    "context",
+    "accepted assignments",
     truncations,
   );
   if (reports.length < input.reports.length) {
@@ -361,7 +404,12 @@ export function deriveCodingSessionMissionInspectorModel(
     ),
     participants,
     contextFacts: cap(
-      reports.flatMap(deriveContextFacts),
+      [
+        ...assignments.flatMap((assignment) =>
+          deriveAssignmentContextFacts(assignment, truncations),
+        ),
+        ...reports.flatMap(deriveContextFacts),
+      ],
       MISSION_INSPECTOR_LIMITS.contextFacts,
       "context",
       "context facts",
@@ -431,24 +479,58 @@ function deriveAcceptedPlan(
       steps: [],
     };
   }
+  const sortedSteps = [...input.steps].sort(compareAcceptedPlanSteps);
+  const allSourceEventIds = [
+    ...new Set(sortedSteps.map((step) => step.sourceEventId)),
+  ];
   const steps = cap(
-    input.steps,
+    sortedSteps,
     MISSION_INSPECTOR_LIMITS.acceptedPlanSteps,
     "accepted-plan",
     "accepted-plan steps",
     truncations,
-  ).map((text, index) => ({
-    id: `${input.sourceEventId}:accepted:${index}`,
-    text,
+  ).map((step) => ({
+    id: `${step.sourceEventId}:accepted:${step.sourceIndex}`,
+    text: step.text,
     status: null,
+    sourceEventId: step.sourceEventId,
+    authorLabel: step.authorLabel,
+    sourceCreatedAt: step.sourceCreatedAt,
+    sourceIndex: step.sourceIndex,
   }));
+  const sourceEventIds = [
+    ...new Set(steps.map((step) => step.sourceEventId as string)),
+  ];
+  if (sourceEventIds.length < allSourceEventIds.length) {
+    addTruncation(
+      "accepted-plan",
+      sourceEventIds.length,
+      allSourceEventIds.length,
+      "accepted-plan sources",
+      truncations,
+    );
+  }
+  const authorLabels = [
+    ...new Set(steps.map((step) => step.authorLabel as string)),
+  ];
   return {
     kind: "available",
     label: steps.length > 0 ? "Accepted plan" : "Accepted plan has no steps",
-    sourceEventIds: [input.sourceEventId],
-    authorLabel: input.authorLabel,
+    sourceEventIds,
+    authorLabel: authorLabels.join(", "),
     steps,
   };
+}
+
+function compareAcceptedPlanSteps(
+  left: CodingSessionAcceptedPlanStepInput,
+  right: CodingSessionAcceptedPlanStepInput,
+): number {
+  return (
+    left.sourceCreatedAt - right.sourceCreatedAt ||
+    left.sourceEventId.localeCompare(right.sourceEventId) ||
+    left.sourceIndex - right.sourceIndex
+  );
 }
 
 function deriveSeatPlan(
@@ -476,6 +558,10 @@ function deriveSeatPlan(
       id: task.id,
       text: task.text,
       status: task.status,
+      sourceEventId: null,
+      authorLabel: null,
+      sourceCreatedAt: null,
+      sourceIndex: null,
     })),
   };
 }
@@ -673,6 +759,52 @@ function deriveContextFacts(
   );
 }
 
+function deriveAssignmentContextFacts(
+  assignment: CodingSessionMissionAssignmentInput,
+  truncations: CodingSessionMissionTruncation[],
+): CodingSessionMissionContextFact[] {
+  const facts: CodingSessionMissionContextFact[] = [
+    {
+      id: `${assignment.sourceEventId}:Assignment role`,
+      label: "Assignment role",
+      value: assignment.assigneeRole,
+      sourceEventId: assignment.sourceEventId,
+      authorLabel: assignment.authorLabel,
+    },
+    {
+      id: `${assignment.sourceEventId}:Objective`,
+      label: "Objective",
+      value: assignment.objective,
+      sourceEventId: assignment.sourceEventId,
+      authorLabel: assignment.authorLabel,
+    },
+    {
+      id: `${assignment.sourceEventId}:Brief`,
+      label: "Brief",
+      value: assignment.brief,
+      sourceEventId: assignment.sourceEventId,
+      authorLabel: assignment.authorLabel,
+    },
+  ];
+  const ownership = cap(
+    assignment.fileOwnership,
+    MISSION_INSPECTOR_LIMITS.ownershipFilesPerAssignment,
+    "context",
+    "assignment ownership paths",
+    truncations,
+  );
+  for (const [index, path] of ownership.entries()) {
+    facts.push({
+      id: `${assignment.sourceEventId}:Ownership:${index}`,
+      label: "Ownership",
+      value: path,
+      sourceEventId: assignment.sourceEventId,
+      authorLabel: assignment.authorLabel,
+    });
+  }
+  return facts;
+}
+
 function deriveMissionState(
   input: CodingSessionMissionStateInput,
   truncations: CodingSessionMissionTruncation[],
@@ -711,6 +843,13 @@ function deriveMissionState(
         "mission blockers",
         truncations,
       ),
+      canonicalChain: cap(
+        input.canonicalChain,
+        MISSION_INSPECTOR_LIMITS.missionStateItems,
+        "mission-state",
+        "canonical team transaction steps",
+        truncations,
+      ).map((step) => ({ ...step })),
     };
   }
   if (input.kind === "completed") {
@@ -730,6 +869,13 @@ function deriveMissionState(
         "mission follow-ups",
         truncations,
       ),
+      canonicalChain: cap(
+        input.canonicalChain,
+        MISSION_INSPECTOR_LIMITS.missionStateItems,
+        "mission-state",
+        "canonical team transaction steps",
+        truncations,
+      ).map((step) => ({ ...step })),
     };
   }
   if (input.kind === "conflict") {

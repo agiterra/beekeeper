@@ -60,6 +60,147 @@ test("an accepted plan is never inferred from a seat-reported plan", () => {
   assert.equal(model.seatPlans[0].sourceEventId, "seat-plan-event");
 });
 
+test("signed assignments preserve bounded per-step provenance in deterministic order", () => {
+  const ownership = Array.from(
+    { length: 120 },
+    (_, index) => `src/${index}.ts`,
+  );
+  const inputPlanSteps = [
+    {
+      text: "Run the signed smoke test",
+      sourceEventId: "assignment-b",
+      authorLabel: "Verifier",
+      sourceCreatedAt: 123,
+      sourceIndex: 7,
+    },
+    {
+      text: "Implement the bridge",
+      sourceEventId: "assignment-a",
+      authorLabel: "Founder",
+      sourceCreatedAt: 10,
+      sourceIndex: 0,
+    },
+  ];
+  const build = (steps) =>
+    deriveCodingSessionMissionInspectorModel(
+      baseInput({
+        acceptedPlan: {
+          kind: "available",
+          steps,
+        },
+        assignments: [
+          {
+            sourceEventId: "assignment-a",
+            authorLabel: "Founder",
+            assigneeRole: "builder",
+            objective: "Build the portable team loop",
+            brief: "Preserve every accepted signed fact.",
+            fileOwnership: ownership,
+          },
+          {
+            sourceEventId: "assignment-b",
+            authorLabel: "Verifier",
+            assigneeRole: "verifier",
+            objective: "Verify the portable team loop",
+            brief: "Attack every accepted signed fact.",
+            fileOwnership: [],
+          },
+        ],
+      }),
+    );
+  const model = build(inputPlanSteps);
+  const reversed = build([...inputPlanSteps].reverse());
+
+  ownership[0] = "mutated";
+  inputPlanSteps[0].text = "mutated";
+  inputPlanSteps[0].sourceCreatedAt = 999;
+  inputPlanSteps[0].sourceIndex = 999;
+  assert.deepEqual(model.acceptedPlan, reversed.acceptedPlan);
+  assert.deepEqual(model.acceptedPlan.sourceEventIds, [
+    "assignment-a",
+    "assignment-b",
+  ]);
+  assert.deepEqual(
+    model.acceptedPlan.steps.map(
+      ({
+        id,
+        text,
+        status,
+        sourceEventId,
+        authorLabel,
+        sourceCreatedAt,
+        sourceIndex,
+      }) => ({
+        id,
+        text,
+        status,
+        sourceEventId,
+        authorLabel,
+        sourceCreatedAt,
+        sourceIndex,
+      }),
+    ),
+    [
+      {
+        id: "assignment-a:accepted:0",
+        text: "Implement the bridge",
+        status: null,
+        sourceEventId: "assignment-a",
+        authorLabel: "Founder",
+        sourceCreatedAt: 10,
+        sourceIndex: 0,
+      },
+      {
+        id: "assignment-b:accepted:7",
+        text: "Run the signed smoke test",
+        status: null,
+        sourceEventId: "assignment-b",
+        authorLabel: "Verifier",
+        sourceCreatedAt: 123,
+        sourceIndex: 7,
+      },
+    ],
+  );
+  assert.deepEqual(
+    model.contextFacts.slice(0, 4).map(({ label, value, sourceEventId }) => ({
+      label,
+      value,
+      sourceEventId,
+    })),
+    [
+      {
+        label: "Assignment role",
+        value: "builder",
+        sourceEventId: "assignment-a",
+      },
+      {
+        label: "Objective",
+        value: "Build the portable team loop",
+        sourceEventId: "assignment-a",
+      },
+      {
+        label: "Brief",
+        value: "Preserve every accepted signed fact.",
+        sourceEventId: "assignment-a",
+      },
+      {
+        label: "Ownership",
+        value: "src/0.ts",
+        sourceEventId: "assignment-a",
+      },
+    ],
+  );
+  assert.equal(
+    model.contextFacts.filter(({ label }) => label === "Ownership").length,
+    MISSION_INSPECTOR_LIMITS.ownershipFilesPerAssignment,
+  );
+  assert.ok(
+    model.truncations.some(
+      ({ id }) => id === "context:assignment ownership paths",
+    ),
+  );
+});
+
 test("structured report facts remain attributed and are not blended with observed edits", () => {
   const model = deriveCodingSessionMissionInspectorModel(
     baseInput({
@@ -265,9 +406,13 @@ test("huge outer and nested collections are copied, bounded, and disclosed", () 
       },
       acceptedPlan: {
         kind: "available",
-        sourceEventId: "accepted",
-        authorLabel: "Lead",
-        steps: Array.from({ length: 150 }, (_, index) => `step-${index}`),
+        steps: Array.from({ length: 150 }, (_, index) => ({
+          text: `step-${index}`,
+          sourceEventId: `accepted-${index}`,
+          authorLabel: `Lead ${index}`,
+          sourceCreatedAt: index,
+          sourceIndex: 0,
+        })),
       },
       seatPlans: Array.from({ length: 50 }, (_, index) => ({
         executionKey: `seat-${index}`,
@@ -291,6 +436,7 @@ test("huge outer and nested collections are copied, bounded, and disclosed", () 
         summary: "done",
         landedShas: Array.from({ length: 150 }, (_, index) => `sha-${index}`),
         followUps: Array.from({ length: 150 }, (_, index) => `follow-${index}`),
+        canonicalChain: [],
       },
       rejectedReasons: Array.from({ length: 120 }, (_, index) => ({
         code: `rejected-${index}`,
@@ -310,6 +456,22 @@ test("huge outer and nested collections are copied, bounded, and disclosed", () 
   assert.equal(
     model.acceptedPlan.steps.length,
     MISSION_INSPECTOR_LIMITS.acceptedPlanSteps,
+  );
+  assert.equal(
+    model.acceptedPlan.sourceEventIds.length,
+    MISSION_INSPECTOR_LIMITS.acceptedPlanSteps,
+  );
+  assert.ok(
+    model.truncations.some(
+      (item) =>
+        item.notice === "Showing 100 of 150 accepted-plan steps; 50 omitted.",
+    ),
+  );
+  assert.ok(
+    model.truncations.some(
+      (item) =>
+        item.notice === "Showing 100 of 150 accepted-plan sources; 50 omitted.",
+    ),
   );
   assert.equal(model.seatPlans.length, MISSION_INSPECTOR_LIMITS.seatPlans);
   assert.ok(
@@ -384,6 +546,7 @@ test("blocked, conflict, and disclosure collections are capped and copied", () =
         summary: "blocked",
         blockers,
         requiredAction: "Unblock",
+        canonicalChain: [],
       },
     }),
   );

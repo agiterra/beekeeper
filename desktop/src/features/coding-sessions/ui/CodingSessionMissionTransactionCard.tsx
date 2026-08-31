@@ -156,6 +156,14 @@ function CanonicalChain({
             </time>
           </div>
           <p className="mt-0.5 line-clamp-2 text-current/80">{step.summary}</p>
+          {step.decision ? (
+            <p className="mt-0.5 text-current/80">Decision: {step.decision}</p>
+          ) : null}
+          {step.requiredAction ? (
+            <p className="mt-0.5 font-medium text-current/90">
+              Required action: {step.requiredAction}
+            </p>
+          ) : null}
           <code className="mt-0.5 block truncate text-current/65">
             Signed source {step.sourceEventId}
           </code>

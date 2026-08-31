@@ -65,3 +65,63 @@ test("acknowledgement-required stays visible with canonical signed chronology", 
     assert.match(markup, new RegExp(`Signed source ${eventId}`));
   }
 });
+
+test("completed Brief preserves disposition, acknowledgement, and required action", () => {
+  const acknowledgementId = "d".repeat(64);
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionTransactionCard, {
+      state: {
+        kind: "completed",
+        sourceEventId: "e".repeat(64),
+        summary: "The governed mission is complete.",
+        landedShas: ["f".repeat(40)],
+        followUps: [],
+        canonicalChain: [
+          {
+            type: "assignment",
+            sourceEventId: assignmentId,
+            authorPubkey: "1".repeat(64),
+            createdAt: 1,
+            summary: "Implement the Mission projection.",
+          },
+          {
+            type: "report",
+            sourceEventId: reportId,
+            authorPubkey: "2".repeat(64),
+            createdAt: 2,
+            summary: "Projection implemented.",
+          },
+          {
+            type: "disposition",
+            sourceEventId: dispositionId,
+            authorPubkey: "3".repeat(64),
+            createdAt: 3,
+            summary: "Approved with one follow-up.",
+            decision: "approve-with-notes",
+            requiredAction: "Publish the signed follow-up note.",
+          },
+          {
+            type: "acknowledgement",
+            sourceEventId: acknowledgementId,
+            authorPubkey: "4".repeat(64),
+            createdAt: 4,
+            summary: "Approval received.",
+          },
+        ],
+      },
+    }),
+  );
+
+  assert.match(markup, /Mission completed/);
+  assert.match(markup, /Decision: approve-with-notes/);
+  assert.match(markup, /Required action: Publish the signed follow-up note/);
+  assert.match(markup, /Approval received/);
+  for (const eventId of [
+    assignmentId,
+    reportId,
+    dispositionId,
+    acknowledgementId,
+  ]) {
+    assert.match(markup, new RegExp(`Signed source ${eventId}`));
+  }
+});

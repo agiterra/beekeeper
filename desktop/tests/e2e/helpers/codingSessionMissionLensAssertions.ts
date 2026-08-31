@@ -194,6 +194,7 @@ export async function assertConversationAndMissionLenses(
 type MissionRecoveryHarness = {
   baseEvents: RelayEvent[];
   channelName: string;
+  observedFile: string;
   awaiting: {
     events: RelayEvent[];
     foldResponse: Record<string, unknown>;
@@ -285,6 +286,7 @@ export async function assertMissionRestartRecovery(
   await harness.seedAndOpen(page);
   await page.getByRole("button", { name: "Mission lens" }).click();
   const card = page.getByTestId("coding-session-mission-transaction-card");
+  const inspector = page.getByTestId("coding-session-mission-inspector");
   await expect(card).toContainText("Mission running");
   await expect(card).toContainText("accepted report awaiting disposition");
   await expect(
@@ -293,9 +295,16 @@ export async function assertMissionRestartRecovery(
   await expect(
     card.getByTestId("coding-session-mission-canonical-chain"),
   ).toContainText("report");
-  await expect(
-    page.getByTestId("coding-session-mission-inspector"),
-  ).toContainText("Mission inspector mounted with signed evidence.");
+  await expect(inspector).toContainText(
+    "Mission inspector mounted with signed evidence.",
+  );
+  await expect(inspector).toContainText("Mount the signed Mission inspector.");
+  await expect(inspector).toContainText(
+    "Preserve Conversation and show only canonical Mission facts.",
+  );
+  await expect(inspector).toContainText("Run the real mock-bridge smoke test");
+  await expect(inspector).toContainText(harness.observedFile);
+  await expect(inspector).toContainText("Mission inspector smoke");
 
   await page.reload();
   await harness.seedAndOpen(page);
@@ -356,18 +365,25 @@ export async function assertMissionRestartRecovery(
   ).toContainText("disposition");
 
   await publishPhase(harness.acknowledged);
-  await expect(card).toContainText("Mission running", { timeout: 15_000 });
-  await expect(card).toContainText("disposition has been acknowledged");
+  await expect(card).toContainText("Waiting on a person", {
+    timeout: 15_000,
+  });
+  await expect(card).toContainText("Publish the signed follow-up note.");
   await expect(
     card.getByTestId("coding-session-mission-canonical-chain"),
   ).toContainText("acknowledgement");
 
   await publishPhase(harness.completed);
   await expect(card).toContainText("Mission completed", { timeout: 15_000 });
-  await expect(card).toContainText("Signed source");
+  await expect(card).toContainText("Decision: approve-with-notes");
+  await expect(card).toContainText("Publish the signed follow-up note.");
+  await expect(card).toContainText("Approval received.");
   await expect(
-    page.getByTestId("coding-session-mission-inspector"),
-  ).toContainText("Portable Mission evidence is complete.");
+    card.getByTestId("coding-session-mission-canonical-chain"),
+  ).toContainText("acknowledgement");
+  await expect(inspector).toContainText(
+    "Portable Mission evidence is complete.",
+  );
 
   await page.reload();
   await page.evaluate((response) => {
@@ -377,7 +393,14 @@ export async function assertMissionRestartRecovery(
   }, harness.completed.foldResponse);
   await harness.seedAndOpen(page, harness.completed);
   await expect(card).toContainText("Mission completed", { timeout: 15_000 });
-  await expect(
-    page.getByTestId("coding-session-mission-inspector"),
-  ).toContainText("Mission inspector mounted with signed evidence.");
+  await expect(card).toContainText("Decision: approve-with-notes");
+  await expect(card).toContainText("Publish the signed follow-up note.");
+  await expect(card).toContainText("Approval received.");
+  await expect(inspector).toContainText(
+    "Mission inspector mounted with signed evidence.",
+  );
+  await expect(inspector).toContainText("Mount the signed Mission inspector.");
+  await expect(inspector).toContainText("Run the real mock-bridge smoke test");
+  await expect(inspector).toContainText(harness.observedFile);
+  await expect(inspector).toContainText("Mission inspector smoke");
 }

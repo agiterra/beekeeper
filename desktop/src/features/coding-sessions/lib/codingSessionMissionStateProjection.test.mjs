@@ -14,6 +14,7 @@ test("canonical terminal truth outranks seat metadata", () => {
     summary: "Done",
     landedShas: [],
     followUps: [],
+    canonicalChain: [],
   };
   assert.equal(
     projectCodingSessionMissionState({

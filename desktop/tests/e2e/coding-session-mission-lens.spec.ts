@@ -386,10 +386,10 @@ function governedMissionWithTerminal(
         assignmentRef: assignment.id,
         reportRef: report.id,
         refutationRef: null,
-        decision: "approve",
+        decision: "approve-with-notes",
         summary: "The signed report is approved.",
         findings: [],
-        requiredAction: null,
+        requiredAction: "Publish the signed follow-up note.",
       },
       FOUNDER_SECRET,
       GENESIS_CREATED_AT + 10,
@@ -819,6 +819,7 @@ test("Mission recovers a report after restart, then folds live verdict evidence"
   await assertMissionRestartRecovery(page, {
     baseEvents: GOVERNED_MISSION.events,
     channelName: CHANNEL_NAME,
+    observedFile: OBSERVED_FILE,
     ...phases,
     openMockApp: (targetPage) =>
       openMockApp(targetPage, {
