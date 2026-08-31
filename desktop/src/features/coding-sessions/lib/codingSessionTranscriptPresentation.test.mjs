@@ -110,6 +110,26 @@ test("the ingress authority's label names the source when one is supplied", () =
   });
 });
 
+test("trusted ingress retains the exact signed source and provider cursor", () => {
+  const eventId = "c".repeat(64);
+  const [item] = projectTrustedCodingSessionTranscriptsToTranscript(
+    [
+      entry({
+        eventSeq: 7,
+        eventId,
+        item: { kind: "result", subtype: "success", result: "done" },
+      }),
+    ],
+    CHANNEL_ID,
+    SIGNER,
+    TARGET,
+  );
+  assert.equal(item.sourceEventId, eventId);
+  assert.equal(item.sourceEventSeq, 7);
+  assert.equal(typeof item.sourceTargetKey, "string");
+  assert.ok(item.sourceTargetKey.length > 0);
+});
+
 test("a duplicate eventSeq orders on event id, not on arrival", () => {
   const first = entry({
     eventSeq: 1,

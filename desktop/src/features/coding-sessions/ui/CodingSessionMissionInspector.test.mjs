@@ -209,8 +209,13 @@ test("panel and drawer variants expose the same honest Mission sections", async 
         name: "Mission inspector",
       });
       assert.equal(inspector.dataset.variant, variant);
+      assert.equal(
+        view.queryByRole("heading", { name: "Inspector" }) !== null,
+        variant === "drawer",
+        "the inline host already labels its Inspector tab",
+      );
       for (const heading of [
-        "Goal",
+        "Current goal",
         "Mission state",
         "Accepted plan",
         "Seat-reported plans",

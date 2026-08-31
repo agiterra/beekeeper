@@ -53,6 +53,8 @@ test("acknowledgement-required stays visible with canonical signed chronology", 
     /Required action: The assigned builder seat must acknowledge/,
   );
   assert.match(markup, /Canonical team transaction chronology/);
+  assert.match(markup, /Signed team handoff flow/);
+  assert.match(markup, /lucide-arrow-right/);
   assert.ok(
     markup.indexOf('capitalize">assignment</span>') <
       markup.indexOf('capitalize">report</span>'),

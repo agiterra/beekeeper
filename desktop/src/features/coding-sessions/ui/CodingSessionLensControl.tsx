@@ -3,16 +3,21 @@ import { cn } from "@/shared/lib/cn";
 
 /** Explicit view choice; changing it never publishes or steers the session. */
 export function CodingSessionLensControl({
+  compact = false,
   lens,
   onChange,
 }: {
+  compact?: boolean;
   lens: CodingSessionLens;
   onChange: (lens: CodingSessionLens) => void;
 }) {
   return (
     <fieldset
       aria-label="Session lens"
-      className="inline-flex h-9 items-center rounded-xl border border-border/65 bg-muted/25 p-1"
+      className={cn(
+        "inline-flex items-center rounded-xl border border-border/65 bg-muted/25",
+        compact ? "h-7 p-0.5" : "h-9 p-1",
+      )}
       data-testid="coding-session-lens-control"
     >
       {(["conversation", "mission"] as const).map((candidate) => {
@@ -23,7 +28,8 @@ export function CodingSessionLensControl({
             aria-label={`${label} lens`}
             aria-pressed={selected}
             className={cn(
-              "h-7 rounded-lg px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "rounded-lg text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              compact ? "h-6 px-2" : "h-7 px-3",
               selected
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-muted/45 hover:text-foreground",

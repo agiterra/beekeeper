@@ -90,6 +90,11 @@ export type CodingSessionStructuredTestInput = {
 
 export type CodingSessionMissionReportInput = {
   sourceEventId: string;
+  /** Exact signed author and timestamp retained for coordination joins. */
+  authorPubkey?: string;
+  sourceCreatedAt?: number;
+  /** Existing operation wake correlation, when the writer supplied one. */
+  deliveryCommandId?: string | null;
   authorLabel: string;
   summary: string;
   assignmentRef: string;

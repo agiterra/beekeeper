@@ -301,6 +301,9 @@ export function projectNativeTeamFoldToMissionInspector(input: {
       const body = event.payload.body as ReportBody;
       return {
         sourceEventId: event.eventId,
+        authorPubkey: event.authorPubkey,
+        sourceCreatedAt: event.createdAt,
+        deliveryCommandId: event.payload.deliveryCommandId,
         authorLabel: event.authorPubkey,
         summary: body.summary,
         assignmentRef: body.assignmentRef,

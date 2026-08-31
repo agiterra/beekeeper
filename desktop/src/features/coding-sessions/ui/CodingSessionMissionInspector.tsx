@@ -60,12 +60,14 @@ export function CodingSessionMissionInspector({
       data-testid="coding-session-mission-inspector"
       data-variant={variant}
     >
-      <header className="shrink-0 border-b border-border/60 px-4 py-3">
-        <p className="text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
-          Mission
-        </p>
-        <h2 className="mt-0.5 text-sm font-semibold">Inspector</h2>
-      </header>
+      {variant === "drawer" ? (
+        <header className="shrink-0 border-b border-border/60 px-4 py-3">
+          <p className="text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
+            Mission
+          </p>
+          <h2 className="mt-0.5 text-sm font-semibold">Inspector</h2>
+        </header>
+      ) : null}
 
       {loading ? (
         <p
@@ -95,7 +97,7 @@ export function CodingSessionMissionInspector({
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8">
         <InspectorSection
-          title="Goal"
+          title="Current goal"
           truncations={truncationsFor(model, "goal")}
         >
           <Goal goal={model.goal} />

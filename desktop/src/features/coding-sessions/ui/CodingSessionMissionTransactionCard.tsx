@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   CheckCircle2,
   CircleDashed,
   Clock3,
@@ -139,36 +140,58 @@ function CanonicalChain({
   steps: readonly CodingSessionMissionCanonicalStep[];
 }) {
   return (
-    <ol
-      aria-label="Canonical team transaction chronology"
-      className="mt-3 space-y-1.5 border-t border-current/20 pt-2"
-      data-testid="coding-session-mission-canonical-chain"
-    >
-      {steps.map((step) => (
-        <li className="min-w-0 text-2xs" key={step.sourceEventId}>
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="font-semibold capitalize">{step.type}</span>
-            <time className="shrink-0 text-current/65">
-              {new Date(step.createdAt * 1000).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </time>
+    <div className="mt-3 border-t border-current/20 pt-2">
+      <nav
+        aria-label="Signed team handoff flow"
+        className="mb-2 flex flex-wrap items-center gap-1.5"
+        data-testid="coding-session-mission-handoff-flow"
+      >
+        {steps.map((step, index) => (
+          <div className="contents" key={step.sourceEventId}>
+            {index > 0 ? (
+              <ArrowRight aria-hidden className="size-3 shrink-0 opacity-60" />
+            ) : null}
+            <span className="rounded-full border border-current/25 bg-background/35 px-2 py-1 text-2xs font-semibold capitalize">
+              {step.type}
+            </span>
           </div>
-          <p className="mt-0.5 line-clamp-2 text-current/80">{step.summary}</p>
-          {step.decision ? (
-            <p className="mt-0.5 text-current/80">Decision: {step.decision}</p>
-          ) : null}
-          {step.requiredAction ? (
-            <p className="mt-0.5 font-medium text-current/90">
-              Required action: {step.requiredAction}
+        ))}
+      </nav>
+      <ol
+        aria-label="Canonical team transaction chronology"
+        className="space-y-1.5"
+        data-testid="coding-session-mission-canonical-chain"
+      >
+        {steps.map((step) => (
+          <li className="min-w-0 text-2xs" key={step.sourceEventId}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="font-semibold capitalize">{step.type}</span>
+              <time className="shrink-0 text-current/65">
+                {new Date(step.createdAt * 1000).toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </time>
+            </div>
+            <p className="mt-0.5 line-clamp-2 text-current/80">
+              {step.summary}
             </p>
-          ) : null}
-          <code className="mt-0.5 block truncate text-current/65">
-            Signed source {step.sourceEventId}
-          </code>
-        </li>
-      ))}
-    </ol>
+            {step.decision ? (
+              <p className="mt-0.5 text-current/80">
+                Decision: {step.decision}
+              </p>
+            ) : null}
+            {step.requiredAction ? (
+              <p className="mt-0.5 font-medium text-current/90">
+                Required action: {step.requiredAction}
+              </p>
+            ) : null}
+            <code className="mt-0.5 block truncate text-current/65">
+              Signed source {step.sourceEventId}
+            </code>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

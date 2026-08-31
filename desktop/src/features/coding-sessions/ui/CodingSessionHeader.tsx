@@ -152,6 +152,8 @@ type CodingSessionHeaderProps = {
   surfaceTabs?: readonly CodingSessionHeaderSurfaceTab[];
   taskCount?: number;
   taskRailOpen?: boolean;
+  /** Local-only Conversation/Mission choice, kept beside the session title. */
+  viewControl?: ReactNode;
 };
 
 export function CodingSessionHeader({
@@ -192,6 +194,7 @@ export function CodingSessionHeader({
   surfaceTabs,
   taskCount = 0,
   taskRailOpen = false,
+  viewControl,
 }: CodingSessionHeaderProps) {
   const title = sessionTitle?.trim() || "Coding session";
   // A demoted status carries its own history clause; the badge states both so
@@ -259,6 +262,9 @@ export function CodingSessionHeader({
             >
               <Pencil />
             </Button>
+          ) : null}
+          {viewControl ? (
+            <div className="ml-2 shrink-0">{viewControl}</div>
           ) : null}
         </div>
         <p className="truncate text-xs text-muted-foreground">

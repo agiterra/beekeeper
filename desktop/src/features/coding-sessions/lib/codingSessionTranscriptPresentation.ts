@@ -162,6 +162,7 @@ export function projectTrustedCodingSessionTranscriptsToTranscript(
       timestamp: entry.transcript.timestamp,
       turnId: entry.transcript.turnId,
       item: entry.transcript.item,
+      sourceEventId: entry.eventId,
     })),
     {
       channelId,

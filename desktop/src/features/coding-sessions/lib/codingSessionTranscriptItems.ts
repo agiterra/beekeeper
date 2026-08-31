@@ -86,6 +86,11 @@ export type CodingSessionProjectedTranscriptItem = TranscriptItem & {
    * stamped one. Only `user_prompt` echoes carry it today.
    */
   commandId?: string;
+  /** Exact signed kind-44225 event this item was projected from. */
+  sourceEventId?: string;
+  /** Provider sequence and exact target used for durable coordination cursors. */
+  sourceEventSeq?: number;
+  sourceTargetKey?: string;
 };
 
 /** Everything a builder needs that does not come from the item itself. */
@@ -100,6 +105,8 @@ export type CodingSessionItemIdentity = {
   declaredTurnId?: string;
   acpSource?: string;
   bridgeSource?: CodingSessionBridgeSource | null;
+  sourceEventId?: string;
+  sourceEventSeq?: number;
   /** The provider's own session UUID; see `TranscriptItemIdentity`. */
   providerSessionId?: string | null;
 };
@@ -113,9 +120,17 @@ export function finalizeCodingSessionItem(
     ctx.providerSessionId != null
       ? { ...item, providerSessionId: ctx.providerSessionId }
       : item;
-  return ctx.bridgeSource
-    ? { ...stamped, bridgeSource: ctx.bridgeSource }
+  const sourced = ctx.sourceEventId
+    ? {
+        ...stamped,
+        sourceEventId: ctx.sourceEventId,
+        sourceEventSeq: ctx.sourceEventSeq,
+        sourceTargetKey: ctx.targetKey,
+      }
     : stamped;
+  return ctx.bridgeSource
+    ? { ...sourced, bridgeSource: ctx.bridgeSource }
+    : sourced;
 }
 
 type Identity = CodingSessionItemIdentity;

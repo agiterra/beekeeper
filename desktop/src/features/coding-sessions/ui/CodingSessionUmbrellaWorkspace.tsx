@@ -13,6 +13,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionMissionDensity";
 import { deriveCodingSessionStreamPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
+import { useCodingSessionTeamWake } from "@/features/coding-sessions/hooks/useCodingSessionTeamWake";
 import {
   readCodingSessionContextLoad,
   type CodingSessionContextLoad,
@@ -106,6 +107,7 @@ export { CodingSessionUmbrellaTimelineView } from "./CodingSessionUmbrellaTimeli
  */
 export function UmbrellaCodingSessionWorkspace({
   acceptedOperators = null,
+  catalogSettled,
   channelId,
   channelName,
   communityScope,
@@ -128,6 +130,8 @@ export function UmbrellaCodingSessionWorkspace({
 }: {
   /** Live operator grants from the session roster; null while unknown. */
   acceptedOperators?: ReadonlySet<string> | null;
+  /** True only after signed provider history and its live fence have settled. */
+  catalogSettled: boolean;
   channelId: string;
   channelName: string | null;
   /** Stable normalized relay/community identity for local lens persistence. */
@@ -158,6 +162,14 @@ export function UmbrellaCodingSessionWorkspace({
   const gutter = useCodingSessionColumnGutter();
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
+  useCodingSessionTeamWake({
+    catalogSettled,
+    channelId,
+    communityScope,
+    currentUserPubkey,
+    sessionClosed,
+    umbrella,
+  });
   // One coordination read for the whole umbrella; every execution composer
   // asks it whether anything is answering for that generation (§2 item 41).
   const resolveReachability = useCodingSessionReachabilityResolver(channelId);
@@ -562,7 +574,14 @@ export function UmbrellaCodingSessionWorkspace({
           statusLabelOverride={umbrellaAgentStatusSummary(agentFocusItems)}
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces
-            .filter((surfaceEntry) => surfaceEntry.id !== "agents")
+            .filter(
+              (surfaceEntry) =>
+                surfaceEntry.id !== "agents" &&
+                !(
+                  surfaceEntry.id === "mission-inspector" &&
+                  surfaceHost.activeTab === "mission-inspector"
+                ),
+            )
             .map((surfaceEntry) => ({
               id: surfaceEntry.id,
               label: surfaceEntry.label,
@@ -581,26 +600,28 @@ export function UmbrellaCodingSessionWorkspace({
               : (composerTaskDock.activeModel?.tasks.length ?? 0)
           }
           taskRailOpen={composerTaskDock.open}
+          viewControl={
+            isMultiExecution ? (
+              <CodingSessionLensControl
+                compact
+                lens={lens}
+                onChange={handleLensChange}
+              />
+            ) : undefined
+          }
         />
-        {isMultiExecution ? (
-          <div className="flex items-center justify-center border-b border-border/55 bg-background/90 px-4 py-2">
-            <CodingSessionLensControl lens={lens} onChange={handleLensChange} />
-          </div>
-        ) : null}
         {mission ? (
-          <>
-            <CodingSessionParticipantBar
-              focusedExecutionKey={focusedExecutionKey}
-              items={streamPresence.participants}
-              onFocus={handleFocusExecution}
-            />
-            <div className="flex items-center justify-center border-b border-border/55 bg-background/90 px-4 py-2">
+          <CodingSessionParticipantBar
+            focusedExecutionKey={focusedExecutionKey}
+            items={streamPresence.participants}
+            leading={
               <CodingSessionMissionDensityControl
                 density={missionDensity}
                 onChange={handleMissionDensityChange}
               />
-            </div>
-          </>
+            }
+            onFocus={handleFocusExecution}
+          />
         ) : isMultiExecution ? (
           <CodingSessionDispositionStrip
             actorNames={workspaceActorName}

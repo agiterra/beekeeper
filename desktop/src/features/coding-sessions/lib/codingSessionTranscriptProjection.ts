@@ -60,6 +60,8 @@ export type CodingSessionTranscriptEnvelope = {
   timestamp: number;
   item: unknown;
   turnId?: string | null;
+  /** Exact signed source event, supplied only by trusted ingress. */
+  sourceEventId?: string;
 };
 
 /**
@@ -382,6 +384,10 @@ function toIntermediate(
         providerSessionId: target.sessionId,
         targetKey,
         channelId,
+        sourceEventId: isExactSourceEventId(envelopeRaw.sourceEventId)
+          ? envelopeRaw.sourceEventId
+          : undefined,
+        sourceEventSeq: eventSeq ?? undefined,
         timestamp,
         // Tri-state on purpose. A native envelope always carries the key, so
         // `null` is the producer saying "this item belongs to no turn" and
@@ -407,6 +413,10 @@ function toIntermediate(
       ),
     };
   }
+}
+
+function isExactSourceEventId(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 function extractTarget(raw: unknown): CodingSessionTranscriptTarget | null {

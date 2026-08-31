@@ -267,6 +267,7 @@ export function CodingSessionWorkspace({
           reach the only view that renders its earlier turns. */}
       {umbrellaHasCollapsedHistory(umbrella) ? (
         <UmbrellaCodingSessionWorkspace
+          catalogSettled={!catalog.isLoading}
           channelId={channelId}
           channelName={channel?.name ?? null}
           communityScope={communityScope}

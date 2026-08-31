@@ -54,6 +54,22 @@ test("umbrella header promotes the goal and aggregate agent status", () => {
   assert.doesNotMatch(markup, />generation 1<\/p>/);
 });
 
+test("the team lens lives beside the title instead of creating another header", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "Hive Sessions",
+      generationLabel: "generation 1",
+      onBack() {},
+      sessionTitle: "TeamTest",
+      status: { kind: "idle", label: "Idle" },
+      viewControl: React.createElement("span", null, "Conversation · Mission"),
+    }),
+  );
+  assert.match(markup, /TeamTest/);
+  assert.match(markup, /Conversation · Mission/);
+  assert.equal((markup.match(/<header/g) ?? []).length, 1);
+});
+
 test("header renders the export button only when an export handler is provided", () => {
   const baseProps = {
     channelName: "Hive Sessions",

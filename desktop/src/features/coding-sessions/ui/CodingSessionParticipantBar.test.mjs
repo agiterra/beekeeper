@@ -58,6 +58,33 @@ test("an empty Mission roster adds no chrome to Conversation", () => {
   );
 });
 
+test("workflow controls lead the roster inside one shared strip", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: [
+        {
+          executionKey: "lead",
+          label: "Helios · Lead",
+          secondaryLabel: null,
+          role: "lead",
+          status: { kind: "idle", label: "Idle" },
+          disposition: "idle",
+          activity: null,
+          lastTurnLabel: "last turn just now",
+        },
+      ],
+      leading: React.createElement("span", null, "Brief · Live · Trace"),
+      onFocus() {},
+    }),
+  );
+  assert.ok(markup.indexOf("Brief · Live · Trace") < markup.indexOf("Helios"));
+  assert.equal(
+    (markup.match(/aria-label="Session participants"/g) ?? []).length,
+    1,
+  );
+});
+
 test("identity accents never consume attention colors", () => {
   const forbidden = /amber|yellow|red|destructive/;
   for (const executionKey of ["lead", "seat-1", "verifier", "builder"]) {

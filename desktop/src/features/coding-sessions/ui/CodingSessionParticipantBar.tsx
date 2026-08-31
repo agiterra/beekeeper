@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { CodingSessionParticipantPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
 import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/codingSessionParticipantAccent";
 import { cn } from "@/shared/lib/cn";
@@ -6,10 +8,13 @@ import { cn } from "@/shared/lib/cn";
 export function CodingSessionParticipantBar({
   focusedExecutionKey,
   items,
+  leading,
   onFocus,
 }: {
   focusedExecutionKey: string | null;
   items: readonly CodingSessionParticipantPresence[];
+  /** Workflow controls that belong before the roster in the same strip. */
+  leading?: ReactNode;
   onFocus: (executionKey: string | null) => void;
 }) {
   if (items.length === 0) return null;
@@ -19,6 +24,11 @@ export function CodingSessionParticipantBar({
       className="flex min-h-14 shrink-0 items-center gap-2 overflow-x-auto border-b border-border/60 bg-background/80 px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       data-testid="coding-session-participant-bar"
     >
+      {leading ? (
+        <div className="mr-1 flex shrink-0 items-center border-r border-border/60 pr-3">
+          {leading}
+        </div>
+      ) : null}
       {items.map((item) => {
         const selected = item.executionKey === focusedExecutionKey;
         const accent = codingSessionParticipantAccent(item.executionKey);
