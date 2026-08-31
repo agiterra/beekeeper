@@ -8,8 +8,9 @@ use tauri::{AppHandle, Manager};
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_RECORDS: usize = 4096;
 
-/// Public metadata needed by team readiness. Secret fields are intentionally
-/// absent, so deserialization cannot hydrate or retain them.
+/// Public metadata for keyed agent instances needed by team readiness. The
+/// unified store's keyless definitions are deliberately omitted. Secret fields
+/// are intentionally absent, so deserialization cannot hydrate or retain them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManagedAgentReadinessMetadata {
     pub pubkey: String,
@@ -120,6 +121,14 @@ pub(crate) fn load_managed_agent_readiness_metadata_from(
     }
     let mut rows = Vec::with_capacity(wire.len());
     for row in wire {
+        // `managed-agents.json` is a unified store: an empty pubkey identifies
+        // an agent definition that has not been installed as an identity yet.
+        // Readiness must leave it out of the installed-instance projection,
+        // not reject the whole store as corrupt. A non-empty malformed pubkey
+        // remains an error below.
+        if row.pubkey.is_empty() {
+            continue;
+        }
         let auth = crate::readiness_auth::inspect_auth_tag(
             row.auth_tag.as_deref(),
             &row.pubkey,
@@ -153,4 +162,44 @@ pub(crate) fn load_managed_agent_readiness_metadata(
         &managed_agents_store_path_readonly(app)?,
         expected_owner,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_managed_agent_readiness_metadata_from;
+    use std::fs;
+
+    #[test]
+    fn unified_store_omits_keyless_definitions_without_rejecting_keyed_instances() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("managed-agents.json");
+        let payload = serde_json::json!([
+            {
+                "pubkey": "",
+                "name": "Lead definition",
+                "home_role": "lead",
+                "private_key_nsec": "",
+                "auth_tag": null,
+            },
+            {
+                "pubkey": "a".repeat(64),
+                "name": "Installed builder",
+                "home_role": "builder",
+                "private_key_nsec": "nsec-must-not-be-read",
+                "auth_tag": null,
+            }
+        ])
+        .to_string();
+        fs::write(&path, &payload).expect("seed unified store");
+
+        let rows =
+            load_managed_agent_readiness_metadata_from(&path, None).expect("metadata projection");
+
+        assert_eq!(rows.len(), 1, "definitions are not installed identities");
+        assert_eq!(rows[0].pubkey, "a".repeat(64));
+        assert_eq!(rows[0].home_role.as_deref(), Some("builder"));
+        assert_eq!(fs::read_to_string(&path).expect("read after"), payload);
+        assert_eq!(fs::read_dir(temp.path()).expect("list").count(), 1);
+        assert!(!format!("{rows:?}").contains("nsec-must-not-be-read"));
+    }
 }

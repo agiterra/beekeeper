@@ -863,7 +863,7 @@ fn readonly_agent_inventory_rejects_malformed_metadata() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("managed-agents.json");
     for payload in [
-        r#"[{"pubkey":"","name":"Bob"}]"#.to_string(),
+        r#"[{"pubkey":"not-a-pubkey","name":"Bob"}]"#.to_string(),
         format!(
             r#"[{{"pubkey":"{}","name":"Bob","home_role":"Lead"}}]"#,
             "a".repeat(64)
