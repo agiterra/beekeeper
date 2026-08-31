@@ -145,7 +145,8 @@ export type CodingSessionMissionInspectorInput = {
   contextLoads: ReadonlyMap<string, CodingSessionContextLoad | null>;
   missionState: CodingSessionMissionStateInput;
   usage: CodingSessionMissionUsageInput | null;
-  rejectedEventCount: number;
+  rejectedEventCount: number | null;
+  rejectionsTruncated: boolean;
   rejectedReasons: readonly CodingSessionMissionDisclosureInput[];
   conflicts: readonly CodingSessionMissionDisclosureInput[];
 };
@@ -242,7 +243,8 @@ export type CodingSessionMissionInspectorModel = {
   missionState: CodingSessionMissionStateInput;
   usage: CodingSessionMissionUsageInput | null;
   integrity: {
-    rejectedEventCount: number;
+    rejectedEventCount: number | null;
+    rejectionsTruncated: boolean;
     rejectedReasons: CodingSessionMissionDisclosureInput[];
     conflicts: CodingSessionMissionDisclosureInput[];
   };
@@ -340,7 +342,11 @@ export function deriveCodingSessionMissionInspectorModel(
     missionState: deriveMissionState(input.missionState, truncations),
     usage: hasUsage(input.usage) ? { ...input.usage } : null,
     integrity: {
-      rejectedEventCount: Math.max(0, input.rejectedEventCount),
+      rejectedEventCount:
+        input.rejectedEventCount === null
+          ? null
+          : Math.max(0, input.rejectedEventCount),
+      rejectionsTruncated: input.rejectionsTruncated,
       rejectedReasons: deriveDisclosures(
         input.rejectedReasons,
         "rejected reasons",

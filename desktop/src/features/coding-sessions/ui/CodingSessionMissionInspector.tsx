@@ -698,7 +698,10 @@ function Usage({ usage }: { usage: CodingSessionMissionUsageInput | null }) {
 function Integrity({ model }: { model: CodingSessionMissionInspectorModel }) {
   const { integrity } = model;
   const clean =
-    integrity.rejectedEventCount === 0 && integrity.conflicts.length === 0;
+    integrity.rejectedEventCount === 0 &&
+    !integrity.rejectionsTruncated &&
+    integrity.rejectedReasons.length === 0 &&
+    integrity.conflicts.length === 0;
   if (clean) {
     return (
       <EmptyCopy>No rejected or conflicting transaction records.</EmptyCopy>
@@ -706,13 +709,22 @@ function Integrity({ model }: { model: CodingSessionMissionInspectorModel }) {
   }
   return (
     <div className="space-y-3">
-      {integrity.rejectedEventCount > 0 ? (
+      {integrity.rejectedEventCount === null ||
+      integrity.rejectedEventCount > 0 ||
+      integrity.rejectedReasons.length > 0 ? (
         <div className="rounded-lg border border-amber-500/45 bg-amber-500/10 p-2.5">
           <p className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
             <OctagonAlert aria-hidden className="size-3.5" />
-            {integrity.rejectedEventCount} rejected{" "}
-            {integrity.rejectedEventCount === 1 ? "event" : "events"}
+            {integrity.rejectedEventCount === null
+              ? "Rejected event total unavailable after the safety bound"
+              : `${integrity.rejectedEventCount} rejected ${integrity.rejectedEventCount === 1 ? "event" : "events"}`}
           </p>
+          {integrity.rejectionsTruncated ? (
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Showing {integrity.rejectedReasons.length} rejected events;
+              additional unique count unavailable after the safety bound.
+            </p>
+          ) : null}
           {integrity.rejectedReasons.length > 0 ? (
             <DisclosureList items={integrity.rejectedReasons} />
           ) : (

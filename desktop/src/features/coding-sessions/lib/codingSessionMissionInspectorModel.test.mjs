@@ -16,6 +16,7 @@ function baseInput(overrides = {}) {
     missionState: { kind: "unknown", detail: null },
     usage: null,
     rejectedEventCount: 0,
+    rejectionsTruncated: false,
     rejectedReasons: [],
     conflicts: [],
     ...overrides,
@@ -216,6 +217,23 @@ test("conflicts, rejected records, unknown state, and absent usage remain explic
   assert.equal(model.integrity.rejectedEventCount, 2);
   assert.equal(model.integrity.rejectedReasons[0].code, "invalid-causal-ref");
   assert.equal(model.integrity.conflicts[0].code, "mission-terminal");
+});
+
+test("an overflowed rejection set preserves an unknown total", () => {
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({
+      rejectedEventCount: null,
+      rejectionsTruncated: true,
+      rejectedReasons: Array.from({ length: 100 }, (_, index) => ({
+        code: `rejected-${index}`,
+        summary: `Rejected event ${index}`,
+        eventIds: [`event-${index}`],
+      })),
+    }),
+  );
+  assert.equal(model.integrity.rejectedEventCount, null);
+  assert.equal(model.integrity.rejectionsTruncated, true);
+  assert.equal(model.integrity.rejectedReasons.length, 100);
 });
 
 test("no projection facts become zeros or synthetic completion", () => {

@@ -33,6 +33,7 @@ function input(overrides = {}) {
     missionState: { kind: "unknown", detail: null },
     usage: null,
     rejectedEventCount: 0,
+    rejectionsTruncated: false,
     rejectedReasons: [],
     conflicts: [],
     ...overrides,
@@ -276,6 +277,37 @@ test("conflicting and rejected records are visible with their signed sources", a
     ]) {
       assert.ok(view.getAllByText(eventId).length > 0);
     }
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("bounded rejection overflow renders an unknown total without false arithmetic", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(
+      input({
+        rejectedEventCount: null,
+        rejectionsTruncated: true,
+        rejectedReasons: Array.from({ length: 100 }, (_, index) => ({
+          code: `invalid-${index}`,
+          summary: `Rejected event ${index}`,
+          eventIds: [`event-${index}`],
+        })),
+      }),
+    ),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  try {
+    assert.ok(
+      view.getByText("Rejected event total unavailable after the safety bound"),
+    );
+    assert.ok(
+      view.getByText(
+        "Showing 100 rejected events; additional unique count unavailable after the safety bound.",
+      ),
+    );
+    assert.doesNotMatch(view.container.textContent, /total=|omitted=/);
   } finally {
     view.cleanup();
   }

@@ -147,6 +147,7 @@ export function projectNativeTeamFoldToMissionInspector(input: {
     missionState,
     usage: null,
     rejectedEventCount: fold.excluded.length + ingressRejections.length,
+    rejectionsTruncated: false,
     rejectedReasons: [
       ...fold.excluded.map((item) => ({
         code: item.code,
