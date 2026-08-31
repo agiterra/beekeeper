@@ -128,6 +128,62 @@ async function invokeWithTauriFoldMock(input, handler) {
   }
 }
 
+async function projectAcceptedNonterminal(events, assignments) {
+  const verifiedTransactions = events.map((event) => {
+    const decoded = decodeVerifiedCodingSessionTeamTransaction({
+      event,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    });
+    assert.equal(decoded.ok, true);
+    if (!decoded.ok) throw new Error(decoded.error);
+    return decoded.value;
+  });
+  const inputEventIds = verifiedTransactions
+    .map((event) => event.eventId)
+    .sort();
+  const authority = {
+    channelRef: CHANNEL,
+    genesisRef: GENESIS,
+    founderPubkey: FOUNDER,
+    relayPubkey: RELAY,
+    headEventId: null,
+    headSeq: 0,
+    acceptedEventIds: [],
+    activeGrants: [],
+    activeSeats: [],
+  };
+  const nativeFold = await invokeWithTauriFoldMock(
+    {
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      authority,
+      verifiedTransactions,
+    },
+    async () => ({
+      schema: CODING_SESSION_TEAM_FOLD_RESPONSE_SCHEMA,
+      implementation: "buzz-core",
+      inputEventIds,
+      context: {
+        channelRef: CHANNEL,
+        sessionRef: SESSION,
+        genesisRef: GENESIS,
+        founderPubkey: FOUNDER,
+        authorityHeadEventId: null,
+        authorityHeadSeq: 0,
+      },
+      includedEventIds: inputEventIds,
+      excluded: [],
+      conflicts: [],
+      assignments,
+      canonicalTerminal: null,
+    }),
+  );
+  return projectNativeTeamFoldToMissionInspector({ nativeFold }).missionState;
+}
+
 test("desktop decoder runs the canonical shared CSTX schema vectors", () => {
   const vectorPath = resolve(
     process.cwd(),
@@ -695,4 +751,156 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
     requiredAction: "Unlock signing keys",
   });
   assert.deepEqual(projected.acceptedPlan, { kind: "absent" });
+});
+
+test("accepted assignment chains preserve signed chronology and acknowledgement state", async () => {
+  const assignment = transaction(
+    {
+      schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      type: "assignment",
+      supersedes: null,
+      deliveryCommandId: "wake-builder-2",
+      body: {
+        assigneeActor: LEAD,
+        assigneeRole: "builder",
+        objective: "Preserve canonical Mission state",
+        brief: "Project every accepted stage.",
+        branch: "singularity-stream",
+        baseSha: null,
+        fileOwnership: ["desktop/src/features/coding-sessions/lib"],
+        acceptanceSteps: ["pnpm test"],
+      },
+    },
+    FOUNDER_SECRET,
+    10,
+  );
+  const report = transaction(
+    {
+      schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      type: "report",
+      supersedes: null,
+      deliveryCommandId: null,
+      body: {
+        assignmentRef: assignment.id,
+        summary: "Canonical projection implemented",
+        branch: "singularity-stream",
+        baseSha: null,
+        headSha: null,
+        files: ["desktop/src/features/coding-sessions/lib/projection.ts"],
+        tests: [],
+        redBeforeGreen: true,
+        deviations: [],
+        residuals: [],
+        anomalies: [],
+      },
+    },
+    LEAD_SECRET,
+    20,
+  );
+  const disposition = transaction(
+    {
+      schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      type: "verdict",
+      supersedes: null,
+      deliveryCommandId: null,
+      body: {
+        subtype: "disposition",
+        assignmentRef: assignment.id,
+        reportRef: report.id,
+        refutationRef: null,
+        decision: "approve",
+        summary: "Canonical projection approved",
+        findings: [],
+        requiredAction: null,
+      },
+    },
+    FOUNDER_SECRET,
+    30,
+  );
+  const acknowledgement = transaction(
+    {
+      schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      type: "acknowledgement",
+      supersedes: null,
+      deliveryCommandId: null,
+      body: {
+        acknowledgedEventRef: disposition.id,
+        status: "received",
+        note: "Approval received.",
+      },
+    },
+    LEAD_SECRET,
+    40,
+  );
+  const baseSettlement = {
+    assignmentEventId: assignment.id,
+    governedReportEventId: null,
+    dispositionEventId: null,
+    acknowledgementEventId: null,
+    settled: false,
+  };
+
+  const assigned = await projectAcceptedNonterminal(
+    [assignment],
+    [baseSettlement],
+  );
+  assert.equal(assigned.kind, "running");
+  assert.equal(assigned.phase, "assigned");
+  assert.deepEqual(
+    assigned.canonicalChain.map(({ type }) => type),
+    ["assignment"],
+  );
+
+  const reported = await projectAcceptedNonterminal(
+    [report, assignment],
+    [baseSettlement],
+  );
+  assert.equal(reported.kind, "running");
+  assert.equal(reported.phase, "reported");
+  assert.deepEqual(
+    reported.canonicalChain.map(({ type }) => type),
+    ["assignment", "report"],
+  );
+
+  const awaiting = await projectAcceptedNonterminal(
+    [disposition, assignment, report],
+    [baseSettlement],
+  );
+  assert.equal(awaiting.kind, "acknowledgement-required");
+  assert.equal(awaiting.sourceEventId, disposition.id);
+  assert.equal(awaiting.assignmentRef, assignment.id);
+  assert.equal(awaiting.heldOn, "builder");
+  assert.match(awaiting.requiredAction, /builder seat must acknowledge/);
+  assert.deepEqual(
+    awaiting.canonicalChain.map(({ type }) => type),
+    ["assignment", "report", "disposition"],
+  );
+
+  const acknowledged = await projectAcceptedNonterminal(
+    [acknowledgement, report, disposition, assignment],
+    [
+      {
+        assignmentEventId: assignment.id,
+        governedReportEventId: report.id,
+        dispositionEventId: disposition.id,
+        acknowledgementEventId: acknowledgement.id,
+        settled: true,
+      },
+    ],
+  );
+  assert.equal(acknowledged.kind, "running");
+  assert.equal(acknowledged.phase, "acknowledged");
+  assert.equal(acknowledged.sourceEventId, acknowledgement.id);
+  assert.deepEqual(
+    acknowledged.canonicalChain.map(({ type }) => type),
+    ["assignment", "report", "disposition", "acknowledgement"],
+  );
 });

@@ -102,7 +102,7 @@ export const KIND_PROJECT_MEMBERS = 39010;
 // ── Coding sessions (44220–44230) ────────────────────────────────────────────
 //
 // Provider-neutral kinds for driving a coding agent against a working
-// directory. All twelve, including the ephemeral 24223 lease, are
+// directory. All thirteen, including the ephemeral 24223 lease, are
 // channel-scoped (`h` tag) and never enter
 // CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
 // its own workspace surface, not to the chat timeline. Names mirror
@@ -147,6 +147,9 @@ export const KIND_CODING_SESSION_NAME = 44229;
 // NIP-CSCL: member-authored append-only session-closure revision (`cscl1-1`).
 // Closing is founder-only; any relay-accepted member may reopen.
 export const KIND_CODING_SESSION_CLOSURE = 44230;
+// NIP-CSTX: actor-authored portable team transactions folded canonically by
+// buzz-core (`buzz-coding-session-team-transaction/v1`).
+export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;
 
 // ── Project Pulse (44240) ────────────────────────────────────────────────────
 //
@@ -173,6 +176,7 @@ export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_TEAM_TRANSACTION,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

@@ -326,6 +326,7 @@ export function mergeTrustedCodingSessionIngress(
       // separate from lastEventAt (a max over both streams) so status
       // derivation can compare metadata freshness against the transcript.
       statusAt: metadataEntry ? metadataEntry.createdAt * 1000 : null,
+      statusEventId: metadataEntry?.eventId ?? null,
       transcript,
       conflictCount: targetTranscripts.reduce(
         (count, entry) => count + entry.conflictCount,

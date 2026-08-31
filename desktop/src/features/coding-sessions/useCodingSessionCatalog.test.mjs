@@ -101,6 +101,10 @@ test("a session is discoverable from metadata alone", () => {
   // The status's own observation time (metadata created_at, ms) — distinct
   // from lastEventAt so recency-aware status derivation can compare streams.
   assert.equal(session.statusAt, 1_800_000_000_000);
+  assert.equal(
+    session.statusEventId,
+    `metadata-${SIGNER}-${TARGET.generation}`,
+  );
 });
 
 test("a session is discoverable from transcripts alone, with inferred status", () => {
@@ -119,6 +123,7 @@ test("a session is discoverable from transcripts alone, with inferred status", (
     ],
   );
   assert.equal(session.metadataAuthorityPubkey, null);
+  assert.equal(session.statusEventId, null);
   assert.equal(session.status, "running");
   assert.equal(session.title, "Coding session");
   assert.equal(session.label, "Claude Agent Acp · generation 1");

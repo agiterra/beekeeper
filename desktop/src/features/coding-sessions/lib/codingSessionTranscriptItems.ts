@@ -378,7 +378,19 @@ export function buildPairedToolResultItem(
     typeof callTool.toolName === "string" && callTool.toolName.length > 0
       ? safeString(callTool.toolName, MAX_METADATA_FIELD_LENGTH)
       : "unknown_tool";
-  const args = isRecord(callTool.input) ? callTool.input : {};
+  // The result is the provider's final view after streamed tool arguments and
+  // edit locations have settled. Prefer it over the opening call, while still
+  // accepting older providers that only stamped the call.
+  const args = isRecord(resultItem.input)
+    ? resultItem.input
+    : isRecord(callTool.input)
+      ? callTool.input
+      : {};
+  const toolKind =
+    readToolKind(resultItem.toolKind) ?? readToolKind(callTool.toolKind);
+  const resultEditPaths = readEditPaths(resultItem.edit);
+  const editPaths =
+    resultEditPaths.length > 0 ? resultEditPaths : readEditPaths(callTool.edit);
   const isError = resultItem.isError === true;
   const result = stringifyToolResultContent(
     normalizeToolResultContent(resultItem.content, args),
@@ -404,6 +416,8 @@ export function buildPairedToolResultItem(
     args,
     result,
     isError,
+    toolKind,
+    editPaths,
     timestamp: callCtx.timestamp,
     startedAt: callCtx.timestamp,
     completedAt: resultCtx.timestamp,

@@ -317,6 +317,7 @@ function synthesizePendingEntry(
     lastEventAt: new Date(record.recordedAt).toISOString(),
     status: record.hasInitialTurn ? "running" : "idle",
     statusAt: null,
+    statusEventId: null,
     transcript: [],
     conflictCount: 0,
     commandTarget: null,

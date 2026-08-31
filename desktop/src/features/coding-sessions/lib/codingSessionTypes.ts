@@ -44,6 +44,8 @@ export type CodingSessionCatalogRecord = {
    * says nothing about which stream is fresher.
    */
   statusAt: number | null;
+  /** Signed 44223 event that supplied `status`, or null without metadata. */
+  statusEventId: string | null;
   transcript: CodingSessionProjectedTranscriptItem[];
   conflictCount: number;
   commandTarget: CodingSessionCommandTarget | null;

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildBaseTranscriptItem,
+  buildPairedToolResultItem,
   CODING_SESSION_CONTINUITY_REASONS,
   CODING_SESSION_CONTINUITY_STATUSES,
 } from "./codingSessionTranscriptItems.ts";
@@ -156,6 +157,35 @@ test("a result item with no usage block projects exactly as before", () => {
   );
   assert.equal(item.title, "Turn result");
   assert.equal(item.text, "completed");
+});
+
+test("a paired edit keeps the result's final args, discriminant, and paths", () => {
+  const paired = buildPairedToolResultItem(
+    {
+      kind: "tool_call",
+      tool: {
+        toolName: "Edit",
+        toolId: "edit-1",
+        input: {},
+      },
+    },
+    IDENTITY,
+    {
+      kind: "tool_result",
+      toolId: "edit-1",
+      toolName: "Edit",
+      toolKind: "edit",
+      input: { file_path: "desktop/src/App.tsx" },
+      edit: { paths: ["desktop/src/App.tsx"] },
+      content: "updated",
+      isError: false,
+    },
+    { ...IDENTITY, id: "item-2" },
+  );
+
+  assert.equal(paired.toolKind, "edit");
+  assert.deepEqual(paired.args, { file_path: "desktop/src/App.tsx" });
+  assert.deepEqual(paired.editPaths, ["desktop/src/App.tsx"]);
 });
 
 test("a context_window_updated item carrying the driver's occupancy still projects", () => {

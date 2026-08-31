@@ -18,6 +18,7 @@ import {
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_PROVIDER_CATALOG,
+  KIND_CODING_SESSION_TEAM_TRANSACTION,
   KIND_CODING_SESSION_TRANSCRIPT,
   KIND_STREAM_MESSAGE,
   KIND_STREAM_MESSAGE_V2,
@@ -105,6 +106,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       genesis: KIND_CODING_SESSION_GENESIS,
       goal: KIND_CODING_SESSION_GOAL,
       authorityTransition: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+      teamTransaction: KIND_CODING_SESSION_TEAM_TRANSACTION,
       name: KIND_CODING_SESSION_NAME,
     },
     {
@@ -119,10 +121,11 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       genesis: 44226,
       goal: 44227,
       authorityTransition: 44228,
+      teamTransaction: 44244,
       name: 44229,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 12);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 13);
   assert.equal(
     KIND_CODING_SESSION_LEASE >= 20000 && KIND_CODING_SESSION_LEASE <= 29999,
     true,

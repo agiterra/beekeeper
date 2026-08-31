@@ -92,14 +92,42 @@ export type CodingSessionMissionReportInput = {
   tests: readonly CodingSessionStructuredTestInput[];
 };
 
+export type CodingSessionMissionCanonicalStep = {
+  type:
+    | "assignment"
+    | "report"
+    | "refutation"
+    | "disposition"
+    | "acknowledgement";
+  sourceEventId: string;
+  authorPubkey: string;
+  createdAt: number;
+  summary: string;
+};
+
 export type CodingSessionMissionStateInput =
   | { kind: "unknown"; detail: string | null }
-  | { kind: "running"; sourceEventId: string }
+  | {
+      kind: "running";
+      sourceEventId: string;
+      phase: "assigned" | "reported" | "ruled" | "acknowledged";
+      detail: string;
+      canonicalChain: readonly CodingSessionMissionCanonicalStep[];
+    }
+  | {
+      kind: "acknowledgement-required";
+      sourceEventId: string;
+      assignmentRef: string;
+      requiredAction: string;
+      heldOn: string | null;
+      canonicalChain: readonly CodingSessionMissionCanonicalStep[];
+    }
   | {
       kind: "waiting-on-person";
       sourceEventId: string;
       requiredAction: string;
       heldOn: string | null;
+      canonicalChain?: readonly CodingSessionMissionCanonicalStep[];
     }
   | { kind: "stalled"; sourceEventId: string; detail: string }
   | {
@@ -649,6 +677,30 @@ function deriveMissionState(
   input: CodingSessionMissionStateInput,
   truncations: CodingSessionMissionTruncation[],
 ): CodingSessionMissionStateInput {
+  if (input.kind === "running" || input.kind === "acknowledgement-required") {
+    return {
+      ...input,
+      canonicalChain: cap(
+        input.canonicalChain,
+        MISSION_INSPECTOR_LIMITS.missionStateItems,
+        "mission-state",
+        "canonical team transaction steps",
+        truncations,
+      ).map((step) => ({ ...step })),
+    };
+  }
+  if (input.kind === "waiting-on-person" && input.canonicalChain) {
+    return {
+      ...input,
+      canonicalChain: cap(
+        input.canonicalChain,
+        MISSION_INSPECTOR_LIMITS.missionStateItems,
+        "mission-state",
+        "canonical team transaction steps",
+        truncations,
+      ).map((step) => ({ ...step })),
+    };
+  }
   if (input.kind === "blocked") {
     return {
       ...input,

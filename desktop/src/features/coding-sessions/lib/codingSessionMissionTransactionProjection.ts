@@ -1,4 +1,8 @@
-import type { CodingSessionMissionInspectorInput } from "./codingSessionMissionInspectorModel";
+import type {
+  CodingSessionMissionCanonicalStep,
+  CodingSessionMissionInspectorInput,
+  CodingSessionMissionStateInput,
+} from "./codingSessionMissionInspectorModel";
 import type {
   ImmutableCodingSessionTeamWireEvent,
   NativeCodingSessionTeamFold,
@@ -32,6 +36,24 @@ type BlockedBody = {
   requiredAction: string;
 };
 
+type AssignmentBody = {
+  assigneeRole: string;
+  objective: string;
+};
+
+type VerdictBody = {
+  subtype: "refutation" | "disposition";
+  assignmentRef: string;
+  decision: string;
+  summary: string;
+  requiredAction: string | null;
+};
+
+type AcknowledgementBody = {
+  acknowledgedEventRef: string;
+  note: string | null;
+};
+
 function decodeFrozenWireEvent(input: {
   event: ImmutableCodingSessionTeamWireEvent;
   channelRef: string;
@@ -58,6 +80,182 @@ function decodeFrozenWireEvent(input: {
     );
   }
   return decoded.value;
+}
+
+function compareTransactions(
+  left: VerifiedCodingSessionTeamTransaction,
+  right: VerifiedCodingSessionTeamTransaction,
+): number {
+  return (
+    left.createdAt - right.createdAt ||
+    left.eventId.localeCompare(right.eventId)
+  );
+}
+
+function canonicalStep(
+  event: VerifiedCodingSessionTeamTransaction,
+): CodingSessionMissionCanonicalStep {
+  const body = event.payload.body;
+  if (event.payload.type === "assignment") {
+    return {
+      type: "assignment",
+      sourceEventId: event.eventId,
+      authorPubkey: event.authorPubkey,
+      createdAt: event.createdAt,
+      summary: (body as AssignmentBody).objective,
+    };
+  }
+  if (event.payload.type === "report") {
+    return {
+      type: "report",
+      sourceEventId: event.eventId,
+      authorPubkey: event.authorPubkey,
+      createdAt: event.createdAt,
+      summary: (body as ReportBody).summary,
+    };
+  }
+  if (event.payload.type === "verdict") {
+    const verdict = body as VerdictBody;
+    return {
+      type: verdict.subtype,
+      sourceEventId: event.eventId,
+      authorPubkey: event.authorPubkey,
+      createdAt: event.createdAt,
+      summary: verdict.summary,
+    };
+  }
+  const acknowledgement = body as AcknowledgementBody;
+  return {
+    type: "acknowledgement",
+    sourceEventId: event.eventId,
+    authorPubkey: event.authorPubkey,
+    createdAt: event.createdAt,
+    summary: acknowledgement.note ?? "Disposition received.",
+  };
+}
+
+function projectCanonicalNonterminalState(input: {
+  included: readonly VerifiedCodingSessionTeamTransaction[];
+  assignmentEventIds: ReadonlySet<string>;
+}): CodingSessionMissionStateInput {
+  const assignments = input.included.filter(
+    (event) =>
+      event.payload.type === "assignment" &&
+      input.assignmentEventIds.has(event.eventId),
+  );
+  if (assignments.length === 0) {
+    return {
+      kind: "unknown",
+      detail:
+        "The native canonical fold has no terminal or active assignment; Mission does not infer running or completion from silence.",
+    };
+  }
+
+  const relevant = input.included.filter((event) => {
+    if (event.payload.type === "assignment") {
+      return input.assignmentEventIds.has(event.eventId);
+    }
+    if (event.payload.type === "report" || event.payload.type === "verdict") {
+      return input.assignmentEventIds.has(
+        (event.payload.body as ReportBody | VerdictBody).assignmentRef,
+      );
+    }
+    return false;
+  });
+  const relevantVerdictIds = new Set(
+    relevant
+      .filter((event) => event.payload.type === "verdict")
+      .map((event) => event.eventId),
+  );
+  const acknowledgements = input.included.filter(
+    (event) =>
+      event.payload.type === "acknowledgement" &&
+      relevantVerdictIds.has(
+        (event.payload.body as AcknowledgementBody).acknowledgedEventRef,
+      ),
+  );
+  const accepted = [...relevant, ...acknowledgements].sort(compareTransactions);
+  const canonicalChain = accepted.map(canonicalStep);
+  const acknowledgedVerdicts = new Set(
+    acknowledgements.map(
+      (event) =>
+        (event.payload.body as AcknowledgementBody).acknowledgedEventRef,
+    ),
+  );
+  const pendingApprovals = relevant
+    .filter((event) => {
+      if (event.payload.type !== "verdict") return false;
+      const verdict = event.payload.body as VerdictBody;
+      return (
+        verdict.subtype === "disposition" &&
+        ["approve", "approve-with-notes"].includes(verdict.decision) &&
+        !acknowledgedVerdicts.has(event.eventId)
+      );
+    })
+    .sort(compareTransactions);
+  const pendingApproval = pendingApprovals.at(-1);
+  if (pendingApproval) {
+    const verdict = pendingApproval.payload.body as VerdictBody;
+    const assignment = assignments.find(
+      (event) => event.eventId === verdict.assignmentRef,
+    );
+    const role = assignment
+      ? (assignment.payload.body as AssignmentBody).assigneeRole
+      : null;
+    return {
+      kind: "acknowledgement-required",
+      sourceEventId: pendingApproval.eventId,
+      assignmentRef: verdict.assignmentRef,
+      requiredAction: role
+        ? `The assigned ${role} seat must acknowledge this approved disposition.`
+        : "The assigned seat must acknowledge this approved disposition.",
+      heldOn: role,
+      canonicalChain,
+    };
+  }
+
+  const requiredActionVerdict = relevant
+    .filter(
+      (event) =>
+        event.payload.type === "verdict" &&
+        Boolean((event.payload.body as VerdictBody).requiredAction),
+    )
+    .sort(compareTransactions)
+    .at(-1);
+  if (requiredActionVerdict) {
+    const verdict = requiredActionVerdict.payload.body as VerdictBody;
+    return {
+      kind: "waiting-on-person",
+      sourceEventId: requiredActionVerdict.eventId,
+      requiredAction: verdict.requiredAction as string,
+      heldOn: null,
+      canonicalChain,
+    };
+  }
+
+  const last = accepted.at(-1) as VerifiedCodingSessionTeamTransaction;
+  const phase = acknowledgements.length
+    ? "acknowledged"
+    : relevant.some((event) => event.payload.type === "verdict")
+      ? "ruled"
+      : relevant.some((event) => event.payload.type === "report")
+        ? "reported"
+        : "assigned";
+  const detail =
+    phase === "acknowledged"
+      ? "The accepted disposition has been acknowledged; no terminal mission record has been published."
+      : phase === "ruled"
+        ? "The canonical fold contains an accepted verdict; no terminal mission record has been published."
+        : phase === "reported"
+          ? "The canonical fold contains an accepted report awaiting disposition."
+          : "The canonical fold contains active assignment work.";
+  return {
+    kind: "running",
+    sourceEventId: last.eventId,
+    phase,
+    detail,
+    canonicalChain,
+  };
 }
 
 /**
@@ -129,11 +327,14 @@ export function projectNativeTeamFoldToMissionInspector(input: {
             requiredAction: (terminal.payload.body as BlockedBody)
               .requiredAction,
           }
-        : {
-            kind: "unknown",
-            detail:
-              "The native canonical fold has no terminal; Mission does not infer running or completion from silence.",
-          };
+        : projectCanonicalNonterminalState({
+            included,
+            assignmentEventIds: new Set(
+              fold.assignments.map(
+                (assignment) => assignment.assignmentEventId,
+              ),
+            ),
+          });
   const ingressRejections = input.ingressRejections ?? [];
   return {
     goal: { kind: "absent" },

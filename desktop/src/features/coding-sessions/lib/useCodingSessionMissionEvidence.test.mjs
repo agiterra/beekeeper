@@ -739,7 +739,7 @@ test("empty history remains honest unknown rather than inferred running", async 
   assert.deepEqual(mounted.result.current.inspectorInput.missionState, {
     kind: "unknown",
     detail:
-      "The native canonical fold has no terminal; Mission does not infer running or completion from silence.",
+      "The native canonical fold has no terminal or active assignment; Mission does not infer running or completion from silence.",
   });
   mounted.unmount();
 });

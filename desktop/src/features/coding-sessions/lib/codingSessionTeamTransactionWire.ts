@@ -1,11 +1,12 @@
 import type { RelayEvent } from "@/shared/api/types";
+import { KIND_CODING_SESSION_TEAM_TRANSACTION } from "@/shared/constants/kinds";
 import { hasValidSignature } from "@/shared/lib/authors";
 import {
   hasDuplicateJsonKeys,
   hasExactFields,
 } from "@/shared/coordination/sessionCoordinationStrictJson";
 
-export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;
+export { KIND_CODING_SESSION_TEAM_TRANSACTION };
 export const CODING_SESSION_TEAM_TRANSACTION_SCHEMA =
   "buzz-coding-session-team-transaction/v1";
 

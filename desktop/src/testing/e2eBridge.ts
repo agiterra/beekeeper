@@ -534,6 +534,8 @@ type E2eConfig = {
     /** Delay (ms) applied to `get_relay_self` so E2E tests can prove the
      *  fail-closed race: DMs are withheld while classification is unresolved. */
     relaySelfDelayMs?: number;
+    /** Canonical buzz-core adapter response for Mission transaction E2E. */
+    codingSessionTeamFoldResponse?: Record<string, unknown>;
     /** Delay (ms) applied to `start_pairing` so pairing loading UI is observable. */
     pairingStartDelayMs?: number;
     /**
@@ -1271,6 +1273,10 @@ declare global {
       channelName: string;
       event: RelayEvent;
     }) => RelayEvent;
+    /** Replace the mocked native fold result without changing relay history. */
+    __BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__?: (
+      response: Record<string, unknown>,
+    ) => void;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
      *  relay backfills history. Returns the created events. */
@@ -1625,6 +1631,7 @@ const STARTER_WELCOME_CHANNEL_NAME = "welcome-everyone";
 let mockIdentityLostCleared = false;
 // Same pattern for `mock.identityLocked`.
 let mockIdentityLockedCleared = false;
+let mockCodingSessionTeamFoldResponse: Record<string, unknown> | null = null;
 
 // ── get_event defer/release seam ────────────────────────────────────────────
 // When `window.__BUZZ_E2E_DEFER_GET_EVENT__` is set to a target event ID,
@@ -10607,6 +10614,9 @@ export function maybeInstallE2eTauriMocks() {
   if (!config) {
     return;
   }
+  mockCodingSessionTeamFoldResponse = config.mock?.codingSessionTeamFoldResponse
+    ? structuredClone(config.mock.codingSessionTeamFoldResponse)
+    : null;
 
   mockClosedChannelLiveSubscription = false;
   mockWebsocketUnavailable = false;
@@ -10737,6 +10747,9 @@ export function maybeInstallE2eTauriMocks() {
     recordMockMessage(channel.id, event);
     emitMockLiveEvent(channel.id, event);
     return event;
+  };
+  window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__ = (response) => {
+    mockCodingSessionTeamFoldResponse = structuredClone(response);
   };
   window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ = prependMockHistory;
   window.__BUZZ_E2E_EMIT_MOCK_TYPING__ = ({
@@ -13898,6 +13911,13 @@ export function maybeInstallE2eTauriMocks() {
           );
         }
         return activeConfig?.mock?.relaySelf ?? null;
+      case "fold_coding_session_team_transactions": {
+        const response = mockCodingSessionTeamFoldResponse;
+        if (!response) {
+          throw new Error("mock Mission fold response is not configured");
+        }
+        return structuredClone(response);
+      }
       case "archive_identity":
       case "unarchive_identity":
         // The spec only verifies UI state, not the submitted request shape;

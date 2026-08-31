@@ -135,7 +135,21 @@ function richModel() {
         ["lead", null],
         ["builder", { usedTokens: 1000, contextWindow: 10000, pct: 10 }],
       ]),
-      missionState: { kind: "running", sourceEventId: "state-event" },
+      missionState: {
+        kind: "running",
+        sourceEventId: "state-event",
+        phase: "assigned",
+        detail: "The canonical fold contains active assignment work.",
+        canonicalChain: [
+          {
+            type: "assignment",
+            sourceEventId: "state-event",
+            authorPubkey: "a".repeat(64),
+            createdAt: 1,
+            summary: "Build the Mission surface.",
+          },
+        ],
+      },
       usage: {
         sourceEventId: "terminal-event",
         inputTokens: 1000,
@@ -229,6 +243,33 @@ test("empty and unknown states disclose absence rather than rendering zeros", as
       view.container.textContent,
       /0 tokens|0 files|completed/i,
     );
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("loading and fold errors remain explicit and retryable", async () => {
+  let refreshes = 0;
+  const view = await renderInspector({
+    errorMessage: "Canonical Mission fold failed.",
+    focusedExecutionKey: null,
+    loading: true,
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    onRefresh: () => {
+      refreshes += 1;
+    },
+    variant: "panel",
+  });
+  try {
+    assert.ok(view.getByRole("status").textContent.includes("Loading signed"));
+    assert.equal(
+      view
+        .getByRole("alert")
+        .textContent.includes("Canonical Mission fold failed."),
+      true,
+    );
+    view.getByRole("button", { name: "Retry signed evidence" }).click();
+    assert.equal(refreshes, 1);
   } finally {
     view.cleanup();
   }

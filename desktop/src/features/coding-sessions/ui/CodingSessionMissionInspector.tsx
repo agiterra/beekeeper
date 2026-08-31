@@ -26,9 +26,12 @@ export type CodingSessionMissionInspectorProps = {
   model: CodingSessionMissionInspectorModel;
   variant: "panel" | "drawer";
   focusedExecutionKey: string | null;
+  loading?: boolean;
+  errorMessage?: string | null;
   onFocusParticipant?: (executionKey: string | null) => void;
   /** Finalizer-owned bridge into Trace when observed-file provenance is absent. */
   onOpenFileTrace?: (path: string) => void;
+  onRefresh?: () => void;
 };
 
 /**
@@ -37,18 +40,21 @@ export type CodingSessionMissionInspectorProps = {
  * component deliberately does not mount or control either surrounding lens.
  */
 export function CodingSessionMissionInspector({
+  errorMessage = null,
   model,
   variant,
   focusedExecutionKey,
+  loading = false,
   onFocusParticipant,
   onOpenFileTrace,
+  onRefresh,
 }: CodingSessionMissionInspectorProps) {
   return (
     <aside
       aria-label="Mission inspector"
       className={cn(
         "flex h-full min-h-0 flex-col bg-background text-foreground",
-        variant === "panel" && "w-80 shrink-0 border-l border-border/60",
+        variant === "panel" && "w-full",
         variant === "drawer" && "w-full",
       )}
       data-testid="coding-session-mission-inspector"
@@ -60,6 +66,32 @@ export function CodingSessionMissionInspector({
         </p>
         <h2 className="mt-0.5 text-sm font-semibold">Inspector</h2>
       </header>
+
+      {loading ? (
+        <p
+          className="border-b border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground"
+          role="status"
+        >
+          Loading signed Mission evidence…
+        </p>
+      ) : null}
+      {errorMessage ? (
+        <div
+          className="border-b border-destructive/35 bg-destructive/10 px-4 py-2"
+          role="alert"
+        >
+          <p className="text-xs text-destructive">{errorMessage}</p>
+          {onRefresh ? (
+            <button
+              className="mt-1 rounded-sm text-2xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={onRefresh}
+              type="button"
+            >
+              Retry signed evidence
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8">
         <InspectorSection
@@ -608,7 +640,19 @@ function missionStatePresentation(state: CodingSessionMissionStateInput): {
 } {
   switch (state.kind) {
     case "running":
-      return { label: "Running", detail: null, dot: "bg-emerald-500" };
+      return {
+        label: "Running",
+        detail: state.detail,
+        dot: "bg-emerald-500",
+      };
+    case "acknowledgement-required":
+      return {
+        label: "Acknowledgement required",
+        detail: state.heldOn
+          ? `${state.requiredAction} · held on ${state.heldOn}`
+          : state.requiredAction,
+        dot: "bg-amber-500",
+      };
     case "waiting-on-person":
       return {
         label: "Waiting on a person",

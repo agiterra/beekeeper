@@ -6,6 +6,7 @@ import {
   GitCompare,
   Info,
   ListChecks,
+  PanelRight,
   Pencil,
   OctagonX,
   RotateCcw,
@@ -55,7 +56,7 @@ import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
 export type CodingSessionHeaderSurfaceTab = {
   id: string;
   label: string;
-  icon: "agents" | "changes";
+  icon: "agents" | "changes" | "inspector";
   count?: number;
   active: boolean;
 };
@@ -402,7 +403,13 @@ export function CodingSessionHeader({
                   type="button"
                   variant={tab.active ? "secondary" : "ghost"}
                 >
-                  {tab.icon === "agents" ? <Users /> : <GitCompare />}
+                  {tab.icon === "agents" ? (
+                    <Users />
+                  ) : tab.icon === "inspector" ? (
+                    <PanelRight />
+                  ) : (
+                    <GitCompare />
+                  )}
                   <span className={compact ? "sr-only" : undefined}>
                     {tab.label}
                   </span>
