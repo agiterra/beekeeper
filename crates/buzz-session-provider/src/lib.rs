@@ -7819,14 +7819,17 @@ mod tests {
     }
 
     /// Initialize `cwd` as a repository on `branch` with one commit.
+    ///
+    /// The repo-selection variables are cleared because git exports `GIT_DIR`
+    /// into every hook, and it beats `-C` — under a pre-push hook this `init`
+    /// targeted the developer's own repository instead of the tempdir.
     fn init_repo(cwd: &Path, branch: &str) {
         let run = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(cwd)
-                .args(args)
-                .status()
-                .expect("git");
+            let mut command = std::process::Command::new("git");
+            for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+                command.env_remove(var);
+            }
+            let status = command.arg("-C").arg(cwd).args(args).status().expect("git");
             assert!(status.success(), "git {args:?} failed");
         };
         run(&["init", "-q", "-b", branch, "."]);
@@ -8061,7 +8064,11 @@ mod tests {
             .target("instance-1");
 
         // Stand in for an agent that checked out a branch during its turn.
-        let status = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+            command.env_remove(var);
+        }
+        let status = command
             .arg("-C")
             .arg(&cwd)
             .args(["checkout", "-q", "-b", "after"])

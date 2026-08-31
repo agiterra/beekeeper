@@ -637,6 +637,9 @@ mod tests {
 
         // Read the HEAD oid.
         let mut cmd = Command::new("git");
+        // Git exports GIT_DIR into every hook, and it beats `current_dir` — under
+        // a pre-push hook this would read the developer's own repository.
+        super::super::transport::harden_git_env(&mut cmd);
         cmd.current_dir(src.path())
             .args(["rev-parse", "HEAD"])
             .kill_on_drop(true);
@@ -713,6 +716,9 @@ mod tests {
 
         // The hydrated repo must list the same ref with the same oid.
         let mut cmd = Command::new("git");
+        // Git exports GIT_DIR into every hook, and it beats `current_dir` — under
+        // a pre-push hook this would read the developer's own repository.
+        super::super::transport::harden_git_env(&mut cmd);
         cmd.current_dir(hydrated.path())
             .args(["for-each-ref", "--format=%(refname) %(objectname)"])
             .kill_on_drop(true);
@@ -732,6 +738,7 @@ mod tests {
 
         // git rev-parse HEAD resolves to the same oid.
         let mut rp = Command::new("git");
+        super::super::transport::harden_git_env(&mut rp);
         rp.current_dir(hydrated.path())
             .args(["rev-parse", "HEAD"])
             .kill_on_drop(true);
@@ -864,6 +871,9 @@ mod tests {
 
         // No refs.
         let mut cmd = Command::new("git");
+        // Git exports GIT_DIR into every hook, and it beats `current_dir` — under
+        // a pre-push hook this would read the developer's own repository.
+        super::super::transport::harden_git_env(&mut cmd);
         cmd.current_dir(hydrated.path())
             .args(["for-each-ref"])
             .kill_on_drop(true);

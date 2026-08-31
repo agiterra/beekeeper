@@ -86,7 +86,23 @@ async fn create_test_channel(keys: &Keys) -> String {
 /// Run `git` with the Buzz credential helper and isolated config.
 fn git_status(args: &[&str], cwd: &Path, owner_nsec: &str) -> std::process::Output {
     let helper = credential_helper();
-    Command::new("git")
+    let mut command = Command::new("git");
+    // Git exports GIT_DIR into every hook it runs, and it beats `current_dir`.
+    // These are `#[ignore]`d so they do not run under one today, but the
+    // fixture writes into `cwd` and would follow an inherited GIT_DIR straight
+    // into the developer's repository if that ever changed.
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ] {
+        command.env_remove(var);
+    }
+    command
         .args([
             "-c",
             "credential.useHttpPath=true",

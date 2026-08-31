@@ -144,12 +144,34 @@ async fn dirty(cwd: &Path) -> Option<bool> {
     Some(!stdout.trim().is_empty())
 }
 
+/// Environment variables by which git selects a repository, all of which beat
+/// `-C <path>`.
+///
+/// Git exports `GIT_DIR` into every hook it runs, so any `git -C` here that
+/// executes under a pre-commit or pre-push hook silently retargets at the
+/// developer's own repository. `probe(cwd)` promises to report *that*
+/// checkout's branch, commit and dirty state; an inherited `GIT_DIR` made it
+/// report a different repository's instead. Cleared for the same reason
+/// `desktop/src-tauri/src/commands/team_readiness_git.rs` clears them.
+pub(crate) const GIT_REPO_SELECTION_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
 /// Run `git <args>` in `cwd` under [`PROBE_TIMEOUT`], returning stdout.
 ///
 /// `None` on spawn failure, non-zero exit, timeout, or non-UTF-8 output — the
 /// caller cannot distinguish them, and does not need to.
 async fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
+    for var in GIT_REPO_SELECTION_VARS {
+        command.env_remove(var);
+    }
     command
         // Refuse to take any lock the read does not strictly require, so a
         // probe can never contend with the session's own agent over
@@ -199,7 +221,11 @@ mod tests {
     /// Commit `message` in `cwd` with identity forced, so the probe tests do
     /// not depend on the developer's git config.
     fn commit(cwd: &Path, message: &str) {
-        let status = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        for var in super::GIT_REPO_SELECTION_VARS {
+            command.env_remove(var);
+        }
+        let status = command
             .arg("-C")
             .arg(cwd)
             .args([
@@ -218,13 +244,18 @@ mod tests {
         assert!(status.success(), "git commit failed");
     }
 
+    /// `git` in `cwd`, with the repo-selection variables cleared.
+    ///
+    /// Without that, running under a pre-push hook made `git init` target
+    /// `<the developer's repo>/.git` — it only failed loudly because a
+    /// concurrent test already held `config.lock`. Unlocked it would have
+    /// reinitialised the real repository and rewritten its config.
     fn git(cwd: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .status()
-            .expect("git");
+        let mut command = std::process::Command::new("git");
+        for var in super::GIT_REPO_SELECTION_VARS {
+            command.env_remove(var);
+        }
+        let status = command.arg("-C").arg(cwd).args(args).status().expect("git");
         assert!(status.success(), "git {args:?} failed");
     }
 
