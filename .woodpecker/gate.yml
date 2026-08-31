@@ -135,13 +135,29 @@ steps:
       # The DB-backed relay/db unit tests need the migrated schema, not just a
       # reachable postgres (upstream CI has the same apply-schema step).
       - cargo run -p buzz-admin -- migrate
-      # mesh_demo runs for real here (redis present; it self-skips without) but
-      # its loopback-QUIC echo cannot complete inside this docker-in-incus
+      # mesh_demo runs for real here (redis is a declared service, and
+      # BUZZ_TEST_REQUIRE_REDIS above makes a skip fatal rather than silent),
+      # but its loopback-QUIC echo cannot complete inside this docker-in-incus
       # runner (10s ECHO_TIMEOUT expires consistently, isolated or not).
       # Known runner-env limitation — see docs/INTEGRATION.md. The echo test
       # is excluded; the rest of mesh_demo still runs isolated below.
+      #
+      # The exclusion is about this container, NOT about the test: measured
+      # 12/12 green in 0.52s on a dev machine with Redis (2026-08-31). Do not
+      # "clean it up" by deleting it — it is a working regression guard for the
+      # drain-tick frame loss, and `just test-unit` runs it wherever loopback
+      # QUIC works.
       - cargo test --workspace --exclude buzz-agent -- --skip api::mesh_demo
       - cargo test -p buzz-relay --lib api::mesh_demo -- --skip demo_join_forwarded_arm_round_trips_echo
+      # Twelve buzz-relay tests build AppState from a real pool and so need
+      # Postgres. They are `#[ignore]`d, which is what lets `just test-unit`
+      # run the whole workspace on a machine with no Docker — but this runner
+      # HAS Postgres, and it ran them before they were marked. Without this
+      # line, marking them would have quietly deleted their CI coverage to make
+      # a local count look tidy. Three module filters, OR'd by libtest (the
+      # same shape `just test-genesis` uses). Extend the filters when you mark
+      # another Postgres-gated buzz-relay test.
+      - cargo test -p buzz-relay --lib -- --ignored api::media::tests api::admin::tests handlers::event::tests::fanout_access
 
   desktop:
     image: buzz-ci:1

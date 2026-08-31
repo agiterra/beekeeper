@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires PostgreSQL"]
+    #[ignore = "requires Postgres"]
     async fn reaper_deletes_active_child_of_retention_eligible_revoked_installation() {
         let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
@@ -741,7 +741,7 @@ mod tests {
     // admit exactly once; the loser rejects with its whole tx rolled back, so
     // quota is charged once and the auth-event fence is not consumed by the loser.
     #[tokio::test]
-    #[ignore = "requires PostgreSQL"]
+    #[ignore = "requires Postgres"]
     async fn concurrent_same_request_id_admits_exactly_once() {
         let (pool, schema) = full_schema(4).await;
         install_authority(&pool).await;
@@ -794,7 +794,7 @@ mod tests {
     // fails `1 < 1`, updates zero rows, and rejects. Exactly one Ok, and the
     // persisted counter must never exceed the ceiling.
     #[tokio::test]
-    #[ignore = "requires PostgreSQL"]
+    #[ignore = "requires Postgres"]
     async fn concurrent_admissions_never_over_admit_past_quota_ceiling() {
         let (pool, schema) = full_schema(4).await;
         install_authority(&pool).await;
@@ -852,7 +852,7 @@ mod tests {
     // Retryable finish is idempotent-safe and never leaves R permanently
     // un-fenceable while the delegation is live.
     #[tokio::test]
-    #[ignore = "requires PostgreSQL"]
+    #[ignore = "requires Postgres"]
     async fn duplicated_retryable_release_does_not_permanently_unfence_request_id() {
         let (pool, schema) = full_schema(2).await;
         install_authority(&pool).await;
@@ -903,7 +903,7 @@ mod tests {
     // the same request_id re-admits with a fresh auth event; a Terminal finish
     // leaves it burned.
     #[tokio::test]
-    #[ignore = "requires PostgreSQL"]
+    #[ignore = "requires Postgres"]
     async fn retryable_release_frees_request_id_on_real_postgres() {
         let (pool, schema) = full_schema(2).await;
         install_authority(&pool).await;

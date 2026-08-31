@@ -293,6 +293,11 @@ mod tests {
     /// out `ECHO_TIMEOUT` (10 s) and asserted 504 != 200, measured at 1 pass /
     /// 8 standalone runs and 0 / 3 under the full `--lib` suite. A passing run
     /// finishes in ~0.1 s.
+    ///
+    /// The fix landed, and this guard is healthy: 12/12 in 0.52 s on a dev
+    /// machine with Redis (2026-08-31). It is `--skip`ped in
+    /// `.woodpecker/gate.yml` only because loopback QUIC does not work in that
+    /// docker-in-incus runner, so CI is the one place it proves nothing.
     #[tokio::test]
     async fn demo_join_forwarded_arm_round_trips_echo() {
         let Some(directory) = redis_directory_if_available().await else {

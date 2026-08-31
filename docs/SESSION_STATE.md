@@ -5978,6 +5978,101 @@ comment and the fixture comment instead.
 hook has this exposure. Only the team-readiness probe was swept; there was no
 audit of the rest.
 
+### Found 2026-08-31 — CI was red one push in three, and never on a product bug
+
+**Fixed on `fix/test-health-flakes`.** Four of the last twelve Woodpecker
+pipelines on `main` failed (77, 78 on 08-30; 86, 87 on 08-31; 88 green). Every
+one was a bug in a test, not in the code under test. Read straight out of the
+forge database — `log_entries` joined to `steps`/`pipelines`, per the
+`woodpecker-db-debugging` note. **Scope the query by `repo_id`:** pipeline
+*numbers* repeat across repos, and an unscoped `WHERE number IN (...)` silently
+mixed `agiterra/buzz`'s 2026-08-18 pipelines into this repo's, which is how the
+first pass mis-attributed an old ETXTBSY incident as a current failure.
+
+- **`git-credential-nostr::store_stays_silent`** — `store` and `erase` return
+  at `lib.rs:402-406` without ever reading stdin, so the parent's `write_all`
+  races the child's exit and the shared helper unwrapped the resulting `EPIPE`.
+  0 failures in 85 local runs; it needs the loaded runner. Reachable on demand:
+  write more than a pipe buffer to `store` and it raises EPIPE every time,
+  while the child still exits 0 with empty output — so nothing the test asserts
+  was ever in question.
+- **`buzz-session-provider::an_unseated_execution_still_receives_no_buzz_variable_at_all`**
+  — the assertion substring-matched `@agents.beekeeper` against the child's
+  *entire* environment, which `env` dumps in full. Woodpecker injects
+  `CI_PREV_COMMIT_AUTHOR_EMAIL`; when the previous commit on `main` was written
+  by an agent, that value ends in `@agents.beekeeper`. **The test's outcome
+  depended on who authored the commit before it.** Now scoped to the four
+  `GIT_*` names seating actually sets. Checked both ways: with that variable
+  set the old assertion fails and the new one passes, and injecting a real seat
+  identity still fails the new one.
+
+**Why neither was caught locally: `just test-unit` was an allowlist.** It named
+nine `-p` targets, and everything outside it — buzz-relay (1032 tests),
+buzz-acp (836), buzz-session-provider (419), buzz-sdk (306),
+git-credential-nostr, ~3,375 tests in all — ran in **no local gate**, pre-push
+included (`lefthook.yml` `rust-tests` is the same recipe). Only
+`.woodpecker/gate.yml` ran them, so the only way to find a failure there was to
+push. This was already recorded above at the "runs no buzz-session-provider,
+buzz-sdk or buzz-relay lib tests" line; it had not been acted on.
+
+Widening it was blocked by twelve tests that build `AppState` from
+`Config::from_env()` and a lazy pool: they need Postgres but carried no
+`#[ignore]`, so `cargo test --workspace` was red on any machine without Docker.
+Measured: dead port → 4 fanout failures after 90s of connect timeouts; live
+database → 7 pass in 0.33s; unset → 2 fail; under full parallel load → 10 fail.
+Marked `#[ignore = "requires Postgres"]`. Totals before 5232/10/334 and after
+5230/0/346 — **total unchanged at 5576**, the +12 exactly the tests marked.
+
+`just test-unit` is now `cargo test --workspace`: 5635 tests, 100s, green with
+`DATABASE_URL` and `REDIS_URL` both at a dead port. The NIP-98 tolerance has
+been 600s since `88d64ea33`, so the extra ~125s is well inside the push window.
+
+**Tests that passed without asserting anything.** Ten Redis-gated tests in
+`tunnel/directory.rs`, `tunnel/reliable.rs` and `api/mesh_demo.rs` opened with
+`let Some(d) = redis_directory_if_available() else { return; }`. Marking them
+`#[ignore]` would have been *worse* — Woodpecker declares a redis service and
+runs them for real, so that would have deleted live coverage to tidy a count.
+Instead the skip prints on stderr, and `BUZZ_TEST_REQUIRE_REDIS` (now set in
+`gate.yml`) makes it fatal where Redis is supposed to exist. Verified three
+ways: live+guard runs 7/7, dead+guard exits 101, dead+no-guard skips loudly.
+
+**A correction to the received wisdom on the mesh echo test.**
+`demo_join_forwarded_arm_round_trips_echo` is *not* dead weight: measured
+**12/12 green in 0.52s** on a dev machine with Redis. The drain-tick race it
+guards was fixed; `gate.yml` skips it only because loopback QUIC does not work
+in the docker-in-incus runner. It now says so in both places, so nobody deletes
+a working guard on the strength of the exclusion.
+
+**Playwright drift, both directions.** `workspace-rail.spec.ts` and
+`tokens.spec.ts` were listed in `playwright.config.ts` but deleted from disk;
+`dm-new-message-screenshots.spec.ts` and `signout-screenshots.spec.ts` were on
+disk in no project — Playwright answered "No tests found" for them until they
+were registered, and they are 5 passing tests. `pnpm check:e2e-registration`
+now fails on either direction, reading both configs so release-smoke's three
+specs are not false positives. `*.perf.ts` stay exempt by rule.
+
+`just check` also gained `ignore-reasons-check`, a ratchet on bare `#[ignore]`
+(253, down only). 4 in `buzz-db/src/channel.rs` got the reason their 17
+siblings already carry; 5 `"requires PostgreSQL"` normalised to
+`"requires Postgres"`.
+
+**Still open — Stage 4, a decision rather than a patch.**
+`.github/workflows/ci.yml` is ~1100 lines describing sharded smoke E2E,
+integration E2E, relay e2e, mobile APK, Windows and cross-compile. **None of it
+runs** — GitHub Actions are disabled on `agiterra/beekeeper` (see above) and
+the files are kept only to avoid conflicting against upstream. Consequences:
+`desktop/scripts/summarize-flaky-tests.mjs` is invoked only from `ci.yml`, so
+**no flake data is collected anywhere in this repo**; `.woodpecker/nightly.yml`
+runs the Playwright `integration` project with no relay and no seed, against
+specs that post to `localhost:3000`; and 20 of 29 `buzz-test-client` e2e
+binaries are named by no pipeline at all (note `--test e2e_project` selects
+that binary *exactly* — it does not pull in `e2e_project_visibility`).
+Suggested smallest first move: run the smoke project in `gate.yml` as a
+non-blocking step wired to the flake summarizer, so rates accumulate *before*
+anyone attacks the ~26 documented smoke failures. Reviving the rest of
+`ci.yml` under Woodpecker — or deleting it and stopping the implied coverage —
+is Brian's call.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

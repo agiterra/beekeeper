@@ -145,7 +145,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check autodeploy-test
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check autodeploy-test
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -164,6 +164,13 @@ file-size-check:
     node desktop/scripts/check-file-sizes.mjs
     node web/scripts/check-file-sizes.mjs
     node mobile/scripts/check-file-sizes.mjs
+
+# Ratchet on bare `#[ignore]` attributes. An ignored test is invisible; with a
+# reason string the gap is legible and greppable, which is how `test-genesis`
+# is able to select ignored proofs by name at all. Ratchet DOWN only — add the
+# reason rather than raising the baseline.
+ignore-reasons-check:
+    node scripts/check-ignore-reasons.mjs
 
 # Format all Rust code
 fmt:

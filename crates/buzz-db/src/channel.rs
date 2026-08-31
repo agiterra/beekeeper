@@ -2636,7 +2636,7 @@ mod tests {
     /// until it is released. Verified by mutation — dropping the lock from either
     /// function makes that call return immediately and fails this test.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires Postgres"]
     async fn membership_writes_serialize_on_the_shared_channel_lock() {
         let pool = setup_pool().await;
         let (community, channel_id, owner_a, owner_b) =
@@ -2707,7 +2707,7 @@ mod tests {
     /// holder then demotes the remover and commits. Once the key is released the
     /// remover must re-read its (now unprivileged) role and be rejected.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires Postgres"]
     async fn remove_member_rejects_an_actor_demoted_while_it_waited() {
         let pool = setup_pool().await;
         let (community, channel_id, owner_a, owner_b) =
@@ -2793,7 +2793,7 @@ mod tests {
     /// Two owners on purpose, so the last-owner guard can never be what
     /// decides the outcome — only role resolution can.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires Postgres"]
     async fn kicked_owner_rejoins_as_member_not_owner() {
         let pool = setup_pool().await;
         let (community, channel_id, owner_a, owner_b) =
@@ -2845,7 +2845,7 @@ mod tests {
     /// The other side of the same boundary: reactivation may reach an elevated
     /// role, but only because a *currently* elevated granter asked for it.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires Postgres"]
     async fn removed_owner_is_restored_only_by_a_current_owner() {
         let pool = setup_pool().await;
         let (community, channel_id, owner_a, owner_b) =
