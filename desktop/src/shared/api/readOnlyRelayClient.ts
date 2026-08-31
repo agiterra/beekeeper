@@ -9,6 +9,10 @@ import {
 } from "@/shared/api/relayClientShared";
 import { closeWebSocket } from "@/shared/api/relayWebSocketClose";
 import {
+  activateRateLimitIfSignalled,
+  waitForRateLimit,
+} from "@/shared/api/relayRateLimitGate";
+import {
   AUTH_TIMEOUT_MS,
   HISTORY_TIMEOUT_MS,
   PUBLISH_TIMEOUT_MS,
@@ -106,7 +110,10 @@ export class ReadOnlyRelayClient {
 
   async publishEvent(event: RelayEvent): Promise<void> {
     await this.connect();
-    if (this.wsId === null) {
+    const generation = this.generation;
+    await waitForRateLimit();
+
+    if (generation !== this.generation || this.wsId === null) {
       throw new Error("Read-only relay socket is not connected.");
     }
 
@@ -278,6 +285,7 @@ export class ReadOnlyRelayClient {
       if (success) {
         publish.resolve();
       } else {
+        activateRateLimitIfSignalled(message);
         publish.reject(
           new Error(message || "Observer relay rejected the event."),
         );
