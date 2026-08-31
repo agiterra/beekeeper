@@ -237,11 +237,11 @@ test("the seat ceiling field keeps the previous value rather than becoming zero"
   );
 });
 
-test("the shipped default is on, every installed role, four seats, all providers", () => {
+test("the shipped default is on, every installed role, ten seats, all providers", () => {
   assert.deepEqual(DEFAULT_CODING_SESSION_HIRE_POLICY, {
     enabled: true,
     allowedRoles: null,
-    maxSeatsPerUmbrella: 4,
+    maxSeatsPerUmbrella: 10,
     allowedProviderInstanceRefs: null,
   });
 });

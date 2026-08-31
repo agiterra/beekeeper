@@ -115,7 +115,7 @@ const mockCodingSessionCapacity: {
 function codingSessionCapacitySnapshot() {
   return {
     maxSessions: mockCodingSessionCapacity.maxSessions,
-    defaultMaxSessions: 4,
+    defaultMaxSessions: 10,
     runningMaxSessions: mockCodingSessionCapacity.runningMaxSessions,
     turnIdleTimeoutSecs: mockCodingSessionCapacity.turnIdleTimeoutSecs,
     defaultTurnIdleTimeoutSecs: 900,

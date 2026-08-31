@@ -61,7 +61,7 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// using the legacy variables above, which stay exported alongside it.
     pub runtimes: Vec<RuntimeDescriptor>,
     /// Ceiling on concurrently live agent processes, or `None` to leave the
-    /// provider's own default (4) in charge. `Some(0)` is unlimited.
+    /// provider's own default (10) in charge. `Some(0)` is unlimited.
     pub max_sessions: Option<usize>,
     /// Per-turn silence budget in seconds; `None` keeps the provider default.
     pub turn_idle_timeout_secs: Option<u64>,

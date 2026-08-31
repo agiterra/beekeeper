@@ -47,16 +47,16 @@ export type CodingSessionHirePolicy = {
 };
 
 /**
- * On, every installed role, four seats, every provider.
+ * On, every installed role, ten seats, every provider.
  *
- * Four is the same number the session capacity ceiling ships with: a team that
+ * Ten is the same number the session capacity ceiling ships with: a team that
  * can hire past what this computer will run would only be discovering the
  * capacity refusal one seat at a time.
  */
 export const DEFAULT_CODING_SESSION_HIRE_POLICY: CodingSessionHirePolicy = {
   enabled: true,
   allowedRoles: null,
-  maxSeatsPerUmbrella: 4,
+  maxSeatsPerUmbrella: 10,
   allowedProviderInstanceRefs: null,
 };
 

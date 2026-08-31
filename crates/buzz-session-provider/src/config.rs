@@ -29,14 +29,15 @@ pub const PROVIDER_INSTANCE_REF: &str = "claude-primary";
 pub const DEFAULT_MODEL: &str = "default";
 
 /// Default ceiling on concurrently live sessions.
-pub const DEFAULT_MAX_SESSIONS: usize = 4;
+pub const DEFAULT_MAX_SESSIONS: usize = 10;
 /// `BUZZ_CSP_MAX_SESSIONS` value meaning "no ceiling".
 ///
 /// Zero used to be rejected outright. It is the natural spelling of unlimited,
 /// nothing depended on the old error, and a person who has decided their own
-/// machine can hold more than four agents at once should be able to say so
-/// (asked for 2026-08-24). Every other slot rule still applies: idle sessions
-/// are still reclaimed, and a create still fails if the adapter will not start.
+/// machine can hold more agents at once than the default should be able to
+/// say so (asked for 2026-08-24). Every other slot rule still applies: idle
+/// sessions are still reclaimed, and a create still fails if the adapter will
+/// not start.
 pub const UNLIMITED_MAX_SESSIONS: usize = 0;
 /// Default idle window before a live session's subprocess is reclaimed.
 ///

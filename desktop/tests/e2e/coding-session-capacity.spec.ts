@@ -44,7 +44,7 @@ test("Sessions settings state the limit, the running count, and who set it", asy
   // Nothing stored yet, so the panel names the provider's own default.
   await expect(
     page.getByTestId("settings-coding-session-capacity"),
-  ).toContainText("Limit: 4 sessions");
+  ).toContainText("Limit: 10 sessions");
 });
 
 test("a saved limit admits it is not yet in force", async ({ page }) => {
@@ -61,7 +61,7 @@ test("a saved limit admits it is not yet in force", async ({ page }) => {
   // rather than implying nine is being enforced.
   await expect(
     page.getByTestId("coding-session-capacity-pending"),
-  ).toContainText("started with 4 sessions");
+  ).toContainText("started with 10 sessions");
   await expect(
     page.getByTestId("coding-session-capacity-pending"),
   ).toContainText("next time it starts");

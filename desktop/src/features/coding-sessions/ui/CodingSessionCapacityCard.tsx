@@ -60,10 +60,12 @@ export function CodingSessionCapacityCard() {
   const providerPubkey = statusQuery.data?.providerPubkey ?? null;
   const runningNow = useRunningSessionCount(providerPubkey);
 
-  const [draft, setDraft] = React.useState<number>(4);
+  // A placeholder for the frame before settings load; the host's own default
+  // replaces it below. Until the person edits, the field mirrors what is
+  // stored; after, it is theirs. Without the guard a refetch would overwrite
+  // half-typed input.
+  const [draft, setDraft] = React.useState<number>(10);
   const [dirty, setDirty] = React.useState(false);
-  // Until the person edits, the field mirrors what is stored; after, it is
-  // theirs. Without the guard a refetch would overwrite half-typed input.
   const storedLimit =
     settings === null
       ? null
