@@ -7,6 +7,28 @@ use super::TeamReadinessSource;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Environment variables that select which repository `git` acts on,
+/// overriding `-C <path>`.
+///
+/// Git exports `GIT_DIR` (and friends) into every hook it runs, so a probe
+/// spawned anywhere below a hook — the pre-push gate running the desktop test
+/// suite, for one — silently retargets at the hook's repository while still
+/// being handed a `-C` path it now ignores. The probe then reports another
+/// checkout's commit and dirty state as if they were this one's.
+///
+/// Cleared for the same reason `git_run` already disables fsmonitor, hooks and
+/// optional locks: this is a read-only probe of exactly the path it was given,
+/// and nothing in the ambient environment may redirect it.
+const GIT_REPO_SELECTION_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
 pub(super) fn parse_embedded_source(
     commit: Option<&str>,
     dirty: Option<&str>,
@@ -33,7 +55,11 @@ pub(super) fn embedded_source() -> TeamReadinessSource {
 }
 
 fn git_run(checkout: &Path, args: &[&str], capture: bool) -> Result<(i32, String), String> {
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    for var in GIT_REPO_SELECTION_VARS {
+        command.env_remove(var);
+    }
+    let mut child = command
         .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("--no-optional-locks")
         .arg("-C")

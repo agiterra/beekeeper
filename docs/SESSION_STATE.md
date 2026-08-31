@@ -5929,6 +5929,55 @@ running them against a relay built without it: `e2e_git`
 `buzz-relay` lib tests `fanout_access::open_channel_event_passes_through_unfiltered`
 and `::threaded_visibility_open_passes_through` fail on a bare `cargo test`.
 
+### Found 2026-08-31 — the pre-push gate was committing to your branch
+
+**Fixed on `worktree-private-project-member-visibility`, same push as the
+private-project gate above.**
+
+`git push` was refused by the pre-push hook with one failure —
+`commands::team_readiness::tests::checkout_probe_detects_untracked_files_without_git_locks`,
+`assertion failed: !dirty`. The same test had passed in `just ci` twenty
+minutes earlier and passed again when run alone. What it left behind is the
+interesting part: **a commit authored by `Test <test@example.invalid>`,
+subject `seed`, sitting on top of the branch being pushed.**
+
+**Git exports `GIT_DIR` into every hook it runs, and `GIT_DIR` beats
+`-C <path>`.** The fixture builds its repository with
+`Command::new("git").arg("-C").arg(temp.path())` — `init`, `add`, `commit` —
+and under the hook every one of those retargeted at the developer's own
+repository while still being handed a `-C` path git now ignored. So the
+fixture committed into the branch under push, and `checkout_source` then
+probed that same repository instead of its tempdir. It read dirty because the
+worktree had untracked `just dev` build artifacts at that moment — which is
+also why this is intermittent rather than constant: on a clean worktree the
+assertion passes and the stray commit lands *silently*.
+
+Reproduced deliberately: point `GIT_DIR` at a throwaway repo, run the single
+test, and the throwaway grows a `seed` commit. After the fix it does not.
+
+Two layers, because two different sets of git invocations were exposed:
+
+- `desktop/src-tauri/src/commands/team_readiness_git.rs` — `git_run` now
+  clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+  `GIT_NAMESPACE`, `GIT_OBJECT_DIRECTORY` and
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES` (`GIT_REPO_SELECTION_VARS`). This is the
+  production probe, and it is the same hardening it already applied to
+  fsmonitor, hooks and optional locks: `checkout_source(path)` promises to
+  report *that* checkout's commit and dirty state, and an ambient `GIT_DIR`
+  made it silently report another repository's.
+- `team_readiness_tests.rs` — the fixture's own `run()` helper clears the same
+  vars. Fixing `git_run` alone would have stopped the misread but not the
+  writes.
+
+**No regression test.** Pinning this would mean mutating `GIT_DIR` for the
+process, and `std::env::set_var` races every other test in the binary — the
+exact class of bug being fixed. The rationale lives in the constant's doc
+comment and the fixture comment instead.
+
+**Worth knowing generally:** any `git -C` in this tree that can run under a
+hook has this exposure. Only the team-readiness probe was swept; there was no
+audit of the rest.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

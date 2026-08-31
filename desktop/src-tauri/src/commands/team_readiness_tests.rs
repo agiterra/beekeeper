@@ -1,7 +1,6 @@
 use super::*;
 use std::cell::Cell;
 use std::fs;
-use std::process::Command;
 
 use crate::coding_sessions::workdir_store::load_workdir_store_readonly_from;
 use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
@@ -953,47 +952,4 @@ fn readonly_provider_inventory_rejects_malformed_metadata() {
         fs::write(&path, payload).expect("seed malformed metadata");
         assert!(load_provider_readiness_store_from(&path, None).is_err());
     }
-}
-
-#[test]
-fn checkout_probe_detects_untracked_files_without_git_locks() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let run = |args: &[&str]| {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(temp.path())
-            .args(args)
-            .status()
-            .expect("run git");
-        assert!(status.success(), "git {args:?}");
-    };
-    run(&["init", "-q"]);
-    fs::write(temp.path().join("tracked"), "one").expect("tracked");
-    run(&["add", "tracked"]);
-    run(&[
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.invalid",
-        "commit",
-        "-q",
-        "--no-gpg-sign",
-        "-m",
-        "seed",
-    ]);
-    let (_, dirty) = checkout_source(temp.path()).expect("clean source");
-    assert!(!dirty);
-
-    fs::write(temp.path().join(".untracked-hidden"), "two").expect("untracked");
-    let (_, dirty) = checkout_source(temp.path()).expect("dirty source");
-    assert!(dirty);
-    assert!(!temp.path().join(".git/index.lock").exists());
-}
-
-#[test]
-fn checkout_probe_rejects_unexpected_git_exit_codes() {
-    assert_eq!(validate_dirty(0, 1), Ok(false));
-    assert_eq!(validate_dirty(1, 1), Ok(true));
-    assert!(validate_dirty(128, 1).is_err());
-    assert!(validate_dirty(0, 128).is_err());
 }

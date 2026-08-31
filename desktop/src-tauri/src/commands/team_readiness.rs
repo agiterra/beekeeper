@@ -974,3 +974,9 @@ pub async fn team_readiness(
 #[cfg(test)]
 #[path = "team_readiness_tests.rs"]
 mod tests;
+
+// Split from `tests` because that file sits at the repository's 1000-line
+// ceiling; these are the cases that shell out to `git`.
+#[cfg(test)]
+#[path = "team_readiness_git_tests.rs"]
+mod git_tests;
