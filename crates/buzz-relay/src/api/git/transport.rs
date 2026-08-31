@@ -224,22 +224,21 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
 
         let event: nostr::Event = serde_json::from_str(&event_json)
             .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid auth event").into_response())?;
+        let signed_auth_created_at = event.created_at.as_secs();
 
         // Relay membership gate (NIP-43). Git cannot carry a standalone
         // x-auth-tag header through the credential-helper protocol, so agents
         // attach their NIP-OA attestation to the signed NIP-98 event, matching
         // the WebSocket NIP-42 flow.
         let event_auth_tag = crate::handlers::auth::extract_auth_tag_json(&event);
-        let header_auth_tag = parts
-            .headers
-            .get("x-auth-tag")
-            .and_then(|value| value.to_str().ok());
+        let header_auth_tag = crate::api::relay_members::extract_auth_tag_header(&parts.headers);
         let auth_tag = event_auth_tag.as_deref().or(header_auth_tag);
         if crate::api::relay_members::enforce_relay_membership(
             state,
             tenant.community(),
             pubkey.as_bytes(),
             auth_tag,
+            Some(signed_auth_created_at),
         )
         .await
         .is_err()
@@ -251,9 +250,13 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         // Verify the attestation once, here, and carry the result. The NIP-OA
         // signature is self-proving, so this holds on open relays too — the
         // same posture `extract_nip_oa_owner` documents for the rest of the
-        // HTTP surface.
-        let attested_owner =
-            crate::api::relay_members::extract_nip_oa_owner(pubkey.as_bytes(), auth_tag);
+        // HTTP surface. The verified authentication timestamp is threaded in
+        // so signed `created_at` bounds are evaluated against it.
+        let attested_owner = crate::api::relay_members::extract_nip_oa_owner(
+            pubkey.as_bytes(),
+            auth_tag,
+            Some(signed_auth_created_at),
+        );
 
         deny_banned_git_principal(&state.db, tenant.community(), &pubkey, attested_owner).await?;
 
@@ -4202,6 +4205,7 @@ mod sec005_read_gate_tests {
         let attested = crate::api::relay_members::extract_nip_oa_owner(
             agent.public_key().as_bytes(),
             Some(&auth_tag),
+            Some(200),
         );
         assert_eq!(
             attested,
@@ -4217,6 +4221,7 @@ mod sec005_read_gate_tests {
                     Keys::generate().public_key().to_hex(),
                     "00".repeat(64)
                 )),
+                Some(200),
             ),
             None,
             "an unsigned claim must not resolve to an owner"
