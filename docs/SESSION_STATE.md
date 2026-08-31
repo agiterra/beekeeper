@@ -6056,6 +6056,32 @@ specs are not false positives. `*.perf.ts` stay exempt by rule.
 siblings already carry; 5 `"requires PostgreSQL"` normalised to
 `"requires Postgres"`.
 
+**The widened gate paid for itself on its first run.** The push was refused
+with 13 failures in buzz-session-provider, every one a git-shelling test, and
+the error named a path outside the tempdir: `could not lock config file
+/Users/andy/Code/agiterra-beekeeper/.git/config`. Same class as the checkout
+probe above — git exports `GIT_DIR` into every hook, and it beats `-C` **and**
+`current_dir`. Under the hook these fixtures ran `git init` against the
+developer's own repository, and **the only thing that stopped them rewriting
+its config was a lock collision between parallel test threads**. Remove that
+accidental protection — unfixed, `--test-threads=1`, `GIT_DIR` at a throwaway
+repo — and the throwaway goes from 0 to 3 git objects. It also happened for
+real: two commits authored by `probe <probe@example.invalid>`, subject `one`,
+landed on `fix/test-health-flakes` during the failed push, one of them
+truncating `README.md` to a single line. Reset off; no probe-authored commit is
+reachable from any ref, and no other worktree was touched.
+
+This is the sweep the note above said was owed, and it found that **`-C` is the
+wrong thing to grep for**. Two false leads, both of which would mislead the next
+audit: `team_readiness_git.rs` looks unguarded because it clears the variables
+through a named constant, and the buzz-relay git code looks unguarded until you
+notice `harden_git_env` opens with `env_clear()`. Four of the five remaining
+exposures reached git through `current_dir`, not `-C`. Now guarded:
+`git_probe.rs` (production `run_git` plus both test helpers), two fixtures in
+buzz-session-provider `lib.rs`, four helpers in `api/git/hydrate.rs`, and the
+shared helper in `e2e_git.rs`. A re-audit that counts `env_clear`,
+`harden_git_env` and the constant reports zero remaining, test and production.
+
 **Still open — Stage 4, a decision rather than a patch.**
 `.github/workflows/ci.yml` is ~1100 lines describing sharded smoke E2E,
 integration E2E, relay e2e, mobile APK, Windows and cross-compile. **None of it
