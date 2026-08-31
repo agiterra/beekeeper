@@ -18,7 +18,6 @@ import {
 import {
   codingSessionCrewLeadDestination,
   codingSessionCrewProjectNote,
-  leadSeat,
   type CodingSessionCrewLaunchStep,
 } from "../lib/codingSessionCrewLaunch";
 import { codingSessionLeadWorktreeName } from "../lib/codingSessionWorktreeName";
@@ -41,13 +40,72 @@ import { codingSessionCreateModelLabel } from "./useNewCodingSessionCreate";
 
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 
-/** Read launch roles from the published team definition, before local seats resolve. */
+/** Select the lead this launch creates, with the primary as the sole fallback. */
+export function codingSessionCrewLeadSeat<
+  Seat extends { personaId: string; role: string },
+>(seats: readonly Seat[], primaryPersonaId: string): Seat | null {
+  return (
+    seats.find((seat) => seat.role.trim().toLowerCase() === "lead") ??
+    seats.find((seat) => seat.personaId === primaryPersonaId) ??
+    null
+  );
+}
+
+/** Canonicalize the selected explicit lead for the downstream launch selector. */
+export function codingSessionCrewLaunchSeats(
+  seats: readonly ResolvedCodingSessionCrewSeat[],
+  lead: ResolvedCodingSessionCrewSeat | null,
+): ResolvedCodingSessionCrewSeat[] {
+  if (lead?.role.trim().toLowerCase() !== "lead") return [...seats];
+  return seats.map((seat) =>
+    seat.personaId === lead.personaId ? { ...seat, role: "lead" } : seat,
+  );
+}
+
+/** Read the one role this launch creates from the team definition. */
 export function codingSessionCrewReadinessRoles(
   team: CodingSessionCrewTeam | null,
 ): string[] {
-  return normalizeTeamReadinessRoles(
-    team?.crew.seats.map((seat) => seat.role) ?? [],
+  if (!team) return [];
+  const lead = codingSessionCrewLeadSeat(team.crew.seats, team.crew.primary);
+  return normalizeTeamReadinessRoles(lead ? [lead.role] : []);
+}
+
+/** Keep the cached readiness gate and the rendered Launch state identical. */
+export function codingSessionCrewLaunchEnabled(input: {
+  cachedReadinessAllowed: boolean;
+  interactionLocked: boolean;
+  launchBlock: string | null;
+  refusal: string | null;
+}): boolean {
+  return (
+    input.cachedReadinessAllowed &&
+    input.refusal === null &&
+    input.launchBlock === null &&
+    !input.interactionLocked
   );
+}
+
+/** Validate only the seat this provider will actually create. */
+export function codingSessionCrewProviderRefusal(input: {
+  lead: ResolvedCodingSessionCrewSeat | null;
+  provider: {
+    allowedModels: readonly string[];
+    instanceRef: string | null;
+    label: string | null;
+  };
+}): string | null {
+  if (!input.lead) {
+    return "This team has no lead seat to hold operator authority.";
+  }
+  const createdSeats = [input.lead];
+  const runnable = checkCodingSessionCrewSeatModels(
+    createdSeats,
+    input.provider,
+  );
+  if (!runnable.ok) return runnable.reason;
+  const family = checkCodingSessionCrewFamilies(createdSeats);
+  return family.ok ? null : family.reason;
 }
 
 /**
@@ -101,11 +159,10 @@ export function codingSessionCrewProviderNote(input: {
  * Launch a team into one session: pick the team, the repo, and the goal.
  *
  * The refusals this tab is built around are all *before* anything is signed,
- * and all say what to do: a team whose seats nobody on this computer fills, a
- * seat whose model the selected provider cannot actually run, a verifier
- * sharing a model vendor with a builder, and a seat whose vendor cannot be
- * established at all. The launch button stays disabled and the reason is on
- * screen — never a launch that half-happens and explains itself afterwards.
+ * and all say what to do. Provider/model checks apply to the lead alone,
+ * because that is the only seat this launch creates; the lead routes every
+ * later hire independently. The launch button stays disabled and the reason
+ * is on screen — never a launch that half-happens and explains itself later.
  */
 export function NewCodingSessionCrewTab({
   channelId,
@@ -150,7 +207,7 @@ export function NewCodingSessionCrewTab({
   projectRef?: string | null;
   providerAuthorityPubkey: string | null;
   providerInstanceRef: string | null;
-  /** Name of the runtime every seat will run on, for the disclosure line. */
+  /** Name of the runtime the lead will run on, for the disclosure line. */
   providerLabel: string | null;
   /**
    * Models the selected provider runtime actually publishes.
@@ -208,6 +265,15 @@ export function NewCodingSessionCrewTab({
   }, [managedAgentsQuery.data, model, selectedTeam]);
 
   const seats = resolution?.seats ?? null;
+  const selectedLead =
+    seats && selectedTeam
+      ? codingSessionCrewLeadSeat(seats, selectedTeam.crew.primary)
+      : null;
+  const launchSeats = seats
+    ? codingSessionCrewLaunchSeats(seats, selectedLead)
+    : null;
+  const launchPrimaryPersonaId =
+    selectedLead?.personaId ?? selectedTeam?.crew.primary ?? "";
   const selectedRoles = React.useMemo(
     () => codingSessionCrewReadinessRoles(selectedTeam),
     [selectedTeam],
@@ -230,19 +296,22 @@ export function NewCodingSessionCrewTab({
   const provider = React.useMemo(
     () => ({
       allowedModels: providerAllowedModels,
-      // The runtime every seat is created against: a seat declaring a vendor
-      // this runtime cannot run is refused rather than launched into it.
+      // The runtime the lead is created against. Future seats are routed when
+      // the lead hires them and need not share this provider.
       instanceRef: providerInstanceRef,
       label: providerLabel,
     }),
     [providerAllowedModels, providerInstanceRef, providerLabel],
   );
-  // Same order as the launch: a model this provider cannot run is checked
-  // before the vendor rule that would otherwise read it.
-  const runnable = seats
-    ? checkCodingSessionCrewSeatModels(seats, provider)
-    : null;
-  const family = seats ? checkCodingSessionCrewFamilies(seats) : null;
+  // Match codingSessionCrewLaunch exactly: this provider creates only the
+  // lead. Future seats remain provider-neutral until their signed hire.
+  const providerRefusal =
+    seats && selectedTeam
+      ? codingSessionCrewProviderRefusal({
+          lead: selectedLead,
+          provider,
+        })
+      : null;
   // Only about the team that is actually selected: with no team to launch,
   // a missing provider is not yet anybody's problem to read.
   const refusal =
@@ -252,8 +321,7 @@ export function NewCodingSessionCrewTab({
           ? "No coding-session provider is available on this computer, so there is nothing to run the team on."
           : null) ??
         resolution?.error ??
-        (runnable && !runnable.ok ? runnable.reason : null) ??
-        (family && !family.ok ? family.reason : null));
+        providerRefusal);
 
   // The worktree field slugs whatever it is handed, and the slug is
   // idempotent — so handing it the already-suffixed name is what makes the
@@ -287,12 +355,16 @@ export function NewCodingSessionCrewTab({
     isLaunching,
     goal,
   });
-  const canLaunch =
-    refusal === null && launchBlock === null && !interactionLocked;
+  const canLaunch = codingSessionCrewLaunchEnabled({
+    cachedReadinessAllowed: cachedReadinessGate.allowed,
+    interactionLocked,
+    launchBlock,
+    refusal,
+  });
 
   const readFreshForLaunch = teamReadiness.readFreshForLaunch;
   const handleLaunch = React.useCallback(() => {
-    if (!canLaunch || !selectedTeam || !seats) return;
+    if (!canLaunch || !selectedTeam || !launchSeats) return;
     setLaunchError(null);
     void (async () => {
       let freshReadiness: Awaited<ReturnType<typeof readFreshForLaunch>>;
@@ -322,8 +394,12 @@ export function NewCodingSessionCrewTab({
         const result = await launch({
           channelId,
           goal,
-          seats,
-          primaryPersonaId: selectedTeam.crew.primary,
+          seats: launchSeats,
+          // The downstream launch selector historically compared `lead`
+          // exactly. Supplying the already-selected lead as its fallback keeps
+          // free-form role casing from switching the actual create to another
+          // seat after readiness and provider validation passed.
+          primaryPersonaId: launchPrimaryPersonaId,
           projectRef,
           provider,
           workdir: workdir.trim().length > 0 ? workdir.trim() : null,
@@ -364,12 +440,13 @@ export function NewCodingSessionCrewTab({
     channelId,
     goal,
     launch,
+    launchPrimaryPersonaId,
+    launchSeats,
     onLaunched,
     projectRef,
     provider,
     providerAuthorityPubkey,
     readFreshForLaunch,
-    seats,
     selectedTeam,
     useWorktree,
     workdir,
@@ -458,8 +535,8 @@ export function NewCodingSessionCrewTab({
 
       {selectedTeam ? (
         <CodingSessionCrewRoster
-          primaryPersonaId={selectedTeam.crew.primary}
-          seats={seats}
+          primaryPersonaId={launchPrimaryPersonaId}
+          seats={launchSeats}
         />
       ) : null}
 
@@ -602,7 +679,7 @@ export function CodingSessionCrewRoster({
   seats: ResolvedCodingSessionCrewSeat[] | null;
 }) {
   if (!seats) return null;
-  const lead = leadSeat(seats, primaryPersonaId);
+  const lead = codingSessionCrewLeadSeat(seats, primaryPersonaId);
   return (
     <ul
       className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"

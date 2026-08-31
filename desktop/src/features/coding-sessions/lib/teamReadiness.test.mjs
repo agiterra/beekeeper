@@ -343,3 +343,60 @@ test("Prepare preserves completed steps after partial failure and still re-reads
   );
   assert.equal(result.error, "macOS denied key access");
 });
+
+test("two full Prepare runs repeat named idempotent mutations and re-read without drift", async () => {
+  const calls = [];
+  const prepared = readiness({
+    readyForFirstSession: true,
+    status: "awaiting_first_session",
+    hostClass: "prepared_for_first_session",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+    facts: [
+      {
+        category: "catalog",
+        code: "CATALOG_AWAITING_FIRST_SESSION",
+        scope: "wire",
+        state: "awaiting_first_session",
+        summary: "No signed session catalog exists yet.",
+      },
+    ],
+  });
+  const dependencies = {
+    installRoles: async () => calls.push("install"),
+    provisionProvider: async () => calls.push("provision"),
+    startProvider: async () => calls.push("start"),
+    rereadReadiness: async () => {
+      calls.push("reread");
+      return structuredClone(prepared);
+    },
+  };
+
+  const first = await prepareProjectForTeams({ dependencies });
+  const second = await prepareProjectForTeams({ dependencies });
+
+  assert.deepEqual(calls, [
+    "install",
+    "provision",
+    "start",
+    "reread",
+    "install",
+    "provision",
+    "start",
+    "reread",
+  ]);
+  assert.deepEqual(second, first);
+  assert.deepEqual(
+    second.steps.map(({ id, state }) => ({ id, state })),
+    [
+      { id: "install_roles", state: "done" },
+      { id: "provision_provider", state: "done" },
+      { id: "start_provider", state: "done" },
+      { id: "reread_readiness", state: "done" },
+    ],
+  );
+});

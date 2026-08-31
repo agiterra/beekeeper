@@ -410,6 +410,106 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
   );
 });
 
+test("the full Prepare UI is idempotent across two confirmed runs", async () => {
+  const prepared = readiness({
+    readyForFirstSession: true,
+    status: "awaiting_first_session",
+    hostClass: "prepared_for_first_session",
+    provider: {
+      relayUrl: "wss://hive.example",
+      provisioned: true,
+      process: "live",
+    },
+    facts: [
+      {
+        category: "catalog",
+        code: "CATALOG_AWAITING_FIRST_SESSION",
+        scope: "wire",
+        state: "awaiting_first_session",
+        summary: "No signed session catalog exists yet.",
+        remedy: "Launch the first session.",
+      },
+    ],
+    unknownCodes: [],
+    awaitingCodes: ["CATALOG_AWAITING_FIRST_SESSION"],
+  });
+  answers.team_readiness = [readiness(), prepared, structuredClone(prepared)];
+  answers.scan_project_role_packs_directory = {
+    directory: "/repo/personas/roles",
+    exists: true,
+    packs: [
+      {
+        role: "lead",
+        personaName: "lead",
+        packDir: "/repo/personas/roles/lead",
+        defaultName: "Helios",
+        installed: true,
+      },
+    ],
+    skipped: [],
+  };
+  answers.install_crew_role_packs = { installed: [], skipped: [] };
+  answers.provision_coding_session_provider = {
+    provisioned: true,
+    running: true,
+  };
+  answers.ensure_coding_session_provider_running = {
+    provisioned: true,
+    running: true,
+  };
+  await mountHarness();
+  const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+  await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
+  fireEvent.click(screen.getByTestId("team-readiness-prepare"));
+  await screen.findByLabelText("lead agent name");
+
+  const confirm = screen.getByTestId("team-readiness-prepare-confirm");
+  fireEvent.click(confirm);
+  await screen.findByText(/Prepared for the first session/);
+  await waitFor(() =>
+    assert.equal(
+      calls.filter(({ command }) => command === "team_readiness").length,
+      2,
+    ),
+  );
+  fireEvent.click(confirm);
+  await waitFor(() =>
+    assert.equal(
+      calls.filter(({ command }) => command === "team_readiness").length,
+      3,
+    ),
+  );
+
+  assert.deepEqual(
+    readinessCalls().map(({ command }) => command),
+    [
+      "team_readiness",
+      "scan_project_role_packs_directory",
+      "install_crew_role_packs",
+      "provision_coding_session_provider",
+      "ensure_coding_session_provider_running",
+      "team_readiness",
+      "install_crew_role_packs",
+      "provision_coding_session_provider",
+      "ensure_coding_session_provider_running",
+      "team_readiness",
+    ],
+  );
+  assert.match(
+    screen.getByTestId("team-readiness-card").textContent,
+    /Prepared for the first session/,
+  );
+  assert.equal(
+    screen.getByTestId("team-readiness-prepare-steps").querySelectorAll("li")
+      .length,
+    4,
+  );
+  assert.doesNotMatch(
+    screen.getByTestId("team-readiness-prepare-steps").textContent,
+    /failed|pending|running/,
+  );
+});
+
 test("partial native failure keeps completed UI steps and re-reads readiness", async () => {
   answers.team_readiness = [readiness(), readiness()];
   answers.scan_project_role_packs_directory = {

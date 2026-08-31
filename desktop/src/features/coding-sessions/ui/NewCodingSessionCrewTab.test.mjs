@@ -5,14 +5,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE,
+  codingSessionCrewLeadSeat,
+  codingSessionCrewLaunchEnabled,
+  codingSessionCrewLaunchSeats,
+  codingSessionCrewProviderRefusal,
   codingSessionCrewProviderNote,
   codingSessionCrewReadinessRoles,
   CodingSessionCrewLaunchSteps,
   CodingSessionCrewRoster,
   CodingSessionCrewSkillNotice,
 } from "./NewCodingSessionCrewTab.tsx";
+import { leadSeat as selectDownstreamLaunchLead } from "../lib/codingSessionCrewLaunch.ts";
 
-test("readiness roles come from the team definition before local seats resolve", () => {
+test("readiness evaluates only the lead this launch creates", () => {
   assert.deepEqual(
     codingSessionCrewReadinessRoles({
       id: "portable-team",
@@ -26,7 +31,167 @@ test("readiness roles come from the team definition before local seats resolve",
         ],
       },
     }),
-    ["builder", "lead"],
+    ["lead"],
+  );
+});
+
+test("the primary role is the launch readiness role when a team has no lead", () => {
+  assert.deepEqual(
+    codingSessionCrewReadinessRoles({
+      id: "portable-team",
+      name: "Portable team",
+      crew: {
+        primary: "architect",
+        seats: [
+          { personaId: "builder", role: "builder" },
+          { personaId: "architect", role: "architect" },
+        ],
+      },
+    }),
+    ["architect"],
+  );
+});
+
+test("cached unknown readiness visibly keeps Launch disabled before fresh preflight", () => {
+  assert.equal(
+    codingSessionCrewLaunchEnabled({
+      cachedReadinessAllowed: false,
+      interactionLocked: false,
+      launchBlock: null,
+      refusal: null,
+    }),
+    false,
+  );
+  assert.equal(
+    codingSessionCrewLaunchEnabled({
+      cachedReadinessAllowed: true,
+      interactionLocked: false,
+      launchBlock: null,
+      refusal: null,
+    }),
+    true,
+  );
+});
+
+test("provider preflight validates the lead and leaves future seats router-selected", () => {
+  const lead = {
+    personaId: "lead",
+    role: "lead",
+    actor: "a".repeat(64),
+    actorLabel: "Helios",
+    model: "claude-opus-5",
+    vendor: "anthropic",
+  };
+  const futureBuilder = {
+    personaId: "builder",
+    role: "builder",
+    actor: "b".repeat(64),
+    actorLabel: "Bob",
+    model: "gpt-5.6-sol",
+    vendor: "openai",
+  };
+  const provider = {
+    allowedModels: ["claude-opus-5"],
+    instanceRef: "claude-primary",
+    label: "Claude Code",
+  };
+  const selected = codingSessionCrewLeadSeat(
+    [lead, futureBuilder],
+    lead.personaId,
+  );
+  assert.equal(
+    codingSessionCrewProviderRefusal({
+      lead: selected,
+      provider,
+    }),
+    null,
+  );
+  assert.match(
+    codingSessionCrewProviderRefusal({
+      lead: { ...lead, model: "gpt-5.6-sol", vendor: "openai" },
+      provider,
+    }),
+    /Claude Code|claude-primary|anthropic/i,
+  );
+});
+
+test("normalized explicit lead cannot hide behind a compatible primary", () => {
+  const primary = {
+    personaId: "architect",
+    role: "architect",
+    actor: "a".repeat(64),
+    actorLabel: "Ada",
+    model: "claude-opus-5",
+    vendor: "anthropic",
+  };
+  const explicitLead = {
+    personaId: "lead",
+    role: " LEAD ",
+    actor: "b".repeat(64),
+    actorLabel: "Lin",
+    model: "gpt-5.6-sol",
+    vendor: "openai",
+  };
+  const selected = codingSessionCrewLeadSeat(
+    [primary, explicitLead],
+    primary.personaId,
+  );
+  const launchSeats = codingSessionCrewLaunchSeats(
+    [primary, explicitLead],
+    selected,
+  );
+
+  assert.equal(selected, explicitLead);
+  assert.equal(
+    selectDownstreamLaunchLead(launchSeats, selected.personaId)?.personaId,
+    explicitLead.personaId,
+  );
+  assert.match(
+    codingSessionCrewProviderRefusal({
+      lead: selected,
+      provider: {
+        allowedModels: [primary.model],
+        instanceRef: "claude-primary",
+        label: "Claude Code",
+      },
+    }),
+    /Claude Code|claude-primary|anthropic/i,
+  );
+});
+
+test("no explicit lead selects and validates the primary seat", () => {
+  const builder = {
+    personaId: "builder",
+    role: "builder",
+    actor: "b".repeat(64),
+    actorLabel: "Bob",
+    model: "gpt-5.6-sol",
+    vendor: "openai",
+  };
+  const primary = {
+    personaId: "architect",
+    role: "architect",
+    actor: "a".repeat(64),
+    actorLabel: "Ada",
+    model: "claude-opus-5",
+    vendor: "anthropic",
+  };
+  const selected = codingSessionCrewLeadSeat(
+    [builder, primary],
+    primary.personaId,
+  );
+
+  assert.equal(selected, primary);
+  assert.equal(
+    codingSessionCrewProviderRefusal({
+      lead: selected,
+      provider: {
+        allowedModels: [primary.model],
+        instanceRef: "claude-primary",
+        label: "Claude Code",
+      },
+    }),
+    null,
   );
 });
 
