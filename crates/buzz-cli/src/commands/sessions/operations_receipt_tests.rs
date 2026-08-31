@@ -21,6 +21,82 @@ const CHANNEL: &str = "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86";
 const SESSION: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 const GENESIS: &str = "abababababababababababababababababababababababababababababababab";
 
+#[test]
+fn operation_command_rejects_a_body_for_the_wrong_operation() {
+    let report = json!({
+        "assignmentRef": "11".repeat(32),
+        "summary": "done",
+        "branch": null,
+        "baseSha": null,
+        "headSha": null,
+        "files": [],
+        "tests": [],
+        "redBeforeGreen": null,
+        "deviations": [],
+        "residuals": [],
+        "anomalies": []
+    });
+    assert!(decode_body(CodingSessionTeamTransactionType::Assignment, report).is_err());
+}
+
+#[test]
+fn body_file_syntax_does_not_guess_plain_strings_are_paths() {
+    let body = read_json_argument(r#"{"status":"received"}"#).expect("inline JSON");
+    assert_eq!(body["status"], "received");
+}
+
+#[tokio::test]
+async fn team_operation_is_recorded_before_wake_and_wake_failure_stays_visible() {
+    use std::sync::{Arc, Mutex};
+
+    let operation_id = "ab".repeat(32);
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let stored = Arc::new(Mutex::new(Vec::new()));
+    let submit_order = Arc::clone(&order);
+    let submit_stored = Arc::clone(&stored);
+    let submitted_id = operation_id.clone();
+    let wake_order = Arc::clone(&order);
+    let wake_stored = Arc::clone(&stored);
+    let wake_id = operation_id.clone();
+
+    let output = submit_record_then_wake(
+        &operation_id,
+        move || async move {
+            submit_order.lock().expect("order lock").push("record");
+            submit_stored
+                .lock()
+                .expect("stored lock")
+                .push(submitted_id.clone());
+            Ok(json!({
+                "event_id": submitted_id,
+                "accepted": true,
+                "message": ""
+            })
+            .to_string())
+        },
+        Some(move || async move {
+            assert!(wake_stored.lock().expect("stored lock").contains(&wake_id));
+            wake_order.lock().expect("order lock").push("wake");
+            Err(CliError::Other("provider unavailable".into()))
+        }),
+    )
+    .await
+    .expect("stored record remains a successful operation");
+
+    assert_eq!(*order.lock().expect("order lock"), ["record", "wake"]);
+    assert_eq!(
+        stored.lock().expect("stored lock").as_slice(),
+        std::slice::from_ref(&operation_id)
+    );
+    assert_eq!(output["accepted"], true);
+    assert_eq!(output["delivery"]["status"], "unconfirmed");
+    assert_eq!(output["delivery"]["recordedOperationId"], operation_id);
+    assert!(output["delivery"]["error"]
+        .as_str()
+        .expect("delivery error")
+        .contains("provider unavailable"));
+}
+
 fn authority_event(
     signer: &Keys,
     transition_type: CodingSessionAuthorityTransitionType,

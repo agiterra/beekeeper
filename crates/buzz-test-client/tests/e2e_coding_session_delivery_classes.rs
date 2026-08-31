@@ -26,6 +26,14 @@ use buzz_core::coding_session_command::{
 use buzz_core::coding_session_payload::{
     decode_coding_session_lifecycle_receipt, LifecycleReceipt, NO_LIVE_EXECUTION, STEER_UNSUPPORTED,
 };
+use buzz_core::coding_session_team_transaction::{
+    CodingSessionTeamAssignment, CodingSessionTeamTransactionBody,
+};
+use buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
+use buzz_sdk::coding_session_team_transaction::{
+    build_coding_session_team_transaction, coding_session_team_transaction_payload,
+    parse_coding_session_team_transaction,
+};
 use buzz_sdk::{build_coding_session_command, build_coding_session_turn_receipt, build_join};
 use buzz_test_client::BuzzTestClient;
 use nostr::{Alphabet, Event, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
@@ -102,6 +110,37 @@ fn receipt_event(provider: &Keys, channel_id: Uuid, receipt: &LifecycleReceipt) 
     .expect("build turn receipt")
     .sign_with_keys(provider)
     .expect("sign turn receipt")
+}
+
+fn assignment_event(
+    signer: &Keys,
+    channel_id: Uuid,
+    session_ref: &str,
+    genesis_ref: &str,
+    assignee: &Keys,
+    delivery_command_id: Option<String>,
+) -> Event {
+    let body = CodingSessionTeamTransactionBody::Assignment(CodingSessionTeamAssignment {
+        assignee_actor: assignee.public_key().to_hex(),
+        assignee_role: "builder".into(),
+        objective: "Consume the signed operation pointer".into(),
+        brief: "Fetch and verify kind 44244 before acting on the wake.".into(),
+        branch: None,
+        base_sha: None,
+        file_ownership: vec!["crates/buzz-test-client".into()],
+        acceptance_steps: vec!["resolve the exact operation id".into()],
+    });
+    let payload = coding_session_team_transaction_payload(
+        session_ref,
+        genesis_ref,
+        None,
+        delivery_command_id,
+        body,
+    );
+    build_coding_session_team_transaction(&channel_id.to_string(), payload)
+        .expect("build assignment")
+        .sign_with_keys(signer)
+        .expect("sign assignment")
 }
 
 #[tokio::test]
@@ -268,4 +307,180 @@ async fn the_relay_stores_every_delivery_class_and_the_new_turn_stages() {
 
     operator_ws.disconnect().await.expect("operator disconnect");
     provider_ws.disconnect().await.expect("provider disconnect");
+}
+
+#[tokio::test]
+#[ignore = "requires running relay, Postgres, and Redis"]
+async fn team_operation_is_stored_before_pointer_wake_and_strictly_admitted() {
+    let url = relay_url();
+    let operator = Keys::generate();
+    let provider = Keys::generate();
+    let outsider = Keys::generate();
+    let mut operator_ws = BuzzTestClient::connect(&url, &operator)
+        .await
+        .expect("operator connect");
+    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+        .await
+        .expect("provider connect");
+    let mut outsider_ws = BuzzTestClient::connect(&url, &outsider)
+        .await
+        .expect("outsider connect");
+    let channel_id = create_channel(&mut operator_ws, &operator).await;
+    join_channel(&mut provider_ws, &provider, channel_id).await;
+
+    let session_ref = Uuid::new_v4().to_string();
+    let genesis_ref = "ab".repeat(32);
+    let command_id = format!("team-wake-{}", Uuid::new_v4());
+    let operation = assignment_event(
+        &operator,
+        channel_id,
+        &session_ref,
+        &genesis_ref,
+        &provider,
+        Some(command_id.clone()),
+    );
+    let operation_id = operation.id;
+    let accepted = operator_ws
+        .send_event(operation.clone())
+        .await
+        .expect("store assignment");
+    assert!(
+        accepted.accepted,
+        "assignment rejected: {}",
+        accepted.message
+    );
+
+    let malformed = EventBuilder::new(operation.kind, operation.content.clone())
+        .tags(
+            operation
+                .tags
+                .iter()
+                .cloned()
+                .chain([Tag::parse(["unexpected", "tag"]).expect("extra tag")]),
+        )
+        .sign_with_keys(&operator)
+        .expect("sign malformed transaction");
+    let malformed_result = operator_ws
+        .send_event(malformed)
+        .await
+        .expect("submit malformed transaction");
+    assert!(!malformed_result.accepted);
+    assert!(
+        malformed_result.message.contains("invalid:"),
+        "malformed envelope should be rejected as invalid, got: {}",
+        malformed_result.message
+    );
+
+    let outsider_operation = assignment_event(
+        &outsider,
+        channel_id,
+        &session_ref,
+        &genesis_ref,
+        &outsider,
+        None,
+    );
+    let outsider_result = outsider_ws
+        .send_event(outsider_operation)
+        .await
+        .expect("submit outsider transaction");
+    assert!(!outsider_result.accepted);
+    assert!(
+        outsider_result.message.contains("restricted:")
+            && outsider_result.message.contains("membership"),
+        "open-channel outsider must fail the strict session gate, got: {}",
+        outsider_result.message
+    );
+
+    let target = CodingSessionTarget {
+        driver: "claude-agent-acp".into(),
+        instance_id: "instance-1".into(),
+        session_id: session_ref,
+        generation: 1,
+    };
+    let pointer = serde_json::json!({
+        "operationId": operation_id.to_hex(),
+        "type": "assignment",
+    });
+    let wake = turn_command(
+        &operator,
+        channel_id,
+        &target,
+        &command_id,
+        CodingSessionDelivery::Boundary,
+    );
+    let wake_payload: CodingSessionCommandPayload =
+        serde_json::from_str(&wake.content).expect("decode generated wake");
+    let wake = CodingSessionCommandPayload {
+        action: CodingSessionAction::ThreadTurnStart {
+            text: pointer.to_string(),
+            deliver: CodingSessionDelivery::Boundary,
+        },
+        ..wake_payload
+    };
+    let wake = build_coding_session_command(channel_id, &wake)
+        .expect("build pointer wake")
+        .sign_with_keys(&operator)
+        .expect("sign pointer wake");
+    let wake_result = operator_ws
+        .send_event(wake)
+        .await
+        .expect("store pointer wake");
+    assert!(
+        wake_result.accepted,
+        "pointer wake rejected: {}",
+        wake_result.message
+    );
+
+    provider_ws
+        .subscribe("team-pointer", vec![kind_filter(COMMAND_KIND, channel_id)])
+        .await
+        .expect("subscribe pointer");
+    let commands = provider_ws
+        .collect_until_eose("team-pointer", Duration::from_secs(10))
+        .await
+        .expect("collect pointer");
+    assert_eq!(commands.len(), 1);
+    let command: CodingSessionCommandPayload =
+        serde_json::from_str(&commands[0].content).expect("decode pointer command");
+    let CodingSessionAction::ThreadTurnStart { text, .. } = command.action else {
+        panic!("operation wake must be a turn start");
+    };
+    let delivered_pointer: serde_json::Value =
+        serde_json::from_str(&text).expect("decode pointer body");
+    assert_eq!(delivered_pointer, pointer);
+    assert_eq!(
+        delivered_pointer.as_object().expect("pointer object").len(),
+        2,
+        "wake prose must not duplicate signed operation fields"
+    );
+
+    provider_ws
+        .subscribe(
+            "team-operation",
+            vec![Filter::new()
+                .id(operation_id)
+                .kind(Kind::Custom(KIND_CODING_SESSION_TEAM_TRANSACTION as u16))],
+        )
+        .await
+        .expect("query operation pointer");
+    let operations = provider_ws
+        .collect_until_eose("team-operation", Duration::from_secs(10))
+        .await
+        .expect("collect signed operation");
+    assert_eq!(
+        operations.len(),
+        1,
+        "pointer must resolve one signed record"
+    );
+    let resolved = parse_coding_session_team_transaction(&operations[0])
+        .expect("provider re-verifies signed operation");
+    assert_eq!(
+        resolved.delivery_command_id.as_deref(),
+        Some(command_id.as_str())
+    );
+    assert_eq!(resolved.transaction_type.as_str(), "assignment");
+
+    operator_ws.disconnect().await.expect("operator disconnect");
+    provider_ws.disconnect().await.expect("provider disconnect");
+    outsider_ws.disconnect().await.expect("outsider disconnect");
 }

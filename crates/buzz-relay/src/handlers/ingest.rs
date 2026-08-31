@@ -4796,6 +4796,10 @@ fn websocket_only_ingest_kind(kind: u32) -> bool {
 }
 
 #[cfg(test)]
+#[path = "ingest_team_transaction_tests.rs"]
+mod team_transaction_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 

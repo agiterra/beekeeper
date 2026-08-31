@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::Future;
 use std::io::{self, Read};
 
 use buzz_core::coding_session_authority_transition::{
@@ -76,24 +77,46 @@ pub async fn cmd_write(
     }
 
     let operation_id = event.id.to_hex();
-    let raw = client.submit_event(event).await?;
+    let wake = args
+        .wake_to
+        .as_deref()
+        .zip(delivery_command_id.as_deref())
+        .map(|(wake_to, command_id)| {
+            || {
+                super::crew_cmds::send_team_operation_wake(
+                    client,
+                    &args.channel,
+                    wake_to,
+                    &args.session_ref,
+                    command_id,
+                    &operation_id,
+                    transaction_type.as_str(),
+                )
+            }
+        });
+    let output =
+        submit_record_then_wake(&operation_id, || client.submit_event(event), wake).await?;
+    println!("{output}");
+    Ok(())
+}
+
+async fn submit_record_then_wake<Submit, SubmitFuture, Wake, WakeFuture>(
+    operation_id: &str,
+    submit: Submit,
+    wake: Option<Wake>,
+) -> Result<Value, CliError>
+where
+    Submit: FnOnce() -> SubmitFuture,
+    SubmitFuture: Future<Output = Result<String, CliError>>,
+    Wake: FnOnce() -> WakeFuture,
+    WakeFuture: Future<Output = Result<Value, CliError>>,
+{
+    let raw = submit().await?;
     let response = crate::commands::parse_write_response(&raw, "team transaction already stored")?;
     let mut output: Value = serde_json::from_str(&response)
         .map_err(|error| CliError::Other(format!("relay response is not JSON: {error}")))?;
-    if let (Some(wake_to), Some(command_id)) =
-        (args.wake_to.as_deref(), delivery_command_id.as_deref())
-    {
-        let wake = super::crew_cmds::send_team_operation_wake(
-            client,
-            &args.channel,
-            wake_to,
-            &args.session_ref,
-            command_id,
-            &operation_id,
-            transaction_type.as_str(),
-        )
-        .await;
-        let delivery = match wake {
+    if let Some(wake) = wake {
+        let delivery = match wake().await {
             Ok(value) => value,
             Err(error) => json!({
                 "accepted": null,
@@ -106,8 +129,7 @@ pub async fn cmd_write(
             object.insert("delivery".into(), delivery);
         }
     }
-    println!("{output}");
-    Ok(())
+    Ok(output)
 }
 
 /// Read one or all operations with signed provenance and fold disclosure.
@@ -953,30 +975,6 @@ mod tests {
             founder,
             &relay.public_key().to_hex(),
         )
-    }
-
-    #[test]
-    fn operation_command_rejects_a_body_for_the_wrong_operation() {
-        let report = json!({
-            "assignmentRef": "11".repeat(32),
-            "summary": "done",
-            "branch": null,
-            "baseSha": null,
-            "headSha": null,
-            "files": [],
-            "tests": [],
-            "redBeforeGreen": null,
-            "deviations": [],
-            "residuals": [],
-            "anomalies": []
-        });
-        assert!(decode_body(CodingSessionTeamTransactionType::Assignment, report).is_err());
-    }
-
-    #[test]
-    fn body_file_syntax_does_not_guess_plain_strings_are_paths() {
-        let body = read_json_argument(r#"{"status":"received"}"#).expect("inline JSON");
-        assert_eq!(body["status"], "received");
     }
 
     #[test]
