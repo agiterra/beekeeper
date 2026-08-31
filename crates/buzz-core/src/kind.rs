@@ -696,23 +696,23 @@ pub const KIND_CODING_SESSION_GENESIS: u32 = 44226;
 /// `(created_at, event id)`. See `docs/nips/NIP-CSG.md`.
 pub const KIND_CODING_SESSION_GOAL: u32 = 44227;
 
-/// NIP-CSAT (draft): Coding-session authority transition — one append-only
-/// step of a session's authority chain.
+/// NIP-CSAT: Coding-session authority transition — one append-only step of a
+/// session's authority chain.
 ///
 /// Regular stored event (append-only), channel-scoped via an `h` tag.
 /// Content is a public JSON
 /// [`crate::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload`]
 /// naming the session's genesis by event id, the previous accepted
 /// transition (or `null` for the chain's first link), a sequence number
-/// starting at 1, exactly one transition type (`grant-operator` today, the
-/// only type this build accepts), and the grantee pubkey. Ordered tags: `h`,
-/// `csat-v`, `csat-genesis`. The relay validates linkage against the chain
-/// and the signer's standing (the session's owner — today the genesis
-/// signer) at ingest, atomically with storage, and publishes a relay-signed
-/// acceptance receipt (kind 40099) naming the new canonical head. See
-/// `docs/nips/NIP-CSG.md` for the genesis this chain roots at; the
-/// transition's own spec text is drafted here and finalized after A6 per the
-/// sessions execution plan.
+/// starting at 1, one of `grant-operator`, `grant-viewer`, `revoke`,
+/// `grant-seat`, or `revoke-seat`, and the grantee pubkey. Seat transitions
+/// also carry an exact normalized role slug. Ordered tags: `h`, `csat-v`,
+/// `csat-genesis`. The relay validates linkage and signer standing atomically
+/// with storage: legacy grant/revoke transitions are founder-only; seat
+/// transitions may be signed by the founder, an active steering operator, or
+/// an active lead, but a lead may manage only non-lead seats. On acceptance
+/// the relay publishes a signed kind 40099 receipt naming the new canonical
+/// head. See `docs/nips/NIP-CSAT.md`.
 pub const KIND_CODING_SESSION_AUTHORITY_TRANSITION: u32 = 44228;
 
 /// NIP-CSN: Coding-session name — one human-authored revision of the umbrella

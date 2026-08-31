@@ -46,7 +46,7 @@ abstract final class EventKind {
   static const huddleParticipantLeft = 48102;
   static const huddleEnded = 48103;
 
-  // --- Coding sessions (44220-44230, 24223) ---------------------------------
+  // --- Coding sessions (44220-44230, 44244, 24223) --------------------------
   // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile is a
   // read-only observer: it subscribes to the fact kinds and never publishes a
   // command kind.
@@ -83,6 +83,9 @@ abstract final class EventKind {
 
   /// Kind:44230 umbrella-session closure marker (addressable by `d`).
   static const codingSessionClosure = 44230;
+
+  /// Kind:44244 signed, append-only team transaction within a session.
+  static const codingSessionTeamTransaction = 44244;
 
   /// Kind:24223 ephemeral provider lease proving the provider is reachable.
   static const codingSessionLease = 24223;

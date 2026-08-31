@@ -18,6 +18,7 @@ void main() {
       expect(EventKind.codingSessionAuthorityTransition, 44228);
       expect(EventKind.codingSessionName, 44229);
       expect(EventKind.codingSessionClosure, 44230);
+      expect(EventKind.codingSessionTeamTransaction, 44244);
       expect(EventKind.codingSessionLease, 24223);
       expect(EventKind.relayReceipt, 40099);
     });
