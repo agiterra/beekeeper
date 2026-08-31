@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getRelaySelf } from "@/features/moderation/lib/relaySelf";
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
@@ -8,7 +9,13 @@ import {
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_SYSTEM_MESSAGE,
 } from "@/shared/constants/kinds";
+import {
+  hasDuplicateJsonKeys,
+  hasExactFields,
+} from "@/shared/coordination/sessionCoordinationStrictJson";
+import { hasValidSignature } from "@/shared/lib/authors";
 import type { EntityRole } from "@/shared/lib/entityRoles";
+import { parseExactTags } from "./codingSessionWireDecode";
 
 /**
  * Coding-session roster: the client-side fold of one session's NIP-CSAT
@@ -18,14 +25,22 @@ import type { EntityRole } from "@/shared/lib/entityRoles";
  *
  * The relay is the authority — it validates chain linkage (prevAccepted/seq
  * against the current accepted head) and owner signing at ingest, and mints
- * one receipt per accepted transition. This fold is advisory display state:
- * a transition without a matching receipt is *pending*, never a grant. The
- * fold fails closed exactly like the session provider's verifier — an
- * unknown transition type, or a receipt whose bound facts disagree with its
- * transition, stops the fold at that link.
+ * one receipt per accepted transition. This raw-history fold re-verifies each
+ * transition signature and only trusts a receipt signed by the active relay's
+ * NIP-11 key in the expected channel. It remains advisory display state: a
+ * transition without a matching receipt is *pending*, never a grant. The fold
+ * fails closed exactly like the session provider's verifier — an unknown
+ * transition type, malformed envelope, or receipt whose bound facts disagree
+ * with its transition stops the fold at that link. Additive seat links are
+ * verified and advance the accepted head, but stay out of this legacy
+ * operator/viewer display projection.
  */
 
 const HEX64_REGEX = /^[0-9a-f]{64}$/;
+const ROLE_SLUG_REGEX = /^[a-z0-9-]{1,64}$/;
+const MAX_U32 = 0xffff_ffff;
+const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES = 512;
+const textEncoder = new TextEncoder();
 
 /** Version tag pinned on every 44228 transition (`csat-v`). */
 export const CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION =
@@ -35,17 +50,43 @@ export const CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION =
 export const CODING_SESSION_AUTHORITY_RECEIPT_TYPE =
   "coding_session_authority_transition_accepted" as const;
 
-/** The pinned transition vocabulary. Anything else fails the fold closed. */
+/** Legacy transition vocabulary this display surface is allowed to emit. */
 export type CodingSessionAuthorityTransitionType =
   | "grant-operator"
   | "grant-viewer"
   | "revoke";
 
-const TRANSITION_TYPES: readonly CodingSessionAuthorityTransitionType[] = [
-  "grant-operator",
-  "grant-viewer",
-  "revoke",
-];
+type AcceptedCodingSessionAuthorityTransitionType =
+  | CodingSessionAuthorityTransitionType
+  | "grant-seat"
+  | "revoke-seat";
+
+const ACCEPTED_TRANSITION_TYPES =
+  new Set<AcceptedCodingSessionAuthorityTransitionType>([
+    "grant-operator",
+    "grant-viewer",
+    "revoke",
+    "grant-seat",
+    "revoke-seat",
+  ]);
+
+const LEGACY_TRANSITION_FIELDS = [
+  "genesisRef",
+  "prevAccepted",
+  "seq",
+  "type",
+  "granteePubkey",
+] as const;
+const SEAT_TRANSITION_FIELDS = [...LEGACY_TRANSITION_FIELDS, "role"] as const;
+const LEGACY_RECEIPT_FIELDS = [
+  "type",
+  "genesisRef",
+  "acceptedEventId",
+  "seq",
+  "transitionType",
+  "granteePubkey",
+] as const;
+const SEAT_RECEIPT_FIELDS = [...LEGACY_RECEIPT_FIELDS, "role"] as const;
 
 /** Wire-grain role a live grant confers (`coding_session_authority_acl`). */
 export type CodingSessionRosterRole = "operator" | "viewer";
@@ -72,17 +113,20 @@ export type CodingSessionRosterEntry = {
 
 type ParsedTransition = {
   eventId: string;
+  channelId: string;
   seq: number;
   prevAccepted: string | null;
-  /** Kept raw so an unknown type is visible to the fold (fail closed). */
-  type: string;
+  type: AcceptedCodingSessionAuthorityTransitionType;
   granteePubkey: string;
+  role: string | null;
 };
 
 type ParsedReceipt = {
+  channelId: string;
   seq: number;
-  transitionType: string;
+  transitionType: AcceptedCodingSessionAuthorityTransitionType;
   granteePubkey: string;
+  role: string | null;
 };
 
 /** UI vocabulary for a wire grant role: operator ⇒ collaborator. */
@@ -110,58 +154,157 @@ function rosterRoleForGrantType(type: string): CodingSessionRosterRole | null {
   return null;
 }
 
-function parseTransition(
-  event: RelayEvent,
-  genesisRef: string,
-): ParsedTransition | null {
-  let value: unknown;
+function isAcceptedTransitionType(
+  value: unknown,
+): value is AcceptedCodingSessionAuthorityTransitionType {
+  return (
+    typeof value === "string" &&
+    ACCEPTED_TRANSITION_TYPES.has(
+      value as AcceptedCodingSessionAuthorityTransitionType,
+    )
+  );
+}
+
+function isSeatTransitionType(
+  value: AcceptedCodingSessionAuthorityTransitionType,
+): value is "grant-seat" | "revoke-seat" {
+  return value === "grant-seat" || value === "revoke-seat";
+}
+
+function isU32Sequence(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_U32
+  );
+}
+
+function parseJsonObject(content: string, maxBytes?: number) {
+  if (
+    (maxBytes !== undefined && textEncoder.encode(content).length > maxBytes) ||
+    hasDuplicateJsonKeys(content)
+  ) {
+    return null;
+  }
   try {
-    value = JSON.parse(event.content);
+    const value: unknown = JSON.parse(content);
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
-  if (typeof value !== "object" || value === null) return null;
-  const payload = value as Record<string, unknown>;
+}
+
+function parseTransition(
+  event: RelayEvent,
+  genesisRef: string,
+  expectedChannel: string,
+): ParsedTransition | null {
+  if (
+    event.kind !== KIND_CODING_SESSION_AUTHORITY_TRANSITION ||
+    !HEX64_REGEX.test(event.id) ||
+    !hasValidSignature(event)
+  ) {
+    return null;
+  }
+  const tagValues = parseExactTags(event.tags, ["h", "csat-v", "csat-genesis"]);
+  if (
+    !tagValues ||
+    tagValues[0] !== expectedChannel ||
+    tagValues[1] !== CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION ||
+    tagValues[2] !== genesisRef
+  ) {
+    return null;
+  }
+  const payload = parseJsonObject(
+    event.content,
+    MAX_AUTHORITY_TRANSITION_CONTENT_BYTES,
+  );
+  if (!payload || !isAcceptedTransitionType(payload.type)) return null;
+  const seatTransition = isSeatTransitionType(payload.type);
+  if (
+    !hasExactFields(payload, [
+      seatTransition ? SEAT_TRANSITION_FIELDS : LEGACY_TRANSITION_FIELDS,
+    ])
+  ) {
+    return null;
+  }
   if (payload.genesisRef !== genesisRef) return null;
   const seq = payload.seq;
-  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 1) return null;
+  if (!isU32Sequence(seq)) return null;
   const prevAccepted = payload.prevAccepted;
-  if (prevAccepted !== null && typeof prevAccepted !== "string") return null;
-  if (typeof payload.type !== "string") return null;
-  if (typeof payload.granteePubkey !== "string") return null;
+  if (
+    (prevAccepted !== null &&
+      (typeof prevAccepted !== "string" || !HEX64_REGEX.test(prevAccepted))) ||
+    (seq === 1) !== (prevAccepted === null) ||
+    typeof payload.granteePubkey !== "string" ||
+    !HEX64_REGEX.test(payload.granteePubkey) ||
+    (seatTransition &&
+      (typeof payload.role !== "string" || !ROLE_SLUG_REGEX.test(payload.role)))
+  ) {
+    return null;
+  }
   return {
     eventId: event.id,
+    channelId: tagValues[0],
     seq,
     prevAccepted: prevAccepted as string | null,
     type: payload.type,
-    granteePubkey: payload.granteePubkey.toLowerCase(),
+    granteePubkey: payload.granteePubkey,
+    role: seatTransition ? (payload.role as string) : null,
   };
 }
 
 function parseReceipt(
   event: RelayEvent,
   genesisRef: string,
+  expectedChannel: string,
+  trustedRelayPubkey: string,
 ): { acceptedEventId: string; receipt: ParsedReceipt } | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(event.content);
-  } catch {
+  if (
+    event.kind !== KIND_SYSTEM_MESSAGE ||
+    event.pubkey !== trustedRelayPubkey ||
+    !hasValidSignature(event)
+  ) {
     return null;
   }
-  if (typeof value !== "object" || value === null) return null;
-  const payload = value as Record<string, unknown>;
+  const tagValues = parseExactTags(event.tags, ["h"]);
+  if (!tagValues || tagValues[0] !== expectedChannel) return null;
+  const payload = parseJsonObject(event.content);
+  if (!payload || !isAcceptedTransitionType(payload.transitionType)) {
+    return null;
+  }
+  const seatTransition = isSeatTransitionType(payload.transitionType);
+  if (
+    !hasExactFields(payload, [
+      seatTransition ? SEAT_RECEIPT_FIELDS : LEGACY_RECEIPT_FIELDS,
+    ])
+  ) {
+    return null;
+  }
   if (payload.type !== CODING_SESSION_AUTHORITY_RECEIPT_TYPE) return null;
   if (payload.genesisRef !== genesisRef) return null;
-  if (typeof payload.acceptedEventId !== "string") return null;
-  if (typeof payload.seq !== "number") return null;
-  if (typeof payload.transitionType !== "string") return null;
-  if (typeof payload.granteePubkey !== "string") return null;
+  if (
+    typeof payload.acceptedEventId !== "string" ||
+    !HEX64_REGEX.test(payload.acceptedEventId) ||
+    !isU32Sequence(payload.seq) ||
+    typeof payload.granteePubkey !== "string" ||
+    !HEX64_REGEX.test(payload.granteePubkey) ||
+    (seatTransition &&
+      (typeof payload.role !== "string" || !ROLE_SLUG_REGEX.test(payload.role)))
+  ) {
+    return null;
+  }
   return {
     acceptedEventId: payload.acceptedEventId,
     receipt: {
+      channelId: tagValues[0],
       seq: payload.seq,
       transitionType: payload.transitionType,
-      granteePubkey: payload.granteePubkey.toLowerCase(),
+      granteePubkey: payload.granteePubkey,
+      role: seatTransition ? (payload.role as string) : null,
     },
   };
 }
@@ -171,65 +314,84 @@ function parseReceipt(
  *
  * Accepted = transitions with a matching relay receipt (by
  * `acceptedEventId`), applied in seq order from 1 while the chain stays
- * contiguous and every link verifies: known type, receipt facts (seq, type,
- * grantee) binding to the transition, and `prevAccepted` linkage to the
- * previous applied link. Any failed check stops the fold *before* that link
+ * contiguous and every link verifies: event id/signature, expected channel,
+ * known exact type/shape, a trusted-relay receipt whose facts (seq, type,
+ * grantee, and seat role) bind to the transition, unique receipt/canonical
+ * sequence, and `prevAccepted` linkage to the previous applied link. Any
+ * failed check stops the fold *before* that link
  * — later links are never applied (fail closed, matching the session
- * provider's verifier). Pending = transitions past the accepted head with
- * no receipt yet.
+ * provider's verifier). Accepted seat links advance the head but do not
+ * enter the legacy roster map. Pending = transitions past the accepted head
+ * with no receipt yet.
  */
 export function foldCodingSessionRoster(input: {
+  expectedChannel: string;
+  trustedRelayPubkey: string;
   genesisRef: string;
   transitions: readonly RelayEvent[];
   receipts: readonly RelayEvent[];
 }): CodingSessionRosterFold {
   const receiptsByAcceptedId = new Map<string, ParsedReceipt>();
+  const duplicateReceiptIds = new Set<string>();
   for (const event of input.receipts) {
-    const parsed = parseReceipt(event, input.genesisRef);
-    if (parsed)
-      receiptsByAcceptedId.set(parsed.acceptedEventId, parsed.receipt);
+    const parsed = parseReceipt(
+      event,
+      input.genesisRef,
+      input.expectedChannel,
+      input.trustedRelayPubkey,
+    );
+    if (!parsed) continue;
+    if (receiptsByAcceptedId.has(parsed.acceptedEventId)) {
+      duplicateReceiptIds.add(parsed.acceptedEventId);
+      continue;
+    }
+    receiptsByAcceptedId.set(parsed.acceptedEventId, parsed.receipt);
   }
+  for (const eventId of duplicateReceiptIds)
+    receiptsByAcceptedId.delete(eventId);
 
   const parsedTransitions: ParsedTransition[] = [];
   for (const event of input.transitions) {
-    const parsed = parseTransition(event, input.genesisRef);
+    const parsed = parseTransition(
+      event,
+      input.genesisRef,
+      input.expectedChannel,
+    );
     if (parsed) parsedTransitions.push(parsed);
   }
 
-  const acceptedBySeq = new Map<number, ParsedTransition>();
+  const acceptedBySeq = new Map<number, ParsedTransition[]>();
   for (const transition of parsedTransitions) {
     if (receiptsByAcceptedId.has(transition.eventId)) {
-      acceptedBySeq.set(transition.seq, transition);
+      const candidates = acceptedBySeq.get(transition.seq) ?? [];
+      candidates.push(transition);
+      acceptedBySeq.set(transition.seq, candidates);
     }
   }
 
   const accepted = new Map<string, CodingSessionRosterRole>();
   let acceptedHead: { eventId: string; seq: number } | null = null;
   for (let seq = 1; ; seq += 1) {
-    const link = acceptedBySeq.get(seq);
-    if (!link) break;
+    const links = acceptedBySeq.get(seq);
+    if (links?.length !== 1) break;
+    const link = links[0];
     const receipt = receiptsByAcceptedId.get(link.eventId);
     if (
       !receipt ||
+      receipt.channelId !== link.channelId ||
       receipt.seq !== link.seq ||
       receipt.transitionType !== link.type ||
-      receipt.granteePubkey !== link.granteePubkey
+      receipt.granteePubkey !== link.granteePubkey ||
+      receipt.role !== link.role
     ) {
       break; // Receipt does not bind this link's facts — fail closed.
     }
     if (link.prevAccepted !== (acceptedHead?.eventId ?? null)) {
       break; // Link does not extend the chain we folded — fail closed.
     }
-    if (
-      !TRANSITION_TYPES.includes(
-        link.type as CodingSessionAuthorityTransitionType,
-      )
-    ) {
-      break; // Unknown transition type — never guess at its meaning.
-    }
     if (link.type === "revoke") {
       accepted.delete(link.granteePubkey);
-    } else {
+    } else if (!isSeatTransitionType(link.type)) {
       const role = rosterRoleForGrantType(link.type);
       if (role) accepted.set(link.granteePubkey, role);
     }
@@ -358,8 +520,8 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
   if (input.prevAccepted !== null && !HEX64_REGEX.test(input.prevAccepted)) {
     throw new Error("prevAccepted must be null or a lowercase 64-hex event id");
   }
-  if (!Number.isInteger(input.seq) || input.seq < 1) {
-    throw new Error("seq must be an integer starting at 1");
+  if (!isU32Sequence(input.seq)) {
+    throw new Error("seq must be a u32 integer starting at 1");
   }
   if ((input.seq === 1) !== (input.prevAccepted === null)) {
     throw new Error(
@@ -395,13 +557,16 @@ type RosterEventFetcher = (filter: {
   "#h": string[];
 }) => Promise<RelayEvent[]>;
 
-/** Fetch a channel's transitions + receipts and fold them for one genesis. */
+/**
+ * Fetch a channel's transitions + receipts and fold them for one genesis,
+ * pinning receipt trust to the active relay's advertised NIP-11 signing key.
+ */
 export async function fetchCodingSessionRosterFold(
   channelId: string,
   genesisRef: string,
   fetchEvents: RosterEventFetcher = (filter) => relayClient.fetchEvents(filter),
 ): Promise<CodingSessionRosterFold> {
-  const [transitions, receipts] = await Promise.all([
+  const [transitions, receipts, trustedRelayPubkey] = await Promise.all([
     fetchEvents({
       kinds: [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
       "#h": [channelId],
@@ -412,9 +577,21 @@ export async function fetchCodingSessionRosterFold(
       "#h": [channelId],
       limit: ROSTER_EVENT_FETCH_LIMIT,
     }),
+    getRelaySelf(),
   ]);
+  if (trustedRelayPubkey === null || !HEX64_REGEX.test(trustedRelayPubkey)) {
+    throw new Error(
+      "The active relay did not advertise a trusted signing key.",
+    );
+  }
   // Receipts are filtered by `content.type` inside the fold.
-  return foldCodingSessionRoster({ genesisRef, transitions, receipts });
+  return foldCodingSessionRoster({
+    expectedChannel: channelId,
+    trustedRelayPubkey,
+    genesisRef,
+    transitions,
+    receipts,
+  });
 }
 
 export function codingSessionRosterQueryKey(
@@ -495,6 +672,11 @@ export async function publishCodingSessionAuthorityTransition(
   const attempt = async () => {
     const fold = await fetchFold(input.channelId, input.genesisRef);
     const head = fold.acceptedHead;
+    if (head?.seq === MAX_U32) {
+      throw new Error(
+        "The coding-session authority chain is exhausted at its u32 maximum.",
+      );
+    }
     const event = await signer(
       buildCodingSessionAuthorityTransitionEvent({
         channelId: input.channelId,
