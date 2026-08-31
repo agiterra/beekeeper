@@ -40,12 +40,20 @@ fn run_helper_with_args(
         cmd.env(k, v);
     }
     let mut child = cmd.spawn().expect("failed to spawn git-credential-nostr");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
+    // `store` and `erase` are no-ops that exit without reading stdin, so this
+    // write races the child's exit: when the child wins, the pipe is already
+    // closed and the write returns EPIPE. That is the behaviour under test,
+    // not a failure — a helper that ignores its stdin is exactly what these
+    // cases assert. Unwrapping it made `store_stays_silent` fail on the loaded
+    // CI runner (Woodpecker pipelines 86 and 87) while passing 85/85 on an idle
+    // dev machine. Every other error is still a real spawn/IO fault.
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    match stdin.write_all(input.as_bytes()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(e) => panic!("failed to write helper input: {e}"),
+    }
+    drop(stdin);
     child.wait_with_output().expect("failed to wait on child")
 }
 

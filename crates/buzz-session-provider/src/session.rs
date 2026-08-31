@@ -3082,9 +3082,21 @@ done
         // No seat, so no seat identity in the checkout either: the four `GIT_*`
         // variables are a seating artefact, and an unseated execution keeps
         // whatever `git` identity the host already had.
+        // Scoped to the four `GIT_*` names seating actually sets, not the whole
+        // dump: `env` prints every inherited variable, and Woodpecker injects
+        // `CI_PREV_COMMIT_AUTHOR_EMAIL`. When the previous commit on `main` was
+        // authored by an agent that value ends in `@agents.beekeeper`, so a
+        // bare `dumped.contains(..)` failed this test on pipelines 77 and 78 —
+        // an outcome that depended on who wrote the commit before this one.
+        let seat_identity: Vec<&str> = dumped
+            .lines()
+            .filter(|line| line.starts_with("GIT_AUTHOR_") || line.starts_with("GIT_COMMITTER_"))
+            .filter(|line| line.contains("@agents.beekeeper"))
+            .collect();
         assert!(
-            !dumped.contains("@agents.beekeeper"),
-            "an unseated execution was given a seat's git identity:\n{dumped}"
+            seat_identity.is_empty(),
+            "an unseated execution was given a seat's git identity: \
+             {seat_identity:?}\n{dumped}"
         );
         assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
         manager.shutdown("s1");
