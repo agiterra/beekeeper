@@ -216,6 +216,10 @@ export function NewCodingSessionCrewTab({
     projectRef,
     checkoutPath: defaultWorkdir,
     selectedRoles,
+    // A catalog from another membership channel says nothing about the
+    // session being launched here. Before the first channel exists, native
+    // readiness preserves the explicit awaiting-first-session state.
+    channelIds: channelId === null ? [] : [channelId],
   });
   const cachedReadinessGate = teamReadinessLaunchGate({
     projectRef,

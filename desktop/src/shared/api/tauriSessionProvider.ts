@@ -195,16 +195,22 @@ export async function getCodingSessionProviderRuntimes(): Promise<
  * Idempotent — an existing identity is reused, never replaced. Re-minting would
  * orphan every coding-session event already attributed to the old pubkey.
  */
-export async function provisionCodingSessionProvider(): Promise<CodingSessionProviderStatus> {
+export async function provisionCodingSessionProvider(
+  expectedRelayUrl?: string,
+): Promise<CodingSessionProviderStatus> {
   return invokeTauri<CodingSessionProviderStatus>(
     "provision_coding_session_provider",
+    expectedRelayUrl === undefined ? undefined : { expectedRelayUrl },
   );
 }
 
 /** Start the provisioned provider if it is not already supervised. */
-export async function ensureCodingSessionProviderRunning(): Promise<CodingSessionProviderStatus> {
+export async function ensureCodingSessionProviderRunning(
+  expectedRelayUrl?: string,
+): Promise<CodingSessionProviderStatus> {
   return invokeTauri<CodingSessionProviderStatus>(
     "ensure_coding_session_provider_running",
+    expectedRelayUrl === undefined ? undefined : { expectedRelayUrl },
   );
 }
 

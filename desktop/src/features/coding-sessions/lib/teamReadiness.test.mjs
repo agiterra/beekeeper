@@ -11,7 +11,7 @@ import { prepareProjectForTeams } from "./teamReadinessPrepare.ts";
 
 function readiness(overrides = {}) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     projectRef: `30621:${"a".repeat(64)}:hive`,
     generatedAt: "2026-08-30T16:00:00Z",
     readyForFirstSession: false,
@@ -44,6 +44,7 @@ function readiness(overrides = {}) {
       state: "awaiting_first_session",
       targets: [],
       source: "wire",
+      provenance: [],
     },
     facts: [],
     blockingCodes: [],
@@ -211,6 +212,9 @@ test("role and scope normalization are stable and include every authority input"
     ["builder", "lead"],
   );
   const base = {
+    communityId: "community-a",
+    relayUrl: "wss://relay-a.example/",
+    channelIds: ["channel-b", "channel-a", "channel-a"],
     projectRef: " project ",
     checkoutPath: " /repo ",
     selectedRoles: ["Lead", "builder", "lead"],
@@ -236,6 +240,18 @@ test("role and scope normalization are stable and include every authority input"
   assert.notEqual(
     teamReadinessScopeKey(base),
     teamReadinessScopeKey({ ...base, hiringPolicyEnabled: false }),
+  );
+  assert.notEqual(
+    teamReadinessScopeKey(base),
+    teamReadinessScopeKey({ ...base, communityId: "community-b" }),
+  );
+  assert.notEqual(
+    teamReadinessScopeKey(base),
+    teamReadinessScopeKey({ ...base, relayUrl: "wss://relay-b.example" }),
+  );
+  assert.notEqual(
+    teamReadinessScopeKey(base),
+    teamReadinessScopeKey({ ...base, channelIds: ["channel-b"] }),
   );
 });
 

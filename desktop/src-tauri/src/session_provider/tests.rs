@@ -18,6 +18,7 @@ use crate::managed_agents::{
 use crate::session_provider::canonical_relay_key;
 use crate::session_provider::commands::{
     coding_session_provider_models_from_response, mint_provider_record,
+    provider_command_relay_for_active,
 };
 use crate::session_provider::env::{
     build_provider_env, resolve_app_checkout, ProviderEnvInputs, DEFAULT_RUST_LOG,
@@ -33,6 +34,26 @@ use crate::session_provider::supervisor::{
 use crate::session_provider::trust::{append_allowed_bridge_pubkey, LOCAL_PROVIDER_LABEL};
 
 const RELAY: &str = "wss://relay.example/";
+
+#[test]
+fn provider_mutations_honor_an_explicit_active_relay_pin() {
+    assert_eq!(
+        provider_command_relay_for_active(
+            "wss://relay-a.example/",
+            Some(" WSS://RELAY-A.EXAMPLE ")
+        ),
+        Ok("WSS://RELAY-A.EXAMPLE".to_string())
+    );
+    assert!(provider_command_relay_for_active(
+        "wss://relay-b.example",
+        Some("wss://relay-a.example")
+    )
+    .is_err());
+    assert_eq!(
+        provider_command_relay_for_active("wss://relay-b.example", None),
+        Ok("wss://relay-b.example".to_string())
+    );
+}
 
 #[test]
 fn live_claude_models_preserve_adapter_order_and_current_default() {

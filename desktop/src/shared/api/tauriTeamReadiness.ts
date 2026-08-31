@@ -102,6 +102,12 @@ export type TeamReadinessResponse = {
     revision?: number | null;
     targets: string[];
     source: "local" | "wire";
+    provenance: Array<{
+      eventId: string;
+      channelId: string;
+      signerPubkey: string;
+      revision: number;
+    }>;
   };
   facts: TeamReadinessFact[];
   blockingCodes: string[];
@@ -115,10 +121,14 @@ export async function getTeamReadiness(input: {
   projectRef: string;
   selectedRoles: readonly string[];
   hiringPolicyEnabled: boolean;
+  expectedRelayUrl: string;
+  channelIds: readonly string[];
 }): Promise<TeamReadinessResponse> {
   return invokeTauri<TeamReadinessResponse>("team_readiness", {
     projectRef: input.projectRef,
     selectedRoles: [...input.selectedRoles],
     hiringPolicyEnabled: input.hiringPolicyEnabled,
+    expectedRelayUrl: input.expectedRelayUrl,
+    channelIds: [...input.channelIds],
   });
 }

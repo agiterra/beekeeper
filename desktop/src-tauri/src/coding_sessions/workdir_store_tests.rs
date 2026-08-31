@@ -3,9 +3,11 @@
 use std::path::PathBuf;
 
 use super::workdir_store::{
-    validate_workdir, CodingSessionWorkdirScope, CodingSessionWorkdirStore, MAX_MRU_ENTRIES,
-    MAX_PENDING_HINTS, PROJECTS_VIEW_VERSION, WORKDIR_STORE_VERSION,
+    projects_view_provider_for_relay, validate_workdir, CodingSessionWorkdirScope,
+    CodingSessionWorkdirStore, MAX_MRU_ENTRIES, MAX_PENDING_HINTS, PROJECTS_VIEW_VERSION,
+    WORKDIR_STORE_VERSION,
 };
+use crate::session_provider::store::{CodingSessionProviderRecord, CodingSessionProviderStore};
 
 const PROJECT_REF: &str =
     "30621:aa00000000000000000000000000000000000000000000000000000000000000:buzz";
@@ -26,6 +28,43 @@ fn store_with_choices() -> CodingSessionWorkdirStore {
     store.record_use(PathBuf::from("/src/buzz"));
     store.stage_hint("create-1", PathBuf::from("/src/one-shot"));
     store
+}
+
+fn provider_record(relay_url: &str, provider_pubkey: &str) -> CodingSessionProviderRecord {
+    CodingSessionProviderRecord {
+        provider_pubkey: provider_pubkey.into(),
+        instance_id: format!("desktop-{}", &provider_pubkey[..8]),
+        auth_tag: None,
+        created_at: "2026-08-30T00:00:00Z".into(),
+        relay_url: relay_url.into(),
+        private_key_nsec: String::new(),
+    }
+}
+
+#[test]
+fn provisioning_rematerializes_only_the_relay_captured_under_its_lock() {
+    const RELAY_A: &str = "wss://relay-a.example";
+    const RELAY_B: &str = "wss://relay-b.example";
+    let pubkey_a = "a".repeat(64);
+    let pubkey_b = "b".repeat(64);
+    let mut providers = CodingSessionProviderStore::default();
+    providers.upsert(RELAY_A, provider_record(RELAY_A, &pubkey_a));
+    providers.upsert(RELAY_B, provider_record(RELAY_B, &pubkey_b));
+
+    // Community B may become active after provisioning captured A. The
+    // materialization boundary receives A explicitly and cannot re-resolve B.
+    let relay_captured_under_lock = RELAY_A;
+    let active_after_lock = RELAY_B;
+    assert_ne!(relay_captured_under_lock, active_after_lock);
+    let selected = projects_view_provider_for_relay(&providers, relay_captured_under_lock)
+        .expect("the pinned provider exists");
+    assert_eq!(selected.provider_pubkey, pubkey_a);
+    assert_eq!(
+        projects_view_provider_for_relay(&providers, active_after_lock)
+            .expect("the newly active provider exists")
+            .provider_pubkey,
+        pubkey_b
+    );
 }
 
 #[test]

@@ -7,7 +7,7 @@ use crate::coding_sessions::workdir_store::load_workdir_store_readonly_from;
 use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
 use crate::managed_agents::crew_roles::DiscoveredRolePack;
 use crate::managed_agents::storage_readiness::load_managed_agent_readiness_metadata_from;
-use crate::session_provider::runtimes::{runtime_readiness_metadata, StrictRuntimeAuthState};
+use crate::session_provider::runtimes::runtime_readiness_metadata;
 use crate::session_provider::store::load_provider_readiness_store_from;
 use crate::session_provider::store::CodingSessionProviderReadinessRecord;
 use crate::session_provider::store::CodingSessionProviderReadinessStore;
@@ -413,52 +413,310 @@ fn selected_role_pack_state_distinguishes_dirty_and_wrong_project() {
     );
 }
 
+fn catalog_content(revision: u64, project_ref: &str, model: &str) -> String {
+    let catalog = buzz_core_pkg::coding_session_catalog::Catalog {
+        schema: buzz_core_pkg::coding_session_catalog::CATALOG_SCHEMA.into(),
+        revision,
+        providers: vec![buzz_core_pkg::coding_session_catalog::CatalogProvider {
+            provider_instance_ref: "codex-primary".into(),
+            driver: "codex-agent-acp".into(),
+            runtime: "codex".into(),
+            default_model: model.into(),
+            allowed_models: vec![model.into()],
+            capabilities: buzz_core_pkg::coding_session_payload::Capabilities::v1_baseline(),
+            models: Vec::new(),
+        }],
+        projects: vec![buzz_core_pkg::coding_session_catalog::CatalogProject {
+            project_ref: project_ref.into(),
+            repo_ref: None,
+            providers: vec!["codex-primary".into()],
+        }],
+    };
+    buzz_core_pkg::coding_session_catalog::to_canonical_json(&catalog).expect("canonical catalog")
+}
+
+#[test]
+fn signed_catalog_query_and_validation_bind_signer_channel_and_project() {
+    let keys = nostr::Keys::generate();
+    let channel =
+        uuid::Uuid::parse_str("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10").expect("channel uuid");
+    let signer = keys.public_key().to_hex();
+    let content = catalog_content(8, PROJECT_REF, "gpt-5.6-luna");
+    let event = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(channel, 8, &content)
+        .expect("catalog builder")
+        .sign_with_keys(&keys)
+        .expect("signed catalog");
+    let filter =
+        wire::provider_catalog_filter(std::slice::from_ref(&signer), &[channel.to_string()]);
+    assert_eq!(
+        filter,
+        serde_json::json!({
+            "kinds": [buzz_core_pkg::kind::KIND_CODING_SESSION_PROVIDER_CATALOG],
+            "authors": [signer],
+            "#h": [channel.to_string()],
+            "limit": 1001,
+        })
+    );
+
+    let snapshot = wire::validate_catalog_events(
+        std::slice::from_ref(&event),
+        &[keys.public_key().to_hex()],
+        &[channel.to_string()],
+        PROJECT_REF,
+    );
+    assert_eq!(snapshot.invalid_event_count, 0);
+    assert_eq!(snapshot.conflict_count, 0);
+    assert_eq!(snapshot.targets, vec!["codex-primary:gpt-5.6-luna"]);
+    assert_eq!(snapshot.provenance[0].event_id, event.id.to_hex());
+
+    let wrong_signer = wire::validate_catalog_events(
+        std::slice::from_ref(&event),
+        &[nostr::Keys::generate().public_key().to_hex()],
+        &[channel.to_string()],
+        PROJECT_REF,
+    );
+    assert_eq!(wrong_signer.invalid_event_count, 1);
+    assert!(wrong_signer.provenance.is_empty());
+
+    let wrong_channel = wire::validate_catalog_events(
+        std::slice::from_ref(&event),
+        &[keys.public_key().to_hex()],
+        &[uuid::Uuid::new_v4().to_string()],
+        PROJECT_REF,
+    );
+    assert_eq!(wrong_channel.invalid_event_count, 1);
+    assert!(wrong_channel.targets.is_empty());
+
+    let wrong_project = wire::validate_catalog_events(
+        &[event],
+        &[keys.public_key().to_hex()],
+        &[channel.to_string()],
+        "30621:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:other",
+    );
+    assert_eq!(wrong_project.provenance.len(), 1);
+    assert!(wrong_project.targets.is_empty());
+}
+
+#[test]
+fn relay_scope_is_rechecked_at_every_async_boundary() {
+    assert!(
+        wire::ensure_active_relay_scope("wss://relay-a.example/", "WSS://RELAY-A.EXAMPLE").is_ok()
+    );
+    for active_after_await in ["wss://relay-b.example", "", "  "] {
+        assert!(
+            wire::ensure_active_relay_scope("wss://relay-a.example", active_after_await).is_err()
+        );
+    }
+    assert!(wire::ensure_active_relay_scope("", "").is_err());
+}
+
+#[test]
+fn failing_trust_read_is_rejected_if_the_community_changed_while_awaiting_it() {
+    let stale_failure = wire::classify_trusted_signers(Err("malformed metadata".into()));
+    let result = wire::finish_trust_observation_for_scope(
+        "wss://relay-a.example",
+        "wss://relay-b.example",
+        stale_failure,
+    );
+    assert!(
+        result.is_err(),
+        "a stale A trust failure must not become B's readiness Unknown"
+    );
+
+    let current_failure = wire::classify_trusted_signers(Err("malformed metadata".into()));
+    let observation = wire::finish_trust_observation_for_scope(
+        "wss://relay-a.example",
+        "wss://relay-a.example",
+        current_failure,
+    )
+    .expect("unchanged community")
+    .expect_err("malformed trust remains structured Unknown");
+    assert!(matches!(
+        observation,
+        wire::TeamReadinessWireObservation::Unknown { ref code, .. }
+            if code == "TRUST_CONFIG_INVALID"
+    ));
+}
+
+#[test]
+fn catalog_history_sentinel_and_cross_channel_catalog_fail_closed() {
+    let keys = nostr::Keys::generate();
+    let channel_a = uuid::Uuid::new_v4();
+    let channel_b = uuid::Uuid::new_v4();
+    let event = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(
+        channel_a,
+        1,
+        &catalog_content(1, PROJECT_REF, "gpt-5.6-luna"),
+    )
+    .expect("catalog builder")
+    .sign_with_keys(&keys)
+    .expect("signed catalog");
+    let signer = keys.public_key().to_hex();
+    let cross_channel = wire::classify_catalog_query(
+        std::slice::from_ref(&event),
+        std::slice::from_ref(&signer),
+        &[channel_b.to_string()],
+        PROJECT_REF,
+    );
+    let response = fold_trusted_team_wire(
+        finish(PROJECT_REF.into(), local_ready_gathered()),
+        cross_channel,
+    );
+    assert_eq!(response.status, TeamReadinessStatus::Unknown);
+    assert!(response
+        .unknown_codes
+        .contains(&"CATALOG_EVENTS_INVALID".to_string()));
+    assert!(response
+        .unknown_codes
+        .contains(&"CATALOG_TARGETS_UNCOVERED".to_string()));
+    assert!(response.registry.covered_targets.is_empty());
+
+    let overflow = wire::classify_catalog_query(
+        &vec![event; 1001],
+        &[signer],
+        &[channel_a.to_string()],
+        PROJECT_REF,
+    );
+    let response =
+        fold_trusted_team_wire(finish(PROJECT_REF.into(), local_ready_gathered()), overflow);
+    assert_eq!(response.status, TeamReadinessStatus::Unknown);
+    assert_eq!(response.unknown_codes, vec!["CATALOG_HISTORY_OVERFLOW"]);
+}
+
+#[test]
+fn equal_catalog_revision_with_different_signed_content_is_a_conflict() {
+    let keys = nostr::Keys::generate();
+    let channel = uuid::Uuid::new_v4();
+    let first = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(
+        channel,
+        4,
+        &catalog_content(4, PROJECT_REF, "gpt-5.6-luna"),
+    )
+    .expect("catalog builder")
+    .sign_with_keys(&keys)
+    .expect("signed catalog");
+    let second = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(
+        channel,
+        4,
+        &catalog_content(4, PROJECT_REF, "gpt-5.6-sol"),
+    )
+    .expect("catalog builder")
+    .sign_with_keys(&keys)
+    .expect("signed catalog");
+    let snapshot = wire::validate_catalog_events(
+        &[first, second],
+        &[keys.public_key().to_hex()],
+        &[channel.to_string()],
+        PROJECT_REF,
+    );
+    assert_eq!(snapshot.conflict_count, 1);
+    assert!(snapshot.provenance.is_empty());
+    assert!(snapshot.targets.is_empty());
+}
+
+#[test]
+fn empty_reverified_catalog_query_stays_awaiting_first_session() {
+    let local = finish(PROJECT_REF.into(), local_ready_gathered());
+    let response = fold_trusted_team_wire(
+        local,
+        TeamReadinessWireObservation::Reached(TrustedTeamCatalogSnapshot {
+            provenance: Vec::new(),
+            targets: Vec::new(),
+            invalid_event_count: 0,
+            conflict_count: 0,
+        }),
+    );
+    assert!(response.ready_for_first_session);
+    assert!(!response.ready);
+    assert_eq!(response.status, TeamReadinessStatus::AwaitingFirstSession);
+    assert_eq!(response.relay.reachable, Some(true));
+    assert_eq!(
+        response.awaiting_codes,
+        vec!["CATALOG_AWAITING_FIRST_SESSION"]
+    );
+}
+
+#[test]
+fn missing_first_session_channel_uses_only_local_launch_truth() {
+    let response = fold_trusted_team_wire(
+        finish(PROJECT_REF.into(), local_ready_gathered()),
+        TeamReadinessWireObservation::AwaitingChannel,
+    );
+    assert!(response.ready_for_first_session);
+    assert!(!response.ready);
+    assert_eq!(response.status, TeamReadinessStatus::AwaitingFirstSession);
+    assert_eq!(response.relay.reachable, None);
+    assert_eq!(
+        response.awaiting_codes,
+        vec!["CATALOG_AWAITING_FIRST_SESSION", "RELAY_UNOBSERVED"]
+    );
+}
+
 #[test]
 fn trusted_wire_fold_requires_reachability_and_a_covered_target() {
     let local = finish(PROJECT_REF.into(), local_ready_gathered());
     let ready = fold_trusted_team_wire(
         local.clone(),
-        Some(TrustedTeamCatalogSnapshot {
-            revision: 8,
+        TeamReadinessWireObservation::Reached(TrustedTeamCatalogSnapshot {
+            provenance: vec![wire::TeamReadinessCatalogProvenance {
+                event_id: "d".repeat(64),
+                channel_id: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into(),
+                signer_pubkey: "e".repeat(64),
+                revision: 8,
+            }],
             targets: vec!["codex-primary:gpt-5.6-luna".into()],
+            invalid_event_count: 0,
+            conflict_count: 0,
         }),
-        Some(true),
     );
     assert_eq!(ready.status, TeamReadinessStatus::Ready);
     assert!(ready.ready);
     assert_eq!(ready.catalog.revision, Some(8));
-    assert!(ready.runtimes.iter().any(|runtime| {
-        runtime.instance_ref == "codex-primary"
-            && runtime.auth == StrictRuntimeAuthState::Ready
-            && runtime.model_probe == "trusted_provider_catalog"
-    }));
+    assert_eq!(ready.catalog.provenance.len(), 1);
+    assert_eq!(ready.relay.reachable, Some(true));
 
     let uncovered = fold_trusted_team_wire(
         local.clone(),
-        Some(TrustedTeamCatalogSnapshot {
-            revision: 8,
+        TeamReadinessWireObservation::Reached(TrustedTeamCatalogSnapshot {
+            provenance: vec![wire::TeamReadinessCatalogProvenance {
+                event_id: "d".repeat(64),
+                channel_id: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into(),
+                signer_pubkey: "e".repeat(64),
+                revision: 8,
+            }],
             targets: vec!["claude-primary:claude-sonnet-5".into()],
+            invalid_event_count: 0,
+            conflict_count: 0,
         }),
-        Some(true),
     );
     assert_eq!(uncovered.status, TeamReadinessStatus::Unknown);
     assert!(!uncovered.ready);
     assert_eq!(uncovered.unknown_codes, vec!["CATALOG_TARGETS_UNCOVERED"]);
 
-    let unreachable = fold_trusted_team_wire(
-        local.clone(),
-        Some(TrustedTeamCatalogSnapshot {
-            revision: 8,
-            targets: vec!["codex-primary:gpt-5.6-luna".into()],
-        }),
-        Some(false),
-    );
+    let unreachable =
+        fold_trusted_team_wire(local.clone(), TeamReadinessWireObservation::Unreachable);
     assert_eq!(unreachable.status, TeamReadinessStatus::Blocked);
     assert!(!unreachable.ready);
 
-    let untrusted = fold_trusted_team_wire(local, None, Some(true));
+    let untrusted = fold_trusted_team_wire(
+        local,
+        TeamReadinessWireObservation::Unknown {
+            code: "TRUST_CONFIG_INVALID".into(),
+            summary: "Trusted signer metadata is invalid".into(),
+            remedy: Some("Repair metadata, then re-read readiness".into()),
+        },
+    );
     assert_eq!(untrusted.status, TeamReadinessStatus::Unknown);
     assert_eq!(untrusted.catalog.revision, None);
+    assert_eq!(untrusted.unknown_codes, vec!["TRUST_CONFIG_INVALID"]);
+    assert_eq!(
+        untrusted
+            .facts
+            .iter()
+            .find(|fact| fact.code == "TRUST_CONFIG_INVALID")
+            .and_then(|fact| fact.remedy.as_deref()),
+        Some("Repair metadata, then re-read readiness")
+    );
 }
 
 #[test]
@@ -485,6 +743,52 @@ fn readonly_stores_do_not_create_missing_directories() {
     assert!(load_managed_agent_readiness_metadata_from(&agents, None).is_ok());
     assert!(load_provider_readiness_store_from(&provider, None).is_ok());
     assert_eq!(fs::read_dir(temp.path()).expect("root exists").count(), 0);
+}
+
+#[test]
+fn readonly_trust_projection_never_creates_or_repairs_files() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("app-data/agents/global-agent-config.json");
+    assert_eq!(
+        super::host::load_allowed_bridge_pubkeys_readonly_from(&path),
+        Ok(Vec::new())
+    );
+    assert_eq!(fs::read_dir(temp.path()).expect("root exists").count(), 0);
+
+    fs::create_dir_all(path.parent().expect("parent")).expect("test fixture directory");
+    fs::write(&path, br#"{"allowed-bridge-pubkeys":[{"pubkey":"short"}]}"#)
+        .expect("malformed fixture");
+    let before = fs::read(&path).expect("fixture bytes");
+    assert!(super::host::load_allowed_bridge_pubkeys_readonly_from(&path).is_err());
+    assert_eq!(fs::read(&path).expect("unchanged fixture"), before);
+    assert_eq!(
+        fs::read_dir(path.parent().expect("parent"))
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect::<Vec<_>>(),
+        vec![std::ffi::OsString::from("global-agent-config.json")],
+        "readiness must not create a backup, lock, or repaired config"
+    );
+}
+
+#[test]
+fn malformed_trust_projection_becomes_structured_unknown() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("global-agent-config.json");
+    fs::write(&path, b"not-json").expect("fixture");
+    let before = fs::read(&path).expect("before");
+    let observation = wire::classify_trusted_signers(
+        super::host::load_allowed_bridge_pubkeys_readonly_from(&path),
+    )
+    .expect_err("invalid metadata cannot yield trusted signers");
+    assert_eq!(fs::read(&path).expect("after"), before);
+    let response = fold_trusted_team_wire(
+        finish(PROJECT_REF.into(), local_ready_gathered()),
+        observation,
+    );
+    assert_eq!(response.status, TeamReadinessStatus::Unknown);
+    assert_eq!(response.unknown_codes, vec!["TRUST_CONFIG_INVALID"]);
+    assert!(!response.ready);
 }
 
 #[test]

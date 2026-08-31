@@ -37,7 +37,9 @@ use crate::managed_agents::atomic_write_json_restricted;
 use crate::relay::relay_ws_url_with_override;
 use crate::session_provider::env::PROJECTS_FILE_NAME;
 use crate::session_provider::provider_state_dir;
-use crate::session_provider::store::load_provider_store;
+use crate::session_provider::store::{
+    load_provider_store, CodingSessionProviderRecord, CodingSessionProviderStore,
+};
 use crate::util::now_iso;
 
 /// Current on-disk schema version of the desktop's own record.
@@ -348,8 +350,21 @@ pub(crate) fn materialize_projects_view(
     store: &CodingSessionWorkdirStore,
 ) -> Result<(), String> {
     let relay_url = relay_ws_url_with_override(state);
+    materialize_projects_view_for_relay(app, &relay_url, store)
+}
+
+/// Write the provider view for one caller-pinned relay.
+///
+/// Provisioning crosses a lock boundary before it reaches this write. Passing
+/// the relay captured under that lock prevents a later community switch from
+/// redirecting the projects view to another provider identity.
+fn materialize_projects_view_for_relay(
+    app: &AppHandle,
+    relay_url: &str,
+    store: &CodingSessionWorkdirStore,
+) -> Result<(), String> {
     let provider_store = load_provider_store(app)?;
-    let Some(record) = provider_store.get(&relay_url) else {
+    let Some(record) = projects_view_provider_for_relay(&provider_store, relay_url) else {
         return Ok(());
     };
     let state_dir = provider_state_dir(app, &record.provider_pubkey)?;
@@ -358,16 +373,24 @@ pub(crate) fn materialize_projects_view(
     atomic_write_json_restricted(&state_dir.join(PROJECTS_FILE_NAME), &payload)
 }
 
-/// Re-materialize from whatever the desktop currently remembers.
+/// Re-materialize what the desktop remembers for one caller-pinned relay.
 ///
 /// Called after provisioning so directories chosen before a provider existed
-/// reach it the moment one does.
+/// reach it the moment one does. The relay is deliberately not re-read here:
+/// provisioning captured it while holding its serialization lock.
 pub(crate) fn remateralize_provider_projects_view(
     app: &AppHandle,
-    state: &AppState,
+    relay_url: &str,
 ) -> Result<(), String> {
     let store = load_workdir_store(app)?;
-    materialize_projects_view(app, state, &store)
+    materialize_projects_view_for_relay(app, relay_url, &store)
+}
+
+pub(super) fn projects_view_provider_for_relay<'a>(
+    provider_store: &'a CodingSessionProviderStore,
+    relay_url: &str,
+) -> Option<&'a CodingSessionProviderRecord> {
+    provider_store.get(relay_url)
 }
 
 fn mutate<F>(

@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import { readCodingSessionHirePolicy } from "@/features/coding-sessions/lib/codingSessionHirePolicy";
+import { useCommunities } from "@/features/communities/useCommunities";
 import {
   ensureCodingSessionProviderRunning,
   provisionCodingSessionProvider,
@@ -24,12 +25,22 @@ import { normalizeTeamReadinessRoles } from "./teamReadinessModel";
 export const TEAM_READINESS_QUERY_KEY = "team-readiness";
 
 export function teamReadinessScopeKey(input: {
+  communityId: string | null;
+  relayUrl: string | null;
+  channelIds: readonly string[];
   projectRef: string | null;
   checkoutPath: string | null;
   selectedRoles: readonly string[];
   hiringPolicyEnabled: boolean;
 }): string {
   return JSON.stringify([
+    input.communityId,
+    input.relayUrl?.trim().replace(/\/+$/, "").toLowerCase() ?? null,
+    [
+      ...new Set(
+        input.channelIds.map((channel) => channel.trim().toLowerCase()),
+      ),
+    ].sort(),
     input.projectRef?.trim() ?? null,
     input.checkoutPath?.trim() ?? null,
     normalizeTeamReadinessRoles(input.selectedRoles),
@@ -41,7 +52,22 @@ export function useProjectTeamReadiness(input: {
   projectRef: string | null;
   checkoutPath: string | null;
   selectedRoles: readonly string[];
+  channelIds: readonly string[];
 }) {
+  const { activeCommunity } = useCommunities();
+  const queryClient = useQueryClient();
+  const communityId = activeCommunity?.id ?? null;
+  const relayUrl = activeCommunity?.relayUrl ?? null;
+  const channelIds = React.useMemo(
+    () =>
+      [
+        ...new Set(
+          input.channelIds.map((channel) => channel.trim().toLowerCase()),
+        ),
+      ].sort(),
+    [input.channelIds],
+  );
+  const channelKey = channelIds.join("\u0000");
   const selectedRoles = React.useMemo(
     () => normalizeTeamReadinessRoles(input.selectedRoles),
     [input.selectedRoles],
@@ -51,6 +77,9 @@ export function useProjectTeamReadiness(input: {
   const projectRef = input.projectRef?.trim() ?? null;
   const explicitCheckoutPath = input.checkoutPath?.trim() || null;
   const scopeKey = teamReadinessScopeKey({
+    communityId,
+    relayUrl,
+    channelIds,
     projectRef,
     checkoutPath: explicitCheckoutPath,
     selectedRoles,
@@ -58,10 +87,14 @@ export function useProjectTeamReadiness(input: {
   });
   const currentScopeKey = React.useRef(scopeKey);
   currentScopeKey.current = scopeKey;
+  const mountedRef = React.useRef(false);
   const previousScopeKey = React.useRef(scopeKey);
   const query = useQuery({
     queryKey: [
       TEAM_READINESS_QUERY_KEY,
+      communityId,
+      relayUrl,
+      channelKey,
       projectRef,
       explicitCheckoutPath,
       rolesKey,
@@ -72,8 +105,10 @@ export function useProjectTeamReadiness(input: {
         projectRef: projectRef as string,
         selectedRoles,
         hiringPolicyEnabled,
+        expectedRelayUrl: relayUrl as string,
+        channelIds,
       }),
-    enabled: projectRef !== null,
+    enabled: projectRef !== null && relayUrl !== null,
     staleTime: 5_000,
   });
   const [freshReadiness, setFreshReadiness] = React.useState<{
@@ -98,6 +133,7 @@ export function useProjectTeamReadiness(input: {
   const scanningRef = React.useRef(false);
   const preparingRef = React.useRef(false);
   const preflightingRef = React.useRef(false);
+  const operationGenerationRef = React.useRef(0);
   const readiness =
     freshReadiness?.scopeKey === scopeKey
       ? freshReadiness.value
@@ -108,14 +144,61 @@ export function useProjectTeamReadiness(input: {
     explicitCheckoutPath ?? readiness?.source.checkoutPath ?? null;
 
   React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      operationGenerationRef.current += 1;
+    };
+  }, []);
+
+  const isCurrentScope = React.useCallback(
+    () => mountedRef.current && currentScopeKey.current === scopeKey,
+    [scopeKey],
+  );
+  const requireCurrentScope = React.useCallback(() => {
+    if (!isCurrentScope()) {
+      throw new Error(
+        "The active community or Team Readiness scope changed during Prepare. Start Prepare again in the current community.",
+      );
+    }
+  }, [isCurrentScope]);
+  const requireCurrentOperation = React.useCallback(
+    (generation: number) => {
+      requireCurrentScope();
+      if (operationGenerationRef.current !== generation) {
+        throw new Error(
+          "A newer Team Readiness operation replaced this one. Continue in the current scope.",
+        );
+      }
+    },
+    [requireCurrentScope],
+  );
+
+  React.useEffect(() => {
     if (previousScopeKey.current === scopeKey) return;
     previousScopeKey.current = scopeKey;
+    operationGenerationRef.current += 1;
+    scanningRef.current = false;
+    preparingRef.current = false;
+    preflightingRef.current = false;
     setFreshReadiness(null);
     setScanState(null);
     setNamesState(null);
     setPrepareSteps([]);
     setPrepareError(null);
+    setIsScanning(false);
+    setIsPreparing(false);
+    setIsLaunchPreflighting(false);
   }, [scopeKey]);
+
+  React.useEffect(
+    () => () => {
+      queryClient.removeQueries({
+        queryKey: [TEAM_READINESS_QUERY_KEY, communityId, relayUrl],
+      });
+    },
+    [communityId, queryClient, relayUrl],
+  );
 
   const beginPrepare = React.useCallback(async () => {
     if (
@@ -131,11 +214,15 @@ export function useProjectTeamReadiness(input: {
       );
       return;
     }
+    requireCurrentScope();
+    const generation = operationGenerationRef.current + 1;
+    operationGenerationRef.current = generation;
     scanningRef.current = true;
     setIsScanning(true);
     setPrepareError(null);
     try {
       const result = await scanProjectRolePacks(checkoutPath);
+      requireCurrentOperation(generation);
       setScanState({ scopeKey, value: result });
       setNamesState({
         scopeKey,
@@ -144,58 +231,98 @@ export function useProjectTeamReadiness(input: {
         ),
       });
     } catch (error) {
-      setPrepareError(error instanceof Error ? error.message : String(error));
+      if (operationGenerationRef.current === generation && isCurrentScope()) {
+        setPrepareError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      scanningRef.current = false;
-      setIsScanning(false);
+      if (operationGenerationRef.current === generation) {
+        scanningRef.current = false;
+        if (isCurrentScope()) setIsScanning(false);
+      }
     }
-  }, [checkoutPath, scopeKey]);
+  }, [
+    checkoutPath,
+    isCurrentScope,
+    requireCurrentOperation,
+    requireCurrentScope,
+    scopeKey,
+  ]);
 
   const confirmPrepare = React.useCallback(async () => {
     if (
       !scan ||
       projectRef === null ||
+      relayUrl === null ||
       scanningRef.current ||
       preparingRef.current ||
       preflightingRef.current
     ) {
       return;
     }
+    requireCurrentScope();
+    const generation = operationGenerationRef.current + 1;
+    operationGenerationRef.current = generation;
     preparingRef.current = true;
     setIsPreparing(true);
     setPrepareError(null);
     const result = await prepareProjectForTeams({
       dependencies: {
         installRoles: async () => {
+          requireCurrentOperation(generation);
           await installCrewRolePacks(scan.directory, names);
         },
         provisionProvider: async () => {
-          await provisionCodingSessionProvider();
+          requireCurrentOperation(generation);
+          await provisionCodingSessionProvider(relayUrl);
         },
         startProvider: async () => {
-          await ensureCodingSessionProviderRunning();
+          requireCurrentOperation(generation);
+          await ensureCodingSessionProviderRunning(relayUrl);
         },
-        rereadReadiness: () =>
-          getTeamReadiness({
+        rereadReadiness: () => {
+          requireCurrentOperation(generation);
+          return getTeamReadiness({
             projectRef,
             selectedRoles,
             hiringPolicyEnabled,
-          }),
+            expectedRelayUrl: relayUrl,
+            channelIds,
+          });
+        },
       },
-      onSteps: (next) => setPrepareSteps([...next]),
+      onSteps: (next) => {
+        if (operationGenerationRef.current === generation && isCurrentScope()) {
+          setPrepareSteps([...next]);
+        }
+      },
     });
+    if (operationGenerationRef.current !== generation || !isCurrentScope()) {
+      return;
+    }
     if (result.readiness) {
-      if (currentScopeKey.current === scopeKey) {
-        setFreshReadiness({ scopeKey, value: result.readiness });
-      }
+      setFreshReadiness({ scopeKey, value: result.readiness });
     }
     setPrepareError(result.error);
     preparingRef.current = false;
     setIsPreparing(false);
-  }, [hiringPolicyEnabled, names, projectRef, scan, scopeKey, selectedRoles]);
+  }, [
+    channelIds,
+    hiringPolicyEnabled,
+    isCurrentScope,
+    names,
+    projectRef,
+    relayUrl,
+    requireCurrentOperation,
+    requireCurrentScope,
+    scan,
+    scopeKey,
+    selectedRoles,
+  ]);
 
   const readFreshForLaunch = React.useCallback(async () => {
-    if (projectRef === null) return null;
+    if (projectRef === null || relayUrl === null) {
+      return null;
+    }
     if (scanningRef.current || preparingRef.current) {
       throw new Error(
         "Project preparation is still running. Wait for its final readiness re-check.",
@@ -204,6 +331,9 @@ export function useProjectTeamReadiness(input: {
     if (preflightingRef.current) {
       throw new Error("A launch readiness check is already running.");
     }
+    requireCurrentScope();
+    const generation = operationGenerationRef.current + 1;
+    operationGenerationRef.current = generation;
     preflightingRef.current = true;
     setIsLaunchPreflighting(true);
     try {
@@ -211,8 +341,10 @@ export function useProjectTeamReadiness(input: {
         projectRef,
         selectedRoles,
         hiringPolicyEnabled,
+        expectedRelayUrl: relayUrl,
+        channelIds,
       });
-      if (currentScopeKey.current !== scopeKey) {
+      if (operationGenerationRef.current !== generation || !isCurrentScope()) {
         throw new Error(
           "The project, checkout, team roles, or hiring policy changed during the readiness check. Try Launch again.",
         );
@@ -220,10 +352,21 @@ export function useProjectTeamReadiness(input: {
       setFreshReadiness({ scopeKey, value });
       return value;
     } finally {
-      preflightingRef.current = false;
-      setIsLaunchPreflighting(false);
+      if (operationGenerationRef.current === generation) {
+        preflightingRef.current = false;
+        if (isCurrentScope()) setIsLaunchPreflighting(false);
+      }
     }
-  }, [hiringPolicyEnabled, projectRef, scopeKey, selectedRoles]);
+  }, [
+    channelIds,
+    hiringPolicyEnabled,
+    isCurrentScope,
+    projectRef,
+    relayUrl,
+    requireCurrentScope,
+    scopeKey,
+    selectedRoles,
+  ]);
 
   return {
     readiness,

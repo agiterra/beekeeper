@@ -262,11 +262,15 @@ pub async fn provision_coding_session_provider(
     app: AppHandle,
     state: State<'_, AppState>,
     provider: State<'_, CodingSessionProviderState>,
+    expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let _provision_guard = PROVISION_LOCK
         .lock()
         .map_err(|_| "coding-session provider provisioning lock is poisoned".to_string())?;
-    let relay_url = relay_ws_url_with_override(&state);
+    // Resolve after taking the lock: another provisioning call may have waited
+    // here while the person switched communities. An explicit caller pin never
+    // falls through to whichever relay happens to be active now.
+    let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
     let mut store = load_provider_store(&app)?;
     if store.get(&relay_url).is_none() {
         let owner_keys = state.signing_keys()?;
@@ -285,7 +289,7 @@ pub async fn provision_coding_session_provider(
     // The state directory only exists from here on, so any working directory
     // the operator chose before provisioning has had nowhere to land. Write it
     // now, before the child starts reading the file.
-    if let Err(error) = remateralize_provider_projects_view(&app, &state) {
+    if let Err(error) = remateralize_provider_projects_view(&app, &relay_url) {
         eprintln!("buzz-desktop: failed to materialize coding-session projects view: {error}");
     }
 
@@ -299,10 +303,41 @@ pub async fn ensure_coding_session_provider_running(
     app: AppHandle,
     state: State<'_, AppState>,
     provider: State<'_, CodingSessionProviderState>,
+    expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
-    let relay_url = relay_ws_url_with_override(&state);
+    let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
     ensure_running(&app, &provider, &relay_url)?;
     provider_status(&app, &provider, &relay_url)
+}
+
+/// Resolve an optional caller-owned relay pin without ever redirecting it to a
+/// newly active community. Legacy callers omit the pin and retain the original
+/// active-community behavior.
+pub(crate) fn provider_command_relay(
+    state: &AppState,
+    expected_relay_url: Option<&str>,
+) -> Result<String, String> {
+    let active = relay_ws_url_with_override(state);
+    provider_command_relay_for_active(&active, expected_relay_url)
+}
+
+pub(crate) fn provider_command_relay_for_active(
+    active: &str,
+    expected_relay_url: Option<&str>,
+) -> Result<String, String> {
+    let Some(expected) = expected_relay_url else {
+        return Ok(active.to_string());
+    };
+    let expected = expected.trim().trim_end_matches('/');
+    if expected.is_empty()
+        || crate::session_provider::canonical_relay_key(expected)
+            != crate::session_provider::canonical_relay_key(active)
+    {
+        return Err(
+            "the active community changed before the provider operation; retry Prepare".into(),
+        );
+    }
+    Ok(expected.to_string())
 }
 
 /// Stop the supervised provider. The record and its state directory survive, so

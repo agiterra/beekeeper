@@ -21,7 +21,7 @@ use crate::managed_agents::ManagedAgentReadinessMetadata;
 use crate::session_provider::runtimes::StrictRuntimeDiagnostic;
 use crate::session_provider::supervisor::CodingSessionProviderProcessState;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 #[path = "team_readiness_git.rs"]
 mod git_probe;
 use git_probe::{checkout_source, embedded_source};
@@ -36,8 +36,8 @@ use auth_facts::{append_agent_auth_facts, append_provider_auth_fact};
 
 #[path = "team_readiness_wire.rs"]
 mod wire;
-#[allow(unused_imports)]
-pub use wire::{fold_trusted_team_wire, TrustedTeamCatalogSnapshot};
+#[cfg(test)]
+use wire::{fold_trusted_team_wire, TeamReadinessWireObservation, TrustedTeamCatalogSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -205,6 +205,7 @@ pub struct TeamReadinessCatalog {
     pub revision: Option<u64>,
     pub targets: Vec<String>,
     pub source: TeamReadinessScope,
+    pub provenance: Vec<wire::TeamReadinessCatalogProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -824,6 +825,7 @@ fn finish(project_ref: String, mut gathered: Gathered) -> TeamReadinessResponse 
             revision: None,
             targets: Vec::new(),
             source: TeamReadinessScope::Wire,
+            provenance: Vec::new(),
         },
         TeamReadinessRelay {
             state: TeamReadinessFactState::AwaitingFirstSession,
@@ -948,18 +950,25 @@ pub async fn team_readiness(
     project_ref: String,
     selected_roles: Option<Vec<String>>,
     hiring_policy_enabled: Option<bool>,
+    expected_relay_url: String,
+    channel_ids: Vec<String>,
 ) -> Result<TeamReadinessResponse, String> {
     let project_ref = project_ref.trim().to_string();
-    tauri::async_runtime::spawn_blocking(move || {
+    let local_app = app.clone();
+    let local_project_ref = project_ref.clone();
+    let local = tauri::async_runtime::spawn_blocking(move || {
         gather(
-            &AppReadinessHost(&app),
-            project_ref,
+            &AppReadinessHost(&local_app),
+            local_project_ref,
             selected_roles,
             hiring_policy_enabled,
         )
     })
     .await
-    .map_err(|error| format!("team readiness task failed: {error}"))
+    .map_err(|error| format!("team readiness task failed: {error}"))?;
+    let wire =
+        wire::observe_team_wire(&app, &project_ref, &expected_relay_url, &channel_ids).await?;
+    Ok(wire::fold_trusted_team_wire(local, wire))
 }
 
 #[cfg(test)]
