@@ -420,7 +420,10 @@ pub async fn handle_req(
             }
             // Private-project visibility pushdown, same starvation rationale.
             if filter_can_match_project_kind(filter) {
-                params.project_gated_reader = Some(pubkey_bytes.clone());
+                params.project_gated_reader = Some(buzz_db::event::ProjectGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    admitted: hidden_repos.admitted_private_projects.clone(),
+                });
             }
             // Private-project *repo* pushdown (NIP-MP phase 2) — armed only
             // when this reader actually has hidden repos.
@@ -1578,6 +1581,13 @@ pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
 /// [`buzz_core::kind::pulse_entry_hidden_from`] reads the same coordinate set,
 /// so omitting 44240 here would leave that gate looking at an empty set and
 /// failing open on every private project's Pulse.
+///
+/// The project container (kind:30621) rides it too, and is the one entry that
+/// fails **closed** rather than open when the set is missing:
+/// [`buzz_core::kind::project_container_hidden_from`] admits on
+/// `HiddenRepos::admitted_private_projects`, so omitting 30621 here would
+/// hide every private project from its own members — which is exactly the bug
+/// that put it on this list.
 pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
     filter.kinds.as_ref().is_none_or(|ks| {
         // An *empty* kind set is a wildcard for arming purposes, not "matches
@@ -1593,6 +1603,7 @@ pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
                     || kind == buzz_core::kind::KIND_SHELL_SESSION
                     || buzz_core::kind::is_project_membership_kind(kind)
                     || kind == buzz_core::kind::KIND_PULSE_ENTRY
+                    || kind == KIND_PROJECT
             })
     })
 }
@@ -1679,7 +1690,13 @@ pub(crate) fn is_author_only_event(event: &nostr::Event, requester_pubkey_bytes:
 ///    explicitly opted into sharing.
 /// 3. **Result-gated kinds** (kind 44200/30622 etc.): `reader_authorized_for_event`
 ///    carries the per-event ownership check.
-/// 4. **Private-project repo events** (NIP-MP phase 2): NIP-34 events
+/// 4. **Private-project containers** (kind:30621 with
+///    `["buzz-access","private"]`): visible to the author and to the readers
+///    the project ACL admits, read from
+///    `hidden_repos.admitted_private_projects`. Note this one is a *positive*
+///    check — an empty set hides every foreign private project, so a caller
+///    that skips resolving `hidden_repos` must also not deliver 30621s.
+/// 5. **Private-project repo events** (NIP-MP phase 2): NIP-34 events
 ///    belonging to a repo in `hidden_repos` — the reader's DB-resolved
 ///    hidden set ([`crate::state::AppState::hidden_repos_cached`]); pass an
 ///    empty set when the reader can see everything.
@@ -1703,6 +1720,16 @@ pub(crate) fn event_visible_to_reader(
     }
     let requester_pubkey_hex = hex::encode(requester_pubkey_bytes);
     if !buzz_core::filter::reader_authorized_for_event(event, &requester_pubkey_hex) {
+        return false;
+    }
+    // NIP-MP: the private kind:30621 container itself. Gated off the reader's
+    // admitted set (the project ACL projection), never the head's `p` tags —
+    // those go stale the moment a 9010/9011 op is accepted.
+    if buzz_core::kind::project_container_hidden_from(
+        event,
+        &requester_pubkey_hex,
+        &hidden_repos.admitted_private_projects,
+    ) {
         return false;
     }
     if buzz_core::kind::repo_event_hidden_from(
@@ -1807,6 +1834,18 @@ mod tests {
         let narrow: Filter = serde_json::from_str(r#"{"kinds":[1]}"#).expect("filter parses");
         assert!(!filter_can_match_git_gated_kinds(&narrow));
         assert!(!filter_can_match_pulse_kind(&narrow));
+    }
+
+    /// `{"kinds":[30621]}` is the desktop's project-list request. Its gate
+    /// (`project_container_hidden_from`) admits on the reader's ACL-resolved
+    /// set, so unlike its neighbours it fails **closed** when that set was
+    /// never fetched: a project-only filter must arm the resolution or every
+    /// private project disappears from its own members.
+    #[test]
+    fn project_only_filter_arms_the_reader_scope_resolution() {
+        let filter: Filter = serde_json::from_str(r#"{"kinds":[30621]}"#).expect("filter parses");
+        assert!(filter_can_match_git_gated_kinds(&filter));
+        assert!(filter_can_match_project_kind(&filter));
     }
 
     #[test]

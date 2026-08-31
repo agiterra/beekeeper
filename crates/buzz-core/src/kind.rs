@@ -923,16 +923,49 @@ pub fn is_private_project_event(event: &nostr::Event) -> bool {
     })
 }
 
+/// The project's own coordinate, `30621:<owner-hex>:<d>`, for a kind:30621
+/// head. `None` for other kinds or when the `d` tag is absent — the caller
+/// treats that as gate-closed, matching
+/// [`project_membership_event_coordinate`].
+pub fn project_head_coordinate(event: &nostr::Event) -> Option<String> {
+    if event_kind_u32(event) != KIND_PROJECT {
+        return None;
+    }
+    let d = nostr::SingleLetterTag::lowercase(nostr::Alphabet::D);
+    event
+        .tags
+        .filter(nostr::TagKind::SingleLetter(d))
+        .find_map(|t| t.content())
+        .map(|dtag| format!("{KIND_PROJECT}:{}:{dtag}", event.pubkey.to_hex()))
+}
+
 /// Returns `true` if the event is a private project container that must be
 /// withheld from this reader: kind 30621 with `["buzz-access","private"]`
-/// where the reader is neither the author nor listed in a `p` tag.
+/// whose coordinate is absent from the reader's admitted set, and which the
+/// reader did not author.
+///
+/// `admitted_private_projects` is the reader's DB-resolved grant set
+/// (`buzz_db::git_repo::HiddenRepos::admitted_private_projects`, read off the
+/// project ACL projection, so it follows kind:9010/9011 roster ops). The
+/// head's own `p` tags are **not** consulted: they are the bootstrap roster
+/// only, and NIP-MP § Relay-managed membership makes them inert for access
+/// decisions the moment the first op is accepted. Reading them here would
+/// both miss every ops-added member and keep serving a member a 9011 removed,
+/// since nothing can rewrite a creator-signed event.
+///
+/// Fails closed: a private head with no resolvable coordinate, or one whose
+/// ACL row never projected, admits nobody but its author.
 ///
 /// This is the container half of project visibility (NIP-MP Buzz extension);
-/// contents (channels/forums) are gated separately through the project ACL
-/// projection in `buzz-db`. Enforced at every read chokepoint via
-/// [`crate::filter::reader_authorized_for_event`], plus a dedicated live
-/// fan-out branch in the relay.
-pub fn project_container_hidden_from(event: &nostr::Event, reader_pubkey_hex: &str) -> bool {
+/// contents (channels/forums/repos/roster/Pulse) are gated by the same
+/// projection through their own predicates. Enforced at every read chokepoint
+/// via `event_visible_to_reader`, plus a dedicated live fan-out branch in the
+/// relay that resolves the gate straight from the ACL row.
+pub fn project_container_hidden_from(
+    event: &nostr::Event,
+    reader_pubkey_hex: &str,
+    admitted_private_projects: &std::collections::HashSet<String>,
+) -> bool {
     if !is_private_project_event(event) {
         return false;
     }
@@ -944,12 +977,10 @@ pub fn project_container_hidden_from(event: &nostr::Event, reader_pubkey_hex: &s
     {
         return false;
     }
-    // Foreign reader: allowed only when invited via a `p` tag.
-    let p = nostr::SingleLetterTag::lowercase(nostr::Alphabet::P);
-    !event.tags.filter(nostr::TagKind::SingleLetter(p)).any(|t| {
-        t.content()
-            .is_some_and(|c| c.eq_ignore_ascii_case(reader_pubkey_hex))
-    })
+    match project_head_coordinate(event) {
+        Some(coordinate) => !admitted_private_projects.contains(&coordinate),
+        None => true,
+    }
 }
 
 /// Returns `true` if a project-membership event must be withheld from this
@@ -1760,45 +1791,121 @@ mod tests {
         assert!(!is_private_project_event(&ev));
     }
 
+    /// The reader's admitted set, as the relay resolves it from
+    /// `project_acl` / `project_acl_members`.
+    fn admitting(event: &nostr::Event) -> std::collections::HashSet<String> {
+        let mut set = std::collections::HashSet::new();
+        set.insert(project_head_coordinate(event).expect("project head coordinate"));
+        set
+    }
+
+    fn nothing_admitted() -> std::collections::HashSet<String> {
+        std::collections::HashSet::new()
+    }
+
+    #[test]
+    fn project_head_coordinate_is_the_canonical_form() {
+        let ev = make_project_event(&[&["d", "platform"]]);
+        assert_eq!(
+            project_head_coordinate(&ev),
+            Some(format!("{KIND_PROJECT}:{}:platform", ev.pubkey.to_hex()))
+        );
+        // Not a project head, and a head with no `d` tag: no coordinate.
+        assert_eq!(
+            project_head_coordinate(&make_persona_event(&[&["d", "platform"]])),
+            None
+        );
+        assert_eq!(project_head_coordinate(&make_project_event(&[])), None);
+    }
+
     #[test]
     fn malformed_private_tag_fails_closed() {
         // Extra tag element must still count as private — hide, never leak.
         let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private", "x"]]);
         assert!(is_private_project_event(&ev));
-        assert!(project_container_hidden_from(&ev, FOREIGN_HEX));
+        assert!(project_container_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &nothing_admitted()
+        ));
     }
 
     #[test]
     fn private_project_hidden_from_foreign_reader() {
         let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
-        assert!(project_container_hidden_from(&ev, FOREIGN_HEX));
+        assert!(project_container_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &nothing_admitted()
+        ));
     }
 
     #[test]
     fn private_project_visible_to_author() {
         let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
-        assert!(!project_container_hidden_from(&ev, &ev.pubkey.to_hex()));
+        // The author never depends on the ACL projection having landed.
+        assert!(!project_container_hidden_from(
+            &ev,
+            &ev.pubkey.to_hex(),
+            &nothing_admitted()
+        ));
     }
 
     #[test]
-    fn private_project_visible_to_invited_member() {
+    fn private_project_visible_to_admitted_member() {
+        // The head carries no `p` tag at all — this is the member a kind:9010
+        // op added, the case that used to be invisible to everyone but the
+        // creator.
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
+        assert!(!project_container_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &admitting(&ev)
+        ));
+    }
+
+    #[test]
+    fn private_project_hidden_from_stale_head_p_tag_member() {
+        // The converse: a member kind:9011 removed is gone from the roster,
+        // but their `p` tag is still on the creator-signed head and nothing
+        // can rewrite it. The roster decides, not the head.
         let ev = make_project_event(&[
             &["d", "proj"],
             &["buzz-access", "private"],
             &["p", FOREIGN_HEX],
         ]);
-        assert!(!project_container_hidden_from(&ev, FOREIGN_HEX));
+        assert!(project_container_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &nothing_admitted()
+        ));
     }
 
     #[test]
-    fn private_project_hidden_from_uninvited_when_others_invited() {
-        let ev = make_project_event(&[
-            &["d", "proj"],
-            &["buzz-access", "private"],
-            &["p", FOREIGN_HEX],
-        ]);
-        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        assert!(project_container_hidden_from(&ev, other));
+    fn private_project_hidden_when_only_another_project_admits() {
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
+        let elsewhere = make_project_event(&[&["d", "other"], &["buzz-access", "private"]]);
+        assert!(project_container_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &admitting(&elsewhere)
+        ));
+    }
+
+    #[test]
+    fn private_project_without_d_tag_admits_nobody_but_its_author() {
+        // No `d` tag means no coordinate to check against the roster. Ingest
+        // rejects the shape (`d-cardinality`), but a smuggled head must hide
+        // rather than leak.
+        let ev = make_project_event(&[&["buzz-access", "private"]]);
+        let mut everything = std::collections::HashSet::new();
+        everything.insert(format!("{KIND_PROJECT}:{}:", ev.pubkey.to_hex()));
+        assert!(project_container_hidden_from(&ev, FOREIGN_HEX, &everything));
+        assert!(!project_container_hidden_from(
+            &ev,
+            &ev.pubkey.to_hex(),
+            &everything
+        ));
     }
 
     // ── NIP-ST shared terminals: kinds + hidden-from ─────────────────────
@@ -1927,9 +2034,17 @@ mod tests {
     #[test]
     fn public_project_never_hidden() {
         let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "public"]]);
-        assert!(!project_container_hidden_from(&ev, FOREIGN_HEX));
+        assert!(!project_container_hidden_from(
+            &ev,
+            FOREIGN_HEX,
+            &nothing_admitted()
+        ));
         let tagless = make_project_event(&[&["d", "proj"]]);
-        assert!(!project_container_hidden_from(&tagless, FOREIGN_HEX));
+        assert!(!project_container_hidden_from(
+            &tagless,
+            FOREIGN_HEX,
+            &nothing_admitted()
+        ));
     }
 
     // ── repo_project_ref / git_event_repo_names / repo_event_hidden_from ──

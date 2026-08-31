@@ -13,19 +13,22 @@ pub fn filters_match(filters: &[Filter], event: &StoredEvent) -> bool {
 
 /// Result-level read authorization for events whose content is private to a
 /// bounded viewer set. Gates `KIND_DM_VISIBILITY` and `KIND_AGENT_TURN_METRIC`
-/// (reader MUST equal the event's `#p` tag) and private `KIND_PROJECT`
-/// containers (reader MUST be the author or an invited `p`-tag member — see
-/// [`crate::kind::project_container_hidden_from`]). Returns `true` for every
-/// other kind.
+/// (reader MUST equal the event's `#p` tag). Returns `true` for every other
+/// kind.
 ///
 /// This guards every delivery surface — WS historical pull (`req.rs`), HTTP
 /// bridge (`bridge.rs`), and live fan-out (`event.rs`) — so a query that
 /// bypasses the filter-level `#p` gate (e.g. a kindless `ids:[…]` lookup of
 /// a known event id) still cannot read another user's private event.
+///
+/// Private `KIND_PROJECT` containers are **not** gated here.
+/// [`crate::kind::project_container_hidden_from`] needs the reader's
+/// DB-resolved admitted-project set, which this signature cannot carry;
+/// every caller applies it alongside the other project-scoped predicates
+/// (`event_visible_to_reader` in the relay). Adding a container check back
+/// into this function would silently reintroduce the head-`p`-tag reading
+/// the ACL projection replaced.
 pub fn reader_authorized_for_event(event: &nostr::Event, reader_pubkey_hex: &str) -> bool {
-    if crate::kind::project_container_hidden_from(event, reader_pubkey_hex) {
-        return false;
-    }
     let kind = crate::kind::event_kind_u32(event);
     if kind != crate::kind::KIND_DM_VISIBILITY && kind != crate::kind::KIND_AGENT_TURN_METRIC {
         return true;
@@ -292,8 +295,18 @@ mod tests {
         assert!(reader_authorized_for_event(&note, other));
     }
 
+    /// The private-project container is deliberately **not** gated here: the
+    /// decision needs the reader's ACL-resolved admitted set, which this
+    /// signature cannot carry, so it lives in
+    /// [`crate::kind::project_container_hidden_from`] and is applied beside
+    /// the other project-scoped predicates. This test pins the seam — if a
+    /// container check ever reappears in `reader_authorized_for_event` it can
+    /// only be reading the head's `p` tags again, which is exactly the bug
+    /// that hid every private project from its own roster.
     #[test]
-    fn reader_authorized_for_event_gates_private_project() {
+    fn reader_authorized_for_event_leaves_the_project_container_to_the_acl_gate() {
+        use std::collections::HashSet;
+
         use nostr::{EventBuilder, Keys, Kind, Tag};
         let owner_keys = Keys::generate();
         let member = Keys::generate().public_key().to_hex();
@@ -307,26 +320,26 @@ mod tests {
             .sign_with_keys(&owner_keys)
             .unwrap();
         assert!(
-            reader_authorized_for_event(&private, &owner_keys.public_key().to_hex()),
-            "author must always read their own private project"
-        );
-        assert!(
-            reader_authorized_for_event(&private, &member),
-            "invited p-tag member must read the private project"
-        );
-        assert!(
-            !reader_authorized_for_event(&private, &stranger),
-            "uninvited reader must not read a private project"
+            reader_authorized_for_event(&private, &stranger),
+            "this function must not answer the container question at all"
         );
 
-        let public = EventBuilder::new(Kind::Custom(crate::kind::KIND_PROJECT as u16), "")
-            .tags([Tag::parse(["d", "open"]).unwrap()])
-            .sign_with_keys(&owner_keys)
-            .unwrap();
-        assert!(
-            reader_authorized_for_event(&public, &stranger),
-            "tag-less project stays community-readable"
-        );
+        // The ACL gate is what actually decides, and it ignores that `p` tag.
+        let coordinate =
+            crate::kind::project_head_coordinate(&private).expect("project head coordinate");
+        let admitted: HashSet<String> = HashSet::from([coordinate]);
+        let nothing = HashSet::new();
+        assert!(!crate::kind::project_container_hidden_from(
+            &private,
+            &owner_keys.public_key().to_hex(),
+            &nothing
+        ));
+        assert!(!crate::kind::project_container_hidden_from(
+            &private, &stranger, &admitted
+        ));
+        assert!(crate::kind::project_container_hidden_from(
+            &private, &member, &nothing
+        ));
     }
 
     #[test]

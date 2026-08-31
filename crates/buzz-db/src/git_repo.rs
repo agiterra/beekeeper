@@ -256,10 +256,29 @@ pub struct HiddenRepos {
     /// `git_repo_names` link, but its intent to sit inside a private project
     /// is on the event itself and must still hide it.
     pub project_coordinates: std::collections::HashSet<String>,
+    /// `30621:<owner-hex>:<dtag>` of every private project that **does** admit
+    /// this reader — their own projects plus every `project_acl_members` row
+    /// they hold, at any role.
+    ///
+    /// The inverse of [`Self::project_coordinates`], and deliberately not
+    /// derived from it. The hidden set is fail-*open*: a private head whose
+    /// ACL projection never landed sits in no set, so nothing hides it —
+    /// acceptable for a repo's `a` tag, fatal for the container itself. The
+    /// kind:30621 read gate
+    /// ([`buzz_core::kind::project_container_hidden_from`]) is therefore a
+    /// positive check against this set, so an unprojected private head admits
+    /// nobody but its author.
+    pub admitted_private_projects: std::collections::HashSet<String>,
 }
 
 impl HiddenRepos {
     /// `true` when nothing is hidden from this reader — gating can be skipped.
+    ///
+    /// [`Self::admitted_private_projects`] is deliberately excluded: it is a
+    /// grant, not a concealment, and a reader admitted to a project hides
+    /// nothing on that account. Callers guard the hidden-set SQL pushdown on
+    /// this method; the container pushdown is armed separately by
+    /// `filter_can_match_project_kind`.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.coordinates.is_empty() && self.names.is_empty() && self.project_coordinates.is_empty()
@@ -324,6 +343,31 @@ pub async fn hidden_repos_for_reader(
     .fetch_all(pool)
     .await?;
     hidden.project_coordinates = project_rows.into_iter().map(|(c,)| c).collect();
+    // The positive half: private projects this reader IS admitted to, as
+    // creator or as a roster member at any role. `EXISTS` where the hidden
+    // query has `NOT EXISTS`, and no `pa.owner <> $2` clause — the creator is
+    // an implicit member and never appears in `project_acl_members`.
+    let admitted_rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT pa.coordinate
+        FROM project_acl pa
+        WHERE pa.community_id = $1
+          AND pa.visibility = 'private'
+          AND (pa.owner = $2
+               OR EXISTS (
+                   SELECT 1 FROM project_acl_members pam
+                   WHERE pam.community_id = pa.community_id
+                     AND pam.owner = pa.owner
+                     AND pam.dtag = pa.dtag
+                     AND pam.pubkey = $2
+               ))
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(reader)
+    .fetch_all(pool)
+    .await?;
+    hidden.admitted_private_projects = admitted_rows.into_iter().map(|(c,)| c).collect();
     Ok(hidden)
 }
 
@@ -637,5 +681,70 @@ mod tests {
                 .expect("owner in B"),
             Some(owner_b)
         );
+    }
+
+    /// `admitted_private_projects` follows the roster projection, which is
+    /// what the kind:30621 container gate reads: the creator and every
+    /// `project_acl_members` row are admitted, an outsider is not, and the
+    /// two halves of the set never overlap.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn admitted_private_projects_follows_the_roster() {
+        use crate::project_acl::{put_project_members, upsert_project_acl, ProjectRole};
+
+        let pool = setup_pool().await;
+        let community = make_test_community(&pool).await;
+        let owner = hex::decode(pk()).expect("owner bytes");
+        let member = hex::decode(pk()).expect("member bytes");
+        let outsider = hex::decode(pk()).expect("outsider bytes");
+        let dtag = format!("proj-{}", Uuid::new_v4().simple());
+        let coordinate = format!("30621:{}:{dtag}", hex::encode(&owner));
+
+        // A private head naming nobody — the roster is grown by ops alone.
+        upsert_project_acl(
+            &pool,
+            community,
+            &owner,
+            &dtag,
+            "private",
+            &[],
+            1_800_000_500,
+        )
+        .await
+        .expect("project head projection");
+        put_project_members(
+            &pool,
+            community,
+            &owner,
+            &dtag,
+            &owner,
+            &[(member.clone(), ProjectRole::Viewer)],
+        )
+        .await
+        .expect("put member");
+
+        for (who, admitted) in [(&owner, true), (&member, true), (&outsider, false)] {
+            let hidden = hidden_repos_for_reader(&pool, community, who)
+                .await
+                .expect("resolve reader scope");
+            assert_eq!(
+                hidden.admitted_private_projects.contains(&coordinate),
+                admitted,
+                "admitted set for {}",
+                hex::encode(who)
+            );
+            assert_eq!(
+                hidden.project_coordinates.contains(&coordinate),
+                !admitted,
+                "the hidden set is the exact complement for {}",
+                hex::encode(who)
+            );
+        }
+
+        // A viewer is a full read grant: the role tier gates writes, not sight.
+        let hidden = hidden_repos_for_reader(&pool, community, &member)
+            .await
+            .expect("resolve member scope");
+        assert!(hidden.admitted_private_projects.contains(&coordinate));
     }
 }

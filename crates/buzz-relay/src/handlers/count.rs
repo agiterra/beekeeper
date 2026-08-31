@@ -225,7 +225,10 @@ pub async fn handle_count(
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
             if needs_project_gate_filtering {
-                query.project_gated_reader = Some(pubkey_bytes.clone());
+                query.project_gated_reader = Some(buzz_db::event::ProjectGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    admitted: hidden_repos.admitted_private_projects.clone(),
+                });
             }
             if needs_git_gate_filtering {
                 query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
@@ -309,7 +312,10 @@ pub async fn handle_count(
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
             if needs_project_gate_filtering {
-                query.project_gated_reader = Some(pubkey_bytes.clone());
+                query.project_gated_reader = Some(buzz_db::event::ProjectGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    admitted: hidden_repos.admitted_private_projects.clone(),
+                });
             }
             if needs_git_gate_filtering {
                 query.git_gated_reader = Some(buzz_db::event::GitGatedReader {

@@ -5837,6 +5837,98 @@ consequences and three leftovers:
   identifiers `desktop/package.json` `"buzz"` / `pubspec.yaml` `name: buzz`
   and the `desktop/public/buzz.svg` favicon filename were also left as-is.
 
+### Built 2026-08-31 — the private-project container gate reads the roster, not the head
+
+**On `worktree-private-project-member-visibility`, not landed, not deployed.**
+
+Reported symptom: *a private project is visible only to the person who created
+it; members added afterwards never see it.* True, and the cause was one gate
+out of step with the other five.
+
+Private-project access was enforced two ways. Channels, repos, Pulse entries,
+shared terminals and the 39010 roster projection all read the
+`project_acl` / `project_acl_members` projection, which is roster-op aware.
+The kind:30621 container **itself** read the `p` tags on the creator-signed
+head (`buzz_core::kind::project_container_hidden_from`). Adding a member from
+the desktop publishes a kind:9010 op
+(`desktop/src/features/projects-container/lib/projectMembers.ts:122` —
+nothing in the member-management path republishes the head, and no co-owner
+could sign one anyway). The relay writes the member into
+`project_acl_members`, flips `project_acl.roster_source` to `'ops'`, emits the
+39010 — and cannot touch the head. So the new member was on the roster but not
+in the `p` tags, and the `p` tags were the only thing the container gate read.
+Members seeded *at creation* worked (`useCreateProjectContainer.ts:58` writes
+`p` tags directly), which is why the symptom read as "creator only".
+
+NIP-MP already said which side was right — *"once any op has been accepted,
+the head's `p` tags are ignored for access decisions"* — and
+`project_acl.rs:41` repeats it. The container gate had simply never been
+updated to follow. §Access levels of the NIP has been corrected too: it still
+described the gate as a `p`-tag check, and now states the roster rule as a
+MUST with both divergence directions named.
+
+**The converse hole closed in the same change.** A member removed by a
+kind:9011 op kept read access to the head forever, because their stale `p` tag
+sits on an event nothing can rewrite. That is a real leak, not just a
+visibility bug, and it is fixed by the same predicate.
+
+The gate now reads the ACL projection, and **fails closed**:
+
+- `buzz_db::git_repo::HiddenRepos` gains `admitted_private_projects` — the
+  private projects that *do* admit this reader, resolved in the same call as
+  the existing hidden set. Deliberately not derived from
+  `project_coordinates`: the hidden set is fail-*open* (an unprojected head is
+  in no set, so nothing hides it), which is tolerable for a repo's `a` tag and
+  wrong for the container. `is_empty()` deliberately ignores the new field —
+  it means "nothing is hidden", and four `!hidden_repos.is_empty()` pushdown
+  guards depend on that reading.
+- `project_container_hidden_from` takes the admitted set, like its four
+  siblings, and matches on the head's own coordinate
+  (`project_head_coordinate`; no `d` tag → hidden). The `p`-tag scan is gone.
+- The call moved **out** of `buzz_core::filter::reader_authorized_for_event`
+  (which cannot carry the set) into `event_visible_to_reader`. A unit test
+  pins that seam: a container check reappearing in `reader_authorized_for_event`
+  could only be reading `p` tags again.
+- `filter_can_match_git_gated_kinds` now includes `KIND_PROJECT`. It did not,
+  so `{"kinds":[30621]}` — exactly what the desktop sends
+  (`hooks.ts:64`) — never resolved `hidden_repos` at all.
+- SQL pushdown (`EventQuery::project_gated_reader`, now a
+  `ProjectGatedReader`) admits on a coordinate rebuilt from the row's own
+  `pubkey`/`d_tag` against the admitted list, still pre-`LIMIT` for the same
+  starvation reason.
+- Live fan-out resolves `project_coordinate_gate_cached` +
+  `ProjectGate::admits_read`, the shape the 9010/9011/39010 branch directly
+  below it already used. Side effects run before `dispatch_persistent_event`,
+  so the ACL row is written and the coordinate cache flushed before the gate
+  reads it.
+- `push_runtime` resolves the reader scope for batches carrying a private
+  30621 too, and applies the gate — otherwise the container check vanishing
+  from `reader_authorized_for_event` would have woken every subscribed device.
+
+**No migration and no backfill.** `project_acl_members` was already correct;
+only the gate was wrong, so existing private projects repair themselves the
+moment this deploys.
+
+Evidence: `cargo test -p buzz-core --lib` 569/569 (7 new gate cases including
+the ops-added member and the stale-`p`-tag removal). Two new Postgres tests
+green — `git_repo::admitted_private_projects_follows_the_roster` and
+`event::project_gated_reader_admits_on_the_roster_not_the_head_p_tags`. Live
+against a local relay: `e2e_project_visibility` 9/9 (3 new),
+`e2e_project_roles` 3/3, `e2e_project` 6/6, `e2e_repo_visibility` 6/6,
+`e2e_git::git_access_follows_the_project_roster_without_a_channel_binding`
+ok. **The three new E2E tests were verified to fail on a relay built from
+`main`** (stash the three crates, keep the tests, rebuild, rerun) — 0-not-1
+head for the ops-added member, no live fan-out, and the removed member still
+reading the head.
+
+Two failures seen locally that are **not** this change, both confirmed by
+running them against a relay built without it: `e2e_git`
+`git_clone_push_fetch_force_roundtrip` and
+`git_concurrent_push_one_wins_and_repo_recovers` both time out in
+`require_pointer` (the manifest pointer never appears in MinIO), and the
+`buzz-relay` lib tests `fanout_access::open_channel_event_passes_through_unfiltered`
+and `::threaded_visibility_open_passes_through` fail on a bare `cargo test`.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first

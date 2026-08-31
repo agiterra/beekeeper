@@ -1087,7 +1087,10 @@ async fn query_events_authed(
 
     // NIP-MP access extension phase 2: the reader's hidden-repo set, resolved
     // once per request (10s cache) when any filter could match a git-gated
-    // kind. Empty disables all git gating below. Fails closed.
+    // kind. Empty disables all git gating below. Fails closed — and note the
+    // set also carries `admitted_private_projects`, where empty *hides* every
+    // foreign private kind:30621; the arming predicate covers 30621 so no
+    // filter that can match one is served off the default.
     let hidden_repos = if filters
         .iter()
         .any(crate::handlers::req::filter_can_match_git_gated_kinds)
@@ -1372,7 +1375,10 @@ async fn query_events_authed(
         }
         // Private-project visibility pushdown, same starvation rationale.
         if crate::handlers::req::filter_can_match_project_kind(filter) {
-            query.project_gated_reader = Some(pubkey_bytes.clone());
+            query.project_gated_reader = Some(buzz_db::event::ProjectGatedReader {
+                reader: pubkey_bytes.clone(),
+                admitted: hidden_repos.admitted_private_projects.clone(),
+            });
         }
         // Private-project *repo* pushdown (NIP-MP phase 2) — armed only when
         // this reader actually has hidden repos.
@@ -1720,7 +1726,10 @@ async fn count_events_authed(
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
             if needs_project_gate_filtering {
-                query.project_gated_reader = Some(pubkey_bytes.clone());
+                query.project_gated_reader = Some(buzz_db::event::ProjectGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    admitted: hidden_repos.admitted_private_projects.clone(),
+                });
             }
             if needs_git_gate_filtering {
                 query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
@@ -1802,7 +1811,10 @@ async fn count_events_authed(
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
             if needs_project_gate_filtering {
-                query.project_gated_reader = Some(pubkey_bytes.clone());
+                query.project_gated_reader = Some(buzz_db::event::ProjectGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    admitted: hidden_repos.admitted_private_projects.clone(),
+                });
             }
             if needs_git_gate_filtering {
                 query.git_gated_reader = Some(buzz_db::event::GitGatedReader {

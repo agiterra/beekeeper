@@ -124,14 +124,16 @@ async fn load_match_context(
     // A push wake matched against a private project's repo event would leak
     // that project's activity to an outsider's device, so resolve each lease
     // author's hidden set — but only for batches that actually carry
-    // git-gated events (repo events are a sliver of push traffic).
+    // project-scoped events (they are a sliver of push traffic). Private
+    // kind:30621 containers ride the same resolution: their gate reads the
+    // *admitted* half of the same set, and an unresolved set fails closed.
     let mut hidden_repos = std::collections::HashMap::new();
-    let batch_has_git_events = batch.jobs.iter().any(|job| {
+    let batch_has_project_scoped_events = batch.jobs.iter().any(|job| {
         buzz_core::kind::is_git_project_gated_kind(buzz_core::kind::event_kind_u32(
             &job.event.event,
-        ))
+        )) || buzz_core::kind::is_private_project_event(&job.event.event)
     });
-    if batch_has_git_events {
+    if batch_has_project_scoped_events {
         for lease in &leases {
             if hidden_repos.contains_key(&lease.author) {
                 continue;
@@ -250,9 +252,30 @@ fn match_job(
     context: &MatchContext,
 ) -> anyhow::Result<Vec<buzz_db::push::WakeRequest>> {
     let mut wakes = Vec::new();
+    // Stand-in for a lease whose project scope was never resolved (a batch
+    // carrying no project-scoped events). For the container gate an empty
+    // admitted set means "admits nobody but the author" — the fail-closed
+    // direction, and the correct one here: such a batch carries no private
+    // kind:30621 for the gate to act on.
+    let no_admitted_projects = std::collections::HashSet::new();
     for lease in &context.leases {
         let author_hex = hex::encode(&lease.author);
         if !reader_authorized_for_event(&job.event.event, &author_hex) {
+            continue;
+        }
+        // NIP-MP: a private kind:30621 container wakes only its author's
+        // devices and those of readers the project ACL admits — never a
+        // device whose owner cannot see the project at all.
+        if buzz_core::kind::project_container_hidden_from(
+            &job.event.event,
+            &author_hex,
+            context
+                .hidden_repos
+                .get(&lease.author)
+                .map_or(&no_admitted_projects, |hidden| {
+                    &hidden.admitted_private_projects
+                }),
+        ) {
             continue;
         }
         // Private-project repo events (NIP-MP phase 2): never wake a device

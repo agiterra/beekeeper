@@ -118,7 +118,9 @@ Ingest bounds metadata cardinality and length; it interprets no metadata value. 
 `buzz-access` sets who may **read** the project container and, on the Buzz relay, its contained channels and forums. It is the one metadata tag the relay interprets rather than treats as opaque, because it is an access-control input, not a display hint.
 
 - Absent or `public` — the container is community-readable. This is the default and describes every pre-extension event.
-- `private` — the relay withholds the container from every reader except the **author** and the pubkeys named in the event's `p` tags (invited members). Enforcement covers every read surface: REQ historical delivery, live fan-out, COUNT, `ids` lookup, the HTTP bridge, and FTS search. Channels bound to a private project (via `project_ref`) are additionally excluded from non-members' accessible-channel sets, hiding their messages and forums and refusing writes.
+- `private` — the relay withholds the container from every reader except the **author** and the project's current **roster** ([Relay-managed membership](#relay-managed-membership-buzz-extension)): head-sourced `p` tags until the first membership op is accepted, ops-sourced thereafter. Enforcement covers every read surface: REQ historical delivery, live fan-out, COUNT, `ids` lookup, the HTTP bridge, and FTS search. Channels bound to a private project (via `project_ref`) are additionally excluded from non-members' accessible-channel sets, hiding their messages and forums and refusing writes.
+
+A relay MUST read the container gate from the same roster every other surface uses, and MUST NOT read it from the head's `p` tags once the roster is ops-sourced. The head is signed by the creator alone and no op can rewrite it, so a `p`-tag gate diverges in both directions the moment a roster op lands: a member a `9010` seated cannot see the container that names their project, and a member a `9011` removed keeps reading it forever. Both are failures of this section, not of [Roster source](#relay-managed-membership-buzz-extension).
 
 The owner is an implicit member and never appears in `p` tags. `buzz-visibility` is orthogonal: it filters what a client *lists* among events the reader already received; `buzz-access` controls what the relay *delivers* at all.
 
@@ -310,7 +312,7 @@ The Buzz access and roles extensions add seven rules over `buzz-access` and invi
 11. **`invite-cap`** — at most 256 invited-member `p` tags, counting every raw tag, same rationale as `member-cap`. Inclusive: 256 accepted, 257 not.
 12. **`invite-tag-arity`** — every `p` tag has two to four elements (pubkey, optional relay hint, optional role). A fifth element has no defined meaning and is rejected rather than ignored.
 13. **`invite-role`** — a present fourth element is a pinned [role](#member-roles) (`owner`, `collaborator`, `viewer`). A role typo must not silently grant or deny.
-14. **`invite-malformed`** — every `p` value is 64 lowercase hex characters. The read gate compares byte-exact against the authenticated reader's pubkey, so an uppercase invite would never match.
+14. **`invite-malformed`** — every `p` value is 64 lowercase hex characters. The roster projection stores the decoded bytes and the read gate compares byte-exact against the authenticated reader's pubkey, so an uppercase invite would never match.
 15. **`invite-duplicate`** — no two `p` tags hold the same pubkey.
 
 Rules 3 through 6 are evaluated in that order, so an oversized tag list is refused on count before any per-tag parse or set proportional to it is built; rules 11 through 15 follow the same count-before-parse discipline.

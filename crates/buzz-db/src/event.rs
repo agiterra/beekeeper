@@ -129,13 +129,25 @@ pub struct EventQuery {
     ///
     /// When set, `query_events` appends a pre-`LIMIT` clause excluding
     /// kind:30621 heads that carry `["buzz-access","private"]` unless the
-    /// reader is the author or named in a `p` tag:
+    /// reader is the author or the project ACL admits them:
     /// `AND (kind <> 30621 OR NOT tags @> '[["buzz-access","private"]]'
-    ///       OR pubkey = $reader OR tags @> '[["p","<reader-hex>"]]')`.
-    /// Same starvation rationale and GIN-index mechanics as
-    /// [`Self::shared_gated_reader`]; `event_visible_to_reader` stays as
-    /// post-filter defense-in-depth.
-    pub project_gated_reader: Option<Vec<u8>>,
+    ///       OR pubkey = $reader
+    ///       OR '30621:' || encode(pubkey,'hex') || ':' || d_tag = ANY($admitted))`.
+    ///
+    /// The admitted set comes from
+    /// [`crate::git_repo::HiddenRepos::admitted_private_projects`], not from
+    /// the head's `p` tags: those are the bootstrap roster only and go inert
+    /// once a kind:9010/9011 op flips `project_acl.roster_source` to `'ops'`,
+    /// so probing them would hide the project from every ops-added member and
+    /// keep serving it to every ops-removed one.
+    ///
+    /// Same starvation rationale as [`Self::shared_gated_reader`] — the clause
+    /// is applied before ORDER/LIMIT so withheld heads never eat the page.
+    /// `event_visible_to_reader` stays as post-filter defense-in-depth; an
+    /// empty admitted set is still a meaningful (fully closed) gate, so unlike
+    /// [`Self::git_gated_reader`] this one is armed whenever the filter can
+    /// match kind:30621.
+    pub project_gated_reader: Option<ProjectGatedReader>,
     /// Private-project **repo** visibility pushdown (NIP-MP access extension
     /// phase 2).
     ///
@@ -152,6 +164,17 @@ pub struct EventQuery {
     /// defense-in-depth (it also normalizes case-variant coordinates the
     /// exact SQL probe would miss).
     pub git_gated_reader: Option<GitGatedReader>,
+}
+
+/// Reader identity + admitted private-project set for
+/// [`EventQuery::project_gated_reader`].
+#[derive(Debug, Clone)]
+pub struct ProjectGatedReader {
+    /// The authenticated reader's 32-byte pubkey.
+    pub reader: Vec<u8>,
+    /// `30621:<owner-hex>:<dtag>` of every private project admitting this
+    /// reader — [`crate::git_repo::HiddenRepos::admitted_private_projects`].
+    pub admitted: std::collections::HashSet<String>,
 }
 
 /// Reader identity + hidden-repo set for [`EventQuery::git_gated_reader`].
@@ -646,21 +669,27 @@ pub(crate) async fn query_events_on(
 
     // Private-project visibility pushdown: exclude kind:30621 heads carrying
     // ["buzz-access","private"] that the reader neither authored nor is
-    // invited to via a `p` tag.  Applied BEFORE ORDER/LIMIT for the same
-    // starvation reason as the shared-gated clause above.  Both containment
-    // probes are served by idx_events_tags_gin; ingest guarantees `p` values
-    // are lowercase 64-hex, so the reader-hex containment is byte-exact.
-    if let Some(ref reader_bytes) = q.project_gated_reader {
+    // admitted to by the project ACL.  Applied BEFORE ORDER/LIMIT for the same
+    // starvation reason as the shared-gated clause above.  The `buzz-access`
+    // containment probe is served by idx_events_tags_gin; the coordinate is
+    // rebuilt from the row's own `pubkey`/`d_tag` so it matches the canonical
+    // form `project_acl.coordinate` stores, and the leading `kind <>` term
+    // short-circuits it away for every non-project row.
+    if let Some(ref gate) = q.project_gated_reader {
         let private_containment = serde_json::json!([["buzz-access", "private"]]);
-        let reader_p_containment = serde_json::json!([["p", hex::encode(reader_bytes)]]);
+        let admitted: Vec<String> = gate.admitted.iter().cloned().collect();
         qb.push(format!(" AND ({col_prefix}kind <> "));
         qb.push_bind(buzz_core::kind::KIND_PROJECT as i32);
         qb.push(format!(" OR NOT {col_prefix}tags @> "));
         qb.push_bind(private_containment);
         qb.push(format!(" OR {col_prefix}pubkey = "));
-        qb.push_bind(reader_bytes.clone());
-        qb.push(format!(" OR {col_prefix}tags @> "));
-        qb.push_bind(reader_p_containment);
+        qb.push_bind(gate.reader.clone());
+        qb.push(format!(
+            " OR ({col_prefix}d_tag IS NOT NULL AND '{}:' || encode({col_prefix}pubkey, 'hex') || ':' || {col_prefix}d_tag = ANY(",
+            buzz_core::kind::KIND_PROJECT
+        ));
+        qb.push_bind(admitted);
+        qb.push("))");
         qb.push(")");
     }
 
@@ -3643,6 +3672,7 @@ mod tests {
                 coordinates: Vec::new(),
                 names: std::collections::HashSet::new(),
                 project_coordinates: std::collections::HashSet::from([hidden_coordinate.clone()]),
+                admitted_private_projects: std::collections::HashSet::new(),
             },
         };
 
@@ -3675,6 +3705,121 @@ mod tests {
             as_author.len(),
             2,
             "an author always reads back their own entries"
+        );
+    }
+
+    /// The private-project container pushdown admits on the reader's ACL-
+    /// resolved coordinate set, not on the head's `p` tags — so a member a
+    /// kind:9010 op added (no `p` tag anywhere on the head) reads it, and a
+    /// member a kind:9011 op removed does not, even though their stale `p`
+    /// tag is still on the creator-signed event and cannot be rewritten.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn project_gated_reader_admits_on_the_roster_not_the_head_p_tags() {
+        let pool = setup_pool().await;
+        let community_uuid = make_test_community(&pool).await;
+        let community = CommunityId::from_uuid(community_uuid);
+        let owner = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+        let ops_member = Keys::generate();
+        let removed_member = Keys::generate();
+        let base = 1_800_000_400;
+
+        let head = |dtag: &str, tags: Vec<Tag>, created_at: u64| {
+            let mut all = vec![Tag::parse(["d", dtag]).expect("d tag")];
+            all.extend(tags);
+            EventBuilder::new(Kind::Custom(30_621), "")
+                .tags(all)
+                .custom_created_at(nostr::Timestamp::from(created_at))
+                .sign_with_keys(&owner)
+                .expect("sign project head")
+        };
+
+        // Roster-only project: private, and its head names nobody.
+        let ops_project = head(
+            "ops",
+            vec![Tag::parse(["buzz-access", "private"]).expect("access tag")],
+            base + 1,
+        );
+        insert_event(&pool, community, &ops_project, None)
+            .await
+            .expect("insert ops-roster project");
+        // Stale-invite project: private, and its head still names the member
+        // a removal op has since dropped from the roster.
+        let stale_project = head(
+            "stale",
+            vec![
+                Tag::parse(["buzz-access", "private"]).expect("access tag"),
+                Tag::parse(["p", &removed_member.public_key().to_hex()]).expect("p tag"),
+            ],
+            base + 2,
+        );
+        insert_event(&pool, community, &stale_project, None)
+            .await
+            .expect("insert stale-invite project");
+        let public_project = head("open", vec![], base + 3);
+        insert_event(&pool, community, &public_project, None)
+            .await
+            .expect("insert public project");
+
+        let gate = |who: &Keys, admitted: &[&nostr::Event]| crate::event::ProjectGatedReader {
+            reader: who.public_key().to_bytes().to_vec(),
+            admitted: admitted
+                .iter()
+                .map(|ev| {
+                    format!(
+                        "30621:{owner_hex}:{}",
+                        ev.tags
+                            .iter()
+                            .find(|t| t.as_slice().first().map(|s| s.as_str()) == Some("d"))
+                            .and_then(|t| t.as_slice().get(1).cloned())
+                            .expect("d tag")
+                    )
+                })
+                .collect(),
+        };
+
+        let page = |gate: crate::event::ProjectGatedReader| EventQuery {
+            kinds: Some(vec![30_621]),
+            project_gated_reader: Some(gate),
+            limit: Some(10),
+            ..EventQuery::for_community(community)
+        };
+
+        let seen = query_events(&pool, &page(gate(&ops_member, &[&ops_project])))
+            .await
+            .expect("query as the ops-added member");
+        let ids: Vec<_> = seen.iter().map(|e| e.event.id).collect();
+        assert!(
+            ids.contains(&ops_project.id),
+            "a member added by a roster op must read the head"
+        );
+        assert!(
+            ids.contains(&public_project.id),
+            "a public project is never gated"
+        );
+        assert!(
+            !ids.contains(&stale_project.id),
+            "membership in one project does not admit another"
+        );
+
+        let seen = query_events(&pool, &page(gate(&removed_member, &[])))
+            .await
+            .expect("query as the removed member");
+        let ids: Vec<_> = seen.iter().map(|e| e.event.id).collect();
+        assert!(
+            !ids.contains(&stale_project.id),
+            "a stale head `p` tag must not survive the removal op"
+        );
+        assert_eq!(ids, vec![public_project.id]);
+
+        let seen = query_events(&pool, &page(gate(&owner, &[])))
+            .await
+            .expect("query as the creator");
+        assert_eq!(
+            seen.len(),
+            3,
+            "the creator reads their own heads with no roster row at all"
         );
     }
 

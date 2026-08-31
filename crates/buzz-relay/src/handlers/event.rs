@@ -175,20 +175,42 @@ pub async fn filter_fanout_by_access(
     };
 
     // Private-project container gate (fan-out): a kind:30621 head carrying
-    // ["buzz-access","private"] is delivered only to the author's and invited
-    // members' connections, matching REQ semantics
-    // (buzz_core::filter::reader_authorized_for_event).
+    // ["buzz-access","private"] is delivered only to the author's connections
+    // and to those the project ACL admits, matching REQ semantics
+    // (`project_container_hidden_from` inside `event_visible_to_reader`).
+    //
+    // The roster is read from the ACL projection, never the head's own `p`
+    // tags — those are inert once a 9010/9011 op has been accepted. This is
+    // the same shape as the membership-op branch immediately below; the head
+    // is being ingested in this same pass, so its ACL row is already written
+    // and the coordinate cache was flushed by the projection side effect.
+    // A missing gate row for an event we already know is private fails
+    // closed to the author alone.
     let matches = if buzz_core::kind::is_private_project_event(&stored_event.event) {
+        let author = stored_event.event.pubkey.to_bytes();
+        let gate = match buzz_core::kind::project_head_coordinate(&stored_event.event) {
+            Some(coordinate) => match state
+                .project_coordinate_gate_cached(community_id, &coordinate)
+                .await
+            {
+                Ok(gate) => gate,
+                Err(e) => {
+                    warn!(%coordinate, "fan-out access filter: project gate lookup failed: {e}");
+                    None
+                }
+            },
+            None => None,
+        };
         matches
             .into_iter()
             .filter(|(conn_id, _)| {
                 let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
                     return false;
                 };
-                !buzz_core::kind::project_container_hidden_from(
-                    &stored_event.event,
-                    &hex::encode(pk),
-                )
+                if pk == author {
+                    return true;
+                }
+                gate.as_ref().is_some_and(|g| g.admits_read(&pk))
             })
             .collect()
     } else {

@@ -12,6 +12,11 @@
 //!   kind:9007 create) refuses non-member reads AND writes, admits invited
 //!   members, and reverts to open after the project is deleted (NIP-09);
 //! - an owner republish that drops a member revokes that member's access;
+//! - the roster, not the head, is what the container gate reads: a member
+//!   seated by a kind:9010 op sees a head that names nobody, and a member
+//!   dropped by a kind:9011 op stops seeing a head whose `p` tag still names
+//!   them (nothing can rewrite a creator-signed event, which is why the ACL
+//!   projection has to be the authority);
 //! - tag-less and explicitly-public projects stay community-readable.
 //!
 //! See `docs/nips/NIP-MP.md` §Access levels for the normative contract.
@@ -33,6 +38,8 @@ use reqwest::Client;
 use serde_json::Value;
 
 const PROJECT_KIND: u16 = 30621;
+const PUT_MEMBER_KIND: u16 = 9010;
+const REMOVE_MEMBER_KIND: u16 = 9011;
 const MESSAGE_KIND: u16 = 9;
 
 fn relay_url() -> String {
@@ -93,6 +100,33 @@ fn project_event(
     }
     .sign_with_keys(keys)
     .unwrap()
+}
+
+/// Build a kind:9010 put-member op — the roster write every Buzz client
+/// actually makes when a member is added after creation. It cannot touch the
+/// creator-signed head, so the roster it grows is invisible to any gate that
+/// reads `p` tags.
+fn put_member_op(signer: &Keys, coordinate: &str, targets: &[(&Keys, &str)]) -> nostr::Event {
+    let mut tags = vec![Tag::parse(["a", coordinate]).unwrap()];
+    for (target, role) in targets {
+        tags.push(Tag::parse(["p", &target.public_key().to_hex(), "", role]).unwrap());
+    }
+    EventBuilder::new(Kind::Custom(PUT_MEMBER_KIND), "")
+        .tags(tags)
+        .sign_with_keys(signer)
+        .unwrap()
+}
+
+/// Build a kind:9011 remove-member op.
+fn remove_member_op(signer: &Keys, coordinate: &str, targets: &[&Keys]) -> nostr::Event {
+    let mut tags = vec![Tag::parse(["a", coordinate]).unwrap()];
+    for target in targets {
+        tags.push(Tag::parse(["p", &target.public_key().to_hex()]).unwrap());
+    }
+    EventBuilder::new(Kind::Custom(REMOVE_MEMBER_KIND), "")
+        .tags(tags)
+        .sign_with_keys(signer)
+        .unwrap()
 }
 
 /// A NIP-09 `a`-tag-only deletion at the project coordinate.
@@ -405,6 +439,256 @@ async fn test_private_container_fanout_filtered_live() {
             Err(_) => {} // timeout tick — keep waiting out the window
         }
     }
+}
+
+/// Live fan-out follows the roster too: a member seated by a kind:9010 op
+/// receives the head's republish, and the connection gate resolves the grant
+/// from the ACL rather than the event in flight.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn test_roster_op_member_receives_live_fanout() {
+    let owner = Keys::generate();
+    let member = Keys::generate();
+    let d_tag = unique("ops-live");
+    let coordinate = project_coordinate(&owner, &d_tag);
+
+    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+        .await
+        .expect("owner connect");
+    let now = Timestamp::now().as_secs();
+    let ok = owner_client
+        .send_event(project_event(
+            &owner,
+            &d_tag,
+            Some("private"),
+            &[],
+            Some(now),
+        ))
+        .await
+        .expect("send project");
+    assert!(ok.accepted, "private project rejected: {}", ok.message);
+    let ok = owner_client
+        .send_event(put_member_op(&owner, &coordinate, &[(&member, "viewer")]))
+        .await
+        .expect("send put-member");
+    assert!(ok.accepted, "put-member op rejected: {}", ok.message);
+
+    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+        .await
+        .expect("member connect");
+    let member_sid = sub_id("ops-live-member");
+    member_client
+        .subscribe(
+            &member_sid,
+            vec![Filter::new().kind(Kind::Custom(PROJECT_KIND))],
+        )
+        .await
+        .expect("member subscribe");
+    member_client
+        .collect_until_eose(&member_sid, Duration::from_secs(10))
+        .await
+        .expect("member eose");
+
+    // Republish the head (still naming nobody) — the roster is ops-sourced
+    // now, so the republish neither grants nor revokes anything.
+    let head = project_event(&owner, &d_tag, Some("private"), &[], Some(now + 1));
+    let head_id = head.id;
+    let ok = owner_client.send_event(head).await.expect("send republish");
+    assert!(ok.accepted, "republish rejected: {}", ok.message);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut member_got = false;
+    while tokio::time::Instant::now() < deadline {
+        match member_client.recv_event(Duration::from_secs(2)).await {
+            Ok(RelayMessage::Event {
+                subscription_id,
+                event,
+            }) if subscription_id == member_sid && event.id == head_id => {
+                member_got = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert!(
+        member_got,
+        "a roster-op member must receive the private head's live fan-out"
+    );
+}
+
+/// A member added by a kind:9010 roster op reads the container on every
+/// surface — the head names nobody, so a `p`-tag gate would show this project
+/// to its creator alone.
+///
+/// This is the shape every Buzz client produces: `ProjectMembersManager` and
+/// `bee projects members put` publish a 9010, and nothing republishes the
+/// creator-signed head afterwards (nor could a co-owner sign one).
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn test_roster_op_member_reads_the_container_everywhere() {
+    let owner = Keys::generate();
+    let member = Keys::generate();
+    let stranger = Keys::generate();
+    let d_tag = unique("ops-roster");
+    let coordinate = project_coordinate(&owner, &d_tag);
+
+    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+        .await
+        .expect("owner connect");
+    // A private head with no invites at all.
+    let head = project_event(&owner, &d_tag, Some("private"), &[], None);
+    let head_id = head.id;
+    let ok = owner_client.send_event(head).await.expect("send project");
+    assert!(ok.accepted, "private project rejected: {}", ok.message);
+
+    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+        .await
+        .expect("member connect");
+    let seen = query(
+        &mut member_client,
+        "pre-op",
+        container_filter(&owner, &d_tag),
+    )
+    .await;
+    assert!(
+        seen.is_empty(),
+        "a pubkey on no roster must not see the project"
+    );
+
+    let ok = owner_client
+        .send_event(put_member_op(
+            &owner,
+            &coordinate,
+            &[(&member, "collaborator")],
+        ))
+        .await
+        .expect("send put-member");
+    assert!(ok.accepted, "put-member op rejected: {}", ok.message);
+
+    // WS REQ by coordinate.
+    let seen = query(
+        &mut member_client,
+        "post-op",
+        container_filter(&owner, &d_tag),
+    )
+    .await;
+    assert_eq!(
+        seen.len(),
+        1,
+        "a member added by a roster op must see the private project"
+    );
+
+    // The unfiltered project listing the desktop actually sends.
+    let listed = query(
+        &mut member_client,
+        "post-op-list",
+        Filter::new().kind(Kind::Custom(PROJECT_KIND)),
+    )
+    .await;
+    assert!(
+        listed.iter().any(|e| e.id == head_id),
+        "the project must appear in a plain {{\"kinds\":[30621]}} listing"
+    );
+
+    // Kindless known-id lookup.
+    let seen = query(&mut member_client, "post-op-ids", Filter::new().id(head_id)).await;
+    assert_eq!(seen.len(), 1, "member must resolve the head by id");
+
+    // HTTP bridge: /query and /count.
+    let http = http_client();
+    let rows = query_events_http(
+        &http,
+        &member.public_key().to_hex(),
+        vec![container_filter(&owner, &d_tag)],
+    )
+    .await;
+    assert_eq!(rows.len(), 1, "HTTP /query must serve the roster member");
+    let n = count_events_http(
+        &http,
+        &member.public_key().to_hex(),
+        vec![container_filter(&owner, &d_tag)],
+    )
+    .await;
+    assert_eq!(n, 1, "HTTP /count must include the head for a member");
+
+    // A stranger is unaffected by any of it.
+    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+        .await
+        .expect("stranger connect");
+    let seen = query(
+        &mut stranger_client,
+        "stranger-after-op",
+        container_filter(&owner, &d_tag),
+    )
+    .await;
+    assert!(seen.is_empty(), "a roster op admits only its targets");
+    let n = count_events_http(
+        &http,
+        &stranger.public_key().to_hex(),
+        vec![container_filter(&owner, &d_tag)],
+    )
+    .await;
+    assert_eq!(n, 0, "HTTP /count must not leak the head to a stranger");
+}
+
+/// A kind:9011 removal revokes container access even though the removed
+/// member's `p` tag is still on the creator-signed head — nothing can rewrite
+/// that event, so the roster has to be what decides.
+#[tokio::test]
+#[ignore = "requires running relay"]
+async fn test_roster_op_removal_revokes_a_stale_head_invite() {
+    let owner = Keys::generate();
+    let member = Keys::generate();
+    let d_tag = unique("ops-revoke");
+    let coordinate = project_coordinate(&owner, &d_tag);
+
+    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+        .await
+        .expect("owner connect");
+    // The head invites the member directly, and is never republished.
+    let head = project_event(&owner, &d_tag, Some("private"), &[&member], None);
+    let ok = owner_client.send_event(head).await.expect("send project");
+    assert!(ok.accepted, "private project rejected: {}", ok.message);
+
+    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+        .await
+        .expect("member connect");
+    let seen = query(
+        &mut member_client,
+        "head-invited",
+        container_filter(&owner, &d_tag),
+    )
+    .await;
+    assert_eq!(
+        seen.len(),
+        1,
+        "a head-carried invite is the bootstrap roster and must still work"
+    );
+
+    let ok = owner_client
+        .send_event(remove_member_op(&owner, &coordinate, &[&member]))
+        .await
+        .expect("send remove-member");
+    assert!(ok.accepted, "remove-member op rejected: {}", ok.message);
+
+    let seen = query(
+        &mut member_client,
+        "ops-removed",
+        container_filter(&owner, &d_tag),
+    )
+    .await;
+    assert!(
+        seen.is_empty(),
+        "the removal must hold even though the head still carries the p tag"
+    );
+    let n = count_events_http(
+        &http_client(),
+        &member.public_key().to_hex(),
+        vec![container_filter(&owner, &d_tag)],
+    )
+    .await;
+    assert_eq!(n, 0, "HTTP /count must respect the removal too");
 }
 
 /// Channel contents: a channel bound to a private project refuses stranger
