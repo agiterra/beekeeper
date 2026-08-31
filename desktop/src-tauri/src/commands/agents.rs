@@ -385,7 +385,6 @@ pub(super) async fn start_local_agent_with_preflight(
     if record_snapshot.backend != BackendKind::Local {
         return Err(format!("agent {pubkey} is not a local agent"));
     }
-    // Preflight against the same effective definition that spawn uses.
     let personas = load_personas(app).unwrap_or_default();
     let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
     let mesh_model_id =
