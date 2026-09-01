@@ -19,6 +19,8 @@ use nostr::{Event, EventBuilder, Kind, Tag, Timestamp};
 use serde_json::{json, Value};
 
 use crate::client::BuzzClient;
+use buzz_sdk::build_delete_addressable;
+
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::validate_lower_hex64;
@@ -309,6 +311,49 @@ pub async fn cmd_revoke(
     Ok(())
 }
 
+/// `bee terminals delete` — tombstone a shared-terminal announce.
+///
+/// A kind:5 carrying `["a", "30623:<owner>:<session-id>"]`. The relay's
+/// addressable-deletion path soft-deletes the announce and drops its roster
+/// projection (`delete_shell_session_acl`), so the 24310 watch and 24312
+/// input gates stop honouring invites on a session that no longer exists
+/// and fall back to project access alone.
+///
+/// Deliberately **not** a read-modify-write like `invite`/`revoke`: those
+/// republish the head, and there is no head left to republish here. The
+/// announce is therefore not fetched first — a delete that required the
+/// announce to be readable would fail for exactly the case a project Owner
+/// needs it, and the relay is the authority on whether the coordinate
+/// exists either way.
+///
+/// What this does not do is reach the owner's machine. A PTY that is still
+/// running keeps running; it simply becomes unshareable. Saying otherwise
+/// in the output would be a claim this command cannot keep.
+pub async fn cmd_delete(
+    client: &BuzzClient,
+    session_id: &str,
+    owner: Option<&str>,
+) -> Result<(), CliError> {
+    validate_session_id(session_id)?;
+    let owner_hex = match owner {
+        Some(owner) => {
+            validate_lower_hex64("--owner", owner)?;
+            owner.to_string()
+        }
+        None => client.keys().public_key().to_hex(),
+    };
+
+    let builder = build_delete_addressable(KIND_SHELL_SESSION, &owner_hex, session_id)
+        .map_err(|e| CliError::Usage(e.to_string()))?;
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    println!(
+        "{}",
+        parse_write_response(&raw, "no live announce matched that coordinate")?
+    );
+    Ok(())
+}
+
 /// `bee terminals roster` — print an announce's roster as
 /// `[{pubkey, role}]`.
 pub async fn cmd_roster(
@@ -443,6 +488,9 @@ pub async fn dispatch(cmd: crate::TerminalsCmd, client: &BuzzClient) -> Result<(
         TerminalsCmd::Revoke { session_id, pubkey } => {
             cmd_revoke(client, &session_id, &pubkey).await
         }
+        TerminalsCmd::Delete { session_id, owner } => {
+            cmd_delete(client, &session_id, owner.as_deref()).await
+        }
         TerminalsCmd::Roster { session_id, owner } => {
             cmd_roster(client, &session_id, owner.as_deref()).await
         }
@@ -473,6 +521,51 @@ mod tests {
         assert!(validate_session_id("").is_err());
         assert!(validate_session_id(&"a".repeat(65)).is_err());
         assert!(validate_session_id("../../etc/passwd").is_err());
+    }
+
+    // ── delete ────────────────────────────────────────────────────────────────
+
+    /// The tombstone this command signs: a kind:5 naming exactly the
+    /// announce's coordinate and nothing else. The relay routes on that `a`
+    /// tag alone, so its shape is the whole contract.
+    #[test]
+    fn delete_builds_a_kind_5_naming_the_announce_coordinate() {
+        let builder = build_delete_addressable(KIND_SHELL_SESSION, OWNER_HEX, "term-1")
+            .expect("delete builder");
+        let event = builder
+            .sign_with_keys(&Keys::generate())
+            .expect("sign tombstone");
+        assert_eq!(event.kind.as_u16(), 5);
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+        assert_eq!(
+            tags,
+            vec![vec!["a".to_string(), format!("30623:{OWNER_HEX}:term-1")]],
+            "exactly one a tag, and no e tag — the relay refuses an event carrying both"
+        );
+    }
+
+    /// A session id is interpolated straight into the coordinate, so the
+    /// same traversal guard the roster commands use has to run here too.
+    #[test]
+    fn delete_rejects_a_session_id_that_could_escape_the_coordinate() {
+        assert!(validate_session_id("../../etc/passwd").is_err());
+        assert!(validate_session_id("term:1").is_err());
+        assert!(validate_session_id("").is_err());
+    }
+
+    /// Deleting somebody else's terminal is the project-Owner case, and it
+    /// has to address the coordinate to *their* key, not the caller's.
+    #[test]
+    fn delete_addresses_the_named_owner_not_the_caller() {
+        let other = "b".repeat(64);
+        let builder =
+            build_delete_addressable(KIND_SHELL_SESSION, &other, "term-1").expect("builder");
+        let event = builder.sign_with_keys(&Keys::generate()).expect("sign");
+        let coord = event
+            .tags
+            .iter()
+            .find_map(|t| (tag_name(t) == Some("a")).then(|| t.as_slice()[1].clone()));
+        assert_eq!(coord, Some(format!("30623:{other}:term-1")));
     }
 
     #[test]

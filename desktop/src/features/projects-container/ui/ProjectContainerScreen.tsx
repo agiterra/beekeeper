@@ -504,6 +504,7 @@ export function ProjectContainerScreen({
                 projectAddress={
                   project.id === LOCAL_GENERAL_ID ? null : project.address
                 }
+                canDelete={capabilities.canDeleteResource}
                 isFallback={project.id === LOCAL_GENERAL_ID}
                 repos={repos}
               />

@@ -3423,6 +3423,28 @@ pub enum TerminalsCmd {
         #[arg(long)]
         pubkey: String,
     },
+    /// Delete a shared-terminal announce (kind:5 tombstone of its 30623).
+    ///
+    /// The announce is what makes a terminal discoverable, watchable and
+    /// typeable; deleting it drops the roster projection with it, so the
+    /// watch and input gates fall back to project access alone. It does
+    /// not reach into the owner's machine — a PTY that is still running
+    /// keeps running, unattached.
+    ///
+    /// Signed by the announce's owner, or by an Owner of the project the
+    /// announce is bound to.
+    #[command(
+        after_help = "Examples:\n  bee terminals delete <session-id>\n  bee terminals delete <session-id> --owner <hex>"
+    )]
+    Delete {
+        /// Session id (`d` tag of the announce)
+        session_id: String,
+        /// Announce owner pubkey (64-char hex). Defaults to the current
+        /// identity; pass it to delete a terminal you did not announce but
+        /// whose project you own.
+        #[arg(long)]
+        owner: Option<String>,
+    },
     /// Print a session announce's roster as `[{pubkey, role}]`
     Roster {
         /// Session id (`d` tag of the announce)
@@ -4445,7 +4467,7 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "terminals"),
-            vec!["invite", "list", "revoke", "roster", "send-input"]
+            vec!["delete", "invite", "list", "revoke", "roster", "send-input"]
         );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
@@ -4490,7 +4512,7 @@ mod tests {
             // all thirty, so this count and that list cannot drift apart.
             ("sessions", 30),
             ("social", 7),
-            ("terminals", 5),
+            ("terminals", 6),
             ("upload", 1),
             ("users", 5),
             ("workflows", 8),

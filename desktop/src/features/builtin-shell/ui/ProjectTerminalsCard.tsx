@@ -1,15 +1,26 @@
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Eye, Plus, Terminal } from "lucide-react";
+import { EllipsisVertical, Eye, Plus, Terminal, Trash2 } from "lucide-react";
 
 import { useUsersBatchQuery } from "@/features/profile/hooks";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 
 import { useCreateShellSession } from "../hooks/useCreateShellSession";
 import { useShellSessions } from "../hooks/useShellSessions";
 import { projectDefaultCwd, type ShellCwdRepo } from "../lib/projectShellCwd";
 import { useProjectTerminals } from "../observe/useProjectTerminals";
+import {
+  useDeleteTerminalDialog,
+  type DeletableTerminal,
+} from "./useDeleteTerminalDialog";
 
 /**
  * The "Terminals" section of a project screen: the viewer's own sessions in
@@ -21,6 +32,7 @@ export function ProjectTerminalsCard({
   projectAddress,
   isFallback,
   repos = [],
+  canDelete,
 }: {
   /** The project's `30621:<owner>:<dtag>` address, or null for the local
    * General placeholder (nothing is announced there). */
@@ -30,11 +42,27 @@ export function ProjectTerminalsCard({
   /** The project's repositories, for the new-terminal default cwd (the first
    * repo with a local checkout wins). */
   repos?: readonly ShellCwdRepo[];
+  /**
+   * Whether the viewer may delete the shared announce of a terminal owned by
+   * `ownerPubkey`. Passed in rather than resolved here so this card stays
+   * ignorant of the project roster: the caller already holds the project's
+   * capabilities, and a terminal's delete rule is the project's rule
+   * (`canDeleteResource` — an Owner reaches anything, everyone else reaches
+   * only their own). Omitted means no delete affordance at all, which is
+   * what the local General placeholder gets.
+   */
+  canDelete?: (ownerPubkey: string) => boolean;
 }) {
   const navigate = useNavigate();
   const { sessions } = useShellSessions();
   const { createFor } = useCreateShellSession();
   const remote = useProjectTerminals(projectAddress);
+  const identity = useIdentityQuery();
+  // Own rows come from the local session manager, which does not carry a
+  // pubkey — the announce for one is addressed to this identity.
+  const selfPubkey = identity.data?.pubkey?.toLowerCase() ?? null;
+  const { requestDelete, dialog: deleteDialog } =
+    useDeleteTerminalDialog(projectAddress);
 
   const createTerminal = React.useCallback(() => {
     void projectDefaultCwd(repos).then((cwd) =>
@@ -65,6 +93,36 @@ export function ProjectTerminalsCard({
 
   const count = own.length + remoteTerminals.length;
 
+  // The announce is what a delete removes, so a session that was never
+  // shared has nothing to delete: `own` rows exist for local sessions too,
+  // and those carry no coordinate. `projectAddress` being set is exactly the
+  // condition under which one was announced.
+  const deleteMenu = (terminal: DeletableTerminal) =>
+    projectAddress && canDelete?.(terminal.ownerPubkey) ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            aria-label={`Actions for ${terminal.title}`}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-colors hover:text-foreground focus-visible:opacity-100 group-hover/terminal-row:opacity-100 data-[state=open]:opacity-100"
+            data-testid="project-terminal-actions"
+            type="button"
+          >
+            <EllipsisVertical className="size-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            data-testid="project-terminal-delete"
+            onSelect={() => requestDelete(terminal)}
+          >
+            <Trash2 />
+            Delete terminal
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : null;
+
   return (
     <section
       className="rounded-lg border border-border bg-card p-4"
@@ -92,9 +150,12 @@ export function ProjectTerminalsCard({
       ) : (
         <ul className="flex flex-col gap-1">
           {own.map((session) => (
-            <li key={session.sessionId}>
+            <li
+              className="group/terminal-row flex items-center gap-1"
+              key={session.sessionId}
+            >
               <Button
-                className="h-8 w-full justify-start gap-2 px-2"
+                className="h-8 min-w-0 flex-1 justify-start gap-2 px-2"
                 data-testid="project-terminal-own-row"
                 onClick={() =>
                   void navigate({
@@ -112,12 +173,21 @@ export function ProjectTerminalsCard({
                   </span>
                 ) : null}
               </Button>
+              {deleteMenu({
+                sessionId: session.sessionId,
+                ownerPubkey: selfPubkey ?? "",
+                title: session.title,
+                isOwn: true,
+              })}
             </li>
           ))}
           {remoteTerminals.map((terminal) => (
-            <li key={`${terminal.ownerPubkey}:${terminal.sessionId}`}>
+            <li
+              className="group/terminal-row flex items-center gap-1"
+              key={`${terminal.ownerPubkey}:${terminal.sessionId}`}
+            >
               <Button
-                className="h-8 w-full justify-start gap-2 px-2"
+                className="h-8 min-w-0 flex-1 justify-start gap-2 px-2"
                 data-testid="project-terminal-remote-row"
                 onClick={() =>
                   void navigate({
@@ -137,10 +207,17 @@ export function ProjectTerminalsCard({
                   · {ownerLabel(terminal.ownerPubkey)}
                 </span>
               </Button>
+              {deleteMenu({
+                sessionId: terminal.sessionId,
+                ownerPubkey: terminal.ownerPubkey,
+                title: terminal.title,
+                isOwn: false,
+              })}
             </li>
           ))}
         </ul>
       )}
+      {deleteDialog}
     </section>
   );
 }
