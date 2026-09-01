@@ -255,13 +255,32 @@ seat chain plus receipt-backed provider metadata across provider instances,
 and re-resolve that target after restart or generation change. Only the
 provider owning the reporting actor's exact active generation may push, and it
 backfills the complete stored 44244 partition on startup rather than trusting
-the bounded live replay window. An included signed report wakes with only its
+the bounded live replay window. Discovery follows
+[`TEAM_WAKE_DURABILITY.md`](TEAM_WAKE_DURABILITY.md): it computes a complete
+partition set difference against a never-evicted per-channel resolved-id
+ledger, with no correctness decision based on author-signed timestamps. Each
+channel has one in-flight quota and shares one memory-only round-robin for
+need-gated scans and processing; a blocked channel therefore cannot occupy
+another channel's slot and idle/backed-off channels consume no visit. A
+structurally saturated partition or full exact-ledger envelope becomes a
+durable, counted, per-channel refusal with one restart probe; reports arriving
+while refused are explicitly counted and terminals remain durably parked.
+Manual refusal removal requires stopping the provider, deleting that channel's
+`refusal` object from `team-wake-intents.json`, and restarting; live edits are
+unsupported and can be overwritten by the running provider's next atomic
+whole-file write.
+Relay-backed reports may wait for the next complete scan when their
+bounded admission FIFO is full, while provider-local terminal facts use a
+separate always-admitting durable queue because no relay scan can reconstruct
+them. An included signed report wakes with only its
 operation ID/type; the wake command ID is derived from that report and exact
 target rather than reusing the assignment command ID. A terminal diagnostic is
 eligible only when the finished turn was opened by an exact assignment pointer
 whose canonical assignment binds the same command, actor, and role; READY and
 ordinary hire responses never imply a missing report. Only a report for that
-exact assignment suppresses it. Missing transaction or authority facts stay
+exact assignment suppresses it, and only when its whole signed one-second time
+interval fits inside the provider's millisecond turn window. Same-second
+ambiguity fails closed. Missing transaction or authority facts stay
 pending and disclosed. A provider receipt (`queued`, `started`, `refused`, or
 `dropped`) or exact prompt echo settles the intent; relay acceptance alone does
 not. Degradation and interrupt-delivery receipts are progress for other

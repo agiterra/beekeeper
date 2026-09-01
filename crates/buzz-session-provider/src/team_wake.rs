@@ -1,15 +1,7 @@
 //! Durable provider-owned wake intents for team transaction progress.
 //!
-//! An intent is persisted before any kind-44220 publication. Unlike the
-//! provider outbox it stores the semantic source and current routing attempt,
-//! so a command that outlives the protocol horizon or a lead generation that
-//! is superseded can be re-resolved and freshly signed without forgetting why
-//! it exists. Relay acceptance is not completion: only a verified provider
-//! receipt or prompt echo retires the intent.
-
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+//! Report discovery and crash-safe queueing live in the schema-v3 store. This
+//! module owns signed source shapes and the verified routing/delivery protocol.
 
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
@@ -32,15 +24,17 @@ use uuid::Uuid;
 
 use crate::authority::CurrentAuthority;
 use crate::context_projector::{
-    fetch_and_project_session_context, query_complete_kind_partition, ContextProjectionLimits,
-    ContextProjectionRequest,
+    fetch_and_project_session_context, query_complete_kind_partition, ContextProjectionError,
+    ContextProjectionLimits, ContextProjectionRequest,
 };
-use crate::state::atomic_write;
 
-const STORE_FILE: &str = "team-wake-intents.json";
-const STORE_SCHEMA: &str = "buzz-provider-team-wake-intents/v1";
-const MAX_PENDING_INTENTS: usize = 256;
-const MAX_COMPLETED_SOURCES: usize = 4_096;
+#[path = "team_wake_report_order.rs"]
+mod report_order;
+pub use report_order::{included_reports, report_suppresses_terminal, IncludedReport};
+
+#[path = "team_wake_store.rs"]
+mod store;
+pub use store::{ChannelRefusalCode, DiscoveryCapture, WakeIntentStore};
 
 /// Exact durable scope shared by one team transaction graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,162 +89,6 @@ pub struct WakeIntent {
     pub relay_accepted_at: Option<u64>,
     pub attempt: u32,
     pub last_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Snapshot {
-    schema: String,
-    pending: Vec<WakeIntent>,
-    #[serde(default)]
-    completed_source_ids: Vec<String>,
-}
-
-/// Atomic crash-safe store for unresolved provider wake intents.
-#[derive(Debug)]
-pub struct WakeIntentStore {
-    path: PathBuf,
-    pending: Vec<WakeIntent>,
-    completed_source_ids: Vec<String>,
-}
-
-impl WakeIntentStore {
-    pub fn open(dir: &Path) -> io::Result<Self> {
-        let path = dir.join(STORE_FILE);
-        let (pending, completed_source_ids) = match fs::read(&path) {
-            Ok(body) => {
-                let snapshot: Snapshot = serde_json::from_slice(&body).map_err(|error| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("unreadable wake store: {error}"),
-                    )
-                })?;
-                if snapshot.schema != STORE_SCHEMA
-                    || snapshot.pending.len() > MAX_PENDING_INTENTS
-                    || snapshot.completed_source_ids.len() > MAX_COMPLETED_SOURCES
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unsupported or oversized wake store",
-                    ));
-                }
-                (snapshot.pending, snapshot.completed_source_ids)
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (Vec::new(), Vec::new()),
-            Err(error) => return Err(error),
-        };
-        Ok(Self {
-            path,
-            pending,
-            completed_source_ids,
-        })
-    }
-
-    pub fn pending(&self) -> &[WakeIntent] {
-        &self.pending
-    }
-
-    /// Whether recovery has already durably captured this exact in-flight turn.
-    pub fn has_terminal_command(
-        &self,
-        command_id: &str,
-        source_target: &CodingSessionTarget,
-    ) -> bool {
-        self.pending.iter().any(|intent| {
-            matches!(
-                &intent.source,
-                WakeSource::Terminal {
-                    caused_by_command_id,
-                    source_target: stored_target,
-                    ..
-                } if caused_by_command_id == command_id && stored_target == source_target
-            )
-        })
-    }
-
-    pub fn enqueue(&mut self, scope: WakeScope, source: WakeSource) -> io::Result<bool> {
-        if self
-            .pending
-            .iter()
-            .any(|intent| intent.source.event_id() == source.event_id())
-            || self
-                .completed_source_ids
-                .iter()
-                .any(|event_id| event_id == source.event_id())
-        {
-            return Ok(false);
-        }
-        if self.pending.len() >= MAX_PENDING_INTENTS {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "provider team-wake intent bound reached",
-            ));
-        }
-        let previous = (self.pending.clone(), self.completed_source_ids.clone());
-        self.pending.push(WakeIntent {
-            scope,
-            source,
-            target: None,
-            command_id: None,
-            signed_event: None,
-            relay_accepted_at: None,
-            attempt: 0,
-            last_reason: None,
-        });
-        self.persist_or_restore(previous)?;
-        Ok(true)
-    }
-
-    pub fn replace(&mut self, index: usize, intent: WakeIntent) -> io::Result<()> {
-        let previous = (self.pending.clone(), self.completed_source_ids.clone());
-        let Some(slot) = self.pending.get_mut(index) else {
-            return Ok(());
-        };
-        *slot = intent;
-        self.persist_or_restore(previous)
-    }
-
-    /// Persist the current first intent and yield to the next pending source.
-    pub fn defer_first(&mut self, intent: WakeIntent) -> io::Result<()> {
-        let previous = (self.pending.clone(), self.completed_source_ids.clone());
-        let Some(first) = self.pending.first_mut() else {
-            return Ok(());
-        };
-        *first = intent;
-        if self.pending.len() > 1 {
-            self.pending.rotate_left(1);
-        }
-        self.persist_or_restore(previous)
-    }
-
-    pub fn retire(&mut self, index: usize) -> io::Result<()> {
-        if index >= self.pending.len() {
-            return Ok(());
-        }
-        let previous = (self.pending.clone(), self.completed_source_ids.clone());
-        let retired = self.pending.remove(index);
-        self.completed_source_ids
-            .push(retired.source.event_id().to_owned());
-        if self.completed_source_ids.len() > MAX_COMPLETED_SOURCES {
-            let dropped = self.completed_source_ids.len() - MAX_COMPLETED_SOURCES;
-            self.completed_source_ids.drain(..dropped);
-        }
-        self.persist_or_restore(previous)
-    }
-
-    fn persist_or_restore(&mut self, previous: (Vec<WakeIntent>, Vec<String>)) -> io::Result<()> {
-        let body = serde_json::to_vec_pretty(&Snapshot {
-            schema: STORE_SCHEMA.to_owned(),
-            pending: self.pending.clone(),
-            completed_source_ids: self.completed_source_ids.clone(),
-        })?;
-        if let Err(error) = atomic_write(&self.path, &body) {
-            self.pending = previous.0;
-            self.completed_source_ids = previous.1;
-            return Err(error);
-        }
-        Ok(())
-    }
 }
 
 /// Build the exact core fold context from verified genesis and authority facts.
@@ -341,61 +179,6 @@ pub fn resolve_actor_target(
         ));
     }
     Ok(candidates[0].target.clone())
-}
-
-/// One canonical included report and the causal assignment it answers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IncludedReport {
-    pub event_id: String,
-    pub assignment_ref: String,
-    pub author_pubkey: String,
-    pub created_at: u64,
-}
-
-/// Validate the complete transaction graph and return included reports.
-pub fn included_reports(
-    events: &[Event],
-    context: &CodingSessionTeamFoldContext,
-) -> Result<Vec<IncludedReport>, String> {
-    let fold = fold_coding_session_team_transactions(events, context)?;
-    let included: std::collections::HashSet<&str> =
-        fold.included_event_ids.iter().map(String::as_str).collect();
-    let mut reports = Vec::new();
-    for event in events {
-        let id = event.id.to_hex();
-        if !included.contains(id.as_str()) {
-            continue;
-        }
-        let payload = buzz_core::coding_session_team_transaction::validate_coding_session_team_transaction_envelope(event)?;
-        if let CodingSessionTeamTransactionBody::Report(report) = payload.body {
-            reports.push(IncludedReport {
-                event_id: id,
-                assignment_ref: report.assignment_ref,
-                author_pubkey: event.pubkey.to_hex(),
-                created_at: event.created_at.as_secs(),
-            });
-        }
-    }
-    Ok(reports)
-}
-
-pub fn report_suppresses_terminal(
-    reports: &[IncludedReport],
-    assignment_ref: &str,
-    actor: &str,
-    prompt_at_ms: Option<i64>,
-    terminal_at_ms: i64,
-) -> bool {
-    reports.iter().any(|report| {
-        let created_at_ms = i64::try_from(report.created_at)
-            .ok()
-            .and_then(|seconds| seconds.checked_mul(1_000));
-        report.assignment_ref == assignment_ref
-            && report.author_pubkey == actor
-            && created_at_ms.is_some_and(|created| {
-                created <= terminal_at_ms && prompt_at_ms.is_none_or(|prompt| created >= prompt)
-            })
-    })
 }
 
 /// Prove that the turn which ended was initiated by an exact operation pointer
@@ -625,13 +408,35 @@ pub struct VerifiedWakeSnapshot {
     pub included_reports: Vec<IncludedReport>,
 }
 
+/// Typed wake verification failure. Structural projection bounds must remain
+/// distinguishable from retryable relay or fact failures.
+#[derive(Debug, thiserror::Error)]
+pub enum WakeSnapshotError {
+    #[error(transparent)]
+    Projection(#[from] ContextProjectionError),
+    #[error("{0}")]
+    Other(String),
+}
+
+impl From<String> for WakeSnapshotError {
+    fn from(value: String) -> Self {
+        Self::Other(value)
+    }
+}
+
+impl WakeSnapshotError {
+    pub fn is_bound(&self) -> bool {
+        matches!(self, Self::Projection(ContextProjectionError::Bound(_)))
+    }
+}
+
 /// Fetch and verify the authority, provider-routing, and transaction facts for
 /// one pending intent. Every query is exact-channel and complete-or-error.
 pub async fn fetch_verified_snapshot(
     rest: &buzz_acp::relay::RestClient,
     relay_self_pubkey: &str,
     scope: &WakeScope,
-) -> Result<VerifiedWakeSnapshot, String> {
+) -> Result<VerifiedWakeSnapshot, WakeSnapshotError> {
     use buzz_core::kind::{
         KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
         KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_SYSTEM_MESSAGE,
@@ -653,7 +458,9 @@ pub async fn fetch_verified_snapshot(
         || genesis_payload.session_ref != scope.session_ref
         || tag_value(&genesis, "h") != Some(scope.channel_ref.to_string())
     {
-        return Err("canonical genesis does not match the wake scope".into());
+        return Err("canonical genesis does not match the wake scope"
+            .to_owned()
+            .into());
     }
     let founder_pubkey = genesis.pubkey.to_hex();
 
@@ -662,15 +469,13 @@ pub async fn fetch_verified_snapshot(
         scope.channel_ref,
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     let by_id: std::collections::HashMap<String, Event> = transitions
         .into_iter()
         .map(|event| (event.id.to_hex(), event))
         .collect();
-    let receipts = query_complete_kind_partition(rest, scope.channel_ref, KIND_SYSTEM_MESSAGE)
-        .await
-        .map_err(|error| error.to_string())?;
+    let receipts =
+        query_complete_kind_partition(rest, scope.channel_ref, KIND_SYSTEM_MESSAGE).await?;
     let mut links = Vec::new();
     for receipt in receipts
         .into_iter()
@@ -720,16 +525,14 @@ pub async fn fetch_verified_snapshot(
             limits: ContextProjectionLimits::default(),
         },
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
 
     let team_events = query_complete_kind_partition(
         rest,
         scope.channel_ref,
         KIND_CODING_SESSION_TEAM_TRANSACTION,
     )
-    .await
-    .map_err(|error| error.to_string())?
+    .await?
     .into_iter()
     .filter(|event| {
         tag_value(event, "d").as_deref() == Some(scope.session_ref.as_str())

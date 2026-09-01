@@ -5813,6 +5813,66 @@ written and `bash -n` clean but **was not executed** — that harness needs
        below the written 1,000-line ceiling even though the current size script
        does not scan `.mjs`.
 
+101. **The provider-owned no-poll wake needed a schema-v3 durability redesign
+     before landing (implemented and provider-gated locally 2026-08-31; not yet
+     landed or live-proven).** The first provider store used an evicting
+     completed-source FIFO, a timestamp cursor, and a shared actionable queue.
+     Adversarial review proved four failures: an old completed wake could be
+     rediscovered after FIFO eviction and restart; a provider-local terminal
+     diagnostic could be dropped under report pressure; one blocked channel
+     could consume global capacity; and future- or past-dated seat reports could
+     poison any author-time watermark.
+     - **Fix:** schema v3 keeps a never-evicted resolved report-id ledger per
+       channel and discovers by complete-partition set difference, so
+       `created_at` never decides capture or dedupe
+       (`team_wake_store.rs`). Reports use a bounded per-channel admission FIFO;
+       terminal facts use a separate durable queue; one memory-only round-robin
+       selects once per need-gated tick for both scan and processing. Structural
+       partition/ledger saturation is a durable named refusal: live reports are
+       counted with their last id, terminals park, and restart gets one probe.
+       Unknown
+       store schemas are quarantined rather than bricking provider startup, and
+       a failed atomic write poisons the in-memory store until restart. Repeated
+       failures on one channel receive memory-only exponential backoff capped at
+       ten minutes, so retry bookkeeping never wakes or loads a model context.
+     - **Delivery:** deterministic command ids and persist-exact-signed-attempt
+       before relay publication remain. A lead-generation rollover first checks
+       whether the old target already consumed the wake; any target or attempt
+       bump is persisted and returns so the next pass re-checks outcome/echo
+       before signing. The conservative one-second report suppression rule is
+       unchanged.
+     - **Evidence:** the pressure regression drives production store APIs and
+       the real `RelayEventPublisher`/fake-WebSocket EVENT seam across 5,121
+       report sources, more than 4,096 permanent resolutions, four channels,
+       two crash/reopen points, and year-skewed timestamps; it passed in
+       194.52 s and final replay emitted no EVENT. Focused v3.1 regressions cover poisoned writes,
+       combined-envelope quarantine, durable refusal counting/terminal parking,
+       restart re-probe, one-write promotion, need-gated scheduling, fairness,
+       and the R1/R2 attempt/old-target seams. The full provider crate passed 455
+       unit tests in 195.16 s and 2 startup tests in 26.61 s. Provider clippy
+       with warnings denied, formatting, file-size, and `git diff --check`
+       passed on the final local tree. The repository-wide
+       `just ci` is deliberately owed after rebase onto the current `main`; a
+       pre-rebase run was stopped rather than cited. The combined
+       driver/publisher T0 then passed in 51.52 s at the real fake-relay seam:
+       the endpoint observed 68 unique kind-44220 event ids in 69 frames (one
+       relay-rejected frame plus its byte-exact restart resend) while A remained durably
+       refused, B consumed one rotation slot, C/D drained 64 past-/ordinary-
+       dated reports plus two future-/ordinary-dated reports and one terminal
+       admitted under a full report FIFO, a pre-scan restart retained every
+       debt, a proof-visible restart settled the old lead generation without a
+       new-generation publish, and live plus complete-scan replay published
+       nothing. A successful non-empty restart probe now clears its durable
+       refusal before admission, so the probe's own reports cannot be rejected
+       by stale state. The full-driver fixture measured 393 scheduler visits and
+       5,794 sequential snapshot queries; extrapolating its verified lifecycle
+       to 5,121 sources exceeds 430,000 sequential queries and a 67-minute
+       linear floor before superlinear partition/store costs. The two executable
+       tests therefore compose bounded full-driver crash/fairness proof with
+       5,121-source real-publisher pressure rather than disguising store
+       selection as driver publication. Independent adversarial re-review and live relay proof remain
+       required before this item may be called landed.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,

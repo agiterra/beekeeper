@@ -153,6 +153,8 @@ const REPLAY_REORDER_WINDOW: Duration = Duration::from_millis(1_500);
 /// Give an agent-authored report one normal relay round trip to arrive before
 /// a provider terminal becomes a diagnostic wake.
 const TEAM_WAKE_REPORT_GRACE_MS: i64 = 4_000;
+/// Longest infrastructure-only retry delay for one blocked team channel.
+const TEAM_WAKE_BACKOFF_CAP: Duration = Duration::from_secs(600);
 
 /// The `turn_dropped` code for an interrupt-class turn the mailbox had no room
 /// for.
@@ -352,10 +354,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.flush_pending_leases(&publisher).await {
                     tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
                 }
-                if let Err(error) = provider.discover_one_team_wake_partition().await {
-                    tracing::warn!(target: "csp::team_wake", "stored team transaction discovery remains pending: {error}");
-                }
-                if let Err(error) = provider.process_one_team_wake(&publisher).await {
+                if let Err(error) = provider.run_one_team_wake_tick(&publisher).await {
                     tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
                 }
             }
@@ -453,6 +452,13 @@ struct PublishedMetadata {
     status: SessionStatus,
 }
 
+/// Memory-only retry state for one channel's unchanged wake failure.
+struct TeamWakeBackoff {
+    reason: String,
+    failures: u32,
+    retry_at: Instant,
+}
+
 /// The provider's whole runtime state, minus the relay socket.
 pub struct Provider {
     config: Config,
@@ -462,6 +468,17 @@ pub struct Provider {
     team_wakes: team_wake::WakeIntentStore,
     /// Channels whose complete stored 44244 partition was scanned this run.
     team_wake_scanned_channels: HashSet<Uuid>,
+    /// Complete-partition refusals are channel-local. Retrying a 32-page
+    /// refusal every runtime tick would make one bad channel monopolize relay
+    /// work even though no partial result is trusted.
+    team_wake_discovery_backoff: HashMap<Uuid, TeamWakeBackoff>,
+    /// Refusals present at open are eligible for the one restart probe.
+    team_wake_refusals_at_startup: HashSet<Uuid>,
+    /// Refused channels receive exactly one complete discovery probe per
+    /// process lifetime, then consume no scheduler ticks.
+    team_wake_refusal_reprobed: HashSet<Uuid>,
+    /// Infrastructure retries wait here without waking a model or touching its context.
+    team_wake_backoff: HashMap<Uuid, TeamWakeBackoff>,
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
     /// Sender for the queue [`Provider::next_session_event`] drains.
@@ -682,6 +699,7 @@ impl Provider {
         let state = StateStore::open(&config.state_dir, config.command_horizon.as_secs())?;
         let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
         let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
+        let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
         Ok(Self {
             config,
@@ -690,6 +708,10 @@ impl Provider {
             outbox,
             team_wakes,
             team_wake_scanned_channels: HashSet::new(),
+            team_wake_discovery_backoff: HashMap::new(),
+            team_wake_refusals_at_startup,
+            team_wake_refusal_reprobed: HashSet::new(),
+            team_wake_backoff: HashMap::new(),
             sessions: SessionManager::new(events_tx.clone()),
             session_events,
             session_events_tx: events_tx,
@@ -828,12 +850,13 @@ impl Provider {
                         record.genesis_ref.clone(),
                         open_turn.command_id.clone(),
                     ) {
-                        self.team_wakes.enqueue(
-                            team_wake::WakeScope {
-                                channel_ref: record.channel_id,
-                                session_ref,
-                                genesis_ref,
-                            },
+                        let scope = team_wake::WakeScope {
+                            channel_ref: record.channel_id,
+                            session_ref,
+                            genesis_ref,
+                        };
+                        self.team_wakes.capture_terminal(
+                            scope,
                             team_wake::WakeSource::Terminal {
                                 terminal_event_id,
                                 actor_pubkey: actor,
@@ -1267,7 +1290,10 @@ impl Provider {
     /// [`Provider::process_one_team_wake`]. Persisting first closes the crash
     /// window between relay delivery and fold/query work without treating the
     /// event's self-description as authority.
-    fn on_team_transaction(&mut self, channel_id: Uuid, event: &Event) -> anyhow::Result<()> {
+    fn team_report_candidate(
+        channel_id: Uuid,
+        event: &Event,
+    ) -> anyhow::Result<Option<(team_wake::WakeScope, team_wake::WakeSource)>> {
         let payload =
             buzz_core::coding_session_team_transaction::validate_coding_session_team_transaction_envelope(event)
                 .map_err(anyhow::Error::msg)?;
@@ -1275,9 +1301,9 @@ impl Provider {
             payload.body,
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionBody::Report(_)
         ) {
-            return Ok(());
+            return Ok(None);
         }
-        self.team_wakes.enqueue(
+        Ok(Some((
             team_wake::WakeScope {
                 channel_ref: channel_id,
                 session_ref: payload.session_ref,
@@ -1289,40 +1315,290 @@ impl Provider {
                 author_pubkey: event.pubkey.to_hex(),
                 created_at: event.created_at.as_secs(),
             },
-        )?;
+        )))
+    }
+
+    fn on_team_transaction(&mut self, channel_id: Uuid, event: &Event) -> anyhow::Result<()> {
+        let Some((scope, source)) = Self::team_report_candidate(channel_id, event)? else {
+            return Ok(());
+        };
+        self.capture_live_team_wake(scope, source)
+    }
+
+    /// Persist a live wake candidate, asking the complete signed report scan
+    /// to run again when its bounded per-channel source slot is occupied.
+    fn capture_live_team_wake(
+        &mut self,
+        scope: team_wake::WakeScope,
+        source: team_wake::WakeSource,
+    ) -> anyhow::Result<()> {
+        let channel_id = scope.channel_ref;
+        let capture = self.team_wakes.capture_live_report(scope, source)?;
+        match capture {
+            team_wake::DiscoveryCapture::Saturated => {
+                // A complete signed query, rather than an unbounded second
+                // live-source slot, recovers this source after the channel's
+                // admitted FIFO drains. This also covers a query response
+                // that raced the socket delivery.
+                self.team_wake_scanned_channels.remove(&channel_id);
+            }
+            team_wake::DiscoveryCapture::ResolvedLedgerFull => {
+                self.team_wake_scanned_channels.remove(&channel_id);
+                tracing::error!(
+                    target: "csp::team_wake",
+                    channel_ref = %channel_id,
+                    code = "resolved_ledger_full",
+                    pages = 32,
+                    page_rows = 1_000,
+                    "team-wake channel reached the exact verification envelope"
+                );
+            }
+            team_wake::DiscoveryCapture::Refused(_) => {}
+            team_wake::DiscoveryCapture::Admitted | team_wake::DiscoveryCapture::Duplicate => {}
+        }
         Ok(())
     }
 
-    /// Backfill one complete stored team-transaction partition after startup.
+    /// Choose one channel once, then use it for both complete discovery and
+    /// wake processing. Advancing the durable round-robin independently for
+    /// each phase skips the selected discovery channel and lets alternating
+    /// saturated/blocked channels starve their neighbours.
+    async fn run_one_team_wake_tick(
+        &mut self,
+        publisher: &RelayEventPublisher,
+    ) -> anyhow::Result<()> {
+        let scheduled: HashSet<Uuid> = self
+            .subscribed
+            .iter()
+            .copied()
+            .filter(|channel| self.team_wake_discovery_needed(*channel))
+            .chain(
+                self.team_wakes
+                    .work_channels()
+                    .filter(|channel| self.team_wake_processing_needed(*channel)),
+            )
+            .collect();
+        let Some(channel_id) = self.team_wakes.next_tick_channel(scheduled)? else {
+            return Ok(());
+        };
+        if self.team_wake_discovery_needed(channel_id) {
+            self.discover_team_wake_partition_for(channel_id).await;
+        }
+        if self.team_wake_processing_needed(channel_id) {
+            self.process_team_wake_for(channel_id, publisher).await?;
+        }
+        Ok(())
+    }
+
+    fn team_wake_discovery_needed(&self, channel_id: Uuid) -> bool {
+        self.subscribed.contains(&channel_id)
+            && !self.team_wake_scanned_channels.contains(&channel_id)
+            && !self.team_wake_discovery_backoff_pending(channel_id)
+            && (!self.team_wakes.is_refused(channel_id)
+                || (self.team_wake_refusals_at_startup.contains(&channel_id)
+                    && !self.team_wake_refusal_reprobed.contains(&channel_id)))
+    }
+
+    fn team_wake_processing_needed(&self, channel_id: Uuid) -> bool {
+        self.team_wakes.has_work(channel_id)
+            && !self.team_wake_backoff_pending(channel_id)
+            && !self.team_wakes.is_refused(channel_id)
+    }
+
+    /// Backfill one selected complete stored team-transaction partition after startup.
     ///
     /// The live subscription closes the post-subscribe race; this scan closes
     /// the older-than-replay-window gap when a provider was offline. A channel
     /// is marked only after a complete-or-error authenticated query, so a
     /// saturated or unavailable relay can never turn partial history into a
     /// successful discovery pass.
-    async fn discover_one_team_wake_partition(&mut self) -> anyhow::Result<()> {
-        let Some(channel_id) = self
-            .subscribed
-            .iter()
-            .find(|channel_id| !self.team_wake_scanned_channels.contains(channel_id))
-            .copied()
-        else {
-            return Ok(());
-        };
+    async fn discover_team_wake_partition_for(&mut self, channel_id: Uuid) {
+        if !self.team_wake_discovery_needed(channel_id) {
+            return;
+        }
+        let reprobing_refusal = self.team_wakes.is_refused(channel_id);
+        if reprobing_refusal {
+            self.team_wake_refusal_reprobed.insert(channel_id);
+        }
         let Some(rest) = self.rest_client.clone() else {
-            return Ok(());
+            self.defer_team_wake_discovery(channel_id, "relay_query_unavailable");
+            return;
         };
-        let events = context_projector::query_complete_kind_partition(
+        let mut events = match context_projector::query_complete_kind_partition(
             &rest,
             channel_id,
             KIND_CODING_SESSION_TEAM_TRANSACTION,
         )
         .await
-        .map_err(anyhow::Error::msg)?;
+        {
+            Ok(events) => events,
+            Err(context_projector::ContextProjectionError::Bound(error)) => {
+                let first = match self.team_wakes.refuse_channel(
+                    channel_id,
+                    team_wake::ChannelRefusalCode::PartitionSaturated,
+                ) {
+                    Ok(first) => first,
+                    Err(store_error) => {
+                        tracing::error!(target: "csp::team_wake", %channel_id, %store_error, "failed to persist structural channel refusal");
+                        return;
+                    }
+                };
+                if first {
+                    tracing::error!(
+                        target: "csp::team_wake",
+                        channel_ref = %channel_id,
+                        code = "partition_saturated",
+                        pages = 32,
+                        page_rows = 1_000,
+                        %error,
+                        "team-wake channel structurally refused"
+                    );
+                } else {
+                    tracing::debug!(target: "csp::team_wake", channel_ref = %channel_id, code = "partition_saturated", "restart probe reaffirmed team-wake refusal");
+                }
+                self.team_wake_discovery_backoff.remove(&channel_id);
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::team_wake",
+                    %channel_id,
+                    %error,
+                    "complete team-wake partition transiently unavailable"
+                );
+                self.defer_team_wake_discovery(channel_id, "complete_partition_unavailable");
+                return;
+            }
+        };
+        if reprobing_refusal {
+            // A complete partition proves the structural refusal no longer
+            // applies. Clear it durably before admission: a crash after this
+            // write simply restarts ordinary full discovery, while leaving it
+            // installed would make every non-empty successful probe refuse
+            // its own recovered reports.
+            if let Err(error) = self.team_wakes.clear_refusal(channel_id) {
+                tracing::error!(target: "csp::team_wake", %channel_id, %error, "successful restart probe could not clear team-wake refusal");
+                return;
+            }
+        }
+        events.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         for event in events {
-            self.on_team_transaction(channel_id, &event)?;
+            let capture = match Self::team_report_candidate(channel_id, &event) {
+                Ok(Some((scope, source))) => match self.team_wakes.capture_report(scope, source) {
+                    Ok(capture) => capture,
+                    Err(error) => {
+                        tracing::error!(
+                            target: "csp::team_wake",
+                            %channel_id,
+                            %error,
+                            "team-wake report capture refused; leaving channel unscannable until backoff"
+                        );
+                        self.defer_team_wake_discovery(channel_id, "report_capture_refused");
+                        return;
+                    }
+                },
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::error!(
+                        target: "csp::team_wake",
+                        %channel_id,
+                        %error,
+                        "team-wake report validation refused; leaving channel unscannable until backoff"
+                    );
+                    self.defer_team_wake_discovery(channel_id, "report_validation_refused");
+                    return;
+                }
+            };
+            match capture {
+                team_wake::DiscoveryCapture::Admitted | team_wake::DiscoveryCapture::Duplicate => {}
+                team_wake::DiscoveryCapture::Saturated => {
+                    self.defer_team_wake_discovery(channel_id, "admission_fifo_full");
+                    return;
+                }
+                team_wake::DiscoveryCapture::ResolvedLedgerFull => {
+                    tracing::error!(target: "csp::team_wake", channel_ref = %channel_id, code = "resolved_ledger_full", pages = 32, page_rows = 1_000, "team-wake channel reached the exact verification envelope");
+                    self.team_wake_discovery_backoff.remove(&channel_id);
+                    return;
+                }
+                team_wake::DiscoveryCapture::Refused(_) => return,
+            }
         }
         self.team_wake_scanned_channels.insert(channel_id);
+        self.team_wake_discovery_backoff.remove(&channel_id);
+    }
+
+    fn team_wake_discovery_backoff_pending(&self, channel_ref: Uuid) -> bool {
+        self.team_wake_discovery_backoff
+            .get(&channel_ref)
+            .is_some_and(|backoff| backoff.retry_at > Instant::now())
+    }
+
+    fn defer_team_wake_discovery(&mut self, channel_ref: Uuid, reason: &str) {
+        self.team_wake_scanned_channels.remove(&channel_ref);
+        let prior = self.team_wake_discovery_backoff.get(&channel_ref);
+        let failures = prior
+            .filter(|backoff| backoff.reason == reason)
+            .map_or(1, |backoff| backoff.failures.saturating_add(1));
+        let exponent = failures.saturating_sub(1).min(9);
+        let delay = Duration::from_secs(1_u64 << exponent).min(TEAM_WAKE_BACKOFF_CAP);
+        self.team_wake_discovery_backoff.insert(
+            channel_ref,
+            TeamWakeBackoff {
+                reason: reason.into(),
+                failures,
+                retry_at: Instant::now() + delay,
+            },
+        );
+    }
+
+    fn team_wake_backoff_pending(&self, channel_ref: Uuid) -> bool {
+        self.team_wake_backoff
+            .get(&channel_ref)
+            .is_some_and(|backoff| backoff.retry_at > Instant::now())
+    }
+
+    fn defer_team_wake(&mut self, intent: team_wake::WakeIntent) -> anyhow::Result<()> {
+        let channel_ref = intent.scope.channel_ref;
+        let reason = intent
+            .last_reason
+            .clone()
+            .unwrap_or_else(|| "team_wake_retry_pending".into());
+        self.team_wakes.defer_in_flight(channel_ref, intent)?;
+
+        let prior = self.team_wake_backoff.get(&channel_ref);
+        let failures = prior
+            .filter(|backoff| backoff.reason == reason)
+            .map_or(1, |backoff| backoff.failures.saturating_add(1));
+        let exponent = failures.saturating_sub(1).min(9);
+        let delay = if matches!(
+            reason.as_str(),
+            "awaiting_provider_outcome"
+                | "report_grace_pending"
+                | "lead_target_changed_retry_pending"
+                | "command_horizon_retry_pending"
+        ) {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(1_u64 << exponent).min(TEAM_WAKE_BACKOFF_CAP)
+        };
+        self.team_wake_backoff.insert(
+            channel_ref,
+            TeamWakeBackoff {
+                reason,
+                failures,
+                retry_at: Instant::now() + delay,
+            },
+        );
+        Ok(())
+    }
+
+    fn retire_team_wake(&mut self, channel_ref: Uuid) -> anyhow::Result<()> {
+        self.team_wakes.retire_in_flight(channel_ref)?;
+        self.team_wake_backoff.remove(&channel_ref);
         Ok(())
     }
 
@@ -1332,31 +1608,48 @@ impl Provider {
     /// durable with a stable reason; only a verified outcome, a canonical
     /// report suppressing a terminal diagnostic, or a definitively excluded
     /// report retires it.
-    async fn process_one_team_wake(
+    async fn process_team_wake_for(
         &mut self,
+        channel_ref: Uuid,
         publisher: &RelayEventPublisher,
     ) -> anyhow::Result<()> {
-        let Some(mut intent) = self.team_wakes.pending().first().cloned() else {
+        let Some(mut intent) = self.team_wakes.pending_for_channel(channel_ref)? else {
             return Ok(());
         };
+        debug_assert_eq!(intent.scope.channel_ref, channel_ref);
+        if self.team_wake_backoff_pending(channel_ref) {
+            self.team_wakes.defer_in_flight(channel_ref, intent)?;
+            return Ok(());
+        }
         let Some(rest) = self.rest_client.clone() else {
             intent.last_reason = Some("relay_query_unavailable".into());
-            self.team_wakes.defer_first(intent)?;
+            self.defer_team_wake(intent)?;
             return Ok(());
         };
         let Some(relay_self) = self.relay_self.clone() else {
             intent.last_reason = Some("relay_identity_unavailable".into());
-            self.team_wakes.defer_first(intent)?;
+            self.defer_team_wake(intent)?;
             return Ok(());
         };
         let snapshot = match team_wake::fetch_verified_snapshot(&rest, &relay_self, &intent.scope)
             .await
         {
             Ok(snapshot) => snapshot,
+            Err(error) if error.is_bound() => {
+                let first = self.team_wakes.refuse_channel(
+                    channel_ref,
+                    team_wake::ChannelRefusalCode::PartitionSaturated,
+                )?;
+                if first {
+                    tracing::error!(target: "csp::team_wake", channel_ref = %channel_ref, code = "partition_saturated", pages = 32, page_rows = 1_000, %error, "team-wake verification structurally refused channel");
+                }
+                self.team_wake_backoff.remove(&channel_ref);
+                return Ok(());
+            }
             Err(error) => {
                 tracing::warn!(target: "csp::team_wake", %error, "team wake facts are not currently provable");
                 intent.last_reason = Some("verified_snapshot_unavailable".into());
-                self.team_wakes.defer_first(intent)?;
+                self.defer_team_wake(intent)?;
                 return Ok(());
             }
         };
@@ -1367,7 +1660,7 @@ impl Provider {
             &snapshot.authority,
         ) {
             intent.last_reason = Some("provider_not_explicitly_authorized".into());
-            self.team_wakes.defer_first(intent)?;
+            self.defer_team_wake(intent)?;
             return Ok(());
         }
 
@@ -1388,10 +1681,10 @@ impl Provider {
                         .any(|event| event.id.to_hex() == *operation_id)
                     {
                         tracing::info!(target: "csp::team_wake", %operation_id, "discarding excluded team report wake candidate");
-                        self.team_wakes.retire(0)?;
+                        self.retire_team_wake(channel_ref)?;
                     } else {
                         intent.last_reason = Some("report_not_query_visible".into());
-                        self.team_wakes.defer_first(intent)?;
+                        self.defer_team_wake(intent)?;
                     }
                     return Ok(());
                 }
@@ -1403,7 +1696,7 @@ impl Provider {
                     Err(error) => {
                         tracing::info!(target: "csp::team_wake", %error, "team report source has no exact active provider target");
                         intent.last_reason = Some("report_source_target_not_exact".into());
-                        self.team_wakes.defer_first(intent)?;
+                        self.defer_team_wake(intent)?;
                         return Ok(());
                     }
                 };
@@ -1420,7 +1713,7 @@ impl Provider {
                     // provider that owns the reporting generation may mint its
                     // durable push; the exact remote lead remains a valid
                     // target after this ownership check.
-                    self.team_wakes.retire(0)?;
+                    self.retire_team_wake(channel_ref)?;
                     return Ok(());
                 }
             }
@@ -1448,12 +1741,12 @@ impl Provider {
                     role,
                 ) {
                     team_wake::TurnReportRequirement::NotRequired => {
-                        self.team_wakes.retire(0)?;
+                        self.retire_team_wake(channel_ref)?;
                         return Ok(());
                     }
                     team_wake::TurnReportRequirement::Unknown(reason) => {
                         intent.last_reason = Some(reason.into());
-                        self.team_wakes.defer_first(intent)?;
+                        self.defer_team_wake(intent)?;
                         return Ok(());
                     }
                     team_wake::TurnReportRequirement::Required { assignment_ref } => assignment_ref,
@@ -1465,12 +1758,12 @@ impl Provider {
                     *prompt_at_ms,
                     *terminal_at_ms,
                 ) {
-                    self.team_wakes.retire(0)?;
+                    self.retire_team_wake(channel_ref)?;
                     return Ok(());
                 }
                 if now_ms().saturating_sub(*terminal_at_ms) < TEAM_WAKE_REPORT_GRACE_MS {
                     intent.last_reason = Some("report_grace_pending".into());
-                    self.team_wakes.defer_first(intent)?;
+                    self.defer_team_wake(intent)?;
                     return Ok(());
                 }
             }
@@ -1481,32 +1774,55 @@ impl Provider {
             Err(error) => {
                 tracing::info!(target: "csp::team_wake", %error, "team wake has no exact active lead target");
                 intent.last_reason = Some("lead_target_not_exact".into());
-                self.team_wakes.defer_first(intent)?;
+                self.defer_team_wake(intent)?;
                 return Ok(());
             }
         };
 
-        if intent.target.as_ref().is_some_and(|old| old != &target) {
+        let expected_wake_text = team_wake::wake_text(&intent.source)
+            .map_err(|error| anyhow::anyhow!("team wake pointer could not be encoded: {error}"))?;
+        if let Some(old_target) = intent.target.as_ref().filter(|old| *old != &target) {
+            if let Some(old_command_id) = intent.command_id.as_deref() {
+                if team_wake::command_outcome(&snapshot.package, old_command_id, old_target)
+                    .is_some()
+                    || team_wake::command_echoed(
+                        &snapshot.package,
+                        old_command_id,
+                        old_target,
+                        &expected_wake_text,
+                    )
+                {
+                    self.retire_team_wake(channel_ref)?;
+                    return Ok(());
+                }
+            }
             intent.target = None;
             intent.command_id = None;
             intent.signed_event = None;
             intent.relay_accepted_at = None;
             intent.attempt = intent.attempt.saturating_add(1);
+            intent.last_reason = Some("lead_target_changed_retry_pending".into());
+            self.defer_team_wake(intent)?;
+            return Ok(());
         }
-        intent.target = Some(target.clone());
-        if intent.command_id.is_none() {
+        if intent.target.is_none() {
+            // Binding even the first target creates a new command identity.
+            // Persist and return before signing so the next pass checks an
+            // outcome/echo for precisely that identity (I7).
+            intent.target = Some(target.clone());
             intent.command_id = Some(team_wake::command_id(
                 intent.source.event_id(),
                 &target,
                 intent.attempt,
             ));
+            intent.last_reason = Some("lead_target_bound_retry_pending".into());
+            self.defer_team_wake(intent)?;
+            return Ok(());
         }
         let command_id = intent
             .command_id
             .clone()
             .ok_or_else(|| anyhow::anyhow!("team wake command id was not resolved"))?;
-        let expected_wake_text = team_wake::wake_text(&intent.source)
-            .map_err(|error| anyhow::anyhow!("team wake pointer could not be encoded: {error}"))?;
         if team_wake::command_outcome(&snapshot.package, &command_id, &target).is_some()
             || team_wake::command_echoed(
                 &snapshot.package,
@@ -1515,7 +1831,7 @@ impl Provider {
                 &expected_wake_text,
             )
         {
-            self.team_wakes.retire(0)?;
+            self.retire_team_wake(channel_ref)?;
             return Ok(());
         }
         if intent.relay_accepted_at.is_none() {
@@ -1524,7 +1840,7 @@ impl Provider {
         }
         if let Some(accepted_at) = intent.relay_accepted_at {
             if now_secs().saturating_sub(accepted_at) <= self.config.command_horizon.as_secs() {
-                self.team_wakes.defer_first(intent)?;
+                self.defer_team_wake(intent)?;
                 return Ok(());
             }
             intent.attempt = intent.attempt.saturating_add(1);
@@ -1535,6 +1851,9 @@ impl Provider {
             ));
             intent.signed_event = None;
             intent.relay_accepted_at = None;
+            intent.last_reason = Some("command_horizon_retry_pending".into());
+            self.defer_team_wake(intent)?;
+            return Ok(());
         }
 
         if intent.signed_event.is_none() {
@@ -1551,11 +1870,12 @@ impl Provider {
             .map_err(anyhow::Error::msg)?;
             intent.signed_event = Some(event);
             // Persist the exact signed attempt before it can reach the relay.
-            self.team_wakes.replace(0, intent.clone())?;
+            self.team_wakes
+                .replace_in_flight(channel_ref, intent.clone())?;
         }
         let Some(event) = intent.signed_event.clone() else {
             intent.last_reason = Some("signed_attempt_unavailable".into());
-            self.team_wakes.defer_first(intent)?;
+            self.defer_team_wake(intent)?;
             return Ok(());
         };
         match publisher.publish(event).await {
@@ -1568,7 +1888,7 @@ impl Provider {
                 intent.last_reason = Some("publish_retry_pending".into());
             }
         }
-        self.team_wakes.defer_first(intent)?;
+        self.defer_team_wake(intent)?;
         Ok(())
     }
 
@@ -4255,7 +4575,7 @@ impl Provider {
                     Some((scope, actor, role, caused_by_command_id, source_target, prompt_at_ms)),
                 ) = (terminal, team_terminal)
                 {
-                    self.team_wakes.enqueue(
+                    self.team_wakes.capture_terminal(
                         scope,
                         team_wake::WakeSource::Terminal {
                             terminal_event_id,
@@ -5060,7 +5380,6 @@ fn log_ignored(what: &str, reason: &Ignored) {
 
 #[cfg(test)]
 mod tests {
-
     /// The seam the whole lane exists for: what a driver reported becomes an
     /// additive `usage` block on the turn's terminal item, with the prompt
     /// side split into three disjoint counts.
@@ -5139,6 +5458,7 @@ mod tests {
     use super::*;
     use crate::payload::{BUDGET_EXHAUSTED, UNAUTHORIZED_OPERATOR};
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
 
     use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
@@ -5148,6 +5468,11 @@ mod tests {
     use nostr::Keys;
 
     use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
+
+    #[path = "team_wake_driver_tests.rs"]
+    mod team_wake_driver_tests;
+    #[path = "team_wake_pressure_tests.rs"]
+    mod team_wake_pressure_tests;
 
     struct CollectingSink {
         events: Mutex<Vec<Event>>,
@@ -5186,8 +5511,18 @@ mod tests {
 
     #[derive(Clone)]
     struct TestRelayState {
-        events: Vec<Event>,
+        events: Arc<Mutex<Vec<Event>>>,
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
+        published: Arc<Mutex<Vec<Event>>>,
+        reject_next_publish: Arc<AtomicBool>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingTestRelay {
+        events: Arc<Mutex<Vec<Event>>>,
+        queries: Arc<Mutex<Vec<serde_json::Value>>>,
+        published: Arc<Mutex<Vec<Event>>>,
+        reject_next_publish: Arc<AtomicBool>,
     }
 
     /// Minimal NIP-01 filter matching for the fake relay's `/query` bridge:
@@ -5230,11 +5565,14 @@ mod tests {
         true
     }
 
-    async fn test_relay_ws(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
-        ws.on_upgrade(|socket| async move { serve_test_relay_socket(socket).await })
+    async fn test_relay_ws(
+        State(state): State<TestRelayState>,
+        ws: WebSocketUpgrade,
+    ) -> impl axum::response::IntoResponse {
+        ws.on_upgrade(move |socket| async move { serve_test_relay_socket(socket, state).await })
     }
 
-    async fn serve_test_relay_socket(mut socket: WebSocket) {
+    async fn serve_test_relay_socket(mut socket: WebSocket, state: TestRelayState) {
         socket
             .send(AxumWsMessage::Text(
                 serde_json::json!(["AUTH", "genesis-unit-test"])
@@ -5264,7 +5602,53 @@ mod tests {
             ))
             .await
             .expect("send auth OK");
-        while socket.recv().await.is_some() {}
+        while let Some(Ok(message)) = socket.recv().await {
+            let AxumWsMessage::Text(message) = message else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(message.as_str()) else {
+                continue;
+            };
+            if value.pointer("/0").and_then(serde_json::Value::as_str) != Some("EVENT") {
+                continue;
+            }
+            let Some(event_value) = value.pointer("/1").cloned() else {
+                continue;
+            };
+            let Ok(event) = serde_json::from_value::<Event>(event_value) else {
+                continue;
+            };
+            state
+                .published
+                .lock()
+                .expect("published lock")
+                .push(event.clone());
+            let accepted = !state.reject_next_publish.swap(false, Ordering::SeqCst);
+            if accepted {
+                state
+                    .events
+                    .lock()
+                    .expect("events lock")
+                    .push(event.clone());
+            }
+            socket
+                .send(AxumWsMessage::Text(
+                    serde_json::json!([
+                        "OK",
+                        event.id.to_hex(),
+                        accepted,
+                        if accepted {
+                            "stored"
+                        } else {
+                            "injected rejection"
+                        }
+                    ])
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .expect("send event OK");
+        }
     }
 
     async fn test_relay_query(
@@ -5277,8 +5661,8 @@ mod tests {
             .expect("queries lock")
             .push(query.clone());
         let filters: Vec<serde_json::Value> = query.as_array().cloned().unwrap_or_default();
-        let matched: Vec<&Event> = state
-            .events
+        let events = state.events.lock().expect("events lock");
+        let matched: Vec<&Event> = events
             .iter()
             .filter(|event| {
                 filters
@@ -5308,12 +5692,29 @@ mod tests {
         Arc<Mutex<Vec<serde_json::Value>>>,
         tokio::task::JoinHandle<()>,
     ) {
+        let (relay, control, server) = spawn_recording_test_relay(keys, events).await;
+        (relay, control.queries, server)
+    }
+
+    async fn spawn_recording_test_relay(
+        keys: &Keys,
+        events: Vec<Event>,
+    ) -> (
+        HarnessRelay,
+        RecordingTestRelay,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let events = Arc::new(Mutex::new(events));
         let queries = Arc::new(Mutex::new(Vec::new()));
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let reject_next_publish = Arc::new(AtomicBool::new(false));
         let state = TestRelayState {
-            events,
+            events: events.clone(),
             queries: queries.clone(),
+            published: published.clone(),
+            reject_next_publish: reject_next_publish.clone(),
         };
-        let app = Router::new()
+        let app: Router = Router::new()
             .route("/", get(test_relay_ws))
             .route("/query", post(test_relay_query))
             .with_state(state);
@@ -5328,7 +5729,16 @@ mod tests {
         let relay = HarnessRelay::connect(&relay_url, keys, &keys.public_key().to_hex(), None)
             .await
             .expect("connect test relay");
-        (relay, queries, server)
+        (
+            relay,
+            RecordingTestRelay {
+                events,
+                queries,
+                published,
+                reject_next_publish,
+            },
+            server,
+        )
     }
 
     #[tokio::test]
@@ -5373,7 +5783,7 @@ mod tests {
         let provider_keys = Keys::generate();
         let (relay, queries, server) = spawn_test_relay(&provider_keys, Some(report.clone())).await;
         let mut provider = Provider::new(config_of(
-            provider_keys,
+            provider_keys.clone(),
             &dir.path().join("state"),
             None,
             "missing-agent".into(),
@@ -5382,22 +5792,225 @@ mod tests {
         provider.set_rest_client(relay.rest_client());
         provider.subscribed.insert(channel_id);
 
-        provider
-            .discover_one_team_wake_partition()
-            .await
-            .expect("complete startup scan");
-        assert_eq!(provider.team_wakes.pending().len(), 1);
-        assert_eq!(
-            provider.team_wakes.pending()[0].source.event_id(),
-            report.id.to_hex()
-        );
+        provider.discover_team_wake_partition_for(channel_id).await;
+        let discovered = provider
+            .team_wakes
+            .pending_for_channel(channel_id)
+            .expect("select discovered wake")
+            .expect("one discovered wake");
+        assert_eq!(discovered.source.event_id(), report.id.to_hex());
         let query_count = queries.lock().expect("queries").len();
-        provider
-            .discover_one_team_wake_partition()
-            .await
-            .expect("already scanned");
+        provider.discover_team_wake_partition_for(channel_id).await;
         assert_eq!(queries.lock().expect("queries").len(), query_count);
 
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    /// The runtime, rather than the store in isolation, makes one persisted
+    /// round-robin choice per tick. A blocked A may consume its own turn, but
+    /// it cannot make B wait for a second independent discovery/processing
+    /// cursor advance.
+    #[tokio::test]
+    async fn team_wake_driver_gives_a_blocked_channel_one_cycle_slot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let provider_keys = Keys::generate();
+        let (relay, _, server) = spawn_test_relay(&provider_keys, None).await;
+        let mut provider = Provider::new(config_of(
+            provider_keys,
+            &dir.path().join("state"),
+            None,
+            "missing-agent".into(),
+        ))
+        .expect("provider");
+        let channels = [Uuid::from_u128(1), Uuid::from_u128(2)];
+        provider.set_rest_client(relay.rest_client());
+        provider.subscribed.extend(channels);
+        for (value, channel) in channels.into_iter().enumerate() {
+            provider
+                .team_wakes
+                .capture_report(
+                    team_wake::WakeScope {
+                        channel_ref: channel,
+                        session_ref: channel.to_string(),
+                        genesis_ref: "ab".repeat(32),
+                    },
+                    team_wake::WakeSource::Report {
+                        operation_id: format!("{value:064x}"),
+                        operation_type: "assignment_report".into(),
+                        author_pubkey: format!("{:064x}", value + 10),
+                        created_at: 1,
+                    },
+                )
+                .expect("capture report");
+        }
+        let publisher = relay.event_publisher();
+        provider
+            .run_one_team_wake_tick(&publisher)
+            .await
+            .expect("A tick");
+        assert_eq!(provider.team_wakes.channel_counts(channels[0]).2, 1);
+        assert_eq!(provider.team_wakes.channel_counts(channels[1]).2, 0);
+        provider
+            .run_one_team_wake_tick(&publisher)
+            .await
+            .expect("B tick");
+        assert_eq!(provider.team_wakes.channel_counts(channels[1]).2, 1);
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    /// v3.1 S1: subscribed channels that are already scanned and have no work
+    /// are absent from the candidate set, so one busy channel gets the tick.
+    #[test]
+    fn idle_scanned_channels_consume_no_scheduler_ticks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut provider = Provider::new(config_of(
+            Keys::generate(),
+            &dir.path().join("state"),
+            None,
+            "missing-agent".into(),
+        ))
+        .expect("provider");
+        let idle = Uuid::from_u128(1);
+        let working = Uuid::from_u128(2);
+        provider.subscribed.extend([idle, working]);
+        provider.team_wake_scanned_channels.insert(idle);
+        provider.team_wake_scanned_channels.insert(working);
+        provider
+            .team_wakes
+            .capture_report(
+                team_wake::WakeScope {
+                    channel_ref: working,
+                    session_ref: working.to_string(),
+                    genesis_ref: "ab".repeat(32),
+                },
+                team_wake::WakeSource::Report {
+                    operation_id: "77".repeat(32),
+                    operation_type: "assignment_report".into(),
+                    author_pubkey: "88".repeat(32),
+                    created_at: 1,
+                },
+            )
+            .expect("working source");
+        assert!(!provider.team_wake_discovery_needed(idle));
+        assert!(!provider.team_wake_processing_needed(idle));
+        assert!(provider.team_wake_processing_needed(working));
+        assert_eq!(
+            provider
+                .team_wakes
+                .next_tick_channel([working])
+                .expect("select only need"),
+            Some(working)
+        );
+    }
+
+    #[tokio::test]
+    async fn saturated_complete_partition_is_channel_backed_off_not_requeried_each_tick() {
+        use buzz_core::coding_session_team_transaction::{
+            CodingSessionTeamReport, CodingSessionTeamTransactionBody,
+        };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let actor = Keys::generate();
+        let payload =
+            buzz_sdk::coding_session_team_transaction::coding_session_team_transaction_payload(
+                Uuid::new_v4().to_string(),
+                "ab".repeat(32),
+                None,
+                None,
+                CodingSessionTeamTransactionBody::Report(CodingSessionTeamReport {
+                    assignment_ref: "11".repeat(32),
+                    summary: "same-page saturation fixture".into(),
+                    branch: None,
+                    base_sha: None,
+                    head_sha: None,
+                    files: Vec::new(),
+                    tests: Vec::new(),
+                    red_before_green: None,
+                    deviations: Vec::new(),
+                    residuals: Vec::new(),
+                    anomalies: Vec::new(),
+                }),
+            );
+        let report =
+            buzz_sdk::coding_session_team_transaction::build_coding_session_team_transaction(
+                &channel_id.to_string(),
+                payload,
+            )
+            .expect("builder")
+            .sign_with_keys(&actor)
+            .expect("sign report");
+        // The fake relay intentionally returns the same full page after an
+        // `until`, exercising the production complete-partition saturation
+        // refusal without manufacturing a store result.
+        let provider_keys = Keys::generate();
+        let (relay, queries, server) =
+            spawn_test_relay_with_events(&provider_keys, vec![report.clone(); 1_000]).await;
+        let mut provider = Provider::new(config_of(
+            provider_keys.clone(),
+            &dir.path().join("state"),
+            None,
+            "missing-agent".into(),
+        ))
+        .expect("provider");
+        provider.set_rest_client(relay.rest_client());
+        provider.subscribed.insert(channel_id);
+        let publisher = relay.event_publisher();
+        provider
+            .run_one_team_wake_tick(&publisher)
+            .await
+            .expect("saturating tick does not fail the provider");
+        assert!(!provider
+            .team_wake_discovery_backoff
+            .contains_key(&channel_id));
+        let after_refusal = queries.lock().expect("queries").len();
+        assert!(after_refusal >= 2, "complete query paged before refusing");
+        provider
+            .run_one_team_wake_tick(&publisher)
+            .await
+            .expect("refused channel consumes no tick");
+        assert_eq!(queries.lock().expect("queries").len(), after_refusal);
+        assert_eq!(
+            provider
+                .team_wakes
+                .refusal(channel_id)
+                .expect("durable refusal")
+                .code,
+            team_wake::ChannelRefusalCode::PartitionSaturated
+        );
+
+        relay.shutdown().await;
+        server.abort();
+        drop(provider);
+
+        // v3.1 §3.3: a restart gets exactly one probe; when a non-empty
+        // partition has become queryable, that probe clears the refusal before
+        // admitting its recovered report. Empty-only recovery would miss the
+        // self-refusal bug this regression exists to pin.
+        let (relay, _, server) = spawn_test_relay(&provider_keys, Some(report.clone())).await;
+        let mut restarted = Provider::new(config_of(
+            provider_keys,
+            &dir.path().join("state"),
+            None,
+            "missing-agent".into(),
+        ))
+        .expect("restarted provider");
+        restarted.set_rest_client(relay.rest_client());
+        restarted.subscribed.insert(channel_id);
+        restarted
+            .run_one_team_wake_tick(&relay.event_publisher())
+            .await
+            .expect("one restart probe");
+        assert!(restarted.team_wakes.refusal(channel_id).is_none());
+        let recovered = restarted
+            .team_wakes
+            .pending_for_channel(channel_id)
+            .expect("recovered report remains durable")
+            .expect("non-empty restart probe admitted its report");
+        assert_eq!(recovered.source.event_id(), report.id.to_hex());
         relay.shutdown().await;
         server.abort();
     }
@@ -6509,13 +7122,21 @@ mod tests {
     /// A relay whose REST `/query` never answers, so a caller that waits on it
     /// is visibly blocked rather than merely slow.
     async fn spawn_hanging_query_relay(keys: &Keys) -> (HarnessRelay, tokio::task::JoinHandle<()>) {
-        let app = Router::new().route("/", get(test_relay_ws)).route(
-            "/query",
-            post(|| async {
-                tokio::time::sleep(Duration::from_secs(120)).await;
-                axum::Json(serde_json::json!({ "events": [] }))
-            }),
-        );
+        let app = Router::new()
+            .route("/", get(test_relay_ws))
+            .route(
+                "/query",
+                post(|| async {
+                    tokio::time::sleep(Duration::from_secs(120)).await;
+                    axum::Json(serde_json::json!({ "events": [] }))
+                }),
+            )
+            .with_state(TestRelayState {
+                events: Arc::new(Mutex::new(Vec::new())),
+                queries: Arc::new(Mutex::new(Vec::new())),
+                published: Arc::new(Mutex::new(Vec::new())),
+                reject_next_publish: Arc::new(AtomicBool::new(false)),
+            });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test relay");
