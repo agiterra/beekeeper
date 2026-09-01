@@ -6,6 +6,7 @@ import {
   markCommunityOnboardingComplete,
   useCommunityOnboarding,
 } from "@/features/onboarding/communityOnboarding";
+import { router } from "@/app/router";
 import { initializeStarterChannels } from "@/features/onboarding/hooks";
 import { useClaimInvite } from "@/features/onboarding/useClaimInvite";
 import { CommunityChangeOverlay } from "@/features/communities/ui/CommunityChangeOverlay";
@@ -280,7 +281,14 @@ export function CommunityOnboardingFlow({
         // entry — it exists for the Home-route fallback, and leaving it would
         // yank a later Home visit back to Welcome.
         takePendingWelcomeChannelForDirectEntry();
-        window.location.hash = `/channels/${result.focusChannelId}`;
+        // Through the router even here, before the app mounts: a raw hash
+        // write leaves a history entry with no `__TSR_index`/`__TSR_key`, and
+        // the shell's forward-history tracking never recovers from the gap
+        // (see `app/navigation/historyBranch.ts`).
+        void router.navigate({
+          to: "/channels/$channelId",
+          params: { channelId: result.focusChannelId },
+        });
         markCommunityOnboardingComplete(identity.pubkey, relayUrl);
         // Keep this screen mounted as a curtain over the loading app; the
         // "entering" stage fades it out once Welcome reports ready.

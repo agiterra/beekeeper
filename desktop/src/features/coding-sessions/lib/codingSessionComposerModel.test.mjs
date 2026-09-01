@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+// `hasPrimaryShortcutModifier` reads `navigator.platform`, and `navigator` is
+// a getter-only global on Node. Pin it so these assertions describe macOS
+// behaviour on every host instead of quietly inverting on a Linux runner.
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: { platform: "MacIntel", userAgent: "test" },
+});
+
+const {
   getCodingSessionComposerState,
+  matchCodingSessionHistoryKey,
   shouldSubmitCodingSessionComposerKey,
-} from "./codingSessionComposerModel.ts";
+} = await import("./codingSessionComposerModel.ts");
 
 test("member gate is fail-closed while the composer remains reachable", () => {
   assert.deepEqual(
@@ -139,5 +148,55 @@ test("send is held closed while an attachment is unsettled", () => {
     getCodingSessionComposerState({ ...base, hasUnsettledAttachments: true })
       .sendLabel,
     "Send",
+  );
+});
+
+// ── ⌘↑ / ⌘↓ prompt-history recall ────────────────────────────────────────────
+
+function arrow(overrides = {}) {
+  return {
+    altKey: false,
+    ctrlKey: false,
+    key: "ArrowUp",
+    metaKey: false,
+    shiftKey: false,
+    ...overrides,
+  };
+}
+
+test("⌘↑ walks back and ⌘↓ walks forward", () => {
+  assert.equal(matchCodingSessionHistoryKey(arrow({ metaKey: true })), "older");
+  assert.equal(
+    matchCodingSessionHistoryKey(arrow({ key: "ArrowDown", metaKey: true })),
+    "newer",
+  );
+});
+
+// A bare arrow still has to move the caret inside a multi-line draft.
+test("a bare arrow is left to the textarea", () => {
+  assert.equal(matchCodingSessionHistoryKey(arrow()), null);
+  assert.equal(matchCodingSessionHistoryKey(arrow({ key: "ArrowDown" })), null);
+});
+
+test("Shift or Option makes it someone else's chord", () => {
+  assert.equal(
+    matchCodingSessionHistoryKey(arrow({ metaKey: true, shiftKey: true })),
+    null,
+  );
+  assert.equal(
+    matchCodingSessionHistoryKey(arrow({ metaKey: true, altKey: true })),
+    null,
+  );
+});
+
+// On macOS Ctrl is left to the native Emacs-style text bindings.
+test("Ctrl is not the primary modifier on macOS", () => {
+  assert.equal(matchCodingSessionHistoryKey(arrow({ ctrlKey: true })), null);
+});
+
+test("other keys are not history", () => {
+  assert.equal(
+    matchCodingSessionHistoryKey(arrow({ key: "Enter", metaKey: true })),
+    null,
   );
 });

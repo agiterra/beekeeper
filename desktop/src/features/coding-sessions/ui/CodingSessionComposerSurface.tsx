@@ -1,7 +1,10 @@
 import type * as React from "react";
 
 import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
-import { shouldSubmitCodingSessionComposerKey } from "@/features/coding-sessions/lib/codingSessionComposerModel";
+import {
+  matchCodingSessionHistoryKey,
+  shouldSubmitCodingSessionComposerKey,
+} from "@/features/coding-sessions/lib/codingSessionComposerModel";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
@@ -50,6 +53,8 @@ type ComposerSurfaceProps = {
   onAddProvider?: () => void;
   onInterrupt: () => void;
   onPrimary: () => void;
+  /** Walk this operator's prompt history; absent when there is none. */
+  onRecallHistory?: (direction: "older" | "newer") => void;
   onReconnect: () => void;
   onSessionStop: () => void;
   onTextChange: (text: string) => void;
@@ -97,6 +102,7 @@ export function CodingSessionComposerSurface({
   onInterrupt,
   runtimeLabel,
   onPrimary,
+  onRecallHistory,
   onReconnect,
   onSessionStop,
   onTextChange,
@@ -200,6 +206,17 @@ export function CodingSessionComposerSurface({
           onChange={(event) => onTextChange(event.target.value)}
           onPaste={attachments?.handlePaste}
           onKeyDown={(event) => {
+            // History recall is checked first: ⌘↑/⌘↓ carry no submit meaning,
+            // and on macOS an unclaimed one jumps the caret to the start or
+            // end of the textarea instead.
+            const recall = onRecallHistory
+              ? matchCodingSessionHistoryKey(event)
+              : null;
+            if (recall) {
+              event.preventDefault();
+              onRecallHistory?.(recall);
+              return;
+            }
             if (!shouldSubmitCodingSessionComposerKey(event)) return;
             event.preventDefault();
             if (canSubmitText) onPrimary();

@@ -27,6 +27,11 @@ import {
 } from "@/features/profile/ui/ProfileAvatarWithStatus";
 import type { Channel, PresenceStatus } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
+import {
+  ItemPositionBadge,
+  ScopeActionBadge,
+} from "@/features/hotkeys/ui/HotkeyBadge";
+import type { NavHotkeyAction } from "@/features/hotkeys/lib/navHotkeyBindings";
 import { useNow } from "@/shared/lib/useNow";
 import {
   SidebarGroup,
@@ -110,6 +115,10 @@ function UnreadCountBadge({
         "flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-2xs font-semibold leading-none text-primary-foreground tabular-nums",
         className,
       )}
+      // Fades while a hotkey modifier is held: the chord badge lands on the
+      // same corner of the row, and a count under a chord hint reads as
+      // neither.
+      data-hotkey-dim
       data-testid={`channel-unread-${channelName}`}
     >
       {formatUnreadCount(count)}
@@ -128,6 +137,7 @@ function UnreadDotBadge({
   return (
     <span
       className={cn("h-2 w-2 shrink-0 rounded-full bg-primary", className)}
+      data-hotkey-dim
       data-testid={`channel-unread-dot-${channelName}`}
     >
       <span className="sr-only">unread</span>
@@ -286,6 +296,7 @@ function SidebarChannelIcon({
 
 export function ChannelMenuButton({
   channel,
+  hotkeyIndex,
   label,
   isActive,
   hasUnread,
@@ -296,6 +307,8 @@ export function ChannelMenuButton({
   onSelectChannel,
 }: {
   channel: Channel;
+  /** Zero-based position of this row for the item hotkey, or null when unreachable. */
+  hotkeyIndex?: number | null;
   label?: string;
   isActive: boolean;
   hasUnread: boolean;
@@ -409,6 +422,7 @@ export function ChannelMenuButton({
           count={unreadTotal}
         />
       ) : null}
+      <ItemPositionBadge index={hotkeyIndex ?? null} />
     </SidebarMenuButton>
   );
 
@@ -426,6 +440,8 @@ export function ChannelMenuButton({
 export function SidebarSection({
   action,
   activeWorkingByChannelId,
+  hotkeyAction,
+  hotkeyIndexByChannelId,
   dmParticipantsByChannelId,
   emptyState,
   items,
@@ -450,6 +466,10 @@ export function SidebarSection({
 }: {
   action?: React.ReactNode;
   activeWorkingByChannelId?: ReadonlyMap<string, ActiveChannelTurnSummary>;
+  /** Destination this section's header answers to when the scope modifier is held. */
+  hotkeyAction?: NavHotkeyAction;
+  /** Zero-based item-hotkey position per row; absent rows get no badge. */
+  hotkeyIndexByChannelId?: ReadonlyMap<string, number>;
   dmParticipantsByChannelId?: Record<string, SidebarDmParticipant[]>;
   emptyState?: React.ReactNode;
   items: Channel[];
@@ -499,6 +519,9 @@ export function SidebarSection({
               type="button"
             >
               <span data-sidebar-section-title>{title}</span>
+              {hotkeyAction ? (
+                <ScopeActionBadge action={hotkeyAction} inline />
+              ) : null}
               <span aria-hidden="true" className={SECTION_LABEL_CHEVRON_CLASS}>
                 <ChevronDown
                   className={cn(
@@ -526,6 +549,7 @@ export function SidebarSection({
                   >
                     <ChannelMenuButton
                       channel={channel}
+                      hotkeyIndex={hotkeyIndexByChannelId?.get(channel.id)}
                       activeWorking={activeWorkingByChannelId?.get(channel.id)}
                       dmParticipants={dmParticipantsByChannelId?.[channel.id]}
                       hasUnread={unreadChannelIds.has(channel.id)}

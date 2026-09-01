@@ -16,6 +16,7 @@ import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { ChannelSidebarRow } from "@/features/sidebar/ui/ChannelSidebarRow";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import { cn } from "@/shared/lib/cn";
+import { ItemPositionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -39,6 +40,7 @@ import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
  */
 export function ProjectChildRowItem({
   row,
+  hotkeyIndex,
   channelHandlers,
   onOpenCodingSession,
   onRequestCloseCodingSession,
@@ -53,6 +55,8 @@ export function ProjectChildRowItem({
   onObserveShell,
 }: {
   row: ProjectChildRow;
+  /** Zero-based position of this row for the item hotkey, or null when unreachable. */
+  hotkeyIndex?: number | null;
   channelHandlers: ProjectChannelHandlers;
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
@@ -215,11 +219,13 @@ export function ProjectChildRowItem({
               indicator.colorClass,
               pending && "animate-pulse",
             )}
+            data-hotkey-dim
             data-session-indicator={indicator.state}
             data-testid="project-coding-session-indicator"
             role="img"
             title={indicator.title}
           />
+          <ItemPositionBadge index={hotkeyIndex ?? null} />
         </SidebarMenuButton>
       );
       return (
@@ -272,6 +278,7 @@ export function ProjectChildRowItem({
       return (
         <ChannelSidebarRow
           channel={channel}
+          hotkeyIndex={hotkeyIndex}
           activeWorking={channelHandlers.activeWorkingByChannelId?.get(
             channel.id,
           )}
@@ -302,6 +309,7 @@ export function ProjectChildRowItem({
       return (
         <ShellSessionRow
           session={row.session}
+          hotkeyIndex={hotkeyIndex}
           isActive={row.session.sessionId === activeShellSessionId}
           onOpen={onOpenShell}
           onRequestRename={onRequestRenameShell}
@@ -321,7 +329,11 @@ export function ProjectChildRowItem({
           >
             <Terminal className="size-4 shrink-0" />
             <span className="truncate">{terminal.title}</span>
-            <Eye className="ml-auto size-3.5 shrink-0 text-sidebar-foreground/50" />
+            <Eye
+              className="ml-auto size-3.5 shrink-0 text-sidebar-foreground/50"
+              data-hotkey-dim
+            />
+            <ItemPositionBadge index={hotkeyIndex ?? null} />
           </SidebarMenuButton>
         </SidebarMenuItem>
       );

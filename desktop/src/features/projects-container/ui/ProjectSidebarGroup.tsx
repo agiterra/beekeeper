@@ -20,6 +20,12 @@ import {
 } from "@/shared/ui/dropdown-menu";
 
 import { cn } from "@/shared/lib/cn";
+import {
+  registerHotkeyTargets,
+  useActiveHotkeyScope,
+} from "@/features/hotkeys/lib/hotkeyTargetRegistry";
+import { NAV_HOTKEY_MAX_POSITIONS } from "@/features/hotkeys/lib/navHotkeyBindings";
+import { ScopePositionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
@@ -42,7 +48,11 @@ import type {
   ExactProjectCodingSessionCoordinates,
   ProjectCodingSessionShelfEntry,
 } from "../lib/projectCodingSessionShelf";
-import { buildProjectChildren, projectChildKey } from "../lib/projectChildren";
+import {
+  buildProjectChildren,
+  projectChildKey,
+  projectChildLabel,
+} from "../lib/projectChildren";
 import {
   PROJECT_SESSION_PAGE_SIZE,
   filterProjectSessions,
@@ -98,6 +108,8 @@ export function ProjectSidebarGroup({
   currentPubkey,
   sessionFilter,
   onSessionFilterChange,
+  hotkeyPosition,
+  isProjectHomeActive,
   onOpenProject,
   onNewCodingSession,
   onRequestCreate,
@@ -137,6 +149,11 @@ export function ProjectSidebarGroup({
   /** Which sessions to list; owned by the sections parent so it persists. */
   sessionFilter: ProjectSessionFilter;
   onSessionFilterChange: (filter: ProjectSessionFilter) => void;
+  /** Zero-based position of this project for the scope hotkey, or null past the cap. */
+  hotkeyPosition?: number | null;
+  /** True only on the project's own page — not merely somewhere inside it, or
+   * the header and the open session row would both claim to be the live one. */
+  isProjectHomeActive?: boolean;
   onOpenProject: () => void;
   /** Starts the project-scoped create flow from the group's `+` menu. */
   onNewCodingSession?: () => void;
@@ -257,9 +274,82 @@ export function ProjectSidebarGroup({
   );
   const founderProfiles = useUsersBatchQuery(founderPubkeys).data?.profiles;
 
+  /**
+   * The group's rows in the order they are painted below: channels and forums,
+   * then the open sessions, then terminals, then the settled sessions. Built
+   * once and used for both the badge numbers and the registered chords, so the
+   * two cannot drift as the filter, the paging, or the shelf order move.
+   *
+   * A pending session row is skipped: it stands for a create the provider has
+   * not acknowledged, so there is no generation to open. Numbering it would
+   * put a badge on a row that answers to nothing.
+   */
+  const displayedRows = React.useMemo(
+    () =>
+      [
+        ...channelRows,
+        ...visibleOpenRows,
+        ...terminalRows,
+        ...visibleSettledRows,
+      ].filter(
+        (row) => !(row.type === "coding-session" && row.entry.pending === true),
+      ),
+    [channelRows, terminalRows, visibleOpenRows, visibleSettledRows],
+  );
+
+  const activeHotkeyScope = useActiveHotkeyScope();
+  // Collapsed groups paint no rows, so they number none and answer to none:
+  // a chord that opened a row with no badge on it is exactly the drift the
+  // registry exists to prevent.
+  const isHotkeyScope =
+    !collapsed && activeHotkeyScope === `project:${project.id}`;
+  const hotkeyIndexByRowKey = React.useMemo(() => {
+    const map = new Map<string, number>();
+    if (!isHotkeyScope) return map;
+    displayedRows.slice(0, NAV_HOTKEY_MAX_POSITIONS).forEach((row, index) => {
+      map.set(projectChildKey(row), index);
+    });
+    return map;
+  }, [displayedRows, isHotkeyScope]);
+
+  const activateRow = React.useEffectEvent(
+    (row: (typeof displayedRows)[number]) => {
+      switch (row.type) {
+        case "coding-session":
+          onOpenCodingSession?.({
+            channelId: row.entry.channelId,
+            generationId: row.entry.generationId,
+          });
+          return;
+        case "channel":
+        case "forum":
+          channelHandlers.onSelectChannel(row.channel.id);
+          return;
+        case "shell":
+          onOpenShell(row.session.sessionId);
+          return;
+        case "remote-shell":
+          onObserveShell?.(row.terminal);
+      }
+    },
+  );
+
+  React.useEffect(() => {
+    if (!isHotkeyScope) return;
+    return registerHotkeyTargets(
+      `project:${project.id}`,
+      displayedRows.slice(0, NAV_HOTKEY_MAX_POSITIONS).map((row) => ({
+        key: projectChildKey(row),
+        label: projectChildLabel(row),
+        activate: () => activateRow(row),
+      })),
+    );
+  }, [displayedRows, isHotkeyScope, project.id]);
+
   const renderRow = (row: (typeof children)[number]) => (
     <ProjectChildRowItem
       key={projectChildKey(row)}
+      hotkeyIndex={hotkeyIndexByRowKey.get(projectChildKey(row)) ?? null}
       row={row}
       channelHandlers={channelHandlers}
       onOpenCodingSession={onOpenCodingSession}
@@ -297,6 +387,7 @@ export function ProjectSidebarGroup({
           <SidebarMenuItem>
             <SidebarMenuButton
               type="button"
+              isActive={isProjectHomeActive}
               onClick={onOpenProject}
               className="pr-14"
               data-testid={`project-open-${project.dtag}`}
@@ -325,10 +416,17 @@ export function ProjectSidebarGroup({
                   (local)
                 </span>
               ) : null}
+              {hotkeyPosition === null ||
+              hotkeyPosition === undefined ? null : (
+                <ScopePositionBadge index={hotkeyPosition} />
+              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+        <div
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center"
+          data-hotkey-dim
+        >
           {dragHandleProps ? (
             <button
               type="button"

@@ -20,6 +20,7 @@ import { useChannelBrowserDialog } from "@/app/useChannelBrowserDialog";
 import { useMarkAsReadShortcuts } from "@/app/useMarkAsReadShortcuts";
 import { useSettingsShortcuts } from "@/app/useSettingsShortcuts";
 import { useAppShellKeyboardShortcuts } from "@/app/useAppShellKeyboardShortcuts";
+import { useNavigationHotkeys } from "@/app/navigation/useNavigationHotkeys";
 import { useAppShellDesktopNotifications } from "@/app/useAppShellDesktopNotifications";
 import { useAppShellLifecycleEffects } from "@/app/useAppShellLifecycleEffects";
 import { useChannelActivityProjection } from "@/app/useChannelActivityProjection";
@@ -664,6 +665,12 @@ export function AppShell() {
     onNewMessage: goNewMessage,
     onSearchCurrentChannel: handleOpenChannelSearch,
     onSearchEverything: handleOpenSearch,
+  });
+  useNavigationHotkeys({
+    activeChannel,
+    disabled: settingsOpen || isHuddleRoom,
+    pubkey: identityQuery.data?.pubkey,
+    relayUrl: communitiesHook.activeCommunity?.relayUrl,
   });
   useSettingsShortcuts({
     onClose: handleCloseSettings,

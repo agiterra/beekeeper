@@ -46,7 +46,8 @@ export function PendingCodingSessionScreen({
   channelName,
   projectName = null,
   seat = null,
-  onBack,
+  closeLabel,
+  onClose,
   retryExact,
   startFresh,
   beginLoginWatch,
@@ -77,7 +78,10 @@ export function PendingCodingSessionScreen({
     role: string;
     packStaged: boolean | null;
   } | null;
-  onBack: () => void;
+  /** Dismisses the surface this screen sits in — the create dialog, or the
+   * pop-out window. Absent in the main window. */
+  onClose?: () => void;
+  closeLabel?: string;
   retryExact: () => void;
   startFresh: () => void;
   beginLoginWatch: (runtime: string) => void;
@@ -124,7 +128,8 @@ export function PendingCodingSessionScreen({
       <CodingSessionHeader
         channelName={channelName}
         generationLabel="pending"
-        onBack={onBack}
+        closeLabel={closeLabel}
+        onClose={onClose}
         projectName={projectName}
         seat={seatLabel ? { label: seatLabel } : null}
         sessionTitle={transaction.input.title}

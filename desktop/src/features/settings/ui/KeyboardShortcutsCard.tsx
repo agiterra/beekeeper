@@ -8,6 +8,7 @@ import {
   SettingsOptionGroupList,
   SettingsOptionRow,
 } from "./SettingsOptionGroup";
+import { NavHotkeySettingsCard } from "./NavHotkeySettingsCard";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 
 function KeyCombo({ shortcut }: { shortcut: KeyboardShortcut }) {
@@ -39,10 +40,11 @@ export function KeyboardShortcutsCard() {
     <section className="min-w-0" data-testid="settings-shortcuts">
       <SettingsSectionHeader
         title="Keyboard shortcuts"
-        description="All available keyboard shortcuts. Shortcuts are read-only."
+        description="The navigation hotkeys can be reassigned; the rest are fixed."
       />
 
       <SettingsOptionGroupList>
+        <NavHotkeySettingsCard />
         {[...categories.entries()].map(([category, shortcuts]) => (
           <SettingsOptionGroup key={category} title={category}>
             {shortcuts.map((shortcut) => (

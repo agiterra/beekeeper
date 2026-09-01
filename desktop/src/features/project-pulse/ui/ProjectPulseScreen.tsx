@@ -1,6 +1,5 @@
 import * as React from "react";
 
-import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import {
   partitionChannels,
@@ -185,17 +184,14 @@ export function ProjectPulseScreen({
     return () => window.clearInterval(timer);
   }, []);
 
-  const { goProject } = useAppNavigation();
   return (
     <ProjectPulseView
       authorNames={authorNames}
       nowSeconds={nowSeconds}
       // Named, not implied by a 300px-away sidebar selection: two projects'
       // Pulse screens are otherwise pixel-identical chrome, and "No Pulse yet"
-      // read against the wrong project is a coordination lie.
-      onBack={
-        embedded ? undefined : () => void goProject(project?.id ?? projectId)
-      }
+      // read against the wrong project is a coordination lie. The heading
+      // carries that name; the way back is the window's own back control.
       projectName={embedded ? null : (project?.name ?? null)}
       state={state}
     />

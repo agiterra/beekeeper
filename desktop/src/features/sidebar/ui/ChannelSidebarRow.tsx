@@ -25,6 +25,7 @@ export function ChannelSidebarRow({
   draggable,
   itemClassName,
   onSelectChannel,
+  hotkeyIndex,
   onMarkChannelRead,
   onMarkChannelUnread,
   sections,
@@ -47,6 +48,8 @@ export function ChannelSidebarRow({
   hasUnread: boolean;
   unreadCount: number;
   draggable?: boolean;
+  /** Zero-based position of this row for the item hotkey, or null when unreachable. */
+  hotkeyIndex?: number | null;
   itemClassName?: string;
   onSelectChannel: (channelId: string) => void;
   onMarkChannelRead: (
@@ -71,6 +74,7 @@ export function ChannelSidebarRow({
   const button = (
     <ChannelMenuButton
       channel={channel}
+      hotkeyIndex={hotkeyIndex}
       activeWorking={activeWorking}
       hasUnread={hasUnread}
       unreadCount={unreadCount}

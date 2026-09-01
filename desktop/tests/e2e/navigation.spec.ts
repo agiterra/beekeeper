@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-import { installMockBridge } from "../helpers/bridge";
+import {
+  installMockBridge,
+  openNewMessagePage,
+  TEST_IDENTITIES,
+} from "../helpers/bridge";
 import { overridePreviewFeatures } from "../helpers/features";
 import { openSettings } from "../helpers/settings";
 
@@ -602,4 +606,34 @@ test("cold-start message deep link preserves its thread target", async ({
   await expect(page.getByTestId("chat-title")).toHaveText("watercooler");
   await expect(page).toHaveURL(/messageId=mock-forum-release-reply/);
   await expect(page).toHaveURL(/threadRootId=mock-forum-release-thread/);
+});
+
+// The DM flow rewrites `/messages/new` into the conversation with
+// `{ replace: true }`, which mints a new history key at the same index. Reading
+// that as a new branch used to discard the forward stack, so the arrow went
+// grey over history that was still sitting there.
+test("back and forward traverse a direct message created in place", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  await openNewMessagePage(page);
+  await page.getByTestId("new-dm-search").fill("charlie");
+  await page
+    .getByTestId(`new-dm-result-${TEST_IDENTITIES.charlie.pubkey}`)
+    .click();
+  await page.getByTestId("message-input").fill("Hello charlie");
+  await page.getByTestId("send-message").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("charlie");
+
+  // Back skips the replaced `/messages/new` entry entirely.
+  await page.getByTestId("global-back").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  await expect(page.getByTestId("global-forward")).toBeEnabled();
+  await page.getByTestId("global-forward").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("charlie");
 });

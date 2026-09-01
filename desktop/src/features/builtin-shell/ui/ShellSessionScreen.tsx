@@ -1,14 +1,7 @@
 import * as React from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate, useRouter } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import {
-  ArrowLeft,
-  ChevronDown,
-  Eye,
-  FolderGit2,
-  Users,
-  X,
-} from "lucide-react";
+import { ChevronDown, Eye, FolderGit2, Users, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
@@ -427,6 +420,8 @@ function ShellConnectingView({ label }: { label: string }) {
  */
 export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
   const navigate = useNavigate();
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
   const { sessions, loading } = useShellSessions();
   const watchers = useShellWatchers(sessionId);
 
@@ -452,17 +447,23 @@ export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
     }
   }, [session?.restorable, sessionId]);
 
-  const goBack = React.useCallback(() => {
-    void navigate({ to: "/" });
-  }, [navigate]);
-
+  // Closing a terminal should return you where you came from, not to the
+  // Dashboard. The hard `/` was only ever right because this screen used to
+  // carry its own back arrow next to it; with that gone, a close that
+  // discarded history would be the only way out and would lose your place.
   const close = React.useCallback(() => {
     void closeShellSession(sessionId)
       .catch(() => {
         // Already gone.
       })
-      .then(() => navigate({ to: "/" }));
-  }, [navigate, sessionId]);
+      .then(() => {
+        if (canGoBack) {
+          router.history.back();
+          return;
+        }
+        return navigate({ to: "/" });
+      });
+  }, [canGoBack, navigate, router.history, sessionId]);
 
   if (!session) {
     return loading ? (
@@ -477,16 +478,6 @@ export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={goBack}
-          aria-label="Back"
-          data-testid="shell-session-back"
-        >
-          <ArrowLeft className="size-4" />
-        </Button>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{session.title}</p>
           <p className="flex items-center gap-1 truncate text-2xs text-muted-foreground">

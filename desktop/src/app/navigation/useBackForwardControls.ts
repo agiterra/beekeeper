@@ -8,6 +8,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import { matchBackForwardChord } from "@/app/navigation/backForwardChords";
+import { resolveHistoryBranch } from "@/app/navigation/historyBranch";
 import { isMacPlatform } from "@/shared/lib/platform";
 import { trimMapToSize } from "@/shared/lib/trimMapToSize";
 
@@ -27,13 +28,31 @@ export function useBackForwardControls() {
   const locationKey =
     locationState.__TSR_key ?? locationState.key ?? String(locationIndex);
   const keysByIndexRef = React.useRef(new Map<number, string>());
+  const previousIndexRef = React.useRef<number | null>(null);
+  // Mirrored in a ref as well as state: the branch decision reads the current
+  // high-water mark and also mutates the key map, so it must run exactly once
+  // per navigation — not inside a `setState` updater, which React is free to
+  // invoke twice.
+  const maxIndexRef = React.useRef(locationIndex);
   const [maxIndex, setMaxIndex] = React.useState(locationIndex);
 
   React.useEffect(() => {
     const keysByIndex = keysByIndexRef.current;
-    const currentKey = keysByIndex.get(locationIndex);
+    const previousIndex = previousIndexRef.current;
+    previousIndexRef.current = locationIndex;
 
-    if (currentKey && currentKey !== locationKey) {
+    // How we arrived decides whether anything ahead of us survives — a
+    // replace-in-place mints a new key at the same index and must not be read
+    // as a new branch. See `historyBranch.ts`.
+    const branch = resolveHistoryBranch({
+      previousIndex,
+      index: locationIndex,
+      storedKey: keysByIndex.get(locationIndex),
+      key: locationKey,
+      maxIndex: maxIndexRef.current,
+    });
+
+    if (branch.truncateAbove) {
       for (const storedIndex of [...keysByIndex.keys()]) {
         if (storedIndex >= locationIndex) {
           keysByIndex.delete(storedIndex);
@@ -43,13 +62,8 @@ export function useBackForwardControls() {
 
     keysByIndex.set(locationIndex, locationKey);
     trimMapToSize(keysByIndex, 200);
-    setMaxIndex((current: number) => {
-      if (currentKey && currentKey !== locationKey) {
-        return locationIndex;
-      }
-
-      return Math.max(current, locationIndex);
-    });
+    maxIndexRef.current = branch.maxIndex;
+    setMaxIndex(branch.maxIndex);
   }, [locationIndex, locationKey]);
 
   const canGoForward = locationIndex < maxIndex;

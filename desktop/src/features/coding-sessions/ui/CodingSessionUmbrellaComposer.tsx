@@ -1,7 +1,12 @@
 import * as React from "react";
 import { ArrowUp, Check, ChevronDown, MessagesSquare } from "lucide-react";
 
-import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  buildCodingSessionTargetKey,
+  codingSessionTargetSupportsInterrupt,
+} from "@/features/coding-sessions/lib/codingSessionCommand";
+import { buildCodingSessionPromptHistory } from "@/features/coding-sessions/lib/codingSessionPromptHistory";
+import { usePendingCodingSessionTurns } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import { publishCodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionLanePublish";
 import {
   listCodingSessionUmbrellaParticipants,
@@ -279,6 +284,29 @@ function ExecutionComposer({
 }) {
   const record = participant.execution.activeGeneration;
   const target = record.commandTarget;
+  // Recall spans the whole execution, prior generations included: a reconnect
+  // starts a new generation but not a new conversation, and a prompt sent
+  // before the resume is exactly the one worth sending again.
+  const pendingTurns = usePendingCodingSessionTurns();
+  const promptHistory = React.useMemo(() => {
+    const targetKey = target ? buildCodingSessionTargetKey(target) : null;
+    return buildCodingSessionPromptHistory({
+      transcript: [
+        ...participant.execution.priorGenerations,
+        participant.execution.activeGeneration,
+      ].flatMap((generation) => generation.transcript),
+      pending: targetKey
+        ? pendingTurns.filter((turn) => turn.targetKey === targetKey)
+        : [],
+      currentPubkey: currentUserPubkey,
+    });
+  }, [
+    currentUserPubkey,
+    participant.execution.activeGeneration,
+    participant.execution.priorGenerations,
+    pendingTurns,
+    target,
+  ]);
   // The lease, not the newest report, decides whether this composer is talking
   // to anything (§2 item 41).
   const reachability = resolveReachability(target);
@@ -337,6 +365,7 @@ function ExecutionComposer({
       onTextChange={onTextChange}
       prepareText={prepareText}
       prefill={prefill}
+      promptHistory={promptHistory}
       providerAuthorityPubkey={participant.execution.signerPubkey}
       recipientControl={recipientControl}
       seatActorPubkey={record.agentRef}

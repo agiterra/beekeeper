@@ -63,6 +63,7 @@ import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
 import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
 import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
+import { buildCodingSessionPromptHistory } from "@/features/coding-sessions/lib/codingSessionPromptHistory";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import {
   CodingSessionPendingTurnList,
@@ -87,7 +88,9 @@ type CodingSessionWorkspaceProps = {
   requireBootstrap?: boolean;
   channelId: string;
   generationId: string;
-  onBack: () => void;
+  /** Closes the pop-out window. Absent in the main window, where the app's
+   * own back/forward in the top chrome is the way out of a session. */
+  onClose?: () => void;
   surface: CodingSessionSurface;
 };
 
@@ -95,7 +98,7 @@ export function CodingSessionWorkspace({
   bootstrap = null,
   channelId,
   generationId,
-  onBack,
+  onClose,
   requireBootstrap = false,
   surface,
 }: CodingSessionWorkspaceProps) {
@@ -173,7 +176,7 @@ export function CodingSessionWorkspace({
       <CodingSessionWorkspaceState
         channelName={channel?.name ?? null}
         generationId={generationId}
-        onBack={onBack}
+        onClose={onClose}
         resolution={resolution}
       />
     );
@@ -284,7 +287,7 @@ export function CodingSessionWorkspace({
           onReopenSession={
             canReopenSession ? () => requestClosure("open") : undefined
           }
-          onBack={onBack}
+          onClose={onClose}
           onOpenPeople={onOpenPeople}
           peopleCount={peopleCount}
           surface={surface}
@@ -309,7 +312,7 @@ export function CodingSessionWorkspace({
           onReopenSession={
             canReopenSession ? () => requestClosure("open") : undefined
           }
-          onBack={onBack}
+          onClose={onClose}
           onOpenPeople={onOpenPeople}
           peopleCount={peopleCount}
           founderPubkey={umbrella.founderPubkey}
@@ -371,7 +374,7 @@ function ReadyCodingSessionWorkspace({
   onAddProvider,
   onCloseSession,
   onReopenSession,
-  onBack,
+  onClose,
   onOpenPeople,
   peopleCount,
   session,
@@ -397,7 +400,9 @@ function ReadyCodingSessionWorkspace({
   onAddProvider?: () => void;
   onCloseSession?: () => void;
   onReopenSession?: () => void;
-  onBack: () => void;
+  /** Closes the pop-out window. Absent in the main window, where the app's
+   * own back/forward in the top chrome is the way out of a session. */
+  onClose?: () => void;
   onOpenPeople?: () => void;
   peopleCount: number;
   session: Extract<
@@ -462,6 +467,16 @@ function ReadyCodingSessionWorkspace({
     echoes: session.transcript,
     targetKey: commandTargetKey,
   });
+  // This operator's own earlier prompts, for ⌘↑/⌘↓ recall in the composer.
+  const promptHistory = React.useMemo(
+    () =>
+      buildCodingSessionPromptHistory({
+        transcript: session.transcript,
+        pending: pendingTurns.turns,
+        currentPubkey: currentUserPubkey,
+      }),
+    [currentUserPubkey, pendingTurns.turns, session.transcript],
+  );
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? session.title;
   const canRename =
@@ -612,7 +627,7 @@ function ReadyCodingSessionWorkspace({
           isExporting={isExporting}
           model={session.model}
           onAddProvider={onAddProvider}
-          onBack={onBack}
+          onClose={onClose}
           onCloseSession={onCloseSession}
           onExport={exportEnabled ? exportTranscript : undefined}
           onOpenPeople={onOpenPeople}
@@ -784,6 +799,7 @@ function ReadyCodingSessionWorkspace({
                     isUngovernedSession={composerAuthority.isUngovernedSession}
                     lifecycleStatus={session.status}
                     layout={isNarrow ? "stacked" : "inline"}
+                    promptHistory={promptHistory}
                     providerAuthorityPubkey={session.providerAuthorityPubkey}
                     seatActorPubkey={session.agentRef}
                     sessionLabel={session.title}
@@ -834,12 +850,14 @@ function ReadyCodingSessionWorkspace({
 function CodingSessionWorkspaceState({
   channelName,
   generationId,
-  onBack,
+  onClose,
   resolution,
 }: {
   channelName: string | null;
   generationId: string;
-  onBack: () => void;
+  /** Closes the pop-out window. Absent in the main window, where the app's
+   * own back/forward in the top chrome is the way out of a session. */
+  onClose?: () => void;
   resolution: Exclude<
     ReturnType<typeof resolveCodingSessionWorkspace>,
     { kind: "ready" }
@@ -854,7 +872,7 @@ function CodingSessionWorkspaceState({
       <CodingSessionHeader
         channelName={channelName}
         generationLabel={shortGenerationId(generationId)}
-        onBack={onBack}
+        onClose={onClose}
         status={{ kind: "unknown", label: "Status unknown" }}
       />
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10 text-center">

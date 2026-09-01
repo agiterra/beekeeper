@@ -14,7 +14,6 @@ test("header keeps signed generation identity visible beside runtime context", (
       channelName: "Hive Sessions",
       generationLabel: "Keystone Session · generation 2",
       model: "claude-sonnet-4-5",
-      onBack() {},
       providerAuthorityPubkey: "d7d05d95".repeat(8),
       runtimeLabel: "Claude Code",
       sessionTitle: "Keystone Session",
@@ -42,7 +41,6 @@ test("umbrella header promotes the goal and aggregate agent status", () => {
       channelName: "Hive Sessions",
       generationLabel: "generation 1",
       goalText: "Make two-agent work read as one session",
-      onBack() {},
       sessionTitle: "Session UX",
       status: { kind: "working", label: "Working" },
       statusLabelOverride: "2 agents · 1 working",
@@ -59,7 +57,6 @@ test("the team lens lives beside the title instead of creating another header", 
     React.createElement(CodingSessionHeader, {
       channelName: "Hive Sessions",
       generationLabel: "generation 1",
-      onBack() {},
       sessionTitle: "TeamTest",
       status: { kind: "idle", label: "Idle" },
       viewControl: React.createElement("span", null, "Conversation · Mission"),
@@ -74,7 +71,6 @@ test("header renders the export button only when an export handler is provided",
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
-    onBack() {},
     status: { kind: "idle", label: "Idle" },
   };
 
@@ -101,7 +97,6 @@ test("header exposes rename only when the authority-aware workspace provides it"
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "generation 2",
-    onBack() {},
     sessionTitle: "Durable session name",
     status: { kind: "idle", label: "Idle" },
   };
@@ -125,7 +120,6 @@ test("header disables the export button while an export is running", () => {
       channelName: "Hive Sessions",
       generationLabel: "Keystone Session · generation 2",
       isExporting: true,
-      onBack() {},
       onExport() {},
       status: { kind: "idle", label: "Idle" },
     }),
@@ -141,7 +135,6 @@ test("surface affordances are compact direct tabs into the shared host", () => {
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
-    onBack() {},
     status: { kind: "idle", label: "Idle" },
   };
 
@@ -186,7 +179,6 @@ test("the add-provider affordance appears only when this session can take one", 
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
-    onBack() {},
     status: { kind: "idle", label: "Idle" },
   };
 
@@ -211,7 +203,6 @@ test("closure controls describe session state without rewriting execution status
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
-    onBack() {},
     status: { kind: "ended", label: "Ended" },
   };
 
@@ -246,7 +237,6 @@ test("an owning project reads as a followable crumb ahead of the context line", 
     React.createElement(CodingSessionHeader, {
       channelName: "buzz glue sessions",
       generationLabel: "Keystone Session · generation 2",
-      onBack() {},
       onOpenProject() {},
       projectName: "Buzz Glue",
       runtimeLabel: "Claude Code",
@@ -266,7 +256,6 @@ test("without a way to open it the project is plain context, not a dead link", (
     React.createElement(CodingSessionHeader, {
       channelName: "buzz glue sessions",
       generationLabel: "Keystone Session · generation 2",
-      onBack() {},
       projectName: "Buzz Glue",
       runtimeLabel: "Claude Code",
       sessionTitle: "Keystone Session",
@@ -283,7 +272,6 @@ test("a session no project claims shows no crumb at all", () => {
     React.createElement(CodingSessionHeader, {
       channelName: "engineering",
       generationLabel: "generation 2",
-      onBack() {},
       onOpenProject() {},
       projectName: null,
       status: { kind: "idle", label: "Idle" },
@@ -300,7 +288,6 @@ test("header separates reasoning effort from the adapter's raw model id", () => 
       channelName: "Hive Sessions",
       generationLabel: "Generation 1",
       model: "gpt-5.6-terra[low]",
-      onBack() {},
       runtimeLabel: "Codex",
       sessionTitle: "Readable session labels",
       status: { kind: "working", label: "Working" },
@@ -315,7 +302,6 @@ test("a seated session wears its seat beside the title, and an unseated one does
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "generation 2",
-    onBack() {},
     sessionTitle: "Keystone Session",
     status: { kind: "idle", label: "Idle" },
   };
@@ -479,7 +465,6 @@ test("Stop all names how many seats it stops, and only the founder sees it", () 
   const base = {
     channelName: "Beekeeper sessions",
     generationLabel: "Keystone Session · generation 1",
-    onBack() {},
     sessionTitle: "UI",
     status: { kind: "working", label: "Working" },
   };
@@ -594,4 +579,39 @@ test("a host that has answered no hire adds no line", () => {
     ),
     "",
   );
+});
+
+// The window's own back/forward is the way out of a session in the main
+// window. A header that drew its own arrow next to it was the same gesture
+// twice, and the two did not always agree on where "back" was.
+test("no close control unless the surface supplies one", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "Hive Sessions",
+      generationLabel: "generation 1",
+      sessionTitle: "Keystone Session",
+      status: { kind: "idle", label: "Idle" },
+    }),
+  );
+
+  assert.doesNotMatch(markup, /data-testid="coding-session-dismiss"/);
+});
+
+test("a pop-out or dialog gets a close control it can name", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "Hive Sessions",
+      closeLabel: "Close session window",
+      generationLabel: "generation 1",
+      onClose() {},
+      sessionTitle: "Keystone Session",
+      status: { kind: "idle", label: "Idle" },
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-dismiss"/);
+  assert.match(markup, /aria-label="Close session window"/);
+  // Not to be confused with `coding-session-close`, which settles the session
+  // itself. One dismisses a window; the other ends shared work.
+  assert.doesNotMatch(markup, /data-testid="coding-session-close"/);
 });

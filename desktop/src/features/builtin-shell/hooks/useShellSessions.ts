@@ -118,3 +118,41 @@ export function useShellSessions(): {
 
   return { sessions: state.sessions, loading: state.loading, refresh };
 }
+
+/**
+ * The owning project of one shell session, or null.
+ *
+ * A terminal route carries no channel, so this back-reference is the only
+ * thing that can say which project `/shell/<id>` belongs to.
+ *
+ * Subscribes to the shared list *only* while a session id is in play. The
+ * store polls the backend every {@link POLL_MS}, and the caller is the app
+ * shell — mounted for the whole session, on every route. Subscribing
+ * unconditionally there would run that poll forever for people who never open
+ * a terminal, to answer a question that only a `/shell/` route ever asks.
+ */
+export function useShellSessionProjectRef(
+  sessionId: string | undefined,
+): string | null {
+  React.useEffect(() => {
+    if (!sessionId) return;
+    ensureStarted();
+    return ensureStopped;
+  }, [sessionId]);
+
+  const state = React.useSyncExternalStore(
+    (listener) => {
+      if (!sessionId) return () => {};
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => snapshot,
+    () => snapshot,
+  );
+
+  if (!sessionId) return null;
+  return (
+    state.sessions.find((session) => session.sessionId === sessionId)
+      ?.projectRef ?? null
+  );
+}

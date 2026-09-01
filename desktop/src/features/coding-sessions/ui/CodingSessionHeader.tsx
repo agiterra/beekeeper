@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   Bot,
   Download,
   ExternalLink,
@@ -13,6 +12,7 @@ import {
   Square,
   UserPlus,
   Users,
+  X,
 } from "lucide-react";
 import * as React from "react";
 import type { ReactNode } from "react";
@@ -110,7 +110,15 @@ type CodingSessionHeaderProps = {
   onStopAll?: () => void;
   /** How many seats {@link onStopAll} would stop. Named on the control. */
   stopAllCount?: number;
-  onBack: () => void;
+  /**
+   * Dismisses the surface this header sits in — the pop-out window, or the
+   * create dialog. Absent in the main window, where the app's own
+   * back/forward in the top chrome is the way out of a session; a second
+   * arrow here was that same gesture wearing a different icon.
+   */
+  onClose?: () => void;
+  /** Accessible name for the close control; say what it dismisses. */
+  closeLabel?: string;
   onExport?: () => void;
   /**
    * Opens the session People surface (roster + invite/share). Absent when
@@ -168,7 +176,8 @@ export function CodingSessionHeader({
   isExporting = false,
   model = null,
   onAddProvider,
-  onBack,
+  closeLabel = "Close",
+  onClose,
   onCloseSession,
   onExport,
   onOpenPeople,
@@ -225,16 +234,18 @@ export function CodingSessionHeader({
       data-tauri-drag-region="deep"
       data-testid="coding-session-header"
     >
-      <Button
-        aria-label="Back from coding session"
-        data-testid="coding-session-back"
-        onClick={onBack}
-        size="icon"
-        type="button"
-        variant="ghost"
-      >
-        <ArrowLeft />
-      </Button>
+      {onClose ? (
+        <Button
+          aria-label={closeLabel}
+          data-testid="coding-session-dismiss"
+          onClick={onClose}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <X />
+        </Button>
+      ) : null}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1">
           <h1 className="truncate text-sm font-semibold">{title}</h1>

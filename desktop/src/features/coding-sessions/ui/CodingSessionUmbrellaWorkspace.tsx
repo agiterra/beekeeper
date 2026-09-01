@@ -116,7 +116,7 @@ export function UmbrellaCodingSessionWorkspace({
   onAddProvider,
   onCloseSession,
   onReopenSession,
-  onBack,
+  onClose,
   onOpenPeople,
   peopleCount = 0,
   surface,
@@ -142,7 +142,9 @@ export function UmbrellaCodingSessionWorkspace({
   onAddProvider?: () => void;
   onCloseSession?: () => void;
   onReopenSession?: () => void;
-  onBack: () => void;
+  /** Closes the pop-out window. Absent in the main window, where the app's
+   * own back/forward in the top chrome is the way out of a session. */
+  onClose?: () => void;
   /** Opens the session People surface; absent for no-genesis sessions. */
   onOpenPeople?: () => void;
   peopleCount?: number;
@@ -547,7 +549,7 @@ export function UmbrellaCodingSessionWorkspace({
           generationLabel={codingSessionUmbrellaGenerationLabel(umbrella)}
           goalText={goal?.content ?? null}
           onAddProvider={onAddProvider}
-          onBack={onBack}
+          onClose={onClose}
           onCloseSession={onCloseSession}
           onOpenPeople={onOpenPeople}
           onPopout={surface === "main" ? handlePopout : undefined}

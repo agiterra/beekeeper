@@ -580,7 +580,8 @@ export function NewCodingSessionForm({
           lifecycle={lifecycle}
           lifecycleErrorMessage={lifecycleErrorMessage}
           lifecycleIsLoading={lifecycleIsLoading}
-          onBack={onDone}
+          closeLabel="Close the new session dialog"
+          onClose={onDone}
           onEditRequest={() => setEditRequested(true)}
           projectName={projectContext?.projectName ?? null}
           publishError={publishError ?? durabilityError}

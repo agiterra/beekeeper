@@ -6,6 +6,7 @@ import {
   managedAgentsQueryKey,
   relayAgentsQueryKey,
 } from "@/features/agents/hooks";
+import { router } from "@/app/router";
 import { channelsQueryKey } from "@/features/channels/hooks";
 import {
   ensureStarterChannels,
@@ -625,9 +626,14 @@ export function useAppOnboardingState(isSharedIdentity: boolean) {
       gateComplete();
       setIsCompletingStarterSetup(false);
       if (starterResult.focusChannelId) {
-        window.location.hash = `/channels/${encodeURIComponent(
-          starterResult.focusChannelId,
-        )}`;
+        // Through the router, not `window.location.hash`: a raw hash write
+        // pushes a history entry with no `__TSR_index`/`__TSR_key`, which
+        // desyncs the shell's forward-history tracking for the rest of the
+        // session (see `app/navigation/historyBranch.ts`).
+        void router.navigate({
+          to: "/channels/$channelId",
+          params: { channelId: starterResult.focusChannelId },
+        });
       }
       if (!starterResult.ok) {
         showStarterRetryToast(starterResult.reason);

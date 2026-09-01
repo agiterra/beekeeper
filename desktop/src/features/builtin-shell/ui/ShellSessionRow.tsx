@@ -13,6 +13,7 @@ import {
   SidebarMenuItem,
 } from "@/shared/ui/sidebar";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
+import { ItemPositionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 
 /**
  * One built-in shell session row: opens the session's terminal on click, with
@@ -21,12 +22,15 @@ import type { ShellSessionInfo } from "@/shared/api/tauriShell";
  */
 export function ShellSessionRow({
   session,
+  hotkeyIndex,
   isActive,
   onOpen,
   onRequestRename,
   onRequestClose,
 }: {
   session: ShellSessionInfo;
+  /** Zero-based position of this row for the item hotkey, or null when unreachable. */
+  hotkeyIndex?: number | null;
   isActive: boolean;
   onOpen: (sessionId: string) => void;
   onRequestRename: (session: ShellSessionInfo) => void;
@@ -47,8 +51,10 @@ export function ShellSessionRow({
               <span
                 title="Shell exited"
                 className="ml-auto inline-flex size-1.5 shrink-0 rounded-full bg-muted-foreground/50"
+                data-hotkey-dim
               />
             ) : null}
+            <ItemPositionBadge index={hotkeyIndex ?? null} />
           </SidebarMenuButton>
         </ContextMenuTrigger>
         <ContextMenuContent>

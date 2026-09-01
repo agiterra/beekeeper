@@ -20,6 +20,8 @@ import {
 } from "@/features/sidebar/lib/useChannelSections";
 import { useActiveWorkingChannelsById } from "@/features/sidebar/lib/useActiveWorkingChannelsById";
 import { useDmSidebarMetadata } from "@/features/sidebar/useDmSidebarMetadata";
+import { useDmHotkeyTargets } from "@/features/sidebar/lib/useDmHotkeyTargets";
+import { useHotkeyArmedProps } from "@/features/hotkeys/ui/HotkeyBadge";
 import { sortDmChannelsForSidebar } from "@/features/sidebar/lib/dmSidebarSort";
 import {
   sectionSortGroupKey,
@@ -431,6 +433,11 @@ export function AppSidebar({
       ),
     [directMessages, dmChannelLabels, sortModeFor],
   );
+  const dmHotkeyIndexes = useDmHotkeyTargets(
+    sortedDirectMessages,
+    onSelectChannel,
+  );
+  const hotkeyArmedProps = useHotkeyArmedProps();
   const sidebarLoadingShape = useSidebarLoadingShape({
     activeCommunityId: activeCommunity?.id,
     currentPubkey,
@@ -495,6 +502,7 @@ export function AppSidebar({
 
   return (
     <Sidebar
+      {...hotkeyArmedProps}
       className="!z-[100] !border-r-0"
       collapsible="offcanvas"
       data-testid="app-sidebar"
@@ -657,6 +665,8 @@ export function AppSidebar({
                     }
                     presenceByChannelId={dmPresenceByChannelId}
                     selectedChannelId={selectedChannelId}
+                    hotkeyAction="dms"
+                    hotkeyIndexByChannelId={dmHotkeyIndexes}
                     testId="dm-list"
                     title="Direct messages"
                     sectionActionsOpen={dmActionsMenuOpen}

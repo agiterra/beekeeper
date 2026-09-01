@@ -1,6 +1,7 @@
 import { LayoutDashboard, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
+import { ScopeActionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 import { FeatureGate } from "@/shared/features";
 import type { Channel, SearchHit } from "@/shared/api/types";
 import {
@@ -113,6 +114,7 @@ export function AppSidebarPrimaryMenu({
           >
             <LayoutDashboard className="h-4 w-4" />
             <SidebarMenuLabel>Dashboard</SidebarMenuLabel>
+            <ScopeActionBadge action="dashboard" />
           </SidebarMenuButton>
           {homeBadgeCount > 0 ? (
             <SidebarMenuBadge

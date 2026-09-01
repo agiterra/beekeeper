@@ -1,10 +1,16 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import {
+  useLocation,
+  useNavigate,
+  useParams,
+  useRouter,
+} from "@tanstack/react-router";
 import { FolderGit2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { navigateToRememberedRoute } from "@/app/navigation/rememberedRoute";
 import { useCreateShellSession } from "@/features/builtin-shell/hooks/useCreateShellSession";
 import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
 import {
@@ -14,6 +20,10 @@ import {
 import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { useCodingSessionClosureDialog } from "@/features/coding-sessions/hooks/useCodingSessionClosureDialog";
+import { registerHotkeyTargets } from "@/features/hotkeys/lib/hotkeyTargetRegistry";
+import { NAV_HOTKEY_MAX_POSITIONS } from "@/features/hotkeys/lib/navHotkeyBindings";
+import { ScopeActionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
+import { getRememberedRoute } from "../lib/projectRouteMemoryStore";
 import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
 import type { Channel } from "@/shared/api/types";
@@ -108,6 +118,14 @@ export function ProjectSidebarSections({
   const builtinShellEnabled = useFeatureEnabled("builtin-shell");
   const { sessions: allShellSessions } = useShellSessions();
   const navigate = useNavigate();
+  const router = useRouter();
+  const pathname = useLocation({ select: (state) => state.pathname });
+  // The sidebar's active indicator needs to name a single row. `/projects`
+  // is the list; `/projects/<id>` belongs to that project's own header, not
+  // to the list link above it.
+  const projectRouteId = pathname.startsWith("/projects/")
+    ? decodeURIComponent(pathname.split("/")[2] ?? "")
+    : null;
   const activeShellSessionId = useParams({
     strict: false,
     select: (p) => (p as { sessionId?: string }).sessionId,
@@ -197,6 +215,57 @@ export function ProjectSidebarSections({
       void goProject(project.id);
     },
     [goProject],
+  );
+
+  /**
+   * The projects in the order they are rendered — General first, then the
+   * drag-sorted rest — capped at the reachable positions. This is the array
+   * the scope hotkey indexes into and the array the badges number from, so
+   * "⌥2" and the second row cannot come apart.
+   */
+  const hotkeyProjects = React.useMemo(
+    () =>
+      [...pinnedProjects, ...sortableProjects].slice(
+        0,
+        NAV_HOTKEY_MAX_POSITIONS,
+      ),
+    [pinnedProjects, sortableProjects],
+  );
+  const hotkeyPositionByProjectId = React.useMemo(() => {
+    const map = new Map<string, number>();
+    hotkeyProjects.forEach((project, index) => {
+      map.set(project.id, index);
+    });
+    return map;
+  }, [hotkeyProjects]);
+
+  /**
+   * Opening a project by chord means returning to where you left it, not to
+   * its home page — a project is mostly the session you had open in it. Falls
+   * back to the project home when nothing is remembered, or when the
+   * remembered route has since stopped resolving.
+   */
+  const openRememberedProject = React.useEffectEvent(
+    (project: ProjectContainer) => {
+      navigateToRememberedRoute(
+        router,
+        getRememberedRoute(project.id),
+        () => void goProject(project.id),
+      );
+    },
+  );
+
+  React.useEffect(
+    () =>
+      registerHotkeyTargets(
+        "projects",
+        hotkeyProjects.map((project) => ({
+          key: project.id,
+          label: project.name,
+          activate: () => openRememberedProject(project),
+        })),
+      ),
+    [hotkeyProjects],
   );
 
   // Project groups list every open channel (browse surface), so a row can
@@ -324,6 +393,11 @@ export function ProjectSidebarSections({
         onOpenCodingSession={({ channelId, generationId }) =>
           void goCodingSession(channelId, generationId)
         }
+        hotkeyPosition={hotkeyPositionByProjectId.get(project.id) ?? null}
+        isProjectHomeActive={
+          projectRouteId !== null &&
+          (projectRouteId === project.id || projectRouteId === project.dtag)
+        }
         onOpenProject={() => handleOpenProject(project)}
         onNewCodingSession={() => void goNewProjectCodingSession(project.id)}
         onRequestCreate={(kind) => setCreateRequest({ kind, project })}
@@ -353,12 +427,14 @@ export function ProjectSidebarSections({
           <SidebarMenuItem>
             <SidebarMenuButton
               data-testid="open-projects-view"
+              isActive={pathname === "/projects"}
               onClick={() => void goProjects({ filter: "projects" })}
               tooltip="Projects"
               type="button"
             >
               <FolderGit2 className="h-4 w-4" />
               <SidebarMenuLabel>Projects</SidebarMenuLabel>
+              <ScopeActionBadge action="projects" />
             </SidebarMenuButton>
             <SidebarMenuAction
               aria-label="New project"

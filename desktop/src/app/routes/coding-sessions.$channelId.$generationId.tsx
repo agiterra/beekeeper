@@ -1,10 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
-import {
-  createFileRoute,
-  useCanGoBack,
-  useNavigate,
-  useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import * as React from "react";
 
 import {
@@ -37,9 +32,6 @@ export const Route = createFileRoute(
 function CodingSessionRouteComponent() {
   const { channelId, generationId } = Route.useParams();
   const { surface } = Route.useSearch();
-  const canGoBack = useCanGoBack();
-  const navigate = useNavigate();
-  const router = useRouter();
   const [bootstrapState, setBootstrapState] = React.useState<
     | { kind: "not-needed" }
     | { kind: "loading" }
@@ -74,23 +66,17 @@ function CodingSessionRouteComponent() {
     };
   }, [channelId, generationId, surface]);
 
-  const handleBack = React.useCallback(async () => {
-    if (surface === "popout" && isTauri()) {
-      const { getCurrentWebviewWindow } = await import(
-        "@tauri-apps/api/webviewWindow"
-      );
-      await getCurrentWebviewWindow().close();
-      return;
-    }
-    if (canGoBack) {
-      router.history.back();
-      return;
-    }
-    await navigate({
-      to: "/channels/$channelId",
-      params: { channelId },
-    });
-  }, [canGoBack, channelId, navigate, router.history, surface]);
+  // Only the pop-out keeps a header control. In the main window the app's own
+  // back/forward in the top chrome is the way out of a session, and a second
+  // arrow in the page header two rows below it was the same gesture wearing a
+  // different icon.
+  const isPopout = surface === "popout" && isTauri();
+  const handleClosePopout = React.useCallback(async () => {
+    const { getCurrentWebviewWindow } = await import(
+      "@tauri-apps/api/webviewWindow"
+    );
+    await getCurrentWebviewWindow().close();
+  }, []);
 
   if (bootstrapState.kind === "loading") {
     return (
@@ -110,8 +96,8 @@ function CodingSessionRouteComponent() {
       }
       channelId={channelId}
       generationId={generationId}
-      onBack={() => void handleBack()}
-      requireBootstrap={surface === "popout" && isTauri()}
+      onClose={isPopout ? () => void handleClosePopout() : undefined}
+      requireBootstrap={isPopout}
       surface={surface}
     />
   );

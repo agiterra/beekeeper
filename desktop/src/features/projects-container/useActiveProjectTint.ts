@@ -12,8 +12,12 @@ import { parseMemberRef } from "./lib/projectContainerModel";
  * Resolution order: a `/projects/<id>` route names the project directly
  * (the id segment matches `ProjectContainer.id` or its dtag, like
  * `useProjectContainerQuery`); otherwise the active channel's `projectRef`
- * back-reference names it. Anything else — DMs, settings, channels without
- * a project — is no project, and no tint.
+ * back-reference names it — which also covers a coding session, since
+ * `deriveShellRoute` keeps the session's channel selected. A terminal has no
+ * channel at all, so `/shell/<id>` is resolved from the shell session's own
+ * `projectRef` address, passed in by the caller that has the session list.
+ * Anything else — DMs, settings, channels without a project — is no project,
+ * and no tint.
  *
  * Pure and exported for unit tests; the hook below feeds it live state.
  */
@@ -21,6 +25,7 @@ export function resolveActiveProjectId(
   pathname: string,
   channelProjectRef: string | null | undefined,
   projects: readonly ProjectContainer[],
+  shellProjectRef?: string | null,
 ): string | null {
   if (pathname.startsWith("/projects/")) {
     const segment = pathname.split("/")[2] ?? "";
@@ -32,6 +37,13 @@ export function resolveActiveProjectId(
       if (project) return project.id;
     }
     return null;
+  }
+  if (pathname.startsWith("/shell/")) {
+    if (!shellProjectRef) return null;
+    const project = projects.find(
+      (candidate) => candidate.address === shellProjectRef,
+    );
+    return project ? project.id : null;
   }
   if (channelProjectRef) {
     const ref = parseMemberRef(channelProjectRef);
@@ -54,6 +66,7 @@ export function resolveActiveProjectId(
 export function useActiveProjectContainer(
   pathname: string,
   channelProjectRef: string | null | undefined,
+  shellProjectRef?: string | null,
 ): ProjectContainer | null {
   const projectsEnabled = useFeatureEnabled("projects");
   const projectsQuery = useProjectContainersQuery({
@@ -66,10 +79,11 @@ export function useActiveProjectContainer(
       pathname,
       channelProjectRef,
       projects,
+      shellProjectRef,
     );
     if (!projectId) return null;
     return projects.find((candidate) => candidate.id === projectId) ?? null;
-  }, [channelProjectRef, pathname, projects, projectsEnabled]);
+  }, [channelProjectRef, pathname, projects, projectsEnabled, shellProjectRef]);
 }
 
 /**

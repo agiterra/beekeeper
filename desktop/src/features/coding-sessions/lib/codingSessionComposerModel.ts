@@ -1,3 +1,5 @@
+import { hasPrimaryShortcutModifier } from "@/shared/lib/platform";
+
 /** UI model for the provider-neutral coding-session composer. */
 export function getCodingSessionComposerState({
   canSteer,
@@ -51,4 +53,25 @@ export function shouldSubmitCodingSessionComposerKey(event: {
   shiftKey: boolean;
 }): boolean {
   return event.key === "Enter" && !event.shiftKey;
+}
+
+/**
+ * Prompt-history recall: the primary modifier plus ↑/↓.
+ *
+ * On macOS ⌘↑/⌘↓ otherwise jump the caret to the start or end of the
+ * textarea, which is why the composer claims the event; a bare ↑/↓ is left
+ * alone so ordinary caret movement inside a multi-line draft still works.
+ */
+export function matchCodingSessionHistoryKey(event: {
+  key: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}): "older" | "newer" | null {
+  if (event.shiftKey || event.altKey) return null;
+  if (!hasPrimaryShortcutModifier(event)) return null;
+  if (event.key === "ArrowUp") return "older";
+  if (event.key === "ArrowDown") return "newer";
+  return null;
 }

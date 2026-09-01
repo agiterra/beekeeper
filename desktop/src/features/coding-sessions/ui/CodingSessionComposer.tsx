@@ -29,6 +29,11 @@ import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/u
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import {
+  IDLE_PROMPT_RECALL,
+  stepPromptRecall,
+  type PromptRecallState,
+} from "@/features/coding-sessions/lib/codingSessionPromptHistory";
+import {
   resolveCodingSessionReaddress,
   restoreCodingSessionDraft,
 } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
@@ -105,6 +110,11 @@ type CodingSessionComposerProps = {
    * Applied once per `id`; the person keeps full control of the text after.
    */
   prefill?: { id: string; text: string } | null;
+  /**
+   * The operator's own earlier prompts for this execution, newest first, for
+   * ⌘↑/⌘↓ recall. Empty (the default) simply makes the chords inert.
+   */
+  promptHistory?: readonly string[];
   providerAuthorityPubkey?: string | null;
   /** Runtime slug, named in the disabled attach tooltip. */
   runtimeLabel?: string | null;
@@ -140,6 +150,9 @@ type CodingSessionComposerProps = {
  * Module-level so it is reference-stable — the resume callback depends on it,
  * and a fresh object each render would rebuild that callback every time.
  */
+/** Reference-stable empty default; a fresh `[]` per render would churn effects. */
+const EMPTY_PROMPT_HISTORY: readonly string[] = Object.freeze([]);
+
 const DEFAULT_SEAT_CUSTODY: CodingSessionSeatCustody = {
   stageSeat: stageCodingSessionActorSeat,
   clearSeat: clearCodingSessionActorSeat,
@@ -166,6 +179,7 @@ export function CodingSessionComposer({
   onTextChange,
   prepareText,
   prefill = null,
+  promptHistory = EMPTY_PROMPT_HISTORY,
   providerAuthorityPubkey = null,
   recipientControl,
   runtimeLabel = null,
@@ -180,6 +194,18 @@ export function CodingSessionComposer({
 }: CodingSessionComposerProps) {
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
   const [text, setText] = React.useState(prefill?.text ?? "");
+  /**
+   * Where ⌘↑/⌘↓ has walked to in this operator's earlier prompts.
+   *
+   * Declared beside the draft because every path that makes the draft the
+   * person's again — a prefill, a restored refusal, typing, a send — has to
+   * reset it, so the next ⌘↑ starts from the newest prompt instead of
+   * resuming a walk from some earlier visit.
+   *
+   * Nothing renders from it, so the value slot stays empty: the cursor is read
+   * only inside the updater, where it is guaranteed current.
+   */
+  const [, setRecall] = React.useState<PromptRecallState>(IDLE_PROMPT_RECALL);
   const [appliedPrefillId, setAppliedPrefillId] = React.useState<string | null>(
     prefill?.id ?? null,
   );
@@ -187,6 +213,7 @@ export function CodingSessionComposer({
     // Render-time state adjustment: a new prefill replaces the draft exactly
     // once, then the editor is the person's again.
     setAppliedPrefillId(prefill.id);
+    setRecall(IDLE_PROMPT_RECALL);
     setText(prefill.text);
   }
   /**
@@ -244,6 +271,7 @@ export function CodingSessionComposer({
   });
   const restoreRefusedDraft = React.useCallback(
     (refused: string, refusedCommandId?: string) => {
+      setRecall(IDLE_PROMPT_RECALL);
       setText((current) => restoreCodingSessionDraft(current, refused));
       // The optimistic row for this turn is waiting on an echo that a refusal
       // guarantees will never come; the words are back in the editor instead.
@@ -430,6 +458,7 @@ export function CodingSessionComposer({
     // to hand back exactly what they typed, routing handle and all.
     const draft = text;
     const attachmentRefs = attachments.attachmentRefs;
+    setRecall(IDLE_PROMPT_RECALL);
     setText("");
     await publishPreparedText({
       attachmentRefs,
@@ -447,6 +476,35 @@ export function CodingSessionComposer({
     publishPreparedText,
     text,
   ]);
+
+  /** ⌘↑/⌘↓: walk back and forward through the earlier prompts. */
+  const recallHistory = React.useCallback(
+    (direction: "older" | "newer") => {
+      setRecall((current) => {
+        const step = stepPromptRecall(direction, current, promptHistory, text);
+        if (step.text !== null) {
+          setText(step.text);
+          // Caret to the end: recall is for editing the prompt, and landing at
+          // character zero means every recall starts with a trip to the end.
+          const editor = editorRef.current;
+          if (editor) {
+            requestAnimationFrame(() => {
+              editor.setSelectionRange(
+                editor.value.length,
+                editor.value.length,
+              );
+            });
+          }
+        }
+        return step.state;
+      });
+    },
+    [promptHistory, text],
+  );
+  const handleTextChange = React.useCallback((next: string) => {
+    setRecall(IDLE_PROMPT_RECALL);
+    setText(next);
+  }, []);
 
   // A turn the provider answered with `NO_LIVE_EXECUTION` or
   // `STALE_GENERATION` never ran, and nothing but the sender can decide it
@@ -648,12 +706,13 @@ export function CodingSessionComposer({
         isWorking={isWorking}
         layout={layout}
         onAddProvider={onAddProvider}
+        onRecallHistory={promptHistory.length > 0 ? recallHistory : undefined}
         runtimeLabel={runtimeLabel}
         onInterrupt={() => void handleStop()}
         onPrimary={() => void submit()}
         onReconnect={() => void handleResume()}
         onSessionStop={requestSessionEnd}
-        onTextChange={setText}
+        onTextChange={handleTextChange}
         pendingAction={pendingAction}
         providerAuthorityPubkey={providerAuthorityPubkey}
         recipientControl={recipientControl}

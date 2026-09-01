@@ -77,3 +77,56 @@ test("surfaces belonging to no project resolve to none", () => {
     null,
   );
 });
+
+// A terminal route carries no channel, so nothing on the URL can name the
+// project. The shell session's own `projectRef` is the only link, and it is
+// what the sidebar already files the terminal under.
+test("a /shell route resolves through the session's projectRef", () => {
+  assert.equal(
+    resolveActiveProjectId(
+      "/shell/session-123",
+      null,
+      PROJECTS,
+      `30621:${OWNER}:skunkworks`,
+    ),
+    `${OWNER}:skunkworks`,
+  );
+});
+
+test("a /shell route with no projectRef belongs to no project", () => {
+  assert.equal(
+    resolveActiveProjectId("/shell/session-123", null, PROJECTS),
+    null,
+  );
+  assert.equal(
+    resolveActiveProjectId("/shell/session-123", null, PROJECTS, null),
+    null,
+  );
+});
+
+test("a shell claiming an unknown project resolves to none, not a guess", () => {
+  assert.equal(
+    resolveActiveProjectId(
+      "/shell/session-123",
+      null,
+      PROJECTS,
+      `30621:${OWNER}:vanished`,
+    ),
+    null,
+  );
+});
+
+// The channel back-reference must not be consulted for a terminal: a shell
+// route has no active channel, and reading a stale one would file the terminal
+// under whatever channel was last selected.
+test("a shell route ignores the channel back-reference", () => {
+  assert.equal(
+    resolveActiveProjectId(
+      "/shell/session-123",
+      `30621:${OWNER}:general`,
+      PROJECTS,
+      null,
+    ),
+    null,
+  );
+});

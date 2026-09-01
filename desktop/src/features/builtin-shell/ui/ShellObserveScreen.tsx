@@ -1,7 +1,6 @@
 import * as React from "react";
 import { Terminal } from "@xterm/xterm";
-import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Eye, Keyboard, RefreshCw } from "lucide-react";
+import { Eye, Keyboard, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useUsersBatchQuery } from "@/features/profile/hooks";
@@ -76,7 +75,6 @@ export function ShellObserveScreen({
   sessionId: string;
   projectRef: string;
 }) {
-  const navigate = useNavigate();
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const termRef = React.useRef<Terminal | null>(null);
 
@@ -227,16 +225,6 @@ export function ShellObserveScreen({
       data-testid="shell-observe-screen"
     >
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => void navigate({ to: "/" })}
-          aria-label="Back"
-          data-testid="shell-observe-back"
-        >
-          <ArrowLeft className="size-4" />
-        </Button>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">
             {ownerName}&rsquo;s terminal

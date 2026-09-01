@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
   Activity,
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
   CircleCheck,
@@ -195,7 +194,6 @@ export function ProjectPulseView({
   /** The project this Pulse describes; without it the screen names no project. */
   projectName,
   /** Back to the project home, when the caller can navigate there. */
-  onBack,
   /** Resolved author names by lowercase pubkey. */
   authorNames,
 }: {
@@ -203,7 +201,6 @@ export function ProjectPulseView({
   nowSeconds: number;
   onOpenSession?: (targetKey: string) => void;
   projectName?: string | null;
-  onBack?: () => void;
   authorNames?: PulseAuthorNames;
 }) {
   const [branch, setBranch] = React.useState<string | null | undefined>(
@@ -243,18 +240,6 @@ export function ProjectPulseView({
   const header = (
     <header className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
-        {onBack ? (
-          <button
-            className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
-            data-testid="pulse-back"
-            onClick={onBack}
-            title={`Back to ${projectName ?? "the project"}`}
-            type="button"
-          >
-            <ArrowLeft className="size-3" aria-hidden />
-            {projectName ?? "Project"}
-          </button>
-        ) : null}
         <Activity className="size-4 text-muted-foreground" aria-hidden />
         <h1
           className="text-base font-semibold text-foreground"

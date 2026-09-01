@@ -1,0 +1,25 @@
+/* Hotkey badges.
+
+   While a modifier is held, every numbered sidebar row wears a chord hint at
+   its right edge — exactly where unread counts, mute bells and working badges
+   already live. Rather than teaching each of those to move, the whole trailing
+   furniture fades out for the duration of the hold: the row is being read as a
+   destination just then, not as a status line. The badge itself is exempt.
+
+   Driven by `data-hotkeys-armed` on the sidebar root (see
+   `useHotkeyArmedProps` in `features/hotkeys/ui/HotkeyBadge.tsx`). */
+
+[data-hotkeys-armed] [data-sidebar="menu-badge"],
+[data-hotkeys-armed] [data-sidebar="menu-action"],
+[data-hotkeys-armed] [data-hotkey-dim] {
+  opacity: 0;
+  transition: opacity 100ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-hotkeys-armed] [data-sidebar="menu-badge"],
+  [data-hotkeys-armed] [data-sidebar="menu-action"],
+  [data-hotkeys-armed] [data-hotkey-dim] {
+    transition: none;
+  }
+}

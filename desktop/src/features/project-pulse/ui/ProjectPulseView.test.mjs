@@ -280,23 +280,19 @@ test("the loading card shows skeleton rows, not just a sentence", async () => {
   assert.ok(getByTestId("pulse-loading-skeleton"));
 });
 
-test("the screen names the project it describes and offers a way back", async () => {
-  const clicks = [];
-  const { getByTestId } = await renderView(
+// Two projects' Pulse screens are otherwise pixel-identical chrome, so the
+// heading has to say which one this is. The way back is the window's own
+// back control, not a second arrow in the page.
+test("the screen names the project it describes", async () => {
+  const { getByTestId, queryByTestId } = await renderView(
     { kind: "ready", digest: digest() },
-    { projectName: "Pulse Demo", onBack: () => clicks.push("back") },
+    { projectName: "Pulse Demo" },
   );
   assert.equal(
     getByTestId("pulse-header-title").textContent,
     "Pulse · Pulse Demo",
   );
-  const back = getByTestId("pulse-back");
-  assert.match(back.textContent, /Pulse Demo/);
-  const { act } = await import("react");
-  await act(async () => {
-    back.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-  });
-  assert.deepEqual(clicks, ["back"]);
+  assert.equal(queryByTestId("pulse-back"), null);
 });
 
 /**
