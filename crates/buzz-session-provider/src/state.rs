@@ -1,7 +1,7 @@
 //! Durable provider state: watermarks, command dedupe, session records,
 //! per-generation sequence counters, and the catalog revision.
 //!
-//! Two files, both under `BUZZ_CSP_STATE_DIR`:
+//! Four files, all under `BUZZ_CSP_STATE_DIR`:
 //!
 //! - `state.json` — the whole mutable snapshot, replaced atomically
 //!   (write to a temp file, fsync, rename). A torn write can therefore never
@@ -9,6 +9,16 @@
 //! - `commands.jsonl` — append-only record of consumed `commandId`s. Append is
 //!   the right shape here because the only question ever asked is "have I
 //!   already acted on this?", and an append cannot lose earlier answers.
+//! - `refusals.jsonl` — append-only record of `commandId`s answered with a
+//!   refusal, so a redelivery cannot republish the same answer.
+//! - `operations.jsonl` — append-only record of team-wake *operations* this
+//!   provider has started a turn for, one JSON object per line:
+//!   `{"key": <operation fence key>, "commandId": <owner>, "at": <unix secs>}`.
+//!   The key is [`crate::team_wake::operation_fence_key`]'s value: the exact
+//!   target generation plus the canonicalised wake pointer. Two commands with
+//!   different ids can carry the same pointer — the provider's wake sender and
+//!   Desktop's fallback deliberately do — and only one of them may spend a
+//!   lead turn on it.
 //!
 //! # The sequence-counter invariant
 //!
@@ -45,6 +55,15 @@ const COMMANDS_FILE: &str = "commands.jsonl";
 /// redelivery from publishing a byte-identical `turn_refused` a second time,
 /// which is the difference between a refusal and a stutter.
 const REFUSALS_FILE: &str = "refusals.jsonl";
+/// Append-only record of team-wake operations a turn has actually *started*
+/// for, keyed by [`crate::team_wake::operation_fence_key`].
+///
+/// Separate from [`COMMANDS_FILE`] because it answers a different question.
+/// The command ledger says "did *this command* run"; this one says "is this
+/// *operation* already somebody's". A command id is producer-specific, and
+/// two producers mint different ids for one operation on purpose, so the
+/// command ledger cannot answer it.
+const OPERATIONS_FILE: &str = "operations.jsonl";
 /// Single-instance lock file. See [`acquire_state_dir_lock`].
 pub const LOCK_FILE: &str = "provider.lock";
 
@@ -358,6 +377,16 @@ struct CommandRecord {
     at: u64,
 }
 
+/// One line of [`OPERATIONS_FILE`]: the operation, the command that owns it,
+/// and when the owner started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OperationRecord {
+    key: String,
+    command_id: String,
+    at: u64,
+}
+
 /// Durable provider state rooted at one directory.
 #[derive(Debug)]
 pub struct StateStore {
@@ -365,6 +394,8 @@ pub struct StateStore {
     snapshot: Snapshot,
     commands: HashSet<String>,
     refusals: HashSet<String>,
+    /// Team-wake operation key → the `commandId` that owns it.
+    operations: HashMap<String, String>,
 }
 
 impl StateStore {
@@ -376,7 +407,7 @@ impl StateStore {
     pub fn open(dir: &Path, command_retention_secs: u64) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
         restrict_directory(dir)?;
-        for file in [STATE_FILE, COMMANDS_FILE, REFUSALS_FILE] {
+        for file in [STATE_FILE, COMMANDS_FILE, REFUSALS_FILE, OPERATIONS_FILE] {
             restrict_file_if_present(&dir.join(file))?;
         }
         let snapshot = load_snapshot(&dir.join(STATE_FILE))?;
@@ -385,6 +416,7 @@ impl StateStore {
             snapshot,
             commands: HashSet::new(),
             refusals: HashSet::new(),
+            operations: HashMap::new(),
         };
         store.load_commands(command_retention_secs)?;
         Ok(store)
@@ -427,6 +459,58 @@ impl StateStore {
             command_id,
             at,
         )
+    }
+
+    /// The `commandId` that durably owns one team-wake operation, if any.
+    ///
+    /// `key` comes from [`crate::team_wake::operation_fence_key`]. `None`
+    /// means no turn has ever *started* for this operation on this target
+    /// generation — which is the same answer for "never seen" and for "the
+    /// owner was dropped before it ran", and deliberately so: a fence that
+    /// outlived its owner's failure would lose the operation permanently.
+    pub fn operation_owner(&self, key: &str) -> Option<&str> {
+        self.operations.get(key).map(String::as_str)
+    }
+
+    /// Durably record that `command_id` owns the operation named by `key`.
+    ///
+    /// Idempotent for the same key: the first writer wins and a later call —
+    /// including one after a restart replayed the owner — appends nothing.
+    /// Written at the moment the turn *starts*, beside
+    /// [`Self::consume_command`], because that is the moment the operation
+    /// actually costs the lead a turn.
+    pub fn consume_operation(&mut self, key: &str, command_id: &str, at: u64) -> io::Result<()> {
+        if self.operations.contains_key(key) {
+            return Ok(());
+        }
+        self.operations
+            .insert(key.to_owned(), command_id.to_owned());
+        let record = OperationRecord {
+            key: key.to_owned(),
+            command_id: command_id.to_owned(),
+            at,
+        };
+        let result = (|| {
+            let path = self.dir.join(OPERATIONS_FILE);
+            let mut options = OpenOptions::new();
+            options.create(true).append(true);
+            restrict_new_file(&mut options);
+            let mut file = options.open(&path)?;
+            restrict_file(&path)?;
+            // One `write` on an O_APPEND handle, for the same reason the
+            // command ledger takes one: a line can never be torn in half.
+            let mut line = serde_json::to_string(&record)?;
+            line.push('\n');
+            file.write_all(line.as_bytes())?;
+            file.sync_all()
+        })();
+        if result.is_err() {
+            // The claim is not durable, so it is not a claim: roll the
+            // in-memory half back rather than fencing on a record a restart
+            // will not find.
+            self.operations.remove(key);
+        }
+        result
     }
 
     /// Whether this command was already answered with a refusal.
@@ -668,7 +752,67 @@ impl StateStore {
     fn load_commands(&mut self, retention_secs: u64) -> io::Result<()> {
         let dir = self.dir.clone();
         Self::load_ledger(&dir.join(COMMANDS_FILE), &mut self.commands, retention_secs)?;
-        Self::load_ledger(&dir.join(REFUSALS_FILE), &mut self.refusals, retention_secs)
+        Self::load_ledger(&dir.join(REFUSALS_FILE), &mut self.refusals, retention_secs)?;
+        Self::load_operation_ledger(
+            &dir.join(OPERATIONS_FILE),
+            &mut self.operations,
+            retention_secs,
+        )
+    }
+
+    /// Load [`OPERATIONS_FILE`], dropping records past the freshness horizon
+    /// and rewriting the file when anything was dropped.
+    ///
+    /// Same retention as the command ledger, for the same reason: a command
+    /// older than the horizon is ignored on its own merits (`PastHorizon`), so
+    /// an operation whose owner is that old can never be duplicated by a
+    /// command the provider would still admit, and remembering it forever
+    /// would grow the file without bound.
+    fn load_operation_ledger(
+        path: &Path,
+        seen: &mut HashMap<String, String>,
+        retention_secs: u64,
+    ) -> io::Result<()> {
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let cutoff = now_secs().saturating_sub(retention_secs);
+        let mut kept: Vec<OperationRecord> = Vec::new();
+        let mut dropped = false;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<OperationRecord>(&line) {
+                Ok(record) if record.at >= cutoff => {
+                    // First writer wins, exactly as `consume_operation` does,
+                    // so a rewritten file cannot change who owns what.
+                    if seen.contains_key(&record.key) {
+                        dropped = true;
+                    } else {
+                        seen.insert(record.key.clone(), record.command_id.clone());
+                        kept.push(record);
+                    }
+                }
+                Ok(_) => dropped = true,
+                Err(error) => {
+                    tracing::warn!(target: "csp::state", "dropping unreadable operation ledger line: {error}");
+                    dropped = true;
+                }
+            }
+        }
+        if dropped {
+            let mut body = String::new();
+            for record in &kept {
+                body.push_str(&serde_json::to_string(record)?);
+                body.push('\n');
+            }
+            atomic_write(path, body.as_bytes())?;
+        }
+        Ok(())
     }
 
     /// Load one append-only `commandId` ledger, dropping records past the

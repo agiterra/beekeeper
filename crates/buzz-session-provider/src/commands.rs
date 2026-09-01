@@ -26,8 +26,9 @@ use buzz_core::coding_session_routing::RoutingRecord;
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
 use crate::payload::{
-    ACTOR_UNAVAILABLE, BUDGET_EXHAUSTED, PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE,
-    SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION, UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
+    ACTOR_UNAVAILABLE, BUDGET_EXHAUSTED, DUPLICATE_OPERATION, PROJECT_CWD_UNRESOLVED,
+    PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION, UNAUTHORIZED_OPERATOR,
+    UNKNOWN_TARGET,
 };
 use crate::state::StateStore;
 
@@ -645,6 +646,36 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         }
     }
 
+    // The operation fence. Everything above answers "have I already acted on
+    // *this command*"; this answers "is this *operation* already somebody's".
+    // Two producers mint different command ids for one identifier-only wake
+    // pointer on purpose, so without this a producer bug on either side buys
+    // a second turn of the lead's context on a fact it already has. Checked
+    // here, at the only place that spends model context, and answered with a
+    // refusal that spends no turn.
+    if let TurnAction::Start { text, .. } = &command.action {
+        if let Some(owner) =
+            duplicate_operation_owner(context, &command.target, text, &command.command_id)
+        {
+            // This message names provider *state* (the owner), not just the
+            // command — the one receipt in this module that does. It is
+            // stable only because `on_turn`'s `Fail` arm records the refusal
+            // durably *before* publishing, so a redelivery is answered
+            // `AlreadyRefused` and can never be republished naming a
+            // different owner. Moving `record_refusal` after the publish
+            // would silently break that.
+            return TurnDecision::Fail {
+                command_id: command.command_id,
+                target: command.target,
+                code: DUPLICATE_OPERATION,
+                message: format!(
+                    "an identical team-wake pointer for this target is already custodied by \
+                     command {owner}; this command spent no turn"
+                ),
+            };
+        }
+    }
+
     match command.action {
         // Interrupt-class delivery cancels work someone else may be watching,
         // so it stays with the founder in this slice. A granted operator can
@@ -689,6 +720,35 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
             target: command.target,
         },
     }
+}
+
+/// The command already custodying this turn's team-wake operation, when it is
+/// not `command_id` itself.
+///
+/// Two fences, in the order that answers the most cases: the durable ledger
+/// first (an operation whose owner already *started*), then this process's
+/// mailbox (an owner accepted and not yet started, which nothing durable can
+/// know about yet).
+///
+/// The owner is always admitted. A command that is already the recorded owner
+/// is a relay redelivery of the turn that claimed the operation — the id-based
+/// fences above answer it as `AlreadyConsumed`/`AlreadyAccepted` — and after a
+/// crash between the operation write and the command write it is the *only*
+/// command that may run. Refusing it there would lose the wake permanently.
+fn duplicate_operation_owner(
+    context: &CommandContext<'_>,
+    target: &CodingSessionTarget,
+    text: &str,
+    command_id: &str,
+) -> Option<String> {
+    let key = crate::team_wake::operation_fence_key(target, text)?;
+    if let Some(owner) = context.state.operation_owner(&key) {
+        return (owner != command_id).then(|| owner.to_owned());
+    }
+    context.in_flight.iter().find_map(|(candidate, turn)| {
+        (candidate != command_id && turn.operation_key.as_deref() == Some(key.as_str()))
+            .then(|| candidate.clone())
+    })
 }
 
 /// Owner-only authority: stop/resume/end. Checks only authority facts
@@ -2096,6 +2156,7 @@ mod tests {
                 session_id: "s1".to_owned(),
                 target: turn_target("s1", 1),
                 created_at: 1_000,
+                operation_key: None,
             },
         );
         // A cancel already in an actor's mailbox whose ledger append failed:

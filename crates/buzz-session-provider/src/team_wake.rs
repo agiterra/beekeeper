@@ -329,7 +329,7 @@ pub fn wake_text(source: &WakeSource) -> Result<String, String> {
             caused_by_command_id,
             ..
         } => serde_json::json!({
-            "schema": "buzz-team-wake/v1",
+            "schema": TEAM_WAKE_POINTER_SCHEMA,
             "type": "turn_ended_without_required_operation",
             "terminalEventId": terminal_event_id,
             "seatRole": role,
@@ -337,6 +337,82 @@ pub fn wake_text(source: &WakeSource) -> Result<String, String> {
         }),
     };
     serde_json::to_string(&value).map_err(|error| error.to_string())
+}
+
+/// Schema string carried by the terminal-diagnostic wake pointer.
+const TEAM_WAKE_POINTER_SCHEMA: &str = "buzz-team-wake/v1";
+
+/// Whether a JSON object is the identifier-only *report* pointer.
+///
+/// Exactly two keys, an event-id-shaped `operationId`, and a non-blank string
+/// `type`. Anything looser would let ordinary operator JSON claim an
+/// operation identity it does not have.
+fn is_report_pointer(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let Some(operation_id) = object
+        .get("operationId")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return false;
+    };
+    let Some(operation_type) = object.get("type").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    object.len() == 2
+        && operation_id.len() == 64
+        && operation_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !operation_type.is_empty()
+}
+
+/// Whether a JSON object is the *terminal diagnostic* pointer.
+///
+/// Exactly the five keys the terminal arm of [`wake_text`] emits, every value
+/// a string, and this crate's own schema.
+fn is_terminal_pointer(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    const KEYS: [&str; 5] = [
+        "schema",
+        "type",
+        "terminalEventId",
+        "seatRole",
+        "causedByCommandId",
+    ];
+    object.len() == KEYS.len()
+        && KEYS
+            .iter()
+            .all(|key| object.get(*key).is_some_and(serde_json::Value::is_string))
+        && object.get("schema").and_then(serde_json::Value::as_str)
+            == Some(TEAM_WAKE_POINTER_SCHEMA)
+}
+
+/// The durable identity of one team-wake *operation* addressed to one exact
+/// execution generation, or `None` when `text` is not a wake pointer.
+///
+/// The runner spends model context per `commandId`, but the thing that must
+/// happen at most once is the *operation*: the provider's wake sender and the
+/// founder's Desktop fallback deliberately mint byte-identical pointer text
+/// under different command ids, so a producer bug on either side would
+/// otherwise buy a second lead turn on a fact the lead already has.
+///
+/// Only the two shapes [`wake_text`] produces are fenced. Prose is never
+/// fenced: an operator who sends the same sentence twice meant to, and
+/// swallowing the second one would be a control lying about what it does.
+///
+/// The key is `coding_session_target_key(target)`, a NUL, then the pointer
+/// re-serialised through [`serde_json::Value`] — whose object is a `BTreeMap`
+/// in this build, so key order and whitespace are canonicalised away while
+/// two different pointers can never collide. The NUL cannot occur in either
+/// half's JSON or in the length-prefixed target key, so the two components
+/// cannot be confused for one another.
+pub fn operation_fence_key(target: &CodingSessionTarget, text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let object = value.as_object()?;
+    if !(is_report_pointer(object) || is_terminal_pointer(object)) {
+        return None;
+    }
+    let canonical = serde_json::to_string(&value).ok()?;
+    Some(format!(
+        "{}\u{0}{canonical}",
+        coding_session_target_key(target)
+    ))
 }
 
 pub fn build_wake_event(

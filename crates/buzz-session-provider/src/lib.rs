@@ -644,6 +644,17 @@ pub struct InFlightTurn {
     target: CodingSessionTarget,
     /// The command event's `created_at`, which is what pins the watermark.
     created_at: u64,
+    /// The team-wake operation this turn took custody of, when its text is one
+    /// of the two identifier-only pointers `team_wake::wake_text` mints.
+    ///
+    /// The process-local half of the operation fence: consumption — and with
+    /// it the durable half in `operations.jsonl` — happens when a turn
+    /// *starts*, so between accept and start the durable ledger cannot answer
+    /// "is this operation already somebody's". This can. It is released
+    /// wherever the entry is, which is every path that drops or starts the
+    /// turn, so an owner that fails releases the operation for a re-armed
+    /// command rather than losing it.
+    operation_key: Option<String>,
 }
 
 /// Turn commands buffered while a channel replays history, held so they are
@@ -3123,6 +3134,14 @@ impl Provider {
             ),
         };
         let session_id = target.session_id.clone();
+        // The operation this turn takes custody of, read from the raw prompt
+        // text — the pointer both producers mint is the bare JSON, and the
+        // `[Context]` envelope is applied to the *delivery*, never to the
+        // fenced identity. An interrupt spends no turn and fences nothing.
+        let operation_key = match &message {
+            SessionCommand::Turn { text, .. } => team_wake::operation_fence_key(&target, text),
+            _ => None,
+        };
 
         // A starting turn is the trigger for a bounded verified-context
         // refresh. Started, not awaited: the turn must not wait on a relay
@@ -3202,6 +3221,7 @@ impl Provider {
                             session_id: session_id.clone(),
                             target: target.clone(),
                             created_at,
+                            operation_key: operation_key.clone(),
                         },
                     );
                     // A `steer` this execution cannot receive is answered
@@ -4608,6 +4628,24 @@ impl Provider {
                 // still behind it, and the replay runs it exactly once. The
                 // durable write happens before the receipt so a crash between
                 // the two costs a receipt, never a duplicate turn.
+                //
+                // The operation ledger goes down *before* the command ledger,
+                // and the order is deliberate. Both orders are safe, because
+                // `decide_turn` always admits a command that already owns its
+                // operation — but this one degrades better: a crash between
+                // the two writes leaves the operation fenced and the command
+                // unconsumed, so the replay re-delivers the owner and it runs
+                // exactly once. The other order would leave the operation
+                // unfenced with the command already consumed, and a duplicate
+                // arriving in that window would spend a second lead turn.
+                if let Some(key) = self
+                    .in_flight
+                    .get(&command_id)
+                    .and_then(|turn| turn.operation_key.clone())
+                {
+                    self.state
+                        .consume_operation(&key, &command_id, now_secs())?;
+                }
                 self.state.consume_command(&command_id, now_secs())?;
                 // D9: the umbrella is charged where the turn is consumed, and
                 // for the same reason — this is the moment work actually
@@ -5589,6 +5627,8 @@ mod tests {
 
     use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
 
+    #[path = "operation_fence_tests.rs"]
+    mod operation_fence_tests;
     #[path = "team_wake_driver_tests.rs"]
     mod team_wake_driver_tests;
     #[path = "team_wake_pressure_tests.rs"]

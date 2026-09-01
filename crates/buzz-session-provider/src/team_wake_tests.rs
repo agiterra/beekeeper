@@ -1238,3 +1238,148 @@ fn only_exact_assignment_pointer_for_actor_and_command_requires_report() {
         }
     );
 }
+
+/// One inbox item for `command_id` on `target`, carrying `stage`/`code`.
+fn inbox_item(
+    command_id: &str,
+    target: &CodingSessionTarget,
+    content: &str,
+    stage: ReceiptStatus,
+    stage_code: Option<&str>,
+) -> CodingSessionContextInboxItem {
+    CodingSessionContextInboxItem {
+        event_id: "1f".repeat(32),
+        created_at: 10,
+        command_id: command_id.to_owned(),
+        sender: "2f".repeat(32),
+        sender_role: None,
+        target: target.clone(),
+        delivery: "boundary".into(),
+        content: content.to_owned(),
+        stage: Some(stage),
+        stage_at: Some(11),
+        stage_code: stage_code.map(str::to_owned),
+    }
+}
+
+/// P-T7 / I13 — the runner's `DUPLICATE_OPERATION` refusal *settles* the
+/// sender's intent; it is never a delivery failure.
+///
+/// The refusal says the operation is already custodied by another command, so
+/// something is delivering the wake — it is simply not this one. Retrying,
+/// or re-arming a fallback against it, would spend the second lead turn the
+/// fence exists to prevent. No behaviour change: `command_outcome` already
+/// treats any `turn_refused` as terminal, and this test is what keeps it that
+/// way.
+#[test]
+fn a_duplicate_operation_refusal_settles_the_wake_intent() {
+    let exact_target = provider_target("codex", "lead", 1);
+    let source = report(55, 1);
+    let expected_content = wake_text(&source).expect("pointer");
+    let mut context = package(Vec::new());
+    context.inbox.push(inbox_item(
+        "wake-1",
+        &exact_target,
+        &expected_content,
+        ReceiptStatus::TurnRefused,
+        Some(buzz_core::coding_session_payload::DUPLICATE_OPERATION),
+    ));
+    assert_eq!(
+        command_outcome(&context, "wake-1", &exact_target),
+        Some(ReceiptStatus::TurnRefused),
+        "a refusal is a settling outcome whatever code it carries"
+    );
+
+    // ...and the settlement the provider then performs is permanent.
+    let dir = tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let mut store = WakeIntentStore::open(dir.path()).expect("open");
+    assert_eq!(
+        store
+            .capture_report(scope(channel), source.clone())
+            .expect("admit"),
+        DiscoveryCapture::Admitted
+    );
+    let intent = next_pending(&mut store, &[channel]).expect("pending");
+    assert_eq!(intent.source.event_id(), source.event_id());
+    store.retire_in_flight(channel).expect("retire on refusal");
+    assert_eq!(store.channel_counts(channel), (1, 0, 0, 0));
+    drop(store);
+
+    let mut reopened = WakeIntentStore::open(dir.path()).expect("reopen");
+    assert_eq!(
+        reopened
+            .capture_report(scope(channel), source)
+            .expect("rediscovery"),
+        DiscoveryCapture::Duplicate,
+        "the report id is in the permanent resolved ledger"
+    );
+    assert!(next_pending(&mut reopened, &[channel]).is_none());
+}
+
+/// P-T8 / acceptance #5 — the Desktop fallback started during a provider
+/// outage; the provider restarts and publishes nothing.
+///
+/// The provider's own command id has no receipt at all — it never got as far
+/// as signing one. What settles the intent is *operation-level* evidence: a
+/// foreign command id whose content is the exact pointer, addressed to the
+/// exact lead target, that reached `turn_started`. Binding to the pointer and
+/// the target rather than to the producer's command id is what lets either
+/// producer prove delivery and stops the other spending a second lead turn.
+#[test]
+fn a_desktop_fallback_start_settles_the_provider_intent_across_a_restart() {
+    let exact_target = provider_target("codex", "lead", 1);
+    let source = report(77, 1);
+    let expected_content = wake_text(&source).expect("pointer");
+    let mut context = package(Vec::new());
+    context.inbox.push(inbox_item(
+        "team-wake-v1:795ce319:42dcf1b7",
+        &exact_target,
+        &expected_content,
+        ReceiptStatus::TurnStarted,
+        None,
+    ));
+
+    // The provider's own command is unanswered; the operation is not.
+    assert_eq!(
+        command_outcome(&context, "team-wake-provider-mint", &exact_target),
+        None
+    );
+    assert!(operation_wake_delivered(
+        &context,
+        &exact_target,
+        &expected_content
+    ));
+    // A different generation is a different execution, and never delivery.
+    assert!(!operation_wake_delivered(
+        &context,
+        &provider_target("codex", "lead", 2),
+        &expected_content
+    ));
+
+    let dir = tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let mut store = WakeIntentStore::open(dir.path()).expect("open");
+    store
+        .capture_report(scope(channel), source.clone())
+        .expect("admit");
+    let intent = next_pending(&mut store, &[channel]).expect("pending");
+    assert!(
+        intent.signed_event.is_none(),
+        "the intent settles before anything is signed, so nothing is published"
+    );
+    store
+        .retire_in_flight(channel)
+        .expect("retire on operation evidence");
+    drop(store);
+
+    let mut reopened = WakeIntentStore::open(dir.path()).expect("restart");
+    assert_eq!(
+        reopened
+            .capture_report(scope(channel), source)
+            .expect("rediscovery after restart"),
+        DiscoveryCapture::Duplicate,
+        "a restart may not resurrect an operation another producer delivered"
+    );
+    assert!(next_pending(&mut reopened, &[channel]).is_none());
+}

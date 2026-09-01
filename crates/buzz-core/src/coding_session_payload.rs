@@ -113,6 +113,24 @@ pub const IMAGE_UNSUPPORTED: &str = "IMAGE_UNSUPPORTED";
 /// An interrupt addressed a live execution that had no turn in flight, so
 /// there was nothing to cancel.
 pub const NO_TURN_IN_FLIGHT: &str = "NO_TURN_IN_FLIGHT";
+/// A second turn command carried an identifier-only team-wake pointer that is
+/// byte-equal — after JSON canonicalisation — to one already custodied or
+/// consumed for the *same exact target* (driver, instance, session,
+/// generation).
+///
+/// **Refused, and it spent zero turns.** The runner fences an operation, not
+/// just a `commandId`: the provider's wake sender and the founder's Desktop
+/// fallback deliberately mint the same pointer text under different command
+/// ids, so without this code a producer bug on either side spends a second
+/// turn of the lead's context on a fact it already has. The receipt's
+/// `message` names the command that owns the operation, so the refused sender
+/// can join its own intent to the delivery that actually happened.
+///
+/// **Both producers treat this refusal of their own command as settlement of
+/// the operation, never as a failure.** Something is delivering the wake — it
+/// is simply not this command. Counting it as a delivery failure would re-arm
+/// a fallback against a turn that is already queued.
+pub const DUPLICATE_OPERATION: &str = "DUPLICATE_OPERATION";
 /// A turn was refused because its umbrella has spent its turn budget (D9).
 ///
 /// **Terminal for this command, and about the umbrella rather than the
