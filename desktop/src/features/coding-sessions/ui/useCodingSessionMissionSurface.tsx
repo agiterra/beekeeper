@@ -7,7 +7,10 @@ import type {
   CodingSessionSeatAuthority,
   CodingSessionTeamWakeDelivery,
 } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
-import { deriveCodingSessionMissionInspectorModel } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import {
+  deriveCodingSessionMissionInspectorModel,
+  type CodingSessionMissionInspectorInput,
+} from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { mergeCodingSessionMissionWorkspaceInput } from "@/features/coding-sessions/lib/codingSessionMissionWorkspaceModel";
 import { projectCodingSessionMissionState } from "@/features/coding-sessions/lib/codingSessionMissionStateProjection";
 import type { CodingSessionParticipantPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
@@ -36,34 +39,32 @@ export type CodingSessionMissionSurfaceResult = {
   unseatedReportEventIds: readonly string[];
 };
 
-/**
- * Lane D adds `transactions` and `unseatedReportEventIds` to the Mission
- * evidence projection in the same batch as this consolidation; in this
- * worktree the fields do not exist on `CodingSessionMissionInspectorInput`
- * yet. This is the **one** place that reads them through an index-access cast,
- * so integration is a single deletion: the finalizer removes this helper and
- * reads the typed fields directly.
- */
 // U-F8: shared frozen empties. Returning fresh `[]` literals made
-// `pending.transactions` change identity on every `inspectorInput` change,
-// which propagates through the hook's result into every consumer's memo deps —
+// `transactions` change identity on every `inspectorInput` change, which
+// propagates through the hook's result into every consumer's memo deps —
 // exactly the render-stability trap AGENTS.md § "React render perf" names.
 const NO_TRANSACTIONS: readonly CodingSessionMissionTransactionInput[] =
   Object.freeze([]);
 const NO_UNSEATED_REPORT_IDS: readonly string[] = Object.freeze([]);
 
-export function readPendingLaneDEvidence(inspectorInput: unknown): {
+/**
+ * Reads the stream's half of the Mission evidence projection.
+ *
+ * Both fields are optional on {@link CodingSessionMissionInspectorInput}
+ * because an empty or errored projection supplies neither, and absent is not
+ * the same fact as empty — so this normalises absence to the shared frozen
+ * empties rather than letting `undefined` reach the stream.
+ */
+export function readCodingSessionMissionStreamEvidence(
+  inspectorInput: CodingSessionMissionInspectorInput,
+): {
   transactions: readonly CodingSessionMissionTransactionInput[];
   unseatedReportEventIds: readonly string[];
 } {
-  const pending = inspectorInput as {
-    transactions?: readonly CodingSessionMissionTransactionInput[];
-    unseatedReportEventIds?: readonly string[];
-  };
   return {
-    transactions: pending.transactions ?? NO_TRANSACTIONS,
+    transactions: inspectorInput.transactions ?? NO_TRANSACTIONS,
     unseatedReportEventIds:
-      pending.unseatedReportEventIds ?? NO_UNSEATED_REPORT_IDS,
+      inspectorInput.unseatedReportEventIds ?? NO_UNSEATED_REPORT_IDS,
   };
 }
 
@@ -189,7 +190,7 @@ export function useCodingSessionMissionSurface(input: {
     [inspectorInput],
   );
   const pending = React.useMemo(
-    () => readPendingLaneDEvidence(evidence.inspectorInput),
+    () => readCodingSessionMissionStreamEvidence(evidence.inspectorInput),
     [evidence.inspectorInput],
   );
   const surfaces = React.useMemo(

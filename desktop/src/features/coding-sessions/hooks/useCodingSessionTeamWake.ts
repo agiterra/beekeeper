@@ -28,6 +28,7 @@ import {
   codingSessionTeamWakeText,
   deriveCodingSessionTeamWakePlan,
   pendingCodingSessionTeamWake,
+  emptyCodingSessionTeamWakeState,
   readCodingSessionTeamWakeState,
   recordCodingSessionTeamWakeAttempt,
   recordCodingSessionTeamWakeCustody,
@@ -261,7 +262,13 @@ export function useCodingSessionTeamWake(
     // The index mutates in place, so its revision — not its identity — is
     // what says the evidence changed.
     void wakeEvidence.revision;
-    return leadTarget && leadTargetKey && storedState
+    // `storedState` is null until this Desktop has written a wake ledger for
+    // this session — which is most sessions, most of the time. Requiring it
+    // here meant a queued provider wake, fully verified on the wire, rendered
+    // as "No team wake deliveries observed": absent local state reported as
+    // an observed absence. The ledger only adds Desktop's OWN attempts; the
+    // evidence being disclosed is the relay's.
+    return leadTarget && leadTargetKey
       ? deriveCodingSessionTeamWakeDeliveryPlan({
           candidates: plan.candidates,
           leadTarget,
@@ -270,7 +277,7 @@ export function useCodingSessionTeamWake(
           index: wakeEvidence.index,
           acknowledgedCommandIds,
           acknowledgedSourceEventIds,
-          state: storedState,
+          state: storedState ?? emptyCodingSessionTeamWakeState(),
           nowMs: Date.now(),
           evidenceComplete,
           publishFailedSourceEventIds: failedThisMount.current,

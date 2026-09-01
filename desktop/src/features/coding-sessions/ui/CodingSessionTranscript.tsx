@@ -21,7 +21,10 @@ import {
   type CodingSessionTranscriptTurn,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { useTextSettledCodingSessionEchoes } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
-import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
+import {
+  resolveCodingSessionPromptAuthor,
+  type CodingSessionPromptSeatResolver,
+} from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { Markdown } from "@/shared/ui/markdown";
@@ -59,6 +62,12 @@ type CodingSessionTranscriptProps = {
    * back to a truncated pubkey, which is always true.
    */
   operatorProfiles?: UserProfileLookup;
+  /**
+   * Names a seat from its actor pubkey. Mission supplies it so a turn one
+   * seat sent to another is attributed to that seat; the one-seat lens has
+   * no second seat to attribute to and passes nothing.
+   */
+  resolveSeat?: CodingSessionPromptSeatResolver;
 };
 
 /**
@@ -79,10 +88,17 @@ const CodingSessionPromptAttributionContext = React.createContext<{
    * message says so rather than presenting a guess as a match.
    */
   textSettledEchoIds: ReadonlySet<string>;
+  /**
+   * Names a seat from its actor pubkey, so a turn one seat sent to another
+   * reads as that seat rather than as the reader or as a truncated hash.
+   * Absent outside Mission, where there is only one seat to confuse.
+   */
+  resolveSeat?: CodingSessionPromptSeatResolver;
 }>({
   currentUserPubkey: null,
   profiles: undefined,
   textSettledEchoIds: new Set(),
+  resolveSeat: undefined,
 });
 
 const GENERIC_AGENT_IDENTITY = {
@@ -110,6 +126,7 @@ export function CodingSessionTranscript({
   generationId,
   isWorking,
   items,
+  resolveSeat,
   scrollRef,
 }: CodingSessionTranscriptProps) {
   const model = useStableCodingSessionTranscriptModel(items, isWorking);
@@ -122,9 +139,10 @@ export function CodingSessionTranscript({
     () => ({
       currentUserPubkey: currentUserPubkey ?? null,
       profiles: operatorProfiles,
+      resolveSeat,
       textSettledEchoIds,
     }),
-    [currentUserPubkey, operatorProfiles, textSettledEchoIds],
+    [currentUserPubkey, operatorProfiles, resolveSeat, textSettledEchoIds],
   );
   const rows = React.useMemo(
     () => buildCodingSessionTranscriptRows(model),
@@ -601,10 +619,12 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
 
   if (item.type === "message") {
     if (item.role === "user") {
-      const authorLabel = resolveCodingSessionPromptAuthorLabel({
+      const author = resolveCodingSessionPromptAuthor({
+        commandId: item.commandId,
         currentUserPubkey: promptAttribution.currentUserPubkey,
         operatorPubkey: item.operatorPubkey,
         profiles: promptAttribution.profiles,
+        resolveSeat: promptAttribution.resolveSeat,
       });
       // Only ever true for a provider that stamps no command id on its echo:
       // this client matched the message to what it sent by comparing the
@@ -627,10 +647,17 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
           </div>
           <p className="pe-1 text-2xs text-muted-foreground">
             <span
-              className="font-medium text-foreground/75"
+              className={
+                author.kind === "team-wake" ||
+                author.kind === "hire-host" ||
+                author.kind === "unrecorded"
+                  ? "font-medium text-muted-foreground"
+                  : "font-medium text-foreground/75"
+              }
+              data-author-kind={author.kind}
               data-testid="coding-session-user-message-author"
             >
-              {authorLabel}
+              {author.label}
             </span>
             {formatCodingSessionMessageTimestamp(item.timestamp)}
           </p>

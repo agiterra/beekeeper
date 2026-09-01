@@ -279,7 +279,16 @@ export function CodingSessionMissionInspector({
           truncations={truncationsFor(model, "tests")}
         >
           {model.tests.length === 0 ? (
-            <EmptyCopy>No structured test results published.</EmptyCopy>
+            // SURFACES D5: the refusal names what it is refusing. No wire kind
+            // reports tests today, and a seat writing "3/3 passing" in its turn
+            // is prose — this panel will not count it.
+            <EmptyCopy>
+              <span className="block">No test report yet</span>
+              <span className="block">
+                Nothing on the wire reports tests. A seat's written report is
+                prose in its turn — Beekeeper will not count it.
+              </span>
+            </EmptyCopy>
           ) : (
             <ul aria-label="Structured test results" className="space-y-2">
               {model.tests.map((result) => (

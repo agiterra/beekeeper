@@ -48,6 +48,7 @@ import { CodingSessionMissionTraceDetails } from "./CodingSessionMissionTraceDet
 import { CodingSessionMissionTransactionRow } from "./CodingSessionMissionTransactionRow";
 import { CodingSessionPendingTurns } from "./CodingSessionPendingTurns";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
+import type { CodingSessionPromptSeatResolver } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { UmbrellaConversationRow } from "./CodingSessionUmbrellaConversationRow";
 import { CodingSessionUmbrellaTurnBlock } from "./CodingSessionUmbrellaTurnBlock";
 
@@ -73,6 +74,7 @@ export function CodingSessionUmbrellaTimelineView({
   onFocusExecution,
   operatorProfiles,
   resolveMissionActor,
+  resolvePromptSeat,
   umbrella,
 }: {
   channelId: string;
@@ -92,6 +94,12 @@ export function CodingSessionUmbrellaTimelineView({
   actorNames?: CodingSessionActorNameResolver;
   /** Pubkey → seat name for transaction rows; the finalizer supplies it. */
   resolveMissionActor?: CodingSessionMissionActorResolver;
+  /**
+   * Names a seat from its actor pubkey so a turn one seat sent to another is
+   * attributed to that seat. Only reaches the rows in Mission — Conversation
+   * has a single seat and no second author to confuse it with.
+   */
+  resolvePromptSeat?: CodingSessionPromptSeatResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
@@ -298,6 +306,9 @@ export function CodingSessionUmbrellaTimelineView({
                   : MISSION_CONVERSATION_ROW_CLASS
               }
               operatorProfiles={operatorProfiles}
+              resolveSeat={
+                missionDensity === null ? undefined : resolvePromptSeat
+              }
             />
           );
         }
@@ -350,6 +361,9 @@ export function CodingSessionUmbrellaTimelineView({
               onFocusExecution={onFocusExecution}
               onRegisterNode={registerBlockNode}
               onRevealFact={revealFact}
+              resolvePromptSeat={
+                missionDensity === null ? undefined : resolvePromptSeat
+              }
               operatorProfiles={operatorProfiles}
               record={record}
               resolveFactLocation={resolveFactLocation}

@@ -66,6 +66,13 @@ type CodingSessionHeaderProps = {
   agentControls?: ReactNode;
   channelName: string | null;
   compact?: boolean;
+  /**
+   * Drops this header's own bottom rule because it is row 1 of a taller
+   * container that owns the rule itself. Mission passes it and lets the
+   * participant bar (row 2) carry the single `border-b`; Conversation, where
+   * the header is the whole container, leaves it false.
+   */
+  flush?: boolean;
   generationLabel: string;
   /**
    * Resolved founder label rendered inside the provenance popover.
@@ -168,6 +175,7 @@ export function CodingSessionHeader({
   agentControls,
   channelName,
   compact = false,
+  flush = false,
   contextLoads,
   routedSeats,
   generationLabel,
@@ -229,8 +237,22 @@ export function CodingSessionHeader({
 
   return (
     <header
-      className="flex h-14 shrink-0 items-center gap-3 border-b border-border/60 bg-background/85 px-4 backdrop-blur-xl"
+      // Mission mounts the participant bar as row 2 of the same container, and
+      // the container gets exactly one bottom rule — below row 2. In
+      // Conversation this header IS the whole container, so it keeps its own.
+      //
+      // Written as two whole literals rather than a `cn(...)` merge, and the
+      // `data-flush` attribute omitted rather than set to "false", so the
+      // Conversation lens emits byte-identical markup to before this prop
+      // existed (I8). A `cn` merge reorders the class string, which is
+      // cosmetically identical and still a DOM change.
+      className={
+        flush
+          ? "flex h-14 shrink-0 items-center gap-3 bg-background/85 px-4 backdrop-blur-xl"
+          : "flex h-14 shrink-0 items-center gap-3 border-b border-border/60 bg-background/85 px-4 backdrop-blur-xl"
+      }
       data-compact={compact ? "true" : "false"}
+      data-flush={flush ? "true" : undefined}
       data-tauri-drag-region="deep"
       data-testid="coding-session-header"
     >

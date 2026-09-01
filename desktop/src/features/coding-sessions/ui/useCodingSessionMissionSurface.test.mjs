@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readPendingLaneDEvidence } from "./useCodingSessionMissionSurface.tsx";
+import { readCodingSessionMissionStreamEvidence } from "./useCodingSessionMissionSurface.tsx";
 
 test("U-F8: absent Lane D evidence keeps a stable identity across reads", () => {
-  const first = readPendingLaneDEvidence({});
-  const second = readPendingLaneDEvidence({ goal: { kind: "absent" } });
+  const first = readCodingSessionMissionStreamEvidence({});
+  const second = readCodingSessionMissionStreamEvidence({
+    goal: { kind: "absent" },
+  });
   // Fresh `[]` literals here churn the hook's result identity on every
   // evidence change and defeat every downstream memo.
   assert.equal(first.transactions, second.transactions);
@@ -17,7 +19,7 @@ test("U-F8: absent Lane D evidence keeps a stable identity across reads", () => 
 test("U-F8: supplied Lane D evidence is passed through by reference", () => {
   const transactions = [];
   const unseatedReportEventIds = ["a".repeat(64)];
-  const read = readPendingLaneDEvidence({
+  const read = readCodingSessionMissionStreamEvidence({
     transactions,
     unseatedReportEventIds,
   });

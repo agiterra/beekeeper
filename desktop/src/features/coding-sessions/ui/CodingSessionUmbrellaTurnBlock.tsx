@@ -9,6 +9,7 @@ import {
   resolveCodingSessionHandoffSource,
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
+import type { CodingSessionPromptSeatResolver } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { buildCodingSessionTurnByline } from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import type { CodingSessionUmbrellaTurnBlock as TurnBlock } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import type {
@@ -44,6 +45,7 @@ export function CodingSessionUmbrellaTurnBlock({
   onRegisterNode,
   onRevealFact,
   operatorProfiles,
+  resolvePromptSeat,
   record,
   resolveFactLocation,
   showProvenance,
@@ -82,6 +84,13 @@ export function CodingSessionUmbrellaTurnBlock({
   onRegisterNode: (key: string, node: HTMLElement | null) => void;
   onRevealFact: (key: string) => void;
   operatorProfiles: UserProfileLookup | undefined;
+  /**
+   * Names a seat from its actor pubkey, so a turn one seat sent to another is
+   * attributed to that seat instead of to whoever is reading. Mission passes
+   * it; Conversation has no second seat and passes nothing, so its prompt
+   * captions are byte-identical to before.
+   */
+  resolvePromptSeat?: CodingSessionPromptSeatResolver;
   record: CodingSessionCatalogRecord | null;
   resolveFactLocation: (link: CodingSessionHandoffLink) => string | null;
   showProvenance: boolean;
@@ -268,6 +277,7 @@ export function CodingSessionUmbrellaTurnBlock({
         isWorking={isWorking}
         items={narrativeItems}
         operatorProfiles={operatorProfiles}
+        resolveSeat={resolvePromptSeat}
       />
       {bundleExecution ? (
         <CodingSessionMissionExecutionBundle
@@ -281,6 +291,7 @@ export function CodingSessionUmbrellaTurnBlock({
             isWorking={false}
             items={executionItems}
             operatorProfiles={operatorProfiles}
+            resolveSeat={resolvePromptSeat}
           />
         </CodingSessionMissionExecutionBundle>
       ) : null}

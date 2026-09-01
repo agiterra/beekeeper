@@ -47,11 +47,24 @@ import {
   assertMissionTransactionFlow,
   assertNarrowMissionSurfaceHierarchy,
   assertProviderQueuedDelivery,
+  assertZeroSwitchObservation,
   buildGovernedMissionApprovalPhases,
   governedMissionWithoutBuilderGrant,
   signedProviderWakeCommand,
   signedTurnQueuedReceipt,
 } from "./helpers/codingSessionMissionLensAssertions";
+
+function hexToBytes(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function hex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 const CHANNEL_NAME = "engineering";
 const CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
@@ -64,7 +77,14 @@ const BUILDER_ACTOR_SECRET = generateSecretKey();
 const BUILDER_ACTOR = getPublicKey(BUILDER_ACTOR_SECRET);
 const VERIFIER_ACTOR_SECRET = generateSecretKey();
 const VERIFIER_ACTOR = getPublicKey(VERIFIER_ACTOR_SECRET);
-const FOUNDER_SECRET = generateSecretKey();
+// The founder is the E2E bridge's own known identity, not a fresh key.
+// Two gates need it to be: the team-wake delivery plan runs only for the
+// founder's Desktop (`lib/codingSessionTeamWake.ts:317-321`), and the mock
+// relay's channel membership is keyed to the identities the bridge knows —
+// so a fresh founder key can be the founder OR a member, never both.
+const FOUNDER_SECRET = hexToBytes(
+  "3dbaebadb5dfd777ff25149ee230d907a15a9e1294b40b830661e65bb42f6c03",
+);
 const FOUNDER = getPublicKey(FOUNDER_SECRET);
 const RELAY_SECRET = generateSecretKey();
 const RELAY = getPublicKey(RELAY_SECRET);
@@ -80,8 +100,28 @@ const VERIFIER_TARGET: CodingSessionCommandTarget = {
   sessionId: "66666666-7777-8888-9999-000000000000",
   generation: 1,
 };
+// A team wake only exists when a seat holds the `lead` role — the wake is
+// addressed to the lead's generation and nothing else can consume it. The base
+// fixture is a builder plus a verifier, so it can never produce one; the wake
+// scenario adds this third seat rather than re-roling the verifier, whose
+// refutation authority other assertions depend on.
+const LEAD_SECRET = generateSecretKey();
+const LEAD_PROVIDER = getPublicKey(LEAD_SECRET);
+const LEAD_ACTOR_SECRET = generateSecretKey();
+const LEAD_ACTOR = getPublicKey(LEAD_ACTOR_SECRET);
+const LEAD_TARGET: CodingSessionCommandTarget = {
+  driver: "claude-agent-acp",
+  instanceId: "lead-instance",
+  sessionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  generation: 1,
+};
 const SCREENSHOTS = "test-results/singularity-lens";
-const GENESIS_CREATED_AT = 1_800_000_000;
+// Anchored to the run's own clock, not to a fixed 2027 timestamp. The stream
+// interleaves transaction rows with turn blocks BY TIME, and the runtime
+// transcript this fixture seeds is dated `now` — so a fixed future genesis
+// sorted every signed handoff below every turn, off the first screen, which is
+// the opposite of the causality plane the rows exist to show.
+const GENESIS_CREATED_AT = Math.floor(Date.now() / 1_000) - 40;
 const OBSERVED_FILE =
   "desktop/src/features/coding-sessions/ui/CodingSessionUmbrellaWorkspace.tsx";
 
@@ -318,6 +358,13 @@ function governedMissionEvents(): {
           settled: false,
         },
       ],
+      // Required by the adapter and the TS decoder as of this batch: reports
+      // the Rust fold INCLUDED by assignee equality whose author holds no live
+      // seat for the assignment's role. Empty here — this fixture's builder is
+      // properly granted. Every other `foldResponse` in this spec and in the
+      // assertions helper spreads this object, so it is the only place the
+      // field has to be declared.
+      unseatedReports: [],
       canonicalTerminal: null,
     },
   };
@@ -777,13 +824,42 @@ async function openMockApp(
     foldResponse?: Record<string, unknown>;
     reducedMotion: "no-preference" | "reduce";
     theme: "buzz" | "buzz-dark";
+    /**
+     * Run as the umbrella's founder rather than as the default mock viewer.
+     *
+     * Team-wake delivery is deliberately founder-only: only the founder's
+     * Desktop covers for a provider wake, so `deriveCodingSessionTeamWakePlan`
+     * returns an empty plan for anyone else
+     * (`lib/codingSessionTeamWake.ts:317-321`). A delivery scenario viewed as
+     * a stranger therefore has nothing to disclose — correctly, but it cannot
+     * test disclosure.
+     */
+    asFounder?: boolean;
   },
 ) {
   await page.emulateMedia({ reducedMotion: input.reducedMotion });
-  await page.addInitScript(({ theme }) => {
-    window.localStorage.setItem("buzz-theme", theme);
-    window.localStorage.setItem("buzz:text-scale", "1.25");
-  }, input);
+  await page.addInitScript(
+    ({ theme, founderIdentity }) => {
+      window.localStorage.setItem("buzz-theme", theme);
+      window.localStorage.setItem("buzz:text-scale", "1.25");
+      if (founderIdentity) {
+        window.localStorage.setItem(
+          "buzz:e2e-identity-override.v1",
+          JSON.stringify(founderIdentity),
+        );
+      }
+    },
+    {
+      theme: input.theme,
+      founderIdentity: input.asFounder
+        ? {
+            privateKey: hex(FOUNDER_SECRET),
+            pubkey: FOUNDER,
+            username: "tyler",
+          }
+        : null,
+    },
+  );
   await installMockBridge(page, {
     codingSessionTeamFoldResponse:
       input.foldResponse ?? GOVERNED_MISSION.foldResponse,
@@ -980,6 +1056,71 @@ function wakeCandidate(sourceEventId: string) {
   };
 }
 
+/** The `lead`-role seat the wake is addressed to: create, receipt, metadata. */
+function leadSeatEvents(): RelayEvent[] {
+  const genesis = GOVERNED_MISSION.events[0];
+  const commandId = "mission-seat-lead";
+  const createInput = buildCodingSessionCreateEvent({
+    channelId: CHANNEL_ID,
+    commandId,
+    projectRef: null,
+    repoRef: null,
+    sessionRef: SESSION_REF,
+    genesisRef: genesis.id,
+    actor: LEAD_ACTOR,
+    role: "lead",
+    providerInstanceRef: "lead-primary",
+    providerAuthorityPubkey: LEAD_PROVIDER,
+    model: "opus",
+    title: "Portable team loop",
+    initialTurn: null,
+  });
+  const create = finalizeEvent(
+    {
+      kind: createInput.kind,
+      tags: createInput.tags,
+      content: createInput.content,
+      created_at: GENESIS_CREATED_AT + 10,
+    },
+    FOUNDER_SECRET,
+  ) as unknown as RelayEvent;
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", commandId],
+        ["csl-key", lifecycleReceiptSemanticKey(commandId)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId,
+        status: "created",
+        session: LEAD_TARGET,
+        error: null,
+      }),
+      created_at: GENESIS_CREATED_AT + 11,
+    },
+    LEAD_SECRET,
+  ) as unknown as RelayEvent;
+  return [
+    create,
+    receipt,
+    signedMetadata({
+      actor: LEAD_ACTOR,
+      model: "opus",
+      role: "lead",
+      runtime: "claude-agent-acp",
+      secret: LEAD_SECRET,
+      status: "running",
+      target: LEAD_TARGET,
+      title: "Portable team loop",
+      createdAt: GENESIS_CREATED_AT + 12,
+    }),
+  ];
+}
+
 function governedMissionWithProviderQueuedWake(): typeof GOVERNED_MISSION {
   const base = GOVERNED_MISSION;
   const report = base.events.find(
@@ -995,8 +1136,8 @@ function governedMissionWithProviderQueuedWake(): typeof GOVERNED_MISSION {
     commandId,
     createdAt: GENESIS_CREATED_AT + 13,
     finalize: (event) =>
-      finalizeEvent(event, VERIFIER_SECRET) as unknown as RelayEvent,
-    leadTarget: VERIFIER_TARGET,
+      finalizeEvent(event, LEAD_SECRET) as unknown as RelayEvent,
+    leadTarget: LEAD_TARGET,
     // Byte-identical to what both producers publish for this operation.
     pointerText: codingSessionTeamWakeText(wakeCandidate(report.id)),
   });
@@ -1005,20 +1146,20 @@ function governedMissionWithProviderQueuedWake(): typeof GOVERNED_MISSION {
     commandId,
     createdAt: GENESIS_CREATED_AT + 14,
     finalize: (event) =>
-      finalizeEvent(event, VERIFIER_SECRET) as unknown as RelayEvent,
-    leadTarget: VERIFIER_TARGET,
+      finalizeEvent(event, LEAD_SECRET) as unknown as RelayEvent,
+    leadTarget: LEAD_TARGET,
     receiptKind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     receiptSchema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
     receiptTagVersion: CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
     semanticKey: codingSessionReceiptSemanticKey,
   });
   return {
-    events: [...base.events, wake, queued],
+    events: [...base.events, ...leadSeatEvents(), wake, queued],
     foldResponse: base.foldResponse,
   };
 }
 
-test.skip("U-E1: the signed handoff reads as one flow in the stream", async ({
+test("U-E1: the signed handoff reads as one flow in the stream", async ({
   page,
 }) => {
   const governed = governedMissionWithTerminal("completed");
@@ -1046,17 +1187,22 @@ test("U-E5 fixture: the provider wake and its receipt are real signed events", (
   const added = governed.events.filter(
     (event) => !GOVERNED_MISSION.events.some((prior) => prior.id === event.id),
   );
-  expect(added).toHaveLength(2);
-  const [wake, queued] = added;
+  // Three lead-seat events (create, receipt, metadata) plus the wake and its
+  // receipt. The lead seat is not decoration: a team wake is addressed to the
+  // lead's generation, so a fixture with no `lead` role can never produce one.
+  expect(added).toHaveLength(5);
+  const wake = added[3];
+  const queued = added[4];
 
   // The wake is a real 44220 addressed to the LEAD generation, signed by the
   // lead's provider authority — not the founder, and not the reporter.
   expect(verifyEvent(wake as never)).toBe(true);
   expect(wake.kind).toBe(44220);
-  expect(wake.pubkey).toBe(VERIFIER_PROVIDER);
+  expect(wake.pubkey).toBe(LEAD_PROVIDER);
   expect(wake.pubkey).not.toBe(FOUNDER);
+  expect(wake.pubkey).not.toBe(BUILDER_PROVIDER);
   expect(wake.tags.find((tag) => tag[0] === "cs-target")?.[1]).toBe(
-    buildCodingSessionTargetKey(VERIFIER_TARGET),
+    buildCodingSessionTargetKey(LEAD_TARGET),
   );
   const command = JSON.parse(wake.content);
   expect(command.schema).toBe("buzz-coding-session-command/v1");
@@ -1070,21 +1216,43 @@ test("U-E5 fixture: the provider wake and its receipt are real signed events", (
   // The receipt is a real 44224 `turn_queued` bound to that command id.
   expect(verifyEvent(queued as never)).toBe(true);
   expect(queued.kind).toBe(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
-  expect(queued.pubkey).toBe(VERIFIER_PROVIDER);
+  expect(queued.pubkey).toBe(LEAD_PROVIDER);
   const receipt = JSON.parse(queued.content);
   expect(receipt.status).toBe("turn_queued");
   expect(receipt.commandId).toBe(command.commandId);
-  expect(receipt.session).toEqual(VERIFIER_TARGET);
+  expect(receipt.session).toEqual(LEAD_TARGET);
   expect(queued.tags.find((tag) => tag[0] === "csl-key")?.[1]).toBe(
     codingSessionReceiptSemanticKey(command.commandId, "turn_queued"),
   );
 });
 
-test.skip("U-E5: a queued provider wake is disclosed on the row, the chip and the rail", async ({
+test("item 9: Mission - Live shows the whole team state with no clicks", async ({
+  page,
+}) => {
+  // 1400x900 with the rail open, the shape Brian named. Everything after the
+  // lens switch is reading, not driving.
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const governed = governedMissionWithProviderQueuedWake();
+  await openMockApp(page, {
+    asFounder: true,
+    foldResponse: governed.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, governed);
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await assertZeroSwitchObservation(page, {
+    expectedSeatCount: 3,
+    screenshots: SCREENSHOTS,
+  });
+});
+
+test("U-E5: a queued provider wake is disclosed on the row, the chip and the rail", async ({
   page,
 }) => {
   const governed = governedMissionWithProviderQueuedWake();
   await openMockApp(page, {
+    asFounder: true,
     foldResponse: governed.foldResponse,
     reducedMotion: "no-preference",
     theme: "buzz",
@@ -1097,7 +1265,7 @@ test.skip("U-E5: a queued provider wake is disclosed on the row, the chip and th
   });
 });
 
-test.skip("U-E6: a created-but-ungranted builder is disclosed, not hidden", async ({
+test("U-E6: a created-but-ungranted builder is disclosed, not hidden", async ({
   page,
 }) => {
   const governed = governedMissionWithoutBuilderGrant(
@@ -1111,11 +1279,21 @@ test.skip("U-E6: a created-but-ungranted builder is disclosed, not hidden", asyn
   });
   await seedAndOpen(page, governed);
   await page.getByRole("button", { name: "Mission lens" }).click();
-  await expect(
-    page
-      .getByTestId("coding-session-participant-bar")
-      .getByTestId("coding-session-seat-authority-badge"),
-  ).toContainText("ungranted");
+  // Both chips: the fixture removes the BUILDER's grant, and the verifier
+  // never had one — only the builder is granted in the base fixture. Two
+  // ungranted seats is the honest reading of that chain, and the assertion
+  // said "one" only because it could not be run.
+  const seatBadges = page
+    .getByTestId("coding-session-participant-bar")
+    .getByTestId("coding-session-seat-authority-badge");
+  await expect(seatBadges).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(seatBadges.nth(index)).toContainText("ungranted");
+    await expect(seatBadges.nth(index)).toHaveAttribute(
+      "data-kind",
+      "created-ungranted",
+    );
+  }
   await expect(
     page.getByTestId("coding-session-mission-inspector"),
   ).toContainText("bee sessions seat-repair");

@@ -174,7 +174,9 @@ test("renders a settled turn with recent work visible in the narrative", async (
   });
 
   assert.match(markup, /coding-session-user-message/);
-  assert.match(markup, />You</);
+  // This fixture's prompt carries no operator stamp. It used to read "You";
+  // item 10c (batch 2026-09-01) says that was a guess, not a fact.
+  assert.match(markup, />Operator not recorded</);
   assert.match(markup, /bg-muted/);
   assert.match(markup, /data-transcript-renderer="static"/);
   assert.match(markup, /first:border-t-0/);
@@ -570,7 +572,11 @@ test("an unresolved foreign operator falls back to a truncated pubkey", async ()
   assert.equal(authorLabel(markup), "bccccccc…cccc");
 });
 
-test("a prompt published before attribution existed is still labelled You", async () => {
+test("item 10c: a prompt published before attribution existed says so", async () => {
+  // Was: "…is still labelled You". Brian saw session messages that looked
+  // like they came from him, and this was one of the three causes. A person's
+  // own typed turn always carries their stamp, so an unstamped prompt is
+  // unknown — and unknown is not the reader.
   const markup = await renderTranscript({
     currentUserPubkey: LOCAL_OPERATOR,
     generationId: "generation-1",
@@ -578,7 +584,7 @@ test("a prompt published before attribution existed is still labelled You", asyn
     items: [prompt(undefined)],
   });
 
-  assert.equal(authorLabel(markup), "You");
+  assert.equal(authorLabel(markup), "Operator not recorded");
 });
 
 test("wide content scrolls inside its block instead of being clipped by the column", async () => {

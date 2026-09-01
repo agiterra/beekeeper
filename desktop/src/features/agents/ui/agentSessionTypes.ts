@@ -128,6 +128,18 @@ export type TranscriptItem =
        * being assigned to anyone.
        */
       operatorPubkey?: string | null;
+      /**
+       * The `commandId` of the 44220 turn-start this `role: "user"` message
+       * echoes, when the provider stamped one.
+       *
+       * Already projected onto coding-session items
+       * (`CodingSessionProjectedTranscriptItem`); declared here because
+       * attribution needs it. A command id is what separates a prompt a person
+       * typed from one the app published on their key — an automatic
+       * `team-wake-` command is founder-signed but nobody wrote it, and
+       * `operatorPubkey` alone cannot tell those apart.
+       */
+      commandId?: string;
     } & TranscriptItemIdentity)
   | ({
       id: string;

@@ -83,7 +83,6 @@ import { CodingSessionLensControl } from "./CodingSessionLensControl";
 import { CodingSessionParticipantBar } from "./CodingSessionParticipantBar";
 import { CodingSessionLiveActivityBar } from "./CodingSessionLiveActivityBar";
 import { CodingSessionMissionDensityControl } from "./CodingSessionMissionDensityControl";
-import { CodingSessionMissionTransactionCard } from "./CodingSessionMissionTransactionCard";
 import { CodingSessionUmbrellaTimelineView } from "./CodingSessionUmbrellaTimelineView";
 import {
   useCodingSessionMissionSurface,
@@ -164,7 +163,12 @@ export function UmbrellaCodingSessionWorkspace({
   const gutter = useCodingSessionColumnGutter();
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
-  useCodingSessionTeamWake({
+  // Team-wake arbitration now *returns* what it observed: one delivery row per
+  // wake operation and one seat-authority row per seated execution. Before this
+  // batch the result was discarded and delivery state surfaced only as
+  // transient toasts, so a queued provider wake or an ungranted seat was
+  // invisible the moment the toast faded.
+  const teamWake = useCodingSessionTeamWake({
     catalogSettled,
     channelId,
     communityScope,
@@ -322,6 +326,56 @@ export function UmbrellaCodingSessionWorkspace({
     () => listCodingSessionRoutedSeats(umbrella.executions),
     [umbrella.executions],
   );
+  // Names a transaction's author or counterparty from the umbrella's own
+  // executions. A pubkey with no execution falls back to the actor-name
+  // resolver, and an unknown one to `null` — the row then renders a truncated
+  // key rather than guessing a name.
+  const resolveMissionActor = React.useCallback(
+    (pubkey: string) => {
+      const execution = umbrella.executions.find(
+        (candidate) =>
+          candidate.activeGeneration.agentRef?.toLowerCase() ===
+          pubkey.toLowerCase(),
+      );
+      if (!execution) {
+        return {
+          label: workspaceActorName(pubkey) ?? null,
+          executionKey: null,
+        };
+      }
+      const agentRef = execution.activeGeneration.agentRef;
+      return {
+        label: buildCodingSessionTurnByline({
+          agentDisplayName: agentRef
+            ? (workspaceActorName(agentRef) ?? null)
+            : null,
+          agentRef,
+          generation: execution.activeGeneration.commandTarget?.generation ?? 1,
+          label: null,
+          model: execution.activeGeneration.model,
+          role: execution.activeGeneration.role,
+          runtime: execution.activeGeneration.runtime,
+        }).name,
+        executionKey: execution.executionKey,
+      };
+    },
+    [umbrella.executions, workspaceActorName],
+  );
+  // Same lookup, but it answers `null` for a pubkey that is not a seat — the
+  // difference that lets prompt attribution tell "a seat sent this" apart from
+  // "a person sent this". A seat's turn used to read `You` to the founder or as
+  // a bare truncated key to everyone else.
+  const resolvePromptSeat = React.useCallback(
+    (pubkey: string) => {
+      const isSeat = umbrella.executions.some(
+        (candidate) =>
+          candidate.activeGeneration.agentRef?.toLowerCase() ===
+          pubkey.toLowerCase(),
+      );
+      return isSeat ? resolveMissionActor(pubkey) : null;
+    },
+    [resolveMissionActor, umbrella.executions],
+  );
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? umbrella.title;
   const canRename =
@@ -430,14 +484,28 @@ export function UmbrellaCodingSessionWorkspace({
     active: mission,
     channelId,
     contextLoads,
+    deliveries: teamWake.deliveries,
     focusedExecutionKey,
     goal,
+    // The goal has one editable home now: the Inspector's Current goal
+    // section. The stream used to carry a second pill above the narrative.
+    goalEditor: (
+      <CodingSessionGoalPill
+        channelId={channelId}
+        currentUserPubkey={currentUserPubkey}
+        founderPubkey={umbrella.founderPubkey}
+        goal={goal}
+        sessionRef={umbrella.sessionRef}
+        variant="inspector"
+      />
+    ),
     isNarrow,
     observedChanges,
     onFocusParticipant: handleFocusExecution,
     onOpenTrace: () => handleMissionDensityChange("trace"),
     participants: streamPresence.participants,
     resolveActorName: workspaceActorName,
+    seatAuthorities: teamWake.seatAuthorities,
     umbrella,
   });
   const surfaces = useCodingSessionWorkspaceSurfaces({
@@ -535,8 +603,15 @@ export function UmbrellaCodingSessionWorkspace({
           }
           channelName={channelName}
           compact={isNarrow || headerCompact}
-          contextLoads={contextLoads}
-          routedSeats={routedSeats}
+          // In Mission the rail owns both of these — Team for the seats,
+          // the Context tab for the load table — so the provenance popover
+          // keeps only what is genuinely provenance (founder, verified
+          // source) instead of showing a third copy of the roster.
+          contextLoads={mission ? undefined : contextLoads}
+          routedSeats={mission ? undefined : routedSeats}
+          // Mission's header is a two-row container; the participant bar below
+          // carries the single bottom rule.
+          flush={mission}
           founderDetails={
             umbrella.founderPubkey ? (
               <CodingSessionFounderLine
@@ -615,6 +690,10 @@ export function UmbrellaCodingSessionWorkspace({
         />
         {mission ? (
           <CodingSessionParticipantBar
+            // Row 2 of the header container: the bar stopped drawing its own
+            // band so this is the container's one bottom rule.
+            className="border-b border-border/60 bg-background/80"
+            deliveries={teamWake.deliveries}
             focusedExecutionKey={focusedExecutionKey}
             items={streamPresence.participants}
             leading={
@@ -624,6 +703,10 @@ export function UmbrellaCodingSessionWorkspace({
               />
             }
             onFocus={handleFocusExecution}
+            // A chip's delivery badge is matched to its seat through the
+            // seat's actorPubkey, which only this projection carries; without
+            // it the chips would badge nothing at all.
+            seatAuthorities={teamWake.seatAuthorities}
           />
         ) : isMultiExecution ? (
           <CodingSessionDispositionStrip
@@ -648,15 +731,20 @@ export function UmbrellaCodingSessionWorkspace({
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
           <div className={cn(gutter, "pb-2")}>
-            <CodingSessionGoalPill
-              channelId={channelId}
-              currentUserPubkey={currentUserPubkey}
-              founderPubkey={umbrella.founderPubkey}
-              goal={goal}
-              headerCarriesGoal
-              sessionRef={umbrella.sessionRef}
-              workspaceExpanded={narrativeExpanded}
-            />
+            {/* Mission's goal lives in the header subtitle (read) and the
+                Inspector's Current goal section (edit). Conversation keeps
+                this pill exactly as it was. */}
+            {mission ? null : (
+              <CodingSessionGoalPill
+                channelId={channelId}
+                currentUserPubkey={currentUserPubkey}
+                founderPubkey={umbrella.founderPubkey}
+                goal={goal}
+                headerCarriesGoal
+                sessionRef={umbrella.sessionRef}
+                workspaceExpanded={narrativeExpanded}
+              />
+            )}
             {isMultiExecution && isNarrow && !mission ? (
               <div className="mt-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <CodingSessionAgentFocus
@@ -697,11 +785,6 @@ export function UmbrellaCodingSessionWorkspace({
                   onClear={() => handleFocusExecution(null)}
                 />
               ) : null}
-              {mission ? (
-                <CodingSessionMissionTransactionCard
-                  state={missionSurfaceResult.missionState}
-                />
-              ) : null}
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
                 currentUserPubkey={currentUserPubkey}
@@ -712,6 +795,17 @@ export function UmbrellaCodingSessionWorkspace({
                 actorNames={workspaceActorName}
                 operatorProfiles={operatorProfiles}
                 missionDensity={mission ? missionDensity : null}
+                // The signed handoffs between seats are the causality plane.
+                // They used to exist only inside a pinned card's chain list;
+                // now they are rows in the stream, interleaved with the turns
+                // they caused.
+                missionDeliveries={mission ? teamWake.deliveries : undefined}
+                missionFounderPubkey={umbrella.founderPubkey}
+                missionTransactions={
+                  mission ? missionSurfaceResult.transactions : undefined
+                }
+                resolveMissionActor={resolveMissionActor}
+                resolvePromptSeat={resolvePromptSeat}
                 umbrella={umbrella}
               />
             </CodingSessionColumn>

@@ -479,7 +479,17 @@ test("empty and unknown states disclose absence rather than rendering zeros", as
     assert.ok(view.getByText("No accepted plan published"));
     assert.ok(view.getByText("No seat has published a signed plan."));
     assert.ok(view.getByText("No signed edit activity observed."));
-    assert.ok(view.getByText("No structured test results published."));
+    // DESIGN-SPEC §8 / SURFACES D5: the frozen unknown copy, headline plus the
+    // sentence that says why nothing is counted.
+    assert.ok(view.getByText("No test report yet"));
+    assert.match(
+      view.container.textContent,
+      /Nothing on the wire reports tests\./,
+    );
+    assert.equal(
+      view.queryByText("No structured test results published."),
+      null,
+    );
     assert.ok(view.getByText("No signed session seats projected."));
     assert.equal(view.queryByText("Terminal usage not reported."), null);
     assert.ok(

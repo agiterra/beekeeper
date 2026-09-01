@@ -755,12 +755,23 @@ export function governedMissionWithoutBuilderGrant(
   fixture: GovernedMissionFixture,
   authorityTransitionKind: number,
   relayAcceptanceKind = 40099,
+  teamTransactionKind = 44244,
 ): GovernedMissionFixture {
   const events = fixture.events.filter((event) => {
     if (event.kind === authorityTransitionKind) return false;
     if (event.kind !== relayAcceptanceKind) return true;
     return !event.content.includes("grant-seat");
   });
+  // With no live seat for the builder, the Rust fold still INCLUDES the
+  // builder's report by assignee equality — inclusion is a target, not an
+  // authorship claim — and discloses it under `unseatedReports`. The mocked
+  // adapter response has to say the same thing, or the surface is asked to
+  // render a disclosure the fold never made.
+  const report = events.find(
+    (event) =>
+      event.kind === teamTransactionKind &&
+      JSON.parse(event.content).type === "report",
+  );
   return {
     events,
     foldResponse: {
@@ -770,6 +781,18 @@ export function governedMissionWithoutBuilderGrant(
         authorityHeadEventId: null,
         authorityHeadSeq: 0,
       },
+      unseatedReports: report
+        ? [
+            {
+              eventId: report.id,
+              authorPubkey: report.pubkey,
+              assignmentRef: ((fixture.foldResponse.assignments as {
+                assignmentEventId: string;
+              }[]) ?? [])[0]?.assignmentEventId,
+              assigneeRole: "builder",
+            },
+          ]
+        : [],
     },
   };
 }
@@ -789,7 +812,12 @@ export async function assertMissionTransactionFlow(
   },
 ) {
   const rows = page.getByTestId("coding-session-mission-transaction-row");
-  await expect(rows).toHaveCount(4, { timeout: 15_000 });
+  // Five, not four: the completed fixture's signed chain is
+  // assignment -> report -> verdict -> acknowledgement, and the mission
+  // TERMINAL is a row of its own (LANE-U U2, "Mission completed - <Actor>").
+  // This assertion was written while the rows could not be mounted, so its
+  // count was a prediction; the terminal is the row it did not predict.
+  await expect(rows).toHaveCount(5, { timeout: 15_000 });
   await expect(rows.nth(0)).toHaveAttribute(
     "data-transaction-type",
     "assignment",
@@ -803,14 +831,19 @@ export async function assertMissionTransactionFlow(
     "data-transaction-type",
     "acknowledgement",
   );
+  await expect(rows.nth(4)).toContainText("Mission completed");
   await expect(rows.nth(2)).toContainText("Verdict: approve-with-notes");
   await expect(rows.nth(2)).toContainText("Publish the signed follow-up note.");
   // DESIGN-SPEC §8: chat weight — 24px monogram pair, `text-sm` body.
   const monograms = rows.nth(1).locator("span.size-6");
   await expect(monograms).toHaveCount(2);
-  await expect(rows.nth(1).locator("p.text-sm").first()).toContainText(
-    "Mission inspector mounted with signed evidence.",
-  );
+  // The BODY, not the title. Both are `text-sm` — the title deliberately
+  // shares the step (it is `missionRowTitleClass()` + `font-semibold`), so
+  // `p.text-sm` alone matches the title first and the assertion never reached
+  // the summary it names. `wrap-break-word` is the body's alone.
+  await expect(
+    rows.nth(1).locator("p.text-sm.wrap-break-word").first(),
+  ).toContainText("Mission inspector mounted with signed evidence.");
   if (input.expectUnseated) {
     await expect(
       rows.nth(1).getByTestId("coding-session-unseated-badge"),
@@ -903,4 +936,77 @@ export async function assertProviderQueuedDelivery(
   await page.getByTestId("coding-session-narrative-scroll").screenshot({
     path: `${input.screenshots}/stream-delivery-queued.png`,
   });
+}
+
+/**
+ * Item 9 (Brian, 2026-09-01): zero-switch observation.
+ *
+ * The consolidation's whole claim is that a person can stand in Mission · Live
+ * at 1400×900 with the rail open and see the state of the team **without
+ * clicking anything**. Before it, the same facts were spread across a pinned
+ * card, a popover, a second goal pill and three toasts, so "can you see it?"
+ * had the answer "yes, after four clicks" — which is not the same answer.
+ *
+ * So this asserts the absence of interaction as hard as it asserts the
+ * presence of the facts: it records every `[aria-pressed]` control's state
+ * before and after, and fails if reading the surface moved any of them.
+ */
+export async function assertZeroSwitchObservation(
+  page: Page,
+  input: { screenshots: string; expectedSeatCount: number },
+) {
+  const pressedStates = () =>
+    page
+      .locator("[aria-pressed]")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("aria-pressed")),
+      );
+  const before = await pressedStates();
+
+  // Row 2: every seat, each with its W1 word beside the dot (never colour
+  // alone). The chips are status-only by design — detail lives in the rail.
+  const chips = page.getByTestId("coding-session-participant-chip");
+  await expect(chips).toHaveCount(input.expectedSeatCount, { timeout: 15_000 });
+  for (let index = 0; index < input.expectedSeatCount; index += 1) {
+    await expect(chips.nth(index)).toBeVisible();
+    await expect(chips.nth(index)).not.toHaveText("");
+  }
+  // The density control leads row 2, in the same container as row 1.
+  await expect(
+    page.getByTestId("coding-session-mission-density"),
+  ).toBeVisible();
+
+  // The causality plane: transaction rows, in the stream, already on screen.
+  const rows = page.getByTestId("coding-session-mission-transaction-row");
+  await expect(rows.first()).toBeVisible();
+  const viewportHeight = page.viewportSize()?.height ?? 0;
+  const boxes = await rows.evaluateAll((elements) =>
+    elements.map((element) => element.getBoundingClientRect().top),
+  );
+  // "Without scrolling" stated as a number rather than as a feeling: at least
+  // one A -> B row is inside the viewport as the surface first renders. The
+  // stream is scrolled to the newest turn, so which row that is depends on the
+  // fixture's length — asserting a specific index would be asserting the
+  // fixture, not the requirement.
+  expect(
+    boxes.filter((top) => top >= 0 && top < viewportHeight).length,
+  ).toBeGreaterThan(0);
+
+  // Turn blocks are present with their execution collapsed inline — the wall
+  // of tool rows is one line until someone asks for it.
+  await expect(
+    page.getByTestId("coding-session-umbrella-turn-block").first(),
+  ).toBeVisible();
+
+  // The state plane. Open, not behind a toggle.
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toBeVisible();
+  await expect(page.getByTestId("mission-state-summary")).toBeVisible();
+
+  // Nothing was pressed to see any of it.
+  expect(await pressedStates()).toEqual(before);
+
+  await waitForAnimations(page);
+  await page.screenshot({ path: `${input.screenshots}/zero-switch-wide.png` });
 }

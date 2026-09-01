@@ -5,6 +5,19 @@ import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/li
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
+/**
+ * Identity palette, with attention hues deliberately excluded — the same rule
+ * `PARTICIPANT_ACCENTS` documents. State owns amber and destructive; a seat
+ * that happened to hash to amber wore the caution hue while nothing about it
+ * needed attention, and the Mission card grammar made that a whole bordered
+ * block rather than a thin rule.
+ *
+ * Amber is **replaced** by `primary`, not removed: this palette and
+ * `PARTICIPANT_ACCENTS` are now the same four hues in the same order, so a
+ * seat's turn block and its chip cannot disagree, and dropping to three
+ * buckets would have made two seats collide on one hue a third of the time
+ * instead of a quarter.
+ */
 const AGENT_ACCENTS = [
   {
     dot: "bg-sky-500",
@@ -19,16 +32,16 @@ const AGENT_ACCENTS = [
     text: "text-violet-700 dark:text-violet-300",
   },
   {
-    dot: "bg-amber-500",
-    border: "border-amber-500/55",
-    soft: "bg-amber-500/10",
-    text: "text-amber-700 dark:text-amber-300",
-  },
-  {
     dot: "bg-emerald-500",
     border: "border-emerald-500/55",
     soft: "bg-emerald-500/10",
     text: "text-emerald-700 dark:text-emerald-300",
+  },
+  {
+    dot: "bg-primary",
+    border: "border-primary/55",
+    soft: "bg-primary/10",
+    text: "text-primary",
   },
 ] as const;
 

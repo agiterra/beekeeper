@@ -1,5 +1,8 @@
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
-import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
+import {
+  resolveCodingSessionPromptAuthor,
+  type CodingSessionPromptSeatResolver,
+} from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { RedactedText } from "@/shared/ui/RedactedPill";
 
@@ -20,6 +23,7 @@ export function UmbrellaConversationRow({
   message,
   missionRowClassName,
   operatorProfiles,
+  resolveSeat,
 }: {
   currentUserPubkey: string | null;
   message: CodingSessionLaneMessage;
@@ -29,11 +33,18 @@ export function UmbrellaConversationRow({
    */
   missionRowClassName?: string;
   operatorProfiles: UserProfileLookup | undefined;
+  /**
+   * Names a seat from its actor pubkey. A seat can post into the lane too, and
+   * without this its message read as a bare key — or, when the founder's own
+   * Desktop signed it, as `You`.
+   */
+  resolveSeat?: CodingSessionPromptSeatResolver;
 }) {
-  const authorLabel = resolveCodingSessionPromptAuthorLabel({
+  const author = resolveCodingSessionPromptAuthor({
     currentUserPubkey,
     operatorPubkey: message.authorPubkey,
     profiles: operatorProfiles,
+    resolveSeat,
   });
   return (
     <div
@@ -42,10 +53,15 @@ export function UmbrellaConversationRow({
     >
       <p className="text-2xs text-muted-foreground">
         <span
-          className="font-medium text-foreground/75"
+          className={
+            author.kind === "unrecorded"
+              ? "font-medium text-muted-foreground"
+              : "font-medium text-foreground/75"
+          }
+          data-author-kind={author.kind}
           data-testid="coding-session-umbrella-conversation-author"
         >
-          {authorLabel}
+          {author.label}
         </span>{" "}
         · {formatLaneTimestamp(message.timestampMs)}
       </p>

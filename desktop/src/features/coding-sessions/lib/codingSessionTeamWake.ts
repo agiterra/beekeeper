@@ -375,6 +375,19 @@ export function codingSessionTeamWakeStorageKey(input: {
   )}`;
 }
 
+/**
+ * A valid wake state with nothing in it.
+ *
+ * Exported because "Desktop has never written wake state for this session" is
+ * not the same fact as "no wake was ever observed", and the delivery plane has
+ * to be able to tell them apart. The wire evidence — a provider's 44220 and
+ * its 44224 receipts — exists whether or not this Desktop has a local ledger,
+ * so derivation starts from this rather than being skipped.
+ */
+export function emptyCodingSessionTeamWakeState(): CodingSessionTeamWakeState {
+  return emptyState();
+}
+
 function emptyState(): CodingSessionTeamWakeState {
   return {
     schema: STATE_SCHEMA,
