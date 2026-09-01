@@ -12,6 +12,7 @@ use buzz_core::coding_session_lifecycle_command::{
     CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
 use buzz_core::coding_session_payload::{Capabilities, LifecycleReceipt, SessionMetadata};
+use buzz_core::coding_session_routing::RoutingRecord;
 use buzz_core::coding_session_team_transaction::{
     CodingSessionTeamAssignment, CodingSessionTeamReport, CodingSessionTeamTransactionBody,
 };
@@ -26,6 +27,25 @@ use buzz_sdk::coding_session_team_transaction::{
 
 const BUILDER_ROLE: &str = "builder";
 const LEAD_ROLE: &str = "lead";
+
+fn routing_record(role: &str, provider: &str) -> RoutingRecord {
+    serde_json::from_value(serde_json::json!({
+        "class": role,
+        "tier": "standard",
+        "risk": {"impact": 3, "uncertainty": 3, "irreversibility": 2, "score": 18},
+        "profile": null,
+        "chosen": {"provider": provider, "model": "default", "effort": "medium"},
+        "runnerUp": null,
+        "reason": "fixture route",
+        "reviewRequired": false,
+        "reviewReasons": [],
+        "challengerSample": false,
+        "override": null,
+        "registryVersion": 1,
+        "catalogRevision": 1
+    }))
+    .expect("routing fixture")
+}
 
 struct DriverChannelFixture {
     channel: Uuid,
@@ -104,6 +124,7 @@ fn execution_events(
     role: &str,
     target: &CodingSessionTarget,
 ) -> Vec<Event> {
+    let routing = routing_record(role, provider_instance_ref);
     let command = CodingSessionLifecycleCommandPayload {
         schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
         command_id: command_id.into(),
@@ -119,7 +140,7 @@ fn execution_events(
             initial_turn: None,
             actor: Some(actor.public_key().to_hex()),
             role: Some(role.into()),
-            routing: None,
+            routing: Some(routing.clone()),
         },
     };
     let command_event = build_coding_session_lifecycle_command(channel, &command)
@@ -155,7 +176,7 @@ fn execution_events(
         relay_reachable: None,
         verified_at: None,
         turn_budget: None,
-        routing: None,
+        routing: Some(routing),
     };
     let metadata_event = build_coding_session_metadata(
         channel,

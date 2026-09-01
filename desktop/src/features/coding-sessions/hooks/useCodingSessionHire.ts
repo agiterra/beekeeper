@@ -762,16 +762,11 @@ async function grantSeat(
   deps: CodingSessionHireDeps,
 ): Promise<string | null> {
   try {
-    const target = await deps.awaitSeatReceipt({
+    await deps.awaitSeatReceipt({
       channelId: plan.channelId,
       commandId: plan.commandId,
       providerAuthorityPubkey: plan.providerAuthorityPubkey,
     });
-    if (target.instanceId !== plan.providerInstanceRef) {
-      throw new Error(
-        `the provider receipt targeted ${target.instanceId}, not the requested ${plan.providerInstanceRef}`,
-      );
-    }
   } catch (error) {
     return grantFailureReason(error);
   }

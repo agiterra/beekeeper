@@ -349,14 +349,14 @@ test("metadata carrying a routing record decodes it", () => {
   assert.deepEqual(parsed?.routing, ROUTING_RECORD);
 });
 
-test("metadata with no routing carries none, and an explicit null is absent", () => {
+test("metadata omits absent routing and rejects an explicit null", () => {
   assert.equal(
     parseBuzzCodingSessionMetadata(metadataContent({})).routing,
     undefined,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataContent({ routing: null })).routing,
-    undefined,
+    parseBuzzCodingSessionMetadata(metadataContent({ routing: null })),
+    null,
   );
 });
 

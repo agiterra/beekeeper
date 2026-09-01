@@ -5873,6 +5873,63 @@ written and `bash -n` clean but **was not executed** — that harness needs
        selection as driver publication. Independent adversarial re-review and live relay proof remain
        required before this item may be called landed.
 
+102. **The first live provider-owned wake attempt in `teamstestv2` exposed four
+     independent cross-layer blockers; the correction is implemented for
+     landing on 2026-08-31.** Desktop fallback delivered the report pointer,
+     but that success masked that the provider itself could not have woken the
+     lead. This was not a model behavior problem and is fixed without polling
+     or loading any model context.
+     - **Strict projection:** routed kind-44223 metadata written by Rust carried
+       `routing`, while the same Rust package's strict reader omitted it from
+       the additive field matrix. The core decoder now accepts all 32 valid
+       independent routing/seat/legacy shapes and rejects explicit routing
+       null, in parity with Desktop (`coding_session_payload.rs`,
+       `codingSessionIngressPayloads.ts`). The real provider driver fixture now
+       carries the routed shape that failed live.
+     - **Authority and identity:** launch now establishes receipt-backed
+       provider operator authority, actor operator authority, and the lead's
+       governed `grant-seat(lead)` in that order. Desktop's fold exposes active
+       seats and rejects a revoke whose role does not match the accepted seat,
+       exactly like the provider. Hire no longer compares a provider receipt's
+       cryptographic `cs-target.instanceId` with the human-facing
+       `providerInstanceRef` alias; the receipt was already pinned to the exact
+       command, channel, and provider signer.
+     - **Terminal classification and migration:** new open turns persist
+       whether they came from a verified kind-44220 and are therefore eligible
+       for a missing-report diagnostic; lifecycle create/hire turns never
+       enter that wake lane. Old state defaults toward preserving assignment
+       diagnostics. A legacy lifecycle terminal already in flight remains
+       durable but atomically yields to later reports or terminals, so the
+       exact stuck `teamstestv2` record cannot head-of-line block real work.
+       Crash recovery still publishes the provider-terminal transcript for
+       every open turn; only team-wake capture is gated.
+     - **Provider-primary arbitration:** provider and Desktop command ids may
+       differ, so both sides now settle on the exact signed operation pointer +
+       target rather than producer id. Cross-producer queued/started or exact
+       prompt echo proves delivery; a foreign dropped/refused receipt does not.
+       Desktop waits a durable 15-second grace measured from local discovery,
+       never the seat-authored event time, and records acknowledged source ids
+       in a non-evicting 32,000-entry truth envelope. Transcript trimming,
+       restart, past/future timestamps, or an expired grace cannot resurrect a
+       delivered fallback. Failed/incomplete Mission evidence cannot baseline
+       or migrate that ledger. When Desktop must cover for the provider it
+       says so visibly instead of presenting fallback success as provider
+       health.
+     - **Durable diagnosis:** provider wake intents retain a bounded,
+       control-free `lastReasonDetail`; malformed or oversized persisted values
+       quarantine the store rather than entering product state. The stable
+       reason remains machine-readable while the detail preserves the cause
+       that was missing from the live provider logs.
+     - **Acceptance boundary:** final automated evidence includes the routed
+       driver/publisher T0, the 5,121-source crash/pressure test, old-state and
+       both terminal head-of-line attacks, cross-producer refusal attacks,
+       receipt-backed seat/order tests, Desktop local-time/restart/trim/error
+       ledger attacks, full provider/core/Desktop suites, and repository CI.
+       A fresh live team session must still prove the final product outcome:
+       provider-signed `team-wake-<sha256>` 44220 to the receipt-backed lead,
+       exactly one lead prompt, no `--wake-to`, and a resolved report source in
+       the provider store.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,

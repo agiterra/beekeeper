@@ -165,6 +165,114 @@ fn corrupt_store_bytes_are_quarantined_without_bricking_startup() {
         .any(|name| name.starts_with("team-wake-intents.json.quarantined-")));
 }
 
+#[test]
+fn oversized_or_control_filled_reason_detail_is_quarantined_on_reopen() {
+    for detail in ["x".repeat(1_025), "control\nreason".into()] {
+        let dir = tempdir().expect("tempdir");
+        let channel = Uuid::new_v4();
+        let mut store = WakeIntentStore::open(dir.path()).expect("open");
+        store
+            .capture_report(scope(channel), report(3, 3))
+            .expect("capture");
+        let mut intent = store
+            .pending_for_channel(channel)
+            .expect("promote")
+            .expect("intent");
+        intent.last_reason_detail = Some(detail);
+        store
+            .replace_in_flight(channel, intent)
+            .expect("persist malformed fixture");
+        drop(store);
+
+        let reopened = WakeIntentStore::open(dir.path()).expect("quarantine and reopen");
+        assert!(!reopened.has_work(channel));
+        assert!(fs::read_dir(dir.path())
+            .expect("read state dir")
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .any(|name| name.starts_with("team-wake-intents.json.quarantined-")));
+    }
+}
+
+#[test]
+fn admitted_report_is_promoted_before_an_older_terminal_diagnostic() {
+    let dir = tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let report = report(4, 4);
+    let mut store = WakeIntentStore::open(dir.path()).expect("open");
+    store
+        .capture_terminal(scope(channel), terminal(channel, 4))
+        .expect("terminal");
+    store
+        .capture_report(scope(channel), report.clone())
+        .expect("report");
+    let promoted = store
+        .pending_for_channel(channel)
+        .expect("promote")
+        .expect("intent");
+    assert_eq!(promoted.source.event_id(), report.event_id());
+}
+
+#[test]
+fn already_in_flight_legacy_terminal_yields_to_a_later_report() {
+    let dir = tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let report = report(5, 5);
+    let mut store = WakeIntentStore::open(dir.path()).expect("open");
+    store
+        .capture_terminal(scope(channel), terminal(channel, 5))
+        .expect("terminal");
+    let mut stuck = store
+        .pending_for_channel(channel)
+        .expect("promote terminal")
+        .expect("terminal intent");
+    stuck.last_reason = Some("initiating_command_not_query_visible".into());
+    store
+        .defer_in_flight(channel, stuck.clone())
+        .expect("persist old stuck state");
+    store
+        .capture_report(scope(channel), report.clone())
+        .expect("later report");
+    assert!(store
+        .park_unattempted_terminal_behind_work(channel, stuck)
+        .expect("park legacy terminal"));
+    let promoted = store
+        .pending_for_channel(channel)
+        .expect("promote report")
+        .expect("report intent");
+    assert_eq!(promoted.source.event_id(), report.event_id());
+}
+
+#[test]
+fn already_in_flight_legacy_terminal_yields_to_a_later_terminal() {
+    let dir = tempdir().expect("tempdir");
+    let channel = Uuid::new_v4();
+    let later = terminal(channel, 7);
+    let mut store = WakeIntentStore::open(dir.path()).expect("open");
+    store
+        .capture_terminal(scope(channel), terminal(channel, 6))
+        .expect("legacy terminal");
+    let mut stuck = store
+        .pending_for_channel(channel)
+        .expect("promote legacy")
+        .expect("legacy intent");
+    stuck.last_reason = Some("initiating_command_not_query_visible".into());
+    store
+        .defer_in_flight(channel, stuck.clone())
+        .expect("persist old stuck state");
+    store
+        .capture_terminal(scope(channel), later.clone())
+        .expect("later terminal");
+    assert!(store
+        .park_unattempted_terminal_behind_work(channel, stuck)
+        .expect("rotate legacy terminal"));
+    let promoted = store
+        .pending_for_channel(channel)
+        .expect("promote later terminal")
+        .expect("later intent");
+    assert_eq!(promoted.source.event_id(), later.event_id());
+}
+
 /// v3.1 §1: a failed atomic write poisons this in-memory instance, while a
 /// reopen recovers exactly the last good disk state.
 #[test]
@@ -476,6 +584,11 @@ fn terminal_capture_is_total_under_report_saturation_and_dedupes_by_turn() {
     drop(store);
 
     let mut reopened = WakeIntentStore::open(dir.path()).expect("reopen");
+    for _ in 0..64 {
+        let next = next_pending(&mut reopened, &[channel]).expect("report");
+        assert!(matches!(next.source, WakeSource::Report { .. }));
+        reopened.retire_in_flight(channel).expect("resolve report");
+    }
     let next = next_pending(&mut reopened, &[channel]).expect("terminal");
     assert!(matches!(next.source, WakeSource::Terminal { .. }));
 }
@@ -869,6 +982,30 @@ fn verified_provider_stage_or_exact_prompt_echo_settles_the_wake() {
     context.inbox[0].stage = Some(ReceiptStatus::TurnDegraded);
     assert_eq!(command_outcome(&context, "wake-1", &exact_target), None);
 
+    context.inbox[0].command_id = "desktop-fallback-id".into();
+    context.inbox[0].content = expected_content.clone();
+    context.inbox[0].stage = Some(ReceiptStatus::TurnQueued);
+    assert!(operation_wake_delivered(
+        &context,
+        &exact_target,
+        &expected_content,
+    ));
+    context.inbox[0].content = "different pointer".into();
+    assert!(!operation_wake_delivered(
+        &context,
+        &exact_target,
+        &expected_content,
+    ));
+    context.inbox[0].content = expected_content.clone();
+    for rejected in [ReceiptStatus::TurnDropped, ReceiptStatus::TurnRefused] {
+        context.inbox[0].stage = Some(rejected);
+        assert!(
+            !operation_wake_delivered(&context, &exact_target, &expected_content),
+            "a foreign producer's terminal refusal is not delivery"
+        );
+    }
+    context.inbox[0].command_id = "wake-1".into();
+
     context.history.push(CodingSessionContextHistoryItem {
         event_id: "33".repeat(32),
         created_at: 12,
@@ -896,6 +1033,12 @@ fn verified_provider_stage_or_exact_prompt_echo_settles_the_wake() {
     assert!(command_echoed(
         &context,
         "wake-1",
+        &exact_target,
+        &expected_content,
+    ));
+    context.history[0].content["commandId"] = serde_json::json!("another-producer-id");
+    assert!(operation_wake_delivered(
+        &context,
         &exact_target,
         &expected_content,
     ));

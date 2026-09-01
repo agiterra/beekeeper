@@ -158,6 +158,7 @@ test("accepted grants fold in seq order; revoke removes the live grant", () => {
     receipts,
   });
   assert.deepEqual([...fold.accepted.entries()], [[BOB, "viewer"]]);
+  assert.deepEqual([...fold.activeSeats.entries()], []);
   assert.deepEqual(fold.acceptedHead, {
     eventId: transitions[2].id,
     seq: 3,
@@ -203,6 +204,23 @@ test("accepted seat links advance the head without entering the legacy roster", 
     seq: 3,
   });
   assert.deepEqual(fold.pending, []);
+});
+
+test("a revoke-seat must match the active accepted role before advancing the head", () => {
+  const { transitions, receipts } = acceptedChain([
+    { type: "grant-seat", granteePubkey: ALICE, role: "builder" },
+    { type: "revoke-seat", granteePubkey: ALICE, role: "verifier" },
+  ]);
+  const fold = foldRoster({
+    genesisRef: GENESIS_REF,
+    transitions,
+    receipts,
+  });
+  assert.deepEqual([...fold.activeSeats.entries()], [[ALICE, "builder"]]);
+  assert.deepEqual(fold.acceptedHead, {
+    eventId: transitions[0].id,
+    seq: 1,
+  });
 });
 
 test("seat links fail closed on role mismatch, invalid role, or extra facts", () => {
@@ -535,6 +553,38 @@ test("transition builder emits the exact envelope and five-field payload", () =>
     type: "grant-operator",
     granteePubkey: ALICE,
   });
+});
+
+test("seat transition builder emits the exact role-bound six-field payload", () => {
+  const event = buildCodingSessionAuthorityTransitionEvent({
+    channelId: CHANNEL_ID,
+    genesisRef: GENESIS_REF,
+    prevAccepted: null,
+    seq: 1,
+    type: "grant-seat",
+    granteePubkey: ALICE,
+    role: "lead",
+  });
+  assert.deepEqual(JSON.parse(event.content), {
+    genesisRef: GENESIS_REF,
+    prevAccepted: null,
+    seq: 1,
+    type: "grant-seat",
+    granteePubkey: ALICE,
+    role: "lead",
+  });
+  assert.throws(
+    () =>
+      buildCodingSessionAuthorityTransitionEvent({
+        channelId: CHANNEL_ID,
+        genesisRef: GENESIS_REF,
+        prevAccepted: null,
+        seq: 1,
+        type: "grant-seat",
+        granteePubkey: ALICE,
+      }),
+    /role must be one lowercase role slug/,
+  );
 });
 
 test("transition builder rejects seq/prevAccepted disagreement", () => {

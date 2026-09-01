@@ -86,6 +86,57 @@ export async function ensureCodingSessionOperatorGrant(
   );
 }
 
+/** Ensure one actor holds a receipt-backed governed seat and exact role. */
+export async function ensureCodingSessionSeatGrant(
+  input: {
+    channelId: string;
+    genesisRef: string;
+    actorPubkey: string;
+    role: string;
+  },
+  dependencies: CodingSessionOperatorGrantDependencies = {},
+): Promise<CodingSessionOperatorGrantResult> {
+  const fetchFold = dependencies.fetchFold ?? fetchCodingSessionRosterFold;
+  const publishTransition =
+    dependencies.publishTransition ?? publishCodingSessionAuthorityTransition;
+  const wait =
+    dependencies.wait ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) =>
+        globalThis.setTimeout(resolve, milliseconds),
+      ));
+  const attempts = Math.max(
+    1,
+    dependencies.receiptPollAttempts ?? RECEIPT_POLL_ATTEMPTS,
+  );
+  const actorPubkey = input.actorPubkey.toLowerCase();
+  const before = await fetchFold(input.channelId, input.genesisRef);
+  if (before.activeSeats.get(actorPubkey) === input.role) {
+    return { status: "already-active", eventId: null };
+  }
+  if (before.activeSeats.has(actorPubkey)) {
+    throw new Error("The actor already holds a different governed seat role.");
+  }
+
+  const event = await publishTransition({
+    channelId: input.channelId,
+    genesisRef: input.genesisRef,
+    type: "grant-seat",
+    granteePubkey: actorPubkey,
+    role: input.role,
+  });
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const confirmed = await fetchFold(input.channelId, input.genesisRef);
+    if (confirmed.activeSeats.get(actorPubkey) === input.role) {
+      return { status: "granted", eventId: event.id };
+    }
+    if (attempt + 1 < attempts) await wait(RECEIPT_POLL_DELAY_MS);
+  }
+  throw new Error(
+    "The relay accepted the seat transition, but its signed receipt did not appear in the session authority chain.",
+  );
+}
+
 /**
  * Grant a newly created session's provider before its optional actor.
  *

@@ -11,6 +11,9 @@ import {
   pendingCodingSessionTeamWake,
   readCodingSessionTeamWakeState,
   recordCodingSessionTeamWakeAttempt,
+  observeCodingSessionTeamWake,
+  codingSessionTeamWakeFallbackNotBefore,
+  codingSessionTeamWakeEvidenceIsComplete,
   writeCodingSessionTeamWakeState,
 } from "./codingSessionTeamWake.ts";
 
@@ -350,6 +353,26 @@ test("an existing provider echo suppresses an already-addressed operation", () =
   );
 });
 
+test("a differently named provider wake suppresses the Desktop fallback by operation id", () => {
+  const candidate = deriveCodingSessionTeamWakePlan({
+    umbrella: umbrella(),
+    evidence: evidence({ withReport: true }),
+    currentUserPubkey: FOUNDER,
+    sessionClosed: false,
+  }).candidates[0];
+  assert.equal(
+    pendingCodingSessionTeamWake({
+      state: baselineCodingSessionTeamWakes([]),
+      candidates: [candidate],
+      leadTarget: LEAD_TARGET,
+      acknowledgedCommandIds: new Set(),
+      acknowledgedSourceEventIds: new Set([candidate.sourceEventId]),
+      attemptedThisMount: new Set(),
+    }),
+    null,
+  );
+});
+
 test("lead generation changes get a distinct deterministic dedupe id", async () => {
   const candidate = deriveCodingSessionTeamWakePlan({
     umbrella: umbrella(),
@@ -403,4 +426,131 @@ test("durable state round-trips and malformed state fails closed", () => {
     }),
   );
   assert.deepEqual(readCodingSessionTeamWakeState(storage, "key")?.pending, []);
+});
+
+test("provider-first fallback grace is persisted from local observation, never source time", () => {
+  const candidate = {
+    ...deriveCodingSessionTeamWakePlan({
+      umbrella: umbrella(),
+      evidence: evidence(),
+      currentUserPubkey: FOUNDER,
+      sessionClosed: false,
+    }).candidates[0],
+    sourceCreatedAtMs: 1,
+  };
+  const state = observeCodingSessionTeamWake(
+    baselineCodingSessionTeamWakes([]),
+    candidate.sourceEventId,
+    50_000,
+  );
+  assert.equal(
+    codingSessionTeamWakeFallbackNotBefore(state, candidate.sourceEventId),
+    50_000,
+  );
+  assert.equal(
+    observeCodingSessionTeamWake(state, candidate.sourceEventId, 99_000),
+    state,
+    "a re-render cannot move an already persisted deadline",
+  );
+  const storage = new MemoryStorage();
+  writeCodingSessionTeamWakeState(storage, "grace", state);
+  assert.equal(
+    codingSessionTeamWakeFallbackNotBefore(
+      readCodingSessionTeamWakeState(storage, "grace"),
+      candidate.sourceEventId,
+    ),
+    50_000,
+    "restart preserves the locally observed grace deadline",
+  );
+});
+
+test("provider operation acknowledgement remains resolved after its transcript echo ages out", () => {
+  const candidate = deriveCodingSessionTeamWakePlan({
+    umbrella: umbrella(),
+    evidence: evidence(),
+    currentUserPubkey: FOUNDER,
+    sessionClosed: false,
+  }).candidates[0];
+  const observed = observeCodingSessionTeamWake(
+    baselineCodingSessionTeamWakes([]),
+    candidate.sourceEventId,
+    50_000,
+  );
+  const resolved = acknowledgeCodingSessionTeamWakes(
+    observed,
+    new Set(),
+    new Set([candidate.sourceEventId]),
+  );
+  assert.deepEqual(resolved.observed, []);
+  assert.deepEqual(resolved.resolvedSourceEventIds, [candidate.sourceEventId]);
+  assert.equal(
+    pendingCodingSessionTeamWake({
+      state: resolved,
+      candidates: [candidate],
+      leadTarget: LEAD_TARGET,
+      acknowledgedCommandIds: new Set(),
+      acknowledgedSourceEventIds: new Set(),
+      attemptedThisMount: new Set(),
+    }),
+    null,
+    "the durable source ledger survives after the bounded echo projection forgets it",
+  );
+});
+
+test("failed or saturated evidence cannot initialize or migrate the durable wake ledger", () => {
+  assert.equal(
+    codingSessionTeamWakeEvidenceIsComplete({
+      isLoading: false,
+      errorMessage: "Mission evidence overflowed its exact bound.",
+    }),
+    false,
+  );
+  assert.equal(
+    codingSessionTeamWakeEvidenceIsComplete({
+      isLoading: false,
+      errorMessage: null,
+    }),
+    true,
+  );
+});
+
+test("author timestamps never decide discovery after the legacy cursor is migrated", () => {
+  const template = deriveCodingSessionTeamWakePlan({
+    umbrella: umbrella(),
+    evidence: evidence(),
+    currentUserPubkey: FOUNDER,
+    sessionClosed: false,
+  }).candidates[0];
+  const future = {
+    ...template,
+    sourceEventId: "e".repeat(64),
+    sourceCreatedAtMs: 99_000,
+  };
+  const past = {
+    ...template,
+    sourceEventId: "1".repeat(64),
+    sourceCreatedAtMs: 1,
+  };
+  const attempted = recordCodingSessionTeamWakeAttempt({
+    state: baselineCodingSessionTeamWakes([]),
+    candidate: future,
+    commandId: "future-wake",
+    leadTarget: LEAD_TARGET,
+    acknowledgedCommandIds: new Set(),
+  });
+  const resolved = acknowledgeCodingSessionTeamWakes(
+    attempted,
+    new Set(["future-wake"]),
+  );
+  assert.equal(resolved.cursor, null);
+  assert.equal(
+    pendingCodingSessionTeamWake({
+      state: resolved,
+      candidates: [future, past],
+      leadTarget: LEAD_TARGET,
+      acknowledgedCommandIds: new Set(),
+      attemptedThisMount: new Set(),
+    }).sourceEventId,
+    past.sourceEventId,
+  );
 });

@@ -188,6 +188,12 @@ export type CodingSessionCrewLaunchDeps = {
     genesisRef: string;
     granteePubkey: string;
   }) => Promise<void>;
+  grantLeadSeat: (input: {
+    channelId: string;
+    genesisRef: string;
+    actorPubkey: string;
+    role: string;
+  }) => Promise<void>;
   sendFirstTurn: (input: {
     channelId: string;
     target: CodingSessionCommandTarget;
@@ -694,12 +700,18 @@ export async function launchCodingSessionCrew(
       genesisRef,
       granteePubkey: lead.actor,
     });
+    await deps.grantLeadSeat({
+      channelId: launchChannelId,
+      genesisRef,
+      actorPubkey: lead.actor,
+      role: "lead",
+    });
   } catch (error) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
       describe(
         error,
-        `${lead.actorLabel} was seated but could not be granted operator, so it cannot steer its siblings.`,
+        `${lead.actorLabel} was seated but could not receive its operator and governed lead grants.`,
       ),
       sessionRef,
       genesisRef,

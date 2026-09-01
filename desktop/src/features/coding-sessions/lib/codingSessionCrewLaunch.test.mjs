@@ -71,6 +71,9 @@ function recordingDeps(overrides = {}) {
     grantOperator: async ({ granteePubkey }) => {
       log.push(`grant:${granteePubkey.slice(0, 4)}`);
     },
+    grantLeadSeat: async ({ actorPubkey, role }) => {
+      log.push(`seat:${actorPubkey.slice(0, 4)}:${role}`);
+    },
     sendFirstTurn: async ({ text }) => {
       log.push("turn");
       deps.sentText = text;
@@ -281,7 +284,7 @@ test("a failed grant is named rather than swallowed", async () => {
   const result = await launchCodingSessionCrew(INPUT, deps);
   assert.equal(result.ok, false);
   assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_GRANT_STEP);
-  assert.match(result.failureReason, /cannot steer its siblings/);
+  assert.match(result.failureReason, /governed lead grants/);
   assert.equal(result.seats.length, 1);
   assert.ok(!deps.log.includes("turn"));
 });
@@ -452,6 +455,7 @@ test("a launch publishes exactly one seated create — the lead's", async () => 
     "publish:lead",
     "receipt:lead",
     `grant:${LEAD.actor.slice(0, 4)}`,
+    `seat:${LEAD.actor.slice(0, 4)}:lead`,
     "turn",
   ]);
   assert.equal(result.seats.length, 1);

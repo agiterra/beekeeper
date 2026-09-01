@@ -12,6 +12,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const STATE_SCHEMA = "buzz-coding-session-team-wake-state/v1";
 const STORAGE_PREFIX = "buzz:coding-session-team-wake:v1:";
 const MAX_PENDING_WAKES = 128;
+const MAX_RESOLVED_SOURCES = 32_000;
 const MAX_COMMAND_ID_BYTES = 256;
 const MAX_ROLE_BYTES = 64;
 
@@ -38,6 +39,8 @@ export type CodingSessionTeamWakeState = {
   schema: typeof STATE_SCHEMA;
   cursor: { createdAtMs: number; sourceEventId: string } | null;
   pending: CodingSessionTeamWakeAttempt[];
+  observed: Array<{ sourceEventId: string; fallbackNotBeforeMs: number }>;
+  resolvedSourceEventIds: string[];
 };
 
 export type CodingSessionTeamWakePlan = {
@@ -45,6 +48,13 @@ export type CodingSessionTeamWakePlan = {
   candidates: CodingSessionTeamWakeCandidate[];
   refusal: string | null;
 };
+
+export function codingSessionTeamWakeEvidenceIsComplete(input: {
+  isLoading: boolean;
+  errorMessage: string | null;
+}): boolean {
+  return !input.isLoading && input.errorMessage === null;
+}
 
 function normalizedRole(role: string | null): string | null {
   const value = role?.trim().toLowerCase() ?? "";
@@ -317,7 +327,13 @@ export function codingSessionTeamWakeStorageKey(input: {
 }
 
 function emptyState(): CodingSessionTeamWakeState {
-  return { schema: STATE_SCHEMA, cursor: null, pending: [] };
+  return {
+    schema: STATE_SCHEMA,
+    cursor: null,
+    pending: [],
+    observed: [],
+    resolvedSourceEventIds: [],
+  };
 }
 
 function isCandidate(value: unknown): value is CodingSessionTeamWakeCandidate {
@@ -385,6 +401,21 @@ export function readCodingSessionTeamWakeState(
       );
     },
   );
+  const observed = (
+    Array.isArray(record.observed) ? record.observed : []
+  ).filter(
+    (row): row is { sourceEventId: string; fallbackNotBeforeMs: number } =>
+      !!row &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      exactEventId(row.sourceEventId) &&
+      Number.isSafeInteger(row.fallbackNotBeforeMs) &&
+      row.fallbackNotBeforeMs >= 0,
+  );
+  const resolvedSourceEventIds = Array.isArray(record.resolvedSourceEventIds)
+    ? record.resolvedSourceEventIds.filter(exactEventId)
+    : [];
+  if (resolvedSourceEventIds.length > MAX_RESOLVED_SOURCES) return null;
   return {
     schema: STATE_SCHEMA,
     cursor: cursor ? { ...cursor } : null,
@@ -392,6 +423,8 @@ export function readCodingSessionTeamWakeState(
       ...attempt,
       candidate: { ...attempt.candidate },
     })),
+    observed: observed.slice(-MAX_PENDING_WAKES).map((row) => ({ ...row })),
+    resolvedSourceEventIds: [...new Set(resolvedSourceEventIds)],
   };
 }
 
@@ -405,22 +438,68 @@ export function writeCodingSessionTeamWakeState(
     JSON.stringify({
       ...state,
       pending: state.pending.slice(-MAX_PENDING_WAKES),
+      observed: state.observed.slice(-MAX_PENDING_WAKES),
     }),
+  );
+}
+
+export function observeCodingSessionTeamWake(
+  state: CodingSessionTeamWakeState,
+  sourceEventId: string,
+  fallbackNotBeforeMs: number,
+): CodingSessionTeamWakeState {
+  if (
+    !exactEventId(sourceEventId) ||
+    !Number.isSafeInteger(fallbackNotBeforeMs) ||
+    fallbackNotBeforeMs < 0 ||
+    state.observed.some((row) => row.sourceEventId === sourceEventId)
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    observed: [...state.observed, { sourceEventId, fallbackNotBeforeMs }].slice(
+      -MAX_PENDING_WAKES,
+    ),
+  };
+}
+
+export function codingSessionTeamWakeFallbackNotBefore(
+  state: CodingSessionTeamWakeState,
+  sourceEventId: string,
+): number | null {
+  return (
+    state.observed.find((row) => row.sourceEventId === sourceEventId)
+      ?.fallbackNotBeforeMs ?? null
   );
 }
 
 export function baselineCodingSessionTeamWakes(
   candidates: readonly CodingSessionTeamWakeCandidate[],
 ): CodingSessionTeamWakeState {
-  const newest = [...candidates].sort(compareCandidate).at(-1) ?? null;
   return {
     ...emptyState(),
-    cursor: newest
-      ? {
-          createdAtMs: newest.sourceCreatedAtMs,
-          sourceEventId: newest.sourceEventId,
-        }
-      : null,
+    resolvedSourceEventIds: [
+      ...new Set(candidates.map((row) => row.sourceEventId)),
+    ],
+  };
+}
+
+export function migrateCodingSessionTeamWakeCursor(
+  state: CodingSessionTeamWakeState,
+  candidates: readonly CodingSessionTeamWakeCandidate[],
+): CodingSessionTeamWakeState {
+  if (state.cursor === null) return state;
+  const resolved = new Set(state.resolvedSourceEventIds);
+  for (const candidate of candidates) {
+    if (!isAfterCursor(candidate, state.cursor)) {
+      resolved.add(candidate.sourceEventId);
+    }
+  }
+  return {
+    ...state,
+    cursor: null,
+    resolvedSourceEventIds: [...resolved].slice(0, MAX_RESOLVED_SOURCES),
   };
 }
 
@@ -429,6 +508,7 @@ export function pendingCodingSessionTeamWake(input: {
   candidates: readonly CodingSessionTeamWakeCandidate[];
   leadTarget: CodingSessionCommandTarget;
   acknowledgedCommandIds: ReadonlySet<string>;
+  acknowledgedSourceEventIds?: ReadonlySet<string>;
   attemptedThisMount: ReadonlySet<string>;
 }): CodingSessionTeamWakeCandidate | null {
   const targetKey = buildCodingSessionTargetKey(input.leadTarget);
@@ -436,7 +516,9 @@ export function pendingCodingSessionTeamWake(input: {
     input.candidates.map((candidate) => [candidate.sourceEventId, candidate]),
   );
   const unresolved = input.state.pending.filter(
-    (attempt) => !input.acknowledgedCommandIds.has(attempt.commandId),
+    (attempt) =>
+      !input.acknowledgedCommandIds.has(attempt.commandId) &&
+      !input.acknowledgedSourceEventIds?.has(attempt.sourceEventId),
   );
   const retry = unresolved.find(
     (attempt) =>
@@ -448,7 +530,8 @@ export function pendingCodingSessionTeamWake(input: {
   return (
     input.candidates.find(
       (candidate) =>
-        isAfterCursor(candidate, input.state.cursor) &&
+        !input.state.resolvedSourceEventIds.includes(candidate.sourceEventId) &&
+        !input.acknowledgedSourceEventIds?.has(candidate.sourceEventId) &&
         !(
           candidate.preferredCommandId &&
           input.acknowledgedCommandIds.has(candidate.preferredCommandId)
@@ -463,11 +546,13 @@ export function recordCodingSessionTeamWakeAttempt(input: {
   commandId: string;
   leadTarget: CodingSessionCommandTarget;
   acknowledgedCommandIds: ReadonlySet<string>;
+  acknowledgedSourceEventIds?: ReadonlySet<string>;
 }): CodingSessionTeamWakeState {
   const pending = input.state.pending.filter(
     (attempt) =>
       attempt.sourceEventId !== input.candidate.sourceEventId &&
-      !input.acknowledgedCommandIds.has(attempt.commandId),
+      !input.acknowledgedCommandIds.has(attempt.commandId) &&
+      !input.acknowledgedSourceEventIds?.has(attempt.sourceEventId),
   );
   pending.push({
     sourceEventId: input.candidate.sourceEventId,
@@ -475,29 +560,47 @@ export function recordCodingSessionTeamWakeAttempt(input: {
     leadTargetKey: buildCodingSessionTargetKey(input.leadTarget),
     candidate: { ...input.candidate },
   });
-  const cursorCandidate = {
-    createdAtMs: input.candidate.sourceCreatedAtMs,
-    sourceEventId: input.candidate.sourceEventId,
-  };
-  const cursor = isAfterCursor(input.candidate, input.state.cursor)
-    ? cursorCandidate
-    : input.state.cursor;
   return {
     schema: STATE_SCHEMA,
-    cursor,
+    cursor: input.state.cursor,
     pending: pending.slice(-MAX_PENDING_WAKES),
+    observed: input.state.observed.filter(
+      (row) => row.sourceEventId !== input.candidate.sourceEventId,
+    ),
+    resolvedSourceEventIds: input.state.resolvedSourceEventIds,
   };
 }
 
 export function acknowledgeCodingSessionTeamWakes(
   state: CodingSessionTeamWakeState,
   acknowledgedCommandIds: ReadonlySet<string>,
+  acknowledgedSourceEventIds: ReadonlySet<string> = new Set(),
 ): CodingSessionTeamWakeState {
+  const resolved = new Set(state.resolvedSourceEventIds);
+  for (const sourceEventId of acknowledgedSourceEventIds) {
+    if (exactEventId(sourceEventId)) resolved.add(sourceEventId);
+  }
+  for (const attempt of state.pending) {
+    if (
+      acknowledgedCommandIds.has(attempt.commandId) ||
+      acknowledgedSourceEventIds.has(attempt.sourceEventId)
+    ) {
+      resolved.add(attempt.sourceEventId);
+    }
+  }
+  const resolvedSourceEventIds = [...resolved].slice(0, MAX_RESOLVED_SOURCES);
+  const resolvedSet = new Set(resolvedSourceEventIds);
   return {
     ...state,
     pending: state.pending.filter(
-      (attempt) => !acknowledgedCommandIds.has(attempt.commandId),
+      (attempt) =>
+        !acknowledgedCommandIds.has(attempt.commandId) &&
+        !acknowledgedSourceEventIds.has(attempt.sourceEventId),
     ),
+    observed: state.observed.filter(
+      (row) => !resolvedSet.has(row.sourceEventId),
+    ),
+    resolvedSourceEventIds,
   };
 }
 

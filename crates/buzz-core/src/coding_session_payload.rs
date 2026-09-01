@@ -927,12 +927,12 @@ pub struct TurnBudget {
 /// Four independent additive amendments have landed on this struct at
 /// different times — the `sessionRef` echo, B1's four coordinate-fact keys,
 /// the agent seat's `role`, then D9's `turnBudget` — and each one is present
-/// or absent on its own, so the base key set has **sixteen** valid shapes,
+/// or absent on its own, so the base key set has **thirty-two** valid shapes,
 /// not four: base, and base plus any combination of `sessionRef`, `role`,
-/// `turnBudget`, and the four fact keys taken together. Mirrors the
+/// `turnBudget`, `routing`, and the four fact keys taken together. Mirrors the
 /// exact-fields discipline in `coding_session_lifecycle_command.rs`
 /// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape
-/// in between or beyond those sixteen — a partial subset of the four fact
+/// in between or beyond those thirty-two — a partial subset of the four fact
 /// keys, or any field this struct does not know — is rejected, not
 /// tolerated.
 const METADATA_BASE_FIELDS: &[&str] = &[
@@ -957,10 +957,13 @@ const METADATA_FACT_FIELDS: &[&str] = &["observedCommit", "dirty", "relayReachab
 /// The budget amendment's one additive key (D9). Independent of the other
 /// three, so it doubles the accepted shape count from eight to sixteen.
 const METADATA_TURN_BUDGET_FIELD: &str = "turnBudget";
+/// The routing amendment's one additive key. The producer omits an absent
+/// record, so an explicit null is not one of the accepted wire shapes.
+const METADATA_ROUTING_FIELD: &str = "routing";
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
-/// Accepts exactly the sixteen field-set shapes documented above
+/// Accepts exactly the thirty-two field-set shapes documented above
 /// `METADATA_BASE_FIELDS`; anything else — an unknown key, or a B1 fact
 /// key present without its three siblings — is a hard rejection. A second
 /// pass through `serde_json` (after the shape check) picks up serde's own
@@ -981,6 +984,14 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     let has_session_ref = object.contains_key(METADATA_SESSION_REF_FIELD);
     let has_role = object.contains_key(METADATA_ROLE_FIELD);
     let has_turn_budget = object.contains_key(METADATA_TURN_BUDGET_FIELD);
+    let has_routing = object.contains_key(METADATA_ROUTING_FIELD);
+    if has_routing
+        && object
+            .get(METADATA_ROUTING_FIELD)
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err("coding-session metadata routing must not be null".to_string());
+    }
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -1003,6 +1014,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_turn_budget {
         expected.push(METADATA_TURN_BUDGET_FIELD);
+    }
+    if has_routing {
+        expected.push(METADATA_ROUTING_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -1983,6 +1997,47 @@ mod tests {
             Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
         );
         assert!(decoded.observed_commit.is_none());
+    }
+
+    #[test]
+    fn decode_metadata_accepts_the_writer_routing_shape_and_rejects_null() {
+        let mut metadata = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": "ab".repeat(32),
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": "sonnet",
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "role": "builder",
+            "routing": {
+                "class": "builder",
+                "tier": "standard",
+                "risk": {"impact": 3, "uncertainty": 3, "irreversibility": 2, "score": 18},
+                "profile": null,
+                "chosen": {"provider": "claude-primary", "model": "sonnet", "effort": "medium"},
+                "runnerUp": null,
+                "reason": "cleared the builder gate",
+                "reviewRequired": false,
+                "reviewReasons": [],
+                "challengerSample": false,
+                "override": null,
+                "registryVersion": 1,
+                "catalogRevision": 7
+            }
+        });
+        let decoded =
+            decode_coding_session_metadata(&metadata.to_string()).expect("writer routing form");
+        assert!(decoded.routing.is_some());
+
+        metadata["routing"] = serde_json::Value::Null;
+        assert!(decode_coding_session_metadata(&metadata.to_string()).is_err());
     }
 
     /// The two current B1 forms — facts alone, and facts plus `sessionRef` —

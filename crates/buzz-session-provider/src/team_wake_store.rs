@@ -160,13 +160,14 @@ impl WakeIntentStore {
                     source.scope.channel_ref == channel.channel_ref
                         && matches!(source.source, WakeSource::Report { .. })
                 })
-                && channel
-                    .in_flight
-                    .as_ref()
-                    .is_none_or(|intent| intent.scope.channel_ref == channel.channel_ref)
+                && channel.in_flight.as_ref().is_none_or(|intent| {
+                    intent.scope.channel_ref == channel.channel_ref
+                        && valid_reason_detail(intent.last_reason_detail.as_deref())
+                })
                 && channel.terminals.iter().all(|intent| {
                     intent.scope.channel_ref == channel.channel_ref
                         && matches!(intent.source, WakeSource::Terminal { .. })
+                        && valid_reason_detail(intent.last_reason_detail.as_deref())
                 })
                 && Self::report_count(channel) <= MAX_RESOLVED_PER_CHANNEL
                 && Self::channel_unique(channel)
@@ -266,6 +267,7 @@ impl WakeIntentStore {
             relay_accepted_at: None,
             attempt: 0,
             last_reason: None,
+            last_reason_detail: None,
         }
     }
 
@@ -473,11 +475,11 @@ impl WakeIntentStore {
         }
         let promoted = channel.in_flight.is_none();
         if channel.in_flight.is_none() {
-            let intent = if !channel.terminals.is_empty() {
-                channel.terminals.remove(0)
-            } else {
+            let intent = if !channel.admitted.is_empty() {
                 let source = channel.admitted.remove(0);
                 Self::intent(source.scope, source.source)
+            } else {
+                channel.terminals.remove(0)
             };
             channel.in_flight = Some(intent);
         }
@@ -524,6 +526,39 @@ impl WakeIntentStore {
 
     pub fn defer_in_flight(&mut self, channel_ref: Uuid, intent: WakeIntent) -> io::Result<()> {
         self.replace_in_flight(channel_ref, intent)
+    }
+
+    /// Move an unattempted terminal behind already-admitted durable work.
+    ///
+    /// This is the migration path for lifecycle terminals captured by the
+    /// pre-gating provider. Their initiating 44221 is deliberately absent
+    /// from the 44220 inbox, so they can never prove a report requirement.
+    /// They remain durable evidence, but may not head-of-line block a report
+    /// or a later terminal whose initiating turn can still be verified.
+    pub fn park_unattempted_terminal_behind_work(
+        &mut self,
+        channel_ref: Uuid,
+        intent: WakeIntent,
+    ) -> io::Result<bool> {
+        let index = self.channel_index_required(channel_ref)?;
+        let channel = &mut self.channels[index];
+        if (channel.admitted.is_empty() && channel.terminals.is_empty())
+            || intent.signed_event.is_some()
+            || intent.relay_accepted_at.is_some()
+            || !matches!(intent.source, WakeSource::Terminal { .. })
+        {
+            return Ok(false);
+        }
+        let Some(current) = channel.in_flight.as_ref() else {
+            return Ok(false);
+        };
+        if current.source.event_id() != intent.source.event_id() {
+            return Ok(false);
+        }
+        channel.in_flight = None;
+        channel.terminals.push(intent);
+        self.persist()?;
+        Ok(true)
     }
 
     /// Resolve the selected source. Report ids enter the permanent ledger; terminals do not.
@@ -616,6 +651,10 @@ impl WakeIntentStore {
                 )
             })
     }
+}
+
+fn valid_reason_detail(detail: Option<&str>) -> bool {
+    detail.is_none_or(|value| value.len() <= 1_024 && !value.chars().any(char::is_control))
 }
 
 fn select_after(cursor: Option<Uuid>, channels: impl IntoIterator<Item = Uuid>) -> Option<Uuid> {

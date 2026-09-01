@@ -835,38 +835,40 @@ impl Provider {
                         ),
                         Priority::High,
                     )?;
-                    if let (
-                        Some((_, terminal_event_id)),
-                        Some(actor),
-                        Some(role),
-                        Some(session_ref),
-                        Some(genesis_ref),
-                        Some(caused_by_command_id),
-                    ) = (
-                        terminal,
-                        record.actor.clone(),
-                        record.role.clone().filter(|role| role != "lead"),
-                        record.session_ref.clone(),
-                        record.genesis_ref.clone(),
-                        open_turn.command_id.clone(),
-                    ) {
-                        let scope = team_wake::WakeScope {
-                            channel_ref: record.channel_id,
-                            session_ref,
-                            genesis_ref,
-                        };
-                        self.team_wakes.capture_terminal(
-                            scope,
-                            team_wake::WakeSource::Terminal {
-                                terminal_event_id,
-                                actor_pubkey: actor,
-                                role,
-                                caused_by_command_id,
-                                source_target: target.clone(),
-                                prompt_at_ms: Some(open_turn.started_at_ms),
-                                terminal_at_ms,
-                            },
-                        )?;
+                    if open_turn.team_wake_eligible {
+                        if let (
+                            Some((_, terminal_event_id)),
+                            Some(actor),
+                            Some(role),
+                            Some(session_ref),
+                            Some(genesis_ref),
+                            Some(caused_by_command_id),
+                        ) = (
+                            terminal,
+                            record.actor.clone(),
+                            record.role.clone().filter(|role| role != "lead"),
+                            record.session_ref.clone(),
+                            record.genesis_ref.clone(),
+                            open_turn.command_id.clone(),
+                        ) {
+                            let scope = team_wake::WakeScope {
+                                channel_ref: record.channel_id,
+                                session_ref,
+                                genesis_ref,
+                            };
+                            self.team_wakes.capture_terminal(
+                                scope,
+                                team_wake::WakeSource::Terminal {
+                                    terminal_event_id,
+                                    actor_pubkey: actor,
+                                    role,
+                                    caused_by_command_id,
+                                    source_target: target.clone(),
+                                    prompt_at_ms: Some(open_turn.started_at_ms),
+                                    terminal_at_ms,
+                                },
+                            )?;
+                        }
                     }
                 }
             }
@@ -1649,10 +1651,12 @@ impl Provider {
             Err(error) => {
                 tracing::warn!(target: "csp::team_wake", %error, "team wake facts are not currently provable");
                 intent.last_reason = Some("verified_snapshot_unavailable".into());
+                intent.last_reason_detail = team_wake::bounded_reason_detail(&error.to_string());
                 self.defer_team_wake(intent)?;
                 return Ok(());
             }
         };
+        intent.last_reason_detail = None;
 
         if !team_wake::provider_may_wake(
             &self.pubkey_hex,
@@ -1726,6 +1730,22 @@ impl Provider {
                 terminal_at_ms,
                 ..
             } => {
+                let lifecycle_turn =
+                    self.state
+                        .session(&source_target.session_id)
+                        .is_some_and(|record| {
+                            self.target_for(record) == *source_target
+                                && record.generation_command_id() == caused_by_command_id
+                        });
+                if lifecycle_turn {
+                    tracing::info!(
+                        target: "csp::team_wake",
+                        %caused_by_command_id,
+                        "discarding lifecycle-turn terminal from the team-wake queue"
+                    );
+                    self.retire_team_wake(channel_ref)?;
+                    return Ok(());
+                }
                 let context = team_wake::fold_context(
                     &intent.scope,
                     &snapshot.founder_pubkey,
@@ -1746,6 +1766,14 @@ impl Provider {
                     }
                     team_wake::TurnReportRequirement::Unknown(reason) => {
                         intent.last_reason = Some(reason.into());
+                        if reason == "initiating_command_not_query_visible"
+                            && self.team_wakes.park_unattempted_terminal_behind_work(
+                                channel_ref,
+                                intent.clone(),
+                            )?
+                        {
+                            return Ok(());
+                        }
                         self.defer_team_wake(intent)?;
                         return Ok(());
                     }
@@ -1782,19 +1810,24 @@ impl Provider {
         let expected_wake_text = team_wake::wake_text(&intent.source)
             .map_err(|error| anyhow::anyhow!("team wake pointer could not be encoded: {error}"))?;
         if let Some(old_target) = intent.target.as_ref().filter(|old| *old != &target) {
-            if let Some(old_command_id) = intent.command_id.as_deref() {
-                if team_wake::command_outcome(&snapshot.package, old_command_id, old_target)
-                    .is_some()
+            let old_command_settled = intent.command_id.as_deref().is_some_and(|command_id| {
+                team_wake::command_outcome(&snapshot.package, command_id, old_target).is_some()
                     || team_wake::command_echoed(
                         &snapshot.package,
-                        old_command_id,
+                        command_id,
                         old_target,
                         &expected_wake_text,
                     )
-                {
-                    self.retire_team_wake(channel_ref)?;
-                    return Ok(());
-                }
+            });
+            if old_command_settled
+                || team_wake::operation_wake_delivered(
+                    &snapshot.package,
+                    old_target,
+                    &expected_wake_text,
+                )
+            {
+                self.retire_team_wake(channel_ref)?;
+                return Ok(());
             }
             intent.target = None;
             intent.command_id = None;
@@ -1830,6 +1863,7 @@ impl Provider {
                 &target,
                 &expected_wake_text,
             )
+            || team_wake::operation_wake_delivered(&snapshot.package, &target, &expected_wake_text)
         {
             self.retire_team_wake(channel_ref)?;
             return Ok(());
@@ -4478,10 +4512,15 @@ impl Provider {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
+                // Only kind-44220 commands admitted by `on_turn` enter this
+                // map. Lifecycle create/hire prompts also start turns, but
+                // cannot name a governed assignment operation.
+                let team_wake_eligible = self.in_flight.contains_key(&command_id);
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = Some(OpenTurn {
                         turn_id: turn_id.clone(),
                         command_id: Some(command_id.clone()),
+                        team_wake_eligible,
                         started_at_ms: now_ms(),
                     });
                 })?;
@@ -4539,6 +4578,9 @@ impl Provider {
                     let session_ref = record.session_ref.clone()?;
                     let genesis_ref = record.genesis_ref.clone()?;
                     let open_turn = record.open_turn.as_ref()?;
+                    if !open_turn.team_wake_eligible {
+                        return None;
+                    }
                     let caused_by_command_id = open_turn.command_id.clone()?;
                     (role != "lead").then(|| {
                         (
@@ -10411,12 +10453,17 @@ mod tests {
                 .expect("session")
                 .session_id
                 .clone();
-            assert!(first
+            let open_turn = first
                 .state()
                 .session(&session_id)
                 .expect("session")
                 .open_turn
-                .is_some());
+                .as_ref()
+                .expect("open lifecycle turn");
+            assert!(
+                !open_turn.team_wake_eligible,
+                "a create's initial turn can never require an assignment report"
+            );
             session_id
         };
 
@@ -10630,6 +10677,7 @@ mod tests {
                     open_turn: Some(OpenTurn {
                         turn_id: "turn-1".into(),
                         command_id: Some("turn-cmd-1".into()),
+                        team_wake_eligible: true,
                         started_at_ms: now_ms(),
                     }),
                     closed: false,

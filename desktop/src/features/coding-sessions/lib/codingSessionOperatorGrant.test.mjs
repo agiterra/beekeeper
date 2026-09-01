@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ensureCodingSessionCreateOperatorGrants,
   ensureCodingSessionOperatorGrant,
+  ensureCodingSessionSeatGrant,
 } from "./codingSessionOperatorGrant.ts";
 
 const CHANNEL_ID = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
@@ -19,6 +20,7 @@ function receiptBackedHarness(initial = []) {
   const dependencies = {
     fetchFold: async () => ({
       accepted: new Map(accepted),
+      activeSeats: new Map(),
       acceptedHead: null,
       pending: [],
     }),
@@ -51,6 +53,53 @@ test("first lead grants the verified provider authority before its actor", async
     harness.dependencies,
   );
   assert.deepEqual(harness.published, [PROVIDER_A, LEAD]);
+});
+
+test("lead seat grant is receipt-backed and idempotent", async () => {
+  const activeSeats = new Map();
+  const published = [];
+  const dependencies = {
+    fetchFold: async () => ({
+      accepted: new Map(),
+      activeSeats: new Map(activeSeats),
+      acceptedHead: null,
+      pending: [],
+    }),
+    publishTransition: async (input) => {
+      published.push(input);
+      activeSeats.set(input.granteePubkey, input.role);
+      return { id: "12".repeat(32) };
+    },
+    wait: async () => {},
+  };
+  const first = await ensureCodingSessionSeatGrant(
+    {
+      channelId: CHANNEL_ID,
+      genesisRef: GENESIS_REF,
+      actorPubkey: LEAD,
+      role: "lead",
+    },
+    dependencies,
+  );
+  const second = await ensureCodingSessionSeatGrant(
+    {
+      channelId: CHANNEL_ID,
+      genesisRef: GENESIS_REF,
+      actorPubkey: LEAD,
+      role: "lead",
+    },
+    dependencies,
+  );
+  assert.equal(published.length, 1);
+  assert.deepEqual(published[0], {
+    channelId: CHANNEL_ID,
+    genesisRef: GENESIS_REF,
+    type: "grant-seat",
+    granteePubkey: LEAD,
+    role: "lead",
+  });
+  assert.equal(first.status, "granted");
+  assert.equal(second.status, "already-active");
 });
 
 test("later mixed-provider hire preserves the existing grant and orders provider before actor", async () => {

@@ -597,14 +597,12 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
-  // Same discipline as `role` and `turnBudget`: a present, non-null `routing`
-  // that is not the closed record is corruption, and the payload is refused
-  // rather than decoded with the decision quietly dropped. A seat that read
-  // as unrouted because its record was malformed would be a seat whose model
-  // nobody could account for — with nothing anywhere saying so.
+  // Unlike historical `role` and `turnBudget`, routing was introduced with an
+  // omit-when-absent writer contract. An explicit null is therefore not a
+  // valid amendment shape. Rust enforces this same rule before deserializing
+  // its `Option`, keeping one signed 44223 visible to both readers or neither.
   if (
     Object.hasOwn(value, "routing") &&
-    value.routing !== null &&
     !isStrictCodingSessionRoutingRecord(value.routing)
   ) {
     return null;
@@ -655,9 +653,6 @@ export function parseBuzzCodingSessionMetadata(
     ...(isCodingSessionTurnBudget(value.turnBudget, value.sessionRef)
       ? { turnBudget: value.turnBudget }
       : {}),
-    // Same treatment as `role` and `turnBudget`: an explicit `null` is how
-    // serde writes an absent `Option`, so it is read as absent rather than as
-    // a claim that this seat was routed to nothing.
     ...(isStrictCodingSessionRoutingRecord(value.routing)
       ? { routing: value.routing as CodingSessionRoutingRecord }
       : {}),

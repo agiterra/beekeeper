@@ -251,6 +251,10 @@ fn default_next_lease_sequence() -> u64 {
     1
 }
 
+fn legacy_open_turn_is_team_wake_eligible() -> bool {
+    true
+}
+
 impl SessionRecord {
     /// The wire target naming this generation, minted with the persisted driver.
     pub fn target(&self, instance_id: &str) -> CodingSessionTarget {
@@ -278,6 +282,13 @@ pub struct OpenTurn {
     pub turn_id: String,
     /// The command that opened the turn, when one did.
     pub command_id: Option<String>,
+    /// Whether the command was a verified kind-44220 thread turn.
+    ///
+    /// Lifecycle create/hire prompts also open model turns, but they can never
+    /// name an assignment operation. Persisting the distinction prevents a
+    /// lifecycle terminal from occupying the durable team-wake queue forever.
+    #[serde(default = "legacy_open_turn_is_team_wake_eligible")]
+    pub team_wake_eligible: bool,
     /// Turn start, milliseconds since the Unix epoch.
     pub started_at_ms: i64,
 }
@@ -1211,6 +1222,30 @@ mod tests {
         );
         let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
         assert_eq!(loaded.bootstrap_transport, None);
+    }
+
+    #[test]
+    fn pre_team_wake_open_turns_default_eligible_so_assignment_crashes_are_not_lost() {
+        let mut written = record("s1");
+        written.open_turn = Some(OpenTurn {
+            turn_id: "turn-1".into(),
+            command_id: Some("assignment-command".into()),
+            team_wake_eligible: true,
+            started_at_ms: 1,
+        });
+        let mut value = serde_json::to_value(&written).expect("serialize");
+        value["openTurn"]
+            .as_object_mut()
+            .expect("open turn object")
+            .remove("teamWakeEligible")
+            .expect("current field");
+        let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
+        assert!(
+            loaded
+                .open_turn
+                .expect("legacy open turn")
+                .team_wake_eligible
+        );
     }
 
     /// The persisted driver — not the live descriptor table — names the wire

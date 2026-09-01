@@ -6,18 +6,22 @@ import {
   acknowledgeCodingSessionTeamWakes,
   baselineCodingSessionTeamWakes,
   buildCodingSessionTeamWakeCommandId,
+  codingSessionTeamWakeFallbackNotBefore,
+  codingSessionTeamWakeEvidenceIsComplete,
   codingSessionTeamWakeStorageKey,
   codingSessionTeamWakeText,
   deriveCodingSessionTeamWakePlan,
   pendingCodingSessionTeamWake,
   readCodingSessionTeamWakeState,
   recordCodingSessionTeamWakeAttempt,
+  observeCodingSessionTeamWake,
+  migrateCodingSessionTeamWakeCursor,
   writeCodingSessionTeamWakeState,
 } from "../lib/codingSessionTeamWake";
 import type { CodingSessionUmbrellaRecord } from "../lib/codingSessionTypes";
 import { useCodingSessionMissionEvidence } from "../lib/useCodingSessionMissionEvidence";
 
-const TERMINAL_OPERATION_GRACE_MS = 2_000;
+const DESKTOP_FALLBACK_GRACE_MS = 15_000;
 
 function leadAcknowledgedCommandIds(
   umbrella: CodingSessionUmbrellaRecord,
@@ -45,12 +49,49 @@ function leadAcknowledgedCommandIds(
   return ids;
 }
 
+function leadAcknowledgedSourceEventIds(
+  umbrella: CodingSessionUmbrellaRecord,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const execution of umbrella.executions) {
+    if (execution.activeGeneration.role?.trim().toLowerCase() !== "lead") {
+      continue;
+    }
+    for (const generation of [
+      ...execution.priorGenerations,
+      execution.activeGeneration,
+    ]) {
+      for (const item of generation.transcript) {
+        if (item.type !== "message" || item.role !== "user") continue;
+        try {
+          const value: unknown = JSON.parse(item.text);
+          if (!value || typeof value !== "object" || Array.isArray(value)) {
+            continue;
+          }
+          const record = value as Record<string, unknown>;
+          const source =
+            typeof record.operationId === "string"
+              ? record.operationId
+              : typeof record.terminalEventId === "string"
+                ? record.terminalEventId
+                : null;
+          if (source && /^[0-9a-f]{64}$/.test(source)) ids.add(source);
+        } catch {
+          // Ordinary human prompts are not wake pointers.
+        }
+      }
+    }
+  }
+  return ids;
+}
+
 /**
  * Push one durable, identifier-only lead wake for signed team results.
  *
  * There is deliberately no polling loop. Signed 44244/44225 ingress changes
  * drive this hook, and a provider-signed user-prompt echo is the only delivery
- * acknowledgement. Relay acceptance alone remains pending and is retried once
+ * acknowledgement. Either producer's exact operation pointer retires the
+ * source durably; relay acceptance alone remains pending and is retried once
  * on a later mount with the same deterministic command id.
  */
 export function useCodingSessionTeamWake(input: {
@@ -83,6 +124,10 @@ export function useCodingSessionTeamWake(input: {
     ],
   );
   const evidence = useCodingSessionMissionEvidence(governedScope);
+  const evidenceComplete = codingSessionTeamWakeEvidenceIsComplete({
+    isLoading: evidence.isLoading,
+    errorMessage: evidence.errorMessage,
+  });
   const plan = React.useMemo(
     () =>
       deriveCodingSessionTeamWakePlan({
@@ -102,6 +147,16 @@ export function useCodingSessionTeamWake(input: {
     () => leadAcknowledgedCommandIds(input.umbrella),
     [input.umbrella],
   );
+  const acknowledgedSourceEventIds = React.useMemo(
+    () => leadAcknowledgedSourceEventIds(input.umbrella),
+    [input.umbrella],
+  );
+  const acknowledgedCommandIdsRef = React.useRef(acknowledgedCommandIds);
+  const acknowledgedSourceEventIdsRef = React.useRef(
+    acknowledgedSourceEventIds,
+  );
+  acknowledgedCommandIdsRef.current = acknowledgedCommandIds;
+  acknowledgedSourceEventIdsRef.current = acknowledgedSourceEventIds;
   const storageKey =
     input.umbrella.sessionRef === null
       ? null
@@ -129,9 +184,8 @@ export function useCodingSessionTeamWake(input: {
     if (
       !storageKey ||
       !input.catalogSettled ||
-      evidence.isLoading ||
-      !plan.lead ||
-      !plan.lead.activeGeneration.commandTarget ||
+      !evidenceComplete ||
+      !plan.lead?.activeGeneration.commandTarget ||
       inFlight.current !== null
     ) {
       return;
@@ -152,11 +206,29 @@ export function useCodingSessionTeamWake(input: {
       }
       return;
     }
+    const migrated = migrateCodingSessionTeamWakeCursor(state, plan.candidates);
+    if (migrated !== state) {
+      state = migrated;
+      try {
+        writeCodingSessionTeamWakeState(storage, storageKey, state);
+      } catch {
+        toast.error(
+          "Automatic team delivery could not migrate its durable wake ledger.",
+        );
+        return;
+      }
+    }
     const acknowledged = acknowledgeCodingSessionTeamWakes(
       state,
       acknowledgedCommandIds,
+      acknowledgedSourceEventIds,
     );
-    if (acknowledged.pending.length !== state.pending.length) {
+    if (
+      acknowledged.pending.length !== state.pending.length ||
+      acknowledged.observed.length !== state.observed.length ||
+      acknowledged.resolvedSourceEventIds.length !==
+        state.resolvedSourceEventIds.length
+    ) {
       state = acknowledged;
       try {
         writeCodingSessionTeamWakeState(storage, storageKey, state);
@@ -173,15 +245,36 @@ export function useCodingSessionTeamWake(input: {
       candidates: plan.candidates,
       leadTarget: target,
       acknowledgedCommandIds,
+      acknowledgedSourceEventIds,
       attemptedThisMount: attemptedThisMount.current,
     });
     if (!candidate || failedThisMount.current.has(candidate.sourceEventId)) {
       return;
     }
-    const waitMs =
-      candidate.kind === "turn_ended_without_required_operation"
-        ? candidate.sourceCreatedAtMs + TERMINAL_OPERATION_GRACE_MS - Date.now()
-        : 0;
+    // Provider-owned delivery is primary. This one-shot grace costs no model
+    // turn and gives the daemon time to publish; signed ingress re-renders the
+    // hook, where operation-level acknowledgement suppresses this fallback.
+    let fallbackNotBefore = codingSessionTeamWakeFallbackNotBefore(
+      state,
+      candidate.sourceEventId,
+    );
+    if (fallbackNotBefore === null) {
+      fallbackNotBefore = Date.now() + DESKTOP_FALLBACK_GRACE_MS;
+      state = observeCodingSessionTeamWake(
+        state,
+        candidate.sourceEventId,
+        fallbackNotBefore,
+      );
+      try {
+        writeCodingSessionTeamWakeState(storage, storageKey, state);
+      } catch {
+        toast.error(
+          "Automatic team delivery could not persist its provider-first grace window.",
+        );
+        return;
+      }
+    }
+    const waitMs = fallbackNotBefore - Date.now();
     if (waitMs > 0) {
       const timeout = window.setTimeout(
         () => setRevision((current) => current + 1),
@@ -198,6 +291,12 @@ export function useCodingSessionTeamWake(input: {
           target,
         );
         if (cancelled) return;
+        if (
+          acknowledgedSourceEventIdsRef.current.has(candidate.sourceEventId) ||
+          acknowledgedCommandIdsRef.current.has(commandId)
+        ) {
+          return;
+        }
         await publishCodingSessionCommand({
           channelId: input.channelId,
           commandId,
@@ -205,6 +304,9 @@ export function useCodingSessionTeamWake(input: {
           text: codingSessionTeamWakeText(candidate),
           deliver: "boundary",
         });
+        toast.warning(
+          "The provider wake was not observed during its grace window. Beekeeper delivered this signed Desktop fallback; provider-owned delivery still needs attention.",
+        );
         attemptedThisMount.current.add(commandId);
         const current =
           readCodingSessionTeamWakeState(storage, storageKey) ?? state;
@@ -217,6 +319,7 @@ export function useCodingSessionTeamWake(input: {
             commandId,
             leadTarget: target,
             acknowledgedCommandIds,
+            acknowledgedSourceEventIds,
           }),
         );
       } catch (error) {
@@ -235,7 +338,8 @@ export function useCodingSessionTeamWake(input: {
     };
   }, [
     acknowledgedCommandIds,
-    evidence.isLoading,
+    acknowledgedSourceEventIds,
+    evidenceComplete,
     input.catalogSettled,
     input.channelId,
     plan.candidates,

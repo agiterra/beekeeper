@@ -54,12 +54,12 @@ export const CODING_SESSION_AUTHORITY_RECEIPT_TYPE =
 export type CodingSessionAuthorityTransitionType =
   | "grant-operator"
   | "grant-viewer"
-  | "revoke";
-
-type AcceptedCodingSessionAuthorityTransitionType =
-  | CodingSessionAuthorityTransitionType
+  | "revoke"
   | "grant-seat"
   | "revoke-seat";
+
+type AcceptedCodingSessionAuthorityTransitionType =
+  CodingSessionAuthorityTransitionType;
 
 const ACCEPTED_TRANSITION_TYPES =
   new Set<AcceptedCodingSessionAuthorityTransitionType>([
@@ -94,6 +94,8 @@ export type CodingSessionRosterRole = "operator" | "viewer";
 export type CodingSessionRosterFold = {
   /** Live grants after folding every accepted link in seq order. */
   accepted: Map<string, CodingSessionRosterRole>;
+  /** Receipt-backed governed seats, separate from People access roles. */
+  activeSeats: Map<string, string>;
   /** The chain's accepted head — what the next transition must extend. */
   acceptedHead: { eventId: string; seq: number } | null;
   /**
@@ -370,6 +372,7 @@ export function foldCodingSessionRoster(input: {
   }
 
   const accepted = new Map<string, CodingSessionRosterRole>();
+  const activeSeats = new Map<string, string>();
   let acceptedHead: { eventId: string; seq: number } | null = null;
   for (let seq = 1; ; seq += 1) {
     const links = acceptedBySeq.get(seq);
@@ -391,6 +394,16 @@ export function foldCodingSessionRoster(input: {
     }
     if (link.type === "revoke") {
       accepted.delete(link.granteePubkey);
+    } else if (link.type === "revoke-seat") {
+      if (
+        link.role === null ||
+        activeSeats.get(link.granteePubkey) !== link.role
+      ) {
+        break;
+      }
+      activeSeats.delete(link.granteePubkey);
+    } else if (link.type === "grant-seat" && link.role !== null) {
+      activeSeats.set(link.granteePubkey, link.role);
     } else if (!isSeatTransitionType(link.type)) {
       const role = rosterRoleForGrantType(link.type);
       if (role) accepted.set(link.granteePubkey, role);
@@ -427,7 +440,7 @@ export function foldCodingSessionRoster(input: {
     .sort((a, b) => a.seq - b.seq)
     .map(({ pubkey, role, eventId }) => ({ pubkey, role, eventId }));
 
-  return { accepted, acceptedHead, pending };
+  return { accepted, activeSeats, acceptedHead, pending };
 }
 
 /**
@@ -478,13 +491,14 @@ export function buildCodingSessionAuthorityTransitionTags(
   ];
 }
 
-/** The exact five-field payload the relay decodes — nothing more or less. */
+/** The exact legacy five-field or seat six-field payload the relay decodes. */
 export function buildCodingSessionAuthorityTransitionContent(input: {
   genesisRef: string;
   prevAccepted: string | null;
   seq: number;
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
+  role?: string;
 }): string {
   return JSON.stringify({
     genesisRef: input.genesisRef,
@@ -492,6 +506,7 @@ export function buildCodingSessionAuthorityTransitionContent(input: {
     seq: input.seq,
     type: input.type,
     granteePubkey: input.granteePubkey,
+    ...(isSeatTransitionType(input.type) ? { role: input.role } : {}),
   });
 }
 
@@ -506,6 +521,7 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
   seq: number;
   type: CodingSessionAuthorityTransitionType;
   granteePubkey: string;
+  role?: string;
 }): CodingSessionAuthorityTransitionEventInput {
   if (input.channelId.trim().length === 0) {
     throw new Error("channelId must not be empty");
@@ -528,6 +544,16 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
       "seq must be exactly 1 if and only if prevAccepted is null",
     );
   }
+  const seatTransition = isSeatTransitionType(input.type);
+  if (
+    (seatTransition &&
+      (typeof input.role !== "string" || !ROLE_SLUG_REGEX.test(input.role))) ||
+    (!seatTransition && input.role !== undefined)
+  ) {
+    throw new Error(
+      "role must be one lowercase role slug exactly for a seat transition",
+    );
+  }
   return {
     kind: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     content: buildCodingSessionAuthorityTransitionContent({
@@ -536,6 +562,7 @@ export function buildCodingSessionAuthorityTransitionEvent(input: {
       seq: input.seq,
       type: input.type,
       granteePubkey,
+      ...(seatTransition ? { role: input.role } : {}),
     }),
     tags: buildCodingSessionAuthorityTransitionTags(
       input.channelId,
@@ -662,6 +689,7 @@ export async function publishCodingSessionAuthorityTransition(
     genesisRef: string;
     type: CodingSessionAuthorityTransitionType;
     granteePubkey: string;
+    role?: string;
   },
   dependencies: TransitionPublishDependencies = {},
 ): Promise<RelayEvent> {
@@ -685,6 +713,7 @@ export async function publishCodingSessionAuthorityTransition(
         seq: (head?.seq ?? 0) + 1,
         type: input.type,
         granteePubkey: input.granteePubkey,
+        ...(input.role !== undefined ? { role: input.role } : {}),
       }),
     );
     return publisher.publishEvent(

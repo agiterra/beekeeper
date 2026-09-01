@@ -25,13 +25,16 @@ import {
   type CodingSessionCrewLaunchStep,
 } from "../lib/codingSessionCrewLaunch";
 import { publishCodingSessionGenesis } from "../lib/codingSessionGenesis";
+import {
+  ensureCodingSessionCreateOperatorGrants,
+  ensureCodingSessionSeatGrant,
+} from "../lib/codingSessionOperatorGrant";
 import { recordPendingCodingSessionLifecycle } from "../lib/codingSessionPendingLifecycle";
 import {
   buildCodingSessionCreateEvent,
   createCodingSessionLifecycleCommandId,
   createCodingSessionSessionRef,
 } from "../lib/codingSessionLifecycleCommand";
-import { publishCodingSessionAuthorityTransition } from "../lib/codingSessionRoster";
 import { publishSeatedCodingSessionCreate } from "../lib/codingSessionSeatedCreate";
 import { ensureProviderChannelMembership } from "../lib/providerChannelMembership";
 import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
@@ -230,11 +233,25 @@ export function useCodingSessionCrewLaunch(input: {
               providerAuthorityPubkey,
             }),
           grantOperator: async ({ channelId, genesisRef, granteePubkey }) => {
-            await publishCodingSessionAuthorityTransition({
+            const result = await ensureCodingSessionCreateOperatorGrants({
               channelId,
               genesisRef,
-              type: "grant-operator",
-              granteePubkey,
+              providerAuthorityPubkey,
+              actorPubkey: granteePubkey,
+            });
+            if (!result.ok) throw new Error(result.reason);
+          },
+          grantLeadSeat: async ({
+            channelId,
+            genesisRef,
+            actorPubkey,
+            role,
+          }) => {
+            await ensureCodingSessionSeatGrant({
+              channelId,
+              genesisRef,
+              actorPubkey,
+              role,
             });
           },
           sendFirstTurn: async ({ channelId, target, text }) => {

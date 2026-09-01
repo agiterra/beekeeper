@@ -89,6 +89,38 @@ pub struct WakeIntent {
     pub relay_accepted_at: Option<u64>,
     pub attempt: u32,
     pub last_reason: Option<String>,
+    /// Bounded, control-free cause for the stable reason above.
+    ///
+    /// This lives with the durable intent because logs can be absent or
+    /// rotated while the store is the artifact an operator can still inspect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reason_detail: Option<String>,
+}
+
+/// Keep one diagnostic useful without letting relay/error text grow the store.
+pub fn bounded_reason_detail(detail: &str) -> Option<String> {
+    const MAX_BYTES: usize = 1_024;
+    let cleaned: String = detail
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut end = cleaned.len().min(MAX_BYTES);
+    while !cleaned.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    Some(cleaned[..end].to_owned())
 }
 
 /// Build the exact core fold context from verified genesis and authority facts.
@@ -393,6 +425,37 @@ pub fn command_echoed(
                 .and_then(serde_json::Value::as_str)
                 == Some(expected_content)
     })
+}
+
+/// Whether any verified command delivered this exact identifier-only wake.
+///
+/// This deliberately ignores the producer-specific command id. The provider
+/// and Desktop fallback mint different deterministic ids; binding instead to
+/// exact target + exact pointer text lets either producer prove delivery and
+/// prevents the other from spending a second lead turn on the same fact.
+pub fn operation_wake_delivered(
+    package: &CodingSessionContextPackage,
+    target: &CodingSessionTarget,
+    expected_content: &str,
+) -> bool {
+    let echoed = package.history.iter().any(|item| {
+        &item.target == target
+            && item.item_kind == "user_prompt"
+            && item
+                .content
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                == Some(expected_content)
+    });
+    echoed
+        || package.inbox.iter().any(|item| {
+            &item.target == target
+                && item.content == expected_content
+                && (matches!(
+                    item.stage,
+                    Some(ReceiptStatus::TurnQueued | ReceiptStatus::TurnStarted)
+                ) || command_echoed(package, &item.command_id, target, expected_content))
+        })
 }
 
 pub const fn report_operation_type() -> CodingSessionTeamTransactionType {
