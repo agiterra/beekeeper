@@ -13,7 +13,7 @@ const OTHER_OWNER = "d".repeat(64);
  * can assert the project tombstone is signed *after* every child deletion.
  * `failing` names commands whose invocation should reject.
  */
-function setupStubs({ failing = new Set() } = {}) {
+function setupStubs({ failing = new Set(), roster = [] } = {}) {
   const calls = [];
   globalThis.window = globalThis.window ?? {};
   globalThis.window.__TAURI_INTERNALS__ = {
@@ -42,12 +42,31 @@ function setupStubs({ failing = new Set() } = {}) {
   };
   const originalPublishEvent = relayClient.publishEvent;
   relayClient.publishEvent = async () => {};
+  // A non-creator delete resolves the project roster before it is allowed
+  // through, so the kind:39010 read has to be answerable here. `roster` is
+  // the projection's `p` tags; an empty list is a project whose only owner
+  // is its creator.
+  const originalFetchEvents = relayClient.fetchEvents;
+  relayClient.fetchEvents = async () => [
+    {
+      id: "roster",
+      pubkey: "f".repeat(64),
+      kind: 39010,
+      created_at: 10,
+      content: "",
+      tags: [
+        ["d", `30621:${OWNER}:platform`],
+        ...roster.map(({ pubkey, role }) => ["p", pubkey, "", role]),
+      ],
+    },
+  ];
   return {
     calls,
     commands: () => calls.map((call) => call.command),
     teardown: () => {
       delete globalThis.window.__TAURI_INTERNALS__;
       relayClient.publishEvent = originalPublishEvent;
+      relayClient.fetchEvents = originalFetchEvents;
     },
   };
 }
@@ -86,13 +105,17 @@ test("cascade deletes channels and workflows, then the project LAST", async () =
   try {
     await deleteProjectContainerCascade({ project: makeProject(), targets });
 
-    // get_identity, both channels, the workflow, then the tombstone signature.
+    // get_identity, both channels, the workflow, then the tombstone
+    // signature. Exactly *one* get_identity: the cascade authorizes at the
+    // top and the final tombstone reuses that decision. The second one this
+    // list used to carry re-resolved the viewer after every child was
+    // already deleted, so its only possible new outcome was to refuse after
+    // the destruction.
     assert.deepEqual(stubs.commands(), [
       "get_identity",
       "delete_channel",
       "delete_channel",
       "delete_workflow",
-      "get_identity",
       "sign_event",
     ]);
     const last = stubs.calls.at(-1);
@@ -166,7 +189,9 @@ test("cascade never signs a delete for a workflow it does not own", async () => 
   }
 });
 
-test("cascade still refuses a non-owner identity before deleting anything", async () => {
+test("cascade still refuses an identity with no owner role, before deleting anything", async () => {
+  // The stub identity is OWNER; this project belongs to somebody else and
+  // its roster names nobody, so OWNER holds no role in it at all.
   const stubs = setupStubs();
   try {
     await assert.rejects(
@@ -174,7 +199,51 @@ test("cascade still refuses a non-owner identity before deleting anything", asyn
         project: makeProject({ owner: OTHER_OWNER }),
         targets,
       }),
-      /Only the project owner/,
+      /Only a project owner can delete it/,
+    );
+    // The refusal lands before any child is touched — a cascade that deleted
+    // half a project and then failed authorization would be unrecoverable.
+    assert.deepEqual(stubs.commands(), ["get_identity"]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("cascade admits a roster owner who did not create the project", async () => {
+  // The capability this whole change exists for: the head is addressed to
+  // OTHER_OWNER's key, which OWNER can never sign for, and OWNER deletes it
+  // anyway on the strength of an `owner` seat. The relay agrees —
+  // `project_owner_admits_deletion` resolves the same role from the ACL.
+  const stubs = setupStubs({ roster: [{ pubkey: OWNER, role: "owner" }] });
+  try {
+    await deleteProjectContainerCascade({
+      project: makeProject({ owner: OTHER_OWNER }),
+      targets,
+    });
+    assert.deepEqual(stubs.commands(), [
+      "get_identity",
+      "delete_channel",
+      "delete_channel",
+      "delete_workflow",
+      "sign_event",
+    ]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("cascade refuses a collaborator seat", async () => {
+  // Write access into a project is not authority over the project.
+  const stubs = setupStubs({
+    roster: [{ pubkey: OWNER, role: "collaborator" }],
+  });
+  try {
+    await assert.rejects(
+      deleteProjectContainerCascade({
+        project: makeProject({ owner: OTHER_OWNER }),
+        targets,
+      }),
+      /Only a project owner can delete it/,
     );
     assert.deepEqual(stubs.commands(), ["get_identity"]);
   } finally {

@@ -62,6 +62,31 @@ pub async fn repo_name_owner(
         .map_err(crate::error::DbError::from)
 }
 
+/// Return the normalized project coordinate `repo_id` is linked to, or `None`
+/// when the repo is unknown or carries no `["project", …]` link.
+///
+/// Deliberately *not* [`get_repo_project_gate`]: that one filters on
+/// `visibility = 'private'` because it decides whether to hide an event
+/// surface. This one answers "which project governs this repo", which a
+/// public project answers just as definitively — the same distinction
+/// [`crate::project_acl::get_project_role_by_coordinate`] documents at
+/// length. Pair the two to resolve an actor's role over a repo.
+pub async fn get_repo_project_ref(
+    pool: &PgPool,
+    community: CommunityId,
+    repo_id: &str,
+) -> Result<Option<String>> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT project_ref FROM git_repo_names \
+         WHERE community_id = $1 AND repo_id = $2",
+    )
+    .bind(community.as_uuid())
+    .bind(repo_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(project_ref,)| project_ref))
+}
+
 /// Reserve `repo_id` for `owner_pubkey` within `community`, enforcing a
 /// per-pubkey quota of `max_repos_per_pubkey`.
 ///

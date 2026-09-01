@@ -18,7 +18,7 @@
 
 use buzz_core::kind::{
     KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER,
-    PROJECT_ROLE_COLLABORATOR,
+    PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
 };
 use buzz_sdk::{
     build_delete_addressable, build_project_with_tags, ProjectMemberCoord, PROJECT_D_MAX_LEN,
@@ -828,6 +828,39 @@ fn roster_from_event_json(event: &serde_json::Value) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Prepend the project creator to a roster read off the wire.
+///
+/// The relay's kind:39010 projection emits one `p` tag per *invited* member
+/// and none for the creator: a membership op targeting them is refused
+/// outright (`ProjectMemberOpRefusal::TargetsCreator`), so they can never
+/// hold a roster row. They are nonetheless an Owner — `ProjectGate::role_of`
+/// answers `Owner` for them before it looks at the member list, and that is
+/// the role the relay authorizes pushes, reads and deletes against.
+///
+/// Printing the raw `p` tags therefore omitted the one member who can do the
+/// most, and `bee projects members` disagreed with both the desktop roster
+/// (which calls `rosterWithOwner` for exactly this reason) and the relay.
+///
+/// The creator is pinned first, and any stray roster row bearing their
+/// pubkey is dropped rather than printed twice — a projection cannot
+/// legitimately contain one, and if a hand-rolled event does, the implicit
+/// Owner is the truth.
+fn roster_with_creator(creator_hex: &str, roster: Vec<(String, String)>) -> Vec<(String, String)> {
+    let creator = creator_hex.to_ascii_lowercase();
+    let mut out = vec![(creator.clone(), PROJECT_ROLE_OWNER.to_string())];
+    out.extend(
+        roster
+            .into_iter()
+            .filter(|(pubkey, _)| pubkey.to_ascii_lowercase() != creator),
+    );
+    out
+}
+
+/// The creator component of a `30621:<owner-hex>:<slug>` coordinate.
+fn coordinate_creator(coordinate: &str) -> &str {
+    coordinate.split(':').nth(1).unwrap_or("")
+}
+
 /// `bee projects members` — print the authoritative roster as
 /// `[{pubkey, role}]`.
 ///
@@ -867,10 +900,11 @@ pub async fn cmd_members(
         }
     };
 
-    let output: Vec<serde_json::Value> = roster
-        .iter()
-        .map(|(pubkey, role)| serde_json::json!({ "pubkey": pubkey, "role": role }))
-        .collect();
+    let output: Vec<serde_json::Value> =
+        roster_with_creator(coordinate_creator(&coordinate), roster)
+            .iter()
+            .map(|(pubkey, role)| serde_json::json!({ "pubkey": pubkey, "role": role }))
+            .collect();
     println!("{}", serde_json::Value::Array(output));
     Ok(())
 }
@@ -1672,6 +1706,72 @@ mod tests {
         let roster = roster_from_event_json(&event);
         assert_eq!(roster.len(), 3);
         assert!(roster.iter().all(|(_, role)| role == "collaborator"));
+    }
+
+    // ── roster_with_creator ───────────────────────────────────────────────────
+
+    /// The bug this fixes: the relay's 39010 projection never names the
+    /// creator, so the raw `p` tags omit the project's most privileged
+    /// member entirely.
+    #[test]
+    fn roster_lists_the_creator_as_owner_even_though_no_p_tag_names_them() {
+        let alice = "b".repeat(64);
+        let roster =
+            roster_with_creator(OWNER_HEX, vec![(alice.clone(), "collaborator".to_string())]);
+        assert_eq!(
+            roster,
+            vec![
+                (OWNER_HEX.to_string(), "owner".to_string()),
+                (alice, "collaborator".to_string()),
+            ],
+            "the creator must be pinned first as Owner"
+        );
+    }
+
+    /// A project whose roster is empty still has an Owner.
+    #[test]
+    fn a_projectless_roster_is_still_the_creator() {
+        assert_eq!(
+            roster_with_creator(OWNER_HEX, Vec::new()),
+            vec![(OWNER_HEX.to_string(), "owner".to_string())]
+        );
+    }
+
+    /// A hand-rolled 39010 naming the creator must not print them twice, and
+    /// must not be able to demote them: the implicit Owner wins.
+    #[test]
+    fn a_stray_creator_row_is_dropped_rather_than_honoured() {
+        let roster = roster_with_creator(
+            OWNER_HEX,
+            vec![
+                (OWNER_HEX.to_ascii_uppercase(), "viewer".to_string()),
+                ("c".repeat(64), "owner".to_string()),
+            ],
+        );
+        assert_eq!(
+            roster,
+            vec![
+                (OWNER_HEX.to_string(), "owner".to_string()),
+                ("c".repeat(64), "owner".to_string()),
+            ]
+        );
+    }
+
+    /// The coordinate is the only place the creator's key appears in this
+    /// command, so parsing it is load-bearing.
+    #[test]
+    fn coordinate_creator_reads_the_middle_component() {
+        assert_eq!(
+            coordinate_creator(&format!("30621:{OWNER_HEX}:platform")),
+            OWNER_HEX
+        );
+        // A slug may contain colons — `splitn(3, ':')` semantics elsewhere —
+        // so only the second component is ever taken.
+        assert_eq!(
+            coordinate_creator(&format!("30621:{OWNER_HEX}:a:b")),
+            OWNER_HEX
+        );
+        assert_eq!(coordinate_creator("malformed"), "");
     }
 
     // ── membership_coordinate ─────────────────────────────────────────────────

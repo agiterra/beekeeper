@@ -18,6 +18,8 @@ import {
 
 import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
 import type { ProjectCascadeTargets } from "./lib/projectCascade";
+import { fetchProjectRoster } from "./lib/projectMembers";
+import { viewerIsProjectOwner } from "./lib/projectPermissions";
 import {
   addProjectMembers,
   publishProjectContainer,
@@ -28,6 +30,31 @@ import { ensureRealProject } from "./useGeneralProjectMigration";
 async function selfPubkey(): Promise<string> {
   const identity = await getIdentity();
   return identity.pubkey.toLowerCase();
+}
+
+/**
+ * Refuse a project delete the relay would refuse anyway.
+ *
+ * Owners are one tier: the creator (the pubkey the kind:30621 head is
+ * addressed to) and anybody seated `owner` on the roster. The relay decides
+ * this the same way — `project_owner_admits_deletion` resolves the actor's
+ * role from the ACL projection, where the creator is an implicit Owner.
+ *
+ * The creator check short-circuits before the roster fetch: it is the common
+ * case, it needs no round trip, and it still holds when the projection has
+ * not been written yet.
+ *
+ * Returns the resolved viewer pubkey, which the cascade needs anyway to skip
+ * workflows it cannot actually delete.
+ */
+async function assertViewerMayDeleteProject(
+  project: ProjectContainer,
+): Promise<string> {
+  const self = await selfPubkey();
+  if (self === project.owner.toLowerCase()) return self;
+  const roster = await fetchProjectRoster(project);
+  if (viewerIsProjectOwner(self, project, roster)) return self;
+  throw new Error("Only a project owner can delete it.");
 }
 
 /**
@@ -225,7 +252,13 @@ export async function updateProjectContainer({
 }: UpdateProjectContainerInput): Promise<ProjectContainer> {
   const self = await selfPubkey();
   if (project.owner !== self) {
-    throw new Error("Only the project owner can edit it.");
+    // Deliberately still creator-only, and deliberately *not* widened to
+    // roster Owners along with delete: a replaceable event is addressed by
+    // (kind, pubkey, d), so this republish signed by anyone else creates a
+    // second project rather than editing this one.
+    throw new Error(
+      "Only the key that created this project can change its settings.",
+    );
   }
   const trimmed = name.trim();
   if (!trimmed) {
@@ -268,10 +301,25 @@ export function useUpdateProjectContainerMutation() {
 async function deleteProjectContainer(
   project: ProjectContainer,
 ): Promise<void> {
-  const self = await selfPubkey();
-  if (project.owner !== self) {
-    throw new Error("Only the project owner can delete it.");
-  }
+  await assertViewerMayDeleteProject(project);
+  await publishProjectTombstone(project);
+}
+
+/**
+ * Publish the kind:5 tombstone for a project's head, with no authorization
+ * of its own.
+ *
+ * Split out so the cascade authorizes exactly once. Re-entering
+ * `deleteProjectContainer` for the final step would resolve the identity and
+ * re-read the roster after every child was already deleted — a second round
+ * trip that cannot change the answer, and one whose only possible new
+ * outcome is to refuse *after* the destruction.
+ *
+ * Every caller must have passed [`assertViewerMayDeleteProject`] first.
+ */
+async function publishProjectTombstone(
+  project: ProjectContainer,
+): Promise<void> {
   const event = await signRelayEvent({
     kind: KIND_DELETION,
     content: `Delete project ${project.name}`,
@@ -335,10 +383,7 @@ export async function deleteProjectContainerCascade({
   project,
   targets,
 }: DeleteProjectContainerCascadeInput): Promise<void> {
-  const self = await selfPubkey();
-  if (project.owner !== self) {
-    throw new Error("Only the project owner can delete it.");
-  }
+  const self = await assertViewerMayDeleteProject(project);
 
   const failures: string[] = [];
   for (const channel of targets.channels) {
@@ -350,7 +395,7 @@ export async function deleteProjectContainerCascade({
   }
   for (const workflow of targets.workflows) {
     // Belt and braces: never sign a tombstone that cannot delete anything.
-    if (workflow.ownerPubkey.toLowerCase() !== self.toLowerCase()) continue;
+    if (workflow.ownerPubkey.toLowerCase() !== self) continue;
     try {
       await deleteWorkflow(workflow.id);
     } catch {
@@ -365,7 +410,10 @@ export async function deleteProjectContainerCascade({
     );
   }
 
-  await deleteProjectContainer(project);
+  // Last, so a failure part-way through leaves the head in place and the
+  // whole operation retryable. Already authorized at the top of this
+  // function.
+  await publishProjectTombstone(project);
 }
 
 export function useDeleteProjectContainerCascadeMutation() {

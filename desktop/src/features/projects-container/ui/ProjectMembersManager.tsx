@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
-import { useIdentityQuery } from "@/shared/api/hooks";
 import type { UserSearchResult } from "@/shared/api/types";
 import {
   ENTITY_ROLE_DESCRIPTIONS,
@@ -44,6 +43,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 
 import type { ProjectContainer } from "../hooks";
+import { useProjectCapabilities } from "../lib/projectPermissions";
 import {
   rosterWithOwner,
   usePutProjectRosterMutation,
@@ -110,11 +110,9 @@ export function ProjectMembersManager({
   addOpen?: boolean;
   onAddOpenChange?: (open: boolean) => void;
 }) {
-  const identityQuery = useIdentityQuery();
-  const self = identityQuery.data?.pubkey?.toLowerCase();
-
   const rosterQuery = useProjectRosterQuery(project);
   const roster = rosterQuery.data ?? project.members;
+  const capabilities = useProjectCapabilities(project);
 
   const entries = React.useMemo(
     () => rosterWithOwner(project, roster),
@@ -146,12 +144,7 @@ export function ProjectMembersManager({
     [entries, displayName],
   );
 
-  const viewerIsOwner =
-    !!self &&
-    (self === project.owner ||
-      roster.some(
-        (member) => member.pubkey === self && member.role === "owner",
-      ));
+  const viewerIsOwner = capabilities.canManageRoster;
 
   const putMutation = usePutProjectRosterMutation(project);
   const removeMutation = useRemoveProjectRosterMutation(project);
@@ -400,18 +393,8 @@ export function ProjectMembersManager({
 }
 
 /** True when the current viewer can manage this project's roster — the
- * creator or a roster owner. Shared so mount points can gate their own
- * add-member affordances. */
+ * creator or a roster owner. Kept as a named re-export so mount points read
+ * as what they gate; the decision itself lives in one place. */
 export function useViewerIsProjectOwner(project: ProjectContainer): boolean {
-  const identityQuery = useIdentityQuery();
-  const self = identityQuery.data?.pubkey?.toLowerCase();
-  const rosterQuery = useProjectRosterQuery(project);
-  const roster = rosterQuery.data ?? project.members;
-  return (
-    !!self &&
-    (self === project.owner ||
-      roster.some(
-        (member) => member.pubkey === self && member.role === "owner",
-      ))
-  );
+  return useProjectCapabilities(project).canManageRoster;
 }

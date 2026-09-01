@@ -5059,6 +5059,18 @@ impl Db {
         git_repo::repo_name_owner(&self.pool, community, repo_id).await
     }
 
+    /// The normalized project coordinate git repo `repo_id` is linked to, or
+    /// `None` when the repo is unknown or unlinked. See
+    /// [`git_repo::get_repo_project_ref`].
+    #[datastore_span(name = "get_repo_project_ref", system = "postgresql")]
+    pub async fn get_repo_project_ref(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+    ) -> Result<Option<String>> {
+        git_repo::get_repo_project_ref(&self.pool, community, repo_id).await
+    }
+
     /// Reserve a git repo name for `owner_pubkey` in `community` (NIP-34).
     ///
     /// See [`git_repo::reserve_repo_name`] for the outcome semantics. The

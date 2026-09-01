@@ -27,7 +27,6 @@ import {
   useManagedAgentsQuery,
   usePersonasQuery,
 } from "@/features/agents/hooks";
-import { useIdentityQuery } from "@/shared/api/hooks";
 import { FeatureGate, useFeatureEnabled } from "@/shared/features";
 import { Button } from "@/shared/ui/button";
 import {
@@ -54,6 +53,7 @@ import {
 import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
 import { useProjectRosterQuery } from "../lib/projectMembers";
+import { useProjectCapabilities } from "../lib/projectPermissions";
 import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
@@ -106,9 +106,7 @@ export function ProjectContainerScreen({
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const personas = usePersonasQuery();
   const managedAgents = useManagedAgentsQuery();
-  const identity = useIdentityQuery();
   const pulseEnabled = useFeatureEnabled("project-pulse");
-  const self = identity.data?.pubkey?.toLowerCase();
 
   const project: ProjectContainer | null = React.useMemo(() => {
     // The fallback URL upgrades to the real General once one is published
@@ -195,6 +193,7 @@ export function ProjectContainerScreen({
   // The header count and Members card share this cached roster read; it
   // falls back to the head event's members until a 39010 projection exists.
   const rosterQuery = useProjectRosterQuery(project);
+  const capabilities = useProjectCapabilities(project);
   const relayOrigin = useRelayOrigin();
   const [editOpen, setEditOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -228,7 +227,10 @@ export function ProjectContainerScreen({
 
   const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
   const isFallback = project.id === LOCAL_GENERAL_ID;
-  const canManage = !isFallback && project.owner === self;
+  // Delete is an Owner capability, not a creator one: the project's creator
+  // and anybody seated `owner` on its roster are the same tier, and the
+  // relay authorizes both (`project_owner_admits_deletion`).
+  const canManage = !isFallback && capabilities.canDeleteProject;
   const repos = [
     ...(reposByProject.get(project.id) ?? []),
     ...(isGeneral ? unclaimedRepos : []),

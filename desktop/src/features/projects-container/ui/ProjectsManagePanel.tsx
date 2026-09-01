@@ -26,7 +26,6 @@ import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
-import { useIdentityQuery } from "@/shared/api/hooks";
 import {
   getCodingSessionWorkdirState,
   pickCodingSessionWorkdir,
@@ -53,6 +52,7 @@ import {
   displayProjectsWithGeneral,
 } from "../lib/projectContainerModel";
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
+import { useProjectCapabilitiesMap } from "../lib/projectPermissions";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
@@ -242,9 +242,6 @@ export function ProjectsManagePanel() {
   const { goWorkflow } = useAppNavigation();
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   const channelsQuery = useChannelsQuery();
-  const identity = useIdentityQuery();
-  const self = identity.data?.pubkey?.toLowerCase();
-
   const updateMutation = useUpdateProjectContainerMutation();
 
   const [editTarget, setEditTarget] = React.useState<ProjectContainer | null>(
@@ -280,6 +277,10 @@ export function ProjectsManagePanel() {
     [displayProjects],
   );
 
+  // One roster read for every card on the panel. Calling the single-project
+  // hook per card would be a hook in a loop *and* one REQ per project.
+  const { capabilitiesFor } = useProjectCapabilitiesMap(displayProjects);
+
   const moves = useProjectItemMoves(projectById);
   const { requestMoveChannel, requestMoveForum, requestMoveRepo } = moves;
 
@@ -304,7 +305,9 @@ export function ProjectsManagePanel() {
   const renderProjectCard = (project: ProjectContainer) => {
     const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
     const isFallback = project.id === LOCAL_GENERAL_ID;
-    const canManage = !isFallback && project.owner === self;
+    // Delete is an Owner capability, not a creator one — the creator and a
+    // roster `owner` are the same tier, and the relay authorizes both.
+    const canManage = !isFallback && capabilitiesFor(project).canDeleteProject;
     const repos = [
       ...(reposByProject.get(project.id) ?? []),
       ...(isGeneral ? unclaimedRepos : []),

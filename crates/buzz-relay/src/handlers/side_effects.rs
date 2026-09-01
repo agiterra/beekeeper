@@ -18,6 +18,7 @@ use buzz_core::kind::{
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
+use buzz_db::project_acl::ProjectRole;
 
 use super::event::dispatch_persistent_event;
 use super::moderation_authz::{authorize_moderation_action, ModerationAction, ModerationTarget};
@@ -290,10 +291,91 @@ fn refuse_permanent_identity_deletion(target_kind: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The project coordinate that governs an addressable deletion target, if any.
+///
+/// Only the three kinds a project actually contains resolve here. Everything
+/// else — workflows above all, which keep their own owner-scoped delete path
+/// in [`handle_a_tag_deletion`] — returns `None` and falls back to plain
+/// authorship.
+///
+/// The returned coordinate is always normalized (`30621:<lowercase-hex>:<d>`):
+/// the project head's is rebuilt from the decoded a-tag bytes, and the repo
+/// and terminal links are normalized on write (`set_repo_project_ref`,
+/// `upsert_shell_session_acl`). That matters because `project_acl.coordinate`
+/// is compared by string equality with no per-row parsing.
+async fn governing_project_coordinate(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    target_kind: u32,
+    target_pubkey: &[u8],
+    target_dtag: &str,
+) -> anyhow::Result<Option<String>> {
+    if target_dtag.is_empty() {
+        return Ok(None);
+    }
+    match target_kind {
+        KIND_PROJECT => Ok(Some(format!(
+            "{KIND_PROJECT}:{}:{target_dtag}",
+            hex::encode(target_pubkey)
+        ))),
+        KIND_GIT_REPO_ANNOUNCEMENT => Ok(state
+            .db
+            .get_repo_project_ref(tenant.community(), target_dtag)
+            .await?),
+        KIND_SHELL_SESSION => Ok(state
+            .db
+            .get_shell_roster(tenant.community(), target_pubkey, target_dtag)
+            .await?
+            .map(|roster| roster.coordinate)),
+        _ => Ok(None),
+    }
+}
+
+/// Whether `actor_bytes` may delete an addressable target because they are an
+/// Owner of the project that contains it.
+///
+/// This is the one place a deletion is authorized by *role* rather than by
+/// signature, and it is deliberately narrow:
+///
+/// * Only [`ProjectRole::Owner`]. A Collaborator deletes their own work
+///   through the authorship arm above and nothing else; a Viewer deletes
+///   nothing.
+/// * Only the three project-scoped addressable kinds
+///   ([`governing_project_coordinate`]).
+/// * Fails closed. An unresolvable project, an unlinked repo, an unprojected
+///   terminal — all return `false`, leaving the caller's `must be event
+///   author` refusal exactly as it was.
+///
+/// [`Db::get_project_role_by_coordinate`] treats the project creator as an
+/// implicit Owner, which is the whole point: creator and roster Owner reach
+/// this gate as the same tier.
+async fn project_owner_admits_deletion(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    target_kind: u32,
+    target_pubkey: &[u8],
+    target_dtag: &str,
+    actor_bytes: &[u8],
+) -> anyhow::Result<bool> {
+    let Some(coordinate) =
+        governing_project_coordinate(tenant, state, target_kind, target_pubkey, target_dtag)
+            .await?
+    else {
+        return Ok(false);
+    };
+    let role = state
+        .db
+        .get_project_role_by_coordinate(tenant.community(), &coordinate, actor_bytes)
+        .await?;
+    Ok(role == Some(ProjectRole::Owner))
+}
+
 /// Validate a standard NIP-09 deletion event before it is stored.
 ///
 /// Buzz accepts standard deletions for self-authored events, plus the owning
-/// human deleting their agent's events (mirrors `validate_edit_ownership`).
+/// human deleting their agent's events (mirrors `validate_edit_ownership`),
+/// plus — on the addressable `a`-tag path only — an Owner of the project that
+/// contains the target (see [`project_owner_admits_deletion`]).
 /// Channel admin deletions continue to use kind 9005.
 pub async fn validate_standard_deletion_event(
     tenant: &TenantContext,
@@ -317,15 +399,33 @@ pub async fn validate_standard_deletion_event(
         }
         let target_pubkey_bytes =
             hex::decode(parts[1]).map_err(|_| anyhow::anyhow!("invalid pubkey in a-tag"))?;
-        if target_pubkey_bytes != actor_bytes
-            && !state
+        if target_pubkey_bytes == actor_bytes
+            || state
                 .db
                 .is_agent_owner(tenant.community(), &target_pubkey_bytes, &actor_bytes)
                 .await?
         {
-            return Err(anyhow::anyhow!("must be event author"));
+            return Ok(());
         }
-        return Ok(());
+        // Third arm: an Owner of the project that contains this target. The
+        // kind is parsed only here — the two arms above never needed it, and
+        // a coordinate whose kind is not a number cannot name a project
+        // resource, so it falls through to the same refusal as before.
+        let target_kind: u32 = parts[0].parse().unwrap_or(0);
+        let target_dtag = parts.get(2).copied().unwrap_or("");
+        if project_owner_admits_deletion(
+            tenant,
+            state,
+            target_kind,
+            &target_pubkey_bytes,
+            target_dtag,
+            &actor_bytes,
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        return Err(anyhow::anyhow!("must be event author"));
     }
 
     for target_id in target_ids {
@@ -4106,3 +4206,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "side_effects_project_owner_delete_tests.rs"]
+mod project_owner_delete_tests;

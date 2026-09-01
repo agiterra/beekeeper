@@ -1,6 +1,5 @@
 import * as React from "react";
 
-import { useIdentityQuery } from "@/shared/api/hooks";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +25,7 @@ import { Textarea } from "@/shared/ui/textarea";
 
 import type { ProjectContainer } from "../hooks";
 import { GENERAL_PROJECT_DTAG } from "../lib/projectContainerModel";
+import { useProjectCapabilities } from "../lib/projectPermissions";
 import { ProjectColorPickerField } from "./ProjectColorPickerField";
 import { ProjectIconPickerField } from "./ProjectIconPickerField";
 import { ProjectMembersManager } from "./ProjectMembersManager";
@@ -71,12 +71,14 @@ export function ProjectSettingsDialog({
     ProjectContainer["visibility"] | null
   >(null);
 
-  const identityQuery = useIdentityQuery();
-  const self = identityQuery.data?.pubkey?.toLowerCase();
-  // The relay-synced head is owner-editable only (the update mutation
-  // hard-rejects everyone else); the dialog stays open for non-owners so
-  // they can read settings and reach the Members tab.
-  const canEditProject = project !== null && project.owner === self;
+  // These fields live on the project's kind:30621 head, which NIP-01
+  // addresses by (kind, *creator pubkey*, d). A roster Owner republishing it
+  // would mint a different project rather than edit this one, so this is the
+  // one capability the creator does not share — a fact about the protocol,
+  // not a permission we withhold. The dialog stays open for everyone so
+  // non-editors can still read the settings and reach the Members tab.
+  const capabilities = useProjectCapabilities(project);
+  const canEditProject = capabilities.canEditHead;
 
   const isGeneral = project?.dtag === GENERAL_PROJECT_DTAG;
 
@@ -152,8 +154,16 @@ export function ProjectSettingsDialog({
             <form onSubmit={handleSubmit}>
               <div className="flex flex-col gap-3">
                 {canEditProject ? null : (
-                  <p className="text-xs text-muted-foreground">
-                    Only the project owner can change these settings.
+                  <p
+                    className="text-xs text-muted-foreground"
+                    data-testid="edit-project-container-readonly-note"
+                  >
+                    {capabilities.isOwner
+                      ? // Saying "only the owner can change these" to
+                        // somebody who *is* an owner names the wrong reason
+                        // and reads as a bug. Name the real one.
+                        "These settings live on the project's own event, and only the key that created it can republish that. You can still manage members and delete the project."
+                      : "Only a project owner can change these settings."}
                   </p>
                 )}
                 <div className="flex items-center gap-2">

@@ -138,7 +138,13 @@ test("updateProjectContainer clears icon and color on explicit null", async () =
   }
 });
 
-test("updateProjectContainer rejects edits from a non-owner identity", async () => {
+test("updateProjectContainer stays creator-only, and says why", async () => {
+  // Head edits are the one capability a roster Owner does NOT share with the
+  // creator, and the refusal must name the real reason: NIP-01 addresses a
+  // replaceable event by (kind, pubkey, d), so this republish signed by
+  // anyone else would create a second project rather than edit this one.
+  // "Only the project owner can edit it" was the old wording and it read as
+  // a lie to somebody who *is* an owner.
   const stubs = setupStubs();
   try {
     await assert.rejects(
@@ -146,7 +152,7 @@ test("updateProjectContainer rejects edits from a non-owner identity", async () 
         project: makeProject({ owner: OTHER_OWNER }),
         name: "Skunkworks",
       }),
-      /Only the project owner/,
+      /Only the key that created this project/,
     );
   } finally {
     stubs.teardown();
