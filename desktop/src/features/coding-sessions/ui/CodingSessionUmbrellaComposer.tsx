@@ -315,6 +315,8 @@ function ExecutionComposer({
       }
       canControl={authority.canPromptExecutions}
       canSteer={record.capabilities?.threadSteer === true}
+      canAttachImages={record.capabilities?.promptImage === true}
+      runtimeLabel={runtimeLabel}
       channelId={channelId}
       onAddProvider={onAddProvider}
       controlContext={{

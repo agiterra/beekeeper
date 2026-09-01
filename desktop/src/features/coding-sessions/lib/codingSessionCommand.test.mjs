@@ -370,3 +370,76 @@ test("an interrupt command carries no delivery class of its own", () => {
   });
   assert.deepEqual(Object.keys(JSON.parse(event.content).action), ["type"]);
 });
+
+const attachment = {
+  sha256: "aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd",
+  mime: "image/png",
+  size: 2048,
+  dim: "800x600",
+  filename: "shot.png",
+};
+
+test("a turn with no images is byte-identical to the pre-attachment wire", () => {
+  // The whole forward-compatibility contract: the payload is validated with
+  // `deny_unknown_fields` at the relay *and* the provider, so an ordinary turn
+  // must not gain a key. Both the absent and the empty-array spellings collapse
+  // to the same bytes.
+  const baseline = buildCodingSessionCommandEvent({
+    channelId: "3f2b8c1e-0000-4000-8000-000000000001",
+    commandId: "cmd-1",
+    target,
+    text: "go",
+    deliver: "boundary",
+  });
+  const withEmptyList = buildCodingSessionCommandEvent({
+    channelId: "3f2b8c1e-0000-4000-8000-000000000001",
+    commandId: "cmd-1",
+    target,
+    text: "go",
+    attachments: [],
+    deliver: "boundary",
+  });
+
+  assert.doesNotMatch(baseline.content, /attachments/);
+  assert.equal(withEmptyList.content, baseline.content);
+});
+
+test("attachments ride the payload and are validated before signing", () => {
+  const event = buildCodingSessionCommandEvent({
+    channelId: "3f2b8c1e-0000-4000-8000-000000000001",
+    commandId: "cmd-2",
+    target,
+    text: "why is this chart wrong?",
+    attachments: [attachment],
+    deliver: "boundary",
+  });
+  const payload = JSON.parse(event.content);
+  assert.deepEqual(payload.action.attachments, [attachment]);
+  // The envelope is unchanged: 44220 admits exactly three two-field tags, so
+  // an attachment can only ever travel inside the content.
+  assert.deepEqual(
+    event.tags.map(([name]) => name),
+    ["h", "cs-v", "cs-target"],
+  );
+
+  const build = (attachments) =>
+    buildCodingSessionCommandEvent({
+      channelId: "3f2b8c1e-0000-4000-8000-000000000001",
+      commandId: "cmd-3",
+      target,
+      text: "go",
+      attachments,
+      deliver: "boundary",
+    });
+
+  for (const [bad, label] of [
+    [{ ...attachment, sha256: "abc" }, "short hash"],
+    [{ ...attachment, sha256: attachment.sha256.toUpperCase() }, "uppercase"],
+    [{ ...attachment, mime: "application/pdf" }, "non-image mime"],
+    [{ ...attachment, size: 0 }, "zero size"],
+    [{ ...attachment, size: 10 * 1024 * 1024 + 1 }, "oversize"],
+  ]) {
+    assert.throws(() => build([bad]), undefined, `accepted ${label}`);
+  }
+  assert.throws(() => build(new Array(5).fill(attachment)), /exceeds 4/);
+});

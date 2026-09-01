@@ -43,6 +43,7 @@ fn payload(text: &str, deliver: CodingSessionDelivery) -> CodingSessionCommandPa
         target: target("s-1", 2),
         action: CodingSessionAction::ThreadTurnStart {
             text: text.to_owned(),
+            attachments: Vec::new(),
             deliver,
         },
     }
@@ -61,6 +62,38 @@ fn a_boundary_turn_omits_the_deliver_key() {
     assert_eq!(decoded, payload("go", CodingSessionDelivery::Boundary));
 }
 
+/// The same omission rule covers attachments, and `boundary_free_content`'s
+/// string surgery must survive them: it strips the one `deliver` key by
+/// literal match, so a payload that now carries another optional key has to
+/// still come out decodable.
+#[test]
+fn a_turn_without_images_carries_no_attachments_key() {
+    let content =
+        boundary_free_content(&payload("go", CodingSessionDelivery::Boundary)).expect("content");
+    assert!(!content.contains("attachments"), "got {content}");
+}
+
+#[test]
+fn a_turn_with_images_keeps_them_through_the_boundary_rewrite() {
+    let mut with_images = payload("look at this", CodingSessionDelivery::Boundary);
+    with_images.action = CodingSessionAction::ThreadTurnStart {
+        text: "look at this".to_owned(),
+        attachments: vec![buzz_core::coding_session_command::TurnAttachment {
+            sha256: "aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd".to_owned(),
+            mime: "image/png".to_owned(),
+            size: 2048,
+            dim: Some("800x600".to_owned()),
+            filename: Some("shot.png".to_owned()),
+        }],
+        deliver: CodingSessionDelivery::Boundary,
+    };
+    let content = boundary_free_content(&with_images).expect("content");
+    assert!(!content.contains("deliver"), "got {content}");
+    let decoded: CodingSessionCommandPayload =
+        serde_json::from_str(&content).expect("round-trips through the relay's own decoder");
+    assert_eq!(decoded, with_images);
+}
+
 #[test]
 fn a_steer_turn_keeps_the_deliver_key() {
     let content =
@@ -77,7 +110,7 @@ fn turn_text_that_spells_the_deliver_key_is_left_intact() {
         boundary_free_content(&payload(hostile, CodingSessionDelivery::Boundary)).expect("content");
     let decoded: CodingSessionCommandPayload = serde_json::from_str(&content).expect("decodes");
     match decoded.action {
-        CodingSessionAction::ThreadTurnStart { text, deliver } => {
+        CodingSessionAction::ThreadTurnStart { text, deliver, .. } => {
             assert_eq!(text, hostile);
             assert_eq!(deliver, CodingSessionDelivery::Boundary);
         }

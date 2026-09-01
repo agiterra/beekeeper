@@ -49,6 +49,13 @@ export type CodingSessionProviderRuntimeCapabilities = {
   context: boolean;
   diff: boolean;
   plan: boolean;
+  /**
+   * Static, pre-launch claim only. Whether a *live* execution takes images is
+   * what its runtime answered at `initialize`, published in that generation's
+   * 44223 — the same per-execution rule `threadSteer` follows, so a control
+   * must never be drawn from this vector.
+   */
+  promptImage: boolean;
 };
 
 /**

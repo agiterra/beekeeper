@@ -103,6 +103,13 @@ pub const NO_LIVE_EXECUTION: &str = "NO_LIVE_EXECUTION";
 /// The only code a `turn_degraded` receipt carries today. Degraded is not
 /// refused: the turn still runs, just later than the sender asked.
 pub const STEER_UNSUPPORTED: &str = "STEER_UNSUPPORTED";
+/// A turn carried image attachments, but the runtime behind this execution
+/// never advertised image prompts, so the turn was delivered as text only.
+///
+/// Like [`STEER_UNSUPPORTED`], degraded is not refused: the words still reach
+/// the agent. Saying so is the point — an image that silently never arrived is
+/// indistinguishable from an agent that looked at it and said nothing.
+pub const IMAGE_UNSUPPORTED: &str = "IMAGE_UNSUPPORTED";
 /// An interrupt addressed a live execution that had no turn in flight, so
 /// there was nothing to cancel.
 pub const NO_TURN_IN_FLIGHT: &str = "NO_TURN_IN_FLIGHT";
@@ -429,11 +436,14 @@ impl LifecycleReceipt {
     /// The turn was accepted, but downgraded out of the class the sender
     /// asked for.
     ///
-    /// Today that is only [`STEER_UNSUPPORTED`]: a `steer` addressed to a
+    /// Two codes reach here. [`STEER_UNSUPPORTED`]: a `steer` addressed to a
     /// runtime that never advertised native mid-turn steering. The turn is not
     /// refused and not lost — a `turn_queued` follows and it runs at the next
     /// boundary. Saying so is the whole point: a silent downgrade would let an
     /// operator believe the agent was steered mid-thought.
+    /// [`IMAGE_UNSUPPORTED`]: the turn's attachments were dropped because the
+    /// runtime does not take image prompts, for the same reason — an operator
+    /// must not be left believing the agent saw a picture it never received.
     pub fn turn_degraded(
         command_id: &str,
         target: &CodingSessionTarget,
@@ -701,6 +711,20 @@ pub struct Capabilities {
     pub diff: bool,
     /// Plan updates are published.
     pub plan: bool,
+    /// The runtime accepts `image` content blocks in `session/prompt`.
+    ///
+    /// **Per-execution truth, exactly like [`thread_steer`](Self::thread_steer).**
+    /// It is what the process behind *this* generation advertised at
+    /// `initialize` (`agentCapabilities.promptCapabilities.image`), not a
+    /// property of the driver: `claude-agent-acp` and an in-house `buzz-agent`
+    /// build can legitimately disagree. A consumer that offers an "attach
+    /// image" control reads it from the execution's metadata (44223).
+    ///
+    /// Defaulted so that metadata published before this field existed still
+    /// decodes — as `false`, which is the honest reading of a provider that
+    /// never claimed image support.
+    #[serde(default)]
+    pub prompt_image: bool,
 }
 
 impl Capabilities {
@@ -722,6 +746,7 @@ impl Capabilities {
             context: false,
             diff: false,
             plan: true,
+            prompt_image: false,
         }
     }
 
@@ -736,6 +761,7 @@ impl Capabilities {
             context: false,
             diff: false,
             plan: false,
+            prompt_image: false,
         }
     }
 
@@ -750,6 +776,20 @@ impl Capabilities {
     pub const fn with_thread_steer(self, thread_steer: bool) -> Self {
         Self {
             thread_steer,
+            ..self
+        }
+    }
+
+    /// The same vector with `promptImage` set to what *this* execution's
+    /// runtime advertised at `initialize`.
+    ///
+    /// Same reasoning as [`with_thread_steer`](Self::with_thread_steer): an
+    /// attach control that publishes an image the runtime will refuse is worse
+    /// than no control, and hiding the control on a runtime that does take
+    /// images costs the operator a capability they paid for.
+    pub const fn with_prompt_image(self, prompt_image: bool) -> Self {
+        Self {
+            prompt_image,
             ..self
         }
     }
@@ -1451,6 +1491,7 @@ pub fn user_prompt_item(
     operator_pubkey: Option<&str>,
     command_id: Option<&str>,
     sender_role: Option<&str>,
+    attachment_count: usize,
 ) -> serde_json::Value {
     let mut item =
         serde_json::json!({ "kind": "user_prompt", "content": content, "steered": steered });
@@ -1474,6 +1515,17 @@ pub fn user_prompt_item(
         if crate::coding_session_lifecycle_command::validate_role_slug(role).is_ok() {
             object.insert("senderRole".into(), serde_json::json!(role));
         }
+    }
+    // Additive and optional like the rest: a turn with no images is
+    // byte-identical to the shape published before attachments existed. This
+    // counts what was actually *delivered* to the agent, so a turn whose
+    // images were dropped for an execution that cannot take them does not
+    // leave a transcript claiming the agent saw them.
+    if attachment_count > 0 {
+        object.insert(
+            "attachmentCount".into(),
+            serde_json::json!(attachment_count),
+        );
     }
     item
 }
@@ -1901,6 +1953,7 @@ mod tests {
                 "context",
                 "diff",
                 "plan",
+                "promptImage",
             ])
         );
     }
@@ -2389,11 +2442,11 @@ mod tests {
     /// the three keys every existing consumer already reads.
     #[test]
     fn user_prompt_carries_the_operator_only_when_one_was_witnessed() {
-        let unattributed = user_prompt_item("go", false, None, None, None);
+        let unattributed = user_prompt_item("go", false, None, None, None, 0);
         assert_eq!(keys(&unattributed), sorted(&["kind", "content", "steered"]));
 
         let operator = "a".repeat(64);
-        let attributed = user_prompt_item("go", true, Some(&operator), None, None);
+        let attributed = user_prompt_item("go", true, Some(&operator), None, None, 0);
         assert_eq!(
             keys(&attributed),
             sorted(&["kind", "content", "steered", "operatorPubkey"])
@@ -2414,7 +2467,7 @@ mod tests {
             &"A".repeat(64),
             &format!("{}{}", "z", "a".repeat(63)),
         ] {
-            let item = user_prompt_item("go", false, Some(bad), None, None);
+            let item = user_prompt_item("go", false, Some(bad), None, None, 0);
             assert!(
                 item.get("operatorPubkey").is_none(),
                 "{bad:?} must not be published as an operator"
@@ -2499,7 +2552,7 @@ mod tests {
     /// id instead of by matching prompt text.
     #[test]
     fn user_prompt_carries_the_command_that_started_the_turn() {
-        let joined = user_prompt_item("go", false, None, Some("turn-1"), None);
+        let joined = user_prompt_item("go", false, None, Some("turn-1"), None, 0);
         assert_eq!(
             keys(&joined),
             sorted(&["kind", "content", "steered", "commandId"])
@@ -2507,7 +2560,7 @@ mod tests {
         assert_eq!(joined["commandId"], "turn-1");
 
         let operator = "a".repeat(64);
-        let both = user_prompt_item("go", true, Some(&operator), Some("turn-2"), None);
+        let both = user_prompt_item("go", true, Some(&operator), Some("turn-2"), None, 0);
         assert_eq!(
             keys(&both),
             sorted(&["kind", "content", "steered", "operatorPubkey", "commandId"])
@@ -2520,7 +2573,7 @@ mod tests {
     #[test]
     fn user_prompt_omits_a_command_that_is_absent_or_unbounded() {
         assert_eq!(
-            keys(&user_prompt_item("go", false, None, None, None)),
+            keys(&user_prompt_item("go", false, None, None, None, 0)),
             sorted(&["kind", "content", "steered"])
         );
         for bad in [
@@ -2529,7 +2582,7 @@ mod tests {
             "with\u{1}control",
             &"c".repeat(crate::coding_session_command::MAX_IDENTIFIER_BYTES + 1),
         ] {
-            let item = user_prompt_item("go", false, None, Some(bad), None);
+            let item = user_prompt_item("go", false, None, Some(bad), None, 0);
             assert!(
                 item.get("commandId").is_none(),
                 "{bad:?} must not be published as a commandId"
@@ -2814,6 +2867,33 @@ mod tests {
             base
         );
         assert!(!base.with_thread_steer(false).thread_steer);
+    }
+
+    /// `with_prompt_image` changes exactly one capability and nothing else,
+    /// and metadata published before the field existed still decodes — as
+    /// `false`, the honest reading of a provider that never claimed images.
+    #[test]
+    fn per_execution_prompt_image_overrides_only_that_capability() {
+        let base = Capabilities::v1_claude();
+        assert!(
+            !base.prompt_image,
+            "a static driver vector must not claim image support it has not witnessed"
+        );
+        let imaging = base.with_prompt_image(true);
+        assert!(imaging.prompt_image);
+        assert_eq!(
+            Capabilities {
+                prompt_image: false,
+                ..imaging
+            },
+            base
+        );
+
+        let legacy: Capabilities = serde_json::from_str(
+            r#"{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true}"#,
+        )
+        .expect("metadata predating promptImage must still decode");
+        assert!(!legacy.prompt_image);
     }
 
     /// The `usage` block is optional and additive: a result item built without

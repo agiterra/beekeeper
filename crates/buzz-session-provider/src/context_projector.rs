@@ -1796,7 +1796,7 @@ fn verify_inbox_command(
         ],
         "turn command",
     )?;
-    let CodingSessionAction::ThreadTurnStart { text, deliver } = &payload.action else {
+    let CodingSessionAction::ThreadTurnStart { text, deliver, .. } = &payload.action else {
         return Ok(None);
     };
     verify_signed(event, "turn command")?;
@@ -2783,6 +2783,7 @@ mod tests {
             target: target.clone(),
             action: CodingSessionAction::ThreadTurnStart {
                 text: text.into(),
+                attachments: Vec::new(),
                 deliver,
             },
         };
@@ -3582,7 +3583,7 @@ mod tests {
 
         for (seq, operator) in [(1u64, None), (2u64, Some("d".repeat(64)))] {
             let item =
-                crate::payload::user_prompt_item("go", false, operator.as_deref(), None, None);
+                crate::payload::user_prompt_item("go", false, operator.as_deref(), None, None, 0);
             let envelope =
                 TranscriptEnvelope::new(&target, seq, seq as i64 * 1_000, Some("turn-1"), item);
             let content = serde_json::to_string(&envelope).unwrap();

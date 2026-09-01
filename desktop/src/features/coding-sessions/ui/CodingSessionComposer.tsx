@@ -39,6 +39,11 @@ import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { getCodingSessionComposerState } from "@/features/coding-sessions/lib/codingSessionComposerModel";
+import {
+  expandImageTokens,
+  useCodingSessionImageAttachments,
+  type CodingSessionAttachmentRef,
+} from "@/features/coding-sessions/lib/useCodingSessionImageAttachments";
 import type { CodingSessionComposerControlContext } from "./CodingSessionComposerDeck";
 import { CodingSessionComposerSurface } from "./CodingSessionComposerSurface";
 
@@ -52,6 +57,14 @@ type CodingSessionComposerProps = {
    * been told must not offer a control the provider would only degrade.
    */
   canSteer?: boolean;
+  /**
+   * Whether this execution advertised image prompts (its 44223
+   * `capabilities.promptImage`). Defaults to `false` for the same reason
+   * `canSteer` does: a composer that has not been told must not offer a
+   * control the provider would only degrade — here, an image the agent would
+   * never receive.
+   */
+  canAttachImages?: boolean;
   channelId: string;
   contextWindow?: CodingSessionContextWindow | null;
   controlContext?: CodingSessionComposerControlContext;
@@ -93,6 +106,8 @@ type CodingSessionComposerProps = {
    */
   prefill?: { id: string; text: string } | null;
   providerAuthorityPubkey?: string | null;
+  /** Runtime slug, named in the disabled attach tooltip. */
+  runtimeLabel?: string | null;
   /** Optional recipient picker rendered inside the immersive control deck. */
   recipientControl?: React.ReactNode;
   /** Publish seam; production passes nothing. */
@@ -135,6 +150,7 @@ export function CodingSessionComposer({
   authorityReason = null,
   canInterrupt,
   canControl = true,
+  canAttachImages = false,
   canSteer = false,
   channelId,
   contextWindow = null,
@@ -152,6 +168,7 @@ export function CodingSessionComposer({
   prefill = null,
   providerAuthorityPubkey = null,
   recipientControl,
+  runtimeLabel = null,
   publishCommand = publishCodingSessionCommand,
   publishResume = publishCodingSessionResume,
   refusalClient,
@@ -172,6 +189,42 @@ export function CodingSessionComposer({
     setAppliedPrefillId(prefill.id);
     setText(prefill.text);
   }
+  /**
+   * Write an image token where the person is typing.
+   *
+   * The caret is what puts the picture in the right place, so a turn reads
+   * *"when I do X I see this: [Image #1]"* rather than prose with a tray of
+   * images bolted underneath. The token is spaced into the sentence rather
+   * than forced onto its own line: it is a reference, and people put
+   * references mid-sentence.
+   */
+  const insertAtCaret = React.useCallback((token: string) => {
+    setText((current) => {
+      const editor = editorRef.current;
+      // Caret when the editor has focus; end of the draft otherwise — the
+      // paperclip takes focus away, and a dropped file has no caret at all.
+      const at =
+        editor && document.activeElement === editor
+          ? editor.selectionStart
+          : current.length;
+      const before = current.slice(0, at);
+      const after = current.slice(at);
+      const lead = before.length === 0 || /\s$/.test(before) ? "" : " ";
+      const trail = after.length === 0 || /^\s/.test(after) ? "" : " ";
+      return `${before}${lead}${token}${trail}${after}`;
+    });
+  }, []);
+
+  const transformDraft = React.useCallback(
+    (transform: (draft: string) => string) => setText(transform),
+    [],
+  );
+
+  const attachments = useCodingSessionImageAttachments({
+    enabled: canAttachImages,
+    onInsertAtCaret: insertAtCaret,
+    onTransformDraft: transformDraft,
+  });
   const [pendingAction, setPendingAction] = React.useState<
     "send" | "interrupt" | "resume" | "stop" | null
   >(null);
@@ -245,9 +298,16 @@ export function CodingSessionComposer({
     editor.style.overflowY =
       editor.scrollHeight > maxHeight ? "auto" : "hidden";
   });
-  const preparedText = (prepareText ? prepareText(text) : text).trim();
+  // `[Image #N]` is what the person reads and keeps editing; the markdown it
+  // becomes is what the relay stores and the transcript renders as a picture.
+  // Expanding here — and never in the draft — is what keeps both true.
+  const preparedText = expandImageTokens(
+    (prepareText ? prepareText(text) : text).trim(),
+    attachments.attachments,
+  );
   const state = getCodingSessionComposerState({
     canSteer,
+    hasUnsettledAttachments: attachments.isUploading || attachments.hasFailed,
     isMember,
     isWorking,
     text: preparedText,
@@ -276,10 +336,12 @@ export function CodingSessionComposer({
 
   const publishPreparedText = React.useCallback(
     async ({
+      attachmentRefs,
       deliver,
       draft,
       preparedText: textToPublish,
     }: {
+      attachmentRefs: CodingSessionAttachmentRef[];
       deliver: CodingSessionTurnDelivery;
       draft: string;
       preparedText: string;
@@ -311,6 +373,9 @@ export function CodingSessionComposer({
           commandId,
           target,
           text: textToPublish,
+          // Omitted at its default by the builder, so a turn with no images
+          // is byte-identical to what this client has always published.
+          attachments: attachmentRefs,
           deliver,
         });
         markPendingCodingSessionTurnPublished(channelId, published.commandId);
@@ -322,6 +387,10 @@ export function CodingSessionComposer({
           executionKey,
           generation: target.generation,
         });
+        // Cleared only once the relay has the turn. Clearing beside the
+        // editor would drop the thumbnails on a publish that then failed,
+        // leaving the restored draft describing images no longer attached.
+        attachments.clear();
       } catch (submitError) {
         forgetPendingCodingSessionTurn(channelId, commandId);
         // The words never left this machine, so they belong back in the editor —
@@ -338,6 +407,7 @@ export function CodingSessionComposer({
       }
     },
     [
+      attachments,
       channelId,
       currentUserPubkey,
       executionKey,
@@ -359,9 +429,16 @@ export function CodingSessionComposer({
     // Keep the person's own words, not the prepared wire text: a refusal has
     // to hand back exactly what they typed, routing handle and all.
     const draft = text;
+    const attachmentRefs = attachments.attachmentRefs;
     setText("");
-    await publishPreparedText({ deliver, draft, preparedText });
+    await publishPreparedText({
+      attachmentRefs,
+      deliver,
+      draft,
+      preparedText,
+    });
   }, [
+    attachments.attachmentRefs,
     canSteer,
     canSubmitText,
     isSending,
@@ -396,8 +473,18 @@ export function CodingSessionComposer({
     clearReaddress();
     // Never `steer`: the execution that answered has just been resumed, so
     // there is no running turn of its to steer into.
-    await publishPreparedText({ deliver: "boundary", draft, preparedText });
+    // The refusal restored the draft, and the thumbnails were never cleared
+    // (the turn was refused, not delivered), so whatever is still staged rides
+    // the resend — the same words *and* the same pictures the person is
+    // looking at.
+    await publishPreparedText({
+      attachmentRefs: attachments.attachmentRefs,
+      deliver: "boundary",
+      draft,
+      preparedText,
+    });
   }, [
+    attachments.attachmentRefs,
     canSubmitText,
     clearReaddress,
     isSending,
@@ -536,7 +623,9 @@ export function CodingSessionComposer({
   return (
     <>
       <CodingSessionComposerSurface
+        attachments={attachments}
         authorityReason={authorityReason}
+        canAttachImages={canAttachImages}
         canControl={canControl}
         canInterrupt={canInterrupt}
         canSessionStop={canSessionStop}
@@ -559,6 +648,7 @@ export function CodingSessionComposer({
         isWorking={isWorking}
         layout={layout}
         onAddProvider={onAddProvider}
+        runtimeLabel={runtimeLabel}
         onInterrupt={() => void handleStop()}
         onPrimary={() => void submit()}
         onReconnect={() => void handleResume()}

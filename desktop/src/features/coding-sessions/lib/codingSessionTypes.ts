@@ -24,6 +24,15 @@ export type CodingSessionCapabilities = {
   context: boolean;
   diff: boolean;
   plan: boolean;
+  /**
+   * Whether this execution's runtime accepts image content blocks in
+   * `session/prompt`, as it advertised at ACP `initialize`.
+   *
+   * Per-execution truth like `threadSteer`, and additive on the wire: metadata
+   * published before the field existed decodes as `false`, which is the honest
+   * reading of a provider that never claimed image support.
+   */
+  promptImage: boolean;
 };
 
 /** Provider-neutral catalog record consumed by coding-session surfaces. */

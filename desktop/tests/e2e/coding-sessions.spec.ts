@@ -130,7 +130,9 @@ function createAndReceiptEvents(genesisRef: string): RelayEvent[] {
   return [create, receipt];
 }
 
-function metadataEvent(): RelayEvent {
+function metadataEvent(
+  capabilityOverrides: Record<string, boolean> = {},
+): RelayEvent {
   const payload = {
     schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
     session: TARGET,
@@ -150,6 +152,7 @@ function metadataEvent(): RelayEvent {
       context: false,
       diff: false,
       plan: true,
+      ...capabilityOverrides,
     },
     sessionRef: SESSION_REF,
   };
@@ -352,13 +355,15 @@ function goalEvent(): RelayEvent {
  * One complete turn: a prompt, a tool call and its result, an assistant
  * answer, and the terminal result the completion footer is derived from.
  */
-function seededEvents(): RelayEvent[] {
+function seededEvents(
+  capabilityOverrides: Record<string, boolean> = {},
+): RelayEvent[] {
   const genesis = genesisEvent();
   return [
     genesis,
     ...createAndReceiptEvents(genesis.id),
     goalEvent(),
-    metadataEvent(),
+    metadataEvent(capabilityOverrides),
     transcriptEvent(1, {
       kind: "user_prompt",
       content: "Fix the reconnect bug",
@@ -407,7 +412,10 @@ function legacyUngovernedEvents(): RelayEvent[] {
   ];
 }
 
-async function seedCodingSession(page: import("@playwright/test").Page) {
+async function seedCodingSession(
+  page: import("@playwright/test").Page,
+  capabilityOverrides: Record<string, boolean> = {},
+) {
   await page.evaluate(
     async ({ channelName, events }) => {
       const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
@@ -416,7 +424,7 @@ async function seedCodingSession(page: import("@playwright/test").Page) {
         seed({ channelName, event });
       }
     },
-    { channelName: CHANNEL_NAME, events: seededEvents() },
+    { channelName: CHANNEL_NAME, events: seededEvents(capabilityOverrides) },
   );
 }
 
@@ -745,4 +753,171 @@ test("the channel timeline never renders coding-session kinds", async ({
   await expect(page.getByTestId("message-timeline")).not.toContainText(
     "buzz-coding-session",
   );
+});
+
+/**
+ * The attach control states the truth about *this* execution.
+ *
+ * `promptImage` is per-execution, learned from what the runtime behind this
+ * generation answered at ACP `initialize`. An execution that never advertised
+ * it must not be offered a control whose images the provider would drop — and
+ * the operator has to be able to find out why, which is what the tooltip is
+ * for. Hiding the button would leave them with nothing to ask about.
+ */
+async function openSeededSessionWorkspace(
+  page: import("@playwright/test").Page,
+  capabilityOverrides: Record<string, boolean> = {},
+) {
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await seedCodingSession(page, capabilityOverrides);
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toHaveAttribute("aria-label", "Coding sessions (1)", { timeout: 15_000 });
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-session-open").click();
+  await expect(page.getByTestId("coding-session-workspace")).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+test("an execution that never advertised image prompts disables attach and says why", async ({
+  page,
+}) => {
+  await openSeededSessionWorkspace(page);
+
+  const attach = page.getByTestId("coding-session-composer-attach");
+  await expect(attach).toBeVisible();
+  await expect(attach).toBeDisabled();
+
+  // The reason is reachable, not merely implied by a greyed-out button.
+  await attach.hover({ force: true });
+  await expect(page.getByText(/did not advertise image prompts/)).toBeVisible();
+});
+
+test("an execution that advertised image prompts drops the capability refusal", async ({
+  page,
+}) => {
+  await openSeededSessionWorkspace(page, { promptImage: true });
+
+  const attach = page.getByTestId("coding-session-composer-attach");
+  await expect(attach).toBeVisible();
+
+  // This seeded session is *also* authority-gated — the viewer is not its
+  // founder — so the button stays disabled here for a different reason. What
+  // this test pins is that the **capability** gate opened: the runtime
+  // refusal is gone and the ordinary invitation is what the operator reads.
+  await attach.hover({ force: true });
+  await expect(page.getByText(/Attach a PNG, JPEG, GIF or WebP/)).toBeVisible();
+  await expect(page.getByText(/did not advertise image prompts/)).toHaveCount(
+    0,
+  );
+});
+
+/**
+ * A prompt that references an image renders the picture, not its markdown.
+ *
+ * The whole point of carrying the reference in the turn text is that the
+ * transcript shows what the operator was looking at. A run where the markdown
+ * reached the relay intact and still surfaced as literal `![image](…)` would
+ * pass every wire test in this repo and be useless to the person reading it.
+ */
+test("a prompt's image reference renders as an image, not as markdown", async ({
+  page,
+}) => {
+  const sha = "a".repeat(64);
+  const url = `http://localhost:3000/media/${sha}.png`;
+
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await page.evaluate(
+    async ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    {
+      channelName: CHANNEL_NAME,
+      events: [
+        ...seededEvents(),
+        transcriptEvent(90, {
+          kind: "user_prompt",
+          content: `When I do X, I see this:\n\n![image](${url})`,
+          attachmentCount: 1,
+        }),
+      ],
+    },
+  );
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toHaveAttribute("aria-label", "Coding sessions (1)", { timeout: 15_000 });
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-session-open").click();
+  await expect(page.getByTestId("coding-session-workspace")).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const prompt = page
+    .getByTestId("coding-session-user-message")
+    .filter({ hasText: "When I do X" });
+  await expect(prompt).toBeVisible({ timeout: 15_000 });
+  // The sentence survives, and the reference became an element rather than
+  // text the reader has to decode.
+  await expect(prompt).toContainText("When I do X, I see this:");
+  await expect(prompt.locator("img")).toHaveCount(1);
+  await expect(prompt).not.toContainText("![image]");
+  await expect(prompt).not.toContainText("attachment");
+});
+
+/**
+ * The shape a paste actually produces: images and nothing else.
+ *
+ * An image-only paragraph takes a different renderer than prose-plus-image
+ * (`ImageMosaic`), so passing the mixed case says nothing about this one — and
+ * pasting two screenshots with no covering sentence is the common way to use
+ * this feature.
+ */
+test("an image-only prompt still renders its pictures", async ({ page }) => {
+  const first = `http://localhost:3000/media/${"a".repeat(64)}.png`;
+  const second = `http://localhost:3000/media/${"b".repeat(64)}.png`;
+
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await page.evaluate(
+    async ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    {
+      channelName: CHANNEL_NAME,
+      events: [
+        ...seededEvents(),
+        transcriptEvent(91, {
+          kind: "user_prompt",
+          content: `![image](${first}) ![image](${second})`,
+          attachmentCount: 2,
+        }),
+      ],
+    },
+  );
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toHaveAttribute("aria-label", "Coding sessions (1)", { timeout: 15_000 });
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-session-open").click();
+  await expect(page.getByTestId("coding-session-workspace")).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const prompts = page.getByTestId("coding-session-user-message");
+  const imageOnly = prompts.filter({ has: page.locator("img") });
+  await expect(imageOnly.locator("img")).toHaveCount(2, { timeout: 15_000 });
+
+  // ...and they have to be *visible*, not merely present. The user-message
+  // bubble shrink-wraps its content, so a mosaic sized only in percentages has
+  // nothing to resolve against and collapses to a sliver — images loaded,
+  // laid out, and clipped to roughly nothing (observed live, 2026-09-01: a
+  // 6px-wide smooth-corners clip path over a 192px-tall row).
+  const mosaic = imageOnly.locator("[data-image-mosaic]");
+  const box = await mosaic.boundingBox();
+  expect(box, "the mosaic should be laid out").not.toBeNull();
+  expect(box?.width ?? 0).toBeGreaterThan(200);
 });

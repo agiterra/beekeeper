@@ -373,3 +373,42 @@ test("rewriteRelayUrl: still passes external Blossom URLs through unchanged", as
     globalThis.window = previousWindow;
   }
 });
+
+test("rewriteRelayUrl: loopback spellings are the same relay", async () => {
+  const mediaUrl = await import("./mediaUrl.ts");
+
+  // A local community added as 127.0.0.1 gets media URLs back on localhost —
+  // the relay builds them from its own tenant host. Treating those as
+  // different origins skips the proxy, and a bare <img> cannot send the
+  // Blossom auth a media read requires, so every picture silently fails.
+  for (const [community, media] of [
+    ["http://127.0.0.1:3000", "http://localhost:3000"],
+    ["http://localhost:3000", "http://127.0.0.1:3000"],
+  ]) {
+    resetMediaCaches();
+    beginRelayOriginFetch()(community);
+    assert.notEqual(
+      mediaUrl.rewriteRelayUrl(`${media}/media/${HASH}.png`),
+      `${media}/media/${HASH}.png`,
+      `${community} and ${media} name the same machine`,
+    );
+  }
+});
+
+test("rewriteRelayUrl: a different relay is still left alone", async () => {
+  const mediaUrl = await import("./mediaUrl.ts");
+
+  // The origin check exists to stop us proxying somebody else's Blossom
+  // server. Loopback equivalence must not widen that.
+  resetMediaCaches();
+  beginRelayOriginFetch()("http://localhost:3000");
+  for (const foreign of [
+    "https://relay.example/media",
+    // Same host family, different port: two relays on one machine.
+    "http://localhost:3001/media",
+  ]) {
+    const url = `${foreign}/${HASH}.png`;
+    assert.equal(mediaUrl.rewriteRelayUrl(url), url, `left alone: ${foreign}`);
+  }
+  resetMediaCaches();
+});

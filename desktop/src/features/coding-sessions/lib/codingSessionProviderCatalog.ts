@@ -37,6 +37,16 @@ export type CodingSessionProviderCapabilities = {
   context: boolean;
   diff: boolean;
   plan: boolean;
+  /**
+   * The driver's static claim about image prompts, absent from a catalog
+   * published before the field existed — hence optional, and read as
+   * `promptImage === true`.
+   *
+   * The **live** truth for one execution is its 44223 `promptImage`, which is
+   * what an attach control must read — the same distinction `threadSteer`
+   * draws.
+   */
+  promptImage?: boolean;
 };
 
 /**
@@ -624,7 +634,9 @@ function parseProvider(
         "diff",
         "plan",
       ],
-      [],
+      // Additive and trailing: a catalog published before this field existed
+      // omits it, and `hasOrderedKeys` only accepts it in this position.
+      ["promptImage"],
     )
   ) {
     return null;
@@ -643,7 +655,11 @@ function parseProvider(
     typeof capabilities.threadSteer !== "boolean" ||
     typeof capabilities.context !== "boolean" ||
     typeof capabilities.diff !== "boolean" ||
-    typeof capabilities.plan !== "boolean"
+    typeof capabilities.plan !== "boolean" ||
+    // Additive: a catalog published before this field existed simply omits it,
+    // and omission reads as `false`.
+    (Object.hasOwn(capabilities, "promptImage") &&
+      typeof capabilities.promptImage !== "boolean")
   ) {
     return null;
   }
@@ -664,6 +680,13 @@ function parseProvider(
       context: capabilities.context,
       diff: capabilities.diff,
       plan: capabilities.plan,
+      // Echoed only when the producer sent it, and always last. The decoder
+      // round-trips: `JSON.stringify(catalog) === content` is what proves the
+      // signed bytes were canonical, so materialising a default here would
+      // make every pre-`promptImage` catalog fail to decode at all.
+      ...(Object.hasOwn(capabilities, "promptImage")
+        ? { promptImage: capabilities.promptImage as boolean }
+        : {}),
     },
     ...(described ? { models: described } : {}),
   };

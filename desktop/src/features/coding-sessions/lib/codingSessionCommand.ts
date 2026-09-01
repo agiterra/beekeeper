@@ -11,6 +11,17 @@ export const CODING_SESSION_COMMAND_TAG_VERSION = "csc1-1";
 export const MAX_CODING_SESSION_IDENTIFIER_BYTES = 256;
 /** Maximum UTF-8 byte length for a coding-session turn. */
 export const MAX_CODING_SESSION_TEXT_BYTES = 12 * 1024;
+/** Mirrors `MAX_TURN_ATTACHMENTS` in buzz-core. */
+export const MAX_CODING_SESSION_ATTACHMENTS = 4;
+/** Mirrors `MAX_TURN_ATTACHMENT_BYTES` in buzz-core. */
+export const MAX_CODING_SESSION_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** Mirrors `ALLOWED_ATTACHMENT_MIMES` in buzz-core. */
+export const CODING_SESSION_ATTACHMENT_MIMES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+] as const;
 
 /** Provider-neutral target for an external coding-session provider adapter. */
 export type CodingSessionCommandTarget = {
@@ -55,11 +66,37 @@ export function isCodingSessionTurnDelivery(
   );
 }
 
+/**
+ * One image attached to a turn, addressed by its Blossom hash.
+ *
+ * No URL, deliberately: the provider derives `{relay}/media/{sha256}.{ext}`
+ * from the relay it is already connected to, so a signed command can never
+ * point it at somewhere else. Mirrors `TurnAttachment` in
+ * `crates/buzz-core/src/coding_session_command.rs`.
+ */
+export type CodingSessionTurnAttachment = {
+  sha256: string;
+  mime: string;
+  size: number;
+  dim?: string;
+  filename?: string;
+};
+
 /** Actions supported by the governed coding-session command contract. */
 export type CodingSessionCommandAction =
   | {
       type: "thread.turn.start";
       text: string;
+      /**
+       * Written only when the turn actually carries images, for exactly the
+       * reason `deliver` is omitted at its default: the payload is validated
+       * with `deny_unknown_fields` at the relay *and* the provider, so a turn
+       * with no images has to serialize to the bytes it always did. A turn
+       * that does carry them requires a relay and provider that know the
+       * field — which is what the execution's `promptImage` capability
+       * tells the composer before it offers the control.
+       */
+      attachments?: CodingSessionTurnAttachment[];
       /**
        * Written only when the sender asks for something other than the wire
        * default. `boundary` is the default an absent key already means, and a
@@ -134,6 +171,7 @@ export function buildCodingSessionCommandEvent(input: {
   commandId: string;
   target: CodingSessionCommandTarget;
   text: string;
+  attachments?: CodingSessionTurnAttachment[];
   deliver: CodingSessionTurnDelivery;
 }): CodingSessionCommandEventInput {
   // The caller always names a class; an unreadable one is refused here rather
@@ -148,17 +186,18 @@ export function buildCodingSessionCommandEvent(input: {
     channelId: input.channelId,
     commandId: input.commandId,
     target: input.target,
-    action:
-      // Omit the default class from the wire. See the field's doc comment: a
-      // relay built before `deliver` existed refuses any payload carrying it,
-      // and absent already means `boundary` in the contract.
-      input.deliver === "boundary"
-        ? { type: "thread.turn.start", text: input.text }
-        : {
-            type: "thread.turn.start",
-            text: input.text,
-            deliver: input.deliver,
-          },
+    action: {
+      type: "thread.turn.start",
+      text: input.text,
+      // Both optional keys are omitted at their defaults, for the same
+      // forward-compatibility reason — see their doc comments. Spreading
+      // rather than assigning `undefined` keeps them out of `JSON.stringify`
+      // output entirely.
+      ...(input.attachments && input.attachments.length > 0
+        ? { attachments: input.attachments }
+        : {}),
+      ...(input.deliver === "boundary" ? {} : { deliver: input.deliver }),
+    },
   });
 }
 
@@ -207,6 +246,7 @@ export function validateCodingSessionCommandInput(input: {
     | {
         type: "thread.turn.start";
         text?: string;
+        attachments?: unknown;
         deliver?: unknown;
       };
 }): void {
@@ -254,7 +294,55 @@ export function validateCodingSessionCommandInput(input: {
         `action.deliver must be one of ${CODING_SESSION_TURN_DELIVERIES.join(", ")}`,
       );
     }
+    // Same rule as `deliver`: absent is legal, present-but-malformed is
+    // refused before signing. The relay and provider both re-check this, but
+    // failing here is what lets the composer say which image was wrong.
+    if (input.action.attachments !== undefined) {
+      validateCodingSessionAttachments(input.action.attachments);
+    }
   }
+}
+
+/** Bounds every attachment field the relay will re-check after signing. */
+function validateCodingSessionAttachments(value: unknown): void {
+  if (!Array.isArray(value)) {
+    throw new Error("action.attachments must be an array");
+  }
+  if (value.length > MAX_CODING_SESSION_ATTACHMENTS) {
+    throw new Error(
+      `action.attachments exceeds ${MAX_CODING_SESSION_ATTACHMENTS} entries`,
+    );
+  }
+  value.forEach((entry, index) => {
+    const attachment = entry as Partial<CodingSessionTurnAttachment>;
+    if (
+      typeof attachment?.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(attachment.sha256)
+    ) {
+      throw new Error(
+        `action.attachments[${index}].sha256 must be 64 lowercase hex characters`,
+      );
+    }
+    if (
+      typeof attachment.mime !== "string" ||
+      !(CODING_SESSION_ATTACHMENT_MIMES as readonly string[]).includes(
+        attachment.mime,
+      )
+    ) {
+      throw new Error(
+        `action.attachments[${index}].mime must be one of ${CODING_SESSION_ATTACHMENT_MIMES.join(", ")}`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(attachment.size) ||
+      (attachment.size ?? 0) <= 0 ||
+      (attachment.size ?? 0) > MAX_CODING_SESSION_ATTACHMENT_BYTES
+    ) {
+      throw new Error(
+        `action.attachments[${index}].size must be between 1 and ${MAX_CODING_SESSION_ATTACHMENT_BYTES} bytes`,
+      );
+    }
+  });
 }
 
 /** Publish a command and return the signed event identity accepted by the relay.

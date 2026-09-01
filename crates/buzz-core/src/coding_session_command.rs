@@ -14,6 +14,16 @@ pub const CODING_SESSION_COMMAND_TAG_VERSION: &str = "csc1-1";
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 /// Maximum UTF-8 byte length for turn text.
 pub const MAX_TURN_TEXT_BYTES: usize = 12 * 1024;
+/// Maximum number of image attachments a single turn may carry.
+pub const MAX_TURN_ATTACHMENTS: usize = 4;
+/// Maximum declared byte size of a single turn attachment.
+pub const MAX_TURN_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+/// The image MIME types a turn attachment may declare.
+///
+/// Deliberately the same set `buzz-cli` will upload (`ALLOWED_MIMES`), minus
+/// video: a still image is what an ACP `image` content block can carry.
+pub const ALLOWED_ATTACHMENT_MIMES: [&str; 4] =
+    ["image/jpeg", "image/png", "image/gif", "image/webp"];
 /// Largest integer that can be represented exactly by JavaScript and JSON peers.
 pub const MAX_SAFE_GENERATION: u64 = 9_007_199_254_740_991;
 
@@ -90,6 +100,67 @@ impl CodingSessionDelivery {
     }
 }
 
+/// A Blossom-hosted image attached to a turn.
+///
+/// Deliberately carries **no URL**. The blob is addressed by hash and the
+/// consuming provider derives `{relay}/media/{sha256}.{ext}` from the relay it
+/// is already connected to, so an operator-supplied string can never steer a
+/// provider's fetch at an arbitrary host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnAttachment {
+    /// Lowercase hex sha256 of the blob — its Blossom identity.
+    pub sha256: String,
+    /// Declared MIME type; must be one of [`ALLOWED_ATTACHMENT_MIMES`].
+    pub mime: String,
+    /// Declared byte size of the blob.
+    pub size: u64,
+    /// Pixel dimensions as `WxH`, when the uploader reported them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dim: Option<String>,
+    /// Original filename, for display only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+}
+
+impl TurnAttachment {
+    /// The file extension implied by [`Self::mime`].
+    pub fn extension(&self) -> &'static str {
+        match self.mime.as_str() {
+            "image/jpeg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            _ => "png",
+        }
+    }
+
+    /// Validate one attachment's fields.
+    fn validate(&self, index: usize) -> Result<(), String> {
+        if self.sha256.len() != 64
+            || !self
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(format!(
+                "action.attachments[{index}].sha256 must be 64 lowercase hex characters"
+            ));
+        }
+        if !ALLOWED_ATTACHMENT_MIMES.contains(&self.mime.as_str()) {
+            return Err(format!(
+                "action.attachments[{index}].mime must be one of {}",
+                ALLOWED_ATTACHMENT_MIMES.join(", ")
+            ));
+        }
+        if self.size == 0 || self.size > MAX_TURN_ATTACHMENT_BYTES {
+            return Err(format!(
+                "action.attachments[{index}].size must be between 1 and {MAX_TURN_ATTACHMENT_BYTES} bytes"
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Supported coding-session actions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
@@ -99,6 +170,13 @@ pub enum CodingSessionAction {
     ThreadTurnStart {
         /// Operator-entered turn text.
         text: String,
+        /// Images the operator attached to this turn.
+        ///
+        /// Omitted from the wire when empty, so a turn without attachments
+        /// serializes exactly as it did before this field existed — the same
+        /// forward-compatibility contract `deliver` keeps.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<TurnAttachment>,
         /// Requested delivery class. Absent on the wire means
         /// [`CodingSessionDelivery::Boundary`], which is what every command
         /// published before this field existed meant.
@@ -141,12 +219,26 @@ impl CodingSessionCommandPayload {
             // `deliver` needs no check here: it is a closed enum, so a class
             // this build does not know never survives decoding to reach
             // validation.
-            CodingSessionAction::ThreadTurnStart { text, deliver: _ } => {
+            CodingSessionAction::ThreadTurnStart {
+                text,
+                attachments,
+                deliver: _,
+            } => {
+                // An attachment adds to a turn; it never stands in for one. A
+                // bare image with no instruction gives the agent nothing to do.
                 if text.trim().is_empty() {
                     return Err("action.text must not be empty".into());
                 }
                 if text.len() > MAX_TURN_TEXT_BYTES {
                     return Err(format!("action.text exceeds {MAX_TURN_TEXT_BYTES} bytes"));
+                }
+                if attachments.len() > MAX_TURN_ATTACHMENTS {
+                    return Err(format!(
+                        "action.attachments exceeds {MAX_TURN_ATTACHMENTS} entries"
+                    ));
+                }
+                for (index, attachment) in attachments.iter().enumerate() {
+                    attachment.validate(index)?;
                 }
             }
             CodingSessionAction::ThreadTurnInterrupt => {}
@@ -201,6 +293,7 @@ mod tests {
             },
             action: CodingSessionAction::ThreadTurnStart {
                 text: "Ship it".into(),
+                attachments: Vec::new(),
                 deliver: CodingSessionDelivery::Boundary,
             },
         }
@@ -247,6 +340,7 @@ mod tests {
         payload.target.generation = 1;
         payload.action = CodingSessionAction::ThreadTurnStart {
             text: "   ".into(),
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         };
         assert!(payload.validate().is_err());
@@ -266,6 +360,7 @@ mod tests {
         let mut payload = valid_payload();
         payload.action = CodingSessionAction::ThreadTurnStart {
             text: "🐝".repeat(MAX_TURN_TEXT_BYTES / 4),
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         };
         assert_eq!(
@@ -279,12 +374,14 @@ mod tests {
 
         payload.action = CodingSessionAction::ThreadTurnStart {
             text: format!("{}a", "🐝".repeat(MAX_TURN_TEXT_BYTES / 4)),
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         };
         assert!(payload.validate().is_err());
 
         payload.action = CodingSessionAction::ThreadTurnStart {
             text: "ok".into(),
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         };
         payload.target.session_id = "é".repeat(MAX_IDENTIFIER_BYTES / 2);
@@ -309,10 +406,168 @@ mod tests {
             decoded.action,
             CodingSessionAction::ThreadTurnStart {
                 text: "go".into(),
+                attachments: Vec::new(),
                 deliver: CodingSessionDelivery::Boundary,
             }
         );
         assert!(decoded.validate().is_ok());
+    }
+
+    fn attachment(sha: &str) -> TurnAttachment {
+        TurnAttachment {
+            sha256: sha.into(),
+            mime: "image/png".into(),
+            size: 1024,
+            dim: Some("800x600".into()),
+            filename: Some("shot.png".into()),
+        }
+    }
+
+    fn start_payload(action: CodingSessionAction) -> CodingSessionCommandPayload {
+        CodingSessionCommandPayload {
+            schema: CODING_SESSION_COMMAND_SCHEMA.into(),
+            command_id: "cmd-att".into(),
+            target: CodingSessionTarget {
+                driver: "provider-a".into(),
+                instance_id: "instance-1".into(),
+                session_id: "session-1".into(),
+                generation: 1,
+            },
+            action,
+        }
+    }
+
+    const SHA_A: &str = "aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd";
+
+    /// A turn with no attachments must serialize to *exactly* the bytes it did
+    /// before the field existed. This is the whole forward-compatibility
+    /// contract: every existing client, relay and provider keeps working, and
+    /// only a turn that actually carries an image takes the new shape.
+    #[test]
+    fn an_empty_attachment_list_is_absent_from_the_wire() {
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "go".into(),
+            attachments: Vec::new(),
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        let wire = serde_json::to_string(&payload).expect("serialize");
+        assert!(
+            !wire.contains("attachments"),
+            "an empty list must not reach the wire: {wire}"
+        );
+    }
+
+    /// A payload written before this field existed still decodes, as no
+    /// attachments — the same absent-means-default rule `deliver` follows.
+    #[test]
+    fn an_absent_attachment_list_decodes_as_empty() {
+        let decoded: CodingSessionCommandPayload = serde_json::from_str(
+            r#"{"schema":"buzz-coding-session-command/v1","commandId":"cmd-3","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":1},"action":{"type":"thread.turn.start","text":"go"}}"#,
+        )
+        .expect("decode a command with no attachments key");
+        assert!(matches!(
+            decoded.action,
+            CodingSessionAction::ThreadTurnStart { ref attachments, .. } if attachments.is_empty()
+        ));
+    }
+
+    /// Attachments round-trip, and the optional display fields stay optional.
+    #[test]
+    fn attachments_round_trip() {
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "why is this wrong?".into(),
+            attachments: vec![attachment(SHA_A)],
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        payload.validate().expect("valid");
+        let wire = serde_json::to_string(&payload).expect("serialize");
+        let back: CodingSessionCommandPayload = serde_json::from_str(&wire).expect("decode");
+        assert_eq!(back, payload);
+
+        let bare = TurnAttachment {
+            dim: None,
+            filename: None,
+            ..attachment(SHA_A)
+        };
+        let wire = serde_json::to_string(&bare).expect("serialize");
+        assert!(
+            !wire.contains("dim") && !wire.contains("filename"),
+            "{wire}"
+        );
+    }
+
+    /// Every field an attachment declares is checked before signing. A
+    /// provider acts on these values — it derives a fetch URL from the hash —
+    /// so a malformed one must never reach it.
+    #[test]
+    fn malformed_attachments_are_refused() {
+        let cases: [(TurnAttachment, &str); 5] = [
+            (
+                TurnAttachment {
+                    sha256: "abc".into(),
+                    ..attachment(SHA_A)
+                },
+                "short hash",
+            ),
+            (
+                TurnAttachment {
+                    sha256: SHA_A.to_uppercase(),
+                    ..attachment(SHA_A)
+                },
+                "uppercase hash",
+            ),
+            (
+                TurnAttachment {
+                    mime: "application/pdf".into(),
+                    ..attachment(SHA_A)
+                },
+                "non-image mime",
+            ),
+            (
+                TurnAttachment {
+                    size: 0,
+                    ..attachment(SHA_A)
+                },
+                "zero size",
+            ),
+            (
+                TurnAttachment {
+                    size: MAX_TURN_ATTACHMENT_BYTES + 1,
+                    ..attachment(SHA_A)
+                },
+                "oversize",
+            ),
+        ];
+        for (bad, label) in cases {
+            let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+                text: "go".into(),
+                attachments: vec![bad],
+                deliver: CodingSessionDelivery::Boundary,
+            });
+            assert!(payload.validate().is_err(), "accepted {label}");
+        }
+    }
+
+    /// The count is capped, and an image never substitutes for an instruction.
+    #[test]
+    fn attachment_count_is_capped_and_text_is_still_required() {
+        let too_many = vec![attachment(SHA_A); MAX_TURN_ATTACHMENTS + 1];
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "go".into(),
+            attachments: too_many,
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        assert!(payload.validate().is_err(), "accepted too many attachments");
+
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "   ".into(),
+            attachments: vec![attachment(SHA_A)],
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        assert!(
+            payload.validate().is_err(),
+            "an attachment must not stand in for turn text"
+        );
     }
 
     /// All three classes round-trip as their exact lowercase wire strings, and
@@ -328,6 +583,7 @@ mod tests {
             let mut payload = valid_payload();
             payload.action = CodingSessionAction::ThreadTurnStart {
                 text: "go".into(),
+                attachments: Vec::new(),
                 deliver: class,
             };
             assert!(payload.validate().is_ok());

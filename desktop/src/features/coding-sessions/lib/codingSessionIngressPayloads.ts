@@ -701,10 +701,17 @@ function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
     "diff",
     "plan",
   ] as const;
+  // `promptImage` is optional, not exact-keyed: a provider that predates it
+  // publishes six keys and must keep decoding. Requiring it would turn every
+  // capability vector from an older provider into `null`, which reads as "this
+  // execution can do nothing" — a far worse lie than a missing attach button.
+  const optionalKeys = ["promptImage"] as const;
   if (
     !isPlainRecord(value) ||
-    !hasExactKeys(value, keys) ||
-    !keys.every((key) => typeof value[key] === "boolean")
+    !hasRequiredAndOptionalKeys(value, keys, optionalKeys) ||
+    !keys.every((key) => typeof value[key] === "boolean") ||
+    (Object.hasOwn(value, "promptImage") &&
+      typeof value.promptImage !== "boolean")
   ) {
     return null;
   }
@@ -715,6 +722,7 @@ function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
     context: value.context as boolean,
     diff: value.diff as boolean,
     plan: value.plan as boolean,
+    promptImage: value.promptImage === true,
   });
 }
 

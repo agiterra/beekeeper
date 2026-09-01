@@ -688,6 +688,50 @@ fn inline_code_spans_are_not_host_paths() {
     }
 }
 
+/// A web URL survives the host-path guard, including the markdown wrapper a
+/// coding-session turn carries its screenshots in.
+///
+/// This guard exists to keep *this machine's layout* out of a published
+/// transcript. A URL's path is addressing on a server. Eliding it turned every
+/// attached screenshot into the literal text
+/// `![[elided private context: 105 bytes, sha256:…])`, so the picture never
+/// rendered and the prompt read as gibberish (observed live, 2026-09-01).
+#[test]
+fn a_web_url_is_not_a_host_path() {
+    let sha = "9d04652c983d29738a5ef5cccbcda0f8826bb67443de11158c186cc816521082";
+    for text in [
+        format!("![image](http://localhost:3000/media/{sha}.png)"),
+        format!("![image](https://hive.agiterra.org/media/{sha}.png)"),
+        "see https://github.com/agiterra/beekeeper/blob/main/README.md".to_owned(),
+        "http://localhost:3000/media/x.png".to_owned(),
+    ] {
+        assert_eq!(
+            sanitize_coding_session_context_text(&text),
+            text,
+            "a web URL names a server, not this machine"
+        );
+    }
+}
+
+/// The exemption is scheme-scoped: `file://` is host layout wearing a scheme,
+/// and a bare absolute path beside a URL is still redacted.
+#[test]
+fn the_web_url_exemption_does_not_rescue_real_host_paths() {
+    let elided = sanitize_coding_session_context_text("file:///Users/andy/.ssh/id_ed25519");
+    assert!(
+        elided.contains("[elided private context: "),
+        "a file:// URL is a host path: {elided}"
+    );
+
+    let mixed =
+        sanitize_coding_session_context_text("fetched https://example.com/a from /Users/andy/keys");
+    assert!(mixed.contains("https://example.com/a"), "{mixed}");
+    assert!(
+        mixed.contains("[elided private context: "),
+        "the bare host path beside it still goes: {mixed}"
+    );
+}
+
 // ── Recording redactions for the host's own operator ─────────────────────────
 //
 // The vault these feed exists so an operator can read back a path on their own

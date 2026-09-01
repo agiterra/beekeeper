@@ -7672,6 +7672,112 @@ mod tests {
         }
     }
 
+    /// A turn's image attachments are validated at ingest, because the relay
+    /// decodes the payload with the same `deny_unknown_fields` type the
+    /// provider does. A command it stores but no provider can decode is a turn
+    /// that vanishes with no receipt.
+    #[test]
+    fn coding_session_command_envelope_validates_turn_attachments() {
+        let channel = Uuid::new_v4().to_string();
+        let target = "coding-session/v1|10:provider-a10:instance-19:session-11:2";
+        let sha = "aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd";
+        let command = |attachments: Option<serde_json::Value>| {
+            let mut action = serde_json::json!({ "type": "thread.turn.start", "text": "go" });
+            if let Some(attachments) = attachments {
+                action["attachments"] = attachments;
+            }
+            let content = serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "cmd-1",
+                "target": {
+                    "driver": "provider-a",
+                    "instanceId": "instance-1",
+                    "sessionId": "session-1",
+                    "generation": 2,
+                },
+                "action": action,
+            })
+            .to_string();
+            make_event_with_tags(
+                KIND_CODING_SESSION_COMMAND,
+                &content,
+                &[
+                    &["h", &channel],
+                    &["cs-v", "csc1-1"],
+                    &["cs-target", target],
+                ],
+            )
+        };
+
+        let good = serde_json::json!([
+            { "sha256": sha, "mime": "image/png", "size": 2048 }
+        ]);
+        // Absent (every command published before the field existed), empty,
+        // and well-formed all pass.
+        for attachments in [None, Some(serde_json::json!([])), Some(good.clone())] {
+            assert!(
+                validate_coding_session_command_envelope(&command(attachments.clone())).is_ok(),
+                "rejected attachments={attachments:?}"
+            );
+        }
+
+        for (bad, label) in [
+            (
+                serde_json::json!([{ "sha256": "abc", "mime": "image/png", "size": 1 }]),
+                "short hash",
+            ),
+            (
+                serde_json::json!([{ "sha256": sha, "mime": "application/pdf", "size": 1 }]),
+                "non-image mime",
+            ),
+            (
+                serde_json::json!([{ "sha256": sha, "mime": "image/png", "size": 0 }]),
+                "zero size",
+            ),
+            (
+                serde_json::json!([{ "sha256": sha, "mime": "image/png", "size": 1, "url": "http://x" }]),
+                "unknown key",
+            ),
+            (
+                serde_json::json!(vec![
+                    serde_json::json!({ "sha256": sha, "mime": "image/png", "size": 1 });
+                    5
+                ]),
+                "too many",
+            ),
+        ] {
+            assert!(
+                validate_coding_session_command_envelope(&command(Some(bad))).is_err(),
+                "accepted {label}"
+            );
+        }
+
+        // The envelope itself is unchanged: attachments ride the content, and
+        // an `imeta` tag is still refused outright.
+        let with_imeta = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "cmd-1",
+                "target": {
+                    "driver": "provider-a",
+                    "instanceId": "instance-1",
+                    "sessionId": "session-1",
+                    "generation": 2,
+                },
+                "action": { "type": "thread.turn.start", "text": "go" },
+            })
+            .to_string(),
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+                &["imeta", "url https://example/media/x.png"],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&with_imeta).is_err());
+    }
+
     #[test]
     fn coding_session_command_requires_exact_content_and_tags() {
         let channel = Uuid::new_v4().to_string();

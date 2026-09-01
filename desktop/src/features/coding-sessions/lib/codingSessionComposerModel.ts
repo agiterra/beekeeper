@@ -1,6 +1,7 @@
 /** UI model for the provider-neutral coding-session composer. */
 export function getCodingSessionComposerState({
   canSteer,
+  hasUnsettledAttachments = false,
   isMember,
   isWorking,
   text,
@@ -17,12 +18,22 @@ export function getCodingSessionComposerState({
    * is pressed. The safe default for a capability is that it is absent.
    */
   canSteer: boolean;
+  /**
+   * True while an attached image is still uploading, or when one failed.
+   *
+   * Send is held closed in both cases. Publishing mid-upload would sign a turn
+   * whose `attachments` list is short of what the composer is showing, and
+   * publishing after a failure would sign a hash the relay has no blob for —
+   * either way the operator would believe they sent a picture that never
+   * arrived.
+   */
+  hasUnsettledAttachments?: boolean;
   isMember: boolean;
   isWorking: boolean;
   text: string;
 }) {
   return {
-    canSend: isMember && text.trim().length > 0,
+    canSend: isMember && text.trim().length > 0 && !hasUnsettledAttachments,
     // "Interrupt", never "Stop": the composer also carries **Stop execution**,
     // which is terminal and cannot be undone. Two adjacent buttons both
     // reading Stop is how an operator ends an execution while meaning to end a

@@ -352,6 +352,9 @@ pub fn build_wake_event(
         target,
         action: CodingSessionAction::ThreadTurnStart {
             text: wake_text(source)?,
+            // A wake is provider-minted text; there is no operator draft to
+            // carry images from.
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         },
     };

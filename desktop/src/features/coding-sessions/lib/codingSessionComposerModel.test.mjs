@@ -117,3 +117,27 @@ test("a caller that says nothing about steering does not get a Steer button", ()
     "Send next",
   );
 });
+
+test("send is held closed while an attachment is unsettled", () => {
+  const base = {
+    canSteer: false,
+    isMember: true,
+    isWorking: false,
+    text: "look at this",
+  };
+  assert.equal(getCodingSessionComposerState(base).canSend, true);
+  // Mid-upload: publishing here would sign a turn whose attachment list is
+  // short of what the composer is showing.
+  assert.equal(
+    getCodingSessionComposerState({ ...base, hasUnsettledAttachments: true })
+      .canSend,
+    false,
+  );
+  // The label is unaffected — only the gate closes, so the button does not
+  // start claiming a different action while an upload finishes.
+  assert.equal(
+    getCodingSessionComposerState({ ...base, hasUnsettledAttachments: true })
+      .sendLabel,
+    "Send",
+  );
+});

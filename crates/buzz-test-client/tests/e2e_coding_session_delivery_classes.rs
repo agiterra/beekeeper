@@ -91,6 +91,7 @@ fn turn_command(
         target: target.clone(),
         action: CodingSessionAction::ThreadTurnStart {
             text: "do the thing".to_owned(),
+            attachments: Vec::new(),
             deliver,
         },
     };
@@ -413,6 +414,7 @@ async fn team_operation_is_stored_before_pointer_wake_and_strictly_admitted() {
     let wake = CodingSessionCommandPayload {
         action: CodingSessionAction::ThreadTurnStart {
             text: pointer.to_string(),
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         },
         ..wake_payload

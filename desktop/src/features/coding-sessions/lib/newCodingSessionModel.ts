@@ -216,6 +216,9 @@ export function bootstrapClaudeCodingSessionRuntime(): CodingSessionProviderRunt
       context: false,
       diff: false,
       plan: true,
+      // Unwitnessed until a process answers `initialize`, and an unwitnessed
+      // capability is not a capability.
+      promptImage: false,
     },
   };
 }

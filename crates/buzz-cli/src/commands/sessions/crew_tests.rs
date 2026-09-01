@@ -183,6 +183,7 @@ fn turn_event(
         target,
         CodingSessionAction::ThreadTurnStart {
             text: text.to_owned(),
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         },
     )

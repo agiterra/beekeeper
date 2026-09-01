@@ -95,6 +95,7 @@ function metadata(overrides = {}) {
       context: false,
       diff: false,
       plan: true,
+      promptImage: false,
     },
     ...overrides,
   };
@@ -271,6 +272,38 @@ test("a standalone session's null projectRef decodes; a missing key does not", (
   const { projectRef: _dropped, ...withoutKey } = metadata();
   assert.equal(
     parseBuzzCodingSessionMetadata(JSON.stringify(withoutKey)),
+    null,
+  );
+});
+
+test("capabilities from a provider predating promptImage still decode", () => {
+  // A provider that never published the key must not decode as "this
+  // execution can do nothing" — that would withdraw every control it does
+  // have, which is a far worse lie than a missing attach button.
+  const { promptImage: _absent, ...older } = metadata().capabilities;
+  const decoded = parseBuzzCodingSessionMetadata(
+    JSON.stringify(metadata({ capabilities: older })),
+  );
+  assert.equal(decoded?.capabilities?.promptImage, false);
+  assert.equal(decoded?.capabilities?.threadTurnStart, true);
+
+  // Present and true is carried through — that is what enables the control.
+  assert.equal(
+    parseBuzzCodingSessionMetadata(
+      JSON.stringify(
+        metadata({ capabilities: { ...older, promptImage: true } }),
+      ),
+    )?.capabilities?.promptImage,
+    true,
+  );
+
+  // Present but not a boolean is a malformed vector, not a soft default.
+  assert.equal(
+    parseBuzzCodingSessionMetadata(
+      JSON.stringify(
+        metadata({ capabilities: { ...older, promptImage: "yes" } }),
+      ),
+    ),
     null,
   );
 });

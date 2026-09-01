@@ -1203,7 +1203,7 @@ pub fn plan_readdress(
             ))
         })?;
     let (text, deliver) = match &source.action {
-        CodingSessionAction::ThreadTurnStart { text, deliver } => (text.clone(), *deliver),
+        CodingSessionAction::ThreadTurnStart { text, deliver, .. } => (text.clone(), *deliver),
         CodingSessionAction::ThreadTurnInterrupt => {
             return Err(CliError::Usage(format!(
                 "command '{command_id}' is a thread.turn.interrupt — \

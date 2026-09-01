@@ -5732,6 +5732,7 @@ mod tests {
             command_id: "cmd-1".into(),
             target: cs_target(),
             action: buzz_core::coding_session_command::CodingSessionAction::ThreadTurnStart {
+                attachments: Vec::new(),
                 deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
                 text: "Ship it".into(),
             },

@@ -200,13 +200,28 @@ export function buildBaseTranscriptItem(
   }
 }
 
+/** Whether prose already references an image, so the reader will see it. */
+function containsImageReference(content: string): boolean {
+  return /!\[[^\]]*\]\([^)]+\)/.test(content);
+}
+
 function buildUserPromptMessage(
   item: Record<string, unknown>,
   ctx: Identity,
 ): CodingSessionProjectedTranscriptItem {
   const content = typeof item.content === "string" ? item.content : "";
   const suffixes: string[] = [];
-  if (typeof item.attachmentCount === "number" && item.attachmentCount > 0) {
+  // The count is a fallback, not the display. A turn that references its
+  // images inline renders them where they were written, so restating "1
+  // attachment" underneath would describe something the reader can already
+  // see. The chip survives only for a prompt whose images have no reference
+  // in the prose — an older client, or one whose upload never landed — where
+  // it is the only evidence an image was ever part of the turn.
+  if (
+    typeof item.attachmentCount === "number" &&
+    item.attachmentCount > 0 &&
+    !containsImageReference(content)
+  ) {
     suffixes.push(
       `${item.attachmentCount} attachment${item.attachmentCount === 1 ? "" : "s"}`,
     );

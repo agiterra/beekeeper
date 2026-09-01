@@ -20,7 +20,18 @@ export function ImageMosaic({ children }: { children: React.ReactNode[] }) {
   return (
     <div
       className={cn(
-        "mt-1 grid w-full min-w-0 max-w-lg grid-cols-2 gap-1.5 overflow-hidden rounded-2xl [&_br]:hidden [&_[data-block-media]]:min-h-0 [&_[data-block-media]]:max-w-none [&_[data-block-media]]:overflow-hidden [&_[data-block-media]>button]:m-0 [&_[data-block-media]>button]:h-full [&_[data-block-media]>button]:w-full [&_[data-block-media]>button]:max-w-none [&_[data-block-media]>button]:rounded-none [&_[data-block-media]_[data-progressive-image-frame]]:!h-full [&_[data-block-media]_[data-progressive-image-frame]]:!w-full [&_[data-block-media]_img]:!h-full [&_[data-block-media]_img]:!max-h-none [&_[data-block-media]_img]:!w-full [&_[data-block-media]_img]:!max-w-none [&_[data-block-media]_img]:rounded-none [&_[data-block-media]_img]:object-cover",
+        // Columns carry a floor rather than `grid-cols-2`'s bare
+        // `minmax(0, 1fr)`. The cells below are forced to `!w-full`, which
+        // erases the intrinsic width their image frames would otherwise
+        // contribute, so against a shrink-to-fit parent — a chat or
+        // coding-session bubble sized to its content — every column resolves
+        // to zero and the whole mosaic collapses to the width of its gaps. It
+        // renders as a thin vertical sliver of background with the pictures
+        // clipped out of existence: loaded, laid out, and invisible (observed
+        // live, 2026-09-01, at 6px wide for a two-image prompt). The floor
+        // gives max-content something real to report; `1fr` still fills the
+        // width wherever the parent has one, so nothing changes when it does.
+        "mt-1 grid w-full min-w-0 max-w-lg [grid-template-columns:repeat(2,minmax(6rem,1fr))] gap-1.5 overflow-hidden rounded-2xl [&_br]:hidden [&_[data-block-media]]:min-h-0 [&_[data-block-media]]:max-w-none [&_[data-block-media]]:overflow-hidden [&_[data-block-media]>button]:m-0 [&_[data-block-media]>button]:h-full [&_[data-block-media]>button]:w-full [&_[data-block-media]>button]:max-w-none [&_[data-block-media]>button]:rounded-none [&_[data-block-media]_[data-progressive-image-frame]]:!h-full [&_[data-block-media]_[data-progressive-image-frame]]:!w-full [&_[data-block-media]_img]:!h-full [&_[data-block-media]_img]:!max-h-none [&_[data-block-media]_img]:!w-full [&_[data-block-media]_img]:!max-w-none [&_[data-block-media]_img]:rounded-none [&_[data-block-media]_img]:object-cover",
         isTriptych
           ? "h-80 grid-rows-2 [&_[data-block-media]]:h-auto [&_[data-block-media]:first-child]:row-span-2"
           : "[&_[data-block-media]]:h-48",

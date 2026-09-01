@@ -308,7 +308,7 @@ mod tests {
         );
         let json = to_canonical_json(&catalog).expect("serialize");
         assert!(json.starts_with(
-            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":3,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"model-b","allowedModels":["model-b","model-a","model-c"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true},"models":[{"id":"model-b","vendor":"anthropic"},{"id":"model-a","vendor":"anthropic"},{"id":"model-c","vendor":"anthropic"}]}]"#
+            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":3,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"model-b","allowedModels":["model-b","model-a","model-c"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true,"promptImage":false},"models":[{"id":"model-b","vendor":"anthropic"},{"id":"model-a","vendor":"anthropic"},{"id":"model-c","vendor":"anthropic"}]}]"#
         ));
         // projects[] sorted by projectRef, each with a null repoRef.
         let alpha = json
@@ -352,7 +352,7 @@ mod tests {
         );
         let json = to_canonical_json(&catalog).expect("serialize");
         assert!(json.starts_with(
-            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true},"models":[{"id":"default","vendor":"anthropic"}]},{"providerInstanceRef":"codex-primary","driver":"codex-acp","runtime":"codex","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":false},"models":[{"id":"default","vendor":"openai"}]}]"#
+            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true,"promptImage":false},"models":[{"id":"default","vendor":"anthropic"}]},{"providerInstanceRef":"codex-primary","driver":"codex-acp","runtime":"codex","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":false,"promptImage":false},"models":[{"id":"default","vendor":"openai"}]}]"#
         ));
         assert!(json.contains(r#""providers":["claude-primary","codex-primary"]"#));
     }

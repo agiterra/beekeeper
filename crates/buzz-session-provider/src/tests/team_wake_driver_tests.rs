@@ -605,6 +605,7 @@ async fn team_wake_t0_driver_publisher_survives_pressure_restart_and_rollover() 
         target: c.builder_target.clone(),
         action: CodingSessionAction::ThreadTurnStart {
             text: terminal_pointer,
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         },
     };

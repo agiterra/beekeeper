@@ -199,3 +199,29 @@ test("a context_window_updated item carrying the driver's occupancy still projec
     `the occupancy the driver reported must survive projection: ${JSON.stringify(item)}`,
   );
 });
+
+test("a prompt that references its images inline does not also count them", () => {
+  const url = `http://relay/media/${"a".repeat(64)}.png`;
+
+  // Inline: the reader sees the picture where it was written, so restating
+  // "1 attachment" underneath would describe what is already on screen.
+  const inline = buildBaseTranscriptItem(
+    {
+      kind: "user_prompt",
+      content: `When I do X, I see this:\n\n![image](${url})`,
+      attachmentCount: 1,
+    },
+    IDENTITY,
+  );
+  assert.doesNotMatch(inline.text, /attachment/);
+  assert.match(inline.text, /!\[image\]/);
+
+  // No reference in the prose — an older client, or an upload that never
+  // landed. The count is then the only evidence an image was part of the
+  // turn, so it stays.
+  const countOnly = buildBaseTranscriptItem(
+    { kind: "user_prompt", content: "look at this", attachmentCount: 2 },
+    IDENTITY,
+  );
+  assert.match(countOnly.text, /\(2 attachments\)/);
+});

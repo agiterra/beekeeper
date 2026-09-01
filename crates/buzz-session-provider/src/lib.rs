@@ -31,6 +31,7 @@
 
 pub mod actor_seats;
 mod agent_fence;
+pub mod attachments;
 pub mod authority;
 pub mod catalog;
 pub mod commands;
@@ -187,6 +188,15 @@ const DELIVERED_CANCEL_FENCE_CAPACITY: usize = 256;
 /// process learned at `initialize`.
 const STEER_DOWNGRADED: &str = "this execution cannot take a mid-turn steer; the turn was \
                                 accepted for the next turn boundary instead";
+
+/// The operator-facing sentence a `turn_degraded`/`IMAGE_UNSUPPORTED` carries.
+///
+/// One sentence, and deliberately not a count: like [`STEER_DOWNGRADED`], the
+/// payload under a given `(commandId, turn_degraded)` key must not depend on
+/// what a particular process learned at `initialize`.
+const IMAGES_DROPPED: &str = "this execution's runtime does not accept image prompts, so the \
+                              attached images were not delivered; the turn itself ran, with its \
+                              text alone";
 
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
@@ -607,6 +617,15 @@ pub struct Provider {
     /// witnessed", which publishes as `threadSteer: false` — an unwitnessed
     /// capability is not a capability.
     steering: HashMap<String, bool>,
+    /// Whether the process behind each live generation advertised image
+    /// prompts at `initialize`, keyed by session id.
+    ///
+    /// Per execution for the same reason as [`Self::steering`]: absent means no
+    /// live process was witnessed, which publishes as `promptImage: false`.
+    prompt_image: HashMap<String, bool>,
+    /// Reads turn attachments back from this provider's relay. Built once: the
+    /// relay URL and signing key are fixed for the process's lifetime.
+    media: Option<attachments::MediaFetcher>,
     /// Turn commands held for reordering while a channel's subscription is
     /// replaying history. See [`ReplayWindow`].
     replay: ReplayWindow,
@@ -701,6 +720,7 @@ impl Provider {
         let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
         let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
+        let media = attachments::MediaFetcher::new(&config.relay_url, config.keys.clone());
         Ok(Self {
             config,
             pubkey_hex,
@@ -731,6 +751,8 @@ impl Provider {
             in_flight: HashMap::new(),
             delivered_cancels: VecDeque::new(),
             steering: HashMap::new(),
+            prompt_image: HashMap::new(),
+            media,
             replay: ReplayWindow::default(),
         })
     }
@@ -2185,6 +2207,7 @@ impl Provider {
         };
 
         let request = CreateRequest {
+            media: self.media.clone(),
             target: target.clone(),
             channel_id: plan.channel_id,
             cwd: plan.cwd.clone(),
@@ -2242,6 +2265,8 @@ impl Provider {
         // any metadata is built from it.
         self.steering
             .insert(target.session_id.clone(), startup.steering_supported);
+        self.prompt_image
+            .insert(target.session_id.clone(), startup.prompt_image_supported);
 
         let record = SessionRecord {
             session_id: target.session_id.clone(),
@@ -2363,6 +2388,9 @@ impl Provider {
                     // they cannot join to anything.
                     command_id: plan.command_id.clone(),
                     text: text.clone(),
+                    // A create's brief is text: 44221 carries no attachment
+                    // field, so there is nothing to forward here.
+                    attachments: Vec::new(),
                     // The create's verified signer *is* the operator driving
                     // this first turn — the same fact that made them founder.
                     operator_pubkey: Some(plan.founder_pubkey.clone()),
@@ -2773,6 +2801,7 @@ impl Provider {
         };
 
         let request = CreateRequest {
+            media: self.media.clone(),
             target: target.clone(),
             channel_id: record.channel_id,
             cwd: record.cwd.clone(),
@@ -2822,6 +2851,8 @@ impl Provider {
         let startup = self.sessions.attach(started);
         self.steering
             .insert(record.session_id.clone(), startup.steering_supported);
+        self.prompt_image
+            .insert(record.session_id.clone(), startup.prompt_image_supported);
 
         if let Err(error) = self.state.update_session(&record.session_id, |record| {
             record.generation = generation;
@@ -2991,7 +3022,7 @@ impl Provider {
             created_at,
             content,
         );
-        let (command_id, target, deliver, mut message) = match decision {
+        let (command_id, target, deliver, dropped_attachments, mut message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
                 // An ignore that names a target this provider owns is a
@@ -3044,14 +3075,32 @@ impl Provider {
                 command_id,
                 target,
                 text,
+                attachments,
                 deliver,
             } => {
                 let framing =
                     self.turn_framing(&target.session_id, operator_pubkey, deliver, channel_id);
+                // The capability gate. A runtime that never advertised image
+                // prompts does not merely ignore an image block — `buzz-agent`
+                // fails the whole turn on one — so the attachments are dropped
+                // here and the operator is told below, once the words have
+                // actually been delivered.
+                let takes_images = self
+                    .prompt_image
+                    .get(&target.session_id)
+                    .copied()
+                    .unwrap_or(false);
+                let dropped_attachments = if takes_images { 0 } else { attachments.len() };
+                let attachments = if takes_images {
+                    attachments
+                } else {
+                    Vec::new()
+                };
                 (
                     command_id.clone(),
                     target,
                     deliver,
+                    dropped_attachments,
                     // `decide_turn` returns `Start` only after checking this
                     // exact signer against the session's founder/granted-
                     // operator set, so attributing the turn to them is a
@@ -3059,6 +3108,7 @@ impl Provider {
                     SessionCommand::Turn {
                         command_id,
                         text,
+                        attachments,
                         operator_pubkey: Some(operator_pubkey.to_owned()),
                         framing,
                     },
@@ -3068,6 +3118,7 @@ impl Provider {
                 command_id.clone(),
                 target,
                 CodingSessionDelivery::Boundary,
+                0,
                 SessionCommand::Interrupt { command_id },
             ),
         };
@@ -3168,6 +3219,19 @@ impl Provider {
                             &target,
                             payload::STEER_UNSUPPORTED,
                             STEER_DOWNGRADED,
+                        );
+                        self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    }
+                    // Same rule as the steer degrade, for the same reason: an
+                    // image the agent never received is indistinguishable from
+                    // one it saw and ignored, so the sender is told rather than
+                    // left to infer it from the reply.
+                    if dropped_attachments > 0 {
+                        let receipt = LifecycleReceipt::turn_degraded(
+                            &command_id,
+                            &target,
+                            payload::IMAGE_UNSUPPORTED,
+                            IMAGES_DROPPED,
                         );
                         self.enqueue_receipt(channel_id, &command_id, &receipt)?;
                     }
@@ -3920,6 +3984,19 @@ impl Provider {
                     session::NATIVE_STEER_DELIVERABLE
                         && self
                             .steering
+                            .get(&target.session_id)
+                            .copied()
+                            .unwrap_or(false),
+                )
+                // `promptImage` is per-execution for the same reason as
+                // `threadSteer`, and gated on this provider actually being
+                // able to deliver an image: without a media fetcher the blob
+                // can never be read back, so advertising the capability would
+                // offer an attach control that silently drops every image.
+                .with_prompt_image(
+                    self.media.is_some()
+                        && self
+                            .prompt_image
                             .get(&target.session_id)
                             .copied()
                             .unwrap_or(false),
@@ -4716,6 +4793,7 @@ impl Provider {
                 // redeliverable; see `report_no_live_execution`.
                 self.report_lost_mailbox(&session_id)?;
                 self.steering.remove(&session_id);
+                self.prompt_image.remove(&session_id);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     self.sessions.forget(&session_id);
                     return Ok(());
@@ -12749,6 +12827,7 @@ done
         for index in 0..session::SESSION_MAILBOX_DEPTH - 1 {
             tx.try_send(session::SessionCommand::Turn {
                 command_id: format!("filler-{index}"),
+                attachments: Vec::new(),
                 text: "filler".to_owned(),
                 operator_pubkey: None,
                 framing: None,

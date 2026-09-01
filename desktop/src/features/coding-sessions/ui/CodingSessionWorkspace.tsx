@@ -764,6 +764,8 @@ function ReadyCodingSessionWorkspace({
                     }
                     canControl={composerAuthority.canPromptExecutions}
                     canSteer={session.capabilities?.threadSteer === true}
+                    canAttachImages={session.capabilities?.promptImage === true}
+                    runtimeLabel={runtimeLabel}
                     channelId={channelId}
                     controlContext={{
                       capabilities: session.capabilities,

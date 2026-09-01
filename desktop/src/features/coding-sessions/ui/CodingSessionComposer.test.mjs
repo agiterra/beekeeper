@@ -514,3 +514,60 @@ test("reconnecting an unseated execution stages nothing", async () => {
     cleanup();
   }
 });
+
+test("the attach control is offered only where the execution takes images", () => {
+  // Capability absent — the default. The control is *shown and disabled*
+  // rather than hidden: an operator who cannot find a button learns nothing,
+  // and one who is told learns which runtime would take the image.
+  const withoutCapability = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: false,
+      channelId: "channel-1",
+      isMember: true,
+      isWorking: false,
+      runtimeLabel: "codex-acp",
+      target,
+    }),
+  );
+  assert.match(
+    withoutCapability,
+    /data-testid="coding-session-composer-attach"/,
+  );
+  assert.match(
+    withoutCapability,
+    /coding-session-composer-attach"[^>]*disabled/,
+  );
+
+  const withCapability = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canAttachImages: true,
+      canInterrupt: false,
+      channelId: "channel-1",
+      isMember: true,
+      isWorking: false,
+      target,
+    }),
+  );
+  assert.doesNotMatch(
+    withCapability,
+    /coding-session-composer-attach"[^>]*disabled/,
+  );
+  // The tooltip that explains *why* is a Radix overlay — it renders only when
+  // open, so the wording is asserted in the E2E spec, not here.
+});
+
+test("a composer with no member rights still cannot attach", () => {
+  // `editorDisabled` gates the control too, so a non-member cannot stage an
+  // upload against a session they may not steer.
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canAttachImages: true,
+      canInterrupt: false,
+      channelId: "channel-1",
+      isMember: false,
+      isWorking: false,
+      target,
+    }),
+  );
+  assert.match(markup, /coding-session-composer-attach"[^>]*disabled/);
+});

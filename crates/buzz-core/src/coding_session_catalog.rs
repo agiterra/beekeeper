@@ -496,7 +496,7 @@ mod tests {
             to_canonical_json(&catalog(vec![described("opus[1m]", 1_000_000)])).expect("serialize");
         assert!(
             json.contains(
-                r#""allowedModels":["opus[1m]","haiku","sonnet"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true},"models":[{"id":"opus[1m]","contextWindow":1000000,"family":"opus","vendor":"anthropic"}]"#
+                r#""allowedModels":["opus[1m]","haiku","sonnet"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true,"promptImage":false},"models":[{"id":"opus[1m]","contextWindow":1000000,"family":"opus","vendor":"anthropic"}]"#
             ),
             "unexpected wire form: {json}"
         );

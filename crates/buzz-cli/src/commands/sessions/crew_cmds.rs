@@ -21,7 +21,8 @@ use uuid::Uuid;
 
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
-    CodingSessionDelivery, CODING_SESSION_COMMAND_SCHEMA, CODING_SESSION_COMMAND_TAG_VERSION,
+    CodingSessionDelivery, TurnAttachment, ALLOWED_ATTACHMENT_MIMES, CODING_SESSION_COMMAND_SCHEMA,
+    CODING_SESSION_COMMAND_TAG_VERSION, MAX_TURN_ATTACHMENTS,
 };
 use buzz_core::coding_session_lifecycle_command::{
     validate_event_id_hex, validate_role_slug, validate_session_ref, CodingSessionLifecycleAction,
@@ -237,6 +238,7 @@ pub(super) async fn send_team_operation_wake(
         target: execution.target.clone(),
         action: CodingSessionAction::ThreadTurnStart {
             text,
+            attachments: Vec::new(),
             deliver: CodingSessionDelivery::Boundary,
         },
     };
@@ -336,6 +338,47 @@ async fn await_delivery(
 /// relay's fact alone and says the delivery is unconfirmed, which is what it
 /// is.
 #[allow(clippy::too_many_arguments)]
+/// Upload each `--image` to the relay's Blossom store and describe it for the
+/// turn payload.
+///
+/// The blob is addressed by hash, never by URL: the consuming provider derives
+/// the fetch URL from the relay it is already connected to.
+async fn upload_turn_images(
+    client: &BuzzClient,
+    images: &[String],
+) -> Result<Vec<TurnAttachment>, CliError> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+    if images.len() > MAX_TURN_ATTACHMENTS {
+        return Err(CliError::Usage(format!(
+            "--image may be given at most {MAX_TURN_ATTACHMENTS} times"
+        )));
+    }
+    let mut attachments = Vec::with_capacity(images.len());
+    for path in images {
+        let descriptor = client.upload_file(path).await?;
+        if !ALLOWED_ATTACHMENT_MIMES.contains(&descriptor.mime_type.as_str()) {
+            return Err(CliError::Usage(format!(
+                "--image {path} is {}, but a turn attachment must be one of {}",
+                descriptor.mime_type,
+                ALLOWED_ATTACHMENT_MIMES.join(", ")
+            )));
+        }
+        attachments.push(TurnAttachment {
+            sha256: descriptor.sha256.clone(),
+            mime: descriptor.mime_type.clone(),
+            size: descriptor.size,
+            dim: descriptor.dim.clone(),
+            filename: std::path::Path::new(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+        });
+    }
+    Ok(attachments)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_send(
     client: &BuzzClient,
     channel_id: &str,
@@ -345,6 +388,7 @@ pub async fn cmd_send(
     content: Option<&str>,
     readdress: Option<&str>,
     reply_to: Option<&str>,
+    images: &[String],
     no_wait: bool,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
@@ -412,12 +456,17 @@ pub async fn cmd_send(
         }
     };
 
+    // Uploaded only once the turn is fully resolved: a send that is going to
+    // fail on an unresolvable target should not leave orphan blobs behind.
+    let attachments = upload_turn_images(client, images).await?;
+
     let payload = CodingSessionCommandPayload {
         schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),
         command_id: command_id.clone(),
         target,
         action: CodingSessionAction::ThreadTurnStart {
             text,
+            attachments,
             deliver: delivery,
         },
     };

@@ -2469,6 +2469,11 @@ pub enum SessionsCmd {
         /// Refused: 44220 carries no reply reference (see the error text)
         #[arg(long = "reply-to")]
         reply_to: Option<String>,
+        /// Attach an image to the turn; repeatable. Uploaded to the relay's
+        /// Blossom store and delivered to the agent as an ACP image block.
+        /// Only reaches runtimes that advertise image prompts.
+        #[arg(long = "image")]
+        image: Vec<String>,
         /// Print the relay's acceptance without waiting for the provider's
         /// first turn receipt; delivery is then reported as unconfirmed
         #[arg(long = "no-wait")]

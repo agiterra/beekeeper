@@ -686,6 +686,9 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
+    /// Whether the agent advertised
+    /// `agentCapabilities.promptCapabilities.image: true` at `initialize`.
+    prompt_image_supported: bool,
     /// Whether the agent advertised the stable top-level `loadSession`
     /// capability during initialization.
     session_load_supported: bool,
@@ -1190,6 +1193,7 @@ impl AcpClient {
             observer_context: ObserverContext::default(),
             active_run_id: None,
             steering_supported: false,
+            prompt_image_supported: false,
             session_load_supported: false,
             session_resume_supported: false,
             steer_rx: None,
@@ -1377,6 +1381,13 @@ impl AcpClient {
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        // Absent means false: an agent that does not say it takes images is one
+        // we must not send them to. `buzz-agent` fails the whole turn on a
+        // block it did not advertise, so guessing here is not a soft failure.
+        self.prompt_image_supported = result
+            .pointer("/agentCapabilities/promptCapabilities/image")
+            .and_then(|value| value.as_bool())
             .unwrap_or(false);
         self.session_load_supported = result
             .pointer("/agentCapabilities/loadSession")
@@ -1617,6 +1628,32 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        let blocks: Vec<PromptBlock> = prompt_blocks
+            .iter()
+            .map(|text| PromptBlock::Text((*text).to_owned()))
+            .collect();
+        self.session_prompt_content_with_idle_timeout(
+            session_id,
+            &blocks,
+            idle_timeout,
+            max_duration,
+        )
+        .await
+    }
+
+    /// Like [`session_prompt_blocks_with_idle_timeout`](Self::session_prompt_blocks_with_idle_timeout),
+    /// but sends typed content blocks so a caller can attach images.
+    ///
+    /// Callers must gate image blocks on
+    /// [`prompt_image_supported`](Self::prompt_image_supported); this method
+    /// sends what it is given.
+    pub async fn session_prompt_content_with_idle_timeout(
+        &mut self,
+        session_id: &str,
+        prompt_blocks: &[PromptBlock],
+        idle_timeout: std::time::Duration,
+        max_duration: std::time::Duration,
+    ) -> Result<StopReason, AcpError> {
         let params = build_prompt_params(session_id, prompt_blocks);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
@@ -1713,6 +1750,16 @@ impl AcpClient {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn active_run_id(&self) -> Option<&str> {
         self.active_run_id.as_deref()
+    }
+
+    /// Whether the agent advertised `promptCapabilities.image` at `initialize`.
+    ///
+    /// A caller must consult this before putting a [`PromptBlock::Image`] on
+    /// the wire, and must tell the operator when it drops one — an image that
+    /// silently never reached the agent looks exactly like an agent that
+    /// ignored it.
+    pub fn prompt_image_supported(&self) -> bool {
+        self.prompt_image_supported
     }
 
     /// Whether the agent advertised the [`ACP_STEER_METHOD`] extension at
@@ -2996,12 +3043,47 @@ impl AcpClient {
     }
 }
 
-/// Build `session/prompt` params from one or more text content blocks.
-fn build_prompt_params(session_id: &str, prompt_blocks: &[&str]) -> serde_json::Value {
-    let blocks: Vec<serde_json::Value> = prompt_blocks
-        .iter()
-        .map(|text| serde_json::json!({ "type": "text", "text": text }))
-        .collect();
+/// One ACP `prompt` content block.
+///
+/// The wire is hand-rolled here (there is no ACP crate in the workspace), so
+/// this is the single place a block shape is defined. Only the two variants the
+/// harness actually sends exist: an agent that receives a block it did not
+/// advertise support for is entitled to fail the turn, and one of ours
+/// (`buzz-agent`) does exactly that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptBlock {
+    /// A `{"type":"text"}` block.
+    Text(String),
+    /// A `{"type":"image"}` block carrying base64 bytes inline.
+    ///
+    /// Only sent when the agent advertised
+    /// `agentCapabilities.promptCapabilities.image` at `initialize` — see
+    /// [`AcpClient::prompt_image_supported`].
+    Image {
+        /// The image's MIME type, e.g. `image/png`.
+        mime: String,
+        /// Standard-alphabet base64 of the image bytes, unpadded or padded.
+        data_base64: String,
+    },
+}
+
+impl PromptBlock {
+    /// Render this block as its ACP wire object.
+    fn to_wire(&self) -> serde_json::Value {
+        match self {
+            Self::Text(text) => serde_json::json!({ "type": "text", "text": text }),
+            Self::Image { mime, data_base64 } => serde_json::json!({
+                "type": "image",
+                "mimeType": mime,
+                "data": data_base64,
+            }),
+        }
+    }
+}
+
+/// Build `session/prompt` params from one or more content blocks.
+fn build_prompt_params(session_id: &str, prompt_blocks: &[PromptBlock]) -> serde_json::Value {
+    let blocks: Vec<serde_json::Value> = prompt_blocks.iter().map(PromptBlock::to_wire).collect();
     serde_json::json!({
         "sessionId": session_id,
         "prompt": blocks,
@@ -3925,6 +4007,44 @@ mod tests {
         assert!(visible.contains("verified-package.json"));
     }
 
+    /// Text blocks keep the exact wire shape they have always had, and an
+    /// image block renders as ACP's `{type,mimeType,data}` beside them.
+    #[test]
+    fn build_prompt_params_renders_text_and_image_blocks() {
+        let params = build_prompt_params(
+            "sess_abc123",
+            &[
+                PromptBlock::Text("why is this chart wrong?".into()),
+                PromptBlock::Image {
+                    mime: "image/png".into(),
+                    data_base64: "iVBORw0KGgo=".into(),
+                },
+            ],
+        );
+        assert_eq!(params["sessionId"].as_str(), Some("sess_abc123"));
+        let prompt = params["prompt"].as_array().expect("prompt array");
+        assert_eq!(prompt.len(), 2);
+        assert_eq!(prompt[0]["type"].as_str(), Some("text"));
+        assert_eq!(prompt[0]["text"].as_str(), Some("why is this chart wrong?"));
+        assert_eq!(prompt[1]["type"].as_str(), Some("image"));
+        assert_eq!(prompt[1]["mimeType"].as_str(), Some("image/png"));
+        assert_eq!(prompt[1]["data"].as_str(), Some("iVBORw0KGgo="));
+        // An image block carries no `text` key — a client that reads one would
+        // otherwise silently render an empty message.
+        assert!(prompt[1].get("text").is_none());
+    }
+
+    /// A text-only prompt is byte-identical to what shipped before typed
+    /// blocks existed, so widening the builder cannot have moved the wire.
+    #[test]
+    fn text_only_prompt_params_are_unchanged() {
+        let params = build_prompt_params("s", &[PromptBlock::Text("hello".into())]);
+        assert_eq!(
+            serde_json::to_string(&params).expect("serialize"),
+            r#"{"prompt":[{"text":"hello","type":"text"}],"sessionId":"s"}"#
+        );
+    }
+
     #[test]
     fn session_prompt_request_format() {
         let prompt_text = "[Buzz @mention]\nChannel: test\nFrom: npub1...\nMessage: hello";
@@ -3952,8 +4072,8 @@ mod tests {
         let params = build_prompt_params(
             "sess_abc123",
             &[
-                "/goal ship it",
-                "[Buzz event: @mention]\nContent: @Eva /goal ship it",
+                PromptBlock::Text("/goal ship it".into()),
+                PromptBlock::Text("[Buzz event: @mention]\nContent: @Eva /goal ship it".into()),
             ],
         );
         let prompt = params["prompt"].as_array().unwrap();

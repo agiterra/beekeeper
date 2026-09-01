@@ -8,7 +8,7 @@ import {
 import { uploadMediaFile } from "@/shared/api/tauriMedia";
 import type { QueuedMediaAttachment } from "./backgroundMediaUploadStore";
 import { applyImetaUpdate, compactImetaSlots } from "./imetaSlots";
-import { useFilePicker } from "./useFilePicker";
+import { useFilePicker } from "@/shared/hooks/useFilePicker";
 import { isVideoFile, videoMimeForFile } from "./videoFileType";
 
 /**

@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use buzz_core::coding_session_command::{
     CodingSessionAction, CodingSessionCommandPayload, CodingSessionDelivery, CodingSessionTarget,
+    TurnAttachment,
 };
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
@@ -252,6 +253,8 @@ pub enum TurnDecision {
         target: CodingSessionTarget,
         /// Operator-entered turn text.
         text: String,
+        /// Images the operator attached, addressed by Blossom hash.
+        attachments: Vec<TurnAttachment>,
         /// The delivery class the sender asked for. Authority for it has
         /// already been checked here: an `interrupt` that reaches this variant
         /// was signed by the founder.
@@ -670,10 +673,15 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
                       separate thread.turn.interrupt to cancel the running turn first"
                 .into(),
         },
-        TurnAction::Start { text, deliver } => TurnDecision::Start {
+        TurnAction::Start {
+            text,
+            attachments,
+            deliver,
+        } => TurnDecision::Start {
             command_id: command.command_id,
             target: command.target,
             text,
+            attachments,
             deliver,
         },
         TurnAction::Interrupt => TurnDecision::Interrupt {
@@ -827,6 +835,8 @@ pub enum TurnAction {
     Start {
         /// The prompt.
         text: String,
+        /// Images the operator attached, addressed by Blossom hash.
+        attachments: Vec<TurnAttachment>,
         /// How the sender asked for it to be delivered.
         deliver: CodingSessionDelivery,
     },
@@ -840,9 +850,15 @@ pub fn decode_turn_command(content: &str) -> Result<TurnCommand, String> {
         .map_err(|error| format!("malformed coding-session command payload: {error}"))?;
     payload.validate()?;
     let action = match payload.action {
-        CodingSessionAction::ThreadTurnStart { text, deliver } => {
-            TurnAction::Start { text, deliver }
-        }
+        CodingSessionAction::ThreadTurnStart {
+            text,
+            attachments,
+            deliver,
+        } => TurnAction::Start {
+            text,
+            attachments,
+            deliver,
+        },
         CodingSessionAction::ThreadTurnInterrupt => TurnAction::Interrupt,
     };
     Ok(TurnCommand {
@@ -1827,6 +1843,7 @@ mod tests {
             start.action,
             TurnAction::Start {
                 text: "do the thing".into(),
+                attachments: Vec::new(),
                 deliver: CodingSessionDelivery::Boundary,
             }
         );

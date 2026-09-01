@@ -41,6 +41,13 @@ chrono = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 
+# Turn attachments: HTTP to read the blob back from the relay's Blossom store,
+# base64 for the ACP image block, and `image` to bound what reaches a model
+# (decode + downscale to a 1568px longest edge).
+reqwest = { workspace = true }
+base64 = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

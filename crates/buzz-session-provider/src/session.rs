@@ -34,7 +34,7 @@ use buzz_acp::acp::{
 use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use buzz_acp::TurnUsage;
 use buzz_core::coding_session_command::{
-    coding_session_target_key, CodingSessionDelivery, CodingSessionTarget,
+    coding_session_target_key, CodingSessionDelivery, CodingSessionTarget, TurnAttachment,
 };
 use buzz_core::coding_session_context::validate_coding_session_first_turn_brief_json;
 
@@ -210,6 +210,10 @@ pub struct CreateRequest {
     ///
     /// Host-local paths, so it stays out of `Debug` like `cwd` does.
     pub seat_skills: Option<SeatSkills>,
+    /// How this session reads a turn's image attachments back from the relay's
+    /// Blossom store. `None` when the relay URL could not be understood, which
+    /// simply means attachments are undeliverable on this host.
+    pub media: Option<crate::attachments::MediaFetcher>,
     /// Per-turn silence budget.
     pub idle_timeout: Duration,
     /// Budget for silence after the turn has finished answering, or `None` when
@@ -290,6 +294,14 @@ pub struct SessionStartup {
     /// process actually answered. See [`NATIVE_STEER_DELIVERABLE`] for why an
     /// advertisement is necessary but not yet sufficient.
     pub steering_supported: bool,
+    /// Whether this execution's runtime advertised image prompts at
+    /// `initialize` (`agentCapabilities.promptCapabilities.image`).
+    ///
+    /// Per-execution truth for the same reason as
+    /// [`steering_supported`](Self::steering_supported): it is what the process
+    /// behind *this* generation answered, and it gates whether an operator is
+    /// offered an attach control at all.
+    pub prompt_image_supported: bool,
 }
 
 /// How the rehydration continuity bootstrap reached the agent.
@@ -418,6 +430,9 @@ pub enum SessionCommand {
         command_id: String,
         /// Prompt text.
         text: String,
+        /// Images the operator attached, already filtered against this
+        /// execution's advertised image capability by the run loop.
+        attachments: Vec<TurnAttachment>,
         /// The verified signer of the command, carried so the `user_prompt`
         /// item can name who drove the turn. `None` only when the caller had
         /// no witnessed operator to attribute.
@@ -688,6 +703,7 @@ impl SessionManager {
             translator: TranscriptTranslator::new(request.include_thoughts),
             first_turn_preamble: startup.pending_briefing.clone(),
             agent_version: startup.agent_version.clone(),
+            media: request.media.clone(),
         };
         tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -1153,6 +1169,7 @@ async fn start_agent(
     // Read before the client moves into the return value: this is the one
     // place the `initialize` result is still reachable.
     let steering_supported = client.steering_supported();
+    let prompt_image_supported = client.prompt_image_supported();
     Ok((
         client,
         SessionStartup {
@@ -1166,6 +1183,7 @@ async fn start_agent(
             // Recorded from the `initialize` result of this exact process, via
             // the ACP client that performed the handshake.
             steering_supported,
+            prompt_image_supported,
         },
     ))
 }
@@ -1595,6 +1613,9 @@ struct SessionActor {
     observer: ObserverHandle,
     translator: TranscriptTranslator,
     first_turn_preamble: Option<String>,
+    /// Reads a turn's attachments back from the relay. See
+    /// [`crate::attachments`].
+    media: Option<crate::attachments::MediaFetcher>,
 }
 
 /// A turn that arrived while another was in flight, held until its turn.
@@ -1604,6 +1625,7 @@ struct SessionActor {
 struct QueuedTurn {
     command_id: String,
     text: String,
+    attachments: Vec<TurnAttachment>,
     operator_pubkey: Option<String>,
     framing: Option<TurnFraming>,
 }
@@ -1637,6 +1659,7 @@ impl SessionActor {
                 Some(turn) => Some(SessionCommand::Turn {
                     command_id: turn.command_id,
                     text: turn.text,
+                    attachments: turn.attachments,
                     operator_pubkey: turn.operator_pubkey,
                     framing: turn.framing,
                 }),
@@ -1670,6 +1693,7 @@ impl SessionActor {
                 Some(SessionCommand::Turn {
                     command_id,
                     text,
+                    attachments,
                     operator_pubkey,
                     framing,
                 }) => {
@@ -1680,6 +1704,7 @@ impl SessionActor {
                             &mut queued,
                             command_id,
                             text,
+                            attachments,
                             operator_pubkey,
                             framing,
                         )
@@ -1716,6 +1741,7 @@ impl SessionActor {
         queued: &mut VecDeque<QueuedTurn>,
         command_id: String,
         text: String,
+        attachments: Vec<TurnAttachment>,
         operator_pubkey: Option<String>,
         framing: Option<TurnFraming>,
     ) -> Option<ExitReason> {
@@ -1740,6 +1766,31 @@ impl SessionActor {
         // what is sent after it exists, so subscribing afterwards would lose the
         // opening chunks of every turn.
         let mut frames = self.observer.subscribe();
+
+        // Attachments are read back before the turn's record is written and
+        // before the prompt opens. Before the record, so the transcript counts
+        // what the agent will actually receive rather than what was asked for;
+        // before the prompt, because the prompt future borrows the client for
+        // the whole turn and a blob read racing it would have nowhere to put
+        // its result. The run loop has already dropped attachments this
+        // execution cannot take, so anything still here is deliverable.
+        let image_blocks = if attachments.is_empty() {
+            Vec::new()
+        } else {
+            match self.media.as_ref() {
+                Some(media) => media.image_blocks(&attachments).await,
+                None => {
+                    tracing::warn!(
+                        target: "csp::attachments",
+                        session = %self.session_id,
+                        "turn carried {} attachment(s) but this host has no media fetcher",
+                        attachments.len()
+                    );
+                    Vec::new()
+                }
+            }
+        };
+
         let opening = self.translator.begin_turn(
             &text,
             operator_pubkey.as_deref(),
@@ -1747,6 +1798,7 @@ impl SessionActor {
             framing
                 .as_ref()
                 .and_then(|framing| framing.sender_role.as_deref()),
+            image_blocks.len(),
         );
         emit_items(&self.events, &self.session_id, &turn_id, opening).await;
 
@@ -1757,17 +1809,24 @@ impl SessionActor {
             Some(framing) => framing.render(&text),
             None => text.clone(),
         };
-        // The prompt future holds `&mut self.client` for the whole turn; it is
-        // boxed so the interrupt path can drop it and get the client back.
         let agent_text = match self.first_turn_preamble.take() {
             Some(preamble) => {
                 format!("{preamble}\n\n--- CURRENT USER MESSAGE (answer this) ---\n{addressed}")
             }
             None => addressed,
         };
-        let mut prompt = Box::pin(self.client.session_prompt_with_idle_timeout(
+        // Positioned by the markdown references the operator's own text carries,
+        // so the agent reads the turn in the order it was written.
+        let blocks = if image_blocks.is_empty() {
+            vec![buzz_acp::acp::PromptBlock::Text(agent_text)]
+        } else {
+            crate::attachments::interleave_prompt_blocks(&agent_text, image_blocks)
+        };
+        // The prompt future holds `&mut self.client` for the whole turn; it is
+        // boxed so the interrupt path can drop it and get the client back.
+        let mut prompt = Box::pin(self.client.session_prompt_content_with_idle_timeout(
             &self.acp_session_id,
-            &agent_text,
+            &blocks,
             self.idle_timeout,
             self.max_turn_duration,
         ));
@@ -1795,6 +1854,7 @@ impl SessionActor {
                     Some(SessionCommand::Turn {
                         command_id,
                         text,
+                        attachments,
                         operator_pubkey,
                         framing,
                     }) => {
@@ -1813,6 +1873,7 @@ impl SessionActor {
                             queued.push_back(QueuedTurn {
                                 command_id,
                                 text,
+                                attachments,
                                 operator_pubkey,
                                 framing,
                             });
@@ -2234,6 +2295,26 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// Like [`GOOD_AGENT`], but advertises `promptCapabilities.image`.
+    ///
+    /// This is the exact shape `claude-agent-acp` and `codex-acp` answer with,
+    /// and the only thing that may turn an attach control on.
+    pub(crate) const IMAGE_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"promptCapabilities":{"image":true,"audio":false}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+  esac
+done
+"#;
+
     /// Streams a raw SDK frame alongside a normal answer.
     ///
     /// The frame carries a marker string that must never appear in any
@@ -2434,6 +2515,7 @@ done
     /// placeholder that no test ever spawns.
     fn request_command(command: String, cwd: &std::path::Path) -> CreateRequest {
         CreateRequest {
+            media: None,
             seat: None,
             post_fence_env: Vec::new(),
             seat_skills: None,
@@ -3167,6 +3249,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -3220,6 +3303,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -3315,6 +3399,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -3361,6 +3446,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -3626,6 +3712,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: user_text.to_owned(),
                 operator_pubkey: None,
                 framing: None,
@@ -4121,6 +4208,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -4166,6 +4254,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: text.to_owned(),
                 operator_pubkey: Some("c".repeat(64)),
                 framing,
@@ -4295,6 +4384,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: Some(operator.clone()),
                 framing: None,
@@ -4322,6 +4412,7 @@ done
         handle
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -4364,6 +4455,7 @@ done
             .expect("handle")
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
+                attachments: Vec::new(),
                 text: "go".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -4503,6 +4595,7 @@ done
         handle
             .deliver(SessionCommand::Turn {
                 command_id: "queued".into(),
+                attachments: Vec::new(),
                 text: "work".into(),
                 operator_pubkey: None,
                 framing: None,
@@ -4593,6 +4686,39 @@ done
         assert!(
             startup.steering_supported,
             "`_meta.steering.supported` at initialize is what this fact is made of"
+        );
+        manager.shutdown("s1");
+    }
+
+    /// Whether an execution takes image prompts is witnessed the same way, and
+    /// for the same reason: `buzz-agent` fails a whole turn on a content block
+    /// it did not advertise, so this may never be assumed from a driver slug.
+    #[tokio::test]
+    async fn image_prompt_support_is_witnessed_per_execution_at_initialize() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let quiet = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let startup = manager
+            .create(request(quiet, dir.path()))
+            .await
+            .expect("create");
+        assert!(
+            !startup.prompt_image_supported,
+            "an adapter that advertised nothing must not be credited with images"
+        );
+        manager.shutdown("s1");
+
+        let imaging = fake_agent(dir.path(), "image-agent", IMAGE_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let startup = manager
+            .create(request(imaging, dir.path()))
+            .await
+            .expect("create");
+        assert!(
+            startup.prompt_image_supported,
+            "`agentCapabilities.promptCapabilities.image` is what this fact is made of"
         );
         manager.shutdown("s1");
     }

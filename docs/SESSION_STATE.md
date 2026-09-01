@@ -56,7 +56,56 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-28 (later) — **the Dashboard**, built on
+_Last updated: 2026-09-01 — **image attachments on a coding-session turn**,
+built on `worktree-session-image-attachments`. Drag, paste or pick a
+PNG/JPEG/GIF/WebP in the coding-session composer; it uploads to the relay's
+Blossom store, is referenced inline from the turn text, renders as a picture in
+the transcript, and reaches the agent as a native ACP
+`{"type":"image","mimeType","data"}` block **positioned where it was written**.
+**Wire:** 44220's `thread.turn.start` gains
+`attachments: [{sha256, mime, size, dim?, filename?}]`
+(`crates/buzz-core/src/coding_session_command.rs`), capped at 4 × 10 MiB,
+image-MIME only, and **omitted when empty** so an ordinary turn serializes to
+exactly the bytes it always did — required, because the payload is
+`deny_unknown_fields` at the relay *and* the provider. **No URL is carried:**
+the provider derives `{relay}/media/{sha256}.{ext}` from the relay it is
+already on, so a signed command cannot steer its fetch. The tag envelope is
+untouched (44220 still admits exactly three two-field tags, which is *why*
+attachments live in the content).
+**Placement:** the draft holds readable `[Image #N]` tokens, renumbered when one
+is removed; they expand to markdown on the way to the relay and never in the
+draft. The provider splits the prompt on those references and interleaves the
+fetched images, so a before/after pair keeps which screenshot belongs to which
+sentence. An unreferenced image is appended rather than dropped.
+**Capability, and it is load-bearing:** per-execution `promptImage`, learned at
+ACP `initialize` and republished in 44223 exactly as `threadSteer` is. The
+attach control is disabled, naming the runtime, when false — `buzz-agent`
+*fails the whole turn* on a content block it did not advertise. A turn whose
+images are dropped gets a `turn_degraded`/`IMAGE_UNSUPPORTED` receipt.
+**Three bugs found only by running it, all outside the feature's own code and
+each of which made the images invisible while everything upstream looked
+correct:** (a) the transcript sanitizer's host-path guard elided the media URL
+as machine layout, storing `![[elided private context: …])` — `http`/`https`
+URLs are now exempt (`file://` and bare paths still go); (b) `rewriteRelayUrl`
+compared relay origins by string, so a community added as `127.0.0.1` skipped
+the localhost proxy for media served from `localhost`, and a bare `<img>`
+cannot send the Blossom `t=get` token a media read requires — loopback
+spellings now compare equal; (c) `ImageMosaic`'s `minmax(0, 1fr)` columns
+collapsed to the width of their gaps inside a shrink-to-fit bubble, clipping
+loaded images to a 6px sliver — columns now carry a floor.
+**Deliberately not done:** `buzz-agent` still advertises
+`promptCapabilities.image: false` (accepting image prompts means widening
+`HistoryItem::User(String)` through all three provider paths in `llm.rs`,
+truncation and context accounting); mobile is untouched, its coding-session
+page being read-only by construction (D11c).
+Gate: `just ci` green at the time of the first commit; desktop 7083 unit tests,
+`coding-sessions.spec.ts` 9/9, buzz-core 577, provider 431.
+**Exercised live against the local dev relay on 2026-09-01**, not hive: a real
+paste reached `claude-agent-acp`, which described both screenshots back
+("Both came through: 1… 2…"), and the transcript rendered them inline in the
+order written. **Not yet exercised against hive.**_
+
+_Previously: 2026-08-28 (later) — **the Dashboard**, built on
 `worktree-dashboard` and not yet landed. Inbox, Pulse, Agent progress and
 Agents are no longer four sidebar rows and four routes; they are tabs of one
 Dashboard page at `/`, behind one sidebar row that wears the inbox badge.

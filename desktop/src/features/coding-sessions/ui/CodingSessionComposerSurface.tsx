@@ -5,13 +5,22 @@ import { shouldSubmitCodingSessionComposerKey } from "@/features/coding-sessions
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
+import type { CodingSessionAttachmentController } from "@/features/coding-sessions/lib/useCodingSessionImageAttachments";
+import { CodingSessionComposerAttachments } from "./CodingSessionComposerAttachments";
 import {
   CodingSessionComposerDeck,
   type CodingSessionComposerControlContext,
 } from "./CodingSessionComposerDeck";
 
 type ComposerSurfaceProps = {
+  /**
+   * Staged image attachments. Absent means this surface offers no attach
+   * control at all — the lane composer, for instance, is people-to-people.
+   */
+  attachments?: CodingSessionAttachmentController;
   authorityReason: string | null;
+  /** This execution's advertised `promptImage` capability. */
+  canAttachImages?: boolean;
   canControl: boolean;
   canInterrupt: boolean;
   canSessionStop: boolean;
@@ -47,6 +56,8 @@ type ComposerSurfaceProps = {
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   providerAuthorityPubkey: string | null;
   recipientControl?: React.ReactNode;
+  /** Runtime slug named in the disabled attach tooltip. */
+  runtimeLabel?: string | null;
   sendLabel: string;
   showAuthorityFailure: boolean;
   showStopAction: boolean;
@@ -58,7 +69,9 @@ type ComposerSurfaceProps = {
 
 /** Visual composer shell; command semantics remain in CodingSessionComposer. */
 export function CodingSessionComposerSurface({
+  attachments,
   authorityReason,
+  canAttachImages = false,
   canControl,
   canInterrupt,
   canSessionStop,
@@ -82,6 +95,7 @@ export function CodingSessionComposerSurface({
   layout,
   onAddProvider,
   onInterrupt,
+  runtimeLabel,
   onPrimary,
   onReconnect,
   onSessionStop,
@@ -138,14 +152,40 @@ export function CodingSessionComposerSurface({
           showAuthorityFailure={showAuthorityFailure}
         />
       )}
+      {attachments && !immersive ? (
+        <CodingSessionComposerAttachments
+          canAttach={canAttachImages}
+          controller={attachments}
+          disabled={editorDisabled}
+          runtimeLabel={runtimeLabel}
+        />
+      ) : null}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target; the Image button is the keyboard-accessible path */}
       <div
         className={cn(
           immersive
             ? "relative z-10 overflow-hidden rounded-3xl border border-border/35 bg-muted/35 shadow-[0_18px_60px_-24px_rgba(0,0,0,0.75)]"
             : "flex gap-2",
           !immersive && (layout === "stacked" ? "flex-col" : "items-end"),
+          attachments?.isDragOver && "ring-2 ring-primary/60",
         )}
+        onDragEnter={attachments?.handleDragEnter}
+        onDragLeave={attachments?.handleDragLeave}
+        onDragOver={attachments?.handleDragOver}
+        onDrop={attachments?.handleDrop}
       >
+        {/* Immersive stacks its children, so the strip belongs inside the
+            card. The compact container is a flex row — putting it there would
+            seat the thumbnails beside the textarea, so it goes above instead
+            (rendered below the container's closing tag). */}
+        {attachments && immersive ? (
+          <CodingSessionComposerAttachments
+            canAttach={canAttachImages}
+            controller={attachments}
+            disabled={editorDisabled}
+            runtimeLabel={runtimeLabel}
+          />
+        ) : null}
         <Textarea
           aria-label="Coding-session instruction"
           className={cn(
@@ -158,6 +198,7 @@ export function CodingSessionComposerSurface({
           )}
           disabled={editorDisabled}
           onChange={(event) => onTextChange(event.target.value)}
+          onPaste={attachments?.handlePaste}
           onKeyDown={(event) => {
             if (!shouldSubmitCodingSessionComposerKey(event)) return;
             event.preventDefault();

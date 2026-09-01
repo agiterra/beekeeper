@@ -1602,10 +1602,33 @@ fn host_path_span(word: &str) -> Option<(usize, usize)> {
     Some((offset, offset + candidate.len()))
 }
 
+/// Whether this token is an `http`/`https` URL — addressing on a server rather
+/// than a path on this machine.
+///
+/// Matched anywhere in the token, not just at the start, because a URL reaches
+/// the sanitizer wrapped in whatever prose or markdown the author wrote around
+/// it (`![image](https://…)` is one whitespace-delimited word).
+fn is_web_url(candidate: &str) -> bool {
+    let lowered = candidate.to_ascii_lowercase();
+    lowered.contains("http://") || lowered.contains("https://")
+}
+
 /// Does this token, already stripped of surrounding punctuation, name host
 /// layout?
 fn contains_host_path(candidate: &str) -> bool {
     if SYSTEM_COMMAND_PATHS.contains(&candidate) {
+        return false;
+    }
+    // A web URL is not this machine's layout, and this guard exists only to
+    // keep the machine's layout out of a published transcript. The path in
+    // `https://host/media/<sha>.png` is addressing on somebody's server, not a
+    // directory on disk — eliding it cost coding-session turns their attached
+    // screenshots, which reached the transcript as `![[elided private
+    // context: 105 bytes, …])` and rendered as that literal text.
+    //
+    // Deliberately only `http`/`https`: `file:///Users/andy/…` *is* host
+    // layout wearing a scheme, and still goes.
+    if is_web_url(candidate) {
         return false;
     }
     // A separator with nothing under it is not this machine's layout, and

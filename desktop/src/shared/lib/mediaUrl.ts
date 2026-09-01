@@ -52,6 +52,46 @@ function canonicalOrigin(url: string): string | null {
   }
 }
 
+/** Every spelling of "this machine". */
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+/**
+ * Whether two origins name the same relay.
+ *
+ * String equality, except that the loopback spellings are one host. A local
+ * community added as `ws://127.0.0.1:3000` gets media URLs back on
+ * `http://localhost:3000` — the relay builds them from its own tenant host —
+ * and a strict comparison then decides the blob belongs to somebody else and
+ * skips the proxy. The `<img>` goes straight at the relay, media reads require
+ * Blossom auth an `<img>` cannot send, and every picture silently fails to
+ * load while looking exactly like a rendering bug.
+ *
+ * Scheme and port still have to match: those distinguish real relays, while
+ * `localhost` and `127.0.0.1` never do.
+ */
+function sameRelayOrigin(left: string, right: string): boolean {
+  if (left === right) return true;
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    return (
+      a.protocol === b.protocol &&
+      a.port === b.port &&
+      isLoopbackHost(a.hostname) &&
+      isLoopbackHost(b.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Monotonic cache generation, bumped on every `resetMediaCaches` (i.e.
  * workspace switch). Async lookups capture the current generation and may
@@ -322,7 +362,7 @@ export function rewriteRelayUrl(url: string): string {
   // was typed with uppercase (e.g. wss://PENDING-SEED.communities.buzz.xyz).
   if (cachedRelayOrigin) {
     const urlOrigin = canonicalOrigin(url);
-    if (urlOrigin !== cachedRelayOrigin) {
+    if (!urlOrigin || !sameRelayOrigin(urlOrigin, cachedRelayOrigin)) {
       return url;
     }
   }
