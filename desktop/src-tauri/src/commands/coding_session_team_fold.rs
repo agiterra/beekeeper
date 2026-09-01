@@ -226,6 +226,25 @@ pub struct CodingSessionTeamFoldAdapterSettlement {
     pub settled: bool,
 }
 
+/// One canonical report whose author holds no active seat for the role its
+/// assignment named.
+///
+/// The report is *included*: assignee equality is the inclusion rule, and this
+/// says only that the included report carries no seat authority. Rendering it
+/// as an exclusion would repeat the honesty bug this field exists to fix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionTeamFoldAdapterUnseatedReport {
+    /// Event id of the included report.
+    pub event_id: String,
+    /// Canonical lowercase-hex pubkey that signed the report.
+    pub author_pubkey: String,
+    /// Event id of the assignment the report answers.
+    pub assignment_ref: String,
+    /// Role slug that assignment named for its assignee.
+    pub assignee_role: String,
+}
+
 /// Canonical newest authorized terminal record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -257,6 +276,9 @@ pub struct CodingSessionTeamFoldAdapterResponse {
     pub conflicts: Vec<CodingSessionTeamFoldAdapterConflict>,
     /// Canonical settlement state for every active assignment.
     pub assignments: Vec<CodingSessionTeamFoldAdapterSettlement>,
+    /// Included reports whose author holds no active seat for the assignment's
+    /// role, in included order. Always present; empty is a real answer.
+    pub unseated_reports: Vec<CodingSessionTeamFoldAdapterUnseatedReport>,
     /// Canonical newest authorized terminal record, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamFoldAdapterTerminal>,
 }
@@ -377,6 +399,16 @@ fn fold_adapter(
                 disposition_event_id: value.disposition_event_id,
                 acknowledgement_event_id: value.acknowledgement_event_id,
                 settled: value.settled,
+            })
+            .collect(),
+        unseated_reports: fold
+            .unseated_reports
+            .into_iter()
+            .map(|value| CodingSessionTeamFoldAdapterUnseatedReport {
+                event_id: value.event_id,
+                author_pubkey: value.author_pubkey,
+                assignment_ref: value.assignment_ref,
+                assignee_role: value.assignee_role,
             })
             .collect(),
         canonical_terminal: fold.canonical_terminal.map(|value| {

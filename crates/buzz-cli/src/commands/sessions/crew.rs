@@ -1447,11 +1447,37 @@ pub fn turn_load(
 ///
 /// A hire is not a write the relay can settle: the host has to read the
 /// request, apply its standing policy, pick an identity, cut a worktree, stage
-/// custody, and only then publish a seated create the provider answers. Sixty
-/// seconds is long enough for all of that on a cold host and short enough that
-/// a lead is not blocked for a minute per seat; past it the command reports
-/// that nothing answered, which is what happened.
-pub const HIRE_WAIT_SECONDS: u64 = 60;
+/// custody, and only then publish a seated create the provider answers, and
+/// the provider only enqueues its `created` receipt once actor startup
+/// finishes. This is the same window Desktop's own receipt wait has always
+/// used — `CODING_SESSION_CREW_RECEIPT_TIMEOUT_MS = 120_000` in
+/// `desktop/src/features/coding-sessions/lib/codingSessionCrewReceipt.ts` —
+/// and the two disagreeing is what broke on cleantest, 2026-09-01: the
+/// builder's `created` receipt was signed at 19:11:28, three seconds after
+/// the 19:11:25 hire, and the sixty-second window still closed without seeing
+/// it. The CLI reported an unseated hire for a seat that existed and was
+/// running, and no grant was ever written for it.
+pub const HIRE_WAIT_SECONDS: u64 = 120;
+
+/// The exact `bee sessions seat-repair` invocation that recovers one seat's
+/// role authority, with this hire's own values substituted.
+///
+/// Printed rather than described: a lead reading an ungranted-seat outcome
+/// needs the command, not the name of a command, and re-hiring — the obvious
+/// wrong answer — cannot recover the seat and is forbidden.
+pub fn seat_repair_command(channel: &str, session_ref: &str, actor: &str) -> String {
+    format!(
+        "bee sessions seat-repair --channel {channel} --session-ref {session_ref} --actor {actor}"
+    )
+}
+
+/// The remediation sentence every ungranted-seat outcome ends with.
+pub fn seat_repair_remedy(channel: &str, session_ref: &str, actor: &str) -> String {
+    format!(
+        "If the seat runs anyway, repair its authority with: {}. Never hire again.",
+        seat_repair_command(channel, session_ref, actor)
+    )
+}
 
 /// The seated create a host published in answer to a hire.
 ///
@@ -1535,12 +1561,19 @@ pub enum HireOutcome {
         /// Whether the accepted authority chain names this exact actor-role
         /// pair with a live `grant-seat`.
         ///
-        /// A seated agent with no role authority cannot sign its typed team
-        /// report, so it can do the whole job and settle none of it.
-        /// Carried separately from the receipt because the provider's `created`
-        /// says nothing about authority — on 2026-08-28 a hired builder had a
-        /// `created` receipt and no grant, worked for 1,009 s, and its report
-        /// bounced (item 83).
+        /// What an ungranted seat can and cannot do, exactly: the typed team
+        /// fold **includes** its report — inclusion is assignee equality, and
+        /// an assignment names a target rather than an authorship claim
+        /// (`buzz_core::coding_session_team_transaction_fold`) — and discloses
+        /// it under `unseatedReports` as carrying no seat authority. What the
+        /// seat cannot do is hold `verifier` standing, so it can never refute;
+        /// and it is absent from `activeSeats`, so nothing else in the product
+        /// notices. Carried separately from the receipt because the provider's
+        /// `created` says nothing about authority — on 2026-08-28 a hired
+        /// builder had a `created` receipt and no grant and worked for 1,009 s
+        /// (item 83); on 2026-09-01 the same thing happened again because the
+        /// receipt landed after the CLI's window closed. The remedy is
+        /// [`seat_repair_command`], never a second hire.
         granted: bool,
     },
     /// The host seated the role and the provider refused it.
@@ -1637,6 +1670,167 @@ pub fn find_hired_seat(
         }
     }
     best
+}
+
+/// Every founder-signed seated create naming `actor` in `umbrella`.
+///
+/// The candidate set for a repair, and deliberately not a *choice* among them.
+/// [`find_hired_seat`] can pick one because a hire knows the role it asked for
+/// and the second it asked; a repair knows neither, and the two tie-breakers
+/// that look obvious are both wrong:
+///
+/// - **Earliest `created_at` wins** — which this function used to do — lets a
+///   benign earlier hire that no provider ever answered shadow the seat that is
+///   actually running, and lets anyone who can publish a 44221 park the only
+///   recovery path permanently. `created_at` is author-asserted; nothing signs
+///   it into agreement with the wire.
+/// - **Newest wins** has the mirror-image failure.
+///
+/// So no time is consulted at all. The caller gathers *every* candidate and
+/// lets the signed provider evidence decide which one runs; when more than one
+/// verifies, that is a real ambiguity and the caller refuses rather than
+/// guessing. Only the founder's own creates are candidates, because
+/// `verify_hire_evidence` will reject any other signer anyway
+/// (`create.pubkey != genesis.pubkey`) and a stranger's create must not be able
+/// to occupy a slot in the candidate set.
+///
+/// Returned in event-id order, which is a content hash and therefore neither
+/// author-asserted nor dependent on the order the relay handed the events over.
+pub fn founder_seated_creates_for_actor(
+    events: &[Value],
+    umbrella: &str,
+    actor: &str,
+    founder: &str,
+) -> Vec<HiredSeat> {
+    let mut found: Vec<HiredSeat> = Vec::new();
+    for event in events {
+        if event.get("kind").and_then(Value::as_u64)
+            != Some(u64::from(KIND_CODING_SESSION_LIFECYCLE_COMMAND))
+        {
+            continue;
+        }
+        let (Some(content), Some(created_at), Some(event_id), Some(create_signer)) = (
+            content_of(event),
+            event_created_at(event),
+            event_str(event, "id"),
+            event_str(event, "pubkey"),
+        ) else {
+            continue;
+        };
+        if create_signer != founder {
+            continue;
+        }
+        let Ok(payload) =
+            buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                content,
+            )
+        else {
+            continue;
+        };
+        let CodingSessionLifecycleAction::SessionCreate {
+            session_ref: Some(session_ref),
+            provider_instance_ref,
+            model,
+            actor: Some(create_actor),
+            role: Some(seat_role),
+            genesis_ref: Some(genesis_ref),
+            provider_authority_pubkey,
+            ..
+        } = payload.action
+        else {
+            continue;
+        };
+        if session_ref != umbrella || create_actor != actor {
+            continue;
+        }
+        if found.iter().any(|held| held.event_id == event_id) {
+            continue;
+        }
+        found.push(HiredSeat {
+            event_id,
+            create_signer,
+            command_id: payload.command_id,
+            actor: create_actor,
+            role: seat_role,
+            session_ref,
+            genesis_ref,
+            provider_authority_pubkey,
+            provider_instance_ref,
+            model,
+            // Retained for display only. Nothing in the repair's selection
+            // reads it, and nothing may start.
+            at: created_at,
+            raw: event.clone(),
+        });
+    }
+    // Grouped first so the dedupe below sees its duplicates adjacent, then
+    // re-sorted into event-id order for the caller.
+    found.sort_by(|left, right| {
+        left.command_id
+            .cmp(&right.command_id)
+            .then_with(|| left.role.cmp(&right.role))
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    // One logical command is one candidate. A founder that retries a submit
+    // publishes the same commandId under a new event id and a new
+    // `created_at`; showing the operator that commandId twice, or treating it
+    // as two seats to choose between, is a bug about our own retry, not a fact
+    // about the umbrella. Deduped AFTER the event-id sort, so which copy
+    // survives is deterministic and not time-derived.
+    //
+    // The role is part of the key on purpose: the same commandId republished
+    // with a DIFFERENT role is a genuine contradiction about what to write, and
+    // collapsing it here would silently pick one of the two roles.
+    found.dedup_by(|left, right| left.command_id == right.command_id && left.role == right.role);
+    found.sort_by(|left, right| left.event_id.cmp(&right.event_id));
+    found
+}
+
+/// Every lifecycle (non-turn) receipt whose payload answers `command_id`.
+///
+/// The repair's counterpart to [`newest_create_receipt`], which takes the
+/// newest by `created_at` before any signature check and so can be denied by a
+/// later forgery carrying the same commandId. This returns them all, in
+/// event-id order, and leaves the choice to
+/// [`super::hire_evidence::create_receipt_binding`] — signature first, time
+/// never.
+pub fn create_receipts_for_command(
+    receipts: &[ReceiptRecord],
+    command_id: &str,
+) -> Vec<SeatReceipt> {
+    let mut found: Vec<SeatReceipt> = Vec::new();
+    for record in receipts {
+        if record.is_turn_status {
+            continue;
+        }
+        let Some(content) = content_of(&record.raw) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(content) else {
+            continue;
+        };
+        if receipt.command_id != command_id || receipt.status.is_turn_stage() {
+            continue;
+        }
+        let Some(event_id) = event_str(&record.raw, "id") else {
+            continue;
+        };
+        if found.iter().any(|held| held.event_id == event_id) {
+            continue;
+        }
+        found.push(SeatReceipt {
+            event_id,
+            signer: record.signer.clone(),
+            status: receipt.status,
+            target_key: record.target_key.clone(),
+            error_code: receipt.error.as_ref().map(|error| error.code.clone()),
+            error_message: receipt.error.as_ref().map(|error| error.message.clone()),
+            at: record.created_at,
+            raw: record.raw.clone(),
+        });
+    }
+    found.sort_by(|left, right| left.event_id.cmp(&right.event_id));
+    found
 }
 
 /// The newest lifecycle (non-turn) receipt answering `command_id`.
@@ -1856,7 +2050,11 @@ pub struct HireReport {
 ///
 /// `waited` distinguishes the two ways of having no answer — nobody answered,
 /// and nobody was asked — so `--no-wait` never reads as a silent host.
-pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
+///
+/// `channel` is carried only so the two outcomes that leave a seat without
+/// accepted role authority can print the whole `seat-repair` command rather
+/// than name it.
+pub fn hire_report(outcome: &HireOutcome, waited: bool, channel: &str) -> HireReport {
     match outcome {
         HireOutcome::Created {
             seat,
@@ -1880,11 +2078,18 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
                     "Its accepted role-seat authority is active, so it can report back to you"
                         .to_owned()
                 } else {
-                    "It is seated, but its exact actor-role grant is not accepted; the typed \
-                         team fold excludes an unauthoritative report. Inspect the accepted \
-                         authority chain, then explicitly grant or revoke/change the role. Do \
-                         not hire again"
-                        .to_owned()
+                    // Exactly what is true: the report is canonical and the
+                    // seat is not. Saying the fold drops the report — which
+                    // this sentence used to say — sent leads looking for a
+                    // missing event that was there all along.
+                    format!(
+                        "It is seated, but its exact actor-role grant is not accepted. The typed \
+                         team fold still INCLUDES its report, by assignee identity, and \
+                         discloses it under `unseatedReports` as carrying no seat authority; an \
+                         ungranted seat cannot hold verifier authority, so it can never refute, \
+                         and it is absent from `activeSeats`. {}",
+                        seat_repair_remedy(channel, &seat.session_ref, &seat.actor)
+                    )
                 }
             ),
         },
@@ -1907,8 +2112,12 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
             status: "seating",
             detail: format!(
                 "the host published a seat for {} ({}), but no provider receipt answered it \
-                 within {HIRE_WAIT_SECONDS}s — read `bee sessions status` for the umbrella",
-                seat.role, seat.command_id
+                 within {HIRE_WAIT_SECONDS}s — read `bee sessions status` for the umbrella. \
+                 The repair below needs a provider receipt, so it answers `no_receipt_yet` \
+                 until one lands. {}",
+                seat.role,
+                seat.command_id,
+                seat_repair_remedy(channel, &seat.session_ref, &seat.actor)
             ),
         },
         HireOutcome::Refused(refusal) => HireReport {
@@ -1954,6 +2163,60 @@ pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
         HireOutcome::Created { granted: false, .. } => 1,
         HireOutcome::Failed { .. } | HireOutcome::Refused(_) => 1,
         HireOutcome::Seating { .. } | HireOutcome::Unconfirmed => 5,
+    }
+}
+
+/// What one `bee sessions seat-repair` run found, and whether it wrote.
+///
+/// Four words, three of them terminal facts about evidence rather than about
+/// the write: a repair that does not grant has to say *why* it did not, and
+/// "nothing happened" is three different situations with three different next
+/// steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeatRepairOutcome {
+    /// A new accepted `grant-seat` now names this exact actor-role pair.
+    Granted,
+    /// More than one founder-signed create for this actor carries
+    /// provider-signed proof of a running execution, so which seat the
+    /// operator means is genuinely unknown. Nothing was written: a tie-breaker
+    /// here would grant authority to an execution nobody named.
+    Ambiguous,
+    /// The pair already held an accepted seat. Nothing was written; running
+    /// this command twice is deliberately a no-op.
+    AlreadyGranted,
+    /// The seated create exists and no provider lifecycle receipt answers it.
+    /// Nothing was written: there is no proof yet that anything runs.
+    NoReceiptYet,
+    /// The receipt refused the create, the signed evidence did not verify, or
+    /// the actor holds a different role. Nothing was written.
+    Refused,
+}
+
+impl SeatRepairOutcome {
+    /// The machine-readable word printed as `outcome`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SeatRepairOutcome::Granted => "granted",
+            SeatRepairOutcome::Ambiguous => "ambiguous",
+            SeatRepairOutcome::AlreadyGranted => "already_granted",
+            SeatRepairOutcome::NoReceiptYet => "no_receipt_yet",
+            SeatRepairOutcome::Refused => "refused",
+        }
+    }
+}
+
+/// The process exit code one `seat-repair` outcome earns.
+///
+/// `0` for both granted words — the point of the command is that the seat
+/// holds its role afterwards, and it held it either way. `1` refused, in line
+/// with every other CLI refusal. `5` for `no_receipt_yet`, the same code
+/// `hire` gives an unanswered create: the repair is unfinished rather than
+/// wrong, and a script should come back rather than escalate.
+pub fn seat_repair_exit_code(outcome: SeatRepairOutcome) -> i32 {
+    match outcome {
+        SeatRepairOutcome::Granted | SeatRepairOutcome::AlreadyGranted => 0,
+        SeatRepairOutcome::Refused | SeatRepairOutcome::Ambiguous => 1,
+        SeatRepairOutcome::NoReceiptYet => 5,
     }
 }
 

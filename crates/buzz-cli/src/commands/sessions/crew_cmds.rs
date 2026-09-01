@@ -14,7 +14,7 @@
 //!   (`crates/buzz-relay/src/api/bridge.rs`).
 //! - **`deliver` is omitted at its default.** See [`build_turn_command`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -28,7 +28,9 @@ use buzz_core::coding_session_lifecycle_command::{
     validate_event_id_hex, validate_role_slug, validate_session_ref, CodingSessionLifecycleAction,
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
-use buzz_core::coding_session_payload::{context_window_usage, TurnUsageReport, ACTOR_ROLE_PAIR};
+use buzz_core::coding_session_payload::{
+    context_window_usage, ReceiptStatus, TurnUsageReport, ACTOR_ROLE_PAIR,
+};
 use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -40,12 +42,14 @@ use buzz_sdk::kind::{
 };
 
 use super::crew::{
-    build_executions, build_founder_index, build_inbox, caller_umbrella, decode_leases,
-    decode_resumes, decode_turn_commands, find_hire_refusal, find_hired_seat, fold_delivery,
-    fold_hire, format_age, hire_exit_code, hire_payload, hire_report, hire_unsupported_by_relay,
-    newest_create_receipt, newest_turn_stages, plan_readdress, resolve_send_target,
-    resolve_umbrella_genesis, short_pubkey, turn_load, CrewExecution, FounderIndex, HireOutcome,
-    ReaddressPlan, TurnCommand, TurnStage, DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
+    build_executions, build_founder_index, build_inbox, caller_umbrella,
+    create_receipts_for_command, decode_leases, decode_resumes, decode_turn_commands,
+    find_hire_refusal, find_hired_seat, fold_delivery, fold_hire, format_age,
+    founder_seated_creates_for_actor, hire_exit_code, hire_payload, hire_report,
+    hire_unsupported_by_relay, newest_create_receipt, newest_turn_stages, plan_readdress,
+    resolve_send_target, resolve_umbrella_genesis, seat_repair_exit_code, short_pubkey, turn_load,
+    CrewExecution, FounderIndex, HireOutcome, ReaddressPlan, SeatRepairOutcome, TurnCommand,
+    TurnStage, DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
 use crate::client::BuzzClient;
@@ -637,8 +641,9 @@ pub fn refuse_unsupported_create_flags(
 /// How often the hire wait re-asks the relay whether the host has answered.
 ///
 /// Longer than the turn poll: a hire's answer is a human-scale sequence of
-/// host-local work, not a queue push, and sixty seconds of half-second polls
-/// would be a hundred and twenty queries for one seat.
+/// host-local work, not a queue push, and half-second polls across
+/// [`HIRE_WAIT_SECONDS`]' two-minute window would be four hundred and eighty
+/// queries for one seat. At two seconds it is sixty.
 const HIRE_POLL: std::time::Duration = std::time::Duration::from_millis(2_000);
 
 /// Every kind the hire wait reads: the host's seated create, the provider's
@@ -1055,11 +1060,20 @@ pub async fn cmd_hire(
             Err(error) => seat_grant_error = Some(error.to_string()),
         }
     }
-    let mut report = hire_report(&outcome, !no_wait);
+    let mut report = hire_report(&outcome, !no_wait, channel_id);
     if let Some(error) = &seat_grant_error {
+        let actor = match &outcome {
+            HireOutcome::Created { seat, .. } => seat.actor.clone(),
+            _ => String::new(),
+        };
         report.status = "created_ungranted";
         report.detail = format!(
-            "the provider created the seat, but its role-seat authority was not accepted: {error}. The seat is live; do not hire again. Inspect the accepted authority chain, then explicitly grant or revoke/change its role"
+            "the provider created the seat, but its role-seat authority was not accepted: \
+             {error}. The seat is live, and the typed team fold still INCLUDES its report by \
+             assignee identity, disclosed under `unseatedReports` as carrying no seat \
+             authority; what the seat cannot do is hold verifier authority, so it can never \
+             refute. {}",
+            super::crew::seat_repair_remedy(channel_id, session_ref, &actor)
         );
     }
     if let Some(object) = merged.as_object_mut() {
@@ -1226,6 +1240,554 @@ async fn wait_for_hire(
             return Ok(held);
         }
         tokio::time::sleep(HIRE_POLL).await;
+    }
+}
+
+/// `bee sessions seat-repair` — grant the role seat a hire created and lost.
+///
+/// The recovery path for the one hire failure nothing else can undo: the host
+/// seated the role, the provider answered `created`, and the accepted 44228
+/// chain never learned about it — because the receipt reached the relay after
+/// `hire`'s window closed (cleantest, 2026-09-01) or because the grant write
+/// itself failed. Re-hiring cannot recover it: a fresh hire takes a `since`
+/// cutoff before its own request, which excludes the create that already
+/// exists, and would seat a *second* agent. So this command builds no
+/// kind:44221 at all, and the only event it can ever submit is one kind:44228
+/// `grant-seat`.
+///
+/// One read of the channel, no wait and no poll — every fact it needs is
+/// already on the relay by definition, since the premise is that the create is
+/// older than the window that missed it. The evidence bar is exactly `hire`'s:
+/// [`super::hire_evidence::verify_hire_evidence`] re-checks the signed
+/// genesis, the seated create, the provider receipt bound to that create's own
+/// commandId, and the provider's own metadata for the target, before
+/// [`super::seat_authority::ensure_hired_seat_grant`] is allowed to write.
+/// The role comes from the create, never from a flag: a repair that took the
+/// role from its caller could grant a role no host ever seated.
+pub async fn cmd_seat_repair(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: &str,
+    genesis: Option<&str>,
+    actor: &str,
+    format: &crate::OutputFormat,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    validate_session_ref(session_ref).map_err(CliError::Usage)?;
+    crate::validate::validate_lower_hex64("--actor", actor)?;
+    if let Some(genesis) = genesis {
+        validate_event_id_hex("--genesis", genesis).map_err(CliError::Usage)?;
+    }
+
+    // Resolved exactly as `cmd_hire` resolves it when `--genesis` is absent.
+    let genesis_ref = match genesis {
+        Some(genesis) => genesis.to_owned(),
+        None => {
+            let events =
+                fetch_channel_events(client, channel_id, &[KIND_CODING_SESSION_GENESIS]).await?;
+            resolve_umbrella_genesis(&events, session_ref)?
+        }
+    };
+
+    let events = fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await?;
+
+    // The founder is established BEFORE any create is chosen: a create signed
+    // by anyone else is not a candidate at all, so a stranger's 44221 cannot
+    // occupy a slot in the candidate set and shadow the live seat.
+    let founder = match super::hire_evidence::verified_genesis(
+        &events,
+        channel_id,
+        session_ref,
+        &genesis_ref,
+    ) {
+        Ok(genesis) => genesis.pubkey.to_hex(),
+        Err(error) => {
+            return finish_seat_repair(
+                SeatRepairOutcome::Refused,
+                actor,
+                None,
+                None,
+                None,
+                None,
+                format!(
+                    "the umbrella's own genesis {genesis_ref} could not be verified, so there \
+                     is no founder to measure a seated create against: {error}. Nothing was \
+                     written."
+                ),
+                format,
+            );
+        }
+    };
+
+    let candidates = founder_seated_creates_for_actor(&events, session_ref, actor, &founder);
+    if candidates.is_empty() {
+        return finish_seat_repair(
+            SeatRepairOutcome::Refused,
+            actor,
+            None,
+            None,
+            None,
+            None,
+            format!(
+                "no founder-signed seated create in channel {channel_id} names actor {actor} \
+                 in umbrella {session_ref} — there is no seat to repair. Nothing was written. \
+                 Read `bee sessions status --channel {channel_id}`; do not hire again to \
+                 create one you did not mean to."
+            ),
+            format,
+        );
+    }
+
+    let (receipts, _) = decode_receipts(&events);
+    let assessed: Vec<AssessedCandidate> = candidates
+        .into_iter()
+        .map(|seat| {
+            assess_candidate(
+                &events,
+                channel_id,
+                session_ref,
+                &genesis_ref,
+                &receipts,
+                seat,
+            )
+        })
+        .collect();
+
+    // `ambiguous` is DISAGREEMENT, never a count. A grant writes exactly one
+    // thing — `(actor, role)` (`seat_authority::ensure_hired_seat_grant`) — and
+    // every candidate here is already filtered to one actor, so two verifying
+    // creates can only genuinely disagree about the ROLE. Candidates that imply
+    // the identical write are the same answer arriving twice, and refusing them
+    // broke the idempotent second run on any umbrella that had ever hired the
+    // same actor twice.
+    let verifying: Vec<(&AssessedCandidate, &super::crew::SeatReceipt)> = assessed
+        .iter()
+        .filter_map(|candidate| {
+            candidate
+                .verified
+                .as_ref()
+                .map(|receipt| (candidate, receipt))
+        })
+        .collect();
+
+    let mut by_write: BTreeMap<(&str, &str), Vec<&AssessedCandidate>> = BTreeMap::new();
+    for (candidate, _) in &verifying {
+        by_write
+            .entry((candidate.seat.actor.as_str(), candidate.seat.role.as_str()))
+            .or_default()
+            .push(candidate);
+    }
+
+    let chosen = if by_write.len() <= 1 {
+        // Zero or one distinct write. One group of any size proceeds: every
+        // member implies byte-identical authority, so there is nothing to
+        // choose between and the first in event-id order represents them all.
+        verifying.first().copied()
+    } else {
+        // Real disagreement about the role. One thing can still settle it
+        // without guessing: a role this actor ALREADY holds on the accepted
+        // 44228 chain is not the repair's opinion, it is the founder's
+        // recorded decision. Reading it here is what makes the remedy below
+        // converge — the founder grants the role they mean, re-runs, and gets
+        // `already_granted` instead of the same refusal for ever.
+        let seated_role = super::operations::fetch_projected_authority(
+            client,
+            channel_id,
+            &genesis_ref,
+            &founder,
+        )
+        .await
+        .ok()
+        .and_then(|authority| {
+            authority
+                .seats
+                .iter()
+                .find(|seat| seat.actor_pubkey == actor)
+                .map(|seat| seat.role.clone())
+        });
+        match seated_role {
+            Some(role) => verifying
+                .iter()
+                .find(|(candidate, _)| candidate.seat.role == role)
+                .copied(),
+            None => None,
+        }
+    };
+
+    let Some((candidate, receipt)) = chosen else {
+        if by_write.len() > 1 {
+            let roles = describe_disagreement(&by_write);
+            return finish_seat_repair(
+                SeatRepairOutcome::Ambiguous,
+                actor,
+                None,
+                None,
+                None,
+                None,
+                format!(
+                    "actor {actor} has founder-signed seated creates in umbrella {session_ref} \
+                     for {} different roles, each with provider-signed proof of a running \
+                     execution, so which role this actor holds is a decision only the founder \
+                     can make. Nothing was written. The disagreement: {roles}. Re-running \
+                     alone will not clear it — both creates are signed history and neither can \
+                     be withdrawn. Settle it on the umbrella's accepted authority chain by \
+                     granting the role you mean (the founder's Desktop hire host publishes the \
+                     kind:44228 `grant-seat`; `bee sessions grant` covers only the \
+                     collaborator/viewer tiers, not role seats); once that seat is accepted, \
+                     re-run this and it reports `already_granted`.",
+                    by_write.len()
+                ),
+                format,
+            );
+        }
+
+        // Nothing verified. Two different facts, and they must not be collapsed:
+        // a provider that REFUSED a create, and a provider that has not answered.
+        if let Some((failed, receipt)) = assessed.iter().find_map(|candidate| {
+            candidate
+                .failed
+                .as_ref()
+                .map(|receipt| (candidate, receipt))
+        }) {
+            return finish_seat_repair(
+                SeatRepairOutcome::Refused,
+                actor,
+                Some(&failed.seat.role),
+                Some(&failed.seat.event_id),
+                Some(&receipt.event_id),
+                None,
+                format!(
+                    "the provider refused the seated create {}: {}{}. There is no execution to \
+                     grant authority for, and no event was written. Candidates: {}.",
+                    failed.seat.command_id,
+                    receipt
+                        .error_code
+                        .as_deref()
+                        .unwrap_or(receipt.status.as_str()),
+                    match receipt.error_message.as_deref() {
+                        Some(message) => format!(" — {message}"),
+                        None => String::new(),
+                    },
+                    describe_candidates(&assessed)
+                ),
+                format,
+            );
+        }
+        if let Some(rejected) = assessed
+            .iter()
+            .find_map(|candidate| candidate.rejection.as_deref())
+        {
+            return finish_seat_repair(
+                SeatRepairOutcome::Refused,
+                actor,
+                None,
+                None,
+                None,
+                None,
+                format!(
+                    "no seated create for actor {actor} in umbrella {session_ref} has signed \
+                     provider evidence that verifies, so no seat authority was written. The \
+                     closest candidate failed with: {rejected}. Candidates: {}.",
+                    describe_candidates(&assessed)
+                ),
+                format,
+            );
+        }
+        return finish_seat_repair(
+            SeatRepairOutcome::NoReceiptYet,
+            actor,
+            None,
+            None,
+            None,
+            None,
+            format!(
+                "no seated create for actor {actor} in umbrella {session_ref} has a bound \
+                 provider lifecycle receipt yet, so nothing proves an execution exists to \
+                 grant authority for. Nothing was written. Candidates: {}. Read `bee sessions \
+                 status --channel {channel_id}` and run this again once the provider has \
+                 answered.",
+                describe_candidates(&assessed)
+            ),
+            format,
+        );
+    };
+
+    let seat = &candidate.seat;
+
+    match super::seat_authority::ensure_hired_seat_grant(
+        client,
+        channel_id,
+        session_ref,
+        &genesis_ref,
+        &seat.actor,
+        &seat.role,
+    )
+    .await
+    {
+        Ok(grant) if grant.already_active => finish_seat_repair(
+            SeatRepairOutcome::AlreadyGranted,
+            actor,
+            Some(&seat.role),
+            Some(&seat.event_id),
+            Some(&receipt.event_id),
+            Some(grant.event_id.as_str()),
+            format!(
+                "actor {actor} already holds an accepted {} seat in umbrella {session_ref}; \
+                 nothing was written.",
+                seat.role
+            ),
+            format,
+        ),
+        Ok(grant) => finish_seat_repair(
+            SeatRepairOutcome::Granted,
+            actor,
+            Some(&seat.role),
+            Some(&seat.event_id),
+            Some(&receipt.event_id),
+            Some(grant.event_id.as_str()),
+            format!(
+                "appended an accepted grant-seat naming actor {actor} as {} in umbrella \
+                 {session_ref}, on the evidence of seated create {} and provider receipt {}.",
+                seat.role, seat.command_id, receipt.event_id
+            ),
+            format,
+        ),
+        Err(error) => finish_seat_repair(
+            SeatRepairOutcome::Refused,
+            actor,
+            Some(&seat.role),
+            Some(&seat.event_id),
+            Some(&receipt.event_id),
+            None,
+            format!("the role-seat grant was not accepted: {error}"),
+            format,
+        ),
+    }
+}
+
+/// One candidate seated create, with what the signed evidence says about it.
+struct AssessedCandidate {
+    seat: super::crew::HiredSeat,
+    /// A bound success receipt for which the whole hire chain verifies.
+    verified: Option<super::crew::SeatReceipt>,
+    /// A bound failure-class receipt: the provider answered, and said no.
+    failed: Option<super::crew::SeatReceipt>,
+    /// Why the closest bound success receipt did not verify, when one existed.
+    rejection: Option<String>,
+    /// How many receipts named this commandId but were not bound to it.
+    unbound: usize,
+}
+
+/// Judge one candidate on signed evidence alone.
+///
+/// Receipts are filtered by [`super::hire_evidence::create_receipt_binding`]
+/// *before* any of them is considered, so an unbound receipt — a forgery
+/// carrying the commandId, whatever `created_at` it claims — is invisible here
+/// rather than fatal. It is still counted, and reported, because a repair that
+/// silently ignored competing evidence would be its own honesty bug.
+fn assess_candidate(
+    events: &[Value],
+    channel_id: &str,
+    session_ref: &str,
+    genesis_ref: &str,
+    receipts: &[super::ReceiptRecord],
+    seat: super::crew::HiredSeat,
+) -> AssessedCandidate {
+    let mut verified = None;
+    let mut failed = None;
+    let mut rejection = None;
+    let mut unbound = 0;
+    for receipt in create_receipts_for_command(receipts, &seat.command_id) {
+        if super::hire_evidence::create_receipt_binding(channel_id, &seat, &receipt).is_err() {
+            unbound += 1;
+            continue;
+        }
+        if !matches!(
+            receipt.status,
+            ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
+        ) {
+            if failed.is_none() {
+                failed = Some(receipt);
+            }
+            continue;
+        }
+        if verified.is_some() {
+            continue;
+        }
+        // `provider_instance` is None because a repair has no request to
+        // compare against: the create's own instance is the only claim, and it
+        // is already bound to the receipt's target and the provider's metadata.
+        match super::hire_evidence::verify_hire_evidence(
+            events,
+            &super::hire_evidence::HireEvidenceRequest {
+                channel: channel_id,
+                session_ref,
+                genesis: genesis_ref,
+                role: &seat.role,
+                provider_instance: None,
+            },
+            &seat,
+            &receipt,
+        ) {
+            Ok(()) => verified = Some(receipt),
+            Err(error) => {
+                if rejection.is_none() {
+                    rejection = Some(error.to_string());
+                }
+            }
+        }
+    }
+    AssessedCandidate {
+        seat,
+        verified,
+        failed,
+        rejection,
+        unbound,
+    }
+}
+
+/// The most candidates any one sentence will name before it truncates.
+const MAX_LISTED_CANDIDATES: usize = 8;
+
+/// Name each disputed role and the commandIds claiming it, bounded.
+///
+/// The `ambiguous` outcome's whole job: an operator cannot settle a
+/// disagreement they cannot see, and "two creates verify" is not something
+/// anyone can act on. Roles are listed in sorted order so two runs over the
+/// same channel read identically.
+fn describe_disagreement(by_write: &BTreeMap<(&str, &str), Vec<&AssessedCandidate>>) -> String {
+    by_write
+        .iter()
+        .map(|((_, role), candidates)| {
+            let mut ids: Vec<&str> = candidates
+                .iter()
+                .take(MAX_LISTED_CANDIDATES)
+                .map(|candidate| candidate.seat.command_id.as_str())
+                .collect();
+            if candidates.len() > MAX_LISTED_CANDIDATES {
+                return format!(
+                    "{role} ({}, +{} more not listed)",
+                    ids.join(", "),
+                    candidates.len() - MAX_LISTED_CANDIDATES
+                );
+            }
+            ids.dedup();
+            format!("{role} ({})", ids.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Name every candidate create and what its evidence says, bounded.
+///
+/// Every outcome that does not grant prints this, because the failure the
+/// reviewer found was not a wrong write — it was a true sentence about the
+/// wrong create, with no way for the operator to see that a second one existed.
+fn describe_candidates(assessed: &[AssessedCandidate]) -> String {
+    let mut parts: Vec<String> = assessed
+        .iter()
+        .take(MAX_LISTED_CANDIDATES)
+        .map(|candidate| {
+            let state = if candidate.verified.is_some() {
+                "verified".to_owned()
+            } else if let Some(receipt) = &candidate.failed {
+                format!(
+                    "provider refused ({})",
+                    receipt
+                        .error_code
+                        .as_deref()
+                        .unwrap_or(receipt.status.as_str())
+                )
+            } else if candidate.rejection.is_some() {
+                "receipt did not verify".to_owned()
+            } else {
+                "no bound receipt".to_owned()
+            };
+            let unbound = match candidate.unbound {
+                0 => String::new(),
+                count => format!(", {count} unbound receipt(s) ignored"),
+            };
+            format!("{} [{state}{unbound}]", candidate.seat.command_id)
+        })
+        .collect();
+    if assessed.len() > MAX_LISTED_CANDIDATES {
+        parts.push(format!(
+            "+{} more not listed",
+            assessed.len() - MAX_LISTED_CANDIDATES
+        ));
+    }
+    parts.join("; ")
+}
+
+/// The document one `seat-repair` outcome prints, for one format.
+///
+/// Every outcome prints the same key set, with `null` where a fact is absent:
+/// a script reading `receiptEventId` must be able to tell "there was no
+/// receipt" from "this command does not report receipts". That now includes
+/// the outcomes with no create at all — an actor nothing seated, an
+/// unverifiable genesis — which used to print nothing on stdout and leave a
+/// script parsing stderr. `--format compact` keeps the four facts a script
+/// branches on and drops the two provenance ids and the sentence, which is
+/// what the sibling readers do (`cmd_inbox` rows, `status_row`).
+///
+/// Pure, so the shape is asserted without a relay.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn seat_repair_document(
+    outcome: SeatRepairOutcome,
+    actor: &str,
+    role: Option<&str>,
+    create_event_id: Option<&str>,
+    receipt_event_id: Option<&str>,
+    seat_grant_event_id: Option<&str>,
+    detail: &str,
+    format: &crate::OutputFormat,
+) -> Value {
+    match format {
+        crate::OutputFormat::Compact => json!({
+            "outcome": outcome.as_str(),
+            "actor": actor,
+            "role": role,
+            "seatGrantEventId": seat_grant_event_id,
+        }),
+        crate::OutputFormat::Json => json!({
+            "outcome": outcome.as_str(),
+            "actor": actor,
+            "role": role,
+            "createEventId": create_event_id,
+            "receiptEventId": receipt_event_id,
+            "seatGrantEventId": seat_grant_event_id,
+            "detail": detail,
+        }),
+    }
+}
+
+/// Print one `seat-repair` result and return the exit code it earns.
+#[allow(clippy::too_many_arguments)]
+fn finish_seat_repair(
+    outcome: SeatRepairOutcome,
+    actor: &str,
+    role: Option<&str>,
+    create_event_id: Option<&str>,
+    receipt_event_id: Option<&str>,
+    seat_grant_event_id: Option<&str>,
+    detail: String,
+    format: &crate::OutputFormat,
+) -> Result<(), CliError> {
+    let document = seat_repair_document(
+        outcome,
+        actor,
+        role,
+        create_event_id,
+        receipt_event_id,
+        seat_grant_event_id,
+        &detail,
+        format,
+    );
+    println!("{document}");
+    match seat_repair_exit_code(outcome) {
+        0 => Ok(()),
+        1 => Err(CliError::Refused(detail)),
+        _ => Err(CliError::Unconfirmed(detail)),
     }
 }
 
@@ -1675,3 +2237,7 @@ mod tests {
         assert_eq!(value.as_object().expect("object").len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "seat_repair_tests.rs"]
+mod seat_repair_tests;

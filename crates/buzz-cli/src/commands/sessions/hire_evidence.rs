@@ -1,6 +1,6 @@
 //! Signed evidence fence between provider creation and role-seat authority.
 
-use buzz_core::coding_session_command::coding_session_target_key;
+use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
@@ -45,20 +45,25 @@ pub(super) struct HireEvidenceRequest<'a> {
     pub(super) provider_instance: Option<&'a str>,
 }
 
-/// Prove a successful hire created the exact signed provider execution before
-/// the hiring signer may append authority for it.
-pub(super) fn verify_hire_evidence(
+/// The exact signed genesis founding `session_ref` in `channel`, verified.
+///
+/// Split out of [`verify_hire_evidence`] so the founder pubkey can be
+/// established *before* candidate creates are chosen rather than after one has
+/// already been picked. `seat-repair` needs it as a filter — a create signed by
+/// anyone but the founder is not a candidate at all — and there must be exactly
+/// one implementation of "which key founds this umbrella".
+pub(super) fn verified_genesis(
     events: &[Value],
-    request: &HireEvidenceRequest<'_>,
-    seat: &HiredSeat,
-    receipt: &SeatReceipt,
-) -> Result<(), CliError> {
+    channel: &str,
+    session_ref: &str,
+    genesis: &str,
+) -> Result<Event, CliError> {
     let genesis_event = events
         .iter()
         .find_map(|value| {
             let event = signed_event(value, "coding-session genesis").ok()?;
             (u32::from(event.kind.as_u16()) == KIND_CODING_SESSION_GENESIS
-                && event.id.to_hex() == request.genesis)
+                && event.id.to_hex() == genesis)
                 .then_some(event)
         })
         .ok_or_else(|| {
@@ -69,13 +74,13 @@ pub(super) fn verify_hire_evidence(
         })?;
     let genesis_payload = decode_coding_session_genesis(&genesis_event.content)
         .map_err(|error| CliError::Other(format!("invalid coding-session genesis: {error}")))?;
-    if genesis_payload.session_ref != request.session_ref
+    if genesis_payload.session_ref != session_ref
         || !exact_tags(
             &genesis_event,
             &[
-                ("h", request.channel),
+                ("h", channel),
                 ("csg-v", CODING_SESSION_GENESIS_TAG_VERSION),
-                ("csg-session", request.session_ref),
+                ("csg-session", session_ref),
             ],
         )
     {
@@ -83,6 +88,80 @@ pub(super) fn verify_hire_evidence(
             "the exact coding-session genesis does not found this channel and session".into(),
         ));
     }
+    Ok(genesis_event)
+}
+
+/// Whether one lifecycle receipt is cryptographically bound to one seated
+/// create, returning the execution target it minted when it named one.
+///
+/// This is the receipt half of [`verify_hire_evidence`], extracted so that
+/// evidence *selection* can apply the same bar as evidence *verification*.
+/// Choosing a receipt by its self-asserted `created_at` and only then checking
+/// the binding lets anyone who can publish a 44224 carrying the commandId deny
+/// the repair; filtering by this predicate first means an unbound receipt is
+/// invisible rather than fatal, whatever time it claims.
+///
+/// A failure-class receipt names no target, so the target parity check applies
+/// only when one is present; the caller decides whether a missing target is an
+/// error for its own status class.
+pub(super) fn create_receipt_binding(
+    channel: &str,
+    seat: &HiredSeat,
+    receipt: &SeatReceipt,
+) -> Result<Option<CodingSessionTarget>, CliError> {
+    let provider_receipt = signed_event(&receipt.raw, "provider create receipt")?;
+    let receipt_payload: LifecycleReceipt = serde_json::from_str(&provider_receipt.content)
+        .map_err(|error| CliError::Other(format!("invalid provider create receipt: {error}")))?;
+    if u32::from(provider_receipt.kind.as_u16()) != KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+        || provider_receipt.id.to_hex() != receipt.event_id
+        || provider_receipt.pubkey.to_hex() != seat.provider_authority_pubkey
+        || receipt.signer != seat.provider_authority_pubkey
+        || receipt_payload.command_id != seat.command_id
+        || receipt_payload.status != receipt.status
+        || !exact_tags(
+            &provider_receipt,
+            &[
+                ("h", channel),
+                ("cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION),
+                ("csl-command", &seat.command_id),
+                (
+                    "csl-key",
+                    &coding_session_lifecycle_receipt_semantic_key(&seat.command_id),
+                ),
+            ],
+        )
+    {
+        return Err(CliError::Other(
+            "provider receipt is not bound to the signed seated create".into(),
+        ));
+    }
+    let Some(target) = receipt_payload.session else {
+        return Ok(None);
+    };
+    if receipt.target_key.as_deref() != Some(coding_session_target_key(&target).as_str())
+        || target.instance_id != seat.provider_instance_ref
+    {
+        return Err(CliError::Other(
+            "provider receipt target does not match the observed seat and provider instance".into(),
+        ));
+    }
+    Ok(Some(target))
+}
+
+/// Prove a successful hire created the exact signed provider execution before
+/// the hiring signer may append authority for it.
+pub(super) fn verify_hire_evidence(
+    events: &[Value],
+    request: &HireEvidenceRequest<'_>,
+    seat: &HiredSeat,
+    receipt: &SeatReceipt,
+) -> Result<(), CliError> {
+    let genesis_event = verified_genesis(
+        events,
+        request.channel,
+        request.session_ref,
+        request.genesis,
+    )?;
 
     let create = signed_event(&seat.raw, "seated create")?;
     if u32::from(create.kind.as_u16()) != KIND_CODING_SESSION_LIFECYCLE_COMMAND
@@ -135,42 +214,12 @@ pub(super) fn verify_hire_evidence(
         ));
     }
 
-    let provider_receipt = signed_event(&receipt.raw, "provider create receipt")?;
-    let receipt_payload: LifecycleReceipt = serde_json::from_str(&provider_receipt.content)
-        .map_err(|error| CliError::Other(format!("invalid provider create receipt: {error}")))?;
-    if u32::from(provider_receipt.kind.as_u16()) != KIND_CODING_SESSION_LIFECYCLE_RECEIPT
-        || provider_receipt.id.to_hex() != receipt.event_id
-        || provider_receipt.pubkey.to_hex() != provider_authority_pubkey
-        || receipt.signer != provider_authority_pubkey
-        || receipt_payload.command_id != seat.command_id
-        || receipt_payload.status != receipt.status
-        || !exact_tags(
-            &provider_receipt,
-            &[
-                ("h", request.channel),
-                ("cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION),
-                ("csl-command", &seat.command_id),
-                (
-                    "csl-key",
-                    &coding_session_lifecycle_receipt_semantic_key(&seat.command_id),
-                ),
-            ],
-        )
-    {
-        return Err(CliError::Other(
-            "provider receipt is not bound to the signed seated create".into(),
-        ));
-    }
-    let target = receipt_payload.session.as_ref().ok_or_else(|| {
+    // The receipt binding is the same predicate evidence SELECTION uses, so a
+    // receipt that reaches here has already been shown to be the provider's.
+    let target = create_receipt_binding(request.channel, seat, receipt)?.ok_or_else(|| {
         CliError::Other("successful provider receipt names no execution target".into())
     })?;
-    if receipt.target_key.as_deref() != Some(coding_session_target_key(target).as_str())
-        || target.instance_id != provider_instance_ref
-    {
-        return Err(CliError::Other(
-            "provider receipt target does not match the observed seat and provider instance".into(),
-        ));
-    }
+    let target = &target;
 
     let metadata_matches = events.iter().any(|value| {
         let Ok(event) = signed_event(value, "provider metadata") else {

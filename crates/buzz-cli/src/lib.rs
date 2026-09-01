@@ -2673,6 +2673,55 @@ pub enum SessionsCmd {
         #[arg(long = "no-wait")]
         no_wait: bool,
     },
+    /// Grant the role seat a receipt-backed hire created but never got.
+    ///
+    /// The recovery path for the one failure `bee sessions hire` cannot undo:
+    /// the host seated the role, the provider answered `created`, and the
+    /// accepted kind:44228 authority chain never learned about it — because
+    /// the receipt landed after the hire's window closed, or the grant write
+    /// failed. The seat then runs, its report is folded in by assignee
+    /// identity and disclosed as `unseatedReports`, and nothing grants it
+    /// verifier authority. **Re-hiring cannot fix this** — a second hire
+    /// carries a fresh `since` cutoff that excludes the create that already
+    /// exists — and this command never publishes a hire.
+    ///
+    /// It reads the channel exactly once (no wait, no poll) and lets signed
+    /// evidence — never a self-asserted `created_at` — choose which create to
+    /// repair: candidates are the founder-signed seated creates for `--actor`,
+    /// each judged on receipts that are cryptographically bound to it, and the
+    /// one whose whole genesis → create → receipt → provider-metadata chain
+    /// verifies is repaired with one `grant-seat` transition. It writes nothing
+    /// else, ever.
+    ///
+    /// Outcomes and exit codes: `granted` and `already_granted` exit 0
+    /// (running it twice is a no-op, by design); `no_receipt_yet` exits 5 — no
+    /// candidate has a bound provider receipt yet, so there is nothing to
+    /// grant against; `refused` exits 1 — nothing names the actor, a bound
+    /// receipt failed the chain, the provider refused the create, or the actor
+    /// already holds a different role; `ambiguous` exits 1 — the verifying
+    /// creates disagree about the **role**, which only the founder can settle.
+    /// Creates that imply the same `(actor, role)` write are never ambiguous,
+    /// however many there are, so an umbrella that hired the same actor twice
+    /// still reports `already_granted` on a second run. Every non-granting
+    /// outcome names every candidate it considered, and none of them writes.
+    #[command(
+        after_help = "Examples:\n  bee sessions seat-repair --channel <uuid> --session-ref <uuid> --actor <64-hex>\n  bee --format compact sessions seat-repair --channel <uuid> --session-ref <uuid> --genesis <64-hex> --actor <64-hex>\n\nSafe to re-run: a seat that already holds the exact role is reported\n`already_granted` with no write. Never hire again to recover a seat."
+    )]
+    SeatRepair {
+        /// Channel UUID the umbrella lives in
+        #[arg(long)]
+        channel: String,
+        /// Umbrella session reference (lowercase UUID) the seat joined
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Genesis event id (64-char hex) founding the umbrella. Resolved from
+        /// the channel when omitted; required when two geneses claim the label.
+        #[arg(long)]
+        genesis: Option<String>,
+        /// Pubkey (64-char lowercase hex) the host seated
+        #[arg(long)]
+        actor: String,
+    },
     /// List turns addressed to executions this identity is seated on.
     ///
     /// Oldest first, each row carrying the newest receipt stage its command
@@ -3685,6 +3734,7 @@ mod tests {
                 "revoke",
                 "roster",
                 "route",
+                "seat-repair",
                 "send",
                 "status",
                 "tools",
@@ -3733,7 +3783,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 23),
+            ("sessions", 24),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

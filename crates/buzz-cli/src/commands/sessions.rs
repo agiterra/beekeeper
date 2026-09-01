@@ -2438,6 +2438,22 @@ pub async fn dispatch(
             )
             .await
         }
+        SessionsCmd::SeatRepair {
+            channel,
+            session_ref,
+            genesis,
+            actor,
+        } => {
+            crew_cmds::cmd_seat_repair(
+                client,
+                &channel,
+                &session_ref,
+                genesis.as_deref(),
+                &actor,
+                format,
+            )
+            .await
+        }
         SessionsCmd::Inbox { channel, since } => {
             crew_cmds::cmd_inbox(client, &channel, since.as_deref(), format).await
         }

@@ -2202,7 +2202,7 @@ fn a_seated_but_ungranted_hire_says_it_cannot_report_yet() {
         "{ungranted:?}"
     );
     // The seat exists, but automation must not read it as a usable hire.
-    let report = hire_report(&ungranted, true);
+    let report = hire_report(&ungranted, true, CHANNEL);
     assert_eq!(report.status, "created");
     assert_eq!(hire_exit_code(&ungranted), 1);
     assert!(
@@ -2212,14 +2212,20 @@ fn a_seated_but_ungranted_hire_says_it_cannot_report_yet() {
         "got {}",
         report.detail
     );
+    // What it may NOT say: the fold does not drop the report, and never did.
     assert!(
-        report.detail.contains("explicitly grant or revoke/change"),
+        report.detail.contains("still INCLUDES its report"),
+        "got {}",
+        report.detail
+    );
+    assert!(
+        report.detail.contains("bee sessions seat-repair --channel"),
         "got {}",
         report.detail
     );
 
     let granted = fold_hire(Some(seat), receipt, None, true);
-    let report = hire_report(&granted, true);
+    let report = hire_report(&granted, true, CHANNEL);
     assert_eq!(report.status, "created");
     assert!(
         report.detail.contains("can report back"),
@@ -2416,7 +2422,7 @@ fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
         (fold_hire(None, None, None, false), "unconfirmed", 5),
     ];
     for (outcome, word, code) in cases {
-        let report = hire_report(&outcome, true);
+        let report = hire_report(&outcome, true, CHANNEL);
         assert_eq!(report.status, word, "{outcome:?}");
         assert_eq!(hire_exit_code(&outcome), code, "{outcome:?}");
         assert!(!report.detail.is_empty(), "{outcome:?} said nothing");
@@ -2424,7 +2430,7 @@ fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
 
     // Not waiting is its own sentence: nobody was asked, rather than nobody
     // answered.
-    let unwaited = hire_report(&HireOutcome::Unconfirmed, false);
+    let unwaited = hire_report(&HireOutcome::Unconfirmed, false, CHANNEL);
     assert!(
         unwaited.detail.contains("--no-wait"),
         "got {}",
@@ -2798,6 +2804,7 @@ fn a_refused_hire_report_carries_the_remedy_for_its_code() {
                 .into(),
         }),
         true,
+        CHANNEL,
     );
     assert_eq!(report.status, "refused");
     assert!(
@@ -3319,4 +3326,104 @@ fn context_is_scoped_to_the_execution_that_produced_it() {
         &crate::OutputFormat::Json,
     );
     assert_eq!(row["context"], Value::Null);
+}
+
+// ── Hire window and seat-repair remediation (batch 2026-09-01, C1/C2/C6) ─────
+
+/// The window a hire waits, and the sentence an ungranted seat ends with.
+///
+/// Live break, cleantest 2026-09-01: the builder's `created` receipt was
+/// signed at 19:11:28, three seconds after the 19:11:25 hire — and the CLI's
+/// sixty-second window closed without seeing it, because the receipt reached
+/// the relay later than it was signed. Desktop's own receipt wait has been
+/// 120 s (`CODING_SESSION_CREW_RECEIPT_TIMEOUT_MS`) since it was written.
+#[test]
+fn the_hire_window_matches_desktop_and_ungranted_copy_names_seat_repair() {
+    assert_eq!(HIRE_WAIT_SECONDS, 120);
+
+    let seat_target = target("s-hired", 1);
+    let seat = find_hired_seat(
+        &[seated_create_event(
+            "a",
+            ALICE,
+            1_100,
+            "create-hired",
+            UMBRELLA_HIRE,
+            "builder",
+            BOB,
+            None,
+        )],
+        UMBRELLA_HIRE,
+        "builder",
+        1_000,
+    )
+    .expect("seat");
+    let events = vec![receipt_event(
+        "r-1",
+        1_200,
+        "create-hired",
+        ReceiptStatus::Created,
+        &seat_target,
+        None,
+        None,
+    )];
+    let (records, _) = decode_receipts(&events);
+    let receipt = newest_create_receipt(&records, "create-hired");
+    let expected = format!(
+        "If the seat runs anyway, repair its authority with: bee sessions seat-repair \
+         --channel {CHANNEL} --session-ref {UMBRELLA_HIRE} --actor {}. Never hire again.",
+        seat.actor
+    );
+
+    let ungranted = fold_hire(Some(seat.clone()), receipt, None, false);
+    let report = hire_report(&ungranted, true, CHANNEL);
+    assert!(report.detail.ends_with(&expected), "got {}", report.detail);
+    // The old sentence was false: the fold includes the report by assignee
+    // identity and discloses the missing seat instead of excluding it.
+    assert!(
+        !report.detail.contains("excludes an unauthoritative report"),
+        "got {}",
+        report.detail
+    );
+    assert!(
+        report.detail.contains("unseatedReports"),
+        "got {}",
+        report.detail
+    );
+
+    let seating = hire_report(&HireOutcome::Seating { seat }, true, CHANNEL);
+    assert!(
+        seating.detail.contains("within 120s"),
+        "got {}",
+        seating.detail
+    );
+    assert!(
+        seating.detail.ends_with(&expected),
+        "got {}",
+        seating.detail
+    );
+
+    let unconfirmed = hire_report(&HireOutcome::Unconfirmed, true, CHANNEL);
+    assert!(
+        unconfirmed.detail.contains("within 120s"),
+        "got {}",
+        unconfirmed.detail
+    );
+}
+
+/// No sentence anywhere in the hire path may still claim the typed fold
+/// excludes an ungranted seat's report. It does not, and did not.
+#[test]
+fn no_hire_copy_claims_the_typed_fold_excludes_an_ungranted_report() {
+    for source in [include_str!("crew.rs"), include_str!("crew_cmds.rs")] {
+        for needle in [
+            "excludes an unauthoritative report",
+            "cannot sign its typed team report",
+        ] {
+            assert!(
+                !source.contains(needle),
+                "a hire source still claims {needle:?}"
+            );
+        }
+    }
 }

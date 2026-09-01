@@ -145,6 +145,27 @@ pub struct CodingSessionTeamAssignmentSettlement {
     pub settled: bool,
 }
 
+/// One included report whose author holds no active seat for the role its
+/// assignment named.
+///
+/// Inclusion is assignee equality, deliberately: an assignment names a
+/// *target*, not an authorship claim, so a report the assigned actor signed is
+/// canonical whether or not a `grant-seat` for that role was ever accepted.
+/// The missing seat is a separate fact and a real one — an ungranted actor
+/// cannot hold `verifier` authority, and nothing else in the projection
+/// notices — so it is disclosed here rather than folded into exclusion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingSessionTeamUnseatedReport {
+    /// Event id of the included report.
+    pub event_id: String,
+    /// Canonical lowercase-hex pubkey that signed the report.
+    pub author_pubkey: String,
+    /// Event id of the assignment the report answers.
+    pub assignment_ref: String,
+    /// Role slug that assignment named for its assignee.
+    pub assignee_role: String,
+}
+
 /// Canonical newest authorized terminal transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingSessionTeamCanonicalTerminal {
@@ -165,6 +186,19 @@ pub struct CodingSessionTeamFold {
     pub conflicts: Vec<CodingSessionTeamFoldConflict>,
     /// Approval state for every active assignment.
     pub assignments: Vec<CodingSessionTeamAssignmentSettlement>,
+    /// Included reports whose author holds no active seat for the assignment's
+    /// `assigneeRole`, in included order. Disclosure, never exclusion.
+    ///
+    /// Measured against [`CodingSessionTeamFoldContext::active_seats`], which
+    /// the caller is required to supply *complete*. An empty seat projection
+    /// therefore reads as "nobody is seated", not as "seats unknown", and
+    /// would list every included report. Both current callers fail closed
+    /// before that can happen — the CLI errors out of
+    /// `fetch_projected_authority`, and the Tauri adapter refuses an active
+    /// projection with no authority-head provenance — but a caller that ever
+    /// passes a partial projection must render this as unknown rather than as
+    /// a roster of unseated authors.
+    pub unseated_reports: Vec<CodingSessionTeamUnseatedReport>,
     /// Newest authorized valid terminal event, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamCanonicalTerminal>,
 }
@@ -325,6 +359,8 @@ pub fn fold_coding_session_team_transactions(
             .then_with(|| left.winner_event_id.cmp(&right.winner_event_id))
     });
 
+    let unseated_reports = disclose_unseated_reports(&records, &by_id, &active, context);
+
     Ok(CodingSessionTeamFold {
         included_event_ids: active
             .into_iter()
@@ -333,8 +369,51 @@ pub fn fold_coding_session_team_transactions(
         excluded,
         conflicts,
         assignments,
+        unseated_reports,
         canonical_terminal,
     })
+}
+
+/// List every included report whose author holds no active seat for the role
+/// its assignment named, in the projection's own included order.
+///
+/// Reads only `active`, so a report excluded for any other reason is never
+/// listed: this says "this canonical report carries no seat authority", which
+/// is a different sentence from "this report is not canonical".
+fn disclose_unseated_reports(
+    records: &[Record<'_>],
+    by_id: &HashMap<String, usize>,
+    active: &[usize],
+    context: &CodingSessionTeamFoldContext,
+) -> Vec<CodingSessionTeamUnseatedReport> {
+    let mut disclosed = Vec::new();
+    for &index in active {
+        let CodingSessionTeamTransactionBody::Report(body) = &records[index].payload.body else {
+            continue;
+        };
+        let Some(assignment) = by_id
+            .get(&body.assignment_ref)
+            .map(|reference| &records[*reference])
+        else {
+            continue;
+        };
+        let CodingSessionTeamTransactionBody::Assignment(assignment_body) =
+            &assignment.payload.body
+        else {
+            continue;
+        };
+        let author = &records[index].author;
+        if context.is_active_role(author, &assignment_body.assignee_role) {
+            continue;
+        }
+        disclosed.push(CodingSessionTeamUnseatedReport {
+            event_id: records[index].id.clone(),
+            author_pubkey: author.clone(),
+            assignment_ref: body.assignment_ref.clone(),
+            assignee_role: assignment_body.assignee_role.clone(),
+        });
+    }
+    disclosed
 }
 
 fn validate_references(

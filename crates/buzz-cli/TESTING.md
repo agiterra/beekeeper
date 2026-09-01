@@ -952,13 +952,12 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 #   failed       → the host seated it and the PROVIDER refused the create;
 #                  "code" is the receipt's own (e.g. ACTOR_UNAVAILABLE); exit 1
 #   seating      → a seated create was published, no provider receipt inside
-#                  60 s; exit 5
+#                  120 s; exit 5
 #   unconfirmed  → nothing answered at all, or --no-wait; exit 5
 #   created_ungranted → provider-created execution is live but signed evidence
 #                  or accepted `grant-seat` authority failed; output retains
 #                  create/receipt ids plus `seatGrantError`; do not hire again;
-#                  inspect the accepted authority chain and explicitly grant or
-#                  revoke/change the role; exit 1
+#                  repair it with `bee sessions seat-repair` (§6.13.4); exit 1
 bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
   --role builder --content 'x' --no-wait | jq '{outcome, detail}'
 # → {"outcome":"unconfirmed","detail":"the relay stored the hire; --no-wait
@@ -1042,7 +1041,7 @@ lane); **everything the CLI and the relay do is real.**
 | no brief / empty brief / `Builder` / non-UUID `--session-ref` | `user_error`, exit 1, each naming its own rule |
 
 **Not exercised live:** the `failed` outcome (a provider receipt refusing the
-seated create) and the `seating` outcome (a create with no receipt inside 60 s)
+seated create) and the `seating` outcome (a create with no receipt inside 120 s)
 — unit-tested only; and the *"this relay does not accept hire requests yet"*
 path, which needs a relay built before this branch. No real host implements
 `session.hire` yet, so the policy codes other than `HIRE_OFF` have never been
@@ -1058,6 +1057,106 @@ and inbox `stage`/`turnId` were exercised only by the unit tests in
 a run under `BUZZ_AUTH_TAG` (which is the case the `sign_event_unchecked`
 choice exists for — see the envelope note above). Those remain open until the
 S4 acceptance run seats two managed agents in one umbrella.
+
+---
+
+#### 6.13.4 `seat-repair` — grant the seat a hire created and lost
+
+The recovery path for the one hire failure nothing else undoes: the host
+seated the role, the provider answered `created`, and no `grant-seat` ever
+reached the accepted 44228 chain — because the receipt landed after the hire's
+window closed (cleantest, 2026-09-01: receipt signed 19:11:28, three seconds
+after the 19:11:25 hire, and the then-60 s window still missed it), or because
+the grant write itself failed. **Re-hiring cannot recover it** — a fresh hire
+takes a `since` cutoff before its own request, which excludes the create that
+already exists, and would seat a *second* agent. `seat-repair` never builds a
+44221; the only event it can submit is one 44228 `grant-seat`.
+
+```bash
+# The repair. One read of the channel, no wait and no poll.
+bee sessions seat-repair --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --actor "$ACTOR_PUBKEY"
+# → {"outcome":"granted","actor":"…","role":"builder","createEventId":"…",
+#    "receiptEventId":"…","seatGrantEventId":"…","detail":"appended an
+#    accepted grant-seat …"}; exit 0
+
+# Safe to re-run: the second run writes nothing.
+bee sessions seat-repair --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
+  --actor "$ACTOR_PUBKEY"
+# → {"outcome":"already_granted", …}; exit 0
+
+# --genesis is resolved from the channel unless two geneses claim the label.
+# --format compact keeps {outcome, actor, role, seatGrantEventId}.
+```
+
+The outcomes and the exit code each earns:
+
+| outcome | means | exit |
+| --- | --- | --- |
+| `granted` | a new accepted `grant-seat` now names this exact actor-role pair | 0 |
+| `already_granted` | the pair already held an accepted seat; nothing written | 0 |
+| `no_receipt_yet` | no candidate create has a **bound** provider receipt — nothing yet proves an execution to grant authority for; every candidate is named, with any unbound receipts counted; nothing written | 5 |
+| `refused` | the provider refused a create, a bound receipt failed the full chain, no founder-signed create names the actor, or the actor holds a **different** role; nothing written | 1 |
+| `ambiguous` | the verifying creates disagree about the **role** this actor holds, and the accepted authority chain does not already settle it; each disputed role is named with the commandIds claiming it, and nothing is written | 1 |
+
+Every outcome prints the same seven keys on stdout, including the ones with no
+create to name (`role`, `createEventId`, `receiptEventId` come back `null`).
+
+**How the create is chosen — evidence, never `created_at`.** This is the whole
+of the repair's discovery, and the rule is that a self-asserted timestamp
+decides nothing:
+
+1. Candidates are every 44221 seated create for `(session-ref, actor)` **signed
+   by the umbrella's genesis signer**. A create from any other key is not a
+   candidate at all, so no channel member can park the repair by publishing one.
+2. For each candidate, every receipt naming its commandId is filtered by the
+   same binding checks `verify_hire_evidence` applies — kind, signer equal to
+   the create's `providerAuthorityPubkey`, exact tags, commandId, and
+   target/provider-instance parity. An unbound receipt is **ignored and
+   counted**, never fatal: a later forgery carrying the commandId must not be
+   able to deny the only recovery path.
+3. A candidate verifies when it has a bound `created`-class receipt *and* the
+   full `verify_hire_evidence` chain passes, provider metadata included.
+4. The verifying candidates are grouped by the write they imply — `(actor,
+   role)`, which is all a `grant-seat` carries. Candidates are first deduped by
+   commandId, so a retried submit (same command, new event id) is one candidate.
+   - **One group** — however many candidates are in it — is repaired: every
+     member implies byte-identical authority, so there is nothing to choose
+     between. This is what keeps the idempotent second run working on an
+     umbrella that hired the same actor twice.
+   - **More than one group** is a real disagreement about the role, and only
+     the founder can settle it. If the accepted 44228 chain *already* seats
+     this actor in one of the disputed roles, that recorded decision wins and
+     the run reports `already_granted`. Otherwise: `ambiguous`, exit 1, nothing
+     written, each disputed role named with its commandIds.
+   - **None verifying** reports the provider's refusal if there is one,
+     otherwise `no_receipt_yet`, and **always names every candidate** rather
+     than one create as if it were the only one.
+
+`ambiguous` means *disagreement about what would be written*, never a count.
+It cannot be cleared by re-running alone — both creates are signed history and
+neither can be withdrawn — so the way out is to grant the role you mean on the
+umbrella's authority chain and run again. Note that `bee sessions grant` covers
+the collaborator/viewer tiers only; role seats are published by the founder's
+Desktop hire host (and by this command).
+
+Other rules, and the reason each exists:
+
+- **The role comes from the create, never from a flag.** A repair that took
+  the role from its caller could grant a role no host ever seated.
+- **An actor already seated in another role is never overwritten** — revoke
+  that seat first.
+- **Exit 5 invites a retry, so the ignored count matters.** A provider bug that
+  emits a persistently mis-targeted receipt reads as `no_receipt_yet` for ever.
+  The `N unbound receipt(s) ignored` clause in `detail` is what tells an
+  operator to stop waiting and go look at the provider.
+- **It never re-hires.** Asserted against a recording relay in
+  `crates/buzz-cli/src/commands/sessions/seat_repair_tests.rs`: every case
+  checks that no kind-44221 event reached the wire.
+
+**Not exercised live yet.** The unit suite drives the whole command against a
+local recording relay; the live acceptance against cleantest is tracked with
+the 2026-09-01 batch.
 
 ---
 

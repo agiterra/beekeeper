@@ -872,6 +872,14 @@ fn fold_json(fold: &CodingSessionTeamFold) -> Value {
             "acknowledgementEventId": item.acknowledgement_event_id,
             "settled": item.settled,
         })).collect::<Vec<_>>(),
+        // Disclosure, not exclusion: these reports ARE canonical. The seat is
+        // the separate fact — see `bee sessions seat-repair`.
+        "unseatedReports": fold.unseated_reports.iter().map(|item| json!({
+            "eventId": item.event_id,
+            "authorPubkey": item.author_pubkey,
+            "assignmentRef": item.assignment_ref,
+            "assigneeRole": item.assignee_role,
+        })).collect::<Vec<_>>(),
         "canonicalTerminal": fold.canonical_terminal.as_ref().map(|item| json!({
             "eventId": item.event_id,
             "type": item.transaction_type.as_str(),
@@ -975,6 +983,52 @@ mod tests {
             founder,
             &relay.public_key().to_hex(),
         )
+    }
+
+    #[test]
+    fn fold_json_discloses_unseated_reports_under_fold() {
+        let fold = CodingSessionTeamFold {
+            included_event_ids: vec![id("11"), id("22")],
+            excluded: Vec::new(),
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: vec![
+                buzz_core::coding_session_team_transaction::CodingSessionTeamUnseatedReport {
+                    event_id: id("22"),
+                    author_pubkey: id("33"),
+                    assignment_ref: id("11"),
+                    assignee_role: "builder".into(),
+                },
+            ],
+            canonical_terminal: None,
+        };
+
+        let wire = fold_json(&fold);
+        assert_eq!(
+            wire["unseatedReports"],
+            json!([{
+                "eventId": id("22"),
+                "authorPubkey": id("33"),
+                "assignmentRef": id("11"),
+                "assigneeRole": "builder",
+            }])
+        );
+
+        let empty = CodingSessionTeamFold {
+            included_event_ids: Vec::new(),
+            excluded: Vec::new(),
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: Vec::new(),
+            canonical_terminal: None,
+        };
+        // Present and empty, never absent: an unknown disclosure and "no
+        // unseated reports" are different answers.
+        assert_eq!(fold_json(&empty)["unseatedReports"], json!([]));
+    }
+
+    fn id(byte: &str) -> String {
+        byte.repeat(32)
     }
 
     #[test]

@@ -58,8 +58,9 @@ import type { CodingSessionHireRequest } from "./codingSessionHireWire";
  * Fifteen minutes: long enough that a host restarting, or a relay catching up
  * after a reconnect, still seats what a lead is genuinely waiting for; short
  * enough that nobody is surprised by a seat appearing for a request they made
- * before lunch. The CLI waits sixty seconds for an answer, so anything past
- * this window has already been reported `unconfirmed` to the lead.
+ * before lunch. The CLI waits two minutes for an answer (`HIRE_WAIT_SECONDS`,
+ * matching `CODING_SESSION_CREW_RECEIPT_TIMEOUT_MS`), so anything past this
+ * window has already been reported `unconfirmed` to the lead.
  */
 export const CODING_SESSION_HIRE_MAX_AGE_SECONDS = 15 * 60;
 

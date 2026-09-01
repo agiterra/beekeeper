@@ -808,3 +808,121 @@ fn exclusion_code(
         .map(|item| item.code)
         .unwrap()
 }
+
+// ── Unseated-report disclosure (batch 2026-09-01, §1d) ───────────────────────
+//
+// Report inclusion is assignee-equality by design: the assignment names a
+// target, not an authorship claim. The seat is a separate fact, and before
+// this the fold kept it to itself while the CLI told leads the opposite.
+
+#[test]
+fn an_included_report_from_an_unseated_author_is_disclosed_rather_than_excluded() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    // No seat at all for the assignee: exactly the 2026-08-28 hired builder.
+    let context = context(&founder, Vec::new());
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let report = signed(&report(&assignment.id.to_hex(), "Done"), &actor, 2);
+    let assignment_id = assignment.id.to_hex();
+    let report_id = report.id.to_hex();
+
+    let fold = fold_coding_session_team_transactions(&[assignment, report], &context).unwrap();
+
+    assert!(fold.included_event_ids.contains(&report_id));
+    assert!(fold.excluded.iter().all(|item| item.event_id != report_id));
+    assert_eq!(
+        fold.unseated_reports,
+        vec![CodingSessionTeamUnseatedReport {
+            event_id: report_id,
+            author_pubkey: actor.public_key().to_hex(),
+            assignment_ref: assignment_id,
+            assignee_role: "builder".into(),
+        }]
+    );
+}
+
+#[test]
+fn a_seated_report_author_is_never_disclosed_as_unseated() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let seated = context(&founder, vec![(&actor, "builder")]);
+    // A seat for the wrong role is not a seat for this assignment's role.
+    let wrong_role = context(&founder, vec![(&actor, "verifier")]);
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let report_event = signed(&report(&assignment_event.id.to_hex(), "Done"), &actor, 2);
+    let report_id = report_event.id.to_hex();
+    let events = [assignment_event, report_event];
+
+    let fold = fold_coding_session_team_transactions(&events, &seated).unwrap();
+    assert!(fold.included_event_ids.contains(&report_id));
+    assert!(fold.unseated_reports.is_empty());
+
+    let fold = fold_coding_session_team_transactions(&events, &wrong_role).unwrap();
+    assert_eq!(fold.unseated_reports.len(), 1);
+    assert_eq!(fold.unseated_reports[0].assignee_role, "builder");
+}
+
+#[test]
+fn a_report_excluded_for_another_reason_is_never_listed_as_unseated() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let stranger = Keys::generate();
+    let context = context(&founder, Vec::new());
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    // Authored by somebody the assignment never named: excluded, unauthorized.
+    let report = signed(&report(&assignment.id.to_hex(), "Done"), &stranger, 2);
+    let report_id = report.id.to_hex();
+
+    let fold = fold_coding_session_team_transactions(&[assignment, report], &context).unwrap();
+
+    assert_eq!(
+        exclusion_code(&fold, &report_id),
+        CodingSessionTeamFoldExclusionCode::Unauthorized
+    );
+    assert!(!fold.included_event_ids.contains(&report_id));
+    assert!(fold.unseated_reports.is_empty());
+}
+
+#[test]
+fn unseated_disclosure_follows_included_order_and_is_input_order_independent() {
+    let founder = Keys::generate();
+    let first_actor = Keys::generate();
+    let second_actor = Keys::generate();
+    let context = context(&founder, Vec::new());
+    let first_assignment = signed(&assignment(&first_actor), &founder, 1);
+    let second_assignment = signed(&assignment(&second_actor), &founder, 2);
+    let first_report = signed(
+        &report(&first_assignment.id.to_hex(), "First"),
+        &first_actor,
+        3,
+    );
+    let second_report = signed(
+        &report(&second_assignment.id.to_hex(), "Second"),
+        &second_actor,
+        4,
+    );
+    let events = vec![
+        first_assignment,
+        second_assignment,
+        first_report,
+        second_report,
+    ];
+
+    let forward = fold_coding_session_team_transactions(&events, &context).unwrap();
+    let reversed: Vec<Event> = events.iter().cloned().rev().collect();
+    let backward = fold_coding_session_team_transactions(&reversed, &context).unwrap();
+
+    assert_eq!(forward.unseated_reports, backward.unseated_reports);
+    assert_eq!(forward.unseated_reports.len(), 2);
+    let disclosed: Vec<&String> = forward
+        .unseated_reports
+        .iter()
+        .map(|item| &item.event_id)
+        .collect();
+    let included: Vec<&String> = forward
+        .included_event_ids
+        .iter()
+        .filter(|id| disclosed.contains(id))
+        .collect();
+    assert_eq!(disclosed, included);
+}

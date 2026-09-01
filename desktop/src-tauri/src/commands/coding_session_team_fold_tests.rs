@@ -245,6 +245,7 @@ fn full_approval_chain_returns_closed_provenance_bound_projection() {
             "includedEventIds",
             "inputEventIds",
             "schema",
+            "unseatedReports",
         ]
     );
     assert_eq!(wire["schema"], "buzz-coding-session-team-fold-adapter/v1");
@@ -414,4 +415,70 @@ fn wrong_scope_and_unbound_authority_head_fail() {
     })
     .expect_err("sequence without event id");
     assert!(error.contains("must be present"));
+}
+
+// ── Unseated-report disclosure (batch 2026-09-01, §1d) ───────────────────────
+
+#[test]
+fn an_included_report_without_an_active_seat_crosses_the_boundary_as_disclosure() {
+    let (founder, events, assignment, report, ..) = full_chain();
+    let report_author = events
+        .iter()
+        .find(|event| event.id.to_hex() == report)
+        .expect("report event")
+        .pubkey
+        .to_hex();
+
+    let response = fold_adapter(request(&founder, &events)).expect("canonical fold");
+    assert!(response.included_event_ids.contains(&report));
+    assert_eq!(
+        response.unseated_reports,
+        vec![CodingSessionTeamFoldAdapterUnseatedReport {
+            event_id: report.clone(),
+            author_pubkey: report_author.clone(),
+            assignment_ref: assignment,
+            assignee_role: "builder".into(),
+        }]
+    );
+
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    assert_eq!(wire["unseatedReports"][0]["eventId"], report);
+    assert_eq!(wire["unseatedReports"][0]["authorPubkey"], report_author);
+    assert_eq!(wire["unseatedReports"][0]["assigneeRole"], "builder");
+    let mut keys = wire["unseatedReports"][0]
+        .as_object()
+        .expect("row object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["assigneeRole", "assignmentRef", "authorPubkey", "eventId"]
+    );
+}
+
+#[test]
+fn a_seated_report_author_crosses_the_boundary_with_an_empty_disclosure() {
+    let (founder, events, .., report, _, _, _) = full_chain();
+    let report_author = events
+        .iter()
+        .find(|event| event.id.to_hex() == report)
+        .expect("report event")
+        .pubkey
+        .to_hex();
+    let mut seated = request(&founder, &events);
+    seated
+        .context
+        .active_seats
+        .push(CodingSessionTeamActiveSeatInput {
+            actor_pubkey: report_author,
+            role: "builder".into(),
+            grant_event_ref: id("de"),
+        });
+
+    let response = fold_adapter(seated).expect("canonical fold");
+    assert!(response.unseated_reports.is_empty());
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    assert_eq!(wire["unseatedReports"], json!([]));
 }
