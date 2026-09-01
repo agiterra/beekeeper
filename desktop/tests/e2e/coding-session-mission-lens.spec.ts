@@ -3,9 +3,14 @@ import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
+  verifyEvent,
 } from "nostr-tools/pure";
 
-import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  buildCodingSessionCommandEvent,
+  buildCodingSessionTargetKey,
+} from "@/features/coding-sessions/lib/codingSessionCommand";
+import { codingSessionTeamWakeText } from "@/features/coding-sessions/lib/codingSessionTeamWake";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import { buildCodingSessionGoalEvent } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
@@ -39,8 +44,13 @@ import { installMockBridge } from "../helpers/bridge";
 import {
   assertConversationAndMissionLenses,
   assertMissionRestartRecovery,
+  assertMissionTransactionFlow,
   assertNarrowMissionSurfaceHierarchy,
+  assertProviderQueuedDelivery,
   buildGovernedMissionApprovalPhases,
+  governedMissionWithoutBuilderGrant,
+  signedProviderWakeCommand,
+  signedTurnQueuedReceipt,
 } from "./helpers/codingSessionMissionLensAssertions";
 
 const CHANNEL_NAME = "engineering";
@@ -867,21 +877,253 @@ for (const scenario of [
     });
     await seedAndOpen(page, scenario.governed, scenario.status);
     await page.getByRole("button", { name: "Mission lens" }).click();
-    const card = page.getByTestId("coding-session-mission-transaction-card");
-    await expect(card).toContainText(scenario.label, { timeout: 15_000 });
-    await expect(card).toContainText("Signed source");
+    // U-E2: the pinned card is gone; the state plane is the Inspector's.
+    await expect(
+      page.getByTestId("coding-session-mission-transaction-card"),
+    ).toHaveCount(0);
+    const inspector = page.getByTestId("coding-session-mission-inspector");
+    await expect(inspector).toBeVisible({ timeout: 15_000 });
+    const missionState = inspector.locator(
+      "section:has([data-testid='mission-state-summary'])",
+    );
+    await expect(missionState).toContainText(scenario.label, {
+      timeout: 15_000,
+    });
+    await expect(missionState).toContainText("Signed source");
+    await expect(
+      inspector.getByTestId("mission-state-phase-indicator"),
+    ).toBeVisible();
     if (scenario.name === "blocked") {
-      await expect(card).toContainText("Required action:");
+      await expect(missionState).toContainText("Required action:");
     }
     if (scenario.name === "waiting") {
-      await expect(card).toContainText("Reply to Bob · Builder");
+      await expect(missionState).toContainText("Reply to Bob · Builder");
     }
     await waitForAnimations(page);
-    await card.screenshot({
+    await missionState.screenshot({
       path: `${SCREENSHOTS}/mission-${scenario.name}.png`,
     });
   });
 }
+
+test("Mission stream stays within its own width at 900px", async ({ page }) => {
+  // U-E3: the narrow layout scrolls row 2 and the live strip, never the page.
+  await openMockApp(page, { reducedMotion: "no-preference", theme: "buzz" });
+  await seedAndOpen(page);
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await page.setViewportSize({ width: 900, height: 900 });
+  // Below 960 the Inspector is a Sheet over the workspace; U-E3 is about the
+  // stream underneath it, so close the drawer before measuring.
+  const drawerClose = page.getByRole("button", { name: "Close" }).last();
+  if (await drawerClose.isVisible().catch(() => false)) {
+    await drawerClose.click();
+  }
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toHaveCount(0);
+  const workspace = page.getByTestId("coding-session-umbrella-workspace");
+  await expect(workspace).toBeVisible();
+  const timeline = page.getByTestId("coding-session-umbrella-timeline");
+  await expect(timeline).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(() =>
+      workspace.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
+  const participants = page.getByRole("navigation", {
+    name: "Session participants",
+  });
+  await expect(participants).toBeVisible();
+  expect(["auto", "scroll"]).toContain(
+    await participants.evaluate(
+      (element) => getComputedStyle(element).overflowX,
+    ),
+  );
+  await waitForAnimations(page);
+  await page.getByTestId("coding-session-narrative-scroll").screenshot({
+    path: `${SCREENSHOTS}/stream-flow-narrow.png`,
+  });
+});
+
+// U-E5 / U-E6 — FINALIZER: enable these by deleting `.skip` once
+// `CodingSessionUmbrellaWorkspace.tsx` forwards `missionTransactions`,
+// `missionDeliveries`, `resolveMissionActor` and `missionFounderPubkey` to
+// `CodingSessionUmbrellaTimelineView`, and `seatAuthorities` / `deliveries` to
+// `useCodingSessionMissionSurface` (see REPORT-U.md § Finalizer wiring).
+// Everything they need is already exported from the helper module; this lane
+// owns neither the workspace mount nor Lane D's evidence hook, so the rows
+// cannot reach the DOM here and a green assertion would be a false claim.
+/**
+ * The governed fixture plus a provider-signed wake for the builder's report,
+ * addressed to the **verifier** generation as the lead target, and its
+ * `turn_queued` receipt. Signed with the verifier's provider authority, which
+ * is what makes it provider evidence under §1b.
+ */
+function wakeCandidate(sourceEventId: string) {
+  return {
+    sourceEventId,
+    sourceCreatedAtMs: (GENESIS_CREATED_AT + 9) * 1_000,
+    sourceEventSeq: null,
+    sourceTargetKey: buildCodingSessionTargetKey(BUILDER_TARGET),
+    kind: "operation_ready" as const,
+    operationType: "report" as const,
+    seatRole: "builder",
+    causedByCommandId: null,
+    preferredCommandId: null,
+  };
+}
+
+function governedMissionWithProviderQueuedWake(): typeof GOVERNED_MISSION {
+  const base = GOVERNED_MISSION;
+  const report = base.events.find(
+    (event) =>
+      event.kind === KIND_CODING_SESSION_TEAM_TRANSACTION &&
+      JSON.parse(event.content).type === "report",
+  );
+  if (!report) throw new Error("governed fixture is missing its report");
+  const commandId = "team-wake-provider-1";
+  const wake = signedProviderWakeCommand({
+    buildCommandEvent: buildCodingSessionCommandEvent,
+    channelId: CHANNEL_ID,
+    commandId,
+    createdAt: GENESIS_CREATED_AT + 13,
+    finalize: (event) =>
+      finalizeEvent(event, VERIFIER_SECRET) as unknown as RelayEvent,
+    leadTarget: VERIFIER_TARGET,
+    // Byte-identical to what both producers publish for this operation.
+    pointerText: codingSessionTeamWakeText(wakeCandidate(report.id)),
+  });
+  const queued = signedTurnQueuedReceipt({
+    channelId: CHANNEL_ID,
+    commandId,
+    createdAt: GENESIS_CREATED_AT + 14,
+    finalize: (event) =>
+      finalizeEvent(event, VERIFIER_SECRET) as unknown as RelayEvent,
+    leadTarget: VERIFIER_TARGET,
+    receiptKind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    receiptSchema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    receiptTagVersion: CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+    semanticKey: codingSessionReceiptSemanticKey,
+  });
+  return {
+    events: [...base.events, wake, queued],
+    foldResponse: base.foldResponse,
+  };
+}
+
+test.skip("U-E1: the signed handoff reads as one flow in the stream", async ({
+  page,
+}) => {
+  const governed = governedMissionWithTerminal("completed");
+  await openMockApp(page, {
+    foldResponse: governed.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, governed);
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await assertMissionTransactionFlow(page, { screenshots: SCREENSHOTS });
+});
+
+// The fixture itself runs unskipped: it is the half of U-E5 that does not need
+// the finalizer's mount, and without it the two exported wake helpers would be
+// dead code that nothing ever proves correct.
+test("U-E5 fixture: the provider wake and its receipt are real signed events", () => {
+  const governed = governedMissionWithProviderQueuedWake();
+  const report = GOVERNED_MISSION.events.find(
+    (event) =>
+      event.kind === KIND_CODING_SESSION_TEAM_TRANSACTION &&
+      JSON.parse(event.content).type === "report",
+  );
+  if (!report) throw new Error("governed fixture is missing its report");
+  const added = governed.events.filter(
+    (event) => !GOVERNED_MISSION.events.some((prior) => prior.id === event.id),
+  );
+  expect(added).toHaveLength(2);
+  const [wake, queued] = added;
+
+  // The wake is a real 44220 addressed to the LEAD generation, signed by the
+  // lead's provider authority — not the founder, and not the reporter.
+  expect(verifyEvent(wake as never)).toBe(true);
+  expect(wake.kind).toBe(44220);
+  expect(wake.pubkey).toBe(VERIFIER_PROVIDER);
+  expect(wake.pubkey).not.toBe(FOUNDER);
+  expect(wake.tags.find((tag) => tag[0] === "cs-target")?.[1]).toBe(
+    buildCodingSessionTargetKey(VERIFIER_TARGET),
+  );
+  const command = JSON.parse(wake.content);
+  expect(command.schema).toBe("buzz-coding-session-command/v1");
+  expect(command.action.type).toBe("thread.turn.start");
+  // Byte-identical to the pointer both producers publish for this operation.
+  expect(command.action.text).toBe(
+    codingSessionTeamWakeText(wakeCandidate(report.id)),
+  );
+  expect(JSON.parse(command.action.text).operationId).toBe(report.id);
+
+  // The receipt is a real 44224 `turn_queued` bound to that command id.
+  expect(verifyEvent(queued as never)).toBe(true);
+  expect(queued.kind).toBe(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+  expect(queued.pubkey).toBe(VERIFIER_PROVIDER);
+  const receipt = JSON.parse(queued.content);
+  expect(receipt.status).toBe("turn_queued");
+  expect(receipt.commandId).toBe(command.commandId);
+  expect(receipt.session).toEqual(VERIFIER_TARGET);
+  expect(queued.tags.find((tag) => tag[0] === "csl-key")?.[1]).toBe(
+    codingSessionReceiptSemanticKey(command.commandId, "turn_queued"),
+  );
+});
+
+test.skip("U-E5: a queued provider wake is disclosed on the row, the chip and the rail", async ({
+  page,
+}) => {
+  const governed = governedMissionWithProviderQueuedWake();
+  await openMockApp(page, {
+    foldResponse: governed.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, governed);
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await assertProviderQueuedDelivery(page, {
+    reporterChipName: /Bob · Builder/,
+    screenshots: SCREENSHOTS,
+  });
+});
+
+test.skip("U-E6: a created-but-ungranted builder is disclosed, not hidden", async ({
+  page,
+}) => {
+  const governed = governedMissionWithoutBuilderGrant(
+    governedMissionWithTerminal("completed"),
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  );
+  await openMockApp(page, {
+    foldResponse: governed.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, governed);
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await expect(
+    page
+      .getByTestId("coding-session-participant-bar")
+      .getByTestId("coding-session-seat-authority-badge"),
+  ).toContainText("ungranted");
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toContainText("bee sessions seat-repair");
+  await assertMissionTransactionFlow(page, {
+    screenshots: SCREENSHOTS,
+    expectUnseated: true,
+  });
+});
 
 test("Mission remains accessible in dark, narrow, reduced-motion layout", async ({
   page,

@@ -19,7 +19,9 @@ import type { CodingSessionActorNameResolver } from "@/features/coding-sessions/
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { cn } from "@/shared/lib/cn";
+import { isCodingSessionMissionExecutionItem } from "@/features/coding-sessions/lib/codingSessionMissionExecutionBundle";
 import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
+import { CodingSessionMissionExecutionBundle } from "./CodingSessionMissionExecutionBundle";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
@@ -35,6 +37,8 @@ export function CodingSessionUmbrellaTurnBlock({
   isWorking,
   label,
   labelsByExecutionKey,
+  missionExecutionBundle = false,
+  missionRowClassName,
   onHandoff,
   onFocusExecution,
   onRegisterNode,
@@ -62,6 +66,17 @@ export function CodingSessionUmbrellaTurnBlock({
   /** The surface's resolved participant label, or null when it has none. */
   label: string | null;
   labelsByExecutionKey: ReadonlyMap<string, string>;
+  /**
+   * Collapse this block's signed tool items into one C2 bundle row. Only ever
+   * honoured together with `missionRowClassName`, so Conversation — which
+   * passes neither — cannot reach this path at all.
+   */
+  missionExecutionBundle?: boolean;
+  /**
+   * Mission's shared card grammar for the block shell. Conversation never
+   * passes it, so the one-seat lens renders byte-identical DOM.
+   */
+  missionRowClassName?: string;
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
   onFocusExecution?: (executionKey: string | null) => void;
   onRegisterNode: (key: string, node: HTMLElement | null) => void;
@@ -93,6 +108,21 @@ export function CodingSessionUmbrellaTurnBlock({
     (node: HTMLElement | null) => onRegisterNode(blockKey, node),
     [blockKey, onRegisterNode],
   );
+  const [bundleExpanded, setBundleExpanded] = React.useState(false);
+  const toggleBundle = React.useCallback(
+    () => setBundleExpanded((open) => !open),
+    [],
+  );
+  // Double-gated on purpose: the bundle is Mission's, and `missionRowClassName`
+  // is the one prop Conversation is guaranteed never to pass. A future caller
+  // that sets only `missionExecutionBundle` still gets Conversation's DOM.
+  const bundleExecution = missionExecutionBundle && missionRowClassName != null;
+  const narrativeItems = bundleExecution
+    ? block.items.filter((item) => !isCodingSessionMissionExecutionItem(item))
+    : block.items;
+  const executionItems = bundleExecution
+    ? block.items.filter(isCodingSessionMissionExecutionItem)
+    : [];
   const accent = codingSessionAgentAccent(block.executionKey);
   const foldedSummary = isFolded ? foldedTurnSummary(block) : null;
   // C1a: the seat's own identity, from `agentRef` resolved through kind-0 —
@@ -138,6 +168,13 @@ export function CodingSessionUmbrellaTurnBlock({
     <article
       className={cn(
         "group/turn relative border-t border-l-2 border-border/40 pt-5 pb-1 pl-4 first:border-t-0 first:pt-1 transition-colors",
+        // Mission's card grammar goes in the middle, never last: it carries a
+        // neutral `border-border/60` and a `bg-background`, and tailwind-merge
+        // lets the *last* colour in each group win. Merged after the accent it
+        // painted every seat's block the same grey and flattened the focus
+        // tint, so two seats became byte-identical shells. Shape from the
+        // grammar; colour from identity and focus.
+        missionRowClassName,
         accent.border,
         isHighlighted &&
           "-mx-3 rounded-2xl bg-primary/5 px-3 ring-1 ring-primary/60",
@@ -229,9 +266,24 @@ export function CodingSessionUmbrellaTurnBlock({
         currentUserPubkey={currentUserPubkey}
         generationId={block.generationId}
         isWorking={isWorking}
-        items={block.items}
+        items={narrativeItems}
         operatorProfiles={operatorProfiles}
       />
+      {bundleExecution ? (
+        <CodingSessionMissionExecutionBundle
+          expanded={bundleExpanded}
+          items={executionItems}
+          onToggle={toggleBundle}
+        >
+          <CodingSessionTranscript
+            currentUserPubkey={currentUserPubkey}
+            generationId={block.generationId}
+            isWorking={false}
+            items={executionItems}
+            operatorProfiles={operatorProfiles}
+          />
+        </CodingSessionMissionExecutionBundle>
+      ) : null}
       {completed ? (
         <footer
           className="mt-2 flex flex-wrap items-center gap-1.5"

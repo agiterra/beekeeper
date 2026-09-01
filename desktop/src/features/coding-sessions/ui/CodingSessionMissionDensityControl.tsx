@@ -11,17 +11,34 @@ const OPTIONS: ReadonlyArray<{
   { value: "trace", label: "Trace", description: "Exactly what happened" },
 ];
 
+/**
+ * Brief / Live / Trace, as part of the header's second row.
+ *
+ * The default variant is **flush**: it sits inside the participant strip's own
+ * container, so it must not draw a competing box around itself — that extra
+ * border was one of the five chrome bands stacked above the first row of the
+ * stream. `standalone` keeps the bordered fieldset for any surface that mounts
+ * the control on its own.
+ */
 export function CodingSessionMissionDensityControl({
   density,
   onChange,
+  variant = "flush",
 }: {
   density: CodingSessionMissionDensity;
   onChange: (density: CodingSessionMissionDensity) => void;
+  variant?: "flush" | "standalone";
 }) {
   return (
     <fieldset
-      className="inline-flex rounded-lg border border-border/60 bg-muted/25 p-0.5"
+      className={cn(
+        "inline-flex rounded-lg p-0.5",
+        variant === "standalone"
+          ? "border border-border/60 bg-muted/25"
+          : "bg-muted/25",
+      )}
       data-testid="coding-session-mission-density"
+      data-variant={variant}
     >
       <legend className="sr-only">Mission reading density</legend>
       {OPTIONS.map((option) => (

@@ -2,6 +2,11 @@ import * as React from "react";
 
 import type { CodingSessionContextLoad } from "@/features/coding-sessions/lib/codingSessionContextLoad";
 import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
+import type {
+  CodingSessionMissionTransactionInput,
+  CodingSessionSeatAuthority,
+  CodingSessionTeamWakeDelivery,
+} from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import { deriveCodingSessionMissionInspectorModel } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { mergeCodingSessionMissionWorkspaceInput } from "@/features/coding-sessions/lib/codingSessionMissionWorkspaceModel";
 import { projectCodingSessionMissionState } from "@/features/coding-sessions/lib/codingSessionMissionStateProjection";
@@ -25,7 +30,42 @@ export type CodingSessionMissionSurfaceResult = {
   missionState: ReturnType<
     typeof deriveCodingSessionMissionInspectorModel
   >["missionState"];
+  /** Signed 44244 transactions for the stream's causality plane. */
+  transactions: readonly CodingSessionMissionTransactionInput[];
+  /** Report ids the Rust fold listed under `unseatedReports`. */
+  unseatedReportEventIds: readonly string[];
 };
+
+/**
+ * Lane D adds `transactions` and `unseatedReportEventIds` to the Mission
+ * evidence projection in the same batch as this consolidation; in this
+ * worktree the fields do not exist on `CodingSessionMissionInspectorInput`
+ * yet. This is the **one** place that reads them through an index-access cast,
+ * so integration is a single deletion: the finalizer removes this helper and
+ * reads the typed fields directly.
+ */
+// U-F8: shared frozen empties. Returning fresh `[]` literals made
+// `pending.transactions` change identity on every `inspectorInput` change,
+// which propagates through the hook's result into every consumer's memo deps —
+// exactly the render-stability trap AGENTS.md § "React render perf" names.
+const NO_TRANSACTIONS: readonly CodingSessionMissionTransactionInput[] =
+  Object.freeze([]);
+const NO_UNSEATED_REPORT_IDS: readonly string[] = Object.freeze([]);
+
+export function readPendingLaneDEvidence(inspectorInput: unknown): {
+  transactions: readonly CodingSessionMissionTransactionInput[];
+  unseatedReportEventIds: readonly string[];
+} {
+  const pending = inspectorInput as {
+    transactions?: readonly CodingSessionMissionTransactionInput[];
+    unseatedReportEventIds?: readonly string[];
+  };
+  return {
+    transactions: pending.transactions ?? NO_TRANSACTIONS,
+    unseatedReportEventIds:
+      pending.unseatedReportEventIds ?? NO_UNSEATED_REPORT_IDS,
+  };
+}
 
 /** Build Mission's canonical inspector surface without subscribing in Conversation. */
 export function useCodingSessionMissionSurface(input: {
@@ -35,14 +75,20 @@ export function useCodingSessionMissionSurface(input: {
     key: string;
     load: CodingSessionContextLoad | null;
   }[];
+  /** Team-wake delivery evidence from Lane D's hook; the finalizer supplies it. */
+  deliveries?: readonly CodingSessionTeamWakeDelivery[];
   focusedExecutionKey: string | null;
   goal: CodingSessionGoal | null;
+  /** The founder's goal edit control, rendered inside Current goal. */
+  goalEditor?: React.ReactNode;
   isNarrow: boolean;
   observedChanges: CodingSessionObservedChanges;
   onFocusParticipant: (executionKey: string | null) => void;
   onOpenTrace: () => void;
   participants: readonly CodingSessionParticipantPresence[];
   resolveActorName: CodingSessionActorNameResolver;
+  /** Seat authority per execution from Lane D's accepted-44228 projection. */
+  seatAuthorities?: readonly CodingSessionSeatAuthority[];
   umbrella: CodingSessionUmbrellaRecord;
 }): CodingSessionMissionSurfaceResult {
   const scope = React.useMemo(
@@ -142,6 +188,10 @@ export function useCodingSessionMissionSurface(input: {
     () => deriveCodingSessionMissionInspectorModel(inspectorInput),
     [inspectorInput],
   );
+  const pending = React.useMemo(
+    () => readPendingLaneDEvidence(evidence.inspectorInput),
+    [evidence.inspectorInput],
+  );
   const surfaces = React.useMemo(
     () =>
       input.active
@@ -151,13 +201,17 @@ export function useCodingSessionMissionSurface(input: {
               label: "Inspector",
               content: (
                 <CodingSessionMissionInspector
+                  deliveries={input.deliveries}
                   errorMessage={evidence.errorMessage}
                   focusedExecutionKey={input.focusedExecutionKey}
+                  goalEditor={input.goalEditor}
                   loading={evidence.isLoading}
                   model={model}
                   onFocusParticipant={input.onFocusParticipant}
                   onOpenFileTrace={input.onOpenTrace}
                   onRefresh={evidence.refresh}
+                  seatAuthorities={input.seatAuthorities}
+                  unseatedReportEventIds={pending.unseatedReportEventIds}
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
               ),
@@ -182,16 +236,30 @@ export function useCodingSessionMissionSurface(input: {
       evidence.isLoading,
       evidence.refresh,
       input.active,
+      input.deliveries,
       input.focusedExecutionKey,
+      input.goalEditor,
       input.isNarrow,
       input.onFocusParticipant,
       input.onOpenTrace,
+      input.seatAuthorities,
       model,
+      pending.unseatedReportEventIds,
     ],
   );
   return React.useMemo(
-    () => ({ surfaces, missionState: model.missionState }),
-    [model.missionState, surfaces],
+    () => ({
+      surfaces,
+      missionState: model.missionState,
+      transactions: pending.transactions,
+      unseatedReportEventIds: pending.unseatedReportEventIds,
+    }),
+    [
+      model.missionState,
+      pending.transactions,
+      pending.unseatedReportEventIds,
+      surfaces,
+    ],
   );
 }
 

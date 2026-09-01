@@ -1,24 +1,33 @@
+import type { ReactNode } from "react";
 import {
   Check,
   Circle,
   CircleDashed,
   CircleDot,
+  Flag,
   Minus,
   OctagonAlert,
   TriangleAlert,
   X,
 } from "lucide-react";
 
+import {
+  codingSessionSeatAuthorityCopy,
+  type CodingSessionSeatAuthority,
+  type CodingSessionTeamWakeDelivery,
+} from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import type {
   CodingSessionMissionDisclosureInput,
   CodingSessionMissionGoalModel,
   CodingSessionMissionInspectorModel,
   CodingSessionMissionInspectorSection,
   CodingSessionMissionPlanStep,
-  CodingSessionMissionStateInput,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/codingSessionParticipantAccent";
 import { cn } from "@/shared/lib/cn";
+import { codingSessionUnseatedReportDetail } from "./CodingSessionMissionDeliveryBadge";
+import { CodingSessionMissionDeliveryList } from "./CodingSessionMissionDeliveryList";
+import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
 
 export type CodingSessionMissionInspectorProps = {
   model: CodingSessionMissionInspectorModel;
@@ -26,6 +35,18 @@ export type CodingSessionMissionInspectorProps = {
   focusedExecutionKey: string | null;
   loading?: boolean;
   errorMessage?: string | null;
+  /**
+   * Team-wake delivery evidence. `undefined` is not `[]`: it means no
+   * projection was supplied, and while evidence is loading the section says
+   * `Wake delivery unknown` rather than "none observed".
+   */
+  deliveries?: readonly CodingSessionTeamWakeDelivery[];
+  /** Seat authority per execution, from the accepted 44228 chain. */
+  seatAuthorities?: readonly CodingSessionSeatAuthority[];
+  /** Report event ids the Rust fold listed under `unseatedReports`. */
+  unseatedReportEventIds?: readonly string[];
+  /** The founder's goal edit control, rendered under Current goal. */
+  goalEditor?: ReactNode;
   onFocusParticipant?: (executionKey: string | null) => void;
   /** Finalizer-owned bridge into Trace when observed-file provenance is absent. */
   onOpenFileTrace?: (path: string) => void;
@@ -38,7 +59,9 @@ export type CodingSessionMissionInspectorProps = {
  * component deliberately does not mount or control either surrounding lens.
  */
 export function CodingSessionMissionInspector({
+  deliveries,
   errorMessage = null,
+  goalEditor,
   model,
   variant,
   focusedExecutionKey,
@@ -46,7 +69,16 @@ export function CodingSessionMissionInspector({
   onFocusParticipant,
   onOpenFileTrace,
   onRefresh,
+  seatAuthorities,
+  unseatedReportEventIds,
 }: CodingSessionMissionInspectorProps) {
+  const authorityByExecution = new Map(
+    (seatAuthorities ?? []).map((authority) => [
+      authority.executionKey,
+      authority,
+    ]),
+  );
+  const unseatedReports = new Set(unseatedReportEventIds ?? []);
   return (
     <aside
       aria-label="Mission inspector"
@@ -90,61 +122,86 @@ export function CodingSessionMissionInspector({
           truncations={truncationsFor(model, "goal")}
         >
           <Goal goal={model.goal} />
+          {goalEditor ? <div className="mt-2">{goalEditor}</div> : null}
         </InspectorSection>
 
         <InspectorSection
           title="Mission state"
           truncations={truncationsFor(model, "mission-state")}
         >
-          <MissionState state={model.missionState} />
+          <CodingSessionMissionStatePanel state={model.missionState} />
+          {model.missionState.kind !== "unknown" &&
+          model.missionState.kind !== "conflict" ? (
+            <SignedSource eventId={model.missionState.sourceEventId} />
+          ) : null}
+          {model.missionState.kind === "conflict"
+            ? model.missionState.eventIds.map((eventId) => (
+                <SignedSource eventId={eventId} key={eventId} />
+              ))
+            : null}
         </InspectorSection>
 
         <InspectorSection
-          title="Accepted plan"
-          truncations={truncationsFor(model, "accepted-plan")}
+          title="Team"
+          truncations={truncationsFor(model, "team")}
         >
-          <AcceptedPlan plan={model.acceptedPlan} />
-        </InspectorSection>
-
-        <InspectorSection
-          title="Seat-reported plans"
-          truncations={truncationsFor(model, "seat-plans")}
-        >
-          {model.seatPlans.length === 0 ? (
-            <EmptyCopy>No seat has published a signed plan.</EmptyCopy>
+          {model.participants.length === 0 ? (
+            <EmptyCopy>No signed session seats projected.</EmptyCopy>
           ) : (
-            <div className="space-y-3">
-              {model.seatPlans.map((plan) => (
-                <div data-testid="mission-seat-plan" key={plan.executionKey}>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="text-xs font-medium">{plan.ownerLabel}</p>
-                    {plan.state !== "absent" ? (
-                      <span className="text-2xs text-muted-foreground tabular-nums">
-                        {plan.completedCount}/{plan.steps.length}
+            <ul aria-label="Mission team" className="space-y-1.5">
+              {model.participants.map((participant) => {
+                const focused =
+                  participant.executionKey === focusedExecutionKey;
+                const accent = codingSessionParticipantAccent(
+                  participant.executionKey,
+                );
+                const authority =
+                  authorityByExecution.get(participant.executionKey) ??
+                  (seatAuthorities === undefined && loading
+                    ? unknownSeatAuthority(participant.executionKey)
+                    : null);
+                return (
+                  <li key={participant.executionKey}>
+                    <button
+                      aria-label={`${focused ? "Show all participants" : `Focus ${participant.label}`} — ${participant.disposition}`}
+                      aria-pressed={focused}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        focused
+                          ? cn(accent.border, accent.soft)
+                          : "border-border/60 hover:bg-muted/35",
+                      )}
+                      data-testid="mission-team-participant"
+                      onClick={() =>
+                        onFocusParticipant?.(
+                          focused ? null : participant.executionKey,
+                        )
+                      }
+                      type="button"
+                    >
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          accent.dot,
+                        )}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">
+                          {participant.label}
+                        </span>
+                        <span className="block truncate text-2xs text-muted-foreground">
+                          {participant.disposition}
+                        </span>
                       </span>
+                    </button>
+                    {authority ? (
+                      <SeatAuthorityDetail authority={authority} />
                     ) : null}
-                  </div>
-                  {plan.explanation ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {plan.explanation}
-                    </p>
-                  ) : null}
-                  {plan.steps.length === 0 ? (
-                    <EmptyCopy>
-                      No signed plan published by this seat.
-                    </EmptyCopy>
-                  ) : (
-                    <PlanSteps
-                      ariaLabel={`${plan.ownerLabel} seat-reported plan`}
-                      steps={plan.steps}
-                    />
-                  )}
-                  {plan.sourceEventId ? (
-                    <SignedSource eventId={plan.sourceEventId} />
-                  ) : null}
-                </div>
-              ))}
-            </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </InspectorSection>
 
@@ -257,58 +314,51 @@ export function CodingSessionMissionInspector({
         </InspectorSection>
 
         <InspectorSection
-          title="Team"
-          truncations={truncationsFor(model, "team")}
+          title="Accepted plan"
+          truncations={truncationsFor(model, "accepted-plan")}
         >
-          {model.participants.length === 0 ? (
-            <EmptyCopy>No signed session seats projected.</EmptyCopy>
+          <AcceptedPlan plan={model.acceptedPlan} />
+        </InspectorSection>
+
+        <InspectorSection
+          title="Seat-reported plans"
+          truncations={truncationsFor(model, "seat-plans")}
+        >
+          {model.seatPlans.length === 0 ? (
+            <EmptyCopy>No seat has published a signed plan.</EmptyCopy>
           ) : (
-            <ul aria-label="Mission team" className="space-y-1.5">
-              {model.participants.map((participant) => {
-                const focused =
-                  participant.executionKey === focusedExecutionKey;
-                const accent = codingSessionParticipantAccent(
-                  participant.executionKey,
-                );
-                return (
-                  <li key={participant.executionKey}>
-                    <button
-                      aria-label={`${focused ? "Show all participants" : `Focus ${participant.label}`} — ${participant.disposition}`}
-                      aria-pressed={focused}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        focused
-                          ? cn(accent.border, accent.soft)
-                          : "border-border/60 hover:bg-muted/35",
-                      )}
-                      data-testid="mission-team-participant"
-                      onClick={() =>
-                        onFocusParticipant?.(
-                          focused ? null : participant.executionKey,
-                        )
-                      }
-                      type="button"
-                    >
-                      <span
-                        aria-hidden
-                        className={cn(
-                          "size-2 shrink-0 rounded-full",
-                          accent.dot,
-                        )}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-medium">
-                          {participant.label}
-                        </span>
-                        <span className="block truncate text-2xs text-muted-foreground">
-                          {participant.disposition}
-                        </span>
+            <div className="space-y-3">
+              {model.seatPlans.map((plan) => (
+                <div data-testid="mission-seat-plan" key={plan.executionKey}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-xs font-medium">{plan.ownerLabel}</p>
+                    {plan.state !== "absent" ? (
+                      <span className="text-2xs text-muted-foreground tabular-nums">
+                        {plan.completedCount}/{plan.steps.length}
                       </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                    ) : null}
+                  </div>
+                  {plan.explanation ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {plan.explanation}
+                    </p>
+                  ) : null}
+                  {plan.steps.length === 0 ? (
+                    <EmptyCopy>
+                      No signed plan published by this seat.
+                    </EmptyCopy>
+                  ) : (
+                    <PlanSteps
+                      ariaLabel={`${plan.ownerLabel} seat-reported plan`}
+                      steps={plan.steps}
+                    />
+                  )}
+                  {plan.sourceEventId ? (
+                    <SignedSource eventId={plan.sourceEventId} />
+                  ) : null}
+                </div>
+              ))}
+            </div>
           )}
         </InspectorSection>
 
@@ -321,10 +371,27 @@ export function CodingSessionMissionInspector({
           ) : (
             <ul className="space-y-2">
               {model.reports.map((report) => (
-                <li key={report.sourceEventId}>
+                <li
+                  data-testid="mission-report-row"
+                  data-unseated={
+                    unseatedReports.has(report.sourceEventId)
+                      ? "true"
+                      : undefined
+                  }
+                  key={report.sourceEventId}
+                >
                   <p className="text-xs">{report.summary}</p>
                   <p className="mt-0.5 text-2xs text-muted-foreground">
                     Reported by {report.authorLabel}
+                    {unseatedReports.has(report.sourceEventId) ? (
+                      <span
+                        className="ml-1 inline-flex items-center gap-1 align-middle text-amber-700 dark:text-amber-300"
+                        title={codingSessionUnseatedReportDetail()}
+                      >
+                        <Flag aria-hidden className="size-3 shrink-0" />
+                        {"· unseated"}
+                      </span>
+                    ) : null}
                   </p>
                   <SignedSource eventId={report.sourceEventId} />
                 </li>
@@ -337,7 +404,23 @@ export function CodingSessionMissionInspector({
           title="Integrity"
           truncations={truncationsFor(model, "integrity")}
         >
-          <Integrity model={model} />
+          <div className="space-y-3">
+            <div data-testid="mission-integrity-delivery">
+              <h4 className="mb-1.5 text-2xs font-semibold text-muted-foreground">
+                Delivery
+              </h4>
+              <CodingSessionMissionDeliveryList
+                deliveries={deliveries}
+                loading={loading}
+              />
+            </div>
+            <div data-testid="mission-integrity-records">
+              <h4 className="mb-1.5 text-2xs font-semibold text-muted-foreground">
+                Rejected and conflicting records
+              </h4>
+              <Integrity model={model} />
+            </div>
+          </div>
         </InspectorSection>
       </div>
     </aside>
@@ -595,103 +678,60 @@ function TestIcon({ outcome }: { outcome: "passed" | "failed" | "not-run" }) {
   );
 }
 
-function MissionState({ state }: { state: CodingSessionMissionStateInput }) {
-  const presentation = missionStatePresentation(state);
+/**
+ * Seat authority detail, with the exact repair command when a seat was created
+ * but never granted.
+ *
+ * `maySteer` masks this gap everywhere else: the hire host publishes
+ * `grant-operator` for the actor, which satisfies the fold's `may_lead` check,
+ * so an ungranted seat looks governed until a refutation or an `activeSeats`
+ * listing disagrees. This is the persistent surface that says otherwise.
+ */
+function SeatAuthorityDetail({
+  authority,
+}: {
+  authority: CodingSessionSeatAuthority;
+}) {
+  const copy = codingSessionSeatAuthorityCopy[authority.kind];
   return (
-    <div>
-      <div className="flex items-center gap-2">
-        <span
-          aria-hidden
-          className={cn("size-2 rounded-full", presentation.dot)}
-        />
-        <p className="text-sm font-medium">{presentation.label}</p>
-      </div>
-      {presentation.detail ? (
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          {presentation.detail}
-        </p>
+    <div
+      className="mt-1 pl-2.5"
+      data-kind={authority.kind}
+      data-testid="mission-team-seat-authority"
+    >
+      <p
+        className={cn(
+          "flex items-center gap-1 text-2xs",
+          authority.kind === "created-ungranted"
+            ? "text-amber-700 dark:text-amber-300"
+            : "text-muted-foreground",
+        )}
+      >
+        {copy.badge ? <Flag aria-hidden className="size-3 shrink-0" /> : null}
+        {authority.detail}
+      </p>
+      {authority.remedy ? (
+        <code className="mt-1 block break-all text-2xs text-muted-foreground">
+          {authority.remedy}
+        </code>
       ) : null}
-      {state.kind !== "unknown" && state.kind !== "conflict" ? (
-        <SignedSource eventId={state.sourceEventId} />
-      ) : null}
-      {state.kind === "conflict"
-        ? state.eventIds.map((eventId) => (
-            <SignedSource eventId={eventId} key={eventId} />
-          ))
-        : null}
     </div>
   );
 }
 
-function missionStatePresentation(state: CodingSessionMissionStateInput): {
-  label: string;
-  detail: string | null;
-  dot: string;
-} {
-  switch (state.kind) {
-    case "running":
-      return {
-        label: "Running",
-        detail: state.detail,
-        dot: "bg-emerald-500",
-      };
-    case "acknowledgement-required":
-      return {
-        label: "Acknowledgement required",
-        detail: state.heldOn
-          ? `${state.requiredAction} · held on ${state.heldOn}`
-          : state.requiredAction,
-        dot: "bg-amber-500",
-      };
-    case "waiting-on-person":
-      return {
-        label: "Waiting on a person",
-        detail: state.heldOn
-          ? `${state.requiredAction} · held on ${state.heldOn}`
-          : state.requiredAction,
-        dot: "bg-amber-500",
-      };
-    case "stalled":
-      return { label: "Stalled", detail: state.detail, dot: "bg-amber-500" };
-    case "blocked":
-      return {
-        label: "Blocked",
-        detail: [
-          state.summary,
-          ...state.blockers,
-          `Required: ${state.requiredAction}`,
-        ].join(" · "),
-        dot: "bg-amber-500",
-      };
-    case "completed":
-      return {
-        label: "Completed",
-        detail: [
-          state.summary,
-          state.landedShas.length > 0
-            ? `Landed ${state.landedShas.join(", ")}`
-            : null,
-          state.followUps.length > 0
-            ? `Follow-ups: ${state.followUps.join(" · ")}`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        dot: "bg-emerald-500",
-      };
-    case "conflict":
-      return {
-        label: "Conflicting mission state",
-        detail: "Signed terminal records disagree; no terminal state is shown.",
-        dot: "bg-amber-500",
-      };
-    case "unknown":
-      return {
-        label: "Mission state unknown",
-        detail: state.detail,
-        dot: "bg-muted-foreground/50",
-      };
-  }
+/** The honest placeholder while the authority projection has not arrived. */
+function unknownSeatAuthority(
+  executionKey: string,
+): CodingSessionSeatAuthority {
+  return {
+    executionKey,
+    actorPubkey: null,
+    role: null,
+    kind: "unknown",
+    grantEventId: null,
+    detail: codingSessionSeatAuthorityCopy.unknown.detail,
+    remedy: null,
+  };
 }
 
 function Integrity({ model }: { model: CodingSessionMissionInspectorModel }) {

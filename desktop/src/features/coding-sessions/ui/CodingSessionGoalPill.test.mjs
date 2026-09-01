@@ -36,3 +36,43 @@ test("a real goal keeps the shared objective visible", () => {
   assert.match(markup, /Make the full-screen session feel like one narrative/);
   assert.match(markup, /coding-session-goal-edit-workspace/);
 });
+
+function renderInspectorVariant(goal, currentUserPubkey) {
+  return renderToStaticMarkup(
+    React.createElement(CodingSessionGoalPill, {
+      channelId: "channel-1",
+      currentUserPubkey,
+      founderPubkey: FOUNDER,
+      goal,
+      sessionRef: "session-1",
+      variant: "inspector",
+    }),
+  );
+}
+
+test("U-T6: the inspector variant is the edit control and nothing else", () => {
+  const withGoal = renderInspectorVariant(
+    { content: "Ship the portable team loop" },
+    FOUNDER,
+  );
+  assert.match(withGoal, /coding-session-goal-edit-inspector/);
+  assert.match(withGoal, />Edit goal</);
+  assert.doesNotMatch(withGoal, /Goal:/);
+  assert.doesNotMatch(withGoal, /Ship the portable team loop/);
+  assert.doesNotMatch(withGoal, /coding-session-goal-workspace/);
+
+  const withoutGoal = renderInspectorVariant(null, FOUNDER);
+  assert.match(withoutGoal, /coding-session-goal-edit-inspector/);
+  assert.match(withoutGoal, />Set goal</);
+});
+
+test("U-T6: a viewer who cannot publish the goal gets no control at all", () => {
+  assert.equal(
+    renderInspectorVariant(
+      { content: "Ship the portable team loop" },
+      "b".repeat(64),
+    ),
+    "",
+  );
+  assert.equal(renderInspectorVariant(null, "b".repeat(64)), "");
+});

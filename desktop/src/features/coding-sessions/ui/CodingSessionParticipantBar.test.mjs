@@ -39,7 +39,6 @@ test("the Mission roster gives participant identity and status real weight", () 
   assert.match(markup, /aria-label="Session participants"/);
   assert.match(markup, /Helios · Lead/);
   assert.match(markup, /Bob · Builder/);
-  assert.match(markup, /implementing the stream foundation/);
   assert.match(markup, /aria-pressed="true"/);
   assert.match(markup, /coding-session-agent-breathe/);
   assert.doesNotMatch(markup, new RegExp(key));
@@ -156,4 +155,192 @@ test("only No provider answering consumes destructive styling", () => {
   assert.doesNotMatch(chips[0], /destructive/);
   assert.match(chips[0], /amber/);
   assert.match(chips[1], /destructive/);
+});
+
+const SEAT_ACTOR = "b1".repeat(32);
+const OTHER_ACTOR = "c2".repeat(32);
+
+function chipItems() {
+  return [
+    {
+      executionKey: "lead",
+      label: "Keystone · Lead",
+      secondaryLabel: "Codex · gpt-5.6-sol",
+      role: "lead",
+      status: { kind: "working", label: "Working" },
+      disposition: "live",
+      activity: null,
+      lastTurnLabel: "last turn just now",
+    },
+    {
+      executionKey: "builder",
+      label: "Bob · Builder",
+      secondaryLabel: "Claude Code · sonnet",
+      role: "builder",
+      status: { kind: "idle", label: "Idle" },
+      disposition: "idle",
+      activity: null,
+      lastTurnLabel: "last turn 4m ago",
+    },
+  ];
+}
+
+function authority(kind, executionKey, actorPubkey) {
+  return {
+    executionKey,
+    actorPubkey,
+    role: "builder",
+    kind,
+    grantEventId: kind === "granted" ? "g".repeat(64) : null,
+    detail:
+      kind === "granted"
+        ? "Seat granted"
+        : kind === "created-ungranted"
+          ? "Seat created, not granted"
+          : "Seat authority unknown",
+    remedy:
+      kind === "created-ungranted"
+        ? "bee sessions seat-repair --channel chan --session-ref sess --actor act"
+        : null,
+  };
+}
+
+function wakeDelivery(overrides) {
+  return {
+    sourceEventId: "e".repeat(64),
+    operationType: "report",
+    sourceActorPubkey: SEAT_ACTOR,
+    leadTargetKey: "lead-target",
+    kind: "provider-queued",
+    owningCommandId: "cmd-1",
+    duplicateRefusedCommandIds: [],
+    failures: [],
+    reArmCount: 0,
+    observedAtMs: 10,
+    detail: "Provider wake queued",
+    ...overrides,
+  };
+}
+
+test("U-T3: an ungranted seat is badged on its chip with the remedy in the title", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatAuthorities: [
+        authority("granted", "lead", OTHER_ACTOR),
+        authority("created-ungranted", "builder", SEAT_ACTOR),
+      ],
+    }),
+  );
+  assert.match(markup, /data-testid="coding-session-seat-authority-badge"/);
+  assert.match(markup, />ungranted</);
+  assert.match(
+    markup,
+    /title="Seat created, not granted — bee sessions seat-repair --channel chan --session-ref sess --actor act"/,
+  );
+  assert.equal(
+    markup.match(/coding-session-seat-authority-badge/g).length,
+    1,
+    "a granted seat adds no badge",
+  );
+});
+
+test("U-T3: the newest non-started delivery lands on its own seat's chip only", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatAuthorities: [
+        authority("granted", "lead", OTHER_ACTOR),
+        authority("granted", "builder", SEAT_ACTOR),
+      ],
+      deliveries: [
+        wakeDelivery({ kind: "provider-queued", observedAtMs: 10 }),
+        wakeDelivery({
+          sourceEventId: "f".repeat(64),
+          kind: "fallback-queued",
+          observedAtMs: 40,
+          detail: "Desktop covered for the provider",
+        }),
+        wakeDelivery({
+          sourceEventId: "0".repeat(64),
+          sourceActorPubkey: OTHER_ACTOR,
+          kind: "provider-started",
+          observedAtMs: 90,
+          detail: "Provider wake started",
+        }),
+      ],
+    }),
+  );
+  const badges = markup.match(/coding-session-delivery-badge/g) ?? [];
+  assert.equal(badges.length, 1, "one delivery badge, on one chip");
+  assert.match(markup, /data-kind="fallback-queued"/);
+  assert.match(markup, />fallback</);
+  assert.doesNotMatch(markup, /data-kind="provider-started"/);
+});
+
+test("U-T3: without a seat-authority projection the chip stays status-only", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      deliveries: [wakeDelivery({})],
+    }),
+  );
+  assert.doesNotMatch(markup, /coding-session-delivery-badge/);
+  assert.doesNotMatch(markup, /coding-session-seat-authority-badge/);
+});
+
+test("U-T3: the bar draws no band of its own — the header owns the border", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      className: "border-b border-border/60",
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+    }),
+  );
+  const nav = markup.slice(0, markup.indexOf("</nav>"));
+  const navClass = nav.match(/<nav[^>]*class="([^"]*)"/)[1];
+  assert.match(navClass, /border-b/, "the finalizer's class is merged in");
+  assert.doesNotMatch(
+    renderToStaticMarkup(
+      React.createElement(CodingSessionParticipantBar, {
+        focusedExecutionKey: null,
+        items: chipItems(),
+        onFocus() {},
+      }),
+    ).match(/<nav[^>]*class="([^"]*)"/)[1],
+    /border-b|bg-background/,
+  );
+});
+
+test("U-F2: the chip is status-only — the activity phrase lives in the live strip", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: [
+        {
+          executionKey: "builder",
+          label: "Bob · Builder",
+          secondaryLabel: "Claude Code · sonnet",
+          role: "builder",
+          status: { kind: "working", label: "Working" },
+          disposition: "live",
+          activity: "Verify the signed live activity",
+          lastTurnLabel: "last turn just now",
+        },
+      ],
+      onFocus() {},
+    }),
+  );
+  // The W1 word stays — that is the chip's whole job.
+  assert.match(markup, />live</);
+  assert.match(markup, /Bob · Builder/);
+  // The phrase does not: LiveActivityBar is its one home.
+  assert.doesNotMatch(markup, /Verify the signed live activity/);
 });

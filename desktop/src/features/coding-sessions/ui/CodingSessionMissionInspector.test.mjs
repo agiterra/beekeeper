@@ -267,7 +267,7 @@ test("Context is one separate panel with seat, signed work, and usage facts", as
       assert.equal(context.dataset.variant, variant);
       assert.equal(view.queryByRole("heading", { name: "Context" }), null);
       for (const heading of [
-        "Seat context",
+        "Context load",
         "Signed work context",
         "Terminal usage",
       ]) {
@@ -471,7 +471,10 @@ test("empty and unknown states disclose absence rather than rendering zeros", as
     focusedExecutionKey: null,
   });
   try {
-    assert.ok(view.getByText("Mission state unknown"));
+    assert.match(
+      view.getByTestId("mission-state-summary").textContent,
+      /Mission state unknown/,
+    );
     assert.ok(view.getByText("No accepted mission goal published."));
     assert.ok(view.getByText("No accepted plan published"));
     assert.ok(view.getByText("No seat has published a signed plan."));
@@ -548,7 +551,10 @@ test("conflicting and rejected records are visible with their signed sources", a
     assert.ok(
       view.getByText("Accepted plan unavailable — conflicting signed records"),
     );
-    assert.ok(view.getByText("Conflicting mission state"));
+    assert.match(
+      view.getByTestId("mission-state-summary").textContent,
+      /Mission state conflict/,
+    );
     assert.ok(view.getByText("1 rejected event"));
     assert.ok(view.getByText(/Unknown causal reference/));
     assert.ok(view.getByText(/Terminal records disagree/));
@@ -860,4 +866,329 @@ test("file attribution truncation renders exact shown, total, and omitted counts
   } finally {
     view.cleanup();
   }
+});
+
+test("U-T5: Mission state is one line plus a phase indicator, with no chain list", async () => {
+  const view = await renderInspector({
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const summary = view.getByTestId("mission-state-summary");
+  assert.match(summary.textContent, /Mission running · assigned/);
+  const indicator = view.getByTestId("mission-state-phase-indicator");
+  assert.equal(indicator.getAttribute("data-current-phase"), "assigned");
+  assert.match(
+    indicator.getAttribute("aria-label"),
+    /Mission running — current phase assigned/,
+  );
+  assert.deepEqual(
+    [...indicator.querySelectorAll("li")].map(
+      (node) =>
+        `${node.getAttribute("data-phase")}:${node.getAttribute("data-phase-state")}`,
+    ),
+    [
+      "assigned:current",
+      "reported:pending",
+      "ruled:pending",
+      "acknowledged:pending",
+    ],
+  );
+  assert.equal(
+    view.queryByTestId("coding-session-mission-canonical-chain"),
+    null,
+  );
+  assert.equal(
+    view.queryByTestId("coding-session-mission-transaction-card"),
+    null,
+  );
+  view.cleanup();
+});
+
+test("U-T5: an unestablished phase says so rather than painting the first step", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(
+      input({ missionState: { kind: "unknown", detail: null } }),
+    ),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const indicator = view.getByTestId("mission-state-phase-indicator");
+  assert.equal(indicator.getAttribute("data-current-phase"), "not-established");
+  assert.match(
+    indicator.getAttribute("aria-label"),
+    /signed phase not established/,
+  );
+  assert.deepEqual(
+    [...indicator.querySelectorAll("li")].map((node) =>
+      node.getAttribute("data-phase-state"),
+    ),
+    ["pending", "pending", "pending", "pending"],
+  );
+  view.cleanup();
+});
+
+test("U-T5: a blocked mission states its blockers and the required action", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(
+      input({
+        missionState: {
+          kind: "blocked",
+          sourceEventId: "blocked-event",
+          summary: "Mission cannot proceed.",
+          blockers: ["Relay authority is unavailable."],
+          requiredAction: "Restore the relay signing authority.",
+          canonicalChain: [],
+        },
+      }),
+    ),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const blocked = view.getByTestId("mission-state-blocked");
+  assert.match(blocked.className, /border-destructive\/40/);
+  assert.match(blocked.textContent, /Relay authority is unavailable\./);
+  assert.match(
+    blocked.textContent,
+    /Required action: Restore the relay signing authority\./,
+  );
+  view.cleanup();
+});
+
+test("U-T5: Integrity keeps a bounded Delivery list with visible truncation", async () => {
+  const deliveries = Array.from({ length: 35 }, (_, index) => ({
+    sourceEventId: `source-${String(index).padStart(3, "0")}`,
+    operationType: "report",
+    sourceActorPubkey: "b".repeat(64),
+    leadTargetKey: "lead-target",
+    kind: index === 34 ? "failed" : "provider-queued",
+    owningCommandId: `command-${index}`,
+    duplicateRefusedCommandIds: index === 34 ? ["dupe-1"] : [],
+    failures: [],
+    reArmCount: 0,
+    observedAtMs: index,
+    detail: index === 34 ? "Wake delivery failed" : "Provider wake queued",
+  }));
+  const view = await renderInspector({
+    deliveries,
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const rows = view.getAllByTestId("mission-delivery-row");
+  assert.equal(rows.length, 32);
+  assert.equal(rows[0].getAttribute("data-kind"), "failed");
+  assert.match(rows[0].className, /border-destructive\/40/);
+  assert.match(rows[0].textContent, /1 duplicate refused/);
+  assert.match(
+    view.getByTestId("mission-delivery-truncation").textContent,
+    /Showing 32 of 35 observed deliveries; 3 older rows are not shown\./,
+  );
+  view.cleanup();
+});
+
+test("U-T5: no delivery projection is not the same as none observed", async () => {
+  const loadingView = await renderInspector({
+    loading: true,
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  assert.match(
+    loadingView.getByTestId("mission-delivery-empty").textContent,
+    /Wake delivery unknown/,
+  );
+  loadingView.cleanup();
+  // U-F4: settled-but-unwired is still "no projection", not "none observed".
+  // Claiming observation when nothing observed anything is the exact bug class
+  // this project treats as a crash, and it is the app's steady state until the
+  // finalizer wires Lane D.
+  const unwiredView = await renderInspector({
+    loading: false,
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  assert.match(
+    unwiredView.getByTestId("mission-delivery-empty").textContent,
+    /Wake delivery unknown/,
+  );
+  assert.doesNotMatch(
+    unwiredView.getByTestId("mission-delivery-empty").textContent,
+    /No team wake deliveries observed/,
+  );
+  unwiredView.cleanup();
+  const settledView = await renderInspector({
+    deliveries: [],
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  assert.match(
+    settledView.getByTestId("mission-delivery-empty").textContent,
+    /No team wake deliveries observed\./,
+  );
+  settledView.cleanup();
+});
+
+test("U-T5: a Team row carries the seat-authority sentence and its remedy", async () => {
+  const remedy =
+    "bee sessions seat-repair --channel chan --session-ref sess --actor act";
+  const view = await renderInspector({
+    model: richModel(),
+    seatAuthorities: [
+      {
+        executionKey: "builder",
+        actorPubkey: "b".repeat(64),
+        role: "builder",
+        kind: "created-ungranted",
+        grantEventId: null,
+        detail: "Seat created, not granted",
+        remedy,
+      },
+    ],
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const rows = view.getAllByTestId("mission-team-seat-authority");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].getAttribute("data-kind"), "created-ungranted");
+  assert.match(rows[0].textContent, /Seat created, not granted/);
+  assert.match(rows[0].textContent, new RegExp(remedy.replace(/-/g, "\\-")));
+  view.cleanup();
+});
+
+test("U-T5: an unloaded authority projection reads unknown, never granted", async () => {
+  const view = await renderInspector({
+    loading: true,
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const rows = view.getAllByTestId("mission-team-seat-authority");
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    assert.equal(row.getAttribute("data-kind"), "unknown");
+    assert.match(row.textContent, /Seat authority unknown/);
+  }
+  view.cleanup();
+});
+
+test("U-T5: a fold-listed unseated report says so in the Reports section", async () => {
+  const model = richModel();
+  const reportId = model.reports[0]?.sourceEventId;
+  assert.ok(reportId, "the rich model must publish at least one report");
+  const view = await renderInspector({
+    model,
+    unseatedReportEventIds: [reportId],
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const rows = view.getAllByTestId("mission-report-row");
+  const unseated = rows.filter(
+    (row) => row.getAttribute("data-unseated") === "true",
+  );
+  assert.equal(unseated.length, 1);
+  assert.match(unseated[0].textContent, /· unseated/);
+  view.cleanup();
+});
+
+test("U-T5: the founder's goal editor mounts under Current goal", async () => {
+  const React = (await import("react")).default;
+  const view = await renderInspector({
+    goalEditor: React.createElement(
+      "button",
+      { "data-testid": "goal-editor-probe", type: "button" },
+      "Edit goal",
+    ),
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const probe = view.getByTestId("goal-editor-probe");
+  assert.ok(probe);
+  assert.match(
+    probe.closest("section").textContent,
+    /Ship an honest Mission inspector\./,
+  );
+  view.cleanup();
+});
+
+test("R2 §8: rail section order puts Team third, above Changes", async () => {
+  const view = await renderInspector({
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const headings = [...view.container.querySelectorAll("section > h3")].map(
+    (node) => node.textContent,
+  );
+  assert.deepEqual(headings, [
+    "Current goal",
+    "Mission state",
+    "Team",
+    "Changes",
+    "Files",
+    "Structured tests",
+    "Accepted plan",
+    "Seat-reported plans",
+    "Reports",
+    "Integrity",
+  ]);
+  // The remedy is the rail's one action item; it must not sit below four
+  // panels of file and test detail.
+  assert.ok(
+    headings.indexOf("Team") < headings.indexOf("Changes"),
+    "Team precedes Changes",
+  );
+  view.cleanup();
+});
+
+test("R2 §8: a granted seat prints its line too, so ungranted is comparable", async () => {
+  const view = await renderInspector({
+    model: richModel(),
+    seatAuthorities: [
+      {
+        executionKey: "lead",
+        actorPubkey: "a".repeat(64),
+        role: "lead",
+        kind: "granted",
+        grantEventId: "g".repeat(64),
+        detail: "Seat granted",
+        remedy: null,
+      },
+      {
+        executionKey: "builder",
+        actorPubkey: "b".repeat(64),
+        role: "builder",
+        kind: "created-ungranted",
+        grantEventId: null,
+        detail: "Seat created, not granted",
+        remedy:
+          "bee sessions seat-repair --channel chan --session-ref sess --actor act",
+      },
+    ],
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  const rows = view.getAllByTestId("mission-team-seat-authority");
+  assert.equal(rows.length, 2);
+  const granted = rows.find(
+    (row) => row.getAttribute("data-kind") === "granted",
+  );
+  assert.ok(granted, "the granted seat renders a line of its own");
+  assert.match(granted.textContent, /Seat granted/);
+  // Muted, and with no flag — the ungranted one is the only thing that shouts.
+  assert.match(granted.querySelector("p").className, /text-muted-foreground/);
+  assert.equal(granted.querySelector("svg"), null);
+  const ungranted = rows.find(
+    (row) => row.getAttribute("data-kind") === "created-ungranted",
+  );
+  assert.match(ungranted.querySelector("p").className, /text-amber-700/);
+  assert.ok(
+    ungranted.querySelector("svg"),
+    "the ungranted line carries an icon",
+  );
+  assert.match(ungranted.textContent, /bee sessions seat-repair/);
+  view.cleanup();
 });

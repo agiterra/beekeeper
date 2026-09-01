@@ -41,7 +41,14 @@ export function CodingSessionGoalPill({
   /** Matches the transcript/composer when no secondary rail is open. */
   workspaceExpanded?: boolean;
   sessionRef: string | null;
-  variant?: "workspace" | "catalog";
+  /**
+   * `inspector` is the rail's edit affordance and nothing else: no pill, no
+   * measure box, no goal text. The Inspector's Current goal section already
+   * renders the goal from signed evidence — one row, one voice — so a second
+   * copy of the sentence beside the button would be the duplication this
+   * consolidation removes.
+   */
+  variant?: "workspace" | "catalog" | "inspector";
 }) {
   const measure = useCodingSessionMeasure(workspaceExpanded);
   const [open, setOpen] = React.useState(false);
@@ -56,6 +63,7 @@ export function CodingSessionGoalPill({
     if (!open) setDraft(goal?.content ?? "");
   }, [goal?.content, open]);
 
+  if (variant === "inspector" && !canEdit) return null;
   if (!goal && !canEdit) return null;
   const compact = variant === "catalog";
   if (goal && headerCarriesGoal && !compact && !canEdit) return null;
@@ -76,6 +84,63 @@ export function CodingSessionGoalPill({
       setSaving(false);
     }
   };
+
+  const dialog = canEdit ? (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogContent data-testid="coding-session-goal-dialog">
+        <DialogHeader>
+          <DialogTitle>
+            {goal ? "Edit session goal" : "Add session goal"}
+          </DialogTitle>
+          <DialogDescription>
+            Keep the shared objective short enough to scan while the session is
+            running.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          autoFocus
+          data-testid="coding-session-goal-input"
+          maxLength={MAX_CODING_SESSION_GOAL_BYTES}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="What should this session accomplish?"
+          rows={4}
+          value={draft}
+        />
+        <DialogFooter>
+          <Button onClick={() => setOpen(false)} type="button" variant="ghost">
+            Cancel
+          </Button>
+          <Button
+            data-testid="coding-session-goal-save"
+            disabled={saving || !draft.trim()}
+            onClick={() => void save()}
+            type="button"
+          >
+            {saving ? "Saving…" : "Save goal"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  ) : null;
+
+  if (variant === "inspector") {
+    return (
+      <>
+        <Button
+          className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+          data-testid="coding-session-goal-edit-inspector"
+          onClick={() => setOpen(true)}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <Pencil className="size-3.5" />
+          {goal ? "Edit goal" : "Set goal"}
+        </Button>
+        {dialog}
+      </>
+    );
+  }
 
   return (
     <>
@@ -150,47 +215,7 @@ export function CodingSessionGoalPill({
           </>
         )}
       </div>
-      {canEdit ? (
-        <Dialog onOpenChange={setOpen} open={open}>
-          <DialogContent data-testid="coding-session-goal-dialog">
-            <DialogHeader>
-              <DialogTitle>
-                {goal ? "Edit session goal" : "Add session goal"}
-              </DialogTitle>
-              <DialogDescription>
-                Keep the shared objective short enough to scan while the session
-                is running.
-              </DialogDescription>
-            </DialogHeader>
-            <Textarea
-              autoFocus
-              data-testid="coding-session-goal-input"
-              maxLength={MAX_CODING_SESSION_GOAL_BYTES}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="What should this session accomplish?"
-              rows={4}
-              value={draft}
-            />
-            <DialogFooter>
-              <Button
-                onClick={() => setOpen(false)}
-                type="button"
-                variant="ghost"
-              >
-                Cancel
-              </Button>
-              <Button
-                data-testid="coding-session-goal-save"
-                disabled={saving || !draft.trim()}
-                onClick={() => void save()}
-                type="button"
-              >
-                {saving ? "Saving…" : "Save goal"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      ) : null}
+      {dialog}
     </>
   );
 }

@@ -55,8 +55,14 @@ export function CodingSessionMissionContext({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8">
+        {/*
+          Context load, not a second roster. The Inspector's Team section owns
+          seat identity, status, model, runtime and seat authority; this table
+          exists for exactly one number per seat, and the seat name is here to
+          say whose number it is — not to restate the roster.
+        */}
         <ContextSection
-          title="Seat context"
+          title="Context load"
           truncations={truncationsFor(model, "team")}
         >
           {model.participants.length === 0 ? (

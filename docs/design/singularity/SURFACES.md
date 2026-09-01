@@ -1306,3 +1306,116 @@ tests answer is the honest one.
 - **Accessibility beyond the two rules stated** (reduced motion in B1, polite
   announcements on C5). The lanes inherit the repo's existing rules — rem tokens
   only, never colour alone, disclosure rows keyboard-reachable.
+
+---
+
+## 18. 2026-09-01 — consolidation
+
+*(Lane U of the 2026-09-01 team-turn reliability + Mission UI batch, base
+`15bbe615`. Verdict being executed: "honest but structurally wrong — every fact
+exists; the hierarchy doesn't." Appended, not edited: §§1–17 remain the record
+of the 2026-08-29 walk.)*
+
+### 18a. Ownership — one stream home, one rail home, no third copy
+
+| Fact | Stream (causality plane) | Rail (state plane) | Deleted from |
+|---|---|---|---|
+| Goal | header row 1 subtitle (text only) | Inspector **Current goal** + the edit control (`CodingSessionGoalPill variant="inspector"`) | the goal-pill row above the stream |
+| Team roster | row 2 chips — `name · role`, the W1 word, and only the two badges below; **no activity phrase** | Inspector **Team**: model · runtime · generation · seat authority (+ remedy) · last activity | the chip's activity phrase (the live strip is its one home); Context tab's roster duplication (now **Context load**, one number per seat); Header provenance popover seat rows |
+| Mission state | typed transaction rows + terminal rows, chronological | Inspector **Mission state**: `<label> · <phase>` and a four-step indicator | the pinned Mission transaction card, and its canonical-chain list |
+| Handoff / causality | assignment → report → verdict → acknowledgement rows, each an `A → B` sentence | (none) | the chain list inside that card |
+| Live "working" | `CodingSessionLiveActivityBar`, one line per working seat | (none; the chip shows the W1 word only) | the chip's activity phrase **and** the Inspector team row's |
+| Delivery status | badge on the **report row** it belongs to | Inspector **Integrity › Delivery**, bounded at 32, newest first | toasts remain transient extras |
+| Seat authority | `ungranted` badge on the chip; `unseated` badge on the report row | Inspector **Team** row detail + the exact remedy command | — |
+| Observed changes | header row 1 `Observed changes N` | Inspector **Changes** / **Files** | — |
+| Tests | (none) | Inspector **Structured tests** (`No test report yet`) | — |
+| Context load / usage | (none) | **Context** tab | Header provenance popover context rows |
+| Evidence (signed ids) | Trace: `Signed source` under each row | Inspector `SignedSource` disclosures | — |
+| Controls | header overflow `⋯` | Inspector: Edit goal, Retry evidence | the duplicate Inspector opener while the rail is open |
+
+### 18b. Transaction-row copy (frozen)
+
+`<Actor> → <Counterparty> · Assignment` · `… · Report` · `… · Refutation` ·
+`… · Verdict: <decision>` · `… · Acknowledgement`; terminals
+`Mission completed · <Actor>` and `Mission blocked · <Actor>`. The arrow and the
+monograms are `aria-hidden`; the row's accessible name is the sentence
+`<Actor> to <Counterparty>: <type>`. An unresolvable author reads
+`unknown actor`, never a key; the founder reads `You` when no profile resolves.
+
+Weight follows one rule, in
+`lib/codingSessionMissionRowGrammar.ts` — `attention` for a blocked terminal, a
+refutation, any row carrying a required action, and any row whose delivery kind
+is `failed`; `standard` otherwise; `quiet` for lifecycle notices and the
+truncation row. Colour never carries a state on its own: every attention row
+pairs its hue with an icon and a word.
+
+### 18c. Delivery and seat vocabulary
+
+Frozen in
+[`desktop/src/features/coding-sessions/lib/codingSessionMissionContracts.ts`](../../../desktop/src/features/coding-sessions/lib/codingSessionMissionContracts.ts):
+`codingSessionTeamWakeDeliveryCopy` (eight kinds, `provider-queued` →
+`unknown`), `codingSessionSeatAuthorityCopy` (`granted`,
+`created-ungranted`, `unknown`), `codingSessionSeatRepairRemedy`, and the §2a
+residual sentence. The UI renders `detail` verbatim and never re-derives it.
+`unknown` is a first-class value and is never rendered as any other kind;
+`undefined` (no projection supplied) is not `[]` (none observed) — a rail with
+no delivery projection reads `Wake delivery unknown`, never "none observed".
+
+**The unseated badge is not seat-authority copy.** §1d's `unseatedReports`
+covers a report author with no active seat for the assignment's role — which
+includes a seat never created, and a seat held for a *different* role. Neither
+has a create receipt behind it, so the badge says
+`Report author holds no seat for <role>` (word: `unseated`) and leaves
+`Seat created, not granted` to the seat-authority badge, which does.
+
+### 18d. Deleted
+
+- **The pinned Mission transaction card.** Its state line moved to the
+  Inspector, its chain list became stream rows, and the component renders
+  nothing (the finalizer deletes the file and its mount together).
+- **The goal-pill row** above the stream — the header already carries the goal
+  and the Inspector now carries the control.
+- **The canonical chain list** — three copies of one handoff became one.
+- **The provenance popover's duplicated context and seat rows** — the rail owns
+  both.
+- **The participant bar's own border and background** — it is row 2 of one
+  header container, not a sixth chrome band, and the density control lost its
+  standalone box for the same reason.
+- **The chip's activity phrase** — it made the chip a three-line card, pushed
+  row 2 well past the wireframe's 56 px and clipped mid-word on narrow. The
+  live strip already says it, once, in full.
+- **The inline tool-row wall in Live** — a turn's signed tool items collapse
+  into one C2 row (`▸ N execution events · Terminal a · Read b · Edit c`).
+  Expanding reveals exactly `N` rows, the existing ones: the count *is* the
+  reversibility contract. Brief hides them, Trace lists them. Any class the
+  classifier cannot place keeps the classifier's own label (`Tool`,
+  `Raw event`) — the bundle never invents a verb, and never prints a zero.
+
+**Two type weights, on purpose.** The stream is read like chat, so a
+transaction row's signed summary is `text-sm` and its monogram pair is 24 px
+(`missionRowChatBodyClass`); the rail is scanned, so it stays on the `text-xs`
+body step. And on an attention row the delivery sentence — including the §2a
+residual — is a visible line, not a `title`: the one sentence that explains a
+wake nobody can find must not require a hover.
+
+**Rail order:** Current goal · Mission state · **Team** · Changes · Files ·
+Structured tests · Accepted plan · Seat-reported plans · Reports · Integrity.
+Team is third because the ungranted seat's repair command is the rail's one
+action item, and it must be in the first screen rather than below four panels
+of file and test detail. `Seat granted` prints as a muted line so the ungranted
+one is comparable rather than merely different-by-absence.
+
+**Shape from the grammar, colour from identity and focus.** The card grammar
+carries a neutral border and background, so a Mission row that also has an
+identity accent or a focus tint must merge the grammar *before* them —
+`cn(base, missionRowClassName, accent.border, isHighlighted && …)`. Merged last
+it repaints every seat's turn block the same grey and flattens the focus tint,
+which is how the accent rail was lost once already.
+
+### 18e. Not adopted from the mock
+
+`+ Member` (overridden in §1 and still overridden), a `Tests 3/3` progress bar
+(**W14**: there is no wire source for a test total, so the Inspector says
+`No test report yet` rather than drawing a full green bar), and the mock's
+`Plan` checklist as an accepted plan (**W15** — the Inspector distinguishes the
+seat's own plan from an accepted one, and says so).

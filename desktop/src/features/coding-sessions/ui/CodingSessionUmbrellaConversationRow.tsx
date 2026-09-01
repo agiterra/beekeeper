@@ -18,10 +18,16 @@ import { RedactedText } from "@/shared/ui/RedactedPill";
 export function UmbrellaConversationRow({
   currentUserPubkey,
   message,
+  missionRowClassName,
   operatorProfiles,
 }: {
   currentUserPubkey: string | null;
   message: CodingSessionLaneMessage;
+  /**
+   * Mission's shared card grammar. Conversation never passes it, so the
+   * one-seat lens keeps the exact bubble it has always rendered.
+   */
+  missionRowClassName?: string;
   operatorProfiles: UserProfileLookup | undefined;
 }) {
   const authorLabel = resolveCodingSessionPromptAuthorLabel({
@@ -31,7 +37,7 @@ export function UmbrellaConversationRow({
   });
   return (
     <div
-      className="rounded-xl bg-muted/40 px-4 py-2"
+      className={missionRowClassName ?? "rounded-xl bg-muted/40 px-4 py-2"}
       data-testid="coding-session-umbrella-conversation"
     >
       <p className="text-2xs text-muted-foreground">

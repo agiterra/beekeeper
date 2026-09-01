@@ -119,6 +119,20 @@ export async function assertConversationAndMissionLenses(
   await expect(
     inspector.getByRole("heading", { name: "Inspector", exact: true }),
   ).toHaveCount(0);
+  // DESIGN-SPEC §3 Region D / §8: Team third, so the ungranted seat's remedy
+  // is in the first screen of the rail rather than below four detail panels.
+  expect(await inspector.locator("section > h3").allTextContents()).toEqual([
+    "Current goal",
+    "Mission state",
+    "Team",
+    "Changes",
+    "Files",
+    "Structured tests",
+    "Accepted plan",
+    "Seat-reported plans",
+    "Reports",
+    "Integrity",
+  ]);
   await waitForAnimations(page);
   const surfaceHost = page.getByTestId("coding-session-surface-host");
   await surfaceHost.screenshot({
@@ -219,21 +233,59 @@ export async function assertConversationAndMissionLenses(
   await workspace.screenshot({
     path: `${harness.screenshots}/mission-live.png`,
   });
+  // DESIGN-SPEC C2: Live collapses the turn's signed tool items into one row,
+  // and expanding reveals exactly the events it counted (the reversibility
+  // contract the 2026-08-29 walk asked for).
+  const bundle = page
+    .getByTestId("coding-session-mission-execution-bundle-toggle")
+    .first();
+  await expect(bundle).toBeVisible();
+  await expect(bundle).toHaveAttribute("aria-expanded", "false");
+  const bundleCount = Number(await bundle.getAttribute("data-count"));
+  expect(bundleCount).toBeGreaterThan(0);
+  await expect(bundle).toContainText(
+    `${bundleCount} execution event${bundleCount === 1 ? "" : "s"}`,
+  );
+  await expect(
+    page.getByTestId("coding-session-mission-execution-breakdown").first(),
+  ).toContainText(/[A-Z][a-z]+ \d/);
+  await bundle.click();
+  await expect(bundle).toHaveAttribute("aria-expanded", "true");
+  await bundle.click();
+  await expect(bundle).toHaveAttribute("aria-expanded", "false");
+  await waitForAnimations(page);
+  // U-E1: the causality plane on its own, cropped to the scrolling stream
+  // (the timeline element itself is taller than the viewport, so shooting it
+  // directly returns unpainted rows below the fold).
+  await page.getByTestId("coding-session-narrative-scroll").screenshot({
+    path: `${harness.screenshots}/stream-flow-wide.png`,
+  });
 
   await briefDensity.click();
   await expect(briefDensity).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByTestId("coding-session-mission-trace-detail"),
   ).toHaveCount(0);
+  // U-E2: no pinned card above the stream, and no chain list anywhere.
   await expect(
     page.getByTestId("coding-session-mission-transaction-card"),
-  ).toContainText("Mission running");
+  ).toHaveCount(0);
   await expect(
     page.getByTestId("coding-session-mission-canonical-chain"),
-  ).toContainText("report");
+  ).toHaveCount(0);
+  await expect(inspector.getByTestId("mission-state-summary")).toContainText(
+    "Mission running",
+  );
+  await expect(
+    inspector.getByTestId("mission-state-phase-indicator"),
+  ).toHaveAttribute("data-current-phase", "reported");
   await waitForAnimations(page);
   await workspace.screenshot({
     path: `${harness.screenshots}/mission-brief.png`,
+  });
+  // U-E1: the stream itself, in Brief, cropped away from the surrounding chrome.
+  await page.getByTestId("coding-session-narrative-scroll").screenshot({
+    path: `${harness.screenshots}/stream-flow-brief.png`,
   });
 
   await traceDensity.click();
@@ -461,16 +513,21 @@ export async function assertMissionRestartRecovery(
   await harness.openMockApp(page);
   await harness.seedAndOpen(page);
   await page.getByRole("button", { name: "Mission lens" }).click();
-  const card = page.getByTestId("coding-session-mission-transaction-card");
+  // U-E2: the pinned transaction card is deleted. Mission state is the rail's,
+  // and the signed chain it used to list is the stream's.
+  await expect(
+    page.getByTestId("coding-session-mission-transaction-card"),
+  ).toHaveCount(0);
   const inspector = page.getByTestId("coding-session-mission-inspector");
+  const card = inspector.getByTestId("mission-state-summary");
   await expect(card).toContainText("Mission running");
   await expect(card).toContainText("accepted report awaiting disposition");
   await expect(
-    card.getByTestId("coding-session-mission-canonical-chain"),
-  ).toContainText("assignment");
+    inspector.getByTestId("mission-state-phase-indicator"),
+  ).toHaveAttribute("data-current-phase", "reported");
   await expect(
-    card.getByTestId("coding-session-mission-canonical-chain"),
-  ).toContainText("report");
+    page.getByTestId("coding-session-mission-canonical-chain"),
+  ).toHaveCount(0);
   await expect(inspector).toContainText(
     "Mission inspector mounted with signed evidence.",
   );
@@ -543,8 +600,8 @@ export async function assertMissionRestartRecovery(
   });
   await expect(card).toContainText("builder seat must acknowledge");
   await expect(
-    card.getByTestId("coding-session-mission-canonical-chain"),
-  ).toContainText("disposition");
+    inspector.getByTestId("mission-state-phase-indicator"),
+  ).toHaveAttribute("data-current-phase", "ruled");
 
   await publishPhase(harness.acknowledged);
   await expect(card).toContainText("Waiting on a person", {
@@ -552,20 +609,16 @@ export async function assertMissionRestartRecovery(
   });
   await expect(card).toContainText("Publish the signed follow-up note.");
   await expect(
-    card.getByTestId("coding-session-mission-canonical-chain"),
-  ).toContainText("acknowledgement");
+    inspector.getByTestId("mission-state-phase-indicator"),
+  ).toHaveAttribute("data-current-phase", "acknowledged");
 
   await publishPhase(harness.completed);
   await expect(card).toContainText("Mission completed", { timeout: 15_000 });
-  await expect(card).toContainText("Decision: approve-with-notes");
-  await expect(card).toContainText("Publish the signed follow-up note.");
-  await expect(card).toContainText("Approval received.");
-  await expect(
-    card.getByTestId("coding-session-mission-canonical-chain"),
-  ).toContainText("acknowledgement");
   await expect(inspector).toContainText(
     "Portable Mission evidence is complete.",
   );
+  // The verdict decision and the acknowledgement note are stream rows now
+  // (`assertMissionTransactionFlow`), not a chain list inside a rail card.
 
   await page.reload();
   await page.evaluate((response) => {
@@ -575,9 +628,6 @@ export async function assertMissionRestartRecovery(
   }, harness.completed.foldResponse);
   await harness.seedAndOpen(page, harness.completed);
   await expect(card).toContainText("Mission completed", { timeout: 15_000 });
-  await expect(card).toContainText("Decision: approve-with-notes");
-  await expect(card).toContainText("Publish the signed follow-up note.");
-  await expect(card).toContainText("Approval received.");
   await expect(inspector).toContainText(
     "Mission inspector mounted with signed evidence.",
   );
@@ -589,4 +639,268 @@ export async function assertMissionRestartRecovery(
   await expect(context).toContainText(
     "Preserve Conversation and show only canonical Mission facts.",
   );
+}
+
+// ---------------------------------------------------------------------------
+// U-E4 — fixtures and assertions the finalizer enables once the stream is wired
+//
+// Lane U cannot mount `missionTransactions` / `missionDeliveries` /
+// `seatAuthorities` on `CodingSessionUmbrellaTimelineView`: the mount lives in
+// `CodingSessionUmbrellaWorkspace.tsx`, which this lane does not own. Everything
+// below is written and exported so that enabling the integrated scenarios is a
+// one-line change (`test.skip` → `test`) in the spec, with no new fixture work.
+// ---------------------------------------------------------------------------
+
+/**
+ * A non-founder-signed 44220 whose text is **exactly** the identifier-only
+ * team-wake pointer, addressed to the lead target.
+ *
+ * Built through `buildCodingSessionCommandEvent`, not hand-rolled tags, so the
+ * fixture cannot drift from the real command envelope; the caller signs it with
+ * the lead execution's `providerAuthorityPubkey` (§1b: a delivery is only
+ * provider evidence when the lead's own provider authority signed it).
+ */
+export function signedProviderWakeCommand(input: {
+  buildCommandEvent: (built: {
+    channelId: string;
+    commandId: string;
+    target: CodingSessionCommandTargetLike;
+    text: string;
+    deliver: "boundary";
+  }) => { kind: number; content: string; tags: string[][] };
+  channelId: string;
+  commandId: string;
+  createdAt: number;
+  finalize: (event: {
+    kind: number;
+    created_at: number;
+    tags: string[][];
+    content: string;
+  }) => RelayEvent;
+  /** The lead generation this wake addresses. */
+  leadTarget: CodingSessionCommandTargetLike;
+  /** `codingSessionTeamWakeText(...)` for the operation — byte-identical. */
+  pointerText: string;
+}): RelayEvent {
+  const built = input.buildCommandEvent({
+    channelId: input.channelId,
+    commandId: input.commandId,
+    target: input.leadTarget,
+    text: input.pointerText,
+    deliver: "boundary",
+  });
+  return input.finalize({
+    kind: built.kind,
+    created_at: input.createdAt,
+    tags: built.tags,
+    content: built.content,
+  });
+}
+
+/**
+ * The lead runner's admission receipt for one command: the `turn_queued` that
+ * transfers durable ownership of the operation (§2). Signed by the same
+ * provider authority as the wake.
+ */
+export function signedTurnQueuedReceipt(input: {
+  channelId: string;
+  commandId: string;
+  createdAt: number;
+  finalize: (event: {
+    kind: number;
+    created_at: number;
+    tags: string[][];
+    content: string;
+  }) => RelayEvent;
+  leadTarget: CodingSessionCommandTargetLike;
+  receiptKind: number;
+  receiptSchema: string;
+  receiptTagVersion: string;
+  semanticKey: (commandId: string, status: string) => string;
+}): RelayEvent {
+  const status = "turn_queued";
+  return input.finalize({
+    kind: input.receiptKind,
+    created_at: input.createdAt,
+    tags: [
+      ["h", input.channelId],
+      ["cslr-v", input.receiptTagVersion],
+      ["csl-command", input.commandId],
+      ["csl-key", input.semanticKey(input.commandId, status)],
+    ],
+    content: JSON.stringify({
+      schema: input.receiptSchema,
+      commandId: input.commandId,
+      status,
+      session: input.leadTarget,
+      error: null,
+    }),
+  });
+}
+
+/** Structural stand-in for `CodingSessionCommandTarget` (test-only). */
+type CodingSessionCommandTargetLike = {
+  driver: string;
+  instanceId: string;
+  sessionId: string;
+  generation: number;
+};
+
+/**
+ * The governed fixture with the builder's `grant-seat` (and its acceptance)
+ * removed: a seat that was created and never granted, which is the state §1c
+ * found on the wire and which no persistent surface disclosed.
+ */
+export function governedMissionWithoutBuilderGrant(
+  fixture: GovernedMissionFixture,
+  authorityTransitionKind: number,
+  relayAcceptanceKind = 40099,
+): GovernedMissionFixture {
+  const events = fixture.events.filter((event) => {
+    if (event.kind === authorityTransitionKind) return false;
+    if (event.kind !== relayAcceptanceKind) return true;
+    return !event.content.includes("grant-seat");
+  });
+  return {
+    events,
+    foldResponse: {
+      ...fixture.foldResponse,
+      context: {
+        ...(fixture.foldResponse.context as Record<string, unknown>),
+        authorityHeadEventId: null,
+        authorityHeadSeq: 0,
+      },
+    },
+  };
+}
+
+/**
+ * U-E1 / U-E5 / U-E6: assignment → report → verdict → acknowledgement read as
+ * one flow in the stream, with the delivery and seat-authority disclosure on
+ * the rows that own them.
+ */
+export async function assertMissionTransactionFlow(
+  page: Page,
+  input: {
+    screenshots: string;
+    expectUnseated?: boolean;
+    /** §8: the exact delivery sentence an attention row must print. */
+    expectDeliveryDetail?: string;
+  },
+) {
+  const rows = page.getByTestId("coding-session-mission-transaction-row");
+  await expect(rows).toHaveCount(4, { timeout: 15_000 });
+  await expect(rows.nth(0)).toHaveAttribute(
+    "data-transaction-type",
+    "assignment",
+  );
+  await expect(rows.nth(1)).toHaveAttribute("data-transaction-type", "report");
+  await expect(rows.nth(2)).toHaveAttribute(
+    "data-transaction-type",
+    "disposition",
+  );
+  await expect(rows.nth(3)).toHaveAttribute(
+    "data-transaction-type",
+    "acknowledgement",
+  );
+  await expect(rows.nth(2)).toContainText("Verdict: approve-with-notes");
+  await expect(rows.nth(2)).toContainText("Publish the signed follow-up note.");
+  // DESIGN-SPEC §8: chat weight — 24px monogram pair, `text-sm` body.
+  const monograms = rows.nth(1).locator("span.size-6");
+  await expect(monograms).toHaveCount(2);
+  await expect(rows.nth(1).locator("p.text-sm").first()).toContainText(
+    "Mission inspector mounted with signed evidence.",
+  );
+  if (input.expectUnseated) {
+    await expect(
+      rows.nth(1).getByTestId("coding-session-unseated-badge"),
+    ).toBeVisible();
+  }
+  if (input.expectDeliveryDetail) {
+    // §8: on an attention row the sentence is a text node, not a `title`.
+    const detail = page.getByTestId("coding-session-delivery-detail").first();
+    await expect(detail).toBeVisible();
+    await expect(detail).toHaveText(input.expectDeliveryDetail);
+  }
+  await waitForAnimations(page);
+  await page.getByTestId("coding-session-narrative-scroll").screenshot({
+    path: `${input.screenshots}/stream-transaction-flow.png`,
+  });
+}
+
+/**
+ * U-E5: a provider wake that reached `turn_queued` and has not started is
+ * disclosed in all three of its homes, and never as a failure.
+ *
+ * The three homes are the ownership table's, and this asserts each one:
+ * the **report row** that owns the operation, the **reporting seat's chip**,
+ * and the Inspector's **Integrity › Delivery** list. `provider-queued` is the
+ * one kind where the wake is genuinely in flight — the badge word must be
+ * `queued`, and nothing on the page may read `failed` or `fallback`.
+ */
+export async function assertProviderQueuedDelivery(
+  page: Page,
+  input: { reporterChipName: RegExp; screenshots: string },
+) {
+  // 1. The report row that owns the operation.
+  const reportRow = page
+    .getByTestId("coding-session-mission-transaction-row")
+    .filter({ has: page.locator('[data-transaction-type="report"]') })
+    .or(
+      page.locator(
+        '[data-testid="coding-session-mission-transaction-row"][data-transaction-type="report"]',
+      ),
+    )
+    .first();
+  const rowBadge = reportRow.getByTestId("coding-session-delivery-badge");
+  await expect(rowBadge).toHaveAttribute("data-kind", "provider-queued", {
+    timeout: 15_000,
+  });
+  await expect(rowBadge).toContainText("queued");
+  await expect(rowBadge).toHaveAttribute("title", "Provider wake queued");
+  // A queued wake is in flight, not lost: the row must not take attention weight.
+  await expect(reportRow).toHaveAttribute("data-weight", "standard");
+
+  // 2. The reporting seat's chip — and only that seat's.
+  const chips = page
+    .getByTestId("coding-session-participant-bar")
+    .getByTestId("coding-session-participant-chip");
+  const reporterChip = chips.filter({ hasText: input.reporterChipName });
+  await expect(
+    reporterChip.getByTestId("coding-session-delivery-badge"),
+  ).toHaveAttribute("data-kind", "provider-queued");
+  await expect(
+    page
+      .getByTestId("coding-session-participant-bar")
+      .getByTestId("coding-session-delivery-badge"),
+  ).toHaveCount(1);
+
+  // 3. The Inspector's persistent record.
+  const inspector = page.getByTestId("coding-session-mission-inspector");
+  const deliveryBlock = inspector.getByTestId("mission-integrity-delivery");
+  await expect(deliveryBlock).toBeVisible();
+  await expect(deliveryBlock.getByTestId("mission-delivery-empty")).toHaveCount(
+    0,
+  );
+  const deliveryRow = deliveryBlock.getByTestId("mission-delivery-row").first();
+  await expect(deliveryRow).toHaveAttribute("data-kind", "provider-queued");
+  await expect(deliveryRow).toContainText("Provider wake queued");
+  await expect(deliveryRow).toContainText("Owning command");
+
+  // Nothing anywhere may read this operation as failed or Desktop-covered.
+  await expect(
+    page.locator(
+      '[data-testid="coding-session-delivery-badge"][data-kind="failed"]',
+    ),
+  ).toHaveCount(0);
+  await expect(
+    page.locator(
+      '[data-testid="coding-session-delivery-badge"][data-kind^="fallback"]',
+    ),
+  ).toHaveCount(0);
+
+  await waitForAnimations(page);
+  await page.getByTestId("coding-session-narrative-scroll").screenshot({
+    path: `${input.screenshots}/stream-delivery-queued.png`,
+  });
 }

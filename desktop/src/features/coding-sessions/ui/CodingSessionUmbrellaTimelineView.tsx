@@ -7,7 +7,22 @@ import {
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import type { CodingSessionMissionDensity } from "@/features/coding-sessions/lib/codingSessionMissionDensity";
-import { projectCodingSessionMissionTimeline } from "@/features/coding-sessions/lib/codingSessionMissionStreamModel";
+import type {
+  CodingSessionMissionTransactionInput,
+  CodingSessionTeamWakeDelivery,
+} from "@/features/coding-sessions/lib/codingSessionMissionContracts";
+import {
+  missionRowClass,
+  missionRowMetaClass,
+} from "@/features/coding-sessions/lib/codingSessionMissionRowGrammar";
+import {
+  codingSessionMissionStreamEntryKey,
+  projectCodingSessionMissionTimeline,
+} from "@/features/coding-sessions/lib/codingSessionMissionStreamModel";
+import {
+  buildCodingSessionMissionTransactionRows,
+  type CodingSessionMissionActorResolver,
+} from "@/features/coding-sessions/lib/codingSessionMissionTransactionRows";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionUmbrellaRecord,
@@ -15,6 +30,7 @@ import type {
 import {
   buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
+  type CodingSessionUmbrellaTimelineEntry,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import {
   listCodingSessionUmbrellaParticipants,
@@ -22,16 +38,25 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { CODING_SESSION_UNKNOWN_ACTOR } from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { cn } from "@/shared/lib/cn";
 import {
   blockTargetKey,
   resolveWorkingBlockKeys,
   shouldShowTurnBlockProvenance,
 } from "./CodingSessionUmbrellaWorkspaceModel";
 import { CodingSessionMissionTraceDetails } from "./CodingSessionMissionTraceDetails";
+import { CodingSessionMissionTransactionRow } from "./CodingSessionMissionTransactionRow";
 import { CodingSessionPendingTurns } from "./CodingSessionPendingTurns";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import { UmbrellaConversationRow } from "./CodingSessionUmbrellaConversationRow";
 import { CodingSessionUmbrellaTurnBlock } from "./CodingSessionUmbrellaTurnBlock";
+
+/** The turn block's Mission shell: the card grammar, keeping the accent rail. */
+const MISSION_TURN_BLOCK_CLASS = missionRowClass("standard", {
+  className: "border-l-2",
+});
+/** The conversation row's Mission shell — Conversation never receives it. */
+const MISSION_CONVERSATION_ROW_CLASS = missionRowClass("standard");
 
 /** One chronological umbrella narrative, optionally projected through Mission density. */
 export function CodingSessionUmbrellaTimelineView({
@@ -40,21 +65,33 @@ export function CodingSessionUmbrellaTimelineView({
   currentUserPubkey = null,
   focusedExecutionKey = null,
   laneMessages,
+  missionDeliveries,
   missionDensity = null,
+  missionFounderPubkey = null,
+  missionTransactions,
   onHandoff,
   onFocusExecution,
   operatorProfiles,
+  resolveMissionActor,
   umbrella,
 }: {
   channelId: string;
   currentUserPubkey?: string | null;
   focusedExecutionKey?: string | null;
   laneMessages: readonly CodingSessionLaneMessage[];
+  /** Delivery evidence per operation source; badged on the row that owns it. */
+  missionDeliveries?: readonly CodingSessionTeamWakeDelivery[];
   missionDensity?: CodingSessionMissionDensity | null;
+  /** Founder identity, so the founder's own rows read `You` and not a key. */
+  missionFounderPubkey?: string | null;
+  /** Signed 44244 transactions. Rendered only while a Mission density is set. */
+  missionTransactions?: readonly CodingSessionMissionTransactionInput[];
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
   onFocusExecution?: (executionKey: string | null) => void;
   operatorProfiles?: UserProfileLookup;
   actorNames?: CodingSessionActorNameResolver;
+  /** Pubkey → seat name for transaction rows; the finalizer supplies it. */
+  resolveMissionActor?: CodingSessionMissionActorResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
@@ -83,19 +120,61 @@ export function CodingSessionUmbrellaTimelineView({
     }
     return records;
   }, [umbrella.executions]);
+  const transactionRows = React.useMemo(() => {
+    if (missionDensity === null) return undefined;
+    if (!missionTransactions || missionTransactions.length === 0) {
+      return undefined;
+    }
+    return buildCodingSessionMissionTransactionRows({
+      transactions: missionTransactions,
+      resolveActor:
+        resolveMissionActor ?? (() => ({ label: null, executionKey: null })),
+      founderPubkey: missionFounderPubkey,
+      deliveries: missionDeliveries,
+      density: missionDensity,
+    });
+  }, [
+    missionDeliveries,
+    missionDensity,
+    missionFounderPubkey,
+    missionTransactions,
+    resolveMissionActor,
+  ]);
   const entries = React.useMemo(() => {
     const chronological = buildUmbrellaTimeline(umbrella, laneMessages);
     return missionDensity
-      ? projectCodingSessionMissionTimeline(chronological, missionDensity)
+      ? projectCodingSessionMissionTimeline(
+          chronological,
+          missionDensity,
+          transactionRows,
+        )
       : chronological;
-  }, [laneMessages, missionDensity, umbrella]);
+  }, [laneMessages, missionDensity, transactionRows, umbrella]);
+  // Provenance, working-block resolution and handoff sources are facts about
+  // the narrative alone; a transaction row is never one of their neighbours.
+  const narrativeEntries = React.useMemo(
+    () =>
+      entries.filter(
+        (entry): entry is CodingSessionUmbrellaTimelineEntry =>
+          entry.kind !== "transaction" &&
+          entry.kind !== "transaction-truncation",
+      ),
+    [entries],
+  );
+  const narrativeIndexByKey = React.useMemo(() => {
+    const indexes = new Map<string, number>();
+    narrativeEntries.forEach((entry, index) => {
+      indexes.set(codingSessionUmbrellaEntryKey(entry), index);
+    });
+    return indexes;
+  }, [narrativeEntries]);
   const workingBlockKeys = React.useMemo(
-    () => resolveWorkingBlockKeys(umbrella, entries),
-    [entries, umbrella],
+    () => resolveWorkingBlockKeys(umbrella, narrativeEntries),
+    [narrativeEntries, umbrella],
   );
   const factCandidates = React.useMemo(
     () =>
-      entries.flatMap((entry) =>
+      narrativeEntries.flatMap((entry) =>
         entry.kind === "turn-block"
           ? [
               {
@@ -108,7 +187,7 @@ export function CodingSessionUmbrellaTimelineView({
             ]
           : [],
       ),
-    [entries, recordsByGenerationId],
+    [narrativeEntries, recordsByGenerationId],
   );
   const resolveFactLocation = React.useCallback(
     (link: CodingSessionHandoffLink) =>
@@ -184,14 +263,40 @@ export function CodingSessionUmbrellaTimelineView({
       className="flex flex-col gap-7"
       data-testid="coding-session-umbrella-timeline"
     >
-      {entries.map((entry, index) => {
-        const key = codingSessionUmbrellaEntryKey(entry);
+      {entries.map((entry) => {
+        const key = codingSessionMissionStreamEntryKey(entry);
+        if (entry.kind === "transaction") {
+          return (
+            <CodingSessionMissionTransactionRow key={key} row={entry.row} />
+          );
+        }
+        if (entry.kind === "transaction-truncation") {
+          return (
+            <p
+              className={cn(
+                missionRowClass("quiet"),
+                missionRowMetaClass(),
+                "text-center",
+              )}
+              data-testid="coding-session-mission-transaction-truncation"
+              key={key}
+              role="status"
+            >
+              {entry.hiddenCount} earlier transactions not shown
+            </p>
+          );
+        }
         if (entry.kind === "conversation") {
           return (
             <UmbrellaConversationRow
               currentUserPubkey={currentUserPubkey}
               key={key}
               message={entry.message}
+              missionRowClassName={
+                missionDensity === null
+                  ? undefined
+                  : MISSION_CONVERSATION_ROW_CLASS
+              }
               operatorProfiles={operatorProfiles}
             />
           );
@@ -202,7 +307,11 @@ export function CodingSessionUmbrellaTimelineView({
             CODING_SESSION_UNKNOWN_ACTOR;
           return (
             <p
-              className="text-center text-2xs text-muted-foreground"
+              className={
+                missionDensity === null
+                  ? "text-center text-2xs text-muted-foreground"
+                  : cn(missionRowClass("quiet"), "text-center text-2xs")
+              }
               data-lifecycle-event={entry.event}
               data-testid="coding-session-umbrella-lifecycle"
               key={key}
@@ -233,6 +342,10 @@ export function CodingSessionUmbrellaTimelineView({
               isWorking={workingBlockKeys.has(key)}
               label={labelsByExecutionKey.get(entry.executionKey) ?? null}
               labelsByExecutionKey={labelsByExecutionKey}
+              missionExecutionBundle={missionDensity === "live"}
+              missionRowClassName={
+                missionDensity === null ? undefined : MISSION_TURN_BLOCK_CLASS
+              }
               onHandoff={onHandoff}
               onFocusExecution={onFocusExecution}
               onRegisterNode={registerBlockNode}
@@ -240,7 +353,10 @@ export function CodingSessionUmbrellaTimelineView({
               operatorProfiles={operatorProfiles}
               record={record}
               resolveFactLocation={resolveFactLocation}
-              showProvenance={shouldShowTurnBlockProvenance(entries, index)}
+              showProvenance={shouldShowTurnBlockProvenance(
+                narrativeEntries,
+                narrativeIndexByKey.get(key) ?? -1,
+              )}
               stickyProvenance={
                 focusedExecutionKey === null && umbrella.executions.length > 1
               }
