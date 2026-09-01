@@ -716,3 +716,72 @@ test("repeated attribution overflow reports one exact bounded-collection count",
     },
   );
 });
+
+test("D-T9: report seat authority is unseated, granted, or unknown — never inferred", () => {
+  const reports = [
+    {
+      sourceEventId: "aa".repeat(32),
+      authorLabel: "builder",
+      summary: "granted work",
+      assignmentRef: "cc".repeat(32),
+      branch: null,
+      baseSha: null,
+      headSha: null,
+      files: [],
+      tests: [],
+    },
+    {
+      sourceEventId: "bb".repeat(32),
+      authorLabel: "stranger",
+      summary: "ungranted work",
+      assignmentRef: "cc".repeat(32),
+      branch: null,
+      baseSha: null,
+      headSha: null,
+      files: [],
+      tests: [],
+    },
+  ];
+  const folded = deriveCodingSessionMissionInspectorModel(
+    baseInput({ reports, unseatedReportEventIds: ["bb".repeat(32)] }),
+  );
+  assert.deepEqual(
+    folded.reports.map((report) => report.seatAuthority),
+    ["granted", "unseated"],
+  );
+  const unfolded = deriveCodingSessionMissionInspectorModel(
+    baseInput({ reports }),
+  );
+  assert.deepEqual(
+    unfolded.reports.map((report) => report.seatAuthority),
+    ["unknown", "unknown"],
+    "no fold means no claim about a seat",
+  );
+});
+
+test("D-T9: transactions and their truncation count pass through unchanged", () => {
+  const transactions = [
+    {
+      sourceEventId: "aa".repeat(32),
+      type: "report",
+      authorPubkey: "dd".repeat(32),
+      createdAt: 10,
+      counterpartyPubkey: null,
+      parentEventId: null,
+      summary: "one",
+      decision: null,
+      requiredAction: null,
+      fileCount: 0,
+      testCount: 0,
+      unseated: false,
+    },
+  ];
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({ transactions, transactionsTruncated: 7 }),
+  );
+  assert.deepEqual(model.transactions, transactions);
+  assert.equal(model.transactionsTruncated, 7);
+  const empty = deriveCodingSessionMissionInspectorModel(baseInput());
+  assert.deepEqual(empty.transactions, []);
+  assert.equal(empty.transactionsTruncated, 0);
+});

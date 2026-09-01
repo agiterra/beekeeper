@@ -1,11 +1,27 @@
 import * as React from "react";
 import { toast } from "sonner";
 
-import { publishCodingSessionCommand } from "../lib/codingSessionCommand";
+import {
+  buildCodingSessionTargetKey,
+  publishCodingSessionCommand,
+} from "../lib/codingSessionCommand";
+import type { CodingSessionCommandTarget } from "../lib/codingSessionCommand";
+import type {
+  CodingSessionSeatAuthority,
+  CodingSessionTeamWakeDelivery,
+} from "../lib/codingSessionMissionContracts";
+import {
+  deriveCodingSessionSeatAuthorities,
+  deriveCodingSessionTeamWakeDeliveryPlan,
+  type CodingSessionTeamWakeDeliveryPlan,
+} from "../lib/codingSessionTeamDeliveryStatus";
 import {
   acknowledgeCodingSessionTeamWakes,
   baselineCodingSessionTeamWakes,
   buildCodingSessionTeamWakeCommandId,
+  buildCodingSessionTeamWakeReArmCommandId,
+  clearCodingSessionTeamWakePublishFailure,
+  CODING_SESSION_TEAM_WAKE_GRACE_MS,
   codingSessionTeamWakeFallbackNotBefore,
   codingSessionTeamWakeEvidenceIsComplete,
   codingSessionTeamWakeStorageKey,
@@ -14,14 +30,44 @@ import {
   pendingCodingSessionTeamWake,
   readCodingSessionTeamWakeState,
   recordCodingSessionTeamWakeAttempt,
+  recordCodingSessionTeamWakeCustody,
+  recordCodingSessionTeamWakePublishFailure,
+  recordCodingSessionTeamWakeReArm,
+  releaseCodingSessionTeamWakeCustody,
   observeCodingSessionTeamWake,
   migrateCodingSessionTeamWakeCursor,
   writeCodingSessionTeamWakeState,
+  type CodingSessionTeamWakeState,
 } from "../lib/codingSessionTeamWake";
 import type { CodingSessionUmbrellaRecord } from "../lib/codingSessionTypes";
+import type { CodingSessionMissionEvidenceClient } from "../lib/useCodingSessionMissionEvidence";
 import { useCodingSessionMissionEvidence } from "../lib/useCodingSessionMissionEvidence";
+import { useCodingSessionLeadWakeEvidence } from "./useCodingSessionLeadWakeEvidence";
 
-const DESKTOP_FALLBACK_GRACE_MS = 15_000;
+const EMPTY_DELIVERIES: CodingSessionTeamWakeDelivery[] = [];
+const EMPTY_PLAN: CodingSessionTeamWakeDeliveryPlan = {
+  deliveries: EMPTY_DELIVERIES,
+  resolvedSourceEventIds: new Set<string>(),
+  custodiedSources: [],
+  releasedCustodySourceEventIds: new Set<string>(),
+  suppressedSourceEventIds: new Set<string>(),
+  publishEligibleSourceEventIds: new Set<string>(),
+  reArmEligibleSourceEventIds: new Set<string>(),
+  spentCommandIds: new Set<string>(),
+};
+
+/** What the workspace renders from this hook. Nothing here is inferred. */
+export type CodingSessionTeamWakeResult = {
+  deliveries: CodingSessionTeamWakeDelivery[];
+  seatAuthorities: CodingSessionSeatAuthority[];
+  refusal: string | null;
+};
+
+/** Test seams. Production passes neither and uses the real relay and signer. */
+export type CodingSessionTeamWakeDependencies = {
+  evidenceClient?: CodingSessionMissionEvidenceClient;
+  publishCommand?: typeof publishCodingSessionCommand;
+};
 
 function leadAcknowledgedCommandIds(
   umbrella: CodingSessionUmbrellaRecord,
@@ -86,22 +132,32 @@ function leadAcknowledgedSourceEventIds(
 }
 
 /**
- * Push one durable, identifier-only lead wake for signed team results.
+ * Push one durable, identifier-only lead wake for signed team results — and,
+ * since 2026-09-01, read the lead's own 44224 receipts before doing so.
  *
- * There is deliberately no polling loop. Signed 44244/44225 ingress changes
- * drive this hook, and a provider-signed user-prompt echo is the only delivery
- * acknowledgement. Either producer's exact operation pointer retires the
- * source durably; relay acceptance alone remains pending and is retried once
- * on a later mount with the same deterministic command id.
+ * There is deliberately no polling loop. Signed 44244/44225 ingress and the
+ * lead's 44220/44224 evidence subscription drive this hook; the one timer is
+ * the single-shot local grace, which costs no model turn.
+ *
+ * The arbitration is the §2a ruling: a command — anyone's — that the lead's
+ * provider receipted `turn_queued` owns the operation, so Desktop suppresses
+ * and records that durably. Only when *every* known command has failed for a
+ * reason other than `DUPLICATE_OPERATION` does Desktop cover, and then exactly
+ * once, with a new command id.
  */
-export function useCodingSessionTeamWake(input: {
-  catalogSettled: boolean;
-  channelId: string;
-  communityScope: string;
-  currentUserPubkey: string | null;
-  sessionClosed: boolean;
-  umbrella: CodingSessionUmbrellaRecord;
-}): void {
+export function useCodingSessionTeamWake(
+  input: {
+    catalogSettled: boolean;
+    channelId: string;
+    communityScope: string;
+    currentUserPubkey: string | null;
+    sessionClosed: boolean;
+    umbrella: CodingSessionUmbrellaRecord;
+  },
+  dependencies: CodingSessionTeamWakeDependencies = {},
+): CodingSessionTeamWakeResult {
+  const publishCommand =
+    dependencies.publishCommand ?? publishCodingSessionCommand;
   const governedScope = React.useMemo(
     () =>
       input.umbrella.executions.length > 1 &&
@@ -123,11 +179,10 @@ export function useCodingSessionTeamWake(input: {
       input.umbrella.sessionRef,
     ],
   );
-  const evidence = useCodingSessionMissionEvidence(governedScope);
-  const evidenceComplete = codingSessionTeamWakeEvidenceIsComplete({
-    isLoading: evidence.isLoading,
-    errorMessage: evidence.errorMessage,
-  });
+  const evidence = useCodingSessionMissionEvidence(
+    governedScope,
+    dependencies.evidenceClient,
+  );
   const plan = React.useMemo(
     () =>
       deriveCodingSessionTeamWakePlan({
@@ -143,6 +198,33 @@ export function useCodingSessionTeamWake(input: {
       input.umbrella,
     ],
   );
+  const leadTarget = plan.lead?.activeGeneration.commandTarget ?? null;
+  const leadTargetKey = leadTarget
+    ? buildCodingSessionTargetKey(leadTarget)
+    : null;
+  const wakeEvidence = useCodingSessionLeadWakeEvidence(
+    {
+      channelId: input.channelId,
+      leadTargetKey,
+      providerAuthorityPubkey:
+        plan.lead?.activeGeneration.providerAuthorityPubkey ?? null,
+    },
+    dependencies.evidenceClient,
+  );
+  // An index that is loading, errored, or saturated is not an empty index. If
+  // it were read as one, the hook would conclude "no provider command exists"
+  // and publish — which is the whole defect this batch exists to fix.
+  const evidenceComplete =
+    codingSessionTeamWakeEvidenceIsComplete({
+      isLoading: evidence.isLoading,
+      errorMessage: evidence.errorMessage,
+    }) &&
+    codingSessionTeamWakeEvidenceIsComplete({
+      isLoading: wakeEvidence.isLoading,
+      errorMessage: wakeEvidence.errorMessage,
+    }) &&
+    wakeEvidence.index !== null &&
+    !wakeEvidence.index.overflowed;
   const acknowledgedCommandIds = React.useMemo(
     () => leadAcknowledgedCommandIds(input.umbrella),
     [input.umbrella],
@@ -151,12 +233,6 @@ export function useCodingSessionTeamWake(input: {
     () => leadAcknowledgedSourceEventIds(input.umbrella),
     [input.umbrella],
   );
-  const acknowledgedCommandIdsRef = React.useRef(acknowledgedCommandIds);
-  const acknowledgedSourceEventIdsRef = React.useRef(
-    acknowledgedSourceEventIds,
-  );
-  acknowledgedCommandIdsRef.current = acknowledgedCommandIds;
-  acknowledgedSourceEventIdsRef.current = acknowledgedSourceEventIds;
   const storageKey =
     input.umbrella.sessionRef === null
       ? null
@@ -170,6 +246,79 @@ export function useCodingSessionTeamWake(input: {
   const inFlight = React.useRef<string | null>(null);
   const activeStorageKey = React.useRef<string | null>(null);
   const [revision, setRevision] = React.useState(0);
+
+  const storedState = React.useMemo(() => {
+    void revision;
+    if (!storageKey) return null;
+    try {
+      return readCodingSessionTeamWakeState(window.localStorage, storageKey);
+    } catch {
+      return null;
+    }
+  }, [revision, storageKey]);
+
+  const deliveryPlan = React.useMemo(() => {
+    // The index mutates in place, so its revision — not its identity — is
+    // what says the evidence changed.
+    void wakeEvidence.revision;
+    return leadTarget && leadTargetKey && storedState
+      ? deriveCodingSessionTeamWakeDeliveryPlan({
+          candidates: plan.candidates,
+          leadTarget,
+          leadTargetKey,
+          founderPubkey: input.umbrella.founderPubkey,
+          index: wakeEvidence.index,
+          acknowledgedCommandIds,
+          acknowledgedSourceEventIds,
+          state: storedState,
+          nowMs: Date.now(),
+          evidenceComplete,
+          publishFailedSourceEventIds: failedThisMount.current,
+        })
+      : EMPTY_PLAN;
+  }, [
+    acknowledgedCommandIds,
+    acknowledgedSourceEventIds,
+    evidenceComplete,
+    input.umbrella.founderPubkey,
+    leadTarget,
+    leadTargetKey,
+    plan.candidates,
+    storedState,
+    wakeEvidence.index,
+    wakeEvidence.revision,
+  ]);
+  const seatAuthorities = React.useMemo(
+    () =>
+      deriveCodingSessionSeatAuthorities({
+        channelId: input.channelId,
+        umbrella: input.umbrella,
+        authority: evidence.authority,
+      }),
+    [evidence.authority, input.channelId, input.umbrella],
+  );
+
+  // Rebuilt every render so the pre-publish recheck reads the newest evidence,
+  // including receipts that arrived while the command id was being derived.
+  const recheckRef = React.useRef<
+    (state: CodingSessionTeamWakeState) => CodingSessionTeamWakeDeliveryPlan
+  >(() => EMPTY_PLAN);
+  recheckRef.current = (state) =>
+    leadTarget && leadTargetKey
+      ? deriveCodingSessionTeamWakeDeliveryPlan({
+          candidates: plan.candidates,
+          leadTarget,
+          leadTargetKey,
+          founderPubkey: input.umbrella.founderPubkey,
+          index: wakeEvidence.index,
+          acknowledgedCommandIds,
+          acknowledgedSourceEventIds,
+          state,
+          nowMs: Date.now(),
+          evidenceComplete,
+          publishFailedSourceEventIds: failedThisMount.current,
+        })
+      : EMPTY_PLAN;
 
   React.useEffect(() => {
     if (activeStorageKey.current === storageKey) return;
@@ -185,7 +334,8 @@ export function useCodingSessionTeamWake(input: {
       !storageKey ||
       !input.catalogSettled ||
       !evidenceComplete ||
-      !plan.lead?.activeGeneration.commandTarget ||
+      !leadTarget ||
+      !leadTargetKey ||
       inFlight.current !== null
     ) {
       return;
@@ -218,18 +368,26 @@ export function useCodingSessionTeamWake(input: {
         return;
       }
     }
-    const acknowledged = acknowledgeCodingSessionTeamWakes(
+    // Custody and resolution are written before anything is considered for
+    // publication, and in that order: a released custody row must be gone
+    // before the re-arm rule can see the source as uncovered.
+    const previous = state;
+    for (const sourceEventId of deliveryPlan.releasedCustodySourceEventIds) {
+      state = releaseCodingSessionTeamWakeCustody(state, {
+        sourceEventId,
+        leadTargetKey,
+      });
+    }
+    for (const custody of deliveryPlan.custodiedSources) {
+      state = recordCodingSessionTeamWakeCustody(state, custody);
+    }
+    state = acknowledgeCodingSessionTeamWakes(
       state,
       acknowledgedCommandIds,
       acknowledgedSourceEventIds,
+      deliveryPlan.resolvedSourceEventIds,
     );
-    if (
-      acknowledged.pending.length !== state.pending.length ||
-      acknowledged.observed.length !== state.observed.length ||
-      acknowledged.resolvedSourceEventIds.length !==
-        state.resolvedSourceEventIds.length
-    ) {
-      state = acknowledged;
+    if (state !== previous) {
       try {
         writeCodingSessionTeamWakeState(storage, storageKey, state);
       } catch {
@@ -239,18 +397,37 @@ export function useCodingSessionTeamWake(input: {
         return;
       }
     }
-    const target = plan.lead.activeGeneration.commandTarget;
+    const target: CodingSessionCommandTarget = leadTarget;
+    // A source this mount has already failed on is *skipped*, not a reason to
+    // stop: the sibling behind it has its own expired grace and its own row,
+    // and leaving it saying "Waiting for the provider wake" forever would be a
+    // false status word as well as a lost wake.
     const candidate = pendingCodingSessionTeamWake({
       state,
       candidates: plan.candidates,
       leadTarget: target,
       acknowledgedCommandIds,
       acknowledgedSourceEventIds,
+      suppressedSourceEventIds: deliveryPlan.suppressedSourceEventIds,
+      skipSourceEventIds: failedThisMount.current,
       attemptedThisMount: attemptedThisMount.current,
     });
-    if (!candidate || failedThisMount.current.has(candidate.sourceEventId)) {
+    if (!candidate) return;
+    const delivery = deliveryPlan.deliveries.find(
+      (row) => row.sourceEventId === candidate.sourceEventId,
+    );
+    // Eligibility, not the rendered kind. A row reading `failed` only because
+    // an earlier publish threw is still publishable — that record is
+    // disclosure, and the mount-local skip set above is what stops a loop.
+    if (
+      !delivery ||
+      !deliveryPlan.publishEligibleSourceEventIds.has(candidate.sourceEventId)
+    ) {
       return;
     }
+    const reArm = deliveryPlan.reArmEligibleSourceEventIds.has(
+      candidate.sourceEventId,
+    );
     // Provider-owned delivery is primary. This one-shot grace costs no model
     // turn and gives the daemon time to publish; signed ingress re-renders the
     // hook, where operation-level acknowledgement suppresses this fallback.
@@ -259,7 +436,7 @@ export function useCodingSessionTeamWake(input: {
       candidate.sourceEventId,
     );
     if (fallbackNotBefore === null) {
-      fallbackNotBefore = Date.now() + DESKTOP_FALLBACK_GRACE_MS;
+      fallbackNotBefore = Date.now() + CODING_SESSION_TEAM_WAKE_GRACE_MS;
       state = observeCodingSessionTeamWake(
         state,
         candidate.sourceEventId,
@@ -284,20 +461,35 @@ export function useCodingSessionTeamWake(input: {
     }
     inFlight.current = candidate.sourceEventId;
     let cancelled = false;
+    const settledState = state;
     void (async () => {
       try {
-        const commandId = await buildCodingSessionTeamWakeCommandId(
-          candidate,
-          target,
-        );
+        const commandId = reArm
+          ? await buildCodingSessionTeamWakeReArmCommandId(candidate, target)
+          : await buildCodingSessionTeamWakeCommandId(candidate, target);
         if (cancelled) return;
+        // The boundary recheck. Between the decision above and this line the
+        // provider's `turn_queued` or `turn_started` may have landed; the
+        // evidence index is mutated in place, so this reads the newest facts
+        // rather than the render's snapshot.
+        const latest = recheckRef.current(
+          readCodingSessionTeamWakeState(storage, storageKey) ?? settledState,
+        );
+        const latestDelivery = latest.deliveries.find(
+          (row) => row.sourceEventId === candidate.sourceEventId,
+        );
         if (
-          acknowledgedSourceEventIdsRef.current.has(candidate.sourceEventId) ||
-          acknowledgedCommandIdsRef.current.has(commandId)
+          latest.suppressedSourceEventIds.has(candidate.sourceEventId) ||
+          // The runner already refused this exact id as a duplicate; sending
+          // it again would only be refused again. A different id (the re-arm)
+          // is still allowed once every live command has really failed.
+          latest.spentCommandIds.has(commandId) ||
+          !latestDelivery ||
+          !latest.publishEligibleSourceEventIds.has(candidate.sourceEventId)
         ) {
           return;
         }
-        await publishCodingSessionCommand({
+        await publishCommand({
           channelId: input.channelId,
           commandId,
           target,
@@ -305,25 +497,51 @@ export function useCodingSessionTeamWake(input: {
           deliver: "boundary",
         });
         toast.warning(
-          "The provider wake was not observed during its grace window. Beekeeper delivered this signed Desktop fallback; provider-owned delivery still needs attention.",
+          `${latestDelivery.detail}. The provider wake was not observed during its grace window, so Beekeeper delivered this signed Desktop fallback; provider-owned delivery still needs attention.`,
         );
         attemptedThisMount.current.add(commandId);
         const current =
-          readCodingSessionTeamWakeState(storage, storageKey) ?? state;
+          readCodingSessionTeamWakeState(storage, storageKey) ?? settledState;
+        const recorded = recordCodingSessionTeamWakeAttempt({
+          state: current,
+          candidate,
+          commandId,
+          leadTarget: target,
+          acknowledgedCommandIds,
+          acknowledgedSourceEventIds,
+        });
         writeCodingSessionTeamWakeState(
           storage,
           storageKey,
-          recordCodingSessionTeamWakeAttempt({
-            state: current,
-            candidate,
-            commandId,
-            leadTarget: target,
-            acknowledgedCommandIds,
-            acknowledgedSourceEventIds,
-          }),
+          // A publish that succeeds clears any earlier recorded failure for
+          // this source: the row must stop saying "failed" once it is covered.
+          clearCodingSessionTeamWakePublishFailure(
+            reArm
+              ? recordCodingSessionTeamWakeReArm(recorded, {
+                  sourceEventId: candidate.sourceEventId,
+                  leadTargetKey,
+                  commandId,
+                })
+              : recorded,
+            { sourceEventId: candidate.sourceEventId, leadTargetKey },
+          ),
         );
       } catch (error) {
         failedThisMount.current.add(candidate.sourceEventId);
+        try {
+          const current =
+            readCodingSessionTeamWakeState(storage, storageKey) ?? settledState;
+          writeCodingSessionTeamWakeState(
+            storage,
+            storageKey,
+            recordCodingSessionTeamWakePublishFailure(current, {
+              sourceEventId: candidate.sourceEventId,
+              leadTargetKey,
+            }),
+          );
+        } catch {
+          // A storage failure here costs the durable row, not the toast below.
+        }
         const detail = error instanceof Error ? error.message : String(error);
         toast.error(`Automatic team delivery is unconfirmed: ${detail}`);
       } finally {
@@ -339,12 +557,24 @@ export function useCodingSessionTeamWake(input: {
   }, [
     acknowledgedCommandIds,
     acknowledgedSourceEventIds,
+    deliveryPlan,
     evidenceComplete,
     input.catalogSettled,
     input.channelId,
+    leadTarget,
+    leadTargetKey,
     plan.candidates,
-    plan.lead,
+    publishCommand,
     revision,
     storageKey,
   ]);
+
+  return React.useMemo(
+    () => ({
+      deliveries: deliveryPlan.deliveries,
+      seatAuthorities,
+      refusal: plan.refusal,
+    }),
+    [deliveryPlan.deliveries, plan.refusal, seatAuthorities],
+  );
 }

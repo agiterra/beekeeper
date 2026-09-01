@@ -208,6 +208,7 @@ function nativeResponse(request) {
     excluded: [],
     conflicts: [],
     assignments: [],
+    unseatedReports: [],
     canonicalTerminal: terminal
       ? { eventId: terminal.id, type: terminal.payload.type }
       : null,
@@ -505,16 +506,18 @@ test("raw overflow and rejection retention are deterministic and disclosed", asy
   );
   assert.equal(invalidForward.snapshot().rejectedTotal, null);
 
-  const projectedForward = await projectCodingSessionMissionEvidence({
-    scope: scope(),
-    relayPubkey: RELAY,
-    snapshot: invalidForward.snapshot(),
-  });
-  const projectedReverse = await projectCodingSessionMissionEvidence({
-    scope: scope(),
-    relayPubkey: RELAY,
-    snapshot: invalidReverseSnapshot,
-  });
+  const { inspectorInput: projectedForward } =
+    await projectCodingSessionMissionEvidence({
+      scope: scope(),
+      relayPubkey: RELAY,
+      snapshot: invalidForward.snapshot(),
+    });
+  const { inspectorInput: projectedReverse } =
+    await projectCodingSessionMissionEvidence({
+      scope: scope(),
+      relayPubkey: RELAY,
+      snapshot: invalidReverseSnapshot,
+    });
   assert.equal(projectedForward.rejectedEventCount, null);
   assert.equal(projectedForward.rejectionsTruncated, true);
   assert.equal(
@@ -741,5 +744,61 @@ test("empty history remains honest unknown rather than inferred running", async 
     detail:
       "The native canonical fold has no terminal or active assignment; Mission does not infer running or completion from silence.",
   });
+  mounted.unmount();
+});
+
+test("D6/D-T8: the accepted seat chain and the fold's unseated reports reach the result", async () => {
+  const seatPayload = {
+    type: "grant-seat",
+    granteePubkey: SEAT,
+    role: "builder",
+    seq: 1,
+    prevAccepted: null,
+  };
+  const seatGrant = transition(seatPayload);
+  const seatReceipt = receipt(seatGrant, seatPayload);
+  const historicalAssignment = assignment();
+  const seatReport = report(historicalAssignment.id, "Built it", {
+    secret: SEAT_SECRET,
+    createdAt: 2,
+  });
+  installNative({
+    fold: (request) => ({
+      ...nativeResponse(request),
+      unseatedReports: [
+        {
+          eventId: seatReport.id,
+          authorPubkey: SEAT,
+          assignmentRef: historicalAssignment.id,
+          assigneeRole: "builder",
+        },
+      ],
+    }),
+  });
+  const client = clientFor([
+    historicalAssignment,
+    seatReport,
+    seatGrant,
+    seatReceipt,
+  ]);
+  const { renderHook, settleUntil } = await harness();
+  const mounted = renderHook(() =>
+    useCodingSessionMissionEvidence(scope(), client),
+  );
+  await settleUntil(
+    () => !mounted.result.current.isLoading,
+    "seat authority projection",
+  );
+  assert.equal(mounted.result.current.errorMessage, null);
+  assert.deepEqual(mounted.result.current.authority.activeSeats, [
+    { actorPubkey: SEAT, role: "builder" },
+  ]);
+  assert.deepEqual(
+    Object.values(mounted.result.current.authority.seatGrantRefs),
+    [seatGrant.id],
+  );
+  assert.deepEqual(mounted.result.current.unseatedReportEventIds, [
+    seatReport.id,
+  ]);
   mounted.unmount();
 });

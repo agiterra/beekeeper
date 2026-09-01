@@ -3,6 +3,8 @@ import type {
   CodingSessionMissionInspectorInput,
   CodingSessionMissionStateInput,
 } from "./codingSessionMissionInspectorModel";
+import type { CodingSessionMissionTransactionInput } from "./codingSessionMissionContracts";
+import { CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT } from "./codingSessionMissionContracts";
 import type {
   ImmutableCodingSessionTeamWireEvent,
   NativeCodingSessionTeamFold,
@@ -37,6 +39,7 @@ type BlockedBody = {
 };
 
 type AssignmentBody = {
+  assigneeActor: string;
   assigneeRole: string;
   objective: string;
   brief: string;
@@ -47,6 +50,7 @@ type AssignmentBody = {
 type VerdictBody = {
   subtype: "refutation" | "disposition";
   assignmentRef: string;
+  reportRef: string;
   decision: string;
   summary: string;
   requiredAction: string | null;
@@ -263,6 +267,99 @@ function projectCanonicalNonterminalState(input: {
   };
 }
 
+/** Longest verbatim body summary a stream row carries before it is elided. */
+const MAX_TRANSACTION_SUMMARY_CHARS = 280;
+
+function boundedSummary(value: string): string {
+  return value.length <= MAX_TRANSACTION_SUMMARY_CHARS
+    ? value
+    : `${value.slice(0, MAX_TRANSACTION_SUMMARY_CHARS - 1)}\u2026`;
+}
+
+function transactionType(
+  event: VerifiedCodingSessionTeamTransaction,
+): CodingSessionMissionTransactionInput["type"] {
+  if (event.payload.type === "verdict") {
+    return (event.payload.body as VerdictBody).subtype;
+  }
+  return event.payload.type as CodingSessionMissionTransactionInput["type"];
+}
+
+/**
+ * Project every fold-included 44244 as one stream row.
+ *
+ * Counterparty and parent are read from signed body references and resolved
+ * against the included set only — an unresolvable reference stays `null`
+ * rather than becoming a guess. `createdAt` orders the rows for display and
+ * nothing else; discovery, dedupe, and the wake grace never read it (I4).
+ */
+function projectTransactions(
+  included: readonly VerifiedCodingSessionTeamTransaction[],
+  unseatedReportEventIds: ReadonlySet<string>,
+): { rows: CodingSessionMissionTransactionInput[]; truncated: number } {
+  const authorById = new Map(
+    included.map((event) => [event.eventId, event.authorPubkey] as const),
+  );
+  const ordered = [...included].sort(compareTransactions);
+  const truncated = Math.max(
+    0,
+    ordered.length - CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT,
+  );
+  const rows = ordered
+    .slice(-CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT)
+    .map((event) => {
+      const body = event.payload.body as Record<string, unknown>;
+      const type = transactionType(event);
+      const report =
+        event.payload.type === "report" ? (body as ReportBody) : null;
+      const verdict =
+        event.payload.type === "verdict" ? (body as VerdictBody) : null;
+      const acknowledgement =
+        event.payload.type === "acknowledgement"
+          ? (body as AcknowledgementBody)
+          : null;
+      const assignment =
+        event.payload.type === "assignment" ? (body as AssignmentBody) : null;
+      const parentEventId =
+        report?.assignmentRef ??
+        verdict?.reportRef ??
+        acknowledgement?.acknowledgedEventRef ??
+        null;
+      const counterpartyPubkey = assignment
+        ? assignment.assigneeActor
+        : parentEventId
+          ? (authorById.get(parentEventId) ?? null)
+          : null;
+      return {
+        sourceEventId: event.eventId,
+        type,
+        authorPubkey: event.authorPubkey,
+        createdAt: event.createdAt,
+        counterpartyPubkey,
+        parentEventId,
+        summary: boundedSummary(
+          assignment
+            ? assignment.objective
+            : report
+              ? report.summary
+              : verdict
+                ? verdict.summary
+                : acknowledgement
+                  ? (acknowledgement.note ?? "Disposition received.")
+                  : ((body.summary as string | undefined) ?? ""),
+        ),
+        decision: verdict ? verdict.decision : null,
+        requiredAction: verdict
+          ? verdict.requiredAction
+          : ((body.requiredAction as string | undefined) ?? null),
+        fileCount: report ? report.files.length : null,
+        testCount: report ? report.tests.length : null,
+        unseated: unseatedReportEventIds.has(event.eventId),
+      } satisfies CodingSessionMissionTransactionInput;
+    });
+  return { rows, truncated };
+}
+
 /**
  * Map the response returned and request-bound by the native wrapper. This
  * layer performs no transaction semantics: correction, causal exclusion,
@@ -385,12 +482,22 @@ export function projectNativeTeamFoldToMissionInspector(input: {
           }
         : canonicalNonterminal;
   const ingressRejections = input.ingressRejections ?? [];
+  const unseatedReportEventIds = fold.unseatedReports.map(
+    (report) => report.eventId,
+  );
+  const transactions = projectTransactions(
+    included,
+    new Set(unseatedReportEventIds),
+  );
   return {
     goal: { kind: "absent" },
     acceptedPlan,
     assignments,
     seatPlans: [],
     reports,
+    transactions: transactions.rows,
+    transactionsTruncated: transactions.truncated,
+    unseatedReportEventIds,
     observedChanges: { files: [], unreportedEditCount: 0 },
     observedFileSources: new Map(),
     participants: [],

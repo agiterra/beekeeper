@@ -1,6 +1,7 @@
 import { invokeTauri } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { hasExactFields } from "@/shared/coordination/sessionCoordinationStrictJson";
+import type { CodingSessionNativeUnseatedReport } from "./codingSessionMissionContracts";
 import type { CodingSessionMissionAuthorityProjection } from "./codingSessionMissionAuthority";
 import {
   decodeVerifiedCodingSessionTeamTransaction,
@@ -48,6 +49,17 @@ export type CodingSessionNativeTeamFoldResponse = {
     readonly acknowledgementEventId: string | null;
     readonly settled: boolean;
   }[];
+  /**
+   * Reports the native fold **included** by assignee equality whose author
+   * holds no active seat for the assignment's role.
+   *
+   * Included and disclosed, not excluded: the assignee field is a target, not
+   * an authorship claim, so dropping the report would lose real work. The
+   * field is required rather than optional precisely so a relay or adapter
+   * that has not shipped the disclosure cannot read as "every report is
+   * seated".
+   */
+  readonly unseatedReports: readonly CodingSessionNativeUnseatedReport[];
   readonly canonicalTerminal: {
     readonly eventId: string;
     readonly type: "mission.completed" | "mission.blocked";
@@ -206,6 +218,20 @@ function isSettlement(
   );
 }
 
+function isUnseatedReport(
+  value: unknown,
+): value is CodingSessionNativeUnseatedReport {
+  return (
+    hasExactFields(value, [
+      ["eventId", "authorPubkey", "assignmentRef", "assigneeRole"],
+    ]) &&
+    isEventId(value.eventId) &&
+    isEventId(value.authorPubkey) &&
+    isEventId(value.assignmentRef) &&
+    isString(value.assigneeRole)
+  );
+}
+
 function isTerminal(
   value: unknown,
 ): value is NonNullable<
@@ -232,6 +258,7 @@ function decodeNativeResponse(
         "excluded",
         "conflicts",
         "assignments",
+        "unseatedReports",
         "canonicalTerminal",
       ],
     ]) ||
@@ -246,6 +273,8 @@ function decodeNativeResponse(
     !value.conflicts.every(isConflict) ||
     !Array.isArray(value.assignments) ||
     !value.assignments.every(isSettlement) ||
+    !Array.isArray(value.unseatedReports) ||
+    !value.unseatedReports.every(isUnseatedReport) ||
     !(value.canonicalTerminal === null || isTerminal(value.canonicalTerminal))
   ) {
     throw new Error(
@@ -279,6 +308,9 @@ function cloneAndFreezeNativeResponse(
       response.assignments.map((assignment) =>
         Object.freeze({ ...assignment }),
       ),
+    ),
+    unseatedReports: Object.freeze(
+      response.unseatedReports.map((report) => Object.freeze({ ...report })),
     ),
     canonicalTerminal: response.canonicalTerminal
       ? Object.freeze({ ...response.canonicalTerminal })
@@ -340,6 +372,10 @@ function bindResponse(input: {
       assignment.governedReportEventId,
       assignment.dispositionEventId,
       assignment.acknowledgementEventId,
+    ]),
+    ...response.unseatedReports.flatMap((report) => [
+      report.eventId,
+      report.assignmentRef,
     ]),
     response.canonicalTerminal?.eventId ?? null,
   ].filter((id): id is string => id !== null);

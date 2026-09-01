@@ -1,53 +1,37 @@
 import type { CodingSessionContextLoad } from "./codingSessionContextLoad";
+import type { CodingSessionMissionTransactionInput } from "./codingSessionMissionContracts";
 import type { CodingSessionParticipantPresence } from "./codingSessionStreamPresence";
 import type {
   CodingSessionTaskModel,
   CodingSessionTaskStatus,
 } from "./codingSessionTaskModel";
 import type { CodingSessionObservedChanges } from "./codingSessionTranscriptModel";
+import {
+  addTruncation,
+  cap,
+  deriveAssignmentContextFacts,
+  deriveContextFacts,
+  deriveFiles,
+} from "./codingSessionMissionInspectorBounds";
 
-export const MISSION_INSPECTOR_LIMITS = {
-  assignments: 100,
-  acceptedPlanSteps: 100,
-  contextFacts: 400,
-  disclosureEventIds: 20,
-  disclosures: 100,
-  fileAttributions: 20,
-  fileSourceEventIds: 20,
-  files: 500,
-  filesPerReport: 200,
-  ownershipFilesPerAssignment: 100,
-  goalSourceEventIds: 20,
-  missionStateItems: 100,
-  participants: 64,
-  reports: 100,
-  seatPlanSteps: 100,
-  seatPlans: 32,
-  tests: 500,
-  testsPerReport: 100,
-} as const;
-
-export type CodingSessionMissionInspectorSection =
-  | "goal"
-  | "mission-state"
-  | "accepted-plan"
-  | "seat-plans"
-  | "changes"
-  | "files"
-  | "tests"
-  | "team"
-  | "context"
-  | "reports"
-  | "integrity";
-
-export type CodingSessionMissionTruncation = {
-  id: string;
-  section: CodingSessionMissionInspectorSection;
-  shown: number;
-  total: number;
-  omitted: number;
-  notice: string;
-};
+export {
+  addTruncation,
+  cap,
+  MISSION_INSPECTOR_LIMITS,
+} from "./codingSessionMissionInspectorBounds";
+export type {
+  CodingSessionMissionContextFact,
+  CodingSessionMissionFileAttribution,
+  CodingSessionMissionFileModel,
+  CodingSessionMissionInspectorSection,
+  CodingSessionMissionTruncation,
+} from "./codingSessionMissionInspectorBounds";
+import type {
+  CodingSessionMissionContextFact,
+  CodingSessionMissionFileModel,
+  CodingSessionMissionTruncation,
+} from "./codingSessionMissionInspectorBounds";
+import { MISSION_INSPECTOR_LIMITS } from "./codingSessionMissionInspectorBounds";
 
 export type CodingSessionMissionGoalInput =
   | { kind: "absent" }
@@ -193,6 +177,15 @@ export type CodingSessionMissionInspectorInput = {
   assignments?: readonly CodingSessionMissionAssignmentInput[];
   seatPlans: readonly CodingSessionSeatPlanInput[];
   reports: readonly CodingSessionMissionReportInput[];
+  /** Fold-included 44244 rows for the causality stream, chronological. */
+  transactions?: readonly CodingSessionMissionTransactionInput[];
+  /** How many older rows the projection dropped, disclosed rather than hidden. */
+  transactionsTruncated?: number;
+  /**
+   * Reports the Rust fold listed under `unseatedReports`. Absent means no fold
+   * ran, which is `unknown` — never "every report is seated".
+   */
+  unseatedReportEventIds?: readonly string[];
   observedChanges: CodingSessionObservedChanges;
   /** Trusted projected source items for observed paths, when ingress retains them. */
   observedFileSources?: ReadonlyMap<string, readonly string[]>;
@@ -253,38 +246,6 @@ export type CodingSessionMissionTestModel = CodingSessionStructuredTestInput & {
   authorLabel: string;
 };
 
-export type CodingSessionMissionFileAttribution = {
-  authorLabel: string;
-  sourceEventId: string;
-};
-
-export type CodingSessionMissionFileModel = {
-  path: string;
-  observed: boolean;
-  observedSourceEventIds: string[];
-  observedSourceKnown: boolean;
-  reportedBy: CodingSessionMissionFileAttribution[];
-  additions: number | null;
-  deletions: number | null;
-  editCount: number | null;
-};
-
-export type CodingSessionMissionContextFact = {
-  id: string;
-  label:
-    | "Assignment"
-    | "Assignment role"
-    | "Objective"
-    | "Brief"
-    | "Ownership"
-    | "Branch"
-    | "Base"
-    | "Head";
-  value: string;
-  sourceEventId: string;
-  authorLabel: string;
-};
-
 export type CodingSessionMissionInspectorModel = {
   goal: CodingSessionMissionGoalModel;
   acceptedPlan: CodingSessionMissionPlanModel;
@@ -293,7 +254,15 @@ export type CodingSessionMissionInspectorModel = {
     sourceEventId: string;
     authorLabel: string;
     summary: string;
+    /**
+     * Whether the fold found a live seat for this report's author and role.
+     * `unknown` when no fold ran; the fold decides, never this layer (I6).
+     */
+    seatAuthority: "granted" | "unseated" | "unknown";
   }>;
+  /** Passed through unchanged from the projection; the stream owns rendering. */
+  transactions: readonly CodingSessionMissionTransactionInput[];
+  transactionsTruncated: number;
   tests: CodingSessionMissionTestModel[];
   changes: {
     state: "none" | "named" | "unnamed" | "mixed";
@@ -398,7 +367,15 @@ export function deriveCodingSessionMissionInspectorModel(
       sourceEventId: report.sourceEventId,
       authorLabel: report.authorLabel,
       summary: report.summary,
+      seatAuthority:
+        input.unseatedReportEventIds === undefined
+          ? ("unknown" as const)
+          : input.unseatedReportEventIds.includes(report.sourceEventId)
+            ? ("unseated" as const)
+            : ("granted" as const),
     })),
+    transactions: input.transactions ?? [],
+    transactionsTruncated: input.transactionsTruncated ?? 0,
     tests: deriveTests(reports, truncations),
     changes: deriveChanges(boundedChanges),
     files: deriveFiles(
@@ -638,178 +615,6 @@ function deriveChanges(changes: CodingSessionObservedChanges) {
   };
 }
 
-function deriveFiles(
-  changes: CodingSessionObservedChanges,
-  observedSources: ReadonlyMap<string, readonly string[]> | undefined,
-  reports: readonly CodingSessionMissionReportInput[],
-  truncations: CodingSessionMissionTruncation[],
-): CodingSessionMissionFileModel[] {
-  const files = new Map<string, CodingSessionMissionFileModel>();
-  const attributionSources = new Map<string, Set<string>>();
-  for (const file of changes.files) {
-    const sourceInput = observedSources?.get(file.path);
-    files.set(file.path, {
-      path: file.path,
-      observed: true,
-      observedSourceEventIds: sourceInput
-        ? cap(
-            sourceInput,
-            MISSION_INSPECTOR_LIMITS.fileSourceEventIds,
-            "files",
-            "observed file source events",
-            truncations,
-          )
-        : [],
-      observedSourceKnown: sourceInput !== undefined && sourceInput.length > 0,
-      reportedBy: [],
-      additions: file.additions,
-      deletions: file.deletions,
-      editCount: file.editCount,
-    });
-  }
-  let omittedFiles = 0;
-  for (const report of reports) {
-    const reportFiles = cap(
-      report.files,
-      MISSION_INSPECTOR_LIMITS.filesPerReport,
-      "files",
-      "report files",
-      truncations,
-    );
-    for (const path of reportFiles) {
-      const existing = files.get(path);
-      if (existing) {
-        const seenSources = attributionSources.get(path) ?? new Set<string>();
-        attributionSources.set(path, seenSources);
-        if (!seenSources.has(report.sourceEventId)) {
-          seenSources.add(report.sourceEventId);
-          if (
-            existing.reportedBy.length <
-            MISSION_INSPECTOR_LIMITS.fileAttributions
-          ) {
-            existing.reportedBy.push({
-              authorLabel: report.authorLabel,
-              sourceEventId: report.sourceEventId,
-            });
-          }
-        }
-      } else if (files.size < MISSION_INSPECTOR_LIMITS.files) {
-        attributionSources.set(path, new Set([report.sourceEventId]));
-        files.set(path, {
-          path,
-          observed: false,
-          observedSourceEventIds: [],
-          observedSourceKnown: false,
-          reportedBy: [
-            {
-              authorLabel: report.authorLabel,
-              sourceEventId: report.sourceEventId,
-            },
-          ],
-          additions: null,
-          deletions: null,
-          editCount: null,
-        });
-      } else {
-        omittedFiles += 1;
-      }
-    }
-  }
-  for (const sources of attributionSources.values()) {
-    if (sources.size > MISSION_INSPECTOR_LIMITS.fileAttributions) {
-      addTruncation(
-        "files",
-        MISSION_INSPECTOR_LIMITS.fileAttributions,
-        sources.size,
-        "file report attributions",
-        truncations,
-      );
-    }
-  }
-  if (omittedFiles > 0) {
-    addTruncation(
-      "files",
-      files.size,
-      files.size + omittedFiles,
-      "files after the section limit",
-      truncations,
-    );
-  }
-  return [...files.values()];
-}
-
-function deriveContextFacts(
-  report: CodingSessionMissionReportInput,
-): CodingSessionMissionContextFact[] {
-  const candidates: Array<
-    [CodingSessionMissionContextFact["label"], string | null]
-  > = [
-    ["Assignment", report.assignmentRef],
-    ["Branch", report.branch],
-    ["Base", report.baseSha],
-    ["Head", report.headSha],
-  ];
-  return candidates.flatMap(([label, value]) =>
-    value
-      ? [
-          {
-            id: `${report.sourceEventId}:${label}:${value}`,
-            label,
-            value,
-            sourceEventId: report.sourceEventId,
-            authorLabel: report.authorLabel,
-          },
-        ]
-      : [],
-  );
-}
-
-function deriveAssignmentContextFacts(
-  assignment: CodingSessionMissionAssignmentInput,
-  truncations: CodingSessionMissionTruncation[],
-): CodingSessionMissionContextFact[] {
-  const facts: CodingSessionMissionContextFact[] = [
-    {
-      id: `${assignment.sourceEventId}:Assignment role`,
-      label: "Assignment role",
-      value: assignment.assigneeRole,
-      sourceEventId: assignment.sourceEventId,
-      authorLabel: assignment.authorLabel,
-    },
-    {
-      id: `${assignment.sourceEventId}:Objective`,
-      label: "Objective",
-      value: assignment.objective,
-      sourceEventId: assignment.sourceEventId,
-      authorLabel: assignment.authorLabel,
-    },
-    {
-      id: `${assignment.sourceEventId}:Brief`,
-      label: "Brief",
-      value: assignment.brief,
-      sourceEventId: assignment.sourceEventId,
-      authorLabel: assignment.authorLabel,
-    },
-  ];
-  const ownership = cap(
-    assignment.fileOwnership,
-    MISSION_INSPECTOR_LIMITS.ownershipFilesPerAssignment,
-    "context",
-    "assignment ownership paths",
-    truncations,
-  );
-  for (const [index, path] of ownership.entries()) {
-    facts.push({
-      id: `${assignment.sourceEventId}:Ownership:${index}`,
-      label: "Ownership",
-      value: path,
-      sourceEventId: assignment.sourceEventId,
-      authorLabel: assignment.authorLabel,
-    });
-  }
-  return facts;
-}
-
 function deriveMissionState(
   input: CodingSessionMissionStateInput,
   truncations: CodingSessionMissionTruncation[],
@@ -920,49 +725,6 @@ function deriveDisclosures(
       truncations,
     ),
   }));
-}
-
-function cap<T>(
-  input: readonly T[],
-  limit: number,
-  section: CodingSessionMissionInspectorSection,
-  label: string,
-  truncations: CodingSessionMissionTruncation[],
-): T[] {
-  const output = input.slice(0, limit);
-  if (output.length < input.length) {
-    addTruncation(section, output.length, input.length, label, truncations);
-  }
-  return output;
-}
-
-function addTruncation(
-  section: CodingSessionMissionInspectorSection,
-  shown: number,
-  total: number,
-  label: string,
-  truncations: CodingSessionMissionTruncation[],
-) {
-  const omitted = Math.max(0, total - shown);
-  if (omitted === 0) return;
-  const existing = truncations.find(
-    (item) => item.section === section && item.id === `${section}:${label}`,
-  );
-  if (existing) {
-    existing.shown += shown;
-    existing.total += total;
-    existing.omitted += omitted;
-    existing.notice = `Showing ${existing.shown} of ${existing.total} ${label}; ${existing.omitted} omitted.`;
-    return;
-  }
-  truncations.push({
-    id: `${section}:${label}`,
-    section,
-    shown,
-    total,
-    omitted,
-    notice: `Showing ${shown} of ${total} ${label}; ${omitted} omitted.`,
-  });
 }
 
 function copyContextLoad(

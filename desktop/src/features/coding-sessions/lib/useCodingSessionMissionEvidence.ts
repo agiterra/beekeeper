@@ -5,6 +5,7 @@ import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
 import type { CodingSessionMissionInspectorInput } from "./codingSessionMissionInspectorModel";
+import type { CodingSessionSeatAuthorityProjection } from "./codingSessionTeamDeliveryStatus";
 import {
   buildCodingSessionMissionEvidenceFilters,
   CodingSessionMissionEvidenceStore,
@@ -30,6 +31,13 @@ export type CodingSessionMissionEvidenceResult = {
   isLoading: boolean;
   errorMessage: string | null;
   inspectorInput: CodingSessionMissionInspectorInput;
+  /**
+   * The accepted seat chain this projection was folded against, or `null`
+   * while it is loading or errored. `null` is `unknown`, not "no seats".
+   */
+  authority: CodingSessionSeatAuthorityProjection | null;
+  /** Reports the Rust fold disclosed as authored by an unseated actor. */
+  unseatedReportEventIds: string[];
   retainedEventCount: number;
   refresh: () => void;
 };
@@ -95,6 +103,8 @@ export function useCodingSessionMissionEvidence(
     isLoading: Boolean(stableScope),
     errorMessage: null as string | null,
     inspectorInput: emptyCodingSessionMissionInspectorInput(),
+    authority: null as CodingSessionSeatAuthorityProjection | null,
+    unseatedReportEventIds: [] as string[],
     retainedEventCount: 0,
   }));
 
@@ -110,6 +120,8 @@ export function useCodingSessionMissionEvidence(
         inspectorInput: emptyCodingSessionMissionInspectorInput(
           "Mission evidence has no selected session scope.",
         ),
+        authority: null,
+        unseatedReportEventIds: [],
         retainedEventCount: 0,
       });
       return;
@@ -124,6 +136,8 @@ export function useCodingSessionMissionEvidence(
       isLoading: true,
       errorMessage: null,
       inspectorInput: emptyCodingSessionMissionInspectorInput(),
+      authority: null,
+      unseatedReportEventIds: [],
       retainedEventCount: 0,
     });
 
@@ -136,6 +150,8 @@ export function useCodingSessionMissionEvidence(
         inspectorInput: emptyCodingSessionMissionInspectorInput(
           "Mission evidence could not be canonically projected.",
         ),
+        authority: null,
+        unseatedReportEventIds: [],
         retainedEventCount: retainedEventCount(store),
       });
     };
@@ -144,7 +160,7 @@ export function useCodingSessionMissionEvidence(
       if (!relayPubkey) return;
       const revision = ++projectionRevision;
       try {
-        const inspectorInput = await projectCodingSessionMissionEvidence({
+        const projection = await projectCodingSessionMissionEvidence({
           scope: stableScope,
           relayPubkey,
           snapshot: store.snapshot(),
@@ -155,7 +171,9 @@ export function useCodingSessionMissionEvidence(
           identity: runIdentity,
           isLoading: false,
           errorMessage: null,
-          inspectorInput,
+          inspectorInput: projection.inspectorInput,
+          authority: projection.authority,
+          unseatedReportEventIds: projection.unseatedReportEventIds,
           retainedEventCount: retainedEventCount(store),
         });
       } catch (error) {
@@ -245,6 +263,8 @@ export function useCodingSessionMissionEvidence(
       isLoading: Boolean(stableScope),
       errorMessage: null,
       inspectorInput: emptyCodingSessionMissionInspectorInput(),
+      authority: null,
+      unseatedReportEventIds: [],
       retainedEventCount: 0,
       refresh,
     };
@@ -253,6 +273,8 @@ export function useCodingSessionMissionEvidence(
     isLoading: state.isLoading,
     errorMessage: state.errorMessage,
     inspectorInput: state.inspectorInput,
+    authority: state.authority,
+    unseatedReportEventIds: state.unseatedReportEventIds,
     retainedEventCount: state.retainedEventCount,
     refresh,
   };

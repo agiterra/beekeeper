@@ -175,6 +175,7 @@ async function projectAcceptedNonterminal(events, assignments) {
       excluded: [],
       conflicts: [],
       assignments,
+      unseatedReports: [],
       canonicalTerminal: null,
     }),
   );
@@ -475,6 +476,7 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
         settled: false,
       },
     ],
+    unseatedReports: [],
     canonicalTerminal: { eventId: blocked.id, type: "mission.blocked" },
   };
   const invocationInput = {
@@ -877,4 +879,244 @@ test("multi-assignment accepted steps retain their own source and author regardl
       sourceIndex: 0,
     },
   ]);
+});
+
+function payload(type, body, overrides = {}) {
+  return {
+    schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+    type,
+    supersedes: null,
+    deliveryCommandId: null,
+    body,
+    ...overrides,
+  };
+}
+
+async function projectWithFold(events, foldOverrides) {
+  const verifiedTransactions = events.map((event) => {
+    const decoded = decodeVerifiedCodingSessionTeamTransaction({
+      event,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    });
+    assert.equal(decoded.ok, true);
+    if (!decoded.ok) throw new Error(decoded.error);
+    return decoded.value;
+  });
+  const inputEventIds = verifiedTransactions
+    .map((event) => event.eventId)
+    .sort();
+  const authority = {
+    channelRef: CHANNEL,
+    genesisRef: GENESIS,
+    founderPubkey: FOUNDER,
+    relayPubkey: RELAY,
+    headEventId: null,
+    headSeq: 0,
+    acceptedEventIds: [],
+    activeGrants: [],
+    activeSeats: [],
+  };
+  const nativeFold = await invokeWithTauriFoldMock(
+    {
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      authority,
+      verifiedTransactions,
+    },
+    async () => ({
+      schema: CODING_SESSION_TEAM_FOLD_RESPONSE_SCHEMA,
+      implementation: "buzz-core",
+      inputEventIds,
+      context: {
+        channelRef: CHANNEL,
+        sessionRef: SESSION,
+        genesisRef: GENESIS,
+        founderPubkey: FOUNDER,
+        authorityHeadEventId: null,
+        authorityHeadSeq: 0,
+      },
+      includedEventIds: inputEventIds,
+      excluded: [],
+      conflicts: [],
+      assignments: [],
+      unseatedReports: [],
+      canonicalTerminal: null,
+      ...foldOverrides(inputEventIds),
+    }),
+  );
+  return projectNativeTeamFoldToMissionInspector({ nativeFold });
+}
+
+test("D-T9: transactions project chronologically with counterparty and parent", async () => {
+  const assignmentEvent = transaction(
+    payload("assignment", {
+      assigneeActor: LEAD,
+      assigneeRole: "builder",
+      objective: "Land the fence",
+      brief: "Exact brief.",
+      branch: null,
+      baseSha: null,
+      fileOwnership: [],
+      acceptanceSteps: ["run tests"],
+    }),
+    FOUNDER_SECRET,
+    10,
+  );
+  const reportEvent = transaction(
+    payload("report", {
+      assignmentRef: assignmentEvent.id,
+      summary: "x".repeat(400),
+      branch: null,
+      baseSha: null,
+      headSha: null,
+      files: ["a.ts", "b.ts"],
+      tests: [
+        {
+          name: "unit",
+          command: "pnpm test",
+          outcome: "passed",
+          evidence: null,
+        },
+      ],
+      redBeforeGreen: true,
+      deviations: [],
+      residuals: [],
+      anomalies: [],
+    }),
+    LEAD_SECRET,
+    20,
+  );
+  const verdictEvent = transaction(
+    payload("verdict", {
+      subtype: "disposition",
+      assignmentRef: assignmentEvent.id,
+      reportRef: reportEvent.id,
+      refutationRef: null,
+      decision: "approve",
+      summary: "Good.",
+      findings: [],
+      requiredAction: null,
+    }),
+    FOUNDER_SECRET,
+    30,
+  );
+  const projected = await projectWithFold(
+    [verdictEvent, reportEvent, assignmentEvent],
+    () => ({
+      assignments: [
+        {
+          assignmentEventId: assignmentEvent.id,
+          governedReportEventId: reportEvent.id,
+          dispositionEventId: verdictEvent.id,
+          acknowledgementEventId: null,
+          settled: false,
+        },
+      ],
+      unseatedReports: [
+        {
+          eventId: reportEvent.id,
+          authorPubkey: LEAD,
+          assignmentRef: assignmentEvent.id,
+          assigneeRole: "builder",
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    projected.transactions.map((row) => row.sourceEventId),
+    [assignmentEvent.id, reportEvent.id, verdictEvent.id],
+  );
+  assert.equal(projected.transactionsTruncated, 0);
+  const [assignmentRow, reportRow, verdictRow] = projected.transactions;
+  assert.equal(assignmentRow.type, "assignment");
+  assert.equal(assignmentRow.counterpartyPubkey, LEAD);
+  assert.equal(assignmentRow.parentEventId, null);
+  assert.equal(reportRow.type, "report");
+  assert.equal(reportRow.parentEventId, assignmentEvent.id);
+  assert.equal(reportRow.counterpartyPubkey, FOUNDER);
+  assert.equal(reportRow.fileCount, 2);
+  assert.equal(reportRow.testCount, 1);
+  assert.equal(reportRow.unseated, true);
+  assert.equal(reportRow.summary.length, 280);
+  assert.ok(reportRow.summary.endsWith("…"));
+  assert.equal(verdictRow.type, "disposition");
+  assert.equal(verdictRow.decision, "approve");
+  assert.equal(verdictRow.parentEventId, reportEvent.id);
+  assert.equal(verdictRow.counterpartyPubkey, LEAD);
+  assert.deepEqual(projected.unseatedReportEventIds, [reportEvent.id]);
+});
+
+test("D-T9: the decoder requires the fold's unseatedReports field", async () => {
+  const assignmentEvent = transaction(
+    payload("assignment", {
+      assigneeActor: LEAD,
+      assigneeRole: "builder",
+      objective: "Land the fence",
+      brief: "Exact brief.",
+      branch: null,
+      baseSha: null,
+      fileOwnership: [],
+      acceptanceSteps: ["run tests"],
+    }),
+    FOUNDER_SECRET,
+    10,
+  );
+  const decoded = decodeVerifiedCodingSessionTeamTransaction({
+    event: assignmentEvent,
+    channelRef: CHANNEL,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+  });
+  assert.equal(decoded.ok, true);
+  const authority = {
+    channelRef: CHANNEL,
+    genesisRef: GENESIS,
+    founderPubkey: FOUNDER,
+    relayPubkey: RELAY,
+    headEventId: null,
+    headSeq: 0,
+    acceptedEventIds: [],
+    activeGrants: [],
+    activeSeats: [],
+  };
+  const base = {
+    schema: CODING_SESSION_TEAM_FOLD_RESPONSE_SCHEMA,
+    implementation: "buzz-core",
+    inputEventIds: [assignmentEvent.id],
+    context: {
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+      founderPubkey: FOUNDER,
+      authorityHeadEventId: null,
+      authorityHeadSeq: 0,
+    },
+    includedEventIds: [assignmentEvent.id],
+    excluded: [],
+    conflicts: [],
+    assignments: [],
+    canonicalTerminal: null,
+  };
+  const invocationInput = {
+    channelRef: CHANNEL,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+    authority,
+    verifiedTransactions: [decoded.value],
+  };
+  await assert.rejects(
+    invokeWithTauriFoldMock(invocationInput, async () => base),
+    /malformed response/,
+  );
+  const accepted = await invokeWithTauriFoldMock(invocationInput, async () => ({
+    ...base,
+    unseatedReports: [],
+  }));
+  assert.deepEqual(accepted.fold.unseatedReports, []);
+  assert.ok(Object.isFrozen(accepted.fold.unseatedReports));
 });

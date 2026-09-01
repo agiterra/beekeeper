@@ -7,6 +7,10 @@ import {
 import { hasValidSignature } from "@/shared/lib/authors";
 import type { CodingSessionMissionInspectorInput } from "./codingSessionMissionInspectorModel";
 import { projectCodingSessionMissionAuthority } from "./codingSessionMissionAuthority";
+import {
+  codingSessionSeatGrantKey,
+  type CodingSessionSeatAuthorityProjection,
+} from "./codingSessionTeamDeliveryStatus";
 import { projectNativeTeamFoldToMissionInspector } from "./codingSessionMissionTransactionProjection";
 import {
   decodeVerifiedCodingSessionTeamTransaction,
@@ -280,11 +284,25 @@ export function emptyCodingSessionMissionInspectorInput(
   };
 }
 
+/**
+ * One canonical projection of a scope's signed evidence.
+ *
+ * `authority` is carried out beside the inspector input because seat authority
+ * is a *different* question from mission state and needs the same accepted
+ * 44228 chain the fold was run against — recomputing it at the surface would
+ * be a second opinion, which is exactly what I6 forbids.
+ */
+export type CodingSessionMissionEvidenceProjection = {
+  inspectorInput: CodingSessionMissionInspectorInput;
+  authority: CodingSessionSeatAuthorityProjection;
+  unseatedReportEventIds: string[];
+};
+
 export async function projectCodingSessionMissionEvidence(input: {
   scope: CodingSessionMissionEvidenceScope;
   relayPubkey: string;
   snapshot: CodingSessionMissionEvidenceSnapshot;
-}): Promise<CodingSessionMissionInspectorInput> {
+}): Promise<CodingSessionMissionEvidenceProjection> {
   if (input.snapshot.overflowed) {
     throw new Error(
       `Mission evidence exceeded the ${MISSION_EVIDENCE_MAX_EVENTS_PER_KIND}-event per-kind bound.`,
@@ -331,6 +349,11 @@ export async function projectCodingSessionMissionEvidence(input: {
   if (projected.rejectedEventCount === null) {
     throw new Error("Native fold projection did not provide an exact count.");
   }
+  const seatGrantRefs: Record<string, string> = {};
+  for (const seat of authority.value.activeSeats) {
+    seatGrantRefs[codingSessionSeatGrantKey(seat.actorPubkey, seat.role)] =
+      seat.grantEventRef;
+  }
   ingressRejections.sort(compareRejections);
   const exactIngressTotal =
     input.snapshot.rejectedTotal === null
@@ -345,16 +368,26 @@ export async function projectCodingSessionMissionEvidence(input: {
     exactCombinedTotal === null ||
     exactCombinedTotal > MISSION_EVIDENCE_REJECTION_LIMIT;
   return {
-    ...projected,
-    rejectedEventCount: rejectionsTruncated ? null : exactCombinedTotal,
-    rejectionsTruncated,
-    rejectedReasons: [
-      ...projected.rejectedReasons,
-      ...ingressRejections.map(({ eventId, reason }, index) => ({
-        code: `INGRESS_REJECTED_${index + 1}`,
-        summary: reason,
-        eventIds: [eventId],
+    inspectorInput: {
+      ...projected,
+      rejectedEventCount: rejectionsTruncated ? null : exactCombinedTotal,
+      rejectionsTruncated,
+      rejectedReasons: [
+        ...projected.rejectedReasons,
+        ...ingressRejections.map(({ eventId, reason }, index) => ({
+          code: `INGRESS_REJECTED_${index + 1}`,
+          summary: reason,
+          eventIds: [eventId],
+        })),
+      ],
+    },
+    authority: {
+      activeSeats: authority.value.activeSeats.map((seat) => ({
+        actorPubkey: seat.actorPubkey,
+        role: seat.role,
       })),
-    ],
+      seatGrantRefs,
+    },
+    unseatedReportEventIds: [...(projected.unseatedReportEventIds ?? [])],
   };
 }

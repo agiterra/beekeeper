@@ -12,8 +12,13 @@ import {
   readCodingSessionTeamWakeState,
   recordCodingSessionTeamWakeAttempt,
   observeCodingSessionTeamWake,
+  clearCodingSessionTeamWakePublishFailure,
   codingSessionTeamWakeFallbackNotBefore,
   codingSessionTeamWakeEvidenceIsComplete,
+  codingSessionTeamWakePublishFailed,
+  recordCodingSessionTeamWakeCustody,
+  recordCodingSessionTeamWakePublishFailure,
+  releaseCodingSessionTeamWakeCustody,
   writeCodingSessionTeamWakeState,
 } from "./codingSessionTeamWake.ts";
 
@@ -233,6 +238,7 @@ test("READY plus idle is a diagnostic terminal wake, never completion", () => {
       sourceCreatedAtMs: 1_788_148_802_000,
       sourceEventSeq: 12,
       sourceTargetKey: buildCodingSessionTargetKey(BUILDER_TARGET),
+      sourceActorPubkey: BUILDER_ACTOR,
       kind: "turn_ended_without_required_operation",
       operationType: null,
       seatRole: "builder",
@@ -553,4 +559,135 @@ test("author timestamps never decide discovery after the legacy cursor is migrat
     }).sourceEventId,
     past.sourceEventId,
   );
+});
+
+test("D-T1 (model): a custodied source is never a candidate; only a start resolves it", () => {
+  const candidate = deriveCodingSessionTeamWakePlan({
+    umbrella: umbrella(),
+    evidence: evidence({ withReport: true }),
+    currentUserPubkey: FOUNDER,
+    sessionClosed: false,
+  }).candidates.find((row) => row.kind === "operation_ready");
+  const observed = observeCodingSessionTeamWake(
+    baselineCodingSessionTeamWakes([]),
+    candidate.sourceEventId,
+    50_000,
+  );
+  const suppressed = new Set([candidate.sourceEventId]);
+  assert.equal(
+    pendingCodingSessionTeamWake({
+      state: observed,
+      candidates: [candidate],
+      leadTarget: LEAD_TARGET,
+      acknowledgedCommandIds: new Set(),
+      acknowledgedSourceEventIds: new Set(),
+      suppressedSourceEventIds: suppressed,
+      attemptedThisMount: new Set(),
+    }),
+    null,
+    "a provider command already queued for this pointer suppresses the Desktop fallback",
+  );
+  const custodied = recordCodingSessionTeamWakeCustody(observed, {
+    sourceEventId: candidate.sourceEventId,
+    leadTargetKey: buildCodingSessionTargetKey(LEAD_TARGET),
+    commandId: "provider-cmd",
+  });
+  assert.deepEqual(
+    custodied.resolvedSourceEventIds,
+    [],
+    "custody is not permanent resolution",
+  );
+  assert.deepEqual(custodied.custodied, [
+    {
+      sourceEventId: candidate.sourceEventId,
+      leadTargetKey: buildCodingSessionTargetKey(LEAD_TARGET),
+      commandId: "provider-cmd",
+      fromProvider: true,
+    },
+  ]);
+  assert.equal(
+    recordCodingSessionTeamWakeCustody(custodied, {
+      sourceEventId: candidate.sourceEventId,
+      leadTargetKey: buildCodingSessionTargetKey(LEAD_TARGET),
+      commandId: "provider-cmd",
+    }),
+    custodied,
+    "custody is idempotent per source, target and command",
+  );
+
+  const acknowledged = acknowledgeCodingSessionTeamWakes(
+    custodied,
+    new Set(),
+    new Set(),
+    suppressed,
+  );
+  assert.deepEqual(
+    acknowledged.resolvedSourceEventIds,
+    [candidate.sourceEventId],
+    "a started or echoed command is what writes the permanent ledger",
+  );
+  assert.deepEqual(
+    acknowledged.custodied,
+    [],
+    "permanent resolution retires the custody row",
+  );
+  assert.deepEqual(acknowledged.observed, []);
+
+  const released = releaseCodingSessionTeamWakeCustody(custodied, {
+    sourceEventId: candidate.sourceEventId,
+    leadTargetKey: buildCodingSessionTargetKey(LEAD_TARGET),
+  });
+  assert.deepEqual(released.custodied, []);
+  assert.deepEqual(released.resolvedSourceEventIds, []);
+});
+
+test("D-T2 (state): a publish that threw is durable and clears when it succeeds", () => {
+  const targetKey = buildCodingSessionTargetKey(LEAD_TARGET);
+  const failed = recordCodingSessionTeamWakePublishFailure(
+    baselineCodingSessionTeamWakes([]),
+    { sourceEventId: REPORT_ID, leadTargetKey: targetKey },
+  );
+  assert.equal(
+    codingSessionTeamWakePublishFailed(failed, REPORT_ID, targetKey),
+    true,
+  );
+  const storage = new MemoryStorage();
+  writeCodingSessionTeamWakeState(storage, "pf", failed);
+  assert.equal(
+    codingSessionTeamWakePublishFailed(
+      readCodingSessionTeamWakeState(storage, "pf"),
+      REPORT_ID,
+      targetKey,
+    ),
+    true,
+    "the failure survives a restart, so the row never reads Waiting",
+  );
+  const cleared = clearCodingSessionTeamWakePublishFailure(failed, {
+    sourceEventId: REPORT_ID,
+    leadTargetKey: targetKey,
+  });
+  assert.equal(
+    codingSessionTeamWakePublishFailed(cleared, REPORT_ID, targetKey),
+    false,
+  );
+});
+
+test("D-T6 (state): a v1 blob migrates to v2 with an empty re-arm ledger", () => {
+  const storage = new MemoryStorage();
+  storage.setItem(
+    "key",
+    JSON.stringify({
+      schema: "buzz-coding-session-team-wake-state/v1",
+      cursor: null,
+      pending: [],
+      observed: [],
+      resolvedSourceEventIds: [REPORT_ID],
+    }),
+  );
+  const state = readCodingSessionTeamWakeState(storage, "key");
+  assert.deepEqual(state.reArmed, [], "v1 gains an empty re-arm ledger");
+  assert.deepEqual(state.custodied, [], "v1 gains an empty custody ledger");
+  assert.deepEqual(state.publishFailed, []);
+  assert.deepEqual(state.resolvedSourceEventIds, [REPORT_ID]);
+  assert.equal(state.schema, "buzz-coding-session-team-wake-state/v2");
 });
