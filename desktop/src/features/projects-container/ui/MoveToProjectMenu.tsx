@@ -1,4 +1,9 @@
-import { EllipsisVertical, FolderKanban, FolderSymlink } from "lucide-react";
+import {
+  EllipsisVertical,
+  FolderKanban,
+  FolderSymlink,
+  Trash2,
+} from "lucide-react";
 
 import {
   DropdownMenu,
@@ -22,11 +27,22 @@ export function MoveToProjectMenu({
   projects,
   onMove,
   onLinkLocal,
+  onDelete,
+  deleteLabel = "Delete",
 }: {
   currentId: string | null;
   projects: ProjectContainer[];
   onMove: (target: ProjectContainer) => void;
   onLinkLocal?: () => void;
+  /**
+   * Destructive action for the item this row stands for. Omitted when the
+   * viewer may not delete it — the caller decides that, because the rule is
+   * the containing project's (`canDeleteResource`) and this menu has no
+   * business resolving a roster.
+   */
+  onDelete?: () => void;
+  /** Names the thing, so the item reads "Delete repository", not "Delete". */
+  deleteLabel?: string;
 }) {
   return (
     <DropdownMenu>
@@ -60,6 +76,19 @@ export function MoveToProjectMenu({
             >
               <FolderSymlink />
               Link local checkout…
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        {onDelete ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              data-testid="move-to-project-delete"
+              onSelect={onDelete}
+            >
+              <Trash2 />
+              {deleteLabel}
             </DropdownMenuItem>
           </>
         ) : null}

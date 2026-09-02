@@ -2,12 +2,13 @@ use buzz_core::{
     git_perms::{parse_protection_tag, parse_protection_tags, RefPattern},
     kind::KIND_GIT_REPO_ANNOUNCEMENT,
 };
+use buzz_sdk::build_delete_addressable;
 use nostr::{Event, EventBuilder, Tag, Timestamp};
 
 use crate::client::BuzzClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
-use crate::validate::validate_repo_id;
+use crate::validate::{validate_lower_hex64, validate_repo_id};
 
 fn parse_events(json: &str) -> Result<Vec<Event>, CliError> {
     serde_json::from_str(json)
@@ -467,6 +468,50 @@ async fn cmd_bind_repo(
     Ok(())
 }
 
+/// `bee repos delete` — tombstone a repository's kind:30617 announcement.
+///
+/// A kind:5 carrying `["a", "30617:<owner>:<repo-id>"]`. The relay's
+/// addressable-deletion path soft-deletes the announcement, clears the
+/// repo's project link, soft-deletes the relay-signed kind:30618 ref state,
+/// and removes the object-store pointer — so the repository stops being
+/// listed *and* stops being cloneable. Deleting only the announcement would
+/// have left it fully cloneable by anyone who still had access.
+///
+/// The announcement is not fetched first, for the same reason `terminals
+/// delete` does not fetch: requiring it to be readable would fail for
+/// exactly the case a project Owner needs, and the relay is the authority
+/// on whether the coordinate exists.
+///
+/// Two survivors, both deliberate and both reported by the surfaces that
+/// offer this: the name reservation in `git_repo_names` (deletion never
+/// frees a name to squat) and the content-addressed pack objects (shared
+/// with forks and identical trees, so reclaiming them here could destroy a
+/// neighbour's history).
+pub async fn cmd_delete_repo(
+    client: &BuzzClient,
+    repo_id: &str,
+    owner: Option<&str>,
+) -> Result<(), CliError> {
+    validate_repo_id(repo_id)?;
+    let owner_hex = match owner {
+        Some(owner) => {
+            validate_lower_hex64("--owner", owner)?;
+            owner.to_string()
+        }
+        None => client.keys().public_key().to_hex(),
+    };
+
+    let builder = build_delete_addressable(KIND_GIT_REPO_ANNOUNCEMENT, &owner_hex, repo_id)
+        .map_err(|e| CliError::Usage(e.to_string()))?;
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    println!(
+        "{}",
+        parse_write_response(&raw, "no live announcement matched that coordinate")?
+    );
+    Ok(())
+}
+
 pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), CliError> {
     use crate::{ReposCmd, ReposProtectCmd};
     match cmd {
@@ -500,6 +545,7 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
             channel,
             project,
         } => cmd_bind_repo(client, &id, channel.as_deref(), project.as_deref()).await,
+        ReposCmd::Delete { id, owner } => cmd_delete_repo(client, &id, owner.as_deref()).await,
         ReposCmd::Protect(command) => match command {
             ReposProtectCmd::List { id } => cmd_protect_list(client, &id).await,
             ReposProtectCmd::Set {
@@ -533,9 +579,47 @@ mod tests {
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 
     use super::{
-        build_create_announcement, build_protection_tag, build_updated_repo_announcement,
-        protection_rules_json, validate_write_response, RepoChange,
+        build_create_announcement, build_delete_addressable, build_protection_tag,
+        build_updated_repo_announcement, protection_rules_json, validate_write_response,
+        RepoChange, KIND_GIT_REPO_ANNOUNCEMENT,
     };
+
+    const OWNER_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    /// The tombstone `bee repos delete` signs. The relay routes an
+    /// addressable deletion entirely on this `a` tag, and refuses any kind:5
+    /// carrying both an `a` and an `e` tag, so the shape is the contract.
+    #[test]
+    fn delete_builds_a_kind_5_naming_the_announcement_coordinate() {
+        let event = build_delete_addressable(KIND_GIT_REPO_ANNOUNCEMENT, OWNER_HEX, "myrepo")
+            .expect("delete builder")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign tombstone");
+        assert_eq!(event.kind, Kind::Custom(5));
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+        assert_eq!(
+            tags,
+            vec![vec!["a".to_string(), format!("30617:{OWNER_HEX}:myrepo")]]
+        );
+    }
+
+    /// Deleting somebody else's repository is the project-Owner case, and
+    /// the coordinate has to name *their* key — a tombstone addressed to the
+    /// caller names a coordinate that does not exist, which the relay
+    /// accepts and which deletes nothing.
+    #[test]
+    fn delete_addresses_the_named_owner_not_the_caller() {
+        let other = "b".repeat(64);
+        let event = build_delete_addressable(KIND_GIT_REPO_ANNOUNCEMENT, &other, "myrepo")
+            .expect("builder")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign");
+        let coord = event
+            .tags
+            .iter()
+            .find_map(|t| (t.as_slice()[0] == "a").then(|| t.as_slice()[1].clone()));
+        assert_eq!(coord, Some(format!("30617:{other}:myrepo")));
+    }
 
     fn signed_repo(tags: Vec<Tag>, content: &str, created_at: u64) -> nostr::Event {
         EventBuilder::new(Kind::Custom(30617), content)

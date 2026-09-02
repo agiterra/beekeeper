@@ -1339,6 +1339,33 @@ pub enum ReposCmd {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Delete a repository (kind:5 tombstone of its kind:30617 announce).
+    ///
+    /// The repository stops being listed and stops being cloneable: the
+    /// relay soft-deletes the announcement and its kind:30618 ref state,
+    /// and removes the object-store pointer every read path resolves.
+    ///
+    /// Two things deliberately survive. The name stays reserved to its
+    /// owner — deletion never frees a name for somebody else to squat — so
+    /// this cannot be used to take a name over. And the repository's packed
+    /// objects are content-addressed and shared with any fork or repo that
+    /// has the same content, so they are left for an operator sweep rather
+    /// than deleted from under a neighbour.
+    ///
+    /// Signed by the repo's owner, or by an Owner of the project it is in.
+    #[command(
+        after_help = "Examples:\n  bee repos delete --id myrepo\n  bee repos delete --id myrepo --owner <hex>"
+    )]
+    Delete {
+        /// Repository identifier (d-tag).
+        #[arg(long)]
+        id: String,
+        /// Repo owner pubkey (64-char hex). Defaults to the current identity;
+        /// pass it to delete a repository you did not announce but whose
+        /// project you own.
+        #[arg(long)]
+        owner: Option<String>,
+    },
     /// Manage branch and tag protection rules on one of your repositories.
     #[command(subcommand)]
     Protect(ReposProtectCmd),
@@ -4381,7 +4408,7 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "repos"),
-            vec!["bind", "create", "get", "list", "protect"]
+            vec!["bind", "create", "delete", "get", "list", "protect"]
         );
         let repos = cmd
             .get_subcommands()
@@ -4505,7 +4532,8 @@ mod tests {
             ("projects", 11),
             ("pulse", 4),
             ("reactions", 3),
-            ("repos", 5),
+            // 5 on the base tree, plus `delete`.
+            ("repos", 6),
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
             // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, and B2's
             // `policy` (batch 2 B). `subcommand_names_are_stable` above names

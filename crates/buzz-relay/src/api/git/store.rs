@@ -478,6 +478,33 @@ impl GitStore {
         }
     }
 
+    /// Delete a repo's pointer, making the repository unresolvable.
+    ///
+    /// This is what turns "the announcement is tombstoned" into "the
+    /// repository is gone": every read path resolves the pointer first and
+    /// treats its absence as a definitive `repository not found`, so without
+    /// this a deleted repo stays fully cloneable by anyone who still has
+    /// access — a delete that hides a listing and changes nothing else.
+    ///
+    /// Idempotent: a pointer that is already absent is a success, because
+    /// the caller's goal is the end state, not the transition. That also
+    /// makes a retried deletion safe.
+    ///
+    /// Only the pointer is removed. The manifest and pack objects it named
+    /// are content-addressed and shared across repos — a fork, or two
+    /// branches with identical trees, reference the same bytes — so deleting
+    /// them here could destroy another repository's history. They are left
+    /// for an operator sweep, and every surface that offers this says so.
+    pub async fn delete_pointer(&self, key: &str) -> Result<(), StoreError> {
+        match self.bucket.delete_object(key).await {
+            Ok(_) => Ok(()),
+            // S3 delete is already idempotent, but MinIO and S3 disagree
+            // about whether a missing key 404s, so both shapes are accepted.
+            Err(S3Error::HttpFailWithBody(404, _)) => Ok(()),
+            Err(e) => Err(StoreError::Backend(e)),
+        }
+    }
+
     /// Write the pointer under a precondition (§Push step 7 — the CAS).
     ///
     /// Returns `CasOutcome::LostRace` on 412 (the standard losing outcome).

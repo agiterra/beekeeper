@@ -10,11 +10,11 @@ use buzz_core::coding_session_authority_transition::decode_coding_session_author
 use buzz_core::kind::{
     event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE,
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
-    KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED,
-    KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS, KIND_NIP29_GROUP_MEMBERS,
-    KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT, KIND_REACTION,
-    KIND_SHELL_SESSION, KIND_THREAD_SUMMARY,
+    KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT,
+    KIND_GIT_REPO_STATE, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
+    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT,
+    KIND_REACTION, KIND_SHELL_SESSION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -2715,6 +2715,84 @@ pub async fn emit_project_members_projection(
     Ok(())
 }
 
+/// Make a tombstoned repository actually gone, not merely unlisted.
+///
+/// Soft-deleting the kind:30617 announcement removes the repo from every
+/// listing and drops its project link, and for a long time that was the
+/// whole of "delete a repo". It left the repository fully cloneable: the git
+/// transport resolves an object-store pointer, never the announcement, so
+/// anybody who still had access could `git clone` a repo the UI said was
+/// deleted. That is the shape of bug this codebase treats as severe — a
+/// control that lies about what it enforces — so the deletion now reaches
+/// the two things that actually serve the repo:
+///
+/// * the relay-signed kind:30618 ref state, which is a *second* public
+///   record of the repo's branches and tags and is addressed to the relay's
+///   own key, so the owner's tombstone cannot reach it; and
+/// * the pointer at `repos/<community>/<owner>/<repo>/pointer`, whose
+///   absence every read path already treats as a definitive
+///   `repository not found` — the same generic denial every other refusal
+///   uses.
+///
+/// What is deliberately kept: the `git_repo_names` reservation (deletion
+/// never frees a name for another owner to squat) and the content-addressed
+/// pack and manifest objects, which are shared between repositories and
+/// cannot be reclaimed from here without risking another repo's history.
+///
+/// **Failures are logged, never propagated.** This runs after the tombstone
+/// is stored, so returning an error cannot un-delete anything — it would
+/// only lose the record of what was left behind. A pointer that survives is
+/// the dangerous case (the repo stays cloneable), so it is logged at `error`
+/// with everything an operator needs to finish the job by hand.
+async fn delete_repo_git_state(
+    tenant: &TenantContext,
+    event: &Event,
+    state: &Arc<AppState>,
+    repo_id: &str,
+    owner_hex: &str,
+) {
+    let owner_hex = owner_hex.to_ascii_lowercase();
+    let deleted_at = event.created_at.as_secs() as i64;
+
+    // The 30618 is relay-signed and addressed `30618:<relay>:<repo_id>`, so
+    // it is invisible to the owner's own coordinate deletion. Same
+    // created_at fence as every other branch here: a stale replayed
+    // tombstone must not erase the ref state of a newer re-announce.
+    let relay_pubkey = state.relay_keypair.public_key().to_bytes().to_vec();
+    match state
+        .db
+        .soft_delete_by_coordinate(
+            tenant.community(),
+            KIND_GIT_REPO_STATE as i32,
+            &relay_pubkey,
+            repo_id,
+            deleted_at,
+        )
+        .await
+    {
+        Ok(true) => tracing::info!(repo_id, "repo deletion: soft-deleted kind:30618 ref state"),
+        Ok(false) => tracing::debug!(repo_id, "repo deletion: no live kind:30618 ref state"),
+        Err(e) => tracing::error!(
+            repo_id,
+            "repo deletion: failed to soft-delete kind:30618 ref state, \
+             the repo's branches and tags remain publicly readable: {e}"
+        ),
+    }
+
+    let key = crate::api::git::manifest::pointer_key(tenant.community(), &owner_hex, repo_id);
+    if let Err(e) = state.git_store.delete_pointer(&key).await {
+        tracing::error!(
+            repo_id,
+            key,
+            "repo deletion: FAILED TO DELETE POINTER — the repository is still \
+             cloneable by anyone who can reach it. Delete this object-store key \
+             by hand: {e}"
+        );
+    } else {
+        tracing::info!(repo_id, key, "repo deletion: pointer removed");
+    }
+}
+
 async fn handle_a_tag_deletion(
     tenant: &TenantContext,
     event: &Event,
@@ -2875,6 +2953,7 @@ async fn handle_a_tag_deletion(
                 if link_cleared {
                     state.invalidate_all_accessible_channels(tenant);
                 }
+                delete_repo_git_state(tenant, event, state, d_tag, pubkey_hex).await;
             }
             // A deleted shared-terminal announce drops its roster projection
             // (same created_at scoping), so the 24310 watch / 24312 input gates

@@ -410,3 +410,133 @@ async fn a_coordinate_without_a_d_component_is_refused() {
     // case above failed for the missing component and not for the project.
     assert!(!f.dtag.is_empty());
 }
+
+// ── Repository deletion reaches the git state, not just the listing ──────
+//
+// Soft-deleting the kind:30617 removes the repo from every listing. On its
+// own that left the repository fully cloneable, because the git transport
+// resolves an object-store pointer and a relay-signed kind:30618 ref state,
+// neither of which the owner's tombstone can address. These pin the two
+// extra reaches.
+
+/// The kind:30618 ref state is signed by the *relay*, so it lives at
+/// `30618:<relay-pubkey>:<repo-id>` and the owner's own coordinate deletion
+/// cannot touch it. Left behind, it is a second public record of every
+/// branch and tag in a repository the product says is deleted.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn deleting_a_repo_soft_deletes_its_relay_signed_ref_state() {
+    let f = DeletionFixture::new().await;
+    let repo_owner = Keys::generate();
+    let repo_id = format!("repo-{}", uuid::Uuid::new_v4().simple());
+
+    let ref_state = EventBuilder::new(
+        Kind::Custom(buzz_core::kind::KIND_GIT_REPO_STATE as u16),
+        "",
+    )
+    .tags(vec![Tag::parse(["d", repo_id.as_str()]).expect("d tag")])
+    .sign_with_keys(&f.state.relay_keypair)
+    .expect("sign ref state");
+    f.state
+        .db
+        .insert_event(f.tenant.community(), &ref_state, None)
+        .await
+        .expect("store ref state");
+
+    let tombstone = f.tombstone(
+        &repo_owner,
+        &format!(
+            "{KIND_GIT_REPO_ANNOUNCEMENT}:{}:{repo_id}",
+            repo_owner.public_key().to_hex()
+        ),
+    );
+    delete_repo_git_state(
+        &f.tenant,
+        &tombstone,
+        &f.state,
+        &repo_id,
+        &repo_owner.public_key().to_hex(),
+    )
+    .await;
+
+    let live = f
+        .state
+        .db
+        .query_events(&buzz_db::event::EventQuery {
+            kinds: Some(vec![buzz_core::kind::KIND_GIT_REPO_STATE as i32]),
+            d_tag: Some(repo_id.clone()),
+            ..buzz_db::event::EventQuery::for_community(f.tenant.community())
+        })
+        .await
+        .expect("query ref state");
+    assert!(
+        live.is_empty(),
+        "the repo's branches and tags must not stay publicly readable after a delete"
+    );
+}
+
+/// A stale replayed tombstone must not erase the ref state of a *newer*
+/// re-announce — the same `created_at` fence every other branch of the
+/// deletion handler carries.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_stale_repo_tombstone_does_not_erase_a_newer_ref_state() {
+    let f = DeletionFixture::new().await;
+    let repo_owner = Keys::generate();
+    let repo_id = format!("repo-{}", uuid::Uuid::new_v4().simple());
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let ref_state = EventBuilder::new(
+        Kind::Custom(buzz_core::kind::KIND_GIT_REPO_STATE as u16),
+        "",
+    )
+    .tags(vec![Tag::parse(["d", repo_id.as_str()]).expect("d tag")])
+    .custom_created_at(nostr::Timestamp::from(now))
+    .sign_with_keys(&f.state.relay_keypair)
+    .expect("sign ref state");
+    f.state
+        .db
+        .insert_event(f.tenant.community(), &ref_state, None)
+        .await
+        .expect("store ref state");
+
+    let stale = EventBuilder::new(Kind::EventDeletion, "")
+        .tags(vec![Tag::parse([
+            "a",
+            &format!(
+                "{KIND_GIT_REPO_ANNOUNCEMENT}:{}:{repo_id}",
+                repo_owner.public_key().to_hex()
+            ),
+        ])
+        .expect("a tag")])
+        .custom_created_at(nostr::Timestamp::from(now - 60))
+        .sign_with_keys(&repo_owner)
+        .expect("sign stale tombstone");
+    delete_repo_git_state(
+        &f.tenant,
+        &stale,
+        &f.state,
+        &repo_id,
+        &repo_owner.public_key().to_hex(),
+    )
+    .await;
+
+    let live = f
+        .state
+        .db
+        .query_events(&buzz_db::event::EventQuery {
+            kinds: Some(vec![buzz_core::kind::KIND_GIT_REPO_STATE as i32]),
+            d_tag: Some(repo_id.clone()),
+            ..buzz_db::event::EventQuery::for_community(f.tenant.community())
+        })
+        .await
+        .expect("query ref state");
+    assert_eq!(
+        live.len(),
+        1,
+        "a tombstone older than the ref state must leave it alone"
+    );
+}

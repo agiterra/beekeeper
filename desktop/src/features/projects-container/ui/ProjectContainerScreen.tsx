@@ -23,6 +23,7 @@ import { ProjectPulseCard } from "@/features/project-pulse/ui/ProjectPulseCard";
 import { ProjectPulseScreen } from "@/features/project-pulse/ui/ProjectPulseScreen";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
+import { useDeleteRepositoryDialog } from "@/features/projects/ui/useDeleteRepositoryDialog";
 import {
   useManagedAgentsQuery,
   usePersonasQuery,
@@ -194,6 +195,7 @@ export function ProjectContainerScreen({
   // falls back to the head event's members until a 39010 projection exists.
   const rosterQuery = useProjectRosterQuery(project);
   const capabilities = useProjectCapabilities(project);
+  const repoDelete = useDeleteRepositoryDialog();
   const relayOrigin = useRelayOrigin();
   const [editOpen, setEditOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -567,7 +569,13 @@ export function ProjectContainerScreen({
                       </Button>
                       <MoveToProjectMenu
                         currentId={project.id}
+                        deleteLabel="Delete repository"
                         projects={displayProjects}
+                        onDelete={
+                          capabilities.canDeleteResource(repo.owner)
+                            ? () => repoDelete.requestDelete(repo)
+                            : undefined
+                        }
                         onMove={(target) =>
                           moves.requestMoveRepo(repo, project.id, target)
                         }
@@ -657,6 +665,7 @@ export function ProjectContainerScreen({
       />
 
       {moves.confirmDialog}
+      {repoDelete.dialog}
 
       <ProjectsScreenCreateDialogs
         kind={createKind}
