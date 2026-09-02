@@ -21,6 +21,7 @@ import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellS
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { useCodingSessionClosureDialog } from "@/features/coding-sessions/hooks/useCodingSessionClosureDialog";
 import { useDeleteCodingSessionDialog } from "@/features/coding-sessions/hooks/useDeleteCodingSessionDialog";
+import { activeCodingSessionKey } from "../lib/activeCodingSession";
 import { useProjectCapabilitiesMap } from "../lib/projectPermissions";
 import { registerHotkeyTargets } from "@/features/hotkeys/lib/hotkeyTargetRegistry";
 import { NAV_HOTKEY_MAX_POSITIONS } from "@/features/hotkeys/lib/navHotkeyBindings";
@@ -132,6 +133,20 @@ export function ProjectSidebarSections({
     strict: false,
     select: (p) => (p as { sessionId?: string }).sessionId,
   });
+  const codingSessionRouteParams = useParams({
+    strict: false,
+    select: (p) => {
+      const params = p as { channelId?: string; generationId?: string };
+      return {
+        channelId: params.channelId,
+        generationId: params.generationId,
+      };
+    },
+  });
+  const activeSessionKey = activeCodingSessionKey(
+    pathname,
+    codingSessionRouteParams,
+  );
   const handleOpenShell = React.useCallback(
     (sessionId: string) => {
       void navigate({ to: "/shell/$sessionId", params: { sessionId } });
@@ -387,6 +402,7 @@ export function ProjectSidebarSections({
             sessionRef: entry.sessionRef,
           });
         }}
+        activeCodingSessionKey={activeSessionKey}
         canDeleteCodingSession={(founderPubkey) =>
           capabilitiesFor(project).canDeleteResource(founderPubkey)
         }

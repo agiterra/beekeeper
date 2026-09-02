@@ -3,6 +3,8 @@ import { useLocation, useParams, useRouter } from "@tanstack/react-router";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useShellSessionProjectRef } from "@/features/builtin-shell/hooks/useShellSessions";
+import { useChannelsQuery } from "@/features/channels/hooks";
+import { codingSessionProjectRef } from "@/features/projects-container/lib/activeCodingSession";
 import {
   activateHotkeyTarget,
   setActiveHotkeyScope,
@@ -62,9 +64,37 @@ export function useNavigationHotkeys({
   });
   const shellProjectRef = useShellSessionProjectRef(shellSessionId);
 
+  // A coding-session route (`/coding-sessions/<channel>/<generation>`) also
+  // carries no channel the shell can see: a session lives in a *transport*
+  // channel, and `useChannelsQuery` hides those from every consumer by
+  // default — so `activeChannel` is null there and the project fell through
+  // to nothing. The scope then went null, no group numbered its rows, and
+  // holding the item modifier over an open session showed no badges at all.
+  //
+  // Reading the transport-inclusive view costs nothing: the option filters
+  // the returned list, it does not change the query, so this shares the
+  // cache entry every other caller already populated.
+  const codingSessionChannelId = useParams({
+    strict: false,
+    select: (params) => (params as { channelId?: string }).channelId,
+  });
+  const allChannelsQuery = useChannelsQuery({ includeSessionTransports: true });
+  const sessionProjectRef = React.useMemo(
+    () =>
+      codingSessionProjectRef(
+        location.pathname,
+        codingSessionChannelId,
+        allChannelsQuery.data,
+      ),
+    [allChannelsQuery.data, codingSessionChannelId, location.pathname],
+  );
+
   const activeProject = useActiveProjectContainer(
     location.pathname,
-    activeChannel?.projectRef,
+    // The session's own project takes precedence: on a coding-session route
+    // there is no active channel to disagree with it, and off one this is
+    // null so the channel keeps its existing meaning.
+    sessionProjectRef ?? activeChannel?.projectRef,
     shellProjectRef,
   );
   const activeProjectId = activeProject?.id ?? null;

@@ -31,6 +31,7 @@ import type {
   ProjectCodingSessionShelfEntry,
 } from "../lib/projectCodingSessionShelf";
 import type { ProjectChildRow } from "../lib/projectChildren";
+import { codingSessionRowKey } from "../lib/activeCodingSession";
 import { projectSessionIndicator } from "../lib/projectSessionIndicator";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
@@ -49,6 +50,7 @@ export function ProjectChildRowItem({
   onRequestReopenCodingSession,
   onRequestDeleteCodingSession,
   canDeleteCodingSession,
+  activeCodingSessionKey,
   currentPubkey,
   founderProfiles,
   activeShellSessionId,
@@ -83,6 +85,14 @@ export function ProjectChildRowItem({
    * not to a row.
    */
   canDeleteCodingSession?: (founderPubkey: string | null) => boolean;
+  /**
+   * `channelId:generationId` of the coding session currently on screen, or
+   * null. The sidebar's other two row types have carried an active state
+   * since they existed (`isActiveChannel`, `activeShellSessionId`); coding
+   * sessions never did, so opening one left the sidebar showing nothing
+   * selected.
+   */
+  activeCodingSessionKey?: string | null;
   currentPubkey?: string;
   /** Batched profiles for the founders of the rows being rendered — resolved
    * once by the group so a row never fires its own profile query. */
@@ -154,6 +164,13 @@ export function ProjectChildRowItem({
             pubkey: founderPubkey,
           })
         : null;
+      // A pending row stands for a create the provider has not acknowledged,
+      // so it has no generation to be open at and can never be the active
+      // one — matching the click handler, which is also withheld.
+      const isActiveSession =
+        !pending &&
+        activeCodingSessionKey ===
+          codingSessionRowKey(entry.channelId, entry.generationId);
       const button = (
         <SidebarMenuButton
           aria-label={
@@ -161,6 +178,7 @@ export function ProjectChildRowItem({
               ? `${entry.label}, starting`
               : `Open ${entry.label}${details ? `, ${details}` : ""}`
           }
+          isActive={isActiveSession}
           className={cn(
             settled ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
             settled &&
