@@ -6203,6 +6203,41 @@ written and `bash -n` clean but **was not executed** — that harness needs
        writes; and the UI showing those delivery states truthfully. Cite the
        event ids with `bee events query --kinds 44220,44224 --channel
        f4829942-15a8-4e74-accd-51c8448f250f`.
+     - **Live acceptance, part 1 (2026-09-01 20:40–20:55, after landing).**
+       Landed to `origin/main` as `aa6ca7b96` + docs `4a855d8b5`; the push
+       recipe is now `docs/INTEGRATION.md` § "Landing a batch". The first
+       live `seat-repair` on cleantest's builder found **two more alias-vs-id
+       defects in the CLI's hire evidence**, both latent in `bee sessions
+       hire` itself (it never reached them because the receipt arrived after
+       its window): (a) `create_receipt_binding` compared the receipt target's
+       cryptographic `instanceId` (`1958c6c448e05eed`) with the create's human
+       alias (`claude-primary`) and called the real receipt `3e53c993…`
+       "unbound" — the same defect item 102 removed from the Desktop hire
+       host; fixed in `84a02b8e4` (`hire_evidence.rs` binds by signer,
+       command, tags and target key; a receipt naming another instance now
+       fails verification as `refused` instead of vanishing). (b) The metadata
+       check compared `metadata.runtime` (`claude`) with `target.driver`
+       (`claude-agent-acp`); fixed in `4376208ba` (the driver is pinned by the
+       `cs-target` tag and `metadata.session`). Both fixtures moved to the live
+       shape. Then, with `bee` at `4376208ba`: run 1 → `outcome: granted`,
+       create `4b0a551e5e69e807cdacb205d931df0cb92de877e50ac0e4437218b0f2d53eb2`,
+       receipt `3e53c993e5892be510c8d0486fc069aa5f2b9a871308be706ed26b289689154d`,
+       grant-seat `28a3e70cc0cc3ca36c28e614ca33e48cc3ebdddbd9d8a16a36af4b6a3d39d9ef`;
+       run 2 → `already_granted`, nothing written. **Acceptance #7 passed on
+       the wire.** The team-run half (#1, #2, #3, #9 live) is still owed; the
+       dev app is up from `4a855d8b5` with the keyring (0 keyring failures).
+     - **Found in the launch dialog while preparing that run (Brian,
+       2026-09-01).** The Team tab's red line "runs on Claude Code
+       (anthropic); gpt-5.6-sol is an OpenAI model — a team launch runs every
+       seat on one provider" (`codingSessionCrew.ts:318`, rule at `:552-580`:
+       every launch-time create is published against the one
+       `providerInstanceRef` the dialog selected) contradicts the product's
+       premise. Hires already route per seat (item 99); only the launch seat
+       is pinned to the dialog's provider, and the copy names no remedy. Next
+       slice: route the launch seat like a hire, or at least pick the launch
+       provider from the lead identity's own model and say what to change.
+       Also: the readiness card buries the one blocking line under five
+       honest unknowns; the blocker should be the headline.
 
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
