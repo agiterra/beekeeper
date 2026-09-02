@@ -7,6 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition;
+use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use buzz_core::kind::{
     event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE,
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
@@ -257,38 +258,199 @@ pub async fn handle_side_effects(
     }
 }
 
-/// Refuse deletion of coding-session facts whose history is permanent.
+/// Refuse a *piecemeal* deletion of coding-session facts whose history is
+/// permanent.
 ///
-/// A coding-session genesis (44226) *is* the answer to "who founded this
-/// umbrella". Its `sessionRef` is claimed for good: the storage layer's
-/// uniqueness probe deliberately counts soft-deleted geneses so a reference is
-/// never released, and this gate is the front half of that rule — the relay
-/// refuses the deletion rather than accepting one whose only visible effect is
-/// to hide a row that still binds. Allowing it would advertise "delete your
-/// genesis" as a way to re-found a session and then silently not do that.
+/// A coding-session genesis (44226) is the answer to "who founded this
+/// umbrella", and a closure (44230) is an append-only revision of its shared
+/// state. Deleting either **on its own** is refused, and the two reasons are
+/// different:
 ///
-/// Closure revisions (44230) are likewise append-only facts: deleting the
-/// newest `closed` or `open` revision would silently roll shared state back to
-/// an older action without authoring a counter-revision. Sessions change state
-/// only through another closure revision.
+/// * A lone genesis deletion would strand every closure that references it —
+///   revisions of a session that no longer exists.
+/// * A lone closure deletion would silently roll shared state back to an
+///   older action without authoring a counter-revision. Sessions change state
+///   through another closure, never by erasing the last one.
+///
+/// What *is* now allowed is deleting a session outright: one kind:5 that
+/// names the genesis and every live closure together. Then there is no
+/// half-state to be inconsistent about — the whole authority chain goes at
+/// once, which is what "delete this session" has to mean if it is to mean
+/// anything.
+///
+/// The original refusal's stated reason was that a genesis deletion "would
+/// advertise 'delete your genesis' as a way to re-found a session and then
+/// silently not do that". That argument is against *re-founding*, and it
+/// still holds: the storage layer's uniqueness probe counts soft-deleted
+/// geneses, so a `sessionRef` stays claimed for good and the reference is
+/// never released. Deleting a whole session does not hand it back — the same
+/// rule repository names already follow, where deletion never frees a name
+/// for another owner to squat. Every surface that offers this says so.
+///
+/// This function is the piecemeal half only. It takes the *set* of kinds a
+/// deletion targets so it can tell "the closure alone" from "the closure
+/// with its genesis"; the whole-session case is authorized separately by
+/// [`authorize_coding_session_deletion`], which also decides who may do it.
 ///
 /// Applies to both deletion paths — NIP-09 `kind:5` and the NIP-29 moderator
 /// `kind:9005` — because a moderator is no more able to reassign foundership
-/// than an author is.
+/// than an author is. The moderator path deletes one event at a time, so a
+/// session deletion is not expressible there at all and every refusal below
+/// still fires for it, unchanged.
 fn refuse_permanent_identity_deletion(target_kind: u32) -> anyhow::Result<()> {
     if target_kind == KIND_CODING_SESSION_GENESIS {
         return Err(anyhow::anyhow!(
-            "coding-session genesis events cannot be deleted — a session's founder is permanent; \
-             close the session with a closure revision instead"
+            "coding-session genesis events cannot be deleted on their own — a session's founder \
+             is permanent; close the session with a closure revision, or delete the whole \
+             session (its genesis and every closure in one deletion)"
         ));
     }
     if target_kind == KIND_CODING_SESSION_CLOSURE {
         return Err(anyhow::anyhow!(
-            "coding-session closure events cannot be deleted — reopen or close the session with \
-             another closure revision instead"
+            "coding-session closure events cannot be deleted on their own — reopen or close the \
+             session with another closure revision, or delete the whole session (its genesis and \
+             every closure in one deletion)"
         ));
     }
     Ok(())
+}
+
+/// How many closures one channel may hold before this gate gives up rather
+/// than guess. A session accumulates one revision per close or reopen, so a
+/// channel reaching this has thousands, and under-counting here would let a
+/// partial deletion through as if it were complete.
+const MAX_CLOSURES_SCANNED: i64 = 2_000;
+
+/// Every live closure revision of one umbrella, as event ids.
+///
+/// Closures are grouped by `d = sessionRef` inside `h = channel`, but 44230
+/// is a *regular* kind and `extract_d_tag` only populates the indexed
+/// `d_tag` column for the NIP-33 range — so the column is NULL for every
+/// closure and filtering on it silently matches nothing. (It did, in the
+/// first version of this function: the partial-chain test caught a gate that
+/// found zero closures and therefore called every chain complete.) The scan
+/// is therefore by channel, with the `d` tag matched here.
+///
+/// Fails closed on a channel too large to scan: an under-count would let a
+/// partial deletion through as a complete one, which is the exact outcome
+/// this whole gate exists to prevent.
+async fn live_closure_ids(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    channel_id: Uuid,
+    session_ref: &str,
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let rows = state
+        .db
+        .query_events(&buzz_db::event::EventQuery {
+            kinds: Some(vec![KIND_CODING_SESSION_CLOSURE as i32]),
+            channel_id: Some(channel_id),
+            max_limit: Some(MAX_CLOSURES_SCANNED),
+            limit: Some(MAX_CLOSURES_SCANNED),
+            ..buzz_db::event::EventQuery::for_community(tenant.community())
+        })
+        .await?;
+    if rows.len() as i64 >= MAX_CLOSURES_SCANNED {
+        return Err(anyhow::anyhow!(
+            "this channel holds too many coding-session closure revisions to verify a complete \
+             session deletion against"
+        ));
+    }
+    Ok(rows
+        .into_iter()
+        .filter(|stored| {
+            stored.event.tags.iter().any(|tag| {
+                let parts = tag.as_slice();
+                parts.len() >= 2 && parts[0] == "d" && parts[1] == session_ref
+            })
+        })
+        .map(|stored| stored.event.id.to_bytes().to_vec())
+        .collect())
+}
+
+/// Authorize a whole-session deletion, or refuse it as piecemeal.
+///
+/// Returns `Ok(true)` when this deletion is a complete session delete that
+/// the actor may perform — the caller then skips
+/// [`refuse_permanent_identity_deletion`] for its targets. Returns
+/// `Ok(false)` when no genesis is targeted at all, which is every ordinary
+/// deletion and costs one pass over an already-loaded list.
+///
+/// Three conditions, all required:
+///
+/// 1. **Exactly one session.** A deletion naming two geneses is refused
+///    rather than half-applied; batching two irreversible session deletes
+///    into one event buys nothing and makes a partial failure ambiguous.
+/// 2. **The chain is complete.** Every live closure for that `sessionRef`
+///    must be named by the same deletion. Otherwise the survivors are
+///    revisions of a session that no longer exists.
+/// 3. **The actor is the founder or a project Owner.** The founder is the
+///    genesis signer — the payload deliberately never restates it, because
+///    the signature already settles it. A project Owner reaches it through
+///    the session's channel, which carries the project coordinate; this is
+///    the same `get_project_role_by_coordinate` lookup the git ACL and the
+///    addressable-deletion path use, so a session's delete rule is its
+///    project's rule and not a second one.
+async fn authorize_coding_session_deletion(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    targets: &[StoredEvent],
+    actor_bytes: &[u8],
+) -> anyhow::Result<bool> {
+    let geneses: Vec<&StoredEvent> = targets
+        .iter()
+        .filter(|stored| event_kind_u32(&stored.event) == KIND_CODING_SESSION_GENESIS)
+        .collect();
+    let Some(genesis) = geneses.first().copied() else {
+        return Ok(false);
+    };
+    if geneses.len() > 1 {
+        return Err(anyhow::anyhow!(
+            "a deletion may name at most one coding-session genesis — delete one session at a time"
+        ));
+    }
+
+    let payload = decode_coding_session_genesis(&genesis.event.content)
+        .map_err(|e| anyhow::anyhow!("coding-session genesis is undecodable: {e}"))?;
+    let channel_id = extract_h_tag_channel(&genesis.event).ok_or_else(|| {
+        anyhow::anyhow!(
+            "coding-session genesis carries no channel, so its session cannot be resolved"
+        )
+    })?;
+
+    // Condition 2: the chain must go whole.
+    let named: std::collections::HashSet<Vec<u8>> = targets
+        .iter()
+        .map(|stored| stored.event.id.to_bytes().to_vec())
+        .collect();
+    let closures = live_closure_ids(tenant, state, channel_id, &payload.session_ref).await?;
+    let missing = closures.iter().filter(|id| !named.contains(*id)).count();
+    if missing > 0 {
+        return Err(anyhow::anyhow!(
+            "deleting this session must delete its closure revisions too — {missing} of them are \
+             not named by this deletion, and would be left describing a session that no longer \
+             exists"
+        ));
+    }
+
+    // Condition 3: founder, or an Owner of the containing project.
+    let founder = effective_message_author(&genesis.event, &state.relay_keypair.public_key());
+    if founder == actor_bytes {
+        return Ok(true);
+    }
+    let channel = state.db.get_channel(tenant.community(), channel_id).await?;
+    if let Some(coordinate) = channel.project_ref.as_deref() {
+        let role = state
+            .db
+            .get_project_role_by_coordinate(tenant.community(), coordinate, actor_bytes)
+            .await?;
+        if role == Some(ProjectRole::Owner) {
+            return Ok(true);
+        }
+    }
+    Err(anyhow::anyhow!(
+        "only this session's founder, or an owner of the project it belongs to, may delete it"
+    ))
 }
 
 /// The project coordinate that governs an addressable deletion target, if any.
@@ -428,31 +590,79 @@ pub async fn validate_standard_deletion_event(
         return Err(anyhow::anyhow!("must be event author"));
     }
 
+    // Every target is resolved before any is judged, because a coding-session
+    // deletion is only legible as a whole: whether a closure may go depends on
+    // whether its genesis goes with it, and that is a property of the target
+    // *set*, not of any one target.
+    let mut targets = Vec::with_capacity(target_ids.len());
     for target_id in target_ids {
-        let target_event = state
-            .db
-            .get_event_by_id_including_deleted(tenant.community(), &target_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("target event not found"))?;
+        targets.push(
+            state
+                .db
+                .get_event_by_id_including_deleted(tenant.community(), &target_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("target event not found"))?,
+        );
+    }
 
+    // A complete session delete is authorized here, by founder-or-project-Owner
+    // rather than by authorship of each event — the transcript items and
+    // metadata under a session are signed by the provider and the agent seats,
+    // not by the person deleting it, so an authorship-only rule could never
+    // express "delete this session".
+    let whole_session =
+        authorize_coding_session_deletion(tenant, state, &targets, &actor_bytes).await?;
+
+    for target_event in &targets {
         // Checked before authorship: being the founder is not permission to
         // stop being the founder, so this refusal must not be reachable by
-        // simply having signed the target.
-        refuse_permanent_identity_deletion(event_kind_u32(&target_event.event))?;
+        // simply having signed the target. Skipped only when the deletion has
+        // already been authorized as a complete session delete.
+        if !whole_session {
+            refuse_permanent_identity_deletion(event_kind_u32(&target_event.event))?;
+        }
 
         let target_author =
             effective_message_author(&target_event.event, &state.relay_keypair.public_key());
-        if target_author != actor_bytes
-            && !state
+        if target_author == actor_bytes
+            || state
                 .db
                 .is_agent_owner(tenant.community(), &target_author, &actor_bytes)
                 .await?
         {
-            return Err(anyhow::anyhow!("must be event author"));
+            continue;
         }
+        // A session's own events are signed by whoever produced them — the
+        // provider, an agent seat, the founder — so a session delete carries
+        // targets its actor never authored. That is exactly what the
+        // whole-session authorization above decided, and re-deciding it by
+        // authorship here would make the feature unusable by design.
+        if whole_session && coding_session_scoped_kind(event_kind_u32(&target_event.event)) {
+            continue;
+        }
+        return Err(anyhow::anyhow!("must be event author"));
     }
 
     Ok(())
+}
+
+/// Kinds a complete session deletion is allowed to reach without authorship.
+///
+/// Deliberately a closed list rather than "anything in the session's channel":
+/// a session delete must not become a way to delete a teammate's chat messages
+/// by naming them alongside a genesis.
+fn coding_session_scoped_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_CODING_SESSION_GENESIS
+            | KIND_CODING_SESSION_CLOSURE
+            | buzz_core::kind::KIND_CODING_SESSION_METADATA
+            | buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT
+            | buzz_core::kind::KIND_CODING_SESSION_GOAL
+            | buzz_core::kind::KIND_CODING_SESSION_NAME
+            | buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION
+            | buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+    )
 }
 
 /// Returns `true` if `actor_bytes` is the NIP-OA owner of **any** active owner-role
@@ -4186,8 +4396,12 @@ mod tests {
         }));
     }
 
-    /// A genesis is refused by *both* deletion paths, and refused on the kind
-    /// alone — no authorship, membership, or moderator role can reach past it.
+    /// A genesis is refused by *both* deletion paths when it is deleted on its
+    /// own, and refused on the kind alone — no authorship, membership, or
+    /// moderator role can reach past it. (Deleting a *whole session* is a
+    /// different act, authorized by `authorize_coding_session_deletion`
+    /// before this is consulted; the moderator path deletes one event at a
+    /// time and so cannot express it at all.)
     #[test]
     fn coding_session_genesis_cannot_be_deleted() {
         let refusal = refuse_permanent_identity_deletion(KIND_CODING_SESSION_GENESIS)
@@ -4203,9 +4417,10 @@ mod tests {
         );
     }
 
-    /// Deleting a closure revision would make the fold fall back to older
-    /// state without an attributable counter-revision, so both NIP-09 and
-    /// moderator deletion paths refuse it by kind.
+    /// Deleting a closure revision on its own would make the fold fall back to
+    /// older state without an attributable counter-revision, so both NIP-09
+    /// and moderator deletion paths refuse it by kind. A closure deleted
+    /// *with* its genesis is a whole-session delete and never reaches here.
     #[test]
     fn coding_session_closure_cannot_be_deleted() {
         let refusal = refuse_permanent_identity_deletion(KIND_CODING_SESSION_CLOSURE)

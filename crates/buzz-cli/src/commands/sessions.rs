@@ -44,15 +44,20 @@ use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionMetadata, TranscriptEnvelope,
 };
 use buzz_core::kind::{
-    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
-    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_SYSTEM_MESSAGE,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_TRANSCRIPT,
 };
 
+use nostr::{EventBuilder, Kind, Tag};
+
 use crate::client::BuzzClient;
+use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 
@@ -1169,6 +1174,151 @@ async fn fetch_channel_events(
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
+/// Kinds one coding session owns, in the order the deletion names them.
+///
+/// A closed list, not "everything in the channel". The relay grants a whole
+/// session deletion an authorship exemption over exactly these — a session's
+/// events are signed by the provider and the agent seats, not by the person
+/// deleting it — so naming anything else here would be asking for a refusal,
+/// and naming a teammate's chat message would be asking for something worse.
+const SESSION_OWNED_KINDS: &[u32] = &[
+    KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_TEAM_TRANSACTION,
+];
+
+/// Select the events belonging to one umbrella from a channel fetch.
+///
+/// Grouping is by the `d` tag, which every one of [`SESSION_OWNED_KINDS`]
+/// carries and which equals the `sessionRef`. Returns `(event_id, kind)`
+/// pairs so the caller can report a breakdown before deleting anything.
+///
+/// Deliberately no fallback to "events that mention the genesis": a session
+/// deletion is irreversible and its scope must be something the operator can
+/// see and check, not inferred.
+pub fn session_owned_events(events: &[Value], session_ref: &str) -> Vec<(String, u32)> {
+    let mut selected: Vec<(String, u32)> = events
+        .iter()
+        .filter_map(|event| {
+            let kind = event.get("kind").and_then(Value::as_u64)? as u32;
+            if !SESSION_OWNED_KINDS.contains(&kind) {
+                return None;
+            }
+            let tags = event.get("tags")?.as_array()?;
+            let matches = tags.iter().any(|tag| {
+                let parts = tag.as_array();
+                parts.is_some_and(|parts| {
+                    parts.len() >= 2
+                        && parts[0].as_str() == Some("d")
+                        && parts[1].as_str() == Some(session_ref)
+                })
+            });
+            if !matches {
+                return None;
+            }
+            let id = event.get("id")?.as_str()?.to_string();
+            Some((id, kind))
+        })
+        .collect();
+    // Deterministic so a dry run and the delete that follows it agree, and so
+    // the same session always produces the same tag order.
+    selected.sort();
+    selected.dedup();
+    selected
+}
+
+/// A per-kind count of what a deletion would remove, for the receipt.
+pub fn session_deletion_breakdown(selected: &[(String, u32)]) -> BTreeMap<String, usize> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, kind) in selected {
+        *counts.entry(kind.to_string()).or_default() += 1;
+    }
+    counts
+}
+
+/// `bee sessions delete` — delete one coding session outright.
+///
+/// One kind:5 naming the session's whole chain. The relay refuses a genesis
+/// or closure deleted alone, and refuses a chain that leaves any live
+/// closure behind, so assembling the set here is not a convenience — it is
+/// the only shape the relay accepts.
+///
+/// The `sessionRef` is never released. That is deliberate and matches the
+/// repository-name rule: deletion removes the session, not the claim on its
+/// identity, so nothing can be re-founded under a reference that already
+/// existed.
+async fn cmd_delete_session(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: &str,
+    dry_run: bool,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    validate_uuid(session_ref)?;
+
+    let events = fetch_channel_events(client, channel_id, SESSION_OWNED_KINDS).await?;
+    let selected = session_owned_events(&events, session_ref);
+    if selected.is_empty() {
+        return Err(CliError::NotFound(format!(
+            "no coding session {session_ref:?} in channel {channel_id:?}"
+        )));
+    }
+    if !selected
+        .iter()
+        .any(|(_, kind)| *kind == KIND_CODING_SESSION_GENESIS)
+    {
+        // Without a genesis the relay has nothing to authorize the deletion
+        // against and will refuse every one of these as "must be event
+        // author". Saying so here beats a refusal the operator has to decode.
+        return Err(CliError::NotFound(format!(
+            "session {session_ref:?} has no genesis in channel {channel_id:?}, so it cannot be \
+             deleted as a session; its individual events can still be deleted by their authors"
+        )));
+    }
+
+    let breakdown = session_deletion_breakdown(&selected);
+    if dry_run {
+        println!(
+            "{}",
+            json!({
+                "session_ref": session_ref,
+                "channel": channel_id,
+                "events": selected.len(),
+                "by_kind": breakdown,
+                "session_ref_released": false,
+            })
+        );
+        return Ok(());
+    }
+
+    let tags: Vec<Tag> = selected
+        .iter()
+        .map(|(id, _)| Tag::parse(["e", id.as_str()]).map_err(|e| CliError::Other(e.to_string())))
+        .collect::<Result<_, _>>()?;
+    let builder =
+        EventBuilder::new(Kind::Custom(5), format!("Delete session {session_ref}")).tags(tags);
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    let mut response: Value = serde_json::from_str(&parse_write_response(
+        &raw,
+        "the session changed while it was being deleted; retry",
+    )?)
+    .unwrap_or_else(|_| json!({}));
+    if let Some(object) = response.as_object_mut() {
+        object.insert("events".into(), json!(selected.len()));
+        object.insert("by_kind".into(), json!(breakdown));
+        // Stated on every receipt, because the one thing an operator is
+        // likely to assume and be wrong about is that the reference came back.
+        object.insert("session_ref_released".into(), json!(false));
+    }
+    println!("{response}");
+    Ok(())
+}
+
 async fn cmd_list(
     client: &BuzzClient,
     channel_id: &str,
@@ -2272,6 +2422,11 @@ pub async fn dispatch(
 ) -> Result<(), CliError> {
     use crate::SessionsCmd;
     match cmd {
+        SessionsCmd::Delete {
+            channel,
+            session_ref,
+            dry_run,
+        } => cmd_delete_session(client, &channel, &session_ref, dry_run).await,
         SessionsCmd::List { channel } => cmd_list(client, &channel, format).await,
         SessionsCmd::Transcript {
             channel,
@@ -2587,6 +2742,118 @@ mod tests {
     use buzz_core::coding_session_payload::{
         Capabilities, LifecycleReceipt, SessionStatus, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA,
     };
+
+    // ── session delete selection ──────────────────────────────────────────
+
+    const SESSION_A: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+    const SESSION_B: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a11";
+
+    fn owned(id: &str, kind: u32, session_ref: &str) -> Value {
+        json!({
+            "id": id,
+            "kind": kind,
+            "tags": [["h", "chan"], ["d", session_ref]],
+        })
+    }
+
+    /// The set a delete names is the session's own chain, complete. The
+    /// relay refuses anything short of it, so a selection that quietly
+    /// dropped a closure would produce a refusal the operator cannot act on.
+    #[test]
+    fn selection_takes_the_whole_chain_of_one_session() {
+        let events = vec![
+            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
+            owned("a2", KIND_CODING_SESSION_CLOSURE, SESSION_A),
+            owned("a3", KIND_CODING_SESSION_CLOSURE, SESSION_A),
+            owned("a4", KIND_CODING_SESSION_TRANSCRIPT, SESSION_A),
+            owned("a5", KIND_CODING_SESSION_METADATA, SESSION_A),
+            owned("a6", KIND_CODING_SESSION_GOAL, SESSION_A),
+            owned("a7", KIND_CODING_SESSION_NAME, SESSION_A),
+            owned("a8", KIND_CODING_SESSION_TEAM_TRANSACTION, SESSION_A),
+        ];
+        let selected = session_owned_events(&events, SESSION_A);
+        assert_eq!(selected.len(), 8);
+        assert!(selected
+            .iter()
+            .any(|(_, kind)| *kind == KIND_CODING_SESSION_GENESIS));
+    }
+
+    /// A channel holds many sessions. Naming a neighbour's events would
+    /// delete a session nobody asked about, and the relay would accept it —
+    /// each event is in the same channel and the deletion carries a genesis.
+    #[test]
+    fn selection_never_reaches_a_neighbouring_session() {
+        let events = vec![
+            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
+            owned("b1", KIND_CODING_SESSION_GENESIS, SESSION_B),
+            owned("b2", KIND_CODING_SESSION_TRANSCRIPT, SESSION_B),
+        ];
+        let selected = session_owned_events(&events, SESSION_A);
+        assert_eq!(
+            selected,
+            vec![("a1".to_string(), KIND_CODING_SESSION_GENESIS)]
+        );
+    }
+
+    /// The kind list is closed. A chat message carrying a matching `d` tag —
+    /// which nothing stops a client from publishing — must not be swept in
+    /// on the authorship exemption a session delete is granted.
+    #[test]
+    fn selection_ignores_kinds_a_session_does_not_own() {
+        let events = vec![
+            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
+            owned("m1", 40002, SESSION_A),
+            owned("c1", KIND_CODING_SESSION_COMMAND, SESSION_A),
+        ];
+        let selected = session_owned_events(&events, SESSION_A);
+        assert_eq!(
+            selected,
+            vec![("a1".to_string(), KIND_CODING_SESSION_GENESIS)]
+        );
+    }
+
+    /// A dry run and the delete that follows must name the same set in the
+    /// same order, or the receipt describes something other than what went.
+    #[test]
+    fn selection_is_deterministic_and_deduplicated() {
+        let events = vec![
+            owned("a2", KIND_CODING_SESSION_CLOSURE, SESSION_A),
+            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
+            owned("a2", KIND_CODING_SESSION_CLOSURE, SESSION_A),
+        ];
+        let selected = session_owned_events(&events, SESSION_A);
+        assert_eq!(
+            selected,
+            vec![
+                ("a1".to_string(), KIND_CODING_SESSION_GENESIS),
+                ("a2".to_string(), KIND_CODING_SESSION_CLOSURE),
+            ]
+        );
+    }
+
+    /// An event with no `d` tag belongs to no session and is never selected.
+    #[test]
+    fn selection_skips_an_event_with_no_session_ref() {
+        let events = vec![json!({
+            "id": "x1",
+            "kind": KIND_CODING_SESSION_TRANSCRIPT,
+            "tags": [["h", "chan"]],
+        })];
+        assert!(session_owned_events(&events, SESSION_A).is_empty());
+    }
+
+    /// The receipt's breakdown counts what actually goes, per kind.
+    #[test]
+    fn the_breakdown_counts_each_kind() {
+        let selected = vec![
+            ("a1".to_string(), KIND_CODING_SESSION_GENESIS),
+            ("a2".to_string(), KIND_CODING_SESSION_CLOSURE),
+            ("a3".to_string(), KIND_CODING_SESSION_CLOSURE),
+        ];
+        let breakdown = session_deletion_breakdown(&selected);
+        assert_eq!(breakdown.get("44226"), Some(&1));
+        assert_eq!(breakdown.get("44230"), Some(&2));
+    }
 
     fn target(session_id: &str, generation: u64) -> CodingSessionTarget {
         CodingSessionTarget {

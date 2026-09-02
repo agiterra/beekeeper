@@ -104,6 +104,8 @@ export function ProjectSidebarGroup({
   onOpenCodingSession,
   onRequestCloseCodingSession,
   onRequestArchiveCodingSession,
+  onRequestDeleteCodingSession,
+  canDeleteCodingSession,
   onRequestReopenCodingSession,
   currentPubkey,
   sessionFilter,
@@ -142,6 +144,10 @@ export function ProjectSidebarGroup({
   onRequestArchiveCodingSession?: (
     entry: ProjectCodingSessionShelfEntry,
   ) => void;
+  onRequestDeleteCodingSession?: (
+    entry: ProjectCodingSessionShelfEntry,
+  ) => void;
+  canDeleteCodingSession?: (founderPubkey: string | null) => boolean;
   onRequestReopenCodingSession?: (
     entry: ProjectCodingSessionShelfEntry,
   ) => void;
@@ -355,6 +361,8 @@ export function ProjectSidebarGroup({
       onOpenCodingSession={onOpenCodingSession}
       onRequestCloseCodingSession={onRequestCloseCodingSession}
       onRequestArchiveCodingSession={onRequestArchiveCodingSession}
+      onRequestDeleteCodingSession={onRequestDeleteCodingSession}
+      canDeleteCodingSession={canDeleteCodingSession}
       onRequestReopenCodingSession={onRequestReopenCodingSession}
       currentPubkey={currentPubkey}
       founderProfiles={founderProfiles}

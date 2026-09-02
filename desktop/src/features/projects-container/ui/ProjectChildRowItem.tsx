@@ -6,6 +6,7 @@ import {
   RotateCcw,
   Square,
   Terminal,
+  Trash2,
 } from "lucide-react";
 
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
@@ -46,6 +47,8 @@ export function ProjectChildRowItem({
   onRequestCloseCodingSession,
   onRequestArchiveCodingSession,
   onRequestReopenCodingSession,
+  onRequestDeleteCodingSession,
+  canDeleteCodingSession,
   currentPubkey,
   founderProfiles,
   activeShellSessionId,
@@ -69,6 +72,17 @@ export function ProjectChildRowItem({
   onRequestReopenCodingSession?: (
     entry: ProjectCodingSessionShelfEntry,
   ) => void;
+  onRequestDeleteCodingSession?: (
+    entry: ProjectCodingSessionShelfEntry,
+  ) => void;
+  /**
+   * Whether the viewer may delete a session founded by this pubkey. Unlike
+   * close/archive/reopen — which are founder-only — delete is the project's
+   * rule: an Owner reaches any session in the project. Passed in because the
+   * decision belongs to the screen that holds the project's capabilities,
+   * not to a row.
+   */
+  canDeleteCodingSession?: (founderPubkey: string | null) => boolean;
   currentPubkey?: string;
   /** Batched profiles for the founders of the rows being rendered — resolved
    * once by the group so a row never fires its own profile query. */
@@ -109,6 +123,15 @@ export function ProjectChildRowItem({
           hasClosureCoordinates &&
           isFounder &&
           onRequestArchiveCodingSession,
+      );
+      // Delete is the one action here that is not founder-only: a project
+      // Owner reaches any session in their project, which is the rule the
+      // relay applies too. `canDeleteCodingSession` carries that decision in
+      // from the screen holding the project's capabilities.
+      const canDelete = Boolean(
+        entry.sessionRef &&
+          onRequestDeleteCodingSession &&
+          canDeleteCodingSession?.(entry.founderPubkey),
       );
       const canReopen = Boolean(
         settled &&
@@ -233,7 +256,7 @@ export function ProjectChildRowItem({
           data-session-closure={settled ? "closed" : "open"}
           data-session-status={entry.status.kind}
         >
-          {canClose || canArchive || canReopen ? (
+          {canClose || canArchive || canReopen || canDelete ? (
             <ContextMenu>
               <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
               <ContextMenuContent>
@@ -262,6 +285,16 @@ export function ProjectChildRowItem({
                   >
                     <RotateCcw />
                     Reopen session
+                  </ContextMenuItem>
+                ) : null}
+                {canDelete ? (
+                  <ContextMenuItem
+                    className="text-destructive focus:text-destructive"
+                    data-testid="project-coding-session-delete"
+                    onSelect={() => onRequestDeleteCodingSession?.(entry)}
+                  >
+                    <Trash2 />
+                    Delete session
                   </ContextMenuItem>
                 ) : null}
               </ContextMenuContent>

@@ -20,6 +20,8 @@ import {
 import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { useCodingSessionClosureDialog } from "@/features/coding-sessions/hooks/useCodingSessionClosureDialog";
+import { useDeleteCodingSessionDialog } from "@/features/coding-sessions/hooks/useDeleteCodingSessionDialog";
+import { useProjectCapabilitiesMap } from "../lib/projectPermissions";
 import { registerHotkeyTargets } from "@/features/hotkeys/lib/hotkeyTargetRegistry";
 import { NAV_HOTKEY_MAX_POSITIONS } from "@/features/hotkeys/lib/navHotkeyBindings";
 import { ScopeActionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
@@ -165,6 +167,7 @@ export function ProjectSidebarSections({
   );
   const shellDialogs = useShellSessionDialogs();
   const codingSessionClosureDialog = useCodingSessionClosureDialog();
+  const codingSessionDeleteDialog = useDeleteCodingSessionDialog();
 
   // Coding sessions are channel-scoped the same way, except a session may also
   // carry a signed projectRef that overrides its channel's project.
@@ -183,6 +186,10 @@ export function ProjectSidebarSections({
     project: ProjectContainer;
   } | null>(null);
 
+  // One roster read for every project in the sidebar. Close, archive and
+  // reopen are founder-only and need no roster; delete is the project's rule,
+  // so an Owner reaches any session in their project.
+  const { capabilitiesFor } = useProjectCapabilitiesMap(projects);
   const displayProjects = React.useMemo(
     () => displayProjectsWithGeneral(projects),
     [projects],
@@ -380,6 +387,18 @@ export function ProjectSidebarSections({
             sessionRef: entry.sessionRef,
           });
         }}
+        canDeleteCodingSession={(founderPubkey) =>
+          capabilitiesFor(project).canDeleteResource(founderPubkey)
+        }
+        onRequestDeleteCodingSession={(entry) => {
+          if (!entry.sessionRef) return;
+          codingSessionDeleteDialog.requestDelete({
+            channelId: entry.channelId,
+            label: entry.label,
+            sessionRef: entry.sessionRef,
+            stops: entry.stopTargets.map((stop) => ({ ...stop })),
+          });
+        }}
         onRequestReopenCodingSession={(entry) => {
           if (!entry.sessionRef || !entry.genesisRef) return;
           codingSessionClosureDialog.requestClosure({
@@ -460,6 +479,7 @@ export function ProjectSidebarSections({
       </ProjectSidebarDndContext>
       {shellDialogs.dialogs}
       {codingSessionClosureDialog.dialog}
+      {codingSessionDeleteDialog.dialog}
 
       <ProjectsScreenCreateDialogs
         kind={createRequest?.kind ?? null}

@@ -540,3 +540,305 @@ async fn a_stale_repo_tombstone_does_not_erase_a_newer_ref_state() {
         "a tombstone older than the ref state must leave it alone"
     );
 }
+
+// ── Deleting a whole coding session ──────────────────────────────────────
+//
+// A genesis and a closure stay undeletable on their own — the reasons for
+// that never went away. What is new is that a session can be deleted
+// outright: one kind:5 naming the genesis and every live closure together,
+// signed by the founder or an Owner of the project the session sits in.
+// Then there is no half-state to be inconsistent about.
+
+/// A whole-session delete, and the fixture every case below builds on.
+struct SessionFixture {
+    channel_id: uuid::Uuid,
+    session_ref: String,
+    genesis_id: Vec<u8>,
+    closure_ids: Vec<Vec<u8>>,
+}
+
+impl DeletionFixture {
+    /// A channel inside this project holding one genesis and `closures`
+    /// closure revisions, all signed by `founder`.
+    async fn session(&self, founder: &Keys, closures: usize) -> SessionFixture {
+        let channel = self
+            .state
+            .db
+            .create_channel(
+                self.tenant.community(),
+                &format!("sessions-{}", uuid::Uuid::new_v4().simple()),
+                buzz_db::channel::ChannelType::Stream,
+                buzz_db::channel::ChannelVisibility::Open,
+                None,
+                &founder.public_key().to_bytes(),
+                None,
+                Some(&self.coordinate),
+            )
+            .await
+            .expect("channel");
+        let session_ref = uuid::Uuid::new_v4().to_string();
+
+        let genesis = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_GENESIS as u16),
+            serde_json::json!({ "sessionRef": session_ref, "v": 1 }).to_string(),
+        )
+        .tags(vec![
+            Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
+            Tag::parse(["d", session_ref.as_str()]).expect("d tag"),
+        ])
+        .sign_with_keys(founder)
+        .expect("sign genesis");
+        self.state
+            .db
+            .insert_event(self.tenant.community(), &genesis, Some(channel.id))
+            .await
+            .expect("store genesis");
+
+        let mut closure_ids = Vec::new();
+        for index in 0..closures {
+            let closure = EventBuilder::new(
+                Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_CLOSURE as u16),
+                serde_json::json!({
+                    "action": if index % 2 == 0 { "closed" } else { "open" },
+                    "genesisRef": genesis.id.to_hex(),
+                    "sessionRef": session_ref,
+                    "v": 1,
+                })
+                .to_string(),
+            )
+            .tags(vec![
+                Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
+                Tag::parse(["d", session_ref.as_str()]).expect("d tag"),
+            ])
+            .custom_created_at(nostr::Timestamp::from(1_800_000_000 + index as u64))
+            .sign_with_keys(founder)
+            .expect("sign closure");
+            self.state
+                .db
+                .insert_event(self.tenant.community(), &closure, Some(channel.id))
+                .await
+                .expect("store closure");
+            closure_ids.push(closure.id.to_bytes().to_vec());
+        }
+
+        SessionFixture {
+            channel_id: channel.id,
+            session_ref,
+            genesis_id: genesis.id.to_bytes().to_vec(),
+            closure_ids,
+        }
+    }
+
+    /// A kind:5 naming `ids` by `e` tag, signed by `actor`.
+    fn delete_events(&self, actor: &Keys, ids: &[Vec<u8>]) -> nostr::Event {
+        EventBuilder::new(Kind::EventDeletion, "")
+            .tags(
+                ids.iter()
+                    .map(|id| Tag::parse(["e", &hex::encode(id)]).expect("e tag"))
+                    .collect::<Vec<_>>(),
+            )
+            .sign_with_keys(actor)
+            .expect("sign deletion")
+    }
+
+    async fn verdict_events(&self, actor: &Keys, ids: &[Vec<u8>]) -> Result<(), String> {
+        validate_standard_deletion_event(&self.tenant, &self.delete_events(actor, ids), &self.state)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl SessionFixture {
+    /// The genesis plus every closure — a complete authority chain.
+    fn whole_chain(&self) -> Vec<Vec<u8>> {
+        let mut ids = vec![self.genesis_id.clone()];
+        ids.extend(self.closure_ids.iter().cloned());
+        ids
+    }
+}
+
+/// The capability. The founder deletes their own session outright.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_founder_deletes_their_whole_session() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 2).await;
+    assert_eq!(
+        f.verdict_events(&founder, &session.whole_chain()).await,
+        Ok(())
+    );
+    assert!(!session.session_ref.is_empty());
+}
+
+/// And a project Owner reaches a session they did not found — the case an
+/// authorship rule could never express, and the reason this is authorized
+/// by role at all.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_project_owner_deletes_a_session_they_did_not_found() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 1).await;
+    assert_eq!(
+        f.verdict_events(&f.owner, &session.whole_chain()).await,
+        Ok(())
+    );
+    assert_eq!(
+        f.verdict_events(&f.creator, &session.whole_chain()).await,
+        Ok(())
+    );
+}
+
+/// Write access into a project is not authority over its sessions.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_collaborator_viewer_and_stranger_cannot_delete_someone_elses_session() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 1).await;
+    for (label, actor) in [
+        ("collaborator", &f.collaborator),
+        ("viewer", &f.viewer),
+        ("stranger", &f.stranger),
+    ] {
+        let verdict = f.verdict_events(actor, &session.whole_chain()).await;
+        assert_eq!(
+            verdict,
+            Err("only this session's founder, or an owner of the project it belongs to, may delete it"
+                .to_string()),
+            "{label} must not be able to delete a session they neither founded nor own"
+        );
+    }
+}
+
+/// The piecemeal refusals are the whole reason the old blanket rule existed,
+/// and they survive intact: a genesis on its own still cannot go.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_genesis_alone_is_still_refused_even_for_its_founder() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 2).await;
+    let verdict = f
+        .verdict_events(&founder, std::slice::from_ref(&session.genesis_id))
+        .await;
+    let message = verdict.expect_err("a partial chain must be refused");
+    assert!(
+        message.contains("closure revisions too"),
+        "the refusal must name what is missing, got {message:?}"
+    );
+    assert!(message.contains('2'), "and how many, got {message:?}");
+}
+
+/// A closure on its own would roll shared state back to an older action with
+/// no counter-revision, which is exactly what it always was.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_closure_alone_is_still_refused() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 1).await;
+    let verdict = f
+        .verdict_events(&founder, &session.closure_ids.clone())
+        .await;
+    let message = verdict.expect_err("a lone closure deletion must be refused");
+    assert!(
+        message.contains("cannot be deleted on their own"),
+        "got {message:?}"
+    );
+    assert!(
+        message.contains("another closure revision"),
+        "the refusal must still point at the supported way to change state, got {message:?}"
+    );
+}
+
+/// Naming *some* closures is the dangerous near-miss: it looks like a
+/// session delete and leaves revisions describing a session that is gone.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_partial_chain_is_refused_and_says_how_many_are_missing() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 3).await;
+    let mut partial = vec![session.genesis_id.clone()];
+    partial.push(session.closure_ids[0].clone());
+    let message = f
+        .verdict_events(&founder, &partial)
+        .await
+        .expect_err("a partial chain must be refused");
+    assert!(
+        message.contains("2 of them are not named"),
+        "got {message:?}"
+    );
+}
+
+/// Two sessions in one deletion is refused rather than half-applied.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn two_sessions_in_one_deletion_are_refused() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let first = f.session(&founder, 0).await;
+    let second = f.session(&founder, 0).await;
+    let message = f
+        .verdict_events(&founder, &[first.genesis_id, second.genesis_id])
+        .await
+        .expect_err("two geneses must be refused");
+    assert!(message.contains("one session at a time"), "got {message:?}");
+}
+
+/// A session with no closures at all is a complete chain by itself.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_session_that_was_never_closed_deletes_with_its_genesis_alone() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 0).await;
+    assert_eq!(
+        f.verdict_events(&founder, std::slice::from_ref(&session.genesis_id))
+            .await,
+        Ok(())
+    );
+    assert!(session.closure_ids.is_empty());
+    assert_ne!(session.channel_id, uuid::Uuid::nil());
+}
+
+/// The authorship exemption a session delete needs is a closed list. It must
+/// not become a way to delete a teammate's chat messages by naming them in
+/// the same event as a genesis.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_session_delete_cannot_smuggle_in_someone_elses_message() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 0).await;
+
+    let bystander = Keys::generate();
+    let message = EventBuilder::new(
+        Kind::Custom(buzz_core::kind::KIND_STREAM_MESSAGE_V2 as u16),
+        "not yours to delete",
+    )
+    .tags(vec![
+        Tag::parse(["h", &session.channel_id.to_string()]).expect("h tag")
+    ])
+    .sign_with_keys(&bystander)
+    .expect("sign message");
+    f.state
+        .db
+        .insert_event(f.tenant.community(), &message, Some(session.channel_id))
+        .await
+        .expect("store message");
+
+    let verdict = f
+        .verdict_events(
+            &founder,
+            &[session.genesis_id.clone(), message.id.to_bytes().to_vec()],
+        )
+        .await;
+    assert_eq!(
+        verdict,
+        Err(DENIAL.to_string()),
+        "a genesis in the same deletion must not launder authorship over an unrelated event"
+    );
+}

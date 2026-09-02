@@ -2381,6 +2381,38 @@ pub enum SessionsCmd {
         #[arg(long, value_enum, default_value = "md")]
         format: TranscriptFormat,
     },
+    /// Delete a coding session outright (one kind:5 over its whole chain).
+    ///
+    /// The relay refuses a genesis or a closure deleted on its own — the
+    /// first would strand the session's closure revisions, the second would
+    /// roll shared state back with no counter-revision. So this assembles
+    /// the whole session in one deletion: its genesis, every closure, and
+    /// its metadata, transcript, goal, name and team records.
+    ///
+    /// The session's reference is **never released**. A deleted session's
+    /// `sessionRef` stays claimed for good, exactly as a deleted repository
+    /// keeps its name, so this can never be used to re-found a session under
+    /// an identity that already existed.
+    ///
+    /// Signed by the session's founder, or by an Owner of the project the
+    /// session's channel belongs to.
+    ///
+    /// This does not stop a running execution on its host. Close or stop the
+    /// session first if one is still live; a closure frees the host slot.
+    #[command(
+        after_help = "Examples:\n  bee sessions delete --channel <uuid> --session-ref <uuid>\n  bee sessions delete --channel <uuid> --session-ref <uuid> --dry-run"
+    )]
+    Delete {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// The umbrella session's reference (its genesis `d` tag)
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Print what would be deleted and exit without publishing.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
     /// Diagnose how each turn ended — spans, unterminated tools, stalled prompts
     #[command(
         after_help = "Examples:\n  bee sessions doctor --channel <uuid>\n  bee --format compact sessions doctor --channel <uuid> --target '<cs-target>'\n\nReports, per turn: wall span, unterminated tool calls, the terminal result's\ntoken counts, and the `turn_wire` row when the producer published one. A\nfailed turn whose result carries no usage was never resolved by the agent."
@@ -4468,6 +4500,7 @@ mod tests {
                 "complete",
                 "create",
                 "decide",
+                "delete",
                 "doctor",
                 "export",
                 "grant",
@@ -4535,10 +4568,11 @@ mod tests {
             // 5 on the base tree, plus `delete`.
             ("repos", 6),
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
-            // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, and B2's
-            // `policy` (batch 2 B). `subcommand_names_are_stable` above names
-            // all thirty, so this count and that list cannot drift apart.
-            ("sessions", 30),
+            // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, B2's
+            // `policy` (batch 2 B), and `delete`.
+            // `subcommand_names_are_stable` above names all thirty-one, so
+            // this count and that list cannot drift apart.
+            ("sessions", 31),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),
