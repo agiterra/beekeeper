@@ -22,7 +22,16 @@ const TYPES = new Set([
   "acknowledgement",
   "mission.completed",
   "mission.blocked",
+  "note",
+  "decision.request",
+  "decision.answer",
 ]);
+const DECISION_FOUNDER = "founder";
+const MAX_NOTE_REFS = 16;
+const MAX_DECISION_OPTIONS = 8;
+const MAX_DECISION_OPTION_BYTES = 512;
+const MAX_DECISION_BLOCKS = 16;
+const MAX_SHORT_TEXT_BYTES = 2 * 1024;
 
 export type StrictDecodeResult<T> =
   | { ok: true; value: T }
@@ -100,6 +109,26 @@ export type CodingSessionTeamTransactionBody =
       blockers: string[];
       heldOn: string | null;
       requiredAction: string;
+    }
+  | {
+      /** Something said. Never a phase, never a terminal. */
+      text: string;
+      /** Pointers for a reader; not causal and not required to resolve. */
+      refs: string[];
+    }
+  | {
+      question: string;
+      options: string[];
+      /** Exactly `founder`, or the 64-hex actor holding the decision. */
+      heldOn: string;
+      blocks: string[];
+      recommendation: string | null;
+    }
+  | {
+      requestRef: string;
+      /** An index into the request's options, or bounded free text. */
+      choice: number | string;
+      note: string | null;
     };
 
 export type CodingSessionTeamTransactionPayload = {
@@ -112,7 +141,10 @@ export type CodingSessionTeamTransactionPayload = {
     | "verdict"
     | "acknowledgement"
     | "mission.completed"
-    | "mission.blocked";
+    | "mission.blocked"
+    | "note"
+    | "decision.request"
+    | "decision.answer";
   supersedes: string | null;
   deliveryCommandId: string | null;
   body: CodingSessionTeamTransactionBody;
@@ -324,11 +356,90 @@ function validateVerdict(body: Record<string, unknown>): boolean {
   );
 }
 
+function isBoundedReferenceArray(value: unknown, maxItems: number): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= maxItems &&
+    value.every((item) => typeof item === "string" && HEX64.test(item)) &&
+    new Set(value).size === value.length
+  );
+}
+
+function validateNote(body: Record<string, unknown>): boolean {
+  return (
+    hasExactFields(body, [["text", "refs"]]) &&
+    isText(body.text) &&
+    isBoundedReferenceArray(body.refs, MAX_NOTE_REFS)
+  );
+}
+
+function validateDecisionRequest(body: Record<string, unknown>): boolean {
+  return (
+    hasExactFields(body, [
+      ["question", "options", "heldOn", "blocks", "recommendation"],
+    ]) &&
+    isText(body.question) &&
+    isStringArray(body.options, {
+      maxItems: MAX_DECISION_OPTIONS,
+      maxBytes: MAX_DECISION_OPTION_BYTES,
+      unique: true,
+    }) &&
+    typeof body.heldOn === "string" &&
+    (body.heldOn === DECISION_FOUNDER || HEX64.test(body.heldOn)) &&
+    isBoundedReferenceArray(body.blocks, MAX_DECISION_BLOCKS) &&
+    isNullableText(body.recommendation, MAX_SHORT_TEXT_BYTES)
+  );
+}
+
+function validateDecisionAnswer(body: Record<string, unknown>): boolean {
+  const choiceIsIndex =
+    typeof body.choice === "number" &&
+    Number.isSafeInteger(body.choice) &&
+    body.choice >= 0 &&
+    body.choice < MAX_DECISION_OPTIONS;
+  return (
+    hasExactFields(body, [["requestRef", "choice", "note"]]) &&
+    typeof body.requestRef === "string" &&
+    HEX64.test(body.requestRef) &&
+    (choiceIsIndex || isText(body.choice, MAX_SHORT_TEXT_BYTES)) &&
+    isNullableText(body.note)
+  );
+}
+
+/** Exact refusal for a `mission.blocked` correction that names no blocker. */
+export const TERMINAL_CANNOT_CLEAR_ITSELF =
+  "use a note or a decision.answer to clear a blocker; a terminal cannot clear itself";
+
+/**
+ * Refuse the two supersession shapes that carry no honest meaning, in the same
+ * order buzz-core refuses them so both surfaces name the same reason.
+ */
+function supersessionRefusal(
+  type: string,
+  supersedes: unknown,
+  body: unknown,
+): string | null {
+  if (supersedes === null) return null;
+  if (type === "note") return "a note never supersedes another record";
+  if (
+    type === "mission.blocked" &&
+    isObject(body) &&
+    Array.isArray(body.blockers) &&
+    body.blockers.length === 0
+  ) {
+    return TERMINAL_CANNOT_CLEAR_ITSELF;
+  }
+  return null;
+}
+
 function validateBody(type: string, body: unknown): boolean {
   if (!isObject(body)) return false;
   if (type === "assignment") return validateAssignment(body);
   if (type === "report") return validateReport(body);
   if (type === "verdict") return validateVerdict(body);
+  if (type === "note") return validateNote(body);
+  if (type === "decision.request") return validateDecisionRequest(body);
+  if (type === "decision.answer") return validateDecisionAnswer(body);
   if (type === "acknowledgement") {
     return (
       hasExactFields(body, [["acknowledgedEventRef", "status", "note"]]) &&
@@ -381,6 +492,10 @@ function causalReferences(
   if (payload.type.startsWith("mission.")) {
     return body.assignmentRefs as string[];
   }
+  if (payload.type === "decision.answer") return [body.requestRef as string];
+  // Neither a note's `refs` nor a request's `blocks` is causal: both are
+  // pointers a reader follows, so either may name an event outside this set
+  // and neither costs its record a place in the fold.
   return [];
 }
 
@@ -424,9 +539,17 @@ export function decodeCodingSessionTeamTransactionContent(
         ![...value.deliveryCommandId].some((character) =>
           /\p{Cc}/u.test(character),
         ))
-    ) ||
-    !validateBody(value.type, value.body)
+    )
   ) {
+    return fail("content does not match the v1 transaction schema");
+  }
+  const supersessionError = supersessionRefusal(
+    value.type,
+    value.supersedes,
+    value.body,
+  );
+  if (supersessionError !== null) return fail(supersessionError);
+  if (!validateBody(value.type, value.body)) {
     return fail("content does not match the v1 transaction schema");
   }
   return { ok: true, value: value as CodingSessionTeamTransactionPayload };

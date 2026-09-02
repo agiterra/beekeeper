@@ -213,6 +213,20 @@ fn validate_causal_types(
                 }
             }
         }
+        // A note declares no causal reference at all; its `refs` are pointers
+        // and may name any event, including one outside the supplied set.
+        CodingSessionTeamTransactionBody::Note(_) => {}
+        // Neither does a request: `blocks` are pointers too (REVIEW-B1c F3), so
+        // correcting the assignment a question is about must never delete the
+        // question. `waiting_on_decision` re-resolves `blocks` against the
+        // current active set each fold, which is the honest reading of "this
+        // ruling blocks that work".
+        CodingSessionTeamTransactionBody::DecisionRequest(_) => {}
+        CodingSessionTeamTransactionBody::DecisionAnswer(body) => {
+            if let Some(request) = get(&body.request_ref) {
+                require_type(request, CodingSessionTeamTransactionType::DecisionRequest)?;
+            }
+        }
     }
     Ok(())
 }

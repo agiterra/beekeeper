@@ -15,9 +15,11 @@ use buzz_core::coding_session_genesis::{
 use buzz_core::coding_session_team_transaction::{
     fold_coding_session_team_transactions, CodingSessionTeamAcknowledgement,
     CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamAssignment,
-    CodingSessionTeamFold, CodingSessionTeamFoldContext, CodingSessionTeamMissionBlocked,
-    CodingSessionTeamMissionCompleted, CodingSessionTeamReport, CodingSessionTeamTransactionBody,
-    CodingSessionTeamTransactionType, CodingSessionTeamVerdict,
+    CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
+    CodingSessionTeamDecisionRequest, CodingSessionTeamFold, CodingSessionTeamFoldContext,
+    CodingSessionTeamMissionBlocked, CodingSessionTeamMissionCompleted, CodingSessionTeamNote,
+    CodingSessionTeamReport, CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType,
+    CodingSessionTeamVerdict, CODING_SESSION_TEAM_DECISION_FOUNDER,
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
@@ -35,7 +37,7 @@ use uuid::Uuid;
 use crate::client::BuzzClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
-use crate::{TeamOperationCmd, TeamTransactionWriteArgs};
+use crate::{TeamDecisionCmd, TeamNoteArgs, TeamOperationCmd, TeamTransactionWriteArgs};
 
 /// Whether this operation class hands its stored `deliveryCommandId` straight
 /// to its 44220 wake.
@@ -92,22 +94,61 @@ pub async fn cmd_write(
     args: TeamTransactionWriteArgs,
     transaction_type: CodingSessionTeamTransactionType,
 ) -> Result<(), CliError> {
-    validate_coordinates(&args.channel, &args.session_ref, &args.genesis)?;
     let body_value = read_json_argument(&args.body)?;
     let body = decode_body(transaction_type, body_value)?;
+    publish_operation(
+        client,
+        PublishOperation {
+            channel: args.channel,
+            session_ref: args.session_ref,
+            genesis: args.genesis,
+            supersedes: args.supersedes,
+            delivery_command_id: args.delivery_command_id,
+            wake_to: args.wake_to,
+            body,
+        },
+    )
+    .await
+}
+
+/// One typed operation ready to sign, publish, and optionally wake a seat for.
+///
+/// Every `bee sessions` write verb funnels through this shape so that record
+/// publication, the completion pre-check, wake correlation, and the JSON
+/// answer are defined exactly once.
+struct PublishOperation {
+    channel: String,
+    session_ref: String,
+    genesis: String,
+    supersedes: Option<String>,
+    delivery_command_id: Option<String>,
+    wake_to: Option<String>,
+    body: CodingSessionTeamTransactionBody,
+}
+
+async fn publish_operation(
+    client: &BuzzClient,
+    operation: PublishOperation,
+) -> Result<(), CliError> {
+    validate_coordinates(
+        &operation.channel,
+        &operation.session_ref,
+        &operation.genesis,
+    )?;
+    let transaction_type = operation.body.transaction_type();
     let delivery_command_id = resolve_delivery_command_id(
         transaction_type,
-        args.wake_to.as_deref(),
-        args.delivery_command_id.clone(),
+        operation.wake_to.as_deref(),
+        operation.delivery_command_id,
     )?;
     let payload = coding_session_team_transaction_payload(
-        args.session_ref.clone(),
-        args.genesis.clone(),
-        args.supersedes,
+        operation.session_ref.clone(),
+        operation.genesis.clone(),
+        operation.supersedes,
         delivery_command_id.clone(),
-        body,
+        operation.body,
     );
-    let builder = build_coding_session_team_transaction(&args.channel, payload)
+    let builder = build_coding_session_team_transaction(&operation.channel, payload)
         .map_err(|error| CliError::Usage(error.to_string()))?;
     // The NIP-CSTX envelope is exactly five tags. NIP-OA remains on the HTTP
     // request header; injecting it into the signed event would invalidate the
@@ -117,9 +158,9 @@ pub async fn cmd_write(
     if transaction_type == CodingSessionTeamTransactionType::MissionCompleted {
         verify_completion_before_submit(
             client,
-            &args.channel,
-            &args.session_ref,
-            &args.genesis,
+            &operation.channel,
+            &operation.session_ref,
+            &operation.genesis,
             &event,
         )
         .await?;
@@ -128,17 +169,20 @@ pub async fn cmd_write(
     let operation_id = event.id.to_hex();
     // Only an assignment hands its stored `deliveryCommandId` to the wake; see
     // [`wake_shares_delivery_command_id`]. Everything else lets
-    // `send_team_operation_wake` derive one from this operation and its target.
+    // `send_team_operation_wake` derive one from this operation and the
+    // *resolved* `execution.target_key` — not from the `--wake-to` string the
+    // caller typed, which names the same seat by a different word and would
+    // mint a different id for the same operation (REVIEW-B1c F6).
     let shared_command_id = wake_shares_delivery_command_id(transaction_type)
         .then(|| delivery_command_id.clone())
         .flatten();
-    let wake = args.wake_to.as_deref().map(|wake_to| {
+    let wake = operation.wake_to.as_deref().map(|wake_to| {
         || {
             super::crew_cmds::send_team_operation_wake(
                 client,
-                &args.channel,
+                &operation.channel,
                 wake_to,
-                &args.session_ref,
+                &operation.session_ref,
                 shared_command_id.as_deref(),
                 &operation_id,
                 transaction_type.as_str(),
@@ -149,6 +193,186 @@ pub async fn cmd_write(
         submit_record_then_wake(&operation_id, || client.submit_event(event), wake).await?;
     println!("{output}");
     Ok(())
+}
+
+/// Publish a `note`: something said, with nothing changed.
+///
+/// A note carries no `--supersedes` and no `--wake-to` by construction. It can
+/// never correct another record, and waking a seat for a record that changes
+/// no state would spend a turn to deliver an interruption.
+pub async fn cmd_note(client: &BuzzClient, args: TeamNoteArgs) -> Result<(), CliError> {
+    for reference in &args.refs {
+        validate_lower_hex64("--ref", reference)?;
+    }
+    publish_operation(
+        client,
+        PublishOperation {
+            channel: args.channel,
+            session_ref: args.session_ref,
+            genesis: args.genesis,
+            supersedes: None,
+            delivery_command_id: None,
+            wake_to: None,
+            body: CodingSessionTeamTransactionBody::Note(CodingSessionTeamNote {
+                text: args.text,
+                refs: args.refs,
+            }),
+        },
+    )
+    .await
+}
+
+/// Publish a `decision.request` or a `decision.answer`.
+pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(), CliError> {
+    match cmd {
+        TeamDecisionCmd::Request {
+            channel,
+            session_ref,
+            genesis,
+            question,
+            options,
+            held_on,
+            blocks,
+            recommendation,
+            supersedes,
+            wake_to,
+        } => {
+            if held_on != CODING_SESSION_TEAM_DECISION_FOUNDER {
+                validate_lower_hex64("--held-on", &held_on)?;
+            }
+            for reference in &blocks {
+                validate_lower_hex64("--blocks", reference)?;
+            }
+            // A request that names nobody to wake is still a real request; a
+            // request that names a seat wakes it exactly the way a report does.
+            publish_operation(
+                client,
+                PublishOperation {
+                    channel,
+                    session_ref,
+                    genesis,
+                    supersedes,
+                    // Derived from the stored request and its target, never
+                    // inherited (REVIEW-B1c F6). The flag is gone from the
+                    // surface, so there is nothing to inherit.
+                    delivery_command_id: None,
+                    wake_to,
+                    body: CodingSessionTeamTransactionBody::DecisionRequest(
+                        CodingSessionTeamDecisionRequest {
+                            question,
+                            options,
+                            held_on,
+                            blocks,
+                            recommendation,
+                        },
+                    ),
+                },
+            )
+            .await
+        }
+        TeamDecisionCmd::Answer {
+            channel,
+            session_ref,
+            genesis,
+            request,
+            choice_index,
+            choice,
+            note,
+            supersedes,
+            wake_to,
+        } => {
+            validate_lower_hex64("--request", &request)?;
+            let choice = match (choice_index, choice) {
+                (Some(index), None) => CodingSessionTeamDecisionChoice::Index(index),
+                (None, Some(text)) => CodingSessionTeamDecisionChoice::Text(text),
+                _ => {
+                    return Err(CliError::Usage(
+                        "pass exactly one of --choice-index or --choice".into(),
+                    ));
+                }
+            };
+            // An answer nobody is told about is an answer that never lands,
+            // and the batch forbids polling for it (REVIEW-B1c F4). Wake the
+            // seat that asked, unless the caller named someone else.
+            let wake_to = match wake_to {
+                Some(explicit) => Some(explicit),
+                None => {
+                    resolve_asker_role(client, &channel, &session_ref, &genesis, &request).await?
+                }
+            };
+            publish_operation(
+                client,
+                PublishOperation {
+                    channel,
+                    session_ref,
+                    genesis,
+                    supersedes,
+                    delivery_command_id: None,
+                    wake_to,
+                    body: CodingSessionTeamTransactionBody::DecisionAnswer(
+                        CodingSessionTeamDecisionAnswer {
+                            request_ref: request,
+                            choice,
+                            note,
+                        },
+                    ),
+                },
+            )
+            .await
+        }
+    }
+}
+
+/// Resolve the seat role of the actor that published one `decision.request`.
+///
+/// The answer's default wake target. `--wake-to` speaks cs-target keys, session
+/// ids and role slugs — never pubkeys — so the asker's *role*, read from the
+/// same receipt-backed 44228 chain the fold uses, is the one name for that
+/// actor the resolver understands.
+///
+/// `None` when the asker holds no active seat: there is then no execution to
+/// wake, and inventing one would be a guess. The answer is still published and
+/// the omission is visible in the response's absent `delivery` key.
+async fn resolve_asker_role(
+    client: &BuzzClient,
+    channel: &str,
+    session_ref: &str,
+    genesis: &str,
+    request_id: &str,
+) -> Result<Option<String>, CliError> {
+    let values = client
+        .query_all(operation_pointer_query_filter(request_id))
+        .await?;
+    let [value] = values.as_slice() else {
+        return Err(CliError::NotFound(format!(
+            "expected exactly one signed decision.request {request_id}, found {}",
+            values.len()
+        )));
+    };
+    let event: Event = serde_json::from_value(value.clone())
+        .map_err(|error| CliError::Other(format!("relay returned malformed request: {error}")))?;
+    if event.id.to_hex() != request_id {
+        return Err(CliError::Other(
+            "relay returned an operation other than the requested event id".into(),
+        ));
+    }
+    buzz_core::verify_event(&event)
+        .map_err(|error| CliError::Other(format!("invalid request signature: {error}")))?;
+    let payload = parse_coding_session_team_transaction(&event)
+        .map_err(|error| CliError::Other(format!("invalid team operation: {error}")))?;
+    if payload.transaction_type != CodingSessionTeamTransactionType::DecisionRequest {
+        return Err(CliError::Usage(format!(
+            "--request must name a decision.request; {request_id} is a {}",
+            payload.transaction_type.as_str()
+        )));
+    }
+    let context = fetch_founder_context(client, channel, session_ref, genesis).await?;
+    let asker = event.pubkey.to_hex();
+    Ok(context
+        .active_seats
+        .iter()
+        .find(|seat| seat.actor_pubkey == asker)
+        .map(|seat| seat.role.clone()))
 }
 
 async fn submit_record_then_wake<Submit, SubmitFuture, Wake, WakeFuture>(
@@ -398,6 +622,23 @@ fn decode_body(
                 CodingSessionTeamMissionBlocked,
             >(
                 value, "mission.blocked"
+            )?)
+        }
+        CodingSessionTeamTransactionType::Note => {
+            CodingSessionTeamTransactionBody::Note(typed::<CodingSessionTeamNote>(value, "note")?)
+        }
+        CodingSessionTeamTransactionType::DecisionRequest => {
+            CodingSessionTeamTransactionBody::DecisionRequest(typed::<
+                CodingSessionTeamDecisionRequest,
+            >(
+                value, "decision.request"
+            )?)
+        }
+        CodingSessionTeamTransactionType::DecisionAnswer => {
+            CodingSessionTeamTransactionBody::DecisionAnswer(typed::<
+                CodingSessionTeamDecisionAnswer,
+            >(
+                value, "decision.answer"
             )?)
         }
     })
@@ -931,6 +1172,29 @@ fn fold_json(fold: &CodingSessionTeamFold) -> Value {
             "assignmentRef": item.assignment_ref,
             "assigneeRole": item.assignee_role,
         })).collect::<Vec<_>>(),
+        // Listed, never folded into state: a note changes nothing, and the
+        // rail must be able to show what was said without reading it as a
+        // phase change.
+        "notes": fold.notes.iter().map(|item| json!({
+            "eventId": item.event_id,
+            "authorPubkey": item.author_pubkey,
+            "refs": item.refs,
+        })).collect::<Vec<_>>(),
+        "decisions": fold.decisions.iter().map(|item| json!({
+            "requestId": item.request_event_id,
+            "heldOn": item.held_on,
+            "blocks": item.blocks,
+            // Present and null while the question stands open — never absent,
+            // so "unanswered" and "not disclosed" stay different answers.
+            "answeredBy": item.answered_by,
+            "answerId": item.answer_event_id,
+        })).collect::<Vec<_>>(),
+        // The mission is waiting on a person. That is not a terminal, and it
+        // is exactly the state `mission.blocked` was being used to fake.
+        "waitingOnDecision": fold.waiting_on_decision.as_ref().map(|item| json!({
+            "requestId": item.request_event_id,
+            "heldOn": item.held_on,
+        })),
         "canonicalTerminal": fold.canonical_terminal.as_ref().map(|item| json!({
             "eventId": item.event_id,
             "type": item.transaction_type.as_str(),
@@ -1051,6 +1315,9 @@ mod tests {
                     assignee_role: "builder".into(),
                 },
             ],
+            notes: Vec::new(),
+            decisions: Vec::new(),
+            waiting_on_decision: None,
             canonical_terminal: None,
         };
 
@@ -1071,6 +1338,9 @@ mod tests {
             conflicts: Vec::new(),
             assignments: Vec::new(),
             unseated_reports: Vec::new(),
+            notes: Vec::new(),
+            decisions: Vec::new(),
+            waiting_on_decision: None,
             canonical_terminal: None,
         };
         // Present and empty, never absent: an unknown disclosure and "no
@@ -1094,6 +1364,9 @@ mod tests {
             conflicts: Vec::new(),
             assignments: Vec::new(),
             unseated_reports: Vec::new(),
+            notes: Vec::new(),
+            decisions: Vec::new(),
+            waiting_on_decision: None,
             canonical_terminal: None,
         };
 
@@ -1130,6 +1403,9 @@ mod tests {
             conflicts: Vec::new(),
             assignments: Vec::new(),
             unseated_reports: Vec::new(),
+            notes: Vec::new(),
+            decisions: Vec::new(),
+            waiting_on_decision: None,
             canonical_terminal: None,
         };
 
@@ -1156,6 +1432,9 @@ mod tests {
             conflicts: Vec::new(),
             assignments: Vec::new(),
             unseated_reports: Vec::new(),
+            notes: Vec::new(),
+            decisions: Vec::new(),
+            waiting_on_decision: None,
             canonical_terminal: None,
         };
 
@@ -1166,6 +1445,113 @@ mod tests {
 
     fn id(byte: &str) -> String {
         byte.repeat(32)
+    }
+
+    #[test]
+    fn fold_json_lists_notes_decisions_and_the_waiting_state() {
+        use buzz_core::coding_session_team_transaction::{
+            CodingSessionTeamFoldDecision, CodingSessionTeamFoldNote,
+            CodingSessionTeamFoldWaitingOnDecision,
+        };
+
+        let fold = CodingSessionTeamFold {
+            included_event_ids: vec![id("11"), id("22"), id("33")],
+            excluded: Vec::new(),
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: Vec::new(),
+            notes: vec![CodingSessionTeamFoldNote {
+                event_id: id("22"),
+                author_pubkey: id("aa"),
+                refs: vec![id("11")],
+            }],
+            decisions: vec![CodingSessionTeamFoldDecision {
+                request_event_id: id("33"),
+                held_on: "founder".into(),
+                blocks: vec![id("11")],
+                answered_by: None,
+                answer_event_id: None,
+            }],
+            waiting_on_decision: Some(CodingSessionTeamFoldWaitingOnDecision {
+                request_event_id: id("33"),
+                held_on: "founder".into(),
+            }),
+            canonical_terminal: None,
+        };
+
+        let wire = fold_json(&fold);
+        assert_eq!(
+            wire["notes"],
+            json!([{ "eventId": id("22"), "authorPubkey": id("aa"), "refs": [id("11")] }])
+        );
+        assert_eq!(
+            wire["decisions"],
+            json!([{
+                "requestId": id("33"),
+                "heldOn": "founder",
+                "blocks": [id("11")],
+                "answeredBy": null,
+                "answerId": null,
+            }])
+        );
+        assert_eq!(
+            wire["waitingOnDecision"],
+            json!({ "requestId": id("33"), "heldOn": "founder" })
+        );
+        // Waiting on a person is not a terminal, and the CLI must not print one.
+        assert_eq!(wire["canonicalTerminal"], json!(null));
+
+        let quiet = CodingSessionTeamFold {
+            included_event_ids: Vec::new(),
+            excluded: Vec::new(),
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: Vec::new(),
+            notes: Vec::new(),
+            decisions: Vec::new(),
+            waiting_on_decision: None,
+            canonical_terminal: None,
+        };
+        let quiet_wire = fold_json(&quiet);
+        // Present and empty, never absent: "nothing was said" and "notes were
+        // not disclosed" are different answers.
+        assert_eq!(quiet_wire["notes"], json!([]));
+        assert_eq!(quiet_wire["decisions"], json!([]));
+        assert_eq!(quiet_wire["waitingOnDecision"], json!(null));
+    }
+
+    #[test]
+    fn decode_body_answers_every_type_in_the_closed_vocabulary() {
+        // One arm per wire token: a type the CLI cannot decode is a verb no
+        // seat can publish, however well the core schema supports it.
+        for (transaction_type, body) in [
+            (
+                CodingSessionTeamTransactionType::Note,
+                json!({"text": "said", "refs": []}),
+            ),
+            (
+                CodingSessionTeamTransactionType::DecisionRequest,
+                json!({
+                    "question": "Ship now?",
+                    "options": ["yes"],
+                    "heldOn": "founder",
+                    "blocks": [],
+                    "recommendation": null,
+                }),
+            ),
+            (
+                CodingSessionTeamTransactionType::DecisionAnswer,
+                json!({"requestRef": id("22"), "choice": 0, "note": null}),
+            ),
+        ] {
+            let decoded = decode_body(transaction_type, body).expect("decode body");
+            assert_eq!(decoded.transaction_type(), transaction_type);
+        }
+        assert!(decode_body(
+            CodingSessionTeamTransactionType::Note,
+            json!({"text": "said", "refs": [], "extra": 1})
+        )
+        .is_err());
     }
 
     #[test]

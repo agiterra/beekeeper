@@ -3,10 +3,11 @@ use std::collections::HashMap;
 
 use crate::coding_session_team_transaction::{
     CodingSessionTeamAcknowledgement, CodingSessionTeamAcknowledgementStatus,
-    CodingSessionTeamAssignment, CodingSessionTeamDispositionDecision,
-    CodingSessionTeamMissionBlocked, CodingSessionTeamMissionCompleted,
+    CodingSessionTeamAssignment, CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
+    CodingSessionTeamDecisionRequest, CodingSessionTeamDispositionDecision,
+    CodingSessionTeamMissionBlocked, CodingSessionTeamMissionCompleted, CodingSessionTeamNote,
     CodingSessionTeamRefutationDecision, CodingSessionTeamReport,
-    CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+    CODING_SESSION_TEAM_DECISION_FOUNDER, CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
 use crate::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use nostr::{EventBuilder, JsonUtil, Keys, Kind, Tag, Timestamp};
@@ -937,6 +938,43 @@ fn unseated_disclosure_follows_included_order_and_is_input_order_independent() {
         .filter(|id| disclosed.contains(id))
         .collect();
     assert_eq!(disclosed, included);
+}
+
+// --- B1c: `note` and `decision.*` in the fold.
+
+fn note(text: &str, refs: Vec<String>) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::Note(
+        CodingSessionTeamNote {
+            text: text.into(),
+            refs,
+        },
+    ))
+}
+
+fn decision_request(
+    question: &str,
+    held_on: &str,
+    blocks: Vec<String>,
+) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::DecisionRequest(
+        CodingSessionTeamDecisionRequest {
+            question: question.into(),
+            options: vec!["now".into(), "after the rebuild".into()],
+            held_on: held_on.into(),
+            blocks,
+            recommendation: None,
+        },
+    ))
+}
+
+fn decision_answer(request_ref: &str, index: u32) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::DecisionAnswer(
+        CodingSessionTeamDecisionAnswer {
+            request_ref: request_ref.into(),
+            choice: CodingSessionTeamDecisionChoice::Index(index),
+            note: None,
+        },
+    ))
 }
 
 // The regression suites for the four 2026-09-01 fix rounds, and the fuzz,

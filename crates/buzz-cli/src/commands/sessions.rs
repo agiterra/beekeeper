@@ -2379,6 +2379,8 @@ pub async fn dispatch(
             buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType::MissionBlocked,
         )
         .await,
+        SessionsCmd::Note(args) => operations::cmd_note(client, args).await,
+        SessionsCmd::Decide(cmd) => operations::cmd_decide(client, cmd).await,
         SessionsCmd::Operation(cmd) => operations::cmd_read(client, cmd).await,
         SessionsCmd::Send {
             channel,

@@ -192,6 +192,8 @@ pub enum CodingSessionTeamFoldAdapterExclusionCode {
     CorrectionConflict,
     /// Mission completion lacked a settled approval chain.
     CompletionNotApproved,
+    /// Mission completion named an assignment an unanswered decision blocks.
+    CompletionBlockedByOpenDecision,
     /// Another authorized terminal event won deterministic ordering.
     TerminalConflict,
 }
@@ -255,6 +257,51 @@ pub struct CodingSessionTeamFoldAdapterUnseatedReport {
     pub assignee_role: String,
 }
 
+/// One canonical note: something a participant said, changing nothing.
+///
+/// Rendering a note as a phase, a blocker, or a terminal would recreate the
+/// exact bug this verb exists to fix. `refs` are pointers the author supplied
+/// and are not guaranteed to resolve inside the folded set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionTeamFoldAdapterNote {
+    /// Event id of the canonical note.
+    pub event_id: String,
+    /// Canonical lowercase-hex pubkey that signed the note.
+    pub author_pubkey: String,
+    /// Event ids the note points at, in the author's own order.
+    pub refs: Vec<String>,
+}
+
+/// One canonical decision request with its answer, when one exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionTeamFoldAdapterDecision {
+    /// Event id of the canonical request.
+    #[serde(rename = "requestId")]
+    pub request_event_id: String,
+    /// Exactly `founder`, or the lowercase 64-hex actor holding the decision.
+    pub held_on: String,
+    /// Assignment event ids the request declares itself blocking.
+    pub blocks: Vec<String>,
+    /// Pubkey that answered; null exactly while the question stands open.
+    pub answered_by: Option<String>,
+    /// Event id of the canonical answer; null exactly while it stands open.
+    #[serde(rename = "answerId")]
+    pub answer_event_id: Option<String>,
+}
+
+/// The one open decision holding active work up, when there is one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionTeamFoldAdapterWaitingOnDecision {
+    /// Event id of the open request a reader can go and answer.
+    #[serde(rename = "requestId")]
+    pub request_event_id: String,
+    /// Exactly `founder`, or the lowercase 64-hex actor being waited on.
+    pub held_on: String,
+}
+
 /// Canonical newest authorized terminal record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -289,6 +336,12 @@ pub struct CodingSessionTeamFoldAdapterResponse {
     /// Included reports whose author holds no active seat for the assignment's
     /// role, in included order. Always present; empty is a real answer.
     pub unseated_reports: Vec<CodingSessionTeamFoldAdapterUnseatedReport>,
+    /// Canonical notes in included order. Always present; empty is a real answer.
+    pub notes: Vec<CodingSessionTeamFoldAdapterNote>,
+    /// Canonical decision requests with their answers, in included order.
+    pub decisions: Vec<CodingSessionTeamFoldAdapterDecision>,
+    /// The open decision blocking active work; null when nothing is waiting.
+    pub waiting_on_decision: Option<CodingSessionTeamFoldAdapterWaitingOnDecision>,
     /// Canonical newest authorized terminal record, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamFoldAdapterTerminal>,
 }
@@ -338,6 +391,9 @@ fn exclusion_code(
         }
         CodingSessionTeamFoldExclusionCode::CompletionNotApproved => {
             CodingSessionTeamFoldAdapterExclusionCode::CompletionNotApproved
+        }
+        CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision => {
+            CodingSessionTeamFoldAdapterExclusionCode::CompletionBlockedByOpenDecision
         }
         CodingSessionTeamFoldExclusionCode::TerminalConflict => {
             CodingSessionTeamFoldAdapterExclusionCode::TerminalConflict
@@ -430,6 +486,32 @@ fn fold_adapter(
                 assignee_role: value.assignee_role,
             })
             .collect(),
+        notes: fold
+            .notes
+            .into_iter()
+            .map(|value| CodingSessionTeamFoldAdapterNote {
+                event_id: value.event_id,
+                author_pubkey: value.author_pubkey,
+                refs: value.refs,
+            })
+            .collect(),
+        decisions: fold
+            .decisions
+            .into_iter()
+            .map(|value| CodingSessionTeamFoldAdapterDecision {
+                request_event_id: value.request_event_id,
+                held_on: value.held_on,
+                blocks: value.blocks,
+                answered_by: value.answered_by,
+                answer_event_id: value.answer_event_id,
+            })
+            .collect(),
+        waiting_on_decision: fold.waiting_on_decision.map(|value| {
+            CodingSessionTeamFoldAdapterWaitingOnDecision {
+                request_event_id: value.request_event_id,
+                held_on: value.held_on,
+            }
+        }),
         canonical_terminal: fold.canonical_terminal.map(|value| {
             CodingSessionTeamFoldAdapterTerminal {
                 event_id: value.event_id,

@@ -176,6 +176,9 @@ async function projectAcceptedNonterminal(events, assignments) {
       conflicts: [],
       assignments,
       unseatedReports: [],
+      notes: [],
+      decisions: [],
+      waitingOnDecision: null,
       canonicalTerminal: null,
     }),
   );
@@ -477,6 +480,9 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
       },
     ],
     unseatedReports: [],
+    notes: [],
+    decisions: [],
+    waitingOnDecision: null,
     canonicalTerminal: { eventId: blocked.id, type: "mission.blocked" },
   };
   const invocationInput = {
@@ -945,6 +951,9 @@ async function projectWithFold(events, foldOverrides) {
       conflicts: [],
       assignments: [],
       unseatedReports: [],
+      notes: [],
+      decisions: [],
+      waitingOnDecision: null,
       canonicalTerminal: null,
       ...foldOverrides(inputEventIds),
     }),
@@ -1116,6 +1125,9 @@ test("D-T9: the decoder requires the fold's unseatedReports field", async () => 
   const accepted = await invokeWithTauriFoldMock(invocationInput, async () => ({
     ...base,
     unseatedReports: [],
+    notes: [],
+    decisions: [],
+    waitingOnDecision: null,
   }));
   assert.deepEqual(accepted.fold.unseatedReports, []);
   assert.ok(Object.isFrozen(accepted.fold.unseatedReports));

@@ -308,6 +308,9 @@ function foldResponse(request) {
       },
     ],
     unseatedReports: [],
+    notes: [],
+    decisions: [],
+    waitingOnDecision: null,
     canonicalTerminal: null,
   };
 }

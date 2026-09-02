@@ -2,10 +2,10 @@ use super::*;
 
 use buzz_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamAcknowledgement, CodingSessionTeamAcknowledgementStatus,
-    CodingSessionTeamAssignment, CodingSessionTeamDispositionDecision,
-    CodingSessionTeamMissionCompleted, CodingSessionTeamReport, CodingSessionTeamTransactionBody,
-    CodingSessionTeamTransactionPayload, CodingSessionTeamVerdict,
-    CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+    CodingSessionTeamAssignment, CodingSessionTeamDecisionRequest,
+    CodingSessionTeamDispositionDecision, CodingSessionTeamMissionCompleted, CodingSessionTeamNote,
+    CodingSessionTeamReport, CodingSessionTeamTransactionBody, CodingSessionTeamTransactionPayload,
+    CodingSessionTeamVerdict, CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
 use buzz_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
@@ -240,12 +240,16 @@ fn full_approval_chain_returns_closed_provenance_bound_projection() {
             "canonicalTerminal",
             "conflicts",
             "context",
+            // B1c: the two state-free verbs and the waiting state they create.
+            "decisions",
             "excluded",
             "implementation",
             "includedEventIds",
             "inputEventIds",
+            "notes",
             "schema",
             "unseatedReports",
+            "waitingOnDecision",
         ]
     );
     assert_eq!(wire["schema"], "buzz-coding-session-team-fold-adapter/v1");
@@ -593,4 +597,248 @@ fn a_wrong_type_reference_is_excluded_alone_and_crosses_the_boundary_as_a_code()
 
     let wire = serde_json::to_value(&response).expect("serialize response");
     assert_eq!(wire["excluded"][0]["code"], "wrong_type_reference");
+}
+
+// --- B1c: the two state-free verbs cross this boundary with exact fields.
+
+fn note(text: &str, refs: Vec<String>) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::Note(
+        CodingSessionTeamNote {
+            text: text.into(),
+            refs,
+        },
+    ))
+}
+
+fn decision_request(held_on: &str, blocks: Vec<String>) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::DecisionRequest(
+        CodingSessionTeamDecisionRequest {
+            question: "Ship the CLI fix now, or after the app rebuild?".into(),
+            options: vec!["now".into(), "after the rebuild".into()],
+            held_on: held_on.into(),
+            blocks,
+            recommendation: None,
+        },
+    ))
+}
+
+#[test]
+fn notes_decisions_and_the_waiting_state_cross_the_boundary_with_exact_fields() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let assignment_id = assignment_event.id.to_hex();
+    let note_event = signed(
+        &note("Lane B is rebasing; nothing is blocked.", vec![id("77")]),
+        &founder,
+        2,
+    );
+    let request_event = signed(
+        &decision_request("founder", vec![assignment_id.clone()]),
+        &founder,
+        3,
+    );
+    let note_id = note_event.id.to_hex();
+    let request_id = request_event.id.to_hex();
+    let events = vec![assignment_event, note_event, request_event];
+
+    let response = fold_adapter(request(&founder, &events)).expect("canonical fold");
+    let wire = serde_json::to_value(&response).expect("serialize response");
+
+    // A note is listed, and its unresolvable pointer costs it nothing.
+    let mut note_keys = wire["notes"][0]
+        .as_object()
+        .expect("note object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    note_keys.sort_unstable();
+    assert_eq!(note_keys, vec!["authorPubkey", "eventId", "refs"]);
+    assert_eq!(
+        wire["notes"],
+        json!([{
+            "eventId": note_id,
+            "authorPubkey": founder.public_key().to_hex(),
+            "refs": [id("77")],
+        }])
+    );
+
+    let mut decision_keys = wire["decisions"][0]
+        .as_object()
+        .expect("decision object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    decision_keys.sort_unstable();
+    assert_eq!(
+        decision_keys,
+        vec!["answerId", "answeredBy", "blocks", "heldOn", "requestId"]
+    );
+    assert_eq!(
+        wire["decisions"],
+        json!([{
+            "requestId": request_id,
+            "heldOn": "founder",
+            "blocks": [assignment_id],
+            "answeredBy": null,
+            "answerId": null,
+        }])
+    );
+    assert_eq!(
+        wire["waitingOnDecision"],
+        json!({ "requestId": request_id, "heldOn": "founder" })
+    );
+    // Waiting on a person carries no terminal. That is the whole point.
+    assert_eq!(wire["canonicalTerminal"], json!(null));
+    assert!(wire["excluded"].as_array().expect("excluded").is_empty());
+}
+
+#[test]
+fn a_quiet_session_answers_empty_note_and_decision_collections() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let response = fold_adapter(request(&founder, &[assignment_event])).expect("canonical fold");
+    let wire = serde_json::to_value(&response).expect("serialize response");
+
+    // Present and empty, never absent: a reader must be able to tell "nothing
+    // was said" from "this adapter does not disclose notes".
+    assert_eq!(wire["notes"], json!([]));
+    assert_eq!(wire["decisions"], json!([]));
+    assert_eq!(wire["waitingOnDecision"], json!(null));
+}
+
+/// Path of the fixture the Desktop decoder test reads, relative to this crate.
+const TS_DECODER_FIXTURE: &str =
+    "../src/features/coding-sessions/lib/codingSessionTeamFoldAdapterResponse.fixture.json";
+
+/// Deterministic keys, so the generated fixture is byte-stable across runs.
+fn fixed_keys(byte: u8) -> Keys {
+    Keys::parse(&format!("{byte:02x}").repeat(32)).expect("fixed secret key")
+}
+
+#[test]
+fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
+    // REVIEW-B1c B1: the Desktop decoder's own fixtures were hand-written, so
+    // `pnpm test` stayed green (7310/7310) while the decoder would have thrown
+    // for every real session. This fixture is generated from the adapter, and
+    // the Desktop test decodes exactly this file, so the two sides can never
+    // silently diverge again. Regenerate with
+    // `BUZZ_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml the_typescript_decoder_fixture`.
+    let founder = fixed_keys(0x11);
+    let actor = fixed_keys(0x22);
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let assignment_id = assignment_event.id.to_hex();
+    let report_event = signed(&report(&assignment_id), &actor, 2);
+    let note_event = signed(
+        &note("Lane B is rebasing; nothing is blocked.", vec![id("77")]),
+        &actor,
+        3,
+    );
+    let request_event = signed(
+        &decision_request("founder", vec![assignment_id.clone()]),
+        &actor,
+        4,
+    );
+    let events = vec![assignment_event, report_event, note_event, request_event];
+
+    let mut seated = request(&founder, &events);
+    seated
+        .context
+        .active_seats
+        .push(CodingSessionTeamActiveSeatInput {
+            actor_pubkey: actor.public_key().to_hex(),
+            role: "builder".into(),
+            grant_event_ref: id("de"),
+        });
+    let response = fold_adapter(seated).expect("canonical fold");
+    let generated = serde_json::to_string_pretty(&response).expect("serialize response") + "\n";
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(TS_DECODER_FIXTURE);
+    if std::env::var("BUZZ_UPDATE_FIXTURES").is_ok() {
+        std::fs::write(&path, &generated).expect("write fixture");
+    }
+    let stored = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!("read {}: {error}", path.display());
+    });
+    assert_eq!(
+        stored, generated,
+        "the Desktop decoder fixture is stale; regenerate it with BUZZ_UPDATE_FIXTURES=1"
+    );
+
+    // The fixture must actually exercise all three new collections, or it
+    // proves nothing about the decoder change it exists to pin.
+    let wire: serde_json::Value = serde_json::from_str(&generated).expect("fixture JSON");
+    assert_eq!(wire["notes"].as_array().expect("notes").len(), 1);
+    assert_eq!(wire["decisions"].as_array().expect("decisions").len(), 1);
+    assert!(wire["waitingOnDecision"].is_object());
+}
+
+#[test]
+fn a_completion_blocked_by_an_open_decision_crosses_as_its_own_code() {
+    // REVIEW-B1c F1. The rail must be able to say *why* a completion is not
+    // canonical, and "blocked by an open ruling" is a different sentence from
+    // "its approvals are incomplete".
+    let founder = fixed_keys(0x33);
+    let actor = fixed_keys(0x44);
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let assignment_id = assignment_event.id.to_hex();
+    let report_event = signed(&report(&assignment_id), &actor, 2);
+    let disposition_event = signed(
+        &disposition(&assignment_id, &report_event.id.to_hex()),
+        &founder,
+        3,
+    );
+    let acknowledgement_event = signed(&acknowledgement(&disposition_event.id.to_hex()), &actor, 4);
+    let request_event = signed(
+        &decision_request("founder", vec![assignment_id.clone()]),
+        &actor,
+        5,
+    );
+    let completed_event = signed(&completed(&assignment_id), &founder, 6);
+    let completed_id = completed_event.id.to_hex();
+
+    let mut seated = request(
+        &founder,
+        &[
+            assignment_event,
+            report_event,
+            disposition_event,
+            acknowledgement_event,
+            request_event,
+            completed_event,
+        ],
+    );
+    // The asker must hold a seat, or its request is `Unauthorized` and blocks
+    // nothing — which would make this test pass for the wrong reason.
+    seated
+        .context
+        .active_seats
+        .push(CodingSessionTeamActiveSeatInput {
+            actor_pubkey: actor.public_key().to_hex(),
+            role: "builder".into(),
+            grant_event_ref: id("de"),
+        });
+    let response = fold_adapter(seated).expect("canonical fold");
+
+    assert!(response.canonical_terminal.is_none());
+    let exclusion = response
+        .excluded
+        .iter()
+        .find(|item| item.event_id == completed_id)
+        .expect("the completion is excluded");
+    assert_eq!(
+        exclusion.code,
+        CodingSessionTeamFoldAdapterExclusionCode::CompletionBlockedByOpenDecision
+    );
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    let code = wire["excluded"]
+        .as_array()
+        .expect("excluded")
+        .iter()
+        .find(|item| item["eventId"] == completed_id)
+        .expect("excluded row")["code"]
+        .clone();
+    assert_eq!(code, "completion_blocked_by_open_decision");
+    assert!(wire["waitingOnDecision"].is_object());
 }

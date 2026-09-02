@@ -1,0 +1,61 @@
+{
+  "schema": "buzz-coding-session-team-fold-adapter/v1",
+  "implementation": "buzz-core",
+  "inputEventIds": [
+    "4d0f9bf0d555b5eab924cc93a90ed83d860b60151eddf9d3bdb353a607ae58ba",
+    "5cf1a7f9d895bc54bfda537c6d7a39db46e112caad3fae8d502cd1d675f0901e",
+    "ccddc85a3089c5b5f5f091d6758944b2c8f120312740fc5715248f36563f4cc7",
+    "d28b821200c95d56f9d9077b445650cdd5f62d577dbc03fba6f0aa6ead97316f"
+  ],
+  "context": {
+    "channelRef": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+    "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+    "genesisRef": "abababababababababababababababababababababababababababababababab",
+    "founderPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "authorityHeadEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "authorityHeadSeq": 4
+  },
+  "includedEventIds": [
+    "5cf1a7f9d895bc54bfda537c6d7a39db46e112caad3fae8d502cd1d675f0901e",
+    "d28b821200c95d56f9d9077b445650cdd5f62d577dbc03fba6f0aa6ead97316f",
+    "4d0f9bf0d555b5eab924cc93a90ed83d860b60151eddf9d3bdb353a607ae58ba",
+    "ccddc85a3089c5b5f5f091d6758944b2c8f120312740fc5715248f36563f4cc7"
+  ],
+  "excluded": [],
+  "conflicts": [],
+  "assignments": [
+    {
+      "assignmentEventId": "5cf1a7f9d895bc54bfda537c6d7a39db46e112caad3fae8d502cd1d675f0901e",
+      "governedReportEventId": null,
+      "dispositionEventId": null,
+      "acknowledgementEventId": null,
+      "settled": false
+    }
+  ],
+  "unseatedReports": [],
+  "notes": [
+    {
+      "eventId": "4d0f9bf0d555b5eab924cc93a90ed83d860b60151eddf9d3bdb353a607ae58ba",
+      "authorPubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+      "refs": [
+        "7777777777777777777777777777777777777777777777777777777777777777"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "requestId": "ccddc85a3089c5b5f5f091d6758944b2c8f120312740fc5715248f36563f4cc7",
+      "heldOn": "founder",
+      "blocks": [
+        "5cf1a7f9d895bc54bfda537c6d7a39db46e112caad3fae8d502cd1d675f0901e"
+      ],
+      "answeredBy": null,
+      "answerId": null
+    }
+  ],
+  "waitingOnDecision": {
+    "requestId": "ccddc85a3089c5b5f5f091d6758944b2c8f120312740fc5715248f36563f4cc7",
+    "heldOn": "founder"
+  },
+  "canonicalTerminal": null
+}

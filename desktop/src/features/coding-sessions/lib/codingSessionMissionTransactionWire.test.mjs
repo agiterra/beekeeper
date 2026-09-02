@@ -181,3 +181,312 @@ test("transaction ingress requires signature, exact tags, and one session/genesi
     false,
   );
 });
+
+// --- B1c: the decoder must accept the two state-free verbs with exact keys,
+// and refuse the terminal that clears itself.
+
+const REF = "11".repeat(32);
+const REQUEST = "22".repeat(32);
+
+function envelope(type, body, supersedes = null) {
+  return {
+    schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+    sessionRef: SESSION,
+    genesisRef: GENESIS,
+    type,
+    supersedes,
+    deliveryCommandId: null,
+    body,
+  };
+}
+
+function decode(type, body, supersedes = null) {
+  return decodeCodingSessionTeamTransactionContent(
+    JSON.stringify(envelope(type, body, supersedes)),
+  );
+}
+
+test("note decodes with exact keys and bounded, unique, non-causal refs", () => {
+  assert.equal(
+    decode("note", { text: "nothing is blocked", refs: [] }).ok,
+    true,
+  );
+  assert.equal(
+    decode("note", { text: "nothing is blocked", refs: [REF] }).ok,
+    true,
+  );
+  assert.equal(
+    decode("note", {
+      text: "x".repeat(8 * 1024),
+      refs: Array.from({ length: 16 }, (_, index) =>
+        index.toString(16).padStart(64, "0"),
+      ),
+    }).ok,
+    true,
+  );
+
+  for (const body of [
+    { text: "said" },
+    { refs: [] },
+    { text: "said", refs: [], extra: 1 },
+    { text: "", refs: [] },
+    { text: "   ", refs: [] },
+    { text: "x".repeat(8 * 1024 + 1), refs: [] },
+    { text: "said", refs: ["nothex"] },
+    { text: "said", refs: [REF, REF] },
+    {
+      text: "said",
+      refs: Array.from({ length: 17 }, (_, index) =>
+        index.toString(16).padStart(64, "0"),
+      ),
+    },
+  ]) {
+    assert.equal(
+      decode("note", body).ok,
+      false,
+      `note body must be refused: ${JSON.stringify(body)}`,
+    );
+  }
+
+  // A note's refs are pointers, not causal references, so a note may point at
+  // its own event id without self-referencing.
+  const event = transaction(envelope("note", { text: "said", refs: [] }));
+  const selfPointing = transaction(
+    envelope("note", { text: "said", refs: [event.id] }),
+  );
+  assert.equal(
+    decodeVerifiedCodingSessionTeamTransaction({
+      event: selfPointing,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    }).ok,
+    true,
+  );
+});
+
+test("a note never supersedes another record", () => {
+  const refused = decode("note", { text: "said", refs: [] }, REF);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, "a note never supersedes another record");
+});
+
+test("decision.request decodes with exact keys, heldOn vocabulary and bounds", () => {
+  const good = {
+    question: "Ship the CLI fix now, or after the app rebuild?",
+    options: ["now", "after the rebuild"],
+    heldOn: "founder",
+    blocks: [REF],
+    recommendation: "after the rebuild",
+  };
+  assert.equal(decode("decision.request", good).ok, true);
+  assert.equal(decode("decision.request", { ...good, heldOn: LEAD }).ok, true);
+  assert.equal(
+    decode("decision.request", {
+      ...good,
+      options: [],
+      blocks: [],
+      recommendation: null,
+    }).ok,
+    true,
+  );
+
+  for (const body of [
+    { ...good, heldOn: "lead" },
+    { ...good, heldOn: "Founder" },
+    { ...good, heldOn: "" },
+    { ...good, options: ["a", "a"] },
+    { ...good, options: Array.from({ length: 9 }, (_, i) => `option ${i}`) },
+    { ...good, options: ["x".repeat(513)] },
+    {
+      ...good,
+      blocks: Array.from({ length: 17 }, (_, index) =>
+        index.toString(16).padStart(64, "0"),
+      ),
+    },
+    { ...good, blocks: [REF, REF] },
+    { ...good, recommendation: "x".repeat(2 * 1024 + 1) },
+    { ...good, extra: 1 },
+    (() => {
+      const { recommendation, ...rest } = good;
+      return rest;
+    })(),
+  ]) {
+    assert.equal(
+      decode("decision.request", body).ok,
+      false,
+      `decision.request body must be refused: ${JSON.stringify(body)}`,
+    );
+  }
+});
+
+test("decision.answer takes an option index or bounded text, never both shapes wrong", () => {
+  const good = { requestRef: REQUEST, choice: 0, note: null };
+  assert.equal(decode("decision.answer", good).ok, true);
+  assert.equal(decode("decision.answer", { ...good, choice: 7 }).ok, true);
+  assert.equal(
+    decode("decision.answer", { ...good, choice: "neither; hold" }).ok,
+    true,
+  );
+  assert.equal(
+    decode("decision.answer", { ...good, note: "the sidecar is stale" }).ok,
+    true,
+  );
+
+  for (const body of [
+    { ...good, choice: 8 },
+    { ...good, choice: -1 },
+    { ...good, choice: 1.5 },
+    { ...good, choice: "" },
+    { ...good, choice: "x".repeat(2 * 1024 + 1) },
+    { ...good, choice: null },
+    { ...good, choice: true },
+    { ...good, choice: ["now"] },
+    { ...good, requestRef: "nothex" },
+    { ...good, extra: 1 },
+    { requestRef: REQUEST, choice: 0 },
+  ]) {
+    assert.equal(
+      decode("decision.answer", body).ok,
+      false,
+      `decision.answer body must be refused: ${JSON.stringify(body)}`,
+    );
+  }
+});
+
+test("a mission.blocked correction naming no blocker is refused with the remedy", () => {
+  // Keystone's exact shape on 2026-09-01.
+  const clearing = {
+    assignmentRefs: [],
+    summary: "Nothing is blocked; work resumed.",
+    blockers: [],
+    heldOn: null,
+    requiredAction: "None — the lanes are running again.",
+  };
+  const refused = decode("mission.blocked", clearing, REF);
+  assert.equal(refused.ok, false);
+  assert.equal(
+    refused.error,
+    "use a note or a decision.answer to clear a blocker; a terminal cannot clear itself",
+  );
+
+  // Without `supersedes` the same body keeps its older refusal; the rule adds
+  // a remedy, it relaxes nothing.
+  assert.equal(decode("mission.blocked", clearing).ok, false);
+  // A correction that still names a blocker stays legitimate.
+  assert.equal(
+    decode(
+      "mission.blocked",
+      { ...clearing, blockers: ["the keychain is locked"] },
+      REF,
+    ).ok,
+    true,
+  );
+});
+
+test("the new verbs verify through the exact five-tag envelope", () => {
+  for (const [type, body] of [
+    ["note", { text: "said", refs: [] }],
+    [
+      "decision.request",
+      {
+        question: "Ship now?",
+        options: [],
+        heldOn: "founder",
+        blocks: [],
+        recommendation: null,
+      },
+    ],
+    ["decision.answer", { requestRef: REQUEST, choice: 0, note: null }],
+  ]) {
+    const event = transaction(envelope(type, body));
+    const decoded = decodeVerifiedCodingSessionTeamTransaction({
+      event,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    });
+    assert.equal(decoded.ok, true, `${type} must verify`);
+    assert.equal(decoded.value.payload.type, type);
+    assert.deepEqual(event.tags[4], ["cstx-type", type]);
+  }
+
+  // A decision.answer cannot answer itself; a decision.request cannot block
+  // itself. Both are causal references.
+  const answer = transaction(
+    envelope("decision.answer", {
+      requestRef: REQUEST,
+      choice: 0,
+      note: null,
+    }),
+  );
+  const selfAnswer = transaction(
+    envelope("decision.answer", {
+      requestRef: answer.id,
+      choice: 0,
+      note: null,
+    }),
+  );
+  assert.equal(
+    decodeVerifiedCodingSessionTeamTransaction({
+      event: selfAnswer,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    }).ok,
+    true,
+  );
+});
+
+test("a request may point at its own event id, because blocks is not causal", () => {
+  // REVIEW-B1c F3: `blocks` are pointers. Rust's `causal_references` returns
+  // nothing for a request, so the self-reference guard must agree — otherwise
+  // the two surfaces disagree about which records are decodable at all.
+  const request = transaction(
+    envelope("decision.request", {
+      question: "Ship it?",
+      options: [],
+      heldOn: "founder",
+      blocks: [],
+      recommendation: null,
+    }),
+  );
+  const selfBlocking = transaction(
+    envelope("decision.request", {
+      question: "Ship it?",
+      options: [],
+      heldOn: "founder",
+      blocks: [request.id],
+      recommendation: null,
+    }),
+  );
+  assert.equal(
+    decodeVerifiedCodingSessionTeamTransaction({
+      event: selfBlocking,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    }).ok,
+    true,
+  );
+  // An answer's requestRef IS causal, so naming its own id is still refused.
+  const answer = transaction(
+    envelope("decision.answer", { requestRef: REQUEST, choice: 0, note: null }),
+  );
+  const selfAnswer = transaction(
+    envelope("decision.answer", {
+      requestRef: answer.id,
+      choice: 0,
+      note: null,
+    }),
+  );
+  assert.equal(
+    decodeVerifiedCodingSessionTeamTransaction({
+      event: selfAnswer,
+      channelRef: CHANNEL,
+      sessionRef: SESSION,
+      genesisRef: GENESIS,
+    }).ok,
+    true,
+  );
+});

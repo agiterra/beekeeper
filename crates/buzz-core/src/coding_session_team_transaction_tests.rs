@@ -460,3 +460,435 @@ fn shared_schema_conformance_vectors_match_the_core_decoder() {
         );
     }
 }
+
+// --- B1c: the two state-free verbs, and the terminal that cannot clear itself.
+//
+// These are written against the JSON string boundary rather than the typed
+// structs so that they compile, and fail, on a tree that has never heard of
+// `note` or `decision.*`.
+
+// The bounds are named here as literals rather than imported from the module
+// under test, so that this whole group compiles — and fails — on a tree that
+// has never heard of these verbs. `bounds_match_the_shipped_constants` below
+// pins them to the shipped values.
+const MAX_NOTE_REFS: usize = 16;
+const MAX_DECISION_OPTIONS: usize = 8;
+const MAX_DECISION_OPTION_BYTES: usize = 512;
+const MAX_DECISION_BLOCKS: usize = 16;
+const MAX_SHORT_TEXT_BYTES: usize = 2 * 1024;
+
+fn envelope(transaction_type: &str, supersedes: Value, body: Value) -> String {
+    serde_json::json!({
+        "schema": CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+        "sessionRef": SESSION,
+        "genesisRef": id("ab"),
+        "type": transaction_type,
+        "supersedes": supersedes,
+        "deliveryCommandId": null,
+        "body": body,
+    })
+    .to_string()
+}
+
+fn note_body() -> Value {
+    serde_json::json!({
+        "text": "Lane B is rebasing; nothing is blocked.",
+        "refs": [id("11")],
+    })
+}
+
+fn decision_request_body() -> Value {
+    serde_json::json!({
+        "question": "Ship the CLI fix now, or after the app rebuild?",
+        "options": ["now", "after the rebuild"],
+        "heldOn": "founder",
+        "blocks": [id("11")],
+        "recommendation": "after the rebuild — seats run the bundled bee",
+    })
+}
+
+fn decision_answer_body(choice: Value) -> Value {
+    serde_json::json!({
+        "requestRef": id("22"),
+        "choice": choice,
+        "note": null,
+    })
+}
+
+#[test]
+fn note_accepts_the_exact_body_and_refuses_every_other_shape() {
+    let decoded =
+        decode_coding_session_team_transaction(&envelope("note", Value::Null, note_body()))
+            .expect("exact note body");
+    assert_eq!(decoded.transaction_type.as_str(), "note");
+    // A note's refs are pointers, never causal: the fold must not need them.
+    assert!(decoded.causal_references().is_empty());
+
+    for bad in [
+        serde_json::json!({"text": "said", "refs": [], "extra": 1}),
+        serde_json::json!({"text": "said"}),
+        serde_json::json!({"refs": []}),
+        serde_json::json!({"text": "", "refs": []}),
+        serde_json::json!({"text": "said", "refs": ["nothex"]}),
+        serde_json::json!({"text": "said", "refs": [id("11"), id("11")]}),
+        serde_json::json!({
+            "text": "said",
+            "refs": (0..=MAX_NOTE_REFS)
+                .map(|index| format!("{index:064x}"))
+                .collect::<Vec<_>>(),
+        }),
+        serde_json::json!({
+            "text": "x".repeat(MAX_TEAM_TRANSACTION_TEXT_BYTES + 1),
+            "refs": [],
+        }),
+    ] {
+        assert!(
+            decode_coding_session_team_transaction(&envelope("note", Value::Null, bad.clone()))
+                .is_err(),
+            "note body must be refused: {bad}"
+        );
+    }
+
+    // Exactly at the caps is still valid.
+    assert!(decode_coding_session_team_transaction(&envelope(
+        "note",
+        Value::Null,
+        serde_json::json!({
+            "text": "x".repeat(MAX_TEAM_TRANSACTION_TEXT_BYTES),
+            "refs": (0..MAX_NOTE_REFS)
+                .map(|index| format!("{index:064x}"))
+                .collect::<Vec<_>>(),
+        })
+    ))
+    .is_ok());
+}
+
+#[test]
+fn a_note_never_supersedes_another_record() {
+    let error = decode_coding_session_team_transaction(&envelope(
+        "note",
+        Value::String(id("33")),
+        note_body(),
+    ))
+    .expect_err("a note carrying supersedes must be refused");
+    assert_eq!(error, "a note never supersedes another record");
+}
+
+#[test]
+fn decision_request_accepts_the_exact_body_and_bounds_every_collection() {
+    let decoded = decode_coding_session_team_transaction(&envelope(
+        "decision.request",
+        Value::Null,
+        decision_request_body(),
+    ))
+    .expect("exact decision.request body");
+    assert_eq!(decoded.transaction_type.as_str(), "decision.request");
+    // `blocks` are pointers, not causal references (REVIEW-B1c F3): correcting
+    // the assignment a question is about must never delete the question.
+    assert!(decoded.causal_references().is_empty());
+
+    let with = |mutate: &dyn Fn(&mut serde_json::Map<String, Value>)| {
+        let mut body = decision_request_body();
+        if let Some(object) = body.as_object_mut() {
+            mutate(object);
+        }
+        decode_coding_session_team_transaction(&envelope("decision.request", Value::Null, body))
+    };
+
+    // heldOn is exactly `founder` or a 64-hex actor; nothing else.
+    assert!(with(&|body| {
+        body.insert("heldOn".into(), Value::String(id("cd")));
+    })
+    .is_ok());
+    for bad_held_on in ["", "Founder", "lead", "cd"] {
+        assert!(
+            with(&|body| {
+                body.insert("heldOn".into(), Value::String(bad_held_on.into()));
+            })
+            .is_err(),
+            "heldOn must refuse {bad_held_on:?}"
+        );
+    }
+    assert!(with(&|body| {
+        body.insert(
+            "options".into(),
+            Value::Array(
+                (0..=MAX_DECISION_OPTIONS)
+                    .map(|index| Value::String(format!("option {index}")))
+                    .collect(),
+            ),
+        );
+    })
+    .is_err());
+    assert!(with(&|body| {
+        body.insert(
+            "options".into(),
+            Value::Array(vec![Value::String(
+                "x".repeat(MAX_DECISION_OPTION_BYTES + 1),
+            )]),
+        );
+    })
+    .is_err());
+    assert!(with(&|body| {
+        body.insert(
+            "options".into(),
+            Value::Array(vec![
+                Value::String("same".into()),
+                Value::String("same".into()),
+            ]),
+        );
+    })
+    .is_err());
+    assert!(with(&|body| {
+        body.insert(
+            "blocks".into(),
+            Value::Array(
+                (0..=MAX_DECISION_BLOCKS)
+                    .map(|index| Value::String(format!("{index:064x}")))
+                    .collect(),
+            ),
+        );
+    })
+    .is_err());
+    assert!(with(&|body| {
+        body.insert(
+            "recommendation".into(),
+            Value::String("x".repeat(MAX_SHORT_TEXT_BYTES + 1)),
+        );
+    })
+    .is_err());
+    assert!(with(&|body| {
+        body.insert("unexpected".into(), Value::Bool(true));
+    })
+    .is_err());
+    assert!(with(&|body| {
+        body.remove("recommendation");
+    })
+    .is_err());
+    // An open question with no options and no blocked assignment is still a
+    // real request.
+    assert!(with(&|body| {
+        body.insert("options".into(), Value::Array(Vec::new()));
+        body.insert("blocks".into(), Value::Array(Vec::new()));
+        body.insert("recommendation".into(), Value::Null);
+    })
+    .is_ok());
+}
+
+#[test]
+fn decision_answer_takes_an_option_index_or_bounded_text_and_nothing_else() {
+    let indexed = decode_coding_session_team_transaction(&envelope(
+        "decision.answer",
+        Value::Null,
+        decision_answer_body(serde_json::json!(1)),
+    ))
+    .expect("indexed answer");
+    assert_eq!(indexed.transaction_type.as_str(), "decision.answer");
+    assert_eq!(indexed.causal_references(), vec![id("22").as_str()]);
+    assert!(decode_coding_session_team_transaction(&envelope(
+        "decision.answer",
+        Value::Null,
+        decision_answer_body(serde_json::json!("neither; hold until the rebuild")),
+    ))
+    .is_ok());
+
+    for bad_choice in [
+        serde_json::json!(MAX_DECISION_OPTIONS),
+        serde_json::json!(-1),
+        serde_json::json!(""),
+        serde_json::json!("x".repeat(MAX_SHORT_TEXT_BYTES + 1)),
+        serde_json::json!(null),
+        serde_json::json!(true),
+        serde_json::json!(["now"]),
+    ] {
+        assert!(
+            decode_coding_session_team_transaction(&envelope(
+                "decision.answer",
+                Value::Null,
+                decision_answer_body(bad_choice.clone()),
+            ))
+            .is_err(),
+            "choice must be refused: {bad_choice}"
+        );
+    }
+
+    for bad in [
+        serde_json::json!({"requestRef": id("22"), "choice": 0}),
+        serde_json::json!({"requestRef": id("22"), "choice": 0, "note": null, "extra": 1}),
+        serde_json::json!({"requestRef": "nothex", "choice": 0, "note": null}),
+    ] {
+        assert!(
+            decode_coding_session_team_transaction(&envelope(
+                "decision.answer",
+                Value::Null,
+                bad.clone()
+            ))
+            .is_err(),
+            "decision.answer body must be refused: {bad}"
+        );
+    }
+}
+
+#[test]
+fn a_blocked_correction_naming_no_blocker_is_refused_with_the_remedy() {
+    // Keystone's exact shape on 2026-09-01: a second `mission.blocked`
+    // correcting the first, saying nothing is blocked any more.
+    let clearing = serde_json::json!({
+        "assignmentRefs": [],
+        "summary": "Nothing is blocked; work resumed.",
+        "blockers": [],
+        "heldOn": null,
+        "requiredAction": "None — the lanes are running again.",
+    });
+    let error = decode_coding_session_team_transaction(&envelope(
+        "mission.blocked",
+        Value::String(id("44")),
+        clearing.clone(),
+    ))
+    .expect_err("a terminal correcting itself to empty must be refused");
+    assert_eq!(
+        error,
+        "use a note or a decision.answer to clear a blocker; a terminal cannot clear itself"
+    );
+    assert!(error.contains("note"));
+    assert!(error.contains("decision.answer"));
+
+    // The same body without `supersedes` keeps its own, older refusal: this
+    // rule adds a remedy, it does not relax anything.
+    assert!(decode_coding_session_team_transaction(&envelope(
+        "mission.blocked",
+        Value::Null,
+        clearing
+    ))
+    .is_err());
+
+    // A correction that still names a blocker is a legitimate correction.
+    assert!(decode_coding_session_team_transaction(&envelope(
+        "mission.blocked",
+        Value::String(id("44")),
+        serde_json::json!({
+            "assignmentRefs": [],
+            "summary": "Signing is still held.",
+            "blockers": ["the keychain is locked"],
+            "heldOn": "founder",
+            "requiredAction": "Unlock the signing key",
+        })
+    ))
+    .is_ok());
+}
+
+#[test]
+fn the_new_verbs_carry_the_exact_five_tag_envelope() {
+    for (transaction_type, body) in [
+        ("note", note_body()),
+        ("decision.request", decision_request_body()),
+        (
+            "decision.answer",
+            decision_answer_body(serde_json::json!(0)),
+        ),
+    ] {
+        let content = envelope(transaction_type, Value::Null, body);
+        let payload: CodingSessionTeamTransactionPayload = serde_json::from_str(&content).unwrap();
+        let event = event(&payload);
+        let decoded = validate_coding_session_team_transaction_envelope(&event).unwrap();
+        assert_eq!(decoded.transaction_type.as_str(), transaction_type);
+        assert_eq!(
+            event.tags.as_slice()[4].as_slice(),
+            ["cstx-type".to_owned(), transaction_type.to_owned()]
+        );
+    }
+}
+
+#[test]
+fn bounds_match_the_shipped_constants() {
+    assert_eq!(MAX_NOTE_REFS, MAX_TEAM_TRANSACTION_NOTE_REFS);
+    assert_eq!(MAX_DECISION_OPTIONS, MAX_TEAM_TRANSACTION_DECISION_OPTIONS);
+    assert_eq!(
+        MAX_DECISION_OPTION_BYTES,
+        MAX_TEAM_TRANSACTION_DECISION_OPTION_BYTES
+    );
+    assert_eq!(MAX_DECISION_BLOCKS, MAX_TEAM_TRANSACTION_DECISION_BLOCKS);
+    assert_eq!(MAX_SHORT_TEXT_BYTES, MAX_TEAM_TRANSACTION_SHORT_TEXT_BYTES);
+    assert_eq!(
+        TERMINAL_CANNOT_CLEAR_ITSELF,
+        "use a note or a decision.answer to clear a blocker; a terminal cannot clear itself"
+    );
+    assert_eq!(CODING_SESSION_TEAM_DECISION_FOUNDER, "founder");
+}
+
+#[test]
+fn a_blocked_correction_must_change_its_blockers() {
+    // REVIEW-B1c F5, stronger reading. This needs both records in hand, so it
+    // lives in the supersession validator rather than the single-record schema.
+    let founder = Keys::generate();
+    let blocked = |summary: &str, blockers: Vec<String>, supersedes: Option<String>| {
+        CodingSessionTeamTransactionPayload {
+            schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA.into(),
+            session_ref: SESSION.into(),
+            genesis_ref: id("ab"),
+            transaction_type: CodingSessionTeamTransactionType::MissionBlocked,
+            supersedes,
+            delivery_command_id: None,
+            body: CodingSessionTeamTransactionBody::MissionBlocked(
+                CodingSessionTeamMissionBlocked {
+                    assignment_refs: Vec::new(),
+                    summary: summary.into(),
+                    blockers,
+                    held_on: Some("founder".into()),
+                    required_action: "Unlock the signing key".into(),
+                },
+            ),
+        }
+    };
+
+    let first = event_with_keys(
+        &blocked(
+            "Signing is held",
+            vec!["the keychain is locked".into()],
+            None,
+        ),
+        &founder,
+    );
+    let prose_only = event_with_keys(
+        &blocked(
+            "Signing is still held, per the 23:06 sync",
+            vec!["the keychain is locked".into()],
+            Some(first.id.to_hex()),
+        ),
+        &founder,
+    );
+    assert_eq!(
+        validate_coding_session_team_transaction_supersession(&prose_only, &first).unwrap_err(),
+        TERMINAL_PROSE_EDIT_NEEDS_A_NOTE
+    );
+    assert_eq!(
+        TERMINAL_PROSE_EDIT_NEEDS_A_NOTE,
+        "a mission.blocked correction must change its blockers; use a note to add context"
+    );
+
+    // Order is prose too.
+    let two = event_with_keys(
+        &blocked("Two", vec!["keychain".into(), "relay".into()], None),
+        &founder,
+    );
+    let reordered = event_with_keys(
+        &blocked(
+            "Two, reordered",
+            vec!["relay".into(), "keychain".into()],
+            Some(two.id.to_hex()),
+        ),
+        &founder,
+    );
+    assert!(validate_coding_session_team_transaction_supersession(&reordered, &two).is_err());
+
+    // A correction that changes what is blocking is still a correction.
+    let real = event_with_keys(
+        &blocked(
+            "The relay is down too",
+            vec!["the keychain is locked".into(), "the relay is down".into()],
+            Some(first.id.to_hex()),
+        ),
+        &founder,
+    );
+    assert!(validate_coding_session_team_transaction_supersession(&real, &first).is_ok());
+}

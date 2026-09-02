@@ -133,6 +133,16 @@ pub enum CodingSessionTeamFoldExclusionCode {
     CorrectionConflict,
     /// A completion did not prove every referenced assignment's approval chain.
     CompletionNotApproved,
+    /// A completion named an assignment that a canonical, still-unanswered
+    /// `decision.request` declares itself blocking.
+    ///
+    /// The mission asked a named party for a ruling and then declared itself
+    /// finished without it. Both answers are signed and they contradict each
+    /// other, so the completion is excluded and
+    /// [`CodingSessionTeamFold::waiting_on_decision`] keeps meaning exactly one
+    /// thing: work that cannot finish until a person rules. Answer the request
+    /// (or publish one that blocks nothing) and the completion folds.
+    CompletionBlockedByOpenDecision,
     /// Another authorized terminal event is newer.
     TerminalConflict,
 }
@@ -229,6 +239,19 @@ pub struct CodingSessionTeamFold {
     /// passes a partial projection must render this as unknown rather than as
     /// a roster of unseated authors.
     pub unseated_reports: Vec<CodingSessionTeamUnseatedReport>,
+    /// Canonical notes in included order. Listing, never state: a note can
+    /// neither settle an assignment nor end a mission.
+    ///
+    /// Bounded by the supplied event set exactly as every other collection here
+    /// is, and each entry is fixed width — two event ids plus at most
+    /// [`crate::coding_session_team_transaction::MAX_TEAM_TRANSACTION_NOTE_REFS`]
+    /// pointers. No entry is ever dropped: a note queue that silently hid notes
+    /// would be the same lie the verb exists to fix.
+    pub notes: Vec<CodingSessionTeamFoldNote>,
+    /// Canonical decision requests with their answers, in included order.
+    pub decisions: Vec<CodingSessionTeamFoldDecision>,
+    /// The open decision blocking active work, when there is one.
+    pub waiting_on_decision: Option<CodingSessionTeamFoldWaitingOnDecision>,
     /// Newest authorized valid terminal event, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamCanonicalTerminal>,
 }
@@ -247,6 +270,9 @@ enum ProjectionStage {
     Refutation,
     Disposition,
     Acknowledgement,
+    Note,
+    DecisionRequest,
+    DecisionAnswer,
     MissionCompleted,
     MissionBlocked,
 }
@@ -366,6 +392,9 @@ pub fn fold_coding_session_team_transactions(
         ProjectionStage::Refutation,
         ProjectionStage::Disposition,
         ProjectionStage::Acknowledgement,
+        ProjectionStage::Note,
+        ProjectionStage::DecisionRequest,
+        ProjectionStage::DecisionAnswer,
     ] {
         project_stage(
             &records,
@@ -384,6 +413,7 @@ pub fn fold_coding_session_team_transactions(
         .map(|state| (state.assignment_event_id.as_str(), state.settled))
         .collect();
 
+    let open_blocks = open_request_blocks(&records, &active);
     let mut terminal_authorized = authorized.clone();
     for &index in &authorized {
         let CodingSessionTeamTransactionBody::MissionCompleted(body) = &records[index].payload.body
@@ -407,6 +437,15 @@ pub fn fold_coding_session_team_transactions(
                 code: CodingSessionTeamFoldExclusionCode::CompletionNotApproved,
                 reason: "mission.completed requires every named active assignment to have an acknowledged approving disposition".into(),
             });
+            continue;
+        }
+        if let Some(reason) = completion_blocked_by_open_decision(body, &open_blocks) {
+            terminal_authorized.remove(&index);
+            excluded.push(CodingSessionTeamFoldExclusion {
+                event_id: records[index].id.clone(),
+                code: CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision,
+                reason,
+            });
         }
     }
     for stage in [
@@ -428,13 +467,16 @@ pub fn fold_coding_session_team_transactions(
     sort_indices(&mut active, &records);
     assignments.sort_by(|left, right| left.assignment_event_id.cmp(&right.assignment_event_id));
     excluded.sort_by(|left, right| left.event_id.cmp(&right.event_id));
+
+    let unseated_reports = disclose_unseated_reports(&records, &by_id, &active, context);
+    let notes = list_notes(&records, &active);
+    let decisions = project_decisions(&records, &active, &mut conflicts);
+    let waiting_on_decision = waiting_on_decision(&records, &active, &decisions);
     conflicts.sort_by(|left, right| {
         left.subject
             .cmp(&right.subject)
             .then_with(|| left.winner_event_id.cmp(&right.winner_event_id))
     });
-
-    let unseated_reports = disclose_unseated_reports(&records, &by_id, &active, context);
 
     Ok(CodingSessionTeamFold {
         included_event_ids: active
@@ -445,6 +487,9 @@ pub fn fold_coding_session_team_transactions(
         conflicts,
         assignments,
         unseated_reports,
+        notes,
+        decisions,
+        waiting_on_decision,
         canonical_terminal,
     })
 }
@@ -490,6 +535,20 @@ fn disclose_unseated_reports(
     }
     disclosed
 }
+
+// The `note` and `decision.*` projections live in a sibling file for the same
+// reason, and are children of this module for the same access.
+#[path = "coding_session_team_transaction_fold_decisions.rs"]
+mod decisions;
+
+use decisions::{
+    completion_blocked_by_open_decision, list_notes, open_request_blocks, project_decisions,
+    waiting_on_decision,
+};
+pub use decisions::{
+    CodingSessionTeamFoldDecision, CodingSessionTeamFoldNote,
+    CodingSessionTeamFoldWaitingOnDecision,
+};
 
 // Record-local defect detection lives in a sibling file so no file here passes
 // 1,000 lines (REVIEW-B1b R6). It is a child module, so it reads this module's
@@ -580,6 +639,28 @@ fn is_authorized(
                 None => true,
             }
         }
+        // Saying something and asking for a ruling need participation, not
+        // standing over anyone else's work.
+        CodingSessionTeamTransactionBody::Note(_)
+        | CodingSessionTeamTransactionBody::DecisionRequest(_) => context.may_speak(&record.author),
+        CodingSessionTeamTransactionBody::DecisionAnswer(body) => {
+            // Neither branch below is ever a hard error: an answer that points
+            // at nothing, or at something that is not a request, is that one
+            // record's own defect and is already excluded as
+            // `DanglingReference` or `WrongTypeReference` before this runs.
+            // `false` keeps both arms fail-closed anyway.
+            match by_id.get(&body.request_ref) {
+                Some(&request) => match &records[request].payload.body {
+                    CodingSessionTeamTransactionBody::DecisionRequest(request) => {
+                        // The founder may always rule; otherwise only the exact
+                        // actor the request named holds the answer.
+                        record.author == context.founder_pubkey || request.held_on == record.author
+                    }
+                    _ => false,
+                },
+                None => false,
+            }
+        }
     })
 }
 
@@ -621,6 +702,20 @@ fn logical_subject(payload: &CodingSessionTeamTransactionPayload) -> String {
         }
         CodingSessionTeamTransactionBody::MissionCompleted(_) => "mission.completed".into(),
         CodingSessionTeamTransactionBody::MissionBlocked(_) => "mission.blocked".into(),
+        // A note can never carry `supersedes`, so no two notes ever share a
+        // correction group and this constant is never used to compare subjects.
+        CodingSessionTeamTransactionBody::Note(_) => "note".into(),
+        // The holder is part of the subject, so a correction may not move a
+        // ruling from the founder onto its own asker (REVIEW-B1c F2): that
+        // correction fails `logical_subject` equality and is excluded
+        // `InvalidCorrection`. Re-asking a different party stays possible — you
+        // publish a new request, which is the honest shape.
+        CodingSessionTeamTransactionBody::DecisionRequest(body) => {
+            format!("decision.request:{}", body.held_on)
+        }
+        CodingSessionTeamTransactionBody::DecisionAnswer(body) => {
+            format!("decision.answer:{}", body.request_ref)
+        }
     }
 }
 
@@ -703,6 +798,15 @@ fn matches_stage(payload: &CodingSessionTeamTransactionPayload, stage: Projectio
         ) | (
             CodingSessionTeamTransactionBody::Acknowledgement(_),
             ProjectionStage::Acknowledgement
+        ) | (
+            CodingSessionTeamTransactionBody::Note(_),
+            ProjectionStage::Note
+        ) | (
+            CodingSessionTeamTransactionBody::DecisionRequest(_),
+            ProjectionStage::DecisionRequest
+        ) | (
+            CodingSessionTeamTransactionBody::DecisionAnswer(_),
+            ProjectionStage::DecisionAnswer
         ) | (
             CodingSessionTeamTransactionBody::MissionCompleted(_),
             ProjectionStage::MissionCompleted

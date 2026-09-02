@@ -209,3 +209,119 @@ fn five_hundred_single_reference_mistakes_all_fold_without_a_hard_error() {
     );
     assert_eq!(folded, 500);
 }
+
+// B1c extends the same guarantee to the two new verbs. B1b's fuzz above is
+// carried verbatim so the finalizer's diff lines up; this one adds the new
+// reference sites rather than editing it.
+
+#[test]
+fn five_hundred_single_reference_mistakes_across_the_new_verbs_all_fold_without_a_hard_error() {
+    let mut rng = FoldFuzzRng(0x5eed_1234_9abc_def0);
+    let mut folded = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+
+    for iteration in 0..500usize {
+        // Six reference sites across `note` and `decision.*`, one mistake per
+        // set. Site 0 is the control: a note's `refs` are pointers, not causal
+        // references, so a dangling one must not exclude the note at all.
+        let site = iteration % 6;
+        let missing = rng.hex64();
+        let founder = Keys::generate();
+        let actor = Keys::generate();
+        let context = context(&founder, vec![(&actor, "builder")]);
+
+        let assignment_event = signed(&assignment(&actor), &founder, 1);
+        let assignment_id = assignment_event.id.to_hex();
+
+        let note_event = signed(
+            &note(
+                "Nothing is blocked; the lane is rebasing.",
+                vec![if site == 0 {
+                    missing.clone()
+                } else {
+                    assignment_id.clone()
+                }],
+            ),
+            &actor,
+            2,
+        );
+        let note_id = note_event.id.to_hex();
+
+        let request_event = signed(
+            &decision_request(
+                "Ship now, or after the rebuild?",
+                if site == 1 {
+                    &missing
+                } else {
+                    CODING_SESSION_TEAM_DECISION_FOUNDER
+                },
+                vec![if site == 2 {
+                    missing.clone()
+                } else {
+                    assignment_id.clone()
+                }],
+            ),
+            &actor,
+            3,
+        );
+        let request_id = request_event.id.to_hex();
+
+        let answer_event = signed(
+            &decision_answer(if site == 3 { &missing } else { &request_id }, 0),
+            &founder,
+            4,
+        );
+
+        let mut correction = decision_request("Ship now, or later?", "founder", Vec::new());
+        correction.supersedes = Some(if site == 4 {
+            missing.clone()
+        } else {
+            request_id.clone()
+        });
+        let correction_event = signed(&correction, &actor, 5);
+
+        let mut blocked_payload = blocked("Signing is held");
+        blocked_payload.supersedes = if site == 5 {
+            Some(missing.clone())
+        } else {
+            None
+        };
+        let blocked_event = signed(&blocked_payload, &founder, 6);
+
+        match fold_coding_session_team_transactions(
+            &[
+                assignment_event,
+                note_event,
+                request_event,
+                answer_event,
+                correction_event,
+                blocked_event,
+            ],
+            &context,
+        ) {
+            Ok(fold) => {
+                folded += 1;
+                assert!(
+                    fold.included_event_ids.contains(&assignment_id),
+                    "site {site} lost the assignment"
+                );
+                // A note is never collateral damage: it carries no causal
+                // reference, so no mistake anywhere can exclude it.
+                assert!(
+                    fold.included_event_ids.contains(&note_id),
+                    "site {site} excluded a note"
+                );
+                assert_eq!(fold.notes.len(), 1, "site {site} lost the note listing");
+            }
+            Err(error) => errors.push(format!("site {site}: {error}")),
+        }
+    }
+
+    assert!(
+        errors.is_empty(),
+        "a single dangling reference must never fail the fold; {} of 500 did, first five: {:?}",
+        errors.len(),
+        &errors[..errors.len().min(5)]
+    );
+    assert_eq!(folded, 500);
+}

@@ -829,3 +829,9 @@ fn an_acknowledgement_of_a_dangling_disposition_still_falls_out_as_dependent() {
         "DependentOnExcluded"
     );
 }
+
+// The `note` and `decision.*` suites live in a sibling file for the same
+// reason (REVIEW-B1b R6). It is a child of this module, so every fixture
+// helper is in scope unchanged.
+#[path = "coding_session_team_transaction_fold_decision_tests.rs"]
+mod decisions;

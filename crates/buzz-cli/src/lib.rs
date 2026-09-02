@@ -2549,6 +2549,19 @@ pub enum SessionsCmd {
     Complete(TeamTransactionWriteArgs),
     /// Publish an explicit terminal blocker (kind 44244).
     Block(TeamTransactionWriteArgs),
+    /// Say something without changing any mission state (kind 44244).
+    ///
+    /// A note is listed in the fold and settles nothing: it is not a phase,
+    /// not a terminal, and can neither correct nor be corrected. Reach for it
+    /// instead of a `mission.blocked` whenever the mission has not actually
+    /// stopped.
+    #[command(
+        after_help = "Examples:\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text 'lane B is rebasing, nothing is blocked'\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text 'context for the ruling' --ref <event-id> --ref <event-id>"
+    )]
+    Note(TeamNoteArgs),
+    /// Ask for, or give, a ruling the mission needs (kind 44244).
+    #[command(subcommand)]
+    Decide(TeamDecisionCmd),
     /// Read signed team operations and their deterministic fold.
     #[command(subcommand)]
     Operation(TeamOperationCmd),
@@ -3043,6 +3056,119 @@ pub struct TeamTransactionWriteArgs {
     /// Execution target or role to wake after the transaction is stored.
     #[arg(long = "wake-to")]
     pub wake_to: Option<String>,
+}
+
+/// Input for one signed `note` — the state-free verb.
+///
+/// There is deliberately no `--supersedes` and no `--wake-to`: a note can
+/// never correct another record, and a record that changes no state has no
+/// business spending a seat's turn.
+#[derive(clap::Args, Clone)]
+pub struct TeamNoteArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id.
+    #[arg(long)]
+    pub genesis: String,
+    /// The complete note text (at most 8 KiB).
+    #[arg(long)]
+    pub text: String,
+    /// Event id this note points at; repeatable, at most 16.
+    #[arg(long = "ref")]
+    pub refs: Vec<String>,
+}
+
+/// Signed decision verbs: ask one named party for a ruling, or give it.
+#[derive(Subcommand)]
+pub enum TeamDecisionCmd {
+    /// Ask the founder or one actor for a ruling the mission needs.
+    ///
+    /// An unanswered request naming active assignments in `--blocks` puts the
+    /// mission in a waiting-on-a-person state **without** publishing a
+    /// terminal — the state `mission.blocked` was previously used to fake.
+    #[command(
+        after_help = "Examples:\n  bee sessions decide request --channel <uuid> --session-ref <uuid> --genesis <hex64> --question 'ship the CLI fix now or after the rebuild?' --option 'now' --option 'after' --held-on founder --blocks <assignment-id>"
+    )]
+    Request {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id.
+        #[arg(long)]
+        genesis: String,
+        /// The exact question needing a ruling (at most 8 KiB).
+        #[arg(long)]
+        question: String,
+        /// One closed option; repeatable, at most 8, each at most 512 bytes.
+        #[arg(long = "option")]
+        options: Vec<String>,
+        /// Who holds this decision: `founder`, or an actor pubkey (64-hex).
+        #[arg(long = "held-on")]
+        held_on: String,
+        /// Assignment event id this question blocks; repeatable, at most 16.
+        #[arg(long = "blocks")]
+        blocks: Vec<String>,
+        /// Optional recommendation from the asker (at most 2 KiB).
+        #[arg(long)]
+        recommendation: Option<String>,
+        /// Same-author correction event id for an earlier request.
+        #[arg(long)]
+        supersedes: Option<String>,
+        /// Execution target or role to wake once the request is stored.
+        ///
+        /// The wake's 44220 command id is derived from the stored request and
+        /// that exact target, so there is deliberately no
+        /// `--delivery-command-id`: an inherited id is fenced as
+        /// `AlreadyConsumed` and the wake never lands.
+        #[arg(long = "wake-to")]
+        wake_to: Option<String>,
+    },
+    /// Answer one open decision request.
+    ///
+    /// Only the party the request named — or the founder, always — can answer.
+    /// An answer from anyone else is excluded `Unauthorized` by the fold.
+    #[command(
+        after_help = "Examples:\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice 'neither; hold until the rebuild' --note 'the sidecar is stale'"
+    )]
+    Answer {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id.
+        #[arg(long)]
+        genesis: String,
+        /// Event id of the `decision.request` being answered.
+        #[arg(long)]
+        request: String,
+        /// Zero-based index of the chosen declared option.
+        #[arg(long = "choice-index", conflicts_with = "choice")]
+        choice_index: Option<u32>,
+        /// Free-text answer when no declared option fits (at most 2 KiB).
+        #[arg(long, required_unless_present = "choice_index")]
+        choice: Option<String>,
+        /// Optional bounded reasoning recorded with the answer.
+        #[arg(long)]
+        note: Option<String>,
+        /// Same-author correction event id for an earlier answer.
+        #[arg(long)]
+        supersedes: Option<String>,
+        /// Execution target or role to wake once the answer is stored.
+        ///
+        /// Defaults to the seat role of the actor that asked. An answer nobody
+        /// is told about is an answer that never lands.
+        #[arg(long = "wake-to")]
+        wake_to: Option<String>,
+    },
 }
 
 /// Signed team-operation read commands.
@@ -3581,6 +3707,106 @@ mod tests {
         .is_err());
     }
 
+    /// `bee sessions note` and `bee sessions decide` — the two verbs the lead
+    /// lacked on 2026-09-01, when four `mission.blocked` records were used to
+    /// say things instead.
+    #[test]
+    fn note_and_decide_parse_their_exact_flags() {
+        let id = "ab".repeat(32);
+        let channel = "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86";
+        let session = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let scope = [
+            "--channel",
+            channel,
+            "--session-ref",
+            session,
+            "--genesis",
+            &id,
+        ];
+
+        let note = ["bee", "sessions", "note"].into_iter().chain(scope).chain([
+            "--text",
+            "nothing is blocked",
+            "--ref",
+            &id,
+        ]);
+        assert!(Cli::try_parse_from(note).is_ok());
+        // A note can never correct another record, so the flag must not exist.
+        let superseding_note = ["bee", "sessions", "note"].into_iter().chain(scope).chain([
+            "--text",
+            "correction",
+            "--supersedes",
+            &id,
+        ]);
+        assert!(Cli::try_parse_from(superseding_note).is_err());
+        let textless = ["bee", "sessions", "note"].into_iter().chain(scope);
+        assert!(Cli::try_parse_from(textless).is_err());
+
+        let request = ["bee", "sessions", "decide", "request"]
+            .into_iter()
+            .chain(scope)
+            .chain([
+                "--question",
+                "ship now or after the rebuild?",
+                "--option",
+                "now",
+                "--option",
+                "after",
+                "--held-on",
+                "founder",
+                "--blocks",
+                &id,
+            ]);
+        assert!(Cli::try_parse_from(request).is_ok());
+        let unheld = ["bee", "sessions", "decide", "request"]
+            .into_iter()
+            .chain(scope)
+            .chain(["--question", "ship now?"]);
+        assert!(Cli::try_parse_from(unheld).is_err());
+
+        for choice in [
+            vec!["--choice-index", "0"],
+            vec!["--choice", "neither; hold"],
+        ] {
+            let answer = ["bee", "sessions", "decide", "answer"]
+                .into_iter()
+                .chain(scope)
+                .chain(["--request", &id])
+                .chain(choice);
+            assert!(Cli::try_parse_from(answer).is_ok());
+        }
+        // F6: the wake's command id is derived, so there is nothing to inherit.
+        let inherited = ["bee", "sessions", "decide", "request"]
+            .into_iter()
+            .chain(scope)
+            .chain([
+                "--question",
+                "ship?",
+                "--held-on",
+                "founder",
+                "--delivery-command-id",
+                "reused",
+            ]);
+        assert!(Cli::try_parse_from(inherited).is_err());
+        // F4: an answer can wake the asker.
+        let waking = ["bee", "sessions", "decide", "answer"]
+            .into_iter()
+            .chain(scope)
+            .chain(["--request", &id, "--choice-index", "0", "--wake-to", "lead"]);
+        assert!(Cli::try_parse_from(waking).is_ok());
+        // Exactly one choice, never both and never neither.
+        let both = ["bee", "sessions", "decide", "answer"]
+            .into_iter()
+            .chain(scope)
+            .chain(["--request", &id, "--choice-index", "0", "--choice", "no"]);
+        assert!(Cli::try_parse_from(both).is_err());
+        let neither = ["bee", "sessions", "decide", "answer"]
+            .into_iter()
+            .chain(scope)
+            .chain(["--request", &id]);
+        assert!(Cli::try_parse_from(neither).is_err());
+    }
+
     #[test]
     fn every_shipped_role_persona_can_consume_a_signed_operation_wake() {
         let roles = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../personas/roles");
@@ -4061,6 +4287,7 @@ mod tests {
                 "catalog",
                 "complete",
                 "create",
+                "decide",
                 "doctor",
                 "export",
                 "grant",
@@ -4068,6 +4295,7 @@ mod tests {
                 "hire",
                 "inbox",
                 "list",
+                "note",
                 "operation",
                 "registry",
                 "report",
@@ -4124,7 +4352,11 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 27),
+            // 24 on the base tree, plus A1's `audit`, `grant-seat` and
+            // `revoke-seat` (batch 2 A) and B1c's `decide` and `note`
+            // (batch 2 B). `subcommand_names_are_stable` above names all
+            // twenty-nine, so this count and that list cannot drift apart.
+            ("sessions", 29),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

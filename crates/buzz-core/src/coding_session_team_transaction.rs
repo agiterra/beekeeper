@@ -35,6 +35,26 @@ pub const MAX_TEAM_TRANSACTION_ITEMS: usize = 256;
 pub const MAX_TEAM_TRANSACTION_TESTS: usize = 128;
 /// Maximum byte length of one file path.
 pub const MAX_TEAM_TRANSACTION_PATH_BYTES: usize = 1024;
+/// Maximum byte length of short prose such as a recommendation or a free-text
+/// decision choice.
+pub const MAX_TEAM_TRANSACTION_SHORT_TEXT_BYTES: usize = 2 * 1024;
+/// Maximum number of pointers one `note` may carry.
+pub const MAX_TEAM_TRANSACTION_NOTE_REFS: usize = 16;
+/// Maximum number of options one `decision.request` may offer.
+pub const MAX_TEAM_TRANSACTION_DECISION_OPTIONS: usize = 8;
+/// Maximum byte length of one `decision.request` option.
+pub const MAX_TEAM_TRANSACTION_DECISION_OPTION_BYTES: usize = 512;
+/// Maximum number of assignments one `decision.request` may block.
+pub const MAX_TEAM_TRANSACTION_DECISION_BLOCKS: usize = 16;
+/// Exact wire token naming the founder as the party holding a decision.
+pub const CODING_SESSION_TEAM_DECISION_FOUNDER: &str = "founder";
+/// Exact refusal for a `mission.blocked` correction that names no blocker.
+pub const TERMINAL_CANNOT_CLEAR_ITSELF: &str =
+    "use a note or a decision.answer to clear a blocker; a terminal cannot clear itself";
+/// Exact refusal for a `mission.blocked` correction that leaves the blocker set
+/// untouched — a prose-only edit of a terminal, which now has its own verb.
+pub const TERMINAL_PROSE_EDIT_NEEDS_A_NOTE: &str =
+    "a mission.blocked correction must change its blockers; use a note to add context";
 /// Exact maximum inherited from kind 44220 `commandId`.
 pub const MAX_TEAM_TRANSACTION_DELIVERY_COMMAND_ID_BYTES: usize =
     crate::coding_session_command::MAX_IDENTIFIER_BYTES;
@@ -60,6 +80,15 @@ pub enum CodingSessionTeamTransactionType {
     /// Settles the mission as blocked.
     #[serde(rename = "mission.blocked")]
     MissionBlocked,
+    /// Says something without changing any fold state.
+    #[serde(rename = "note")]
+    Note,
+    /// Asks one named party for a ruling the mission needs.
+    #[serde(rename = "decision.request")]
+    DecisionRequest,
+    /// Answers one `decision.request` with the standing to do so.
+    #[serde(rename = "decision.answer")]
+    DecisionAnswer,
 }
 
 impl CodingSessionTeamTransactionType {
@@ -72,6 +101,9 @@ impl CodingSessionTeamTransactionType {
             Self::Acknowledgement => "acknowledgement",
             Self::MissionCompleted => "mission.completed",
             Self::MissionBlocked => "mission.blocked",
+            Self::Note => "note",
+            Self::DecisionRequest => "decision.request",
+            Self::DecisionAnswer => "decision.answer",
         }
     }
 }
@@ -287,6 +319,73 @@ pub struct CodingSessionTeamMissionBlocked {
     pub required_action: String,
 }
 
+/// Note-specific content.
+///
+/// A note is the vocabulary's only way to say something without changing
+/// state. It is never a phase, never a terminal, never supersedes another
+/// record and can never be superseded, so `refs` are pointers for a reader and
+/// are deliberately **not** causal references: a note whose pointer names an
+/// event outside the supplied set is still a canonical note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionTeamNote {
+    /// The complete bounded text of the note.
+    pub text: String,
+    /// Bounded event ids this note points at; never causal, never required to
+    /// resolve.
+    pub refs: Vec<String>,
+}
+
+/// Decision-request-specific content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionTeamDecisionRequest {
+    /// The exact question the mission needs answered.
+    pub question: String,
+    /// Bounded closed options; may be empty for an open question.
+    pub options: Vec<String>,
+    /// Exactly `founder`, or the lowercase 64-hex actor holding the decision.
+    pub held_on: String,
+    /// Assignment event ids this unanswered question blocks; may be empty.
+    pub blocks: Vec<String>,
+    /// Optional bounded recommendation; the key is still present as JSON null.
+    pub recommendation: Option<String>,
+}
+
+impl CodingSessionTeamDecisionRequest {
+    /// Whether the founder, rather than a named actor, holds this decision.
+    pub fn is_held_on_founder(&self) -> bool {
+        self.held_on == CODING_SESSION_TEAM_DECISION_FOUNDER
+    }
+}
+
+/// The two exact shapes a `decision.answer` choice may take.
+///
+/// An index selects one of the request's declared options; free text answers a
+/// question whose options did not contain the answer. The variant order is
+/// load-bearing for the untagged decode: a JSON number can only be an index and
+/// a JSON string can only be text, so the two never collide.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CodingSessionTeamDecisionChoice {
+    /// Zero-based index into the request's `options`.
+    Index(u32),
+    /// Bounded free-text answer.
+    Text(String),
+}
+
+/// Decision-answer-specific content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionTeamDecisionAnswer {
+    /// Event id of the `decision.request` being answered.
+    pub request_ref: String,
+    /// Chosen option index or bounded free text.
+    pub choice: CodingSessionTeamDecisionChoice,
+    /// Optional bounded reasoning; the key is still present as JSON null.
+    pub note: Option<String>,
+}
+
 /// Operation-specific transaction body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -303,6 +402,12 @@ pub enum CodingSessionTeamTransactionBody {
     MissionCompleted(CodingSessionTeamMissionCompleted),
     /// Blocked mission body.
     MissionBlocked(CodingSessionTeamMissionBlocked),
+    /// Note body.
+    Note(CodingSessionTeamNote),
+    /// Decision-request body.
+    DecisionRequest(CodingSessionTeamDecisionRequest),
+    /// Decision-answer body.
+    DecisionAnswer(CodingSessionTeamDecisionAnswer),
 }
 
 impl CodingSessionTeamTransactionBody {
@@ -315,6 +420,9 @@ impl CodingSessionTeamTransactionBody {
             Self::Acknowledgement(_) => CodingSessionTeamTransactionType::Acknowledgement,
             Self::MissionCompleted(_) => CodingSessionTeamTransactionType::MissionCompleted,
             Self::MissionBlocked(_) => CodingSessionTeamTransactionType::MissionBlocked,
+            Self::Note(_) => CodingSessionTeamTransactionType::Note,
+            Self::DecisionRequest(_) => CodingSessionTeamTransactionType::DecisionRequest,
+            Self::DecisionAnswer(_) => CodingSessionTeamTransactionType::DecisionAnswer,
         }
     }
 }
@@ -353,6 +461,22 @@ impl CodingSessionTeamTransactionPayload {
         }
         if let Some(reference) = &self.supersedes {
             validate_event_id("supersedes", reference)?;
+            // A note is not a phase and cannot correct one: it never changes
+            // fold state, so there is no state for a correction to move.
+            if self.transaction_type == CodingSessionTeamTransactionType::Note {
+                return Err("a note never supersedes another record".into());
+            }
+            // A correction preserves its operation type, so a `mission.blocked`
+            // carrying `supersedes` is by construction correcting another
+            // `mission.blocked`. Naming zero blockers there is the shape the
+            // lead reached for when it wanted to say "nothing is blocked any
+            // more" — and a terminal saying that about itself is the honesty
+            // bug the two new verbs exist to fix.
+            if let CodingSessionTeamTransactionBody::MissionBlocked(body) = &self.body {
+                if body.blockers.is_empty() {
+                    return Err(TERMINAL_CANNOT_CLEAR_ITSELF.into());
+                }
+            }
         }
         if let Some(command_id) = &self.delivery_command_id {
             validate_delivery_command_id(command_id)?;
@@ -378,6 +502,17 @@ impl CodingSessionTeamTransactionPayload {
             CodingSessionTeamTransactionBody::MissionBlocked(body) => {
                 body.assignment_refs.iter().map(String::as_str).collect()
             }
+            // A note's `refs` are pointers a reader follows, not workflow
+            // predecessors: a note must stay canonical whether or not the
+            // events it mentions were supplied.
+            CodingSessionTeamTransactionBody::Note(_) => Vec::new(),
+            // `blocks` are pointers, not causal references (REVIEW-B1c F3).
+            // A question about a piece of work must outlive a correction to
+            // that work: the fold re-resolves `blocks` against the current
+            // chain head every time rather than binding the request to one
+            // superseded event id.
+            CodingSessionTeamTransactionBody::DecisionRequest(_) => Vec::new(),
+            CodingSessionTeamTransactionBody::DecisionAnswer(body) => vec![&body.request_ref],
         }
     }
 }
@@ -391,7 +526,73 @@ impl CodingSessionTeamTransactionBody {
             Self::Acknowledgement(body) => body.validate(),
             Self::MissionCompleted(body) => body.validate(),
             Self::MissionBlocked(body) => body.validate(),
+            Self::Note(body) => body.validate(),
+            Self::DecisionRequest(body) => body.validate(),
+            Self::DecisionAnswer(body) => body.validate(),
         }
+    }
+}
+
+impl CodingSessionTeamNote {
+    fn validate(&self) -> Result<(), String> {
+        validate_text("text", &self.text, MAX_TEAM_TRANSACTION_TEXT_BYTES)?;
+        validate_bounded_event_ids("refs", &self.refs, MAX_TEAM_TRANSACTION_NOTE_REFS)
+    }
+}
+
+impl CodingSessionTeamDecisionRequest {
+    fn validate(&self) -> Result<(), String> {
+        validate_text("question", &self.question, MAX_TEAM_TRANSACTION_TEXT_BYTES)?;
+        if self.options.len() > MAX_TEAM_TRANSACTION_DECISION_OPTIONS {
+            return Err(format!(
+                "options exceeds {MAX_TEAM_TRANSACTION_DECISION_OPTIONS} entries"
+            ));
+        }
+        for option in &self.options {
+            validate_text(
+                "options",
+                option,
+                MAX_TEAM_TRANSACTION_DECISION_OPTION_BYTES,
+            )?;
+        }
+        validate_unique("options", &self.options)?;
+        if !self.is_held_on_founder() {
+            validate_event_id("heldOn", &self.held_on)?;
+        }
+        validate_bounded_event_ids("blocks", &self.blocks, MAX_TEAM_TRANSACTION_DECISION_BLOCKS)?;
+        validate_optional_text(
+            "recommendation",
+            self.recommendation.as_deref(),
+            MAX_TEAM_TRANSACTION_SHORT_TEXT_BYTES,
+        )
+    }
+}
+
+impl CodingSessionTeamDecisionAnswer {
+    fn validate(&self) -> Result<(), String> {
+        validate_event_id("requestRef", &self.request_ref)?;
+        match &self.choice {
+            CodingSessionTeamDecisionChoice::Index(index) => {
+                // An index can only ever name an option the request could
+                // carry, so an out-of-range index is refused at the schema
+                // rather than silently pointing at nothing.
+                if usize::try_from(*index)
+                    .map_or(true, |index| index >= MAX_TEAM_TRANSACTION_DECISION_OPTIONS)
+                {
+                    return Err(format!(
+                        "choice index must be below {MAX_TEAM_TRANSACTION_DECISION_OPTIONS}"
+                    ));
+                }
+            }
+            CodingSessionTeamDecisionChoice::Text(text) => {
+                validate_text("choice", text, MAX_TEAM_TRANSACTION_SHORT_TEXT_BYTES)?;
+            }
+        }
+        validate_optional_text(
+            "note",
+            self.note.as_deref(),
+            MAX_TEAM_TRANSACTION_TEXT_BYTES,
+        )
     }
 }
 
@@ -734,7 +935,35 @@ pub fn validate_coding_session_team_transaction_supersession(
     if current.tags.as_slice()[0].as_slice() != previous.tags.as_slice()[0].as_slice() {
         return Err("a correction cannot cross channels".into());
     }
+    // A terminal that only rewrites its own prose is the shape the lead reached
+    // for four times on 2026-09-01. Editing the sentence is now a `note`, and
+    // clearing the blocker is a `decision.answer`; a correction of a blocked
+    // terminal has to actually change what is blocking.
+    if let (
+        CodingSessionTeamTransactionBody::MissionBlocked(current_body),
+        CodingSessionTeamTransactionBody::MissionBlocked(previous_body),
+    ) = (&current_payload.body, &previous_payload.body)
+    {
+        if same_blocker_set(&current_body.blockers, &previous_body.blockers) {
+            return Err(TERMINAL_PROSE_EDIT_NEEDS_A_NOTE.into());
+        }
+    }
     Ok(())
+}
+
+/// Whether two blocker lists name the same set, ignoring order.
+///
+/// Order is prose: reordering the same blockers says nothing new about what is
+/// holding the mission up.
+fn same_blocker_set(current: &[String], previous: &[String]) -> bool {
+    if current.len() != previous.len() {
+        return false;
+    }
+    let mut current: Vec<&str> = current.iter().map(String::as_str).collect();
+    let mut previous: Vec<&str> = previous.iter().map(String::as_str).collect();
+    current.sort_unstable();
+    previous.sort_unstable();
+    current == previous
 }
 
 fn expected_body_keys(
@@ -781,6 +1010,11 @@ fn expected_body_keys(
             "heldOn",
             "requiredAction",
         ],
+        CodingSessionTeamTransactionType::Note => &["text", "refs"],
+        CodingSessionTeamTransactionType::DecisionRequest => {
+            &["question", "options", "heldOn", "blocks", "recommendation"]
+        }
+        CodingSessionTeamTransactionType::DecisionAnswer => &["requestRef", "choice", "note"],
     }
 }
 
@@ -823,6 +1057,18 @@ fn validate_event_ids(
     require_nonempty: bool,
 ) -> Result<(), String> {
     validate_collection_size(field, values.len(), require_nonempty)?;
+    for value in values {
+        validate_event_id(field, value)?;
+    }
+    validate_unique(field, values)
+}
+
+/// Validate a bounded, unique list of event ids with a per-field cap tighter
+/// than [`MAX_TEAM_TRANSACTION_ITEMS`].
+fn validate_bounded_event_ids(field: &str, values: &[String], max: usize) -> Result<(), String> {
+    if values.len() > max {
+        return Err(format!("{field} exceeds {max} entries"));
+    }
     for value in values {
         validate_event_id(field, value)?;
     }

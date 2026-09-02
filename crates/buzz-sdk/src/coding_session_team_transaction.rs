@@ -153,4 +153,105 @@ mod tests {
         assert_eq!(tags[0], ["h", "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86"]);
         assert_eq!(tags[1], ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"]);
     }
+
+    #[test]
+    fn builder_signs_the_two_state_free_verbs_and_tags_their_exact_types() {
+        for (expected_type, body) in [
+            (
+                "note",
+                serde_json::json!({
+                    "text": "Lane B is rebasing; nothing is blocked.",
+                    "refs": ["11".repeat(32)],
+                }),
+            ),
+            (
+                "decision.request",
+                serde_json::json!({
+                    "question": "Ship the CLI fix now, or after the app rebuild?",
+                    "options": ["now", "after the rebuild"],
+                    "heldOn": "founder",
+                    "blocks": ["11".repeat(32)],
+                    "recommendation": null,
+                }),
+            ),
+            (
+                "decision.answer",
+                serde_json::json!({
+                    "requestRef": "22".repeat(32),
+                    "choice": 1,
+                    "note": null,
+                }),
+            ),
+        ] {
+            let content = serde_json::json!({
+                "schema": CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+                "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+                "genesisRef": "ab".repeat(32),
+                "type": expected_type,
+                "supersedes": null,
+                "deliveryCommandId": null,
+                "body": body,
+            });
+            let payload: CodingSessionTeamTransactionPayload =
+                serde_json::from_value(content).expect("typed fixture");
+            let event = build_coding_session_team_transaction(
+                "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86",
+                payload.clone(),
+            )
+            .expect("builder")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign");
+
+            assert_eq!(
+                parse_coding_session_team_transaction(&event).expect("parse"),
+                payload
+            );
+            let tags: Vec<Vec<String>> = event
+                .tags
+                .iter()
+                .map(|tag| tag.as_slice().to_vec())
+                .collect();
+            assert_eq!(tags.len(), 5);
+            assert_eq!(tags[4], ["cstx-type", expected_type]);
+        }
+    }
+
+    #[test]
+    fn builder_refuses_a_note_that_supersedes_and_a_terminal_that_clears_itself() {
+        let refuse = |transaction_type: &str, supersedes: Value, body: Value| {
+            let content = serde_json::json!({
+                "schema": CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+                "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+                "genesisRef": "ab".repeat(32),
+                "type": transaction_type,
+                "supersedes": supersedes,
+                "deliveryCommandId": null,
+                "body": body,
+            });
+            let payload: CodingSessionTeamTransactionPayload =
+                serde_json::from_value(content).expect("typed fixture");
+            build_coding_session_team_transaction("e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86", payload)
+                .expect_err("builder must refuse")
+                .to_string()
+        };
+
+        assert!(refuse(
+            "note",
+            Value::String("33".repeat(32)),
+            serde_json::json!({"text": "said", "refs": []}),
+        )
+        .contains("a note never supersedes another record"));
+        assert!(refuse(
+            "mission.blocked",
+            Value::String("44".repeat(32)),
+            serde_json::json!({
+                "assignmentRefs": [],
+                "summary": "Nothing is blocked; work resumed.",
+                "blockers": [],
+                "heldOn": null,
+                "requiredAction": "None.",
+            }),
+        )
+        .contains("a terminal cannot clear itself"));
+    }
 }

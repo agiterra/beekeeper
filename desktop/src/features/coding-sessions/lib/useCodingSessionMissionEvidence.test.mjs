@@ -209,6 +209,9 @@ function nativeResponse(request) {
     conflicts: [],
     assignments: [],
     unseatedReports: [],
+    notes: [],
+    decisions: [],
+    waitingOnDecision: null,
     canonicalTerminal: terminal
       ? { eventId: terminal.id, type: terminal.payload.type }
       : null,
