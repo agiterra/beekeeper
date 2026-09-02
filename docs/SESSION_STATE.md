@@ -6336,6 +6336,206 @@ written and `bash -n` clean but **was not executed** — that harness needs
        and table: `review-2026-09-01/LIVE-RUN-TeamRolesV1.md` — an **Audit**
        rail tab and `bee sessions audit`, all from 44225, no new kind.
 
+
+104. **The edges that were not honest: a CLI wake nobody received, a grant
+     that gave up, a goal that vanished, a stream out of order, and usage
+     nothing rendered — fixed on 2026-09-01 night (batch 2 "A",
+     `review-2026-09-01/batch2/`, four commits on `lane/batch2-final`, base
+     `6a683c9e3`).** Every fix answers a numbered finding from item 103's
+     TeamRolesV1 run; the ones it does not close are named at the end. No
+     relay crate is in the diff, so `just test` was **not** required —
+     `crates/buzz-relay`, `buzz-db` and `buzz-auth` are untouched
+     (`git diff --stat 6a683c9e3..HEAD -- crates/buzz-relay crates/buzz-db
+     crates/buzz-auth` is empty).
+
+     - **A1 · CLI (`4ffe030a5`), findings 1, 2, 4, 10, 11.** The CLI's
+       operation wake now derives its own command id — `cli-wake-v1:<operationId>:<12
+       hex of sha256(target key)>`, `crew_cmds.rs:224`, `:238`, minted after
+       `resolve_send_target` at `:284-292` — instead of reusing the
+       assignment's `deliveryCommandId`, which the runner fenced as
+       `AlreadyConsumed` so `bee sessions report`'s wake never reached the
+       lead (finding 4). Assignment alone keeps the shared id its provider
+       binding needs (`operations.rs:51`; `team_wake.rs:288`), and the wake's
+       JSON now says which producer minted it
+       (`delivery.commandIdSource`, `crew_cmds.rs:290`). New `bee sessions
+       audit --channel <uuid> [--session-ref <uuid>]`
+       (`crates/buzz-cli/src/commands/sessions/audit.rs`, dispatch at
+       `commands/sessions.rs:2290`) prints the frozen audit row from 44225
+       alone — no new kind, no new endpoint (finding 11). `bee sessions hire
+       --check` validates brief and routing locally and publishes nothing
+       (`lib.rs:2768`, `crew_cmds.rs:1067-1086`), so an acceptance test can no
+       longer put a live 44221 on the relay (finding 10). `wait_for_hire`
+       carries the last `verify_hire_evidence` error into the outcome as
+       `lastEvidenceError` (`crew.rs:2349`, `crew_cmds.rs:1219`), which is the
+       diagnosis finding 2 corrected: both nights' `exit 5` were an alias
+       defect rejecting a 2-second-late receipt, not late publication. `bee
+       --version` prints the build SHA (`crates/buzz-cli/build.rs`,
+       `src/build_provenance.rs`, `lib.rs:102`) — `unknown` when absent, never
+       invented (finding 1). Role seats moved off `bee sessions grant --role
+       <slug>` (the closed tier enum is restored) to `bee sessions grant-seat`
+       / `revoke-seat`; inventory 27 (`lib.rs:4127`).
+     - **A2 · the Desktop plane (`dbd0a8e2b`), findings 3 and 5.** The hire
+       host retries a rate-limited seat grant instead of disclosing and
+       stopping (`lib/codingSessionGrantRetry.ts`,
+       `hooks/useCodingSessionHire.ts`), and back-pressure is recognised by
+       the relay's own `rate-limited:` token rather than by any `retry in Ns`
+       hint (`codingSessionGrantRetry.ts:59-78`). Only the **publish** is
+       retried: past `publishTransition` a rate-limited confirming read
+       re-reads (`lib/codingSessionOperatorGrant.ts:130-163`, `:203-234`), so
+       one grant is still exactly one 44228 write (finding 3). The team launch
+       publishes the goal as its own kind:44227 rather than only sending it as
+       the lead's first turn (`ui/useCodingSessionCrewLaunch.ts`), and an
+       over-cap goal is refused **before anything is signed**
+       (`lib/codingSessionGoal.ts` `codingSessionGoalOverflow`,
+       `lib/codingSessionCrew.ts:412-420`) — the launch does not run, rather
+       than launching a team and quietly publishing no goal (finding 5).
+     - **A3 · the Mission UI (`8fdfdee17`), findings 6, 7, 8, 9, 11.** An open
+       turn block sorts at its newest item
+       (`lib/codingSessionMissionStreamModel.ts:144`), so a transaction signed
+       during a turn no longer renders below it (finding 7); settled blocks and
+       transaction rows keep their start, and Conversation returns before the
+       merge. The turn-block byline carries the seat's W1 word and the identity
+       rail breathes only while the seat is working
+       (`ui/CodingSessionUmbrellaTurnBlock.tsx:144-154`, `:243-259`), the word
+       passed down from one resolver rather than re-derived, so a demoted seat's
+       block reads `no provider answering` and breathes nowhere (finding 8).
+       Mission drops the `2 AGENTS · 2 WORKING` header aggregate, the bundle
+       verbs go through the shared tool classifier
+       (`lib/codingSessionMissionExecutionBundle.ts` — `Bash`×4 `Read`×2
+       `Edit`×3 `Grep`×2 now reads `Terminal 4 · Read 2 · Edit 3 · Search 2`,
+       where the live run read `Relay 1 · Tool 49`), and "Rehydrated" renders
+       only when the execution really has a prior generation (finding 9). The
+       Inspector states the fold's state beside seat liveness on one line
+       (`ui/CodingSessionMissionInspector.tsx`), so a terminal record cannot
+       hide that work continues (finding 6). And the **Audit** rail tab
+       (`ui/CodingSessionMissionAudit.tsx`,
+       `lib/codingSessionMissionAuditModel.ts`) renders the same frozen row the
+       CLI prints, folding only while its tab is mounted (finding 11).
+     - **The frozen audit row was amended, on both surfaces at once**
+       (`00-BATCH2.md` "Amendment 00:20"), because the original shape had no
+       room for four disclosures: `toolCallsTruncated` beside the scalar
+       `toolCalls`, `handedTwice.resultsSeen`, a nullable `handedTwice.bytes`,
+       and `identicalResults: boolean | null` — never `false`, because
+       "the results disagreed" and "nobody saw the results" are different
+       facts. The reviewer checked the two implementations field for field
+       (`REVIEW-A3.md` § "Amended row shape vs A1's CLI"): all seven rows ✓.
+     - **There is no pricing identity on the wire, and both surfaces stopped
+       pretending there was.** `TurnUsageReport`
+       (`crates/buzz-core/src/coding_session_payload.rs:1277-1300`) is
+       `deny_unknown_fields` over six token fields, while the provider does
+       publish `cost_usd` (serialized `costUsd`, `:1393`). Both the CLI and the
+       Audit tab had gated `costUsd` on a `usage.pricingIdentity` that can
+       never arrive, which made the Cost column dead by construction and
+       printed `not reported` over a cost the driver *had* reported. Gates
+       dropped in both (`audit.rs:334 published_cost`;
+       `lib/codingSessionMissionAuditModel.ts:381`), verified aligned in the
+       integration commit.
+     - **The integration commit (`16aa581f6`) — the wiring no lane owned.**
+       Per-turn `usage` was on the wire and typed on the Desktop contract but
+       `buildResultLifecycleItem` dropped it, so A3's brand-new Audit tab would
+       have read `not reported` on every live turn. `agentSessionTypes.ts`
+       gains a `usage?` slot on the `lifecycle` member and
+       `codingSessionTranscriptItems.ts` a `buildResultUsage` carrying the six
+       wire fields and only those — each independently absent, an unreadable or
+       unknown field dropped rather than reported as `0`, a block with nothing
+       readable in it `null`. The goal field now owes the person three
+       sentences (`ui/NewCodingSessionCrewTab.tsx`
+       `CodingSessionCrewGoalNotes`): a live UTF-8 byte counter beside the cap
+       (the cap is in bytes and a textarea counts characters, so `maxLength` is
+       only the ceiling no legal goal can be cut by); at the cap the counter
+       *becomes* the refusal, in the launch block's own words, factored into
+       `codingSessionGoalOverflowSentence` so the two cannot drift; and after a
+       launch a goal that did not go out says so, instead of leaving an empty
+       goal pill to imply nobody set one. Plus three corrections the reviews
+       left: the stale doc title at `crew_cmds.rs:2431`, the stale `sum_cost`
+       comment at `audit.rs:659`, and SURFACES §19a stating the sort's limit.
+     - **Conversation is byte-identical, proved across trees rather than
+       in-tree.** `git archive 6a683c9e3 desktop scripts` into a scratchpad
+       with `node_modules` symlinked, the same throwaway spec run in both
+       trees, rendering `CodingSessionUmbrellaTimelineView` in Conversation
+       with **every** Mission prop set — `missionDeliveries`,
+       `missionTransactions`, `missionFounderPubkey`, `resolveMissionActor`
+       and `missionLiveness` in its new `{ word, live }` shape — over a
+       two-seat running fixture whose `result` items carry a full `usage`
+       block and a `costUsd`. Result: **24,578 bytes on both trees, identical
+       raw** — no clock masking was needed at all —
+       `sha256 bc3af4e45a48249024aef3c496f8279cdf53ab890218c3ae89f5d087f4ff73f0`.
+       The spec also asserts `loaded === bare` inside each tree, and was
+       deleted afterwards (`git status --porcelain` clean).
+     - **Gates, verbatim, on `16aa581f6`.** `cargo fmt --all -- --check` exit
+       0. `cargo clippy -p buzz-cli --all-targets -- -D warnings`
+       `Finished dev profile … in 1m 28s`, no warnings. `cargo test -p
+       buzz-cli` `test result: ok. 773 passed; 0 failed; 0 ignored`.
+       `cd desktop && pnpm typecheck` `$ tsc --noEmit`, no diagnostics.
+       `pnpm lint` `Checked 2762 files in 1526ms. No fixes applied. / Found 3
+       warnings. / Found 6 infos.` — the same three pre-existing warnings.
+       `pnpm check` `check-e2e-registration: ok — 169 entries, 168 specs, no
+       drift.` `pnpm check:px-text` exit 0. `pnpm test` `ℹ tests 7376 / ℹ
+       suites 81 / ℹ pass 7376 / ℹ fail 0`. `node
+       desktop/scripts/check-file-sizes.mjs` exit 0. `pnpm build:e2e` `✓ built
+       in 2.63s` (4173 and 4183 freed first). `npx playwright test
+       --project=smoke coding-session-mission-lens
+       coding-session-surface-host-screenshots crew-front-door` `25 passed
+       (1.4m)`. Screenshots: 32 PNGs in
+       `review-2026-09-01/batch2/final-shots/`, **0 duplicate SHA-256**.
+       Desktop wake tests re-run for A1's `deliveryCommandId` change (Desktop's
+       own `team-wake-v1:` scheme is untouched): 47 passed, 0 failed.
+     - **`just ci` on the pushed SHA** — see the line at the end of this item.
+     - **What this item does NOT close, from item 103.** Finding 12 (the launch
+       dialog: no provider control on the Team tab, the One-session tab's
+       fallback model leaking into unpinned seats, free-text role names, the
+       truncated lead name) is batch B3, after B1. The `mission.blocked`-as-a-
+       note problem (finding 6's other half) still has no `note`/`correction`
+       verb — the Inspector now shows liveness beside the state, which stops the
+       rail lying, but a lead still has no honest verb to reach for.
+     - **Residuals the reviewers found, carried deliberately.**
+       (a) *CLI.* A hire whose provider metadata never lands within the window
+       now ends `seating` (**exit 5**) where before A1.4 it ended `created`
+       (exit 1) — a behaviour change in a script-visible exit code, disclosed
+       under REVIEW-A1 F8; and no test drives the production route
+       (`assess_candidate.rejection` → `note()`) through `read_hire_answer`.
+       A command substitution — `$(bee sessions status …)` or backticks — is
+       **not** counted as a room download, because the token is `$(bee` (N2);
+       an undercount in a waste table. `bee --version`'s `-dirty` marker reads
+       tracked changes only (`--untracked-files=no`), so a build with only
+       untracked edits reports clean (N4).
+       (b) *Mission UI.* Two blocks of one stream **can** cross-order when a
+       non-last block never got a terminator and its newest item runs past its
+       successor's start — narrower than the invariant
+       `lib/codingSessionUmbrellaTimeline.ts:5-16` claims, now stated in
+       SURFACES §19a rather than special-cased (R1). The Audit tab's partial
+       disclosure counts a turn as reporting if it reported *any* usage field,
+       so two turns each reporting a different field give `2 of 2` over a Σ
+       that summed one (R2). `reportedTurns` is Desktop-only — `bee sessions
+       audit`'s totals (`audit.rs:610-641`) print a partial Σ without the
+       sentence the tab carries (R3). With the Audit tab open every umbrella
+       update re-folds (~38 ms at 2 seats × 2,000 tool items on this machine),
+       because `auditSeats` is a fresh outer array per change; inherent to an
+       open audit on a live mission (R4).
+       (c) *Desktop plane.* The grant retry's confirm loop waits up to 2 s per
+       poll × 25 polls = ~50 s inside one grant attempt on top of the outer
+       60 s — bounded and disclosed, not eliminated; the worst-case blocking
+       window a hire can sit in is minutes, not the 30 s the lane first
+       claimed (REVIEW-A2 F4). `lib/codingSessionGrantRetry.ts` and the two
+       lib files A2 also touched sit outside its ownership row — accepted, no
+       concurrent lane owns them, and the file-size ceiling is why the retry
+       policy is its own file. Two duplicate default `sleep` helpers now exist
+       (`useCodingSessionHire.ts:222-225` and `codingSessionGrantRetry.ts:98-103`).
+       Nothing in A2 has a relay-backed or live run behind it; the relay's
+       rate-limit wording is read from `connection.rs:724`, not observed.
+       (d) *Both audit surfaces.* `toolCallsTruncated` is honestly `false` in
+       the running Desktop app because no caller sets
+       `CodingSessionMissionAuditSeatInput.transcriptTruncated` yet; the CLI's
+       own source is its 4,096-item clip, which Desktop has no equivalent of.
+     - **Live acceptance owed.** Nothing in this item has been exercised on the
+       relay. The batch is unit/DOM/e2e-proven only. First actions on the next
+       build: `bee sessions audit --channel <the TeamRolesV1 channel>` against
+       the real 44225 stream and the Audit tab open on the same session — the
+       two must agree row for row; one `bee sessions report` whose wake now
+       reaches the lead (the derived id, no `AlreadyConsumed`); one team launch
+       whose goal pill is populated from its own kind:44227; and one hire under
+       relay back-pressure that the retry carries through.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -6636,295 +6836,140 @@ than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
 
-- ~~**The lead defaults to a runner for any gate longer than the hire round-trip** (§2 item 88)~~ **DONE** — encoded in the lead pack 0.4.0 (§2 item 89(c)): hire/choose-model skills and the lead persona all say the gate row is a hire.
-- ~~**Per-turn token usage on 44224/44225 → `bee sessions status` context %**~~ **DONE** — the usage block rides the 44225 `result` item and `bee sessions status` prints a context column from the driver's own occupancy (§2 item 89(b)). ~~**Still open: Pulse cost**~~ **DONE 2026-08-29 — see §2 item 93 lane B:** a 44240 Pulse entry now carries an optional `cost` block (`crates/buzz-core/src/pulse.rs:213`, `PulseEntry.cost` at :287) folded from the seats' own 44223/44225 `usage` reports by `bee pulse update --cost-from <channel>[:<sessionRef>]` (`crates/buzz-cli/src/commands/pulse.rs:660`), rendered as `Σ 193k tok · 2 seats` at `desktop/src/features/project-pulse/ui/PulseEntryRow.tsx:248`. A total never sums a number nothing measured — an unmeasured lane publishes no `cost` at all and `bee pulse update` prints `"cost": null` with a `costNote`. Still owed: one live run against a real team channel. The `--help` formula text named in item 89's Open list landed earlier in §2 item 90(b) (`crates/buzz-cli/src/lib.rs:2601`, pinned by `sessions_status_help_explains_the_context_field`).
-- ~~**Brian relaunches, clicks Install team roles once, then hires Banksy as `designer`** (§2 item 84)~~ **DONE** — BanksyTest ran it live on 2026-08-29 (§2 item 91): Keystone hired Banksy in 47 s, she delivered docs/design/singularity/SURFACES.md (951 lines) in 15 min having driven the real app, then Texas (poker) walked it. What that run found is item 91's DRAFT block, and six SWAT lanes fixed it.
-- ~~**One live hire confirms the grant lands** (§2 item 83)~~ **DONE** — the BanksyTest hire carried `grant seq 2` and the project (§2 item 91 DRAFT block). ~~Still open from that same hire and now fixed but unproven live: a hired seat could not push and the relay lied about why (item 91 lane 1 — **relay change, hive redeploys**; it wants one live hire that clones and pushes before it is believed).~~ **DONE 2026-08-29 — see §2 item 92:** hive redeployed, and at 18:51:03 the hired builder ran `git push origin proof/seat-git-push` with its own key and got `* [new branch] proof/seat-git-push`, verified by the founder with `git ls-remote origin` (`928079ba`). A hired seat pushed as itself for the first time. What that same shell exposed instead is `bee git check`: it returned `relay error 403: relay_membership_required` exit 3 one moment before the push succeeded, because it was probing the relay's HTTP membership gate rather than git's transport, and its remedy told the seat to unset the very attestation the push needs. Fixed by item 92 lane 1 — proven against a stub relay and live read-only with the operator key, **but no seat key exists on this machine, so the seat case of the new check is still unproven live.** ~~Still open from that fix: the same lying remedy was appended to every OTHER `bee` 403 by `crates/buzz-cli/src/client.rs:993` and `:1273`.~~ **DONE 2026-08-29 — see §2 item 93 lane A:** both hint sites are gone; a 403 is now decorated by one call over a 23-row gate table (`client.rs:1314`) that names which gate refused — membership, session grant, channel membership, token scope, moderation, project, write fence — no remedy anywhere contains "unset" or "stale or revoked", unknown relay text is returned verbatim with no advice, and a parity test walks `crates/buzz-relay/src` so a remedy cannot silently stop firing. This is the paragraph in `review-2026-08-28/ledger-80-draft.md` starting "Open from item 92 lane A", now delivered.
-- ~~**The desktop Playwright smoke suite is broken on `main` and nothing catches it** (§2 item 90 Open)~~ **DONE** — 85 failed → 26 failed at `7936cc7c` (§2 item 91 lane 6), root causes named at the harness rather than papered over, and `just smoke` added at Justfile:372. It is deliberately still not a `just ci` dependency. ~~The 26 that remain are listed in item 91.~~ **DONE 2026-08-29 — see §2 item 93 lane C:** all 26 fixed, every one a harness fault and none a product fault, and the full smoke at that lane's HEAD `f64bfc8b` is 3 failed / 1 skipped / 1148 passed (39.0m); none of the 26 recurred across four full runs (4,608 test executions). What remains is a tail of independent, load-sensitive timing flakes, three of them named in item 93's Open list, plus three brand/dead-code product findings the triage turned up.
-- ~~**The model picker must not be faked, and the rubric must match it** (Brian's ruling, 2026-08-29 evening, and its amendment)~~ **DONE 2026-08-30 — see §2 item 94:** the alias tables are deleted in the hire host and the create picker (`swat17/no-aliases`), the kind:44222 catalog now carries per-model metadata and is read by `bee sessions catalog` and `bee sessions rubric check` (`swat17/catalog-and-check`), and the lead pack's `choose-model` skill is a versioned rubric naming real catalog ids with four explicit rules for what happens when a new model appears (`swat17/rubric`). An id the catalog does not offer is disclosed and refused, never mapped; a stale rubric is surfaced (check exit 4, Pulse note, Agents badge), never silently patched. **Not proven live** — no seat on this machine could read a real 44222 catalog while the ruling was executed, so the first `bee sessions rubric check` of the next batch is what confirms the eight rows.
-- ~~**Routing — the lead classifies, the router chooses the execution target** (Brian's ruling, 2026-08-30, `review-2026-08-30/routing-spec.md`)~~ **DONE 2026-08-30 — see §2 item 95:** the lead pack no longer names a model anywhere (`swat18/lead-classifies`), `team/model-registry.yaml` plus `bee sessions registry check` / `bee sessions route` land the registry and the router in the crates with `routing` on the 44221 hire/create wire (`swat18/registry`), and the desktop hire host routes and the seat's provenance popover shows the decision (`swat18/router-host`). Gated at `dadcbad2`. **This one redeploys hive** — the relay validates 44221 through `buzz-core` and the schema moved.
-- ~~**Live proof owed: a Keystone hire with `--class builder` at the standard tier whose create carries the routing record.**~~ **DONE 2026-08-30:** Keystone re-ran `review-2026-08-30/brief-routing-proof-lane1.md` unchanged, independently accepted and verified the one-commit lane at `a00554e8b5d4763a132b9181bfa26eec7bbeaeed`, and reported the full hire → host route → create → seat chain on the wire. The later Helios verifier run in §2 item 98 independently proves the create and 44223 now carry the same complete routing record; item 97's persistence/echo acceptance is closed.
-- ~~**Live proof owed from §2 item 98: cross-provider verifier routing.**~~ **DONE at `f5843828`:** Helios hired a live Claude builder and the host independently chose a Codex verifier; the signed create names failure-mode diversity (item 98). **The exact-echo clause found item 99:** the create omitted `profile` while 44223 wrote `profile:null`. The producer fix is implemented; one post-relaunch byte-identical create/44223 proof remains.
-- **Morning: stop the idle seats in Task Management Goals, fast-forward the live checkout (item 93 changed buzz-core → tauri relaunch), cargo build -p buzz-cli, relaunch.**
-- **Live acceptance of the 2026-09-01 turns/UI batch (§2 item 103, acceptance
-  test #10).** The batch is gated and unpushed on `lane/turns-ui-final`; every
-  other acceptance test is green at unit/DOM/e2e level. The exact recipe,
-  including the `bee sessions seat-repair` invocation against cleantest, is in
-  item 103's last bullet.
-- **What an observer of an agent team needs to see** — Brian affirmed this
-  list on 2026-09-01 ("Yes, you got it"), written from orchestrating that
-  batch mostly blind. Start the next Mission/team slice from it; do not
-  re-derive it.
-  1. Who is blocked on whom, and since when — open assignments with age, from
-     the fold, never from silence.
-  2. Test truth per seat, live: written / red / green / count / last run —
-     **needs a checkpoint report subtype on the wire.**
-  3. Gate state as a row per seat (fmt, clippy, typecheck, lint, unit, e2e)
-     with summary line + timestamp — **needs a wire kind.**
-  4. Findings and their disposition (found / fixed / cross-lane / needs
-     ruling) — **needs a wire kind.**
-  5. Rulings requested of the human, as a queue — **needs a typed decision
-     kind** (question, options, who is blocked, since when).
-  6. Diff shape: files touched, ownership violations, untracked files —
-     mostly covered by report `files` once seats report.
-  7. Cost and time: tokens per seat/cumulative (the usage block exists) and
-     wall time per phase plus assignment→report latency — **phase timing does
-     not exist.**
-  8. Delivery honesty: queued / started / fallback / failed / ungranted —
-     **delivered by §2 item 103.**
-  Items 2–5 and phase timing are the next wire kinds to design. Related UI
-  direction from the same night: lead synthesis as a wire kind,
-  selection-driven inspector, one system-health row instead of a badge
-  forest, one surface that degrades instead of two lenses.
-- **Two Lane C follow-ups from §2 item 103, each worth its own item.**
-  (a) `cmd_hire` still picks its receipt by author-asserted `created_at`
-  (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:678-680`); it fails
-  safe behind `verify_hire_evidence` — a forged newest receipt can deny a
-  hire's automatic grant, never produce a wrong one — and the denial is now
-  recoverable with `seat-repair`. (b) **No CLI verb emits `revoke-seat` or a
-  standalone `grant-seat`.** `seat-repair` and `hire`'s automatic path are the
-  only `grant-seat` publishers, and nothing publishes `revoke-seat` at all,
-  which is why `seat-repair`'s `ambiguous` remedy has to point at the
-  founder's Desktop hire host rather than at a `bee` command.
+**Rewritten whole 2026-09-01 night, and rewritten whole at every ceremony from
+now on.** §2 is the ledger — append-only, never contradicted, only superseded.
+§3 had been acting as the todo and had become a palimpsest: struck-through DONE
+lines from six days, five "read item N first" paragraphs each written for a
+different morning, and a "Morning:" line for a morning a week gone. A person or
+a seat opening it could not tell what was next in under ten minutes, which is
+the one thing a Next section is for. **The rule: §3 is one ordered list;
+anything DONE leaves it (it already lives in §2 by item number); live
+confirmations owed are their own short list; and the 2026-08-19 plans' numbered
+items keep their numbers under a heading of their own so the citations that
+point at them still resolve.**
 
-**Read §2 item 84 first (2026-08-28 evening).** The designer seat is now
-Banksy — the pack carries Brian's Banksy direction, a `see-the-app` drive
-skill and a `wire-sources-for-surfaces` table that maps every UI fact to a
-signed event kind or to honest unknown copy, and the installer asks a name
-per identity ("Name your team") and republishes the kind:0 profile of any
-identity it renames. Unit/DOM-level evidence only. ~~**Next: Brian relaunches,
-clicks Install team roles once** (renames plus the profile republish for
-Banksy), **then hires Banksy as `designer`** with the Singularity mock and
-design doc.~~ **DONE 2026-08-29 — see §2 item 91.**
+### Track 1 — landing now (batch 2, `review-2026-09-01/batch2/`)
 
-**Read §2 item 83 first (2026-08-28 evening).** The first hire from inside
-Beekeeper seated a builder that could not report: the hire host granted it
-nothing, and the relay refuses an ungranted seat's `sessions send`. Fixed on
-`crew/front-door` (`cd482f7e`): the host publishes `grant-operator` after the
-create receipt and discloses a failed grant to both the lead and the umbrella;
-`bee sessions hire` now prints and returns `granted`, and the lead pack tells
-the lead to read it. Unit-level evidence only — ~~the next live hire is what
-confirms the grant lands.~~ **DONE 2026-08-29: the BanksyTest hire carried
-`grant seq 2` and the project (§2 item 91).** What that hire exposed instead is
-git: a hired seat could not push and the relay called an auth failure a missing
-repository — fixed by item 91 lane 1, **which changes the relay** —
-~~and not yet proven live.~~ **Proven live 2026-08-29** (§2 item 92: the seat
-pushed as itself at 18:51:03), which in turn found that `bee git check` was
-answering the relay's membership question rather than git's and telling a seat
-to unset its attestation — fixed by item 92 lane 1.
+1. ~~**Batch A "honest edges"**~~ **LANDED** — see §2 item 104: derived CLI
+   wake ids, `bee sessions audit`, `bee sessions hire --check`, the corrected
+   hire-wait diagnosis, `bee --version` SHA (A1); the rate-limited grant retry
+   and the goal published at launch (A2); open-block ordering, the byline W1
+   word, no aggregate chip in Mission, honest bundle verbs, liveness beside
+   fold state, the **Audit** rail tab (A3); plus the per-turn `usage` carry and
+   the goal field's byte counter in the integration commit. No relay crate
+   touched. **Not proven live** — item 104's last bullet is the recipe.
+2. **B1 "one name per thing"** (touches relay ingest → **hive redeploys**):
+   identity newtypes, `requestedBy`/`hireRef` on hires, the session policy
+   record (kind 44245). Held on `origin/lane/batch2-b1-core` for Brian's word.
+3. **A4 Route rail + collapsed-by-default turn blocks**, cut from `main` now
+   that A has landed; design in the canvas §9 / DESIGN-SPEC §9.
+4. **B2/B3** on top of B1: CLI and provider consume the requester and the
+   policy; the launch dialog becomes one form (goal · lead · bench · budget ·
+   posture) that publishes goal + policy, and item 103's finding 12 — the Team
+   tab's missing provider control and the One-session tab's fallback model
+   leaking into unpinned seats — is removed by construction rather than
+   patched.
+5. **Morning, with Brian:** rebuild and relaunch the dev app so seats get the
+   fixed bundled `bee` (`tauri.conf.json:61` — a CLI fix reaches a seat only
+   through an app rebuild); decide B1's landing (relay restart); one governed
+   run on the new build.
 
-**Read §2 item 81 first (2026-08-28 evening).** D14 hire landed on
-`crew/front-door`: a launch now seats the lead alone, and the lead hires the
-rest with `bee sessions hire` (kind 44221 `session.hire`, authorized by the
-relay). **This changes the relay**, so hive redeploys on the green pipeline;
-until it does, the desktop and the CLI both print "this relay does not accept
-hire requests yet" — that is the wire rule working, not a bug. After the
-deploy: Brian relaunches the dev app, launches the lead alone from the Team
-tab, and Keystone hires. Item 81 records the gate counts; **item 82 supersedes
-its blocking residual** — the founder desktop's hire host is now mounted
-(`AppShell.tsx:932`), model ids are checked against the runtime's catalog, and
-a hire older than fifteen minutes is refused rather than seated. None of that
-has been exercised live yet.
+### Track 2 — core honesty found by the live runs (next batch)
 
-**Read §2 item 80 first (2026-08-28 afternoon).** Keystone's first mission
-from inside Beekeeper found seven things by doing; three lanes on
-`crew/front-door` fixed (a), (c), (d), (e) and (f), and item 80 names
-exactly what is still open — (b) the pack union, (g)'s untested
-interrupt/readdress, and the residuals each lane recorded.
+6. **The fold excludes a dangling reference; it must not fail closed for the
+   whole thread** (`coding_session_team_transaction_fold.rs`; TeamRolesV1
+   22:13 — one runner report with a bad `assignmentRef` made `operation
+   get|list` refuse every operation). Exclusion code `DanglingReference`.
+7. **The relay validates the brief cap.** `coding_session_lifecycle_command.rs:345`
+   still admits 12,288 bytes on ingest while both the CLI and the Desktop host
+   refuse at the real cap — relay-touching.
+8. **Two CLI follow-ups from §2 item 103.** `cmd_hire` still picks its receipt
+   by author-asserted `created_at` (`crew_cmds.rs:678-680`); it fails safe
+   behind `verify_hire_evidence` — a forged newest receipt can deny a hire's
+   automatic grant, never produce a wrong one — and the denial is now
+   recoverable with `seat-repair`. Item 104 landed `grant-seat`/`revoke-seat`
+   as real verbs, so the second half of this ("no CLI verb emits them") is
+   closed; what remains is the author-time receipt pick.
+9. **A terminal record whose body says work continues** — a `note`/`correction`
+   verb, so a lead stops publishing `mission.blocked` as a note (item 103
+   finding 6 used it four times, and the rail read Blocked in red while two
+   seats worked).
 
-**Andy, read this first (2026-08-28 morning):** the crew front door (item 76)
-landed on `main` last night, together with the ledger entries for items 76 and
-77. What that gives you: `Install crew roles…` on the team card, seating an
-agent into a running session (join dialog, pending screen, session header),
-`bee events query`, and `founder` / `createSigner` columns on `bee sessions
-status` and `bee sessions list`. The installer also stages the designer and
-poker packs as unseated roles, and item 76 records which surfaces this batch
-deliberately did not build. Item 77 is the ledger of open findings from the
-2026-08-27 live crew runs. **Also in this landing:** the fixes for items 73, 74 and 75 (pending-create honesty copy; every observer accepting a seated create; the provider briefing a seat with its pack) — they were cherry-picked into `crew/front-door` when the integration branch was cut, so they are on `main` as `02e17411`, `b76e22e0` and `b16dee88`; the topic branches `fix/pending-create-honesty` and `fix/seated-session-followups` are therefore redundant, not pending (`git log --oneline origin/main | grep -E "never confirmed|seated create|brief a seated"` shows all three). Three things that will bite you on a dev machine: (1) the
-Beekeeper rename moved the managed runtime dir to `Application
-Support/Beekeeper`, so the first launch re-provisions the managed Node
-runtime and ACP shims — or copy the old
-`Bee Keeper` dir across; (2) `~/.local/bin/bee` shadows the bundled `bee`
-because `build_augmented_path` puts `~/.local/bin` first, so a seat can run an
-old CLI unless you repoint that symlink; (3) seats still share the operator's
-`~/.claude` (same `HOME`), so a seat's local cross-session tools can reach
-other sessions — the fence item in 77 is not landed yet. Also open: the
-"no-surface-by-decision" calls recorded in item 76 are waiting on Brian's
-sign-off. **To mint a team on your machine (2026-08-28 evening):** Agents → the team card's menu → *Install team roles…* → *Choose folder…* and pick `<your checkout>/personas/roles` (the folder that contains `lead`, `architect`, `builder`, … — the parent, not one role) → name the lead → Install. The Agents tab now names a project itself — route, then your own pick from the *Role packs for: …* selector above the team cards, then the newest checkout this host has recorded, then your only/first project — so the folder is pre-chosen from that project's checkout dir (`<checkout>/personas/roles`) and the dialog label says which project it is ("The project's role packs — <name>"); *Choose folder…* still overrides it and retires the label, and a resolved project whose checkout is missing is still named rather than silently dropped — see items 85 and 86. Then New session → Team → Launch team seats the lead alone; the lead hires the rest with `bee sessions hire` (your desktop answers hires automatically; policy is on by default, 4 seats, installed roles). **Team launch, as of `8574bd7d` on `crew/front-door` (item 87):** opened from inside a project, the Team tab now says which project it is launching in ("Launching in <name>: …") and the create carries that `projectRef`, so the session shows up in the project's session list immediately; opened anywhere else it says so instead of guessing ("This session will not belong to a project…"). The tab also offers the same worktree toggle the one-session path does, on by default and prefilled `<session-slug>-lead`, so the lead no longer runs in the checkout the app runs from — and the provider refuses a seated cwd that is the app's own checkout (`SEAT_CWD_SHARED`), though that check only resolves when the desktop runs from inside a repo (`just dev`), not from a bundled `.app`. After a successful launch the lead's session opens instead of the dialog closing on nothing. The founder now gets **Stop all** in the session header ("Stop all (N)"), counting and stopping only live seats; the confirm says plainly that a stopped seat cannot be resumed. Still open: the Team tab has no model/thinking picker (item 87(c)/82), so the lead lands on whatever the selected runtime resolves. **Also open, from the first hands-off loop (item 88, `fddc4318` landed):** `bee sessions hire` still checks a hardcoded `["default"]` model list and refuses models the runtime does offer, ignores the identity's provider, and drops the umbrella's `projectRef` — and a lead whose mission is complete looks exactly like a stalled one.
+### Track 3 — the observer's wire kinds (design next; Brian affirmed the list)
 
-**Read §2 item 78 first (2026-08-28).** The SWAT batch on `crew/front-door`
-supersedes two of the three traps above: the installed team now launches
-(vendor written on every seat, roster made launchable), and
-`build_augmented_path` now ranks the bundled `bee` ahead of `~/.local/bin`.
-The fence is briefing-only, not enforced. Nothing in that batch has been run
-live — the next action is Brian's dogfooding walk, spelled out at the end of
-item 78.
+10. Typed **decision** — question, options, who is blocked, since when —
+    raisable and answerable by either side.
+11. **Checkpoint report** subtype: tests written / red / green mid-lane.
+12. **Gate row** per seat (fmt, clippy, typecheck, lint, unit, e2e) with
+    summary line and timestamp; **findings disposition** (found / fixed /
+    cross-lane / needs ruling); **phase timing** (assignment→report latency).
+    With 10–12 the Audit tab becomes the observer's screen; without them it is
+    usage only. The eight observer needs Brian affirmed on 2026-09-01 are: who
+    is blocked on whom and since when; test truth per seat; gate state per
+    seat; findings and their disposition; rulings requested, as a queue; diff
+    shape (files touched, ownership violations, untracked files); cost and
+    time per seat and per phase; delivery honesty (queued / started / fallback
+    / failed / ungranted — **delivered by §2 item 103**).
+13. UI direction from the same night: lead synthesis as a wire kind, a
+    selection-driven inspector, one system-health row instead of a badge
+    forest, one surface that degrades instead of two lenses.
 
-**Crew front door batch (§2 item 76) landed on `main` on 2026-08-28 after
-Brian's go; relay code was untouched, so the hive deploy is a same-code
-rebuild.**
+### Live confirmations still owed (run one, then strike it here)
 
-**Direction set 2026-08-25: crew sessions.** Executions become agent seats
-with roles that address each other durably, a lead seat dispatches, and the
-human founder observes. The plan, its operating model (lead / lanes / refuter
-/ finalizer), the verified seams, and the six slices live in
-[docs/CREW_SESSIONS_PLAN.md](CREW_SESSIONS_PLAN.md); its section 7 ledger is
-where slice status goes, findings still come here. The amas predecessor's kit
-is at ~/Projects/amas (read-only; contains keys). **Slice 1 (turn commandId on
-the echo + per-stage receipts) was built overnight by a Claude-only crew on
-crew/s1-truthful-turns@5f7ce22d**: gate green — `just ci` ran every recipe to completion (desktop 6172/0, mobile 1465, all Rust and Tauri suites ok; the runner reported early, the log proves the finish) and the lead's `just test` on 4b49249b passed 12/12 sections, 223 integration tests, 0 failed;
-refuters NOT-REFUTED (contract & runtime correctness) and NOT-REFUTED (test
-honesty and evidence), both same-family and therefore advisory, not the
-cross-family pass §1 requires for a tier-2 diff. Proven live 2026-08-26 on the dev instance against hive (see §2 item 58
-for the session and counts). Residuals: `DeliverError::Gone` and the no-live-actor arm still consume the
-command and drop the turn with only a `tracing::warn`, because the locked
-contract gives `turn_dropped` exactly one code (QUEUE_FULL); the mailbox-full
-`turn_dropped` path is implemented but untested (the actor mailbox could not
-be forced full deterministically); a row the provider signed `turn_queued` for
-still vanishes at the 3-minute pending TTL, and the lane's own test now pins
-the suppressed stall escalation as intended; a refused `Ignore` does not
-consume its command, so a redelivered 44220 republishes a byte-identical
-refusal (duplicate signal, deduped by `csl-key` downstream); interrupts get no
-stage receipts at all; the Rust receipt decoder pins `turn_refused` to four
-codes while the desktop accepts any bounded code, which will bite when S6's
-`BUDGET_EXHAUSTED` ships; `bee sessions list --json` reports `malformed: 0`
-for a malformed turn receipt because of a raw-JSON fallback; the TESTING.md
-live-observation block (§6.13.1) is marked NOT YET RUN LIVE; and three
-out-of-lane or shape deviations are recorded in the lane reports (two
-mechanical `turn_id: None` lines in
-`crates/buzz-db/src/coding_session_generation.rs`, the semantic-key helper
-placed in `buzz-sdk/src/builders.rs` rather than beside its siblings, and
-`CodingSessionProjectedTranscriptItem` as a coding-sessions-owned alias
-because `TranscriptItem` lives in the agents lane). It is a topic branch
-awaiting Brian's live look; not landed on main. Rebased onto
-main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
-6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
-`--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
-later that day with one docs conflict (this item is now 58) and re-gated:
-**Slices 2–6 were built by a Claude-only crew on crew/s2-s6; as of 2026-08-27
-all five are reached, S2–S4 and S6 are gated green, and S5 is green but
-carries two advisory notes.** S2 (the relay is the mailbox) is gated and
-proven live at `1a3ee24d`. S3 (agent seats) was gated green by the lead on
-`298a69f6`. S4 (agents talk) is green at `cbbdf7e2` and is on the relay. S5
-(role packs and crew launch) was re-gated green at `d7eca684` after round 3
-closed both blocking findings — the `"default"` adapter alias now resolves to
-vendor `unknown`, and `materialize_skills` resolves its destination the way it
-resolves its source. S6 (budgets and liveness) is built through `83c386fc` and
-**gated green**: `cargo test -p <crate> --lib` over 8 crates 3708 passed / 0
-failed (the run `just ci` does not make), clippy clean, desktop 6365/0 over 72
-suites, Tauri 2712/0/18 plus 7 and 3, px-text clean, `just test` 12/12. Its
-same-family refuter returned CONFIRMED; two fix-now findings were applied
-(contract-1, an agent seat could mint the founder exemption the budget bounds;
-contract-4, an out-of-range `BUZZ_CSP_TURN_BUDGET` silently dropped every
-budgeted 44223 in the desktop) and five are deferred (contract-1b, -2, -3, -5,
--6). **Nothing here has run against a relay or a real provider**, no full
-`just ci` has run on this branch, every refuter was same-family (advisory, not
-the cross-family tier-2 pass §1 requires), and the checkpoint could not push:
-the pre-push branch-skew guard reports the branch behind `origin/main` on 24
-files it also touches, and hermit `just` was missing from the hook subshell so
-six other hook steps exited 127 before it. What is owed before any of this
-lands: a reconciliation with the moved `origin/main`, a full repository gate,
-and one crew launch watched in the app. Rebased onto main@fecf0d33 (Andy's
-stall/redaction work) 2026-08-27 and re-gated there: lib 8 crates green
-(buzz-relay alone 959/0 excluding the pre-existing demo_join failure fixed on
-crew/relay-cancel-safety; the 12 failures seen under a parallel nine-step gate
-were Sqlx PoolTimedOut contention and vanished alone), clippy clean, desktop
-6401/0, Tauri 2718/0, just check, mobile 1465, px, just test 12/12; pushed to
-`origin/crew/s2-s6` — tip **run integration tests alone, not inside a
-parallel gate, when a count looks off; Sqlx PoolTimedOut contention under
-concurrency reads as real failures but vanishes solo.**
+- **Item 104's whole batch** — `bee sessions audit` against the real
+  TeamRolesV1 44225 stream beside the Audit tab on the same session (they must
+  agree row for row); a `bee sessions report` whose derived wake id actually
+  reaches the lead; a team launch whose goal pill fills from its own kind:44227;
+  a hire that the grant retry carries through real back-pressure.
+- Batch-1 acceptance #2 (dropped → exactly one re-arm) and #3 (start vs publish
+  race) — unit-proven only (§2 item 103).
+- Item 99's byte-identical create/44223 proof after a relaunch.
+- `bee sessions rubric check` against a real 44222 catalog (§2 item 94).
+- The seat case of `bee git check` (§2 item 92).
+- §2 item 1's duplicate create on the current build; the rehydration runs
+  (a)(b)(c) from the 2026-08-19 plan; Andy's People/roles flow with a second
+  identity.
 
-**The active track as of 2026-08-25 night is live confirmation of the
-full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
-focused wide-screen E2E workflow, and repository-wide `just ci` gate are green.
-It landed on `main` as `b2298102` on 2026-08-26 (rebased onto Andy's
-`af3b9b66`, gated there, fast-forwarded); only confirmation in the live
-desktop against hive remains. Everything below is the previous track, kept
-because its live confirmations are still owed.
+### Numbered items cited by the 2026-08-19 plans (numbers frozen)
 
-**The previous track was the coding-session honesty pass — §2 items 37-44. As of
-2026-08-24 the code is done and the live confirmation is not.** Six items are
-fixed behind tests, item 40 is closed by a live tool call on hive, item 44's
-premise was corrected. **What is owed is one pass on the dev instance against
-hive with these commits built in** (`env -u BUZZ_DESKTOP_NOKEYRING just
-desktop-standalone`, ≈5 min after a cargo change): add a Codex provider and
-confirm the picker lists real model ids and the execution row stops saying
-`default` (39); quit the app that owns an execution and confirm the header
-says "No provider answering · last reported …" and the composer explains
-itself (41); stop that execution and confirm the receipt says the stop is
-queued (42); and read one Codex shell row for its command (43). Until that
-happens these are tested, not proven. It jumps this queue. The numbered list below is
-unchanged and resumes after it; its numbers are referenced by
-`REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` and
-`PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`, so do not
-renumber it.
+1. Re-test the duplicate create (§2 item 1).
+2. ~~Rehydration hardening~~ shipped; runs (a)(b)(c) owed above.
+3. People/roles flow.
+4. Finish removing metadata-derived liveness from coding-session detail (§2
+   items 20 and 36). Agent Progress now reads the lease and the project shelf
+   was reduced to neutral `Reported …` history; audit the remaining
+   coding-session detail/workspace surface and either give it the shared
+   coordination result or make every status claim explicitly historical. Do
+   not build a third fold.
+5. Move `ChannelInfo`'s `project_ref: None` to its owning branch (§2 item 33).
+   It is on `feature/builtin-shell`; it belongs on
+   `feature/project-containers`.
+6. Step 0b of the split map — the `buzz-core` Pulse/coding-session impurity.
+   `pulse_fold.rs` takes seven coding-session imports on top of the one
+   `pulse.rs` already had, so `feature/project-pulse` does not compile
+   standalone.
+7. **P1**, whenever an hour exists. It gates the entire seed/checkpoint track;
+   everything downstream in the research report §7 is speculation until it
+   runs. Longer horizon lives there too: relay-durable checkpoints (kind
+   44231) and encrypted native-snapshot sync (44232).
 
-**The order the honesty pass is verified in, cheapest question first.** Each
-step answers a different question and none of them substitutes for the next.
-(1) `pnpm exec tsc --noEmit`, `pnpm test`, `pnpm exec biome check` from
-`desktop/`, plus `cargo test -p buzz-session-provider -p buzz-acp` — seconds.
-(2) `cd desktop && pnpm test:e2e:smoke` — this is where a UI claim is proven,
-also seconds; `coding-sessions.spec.ts` already seeds signed relay events
-through `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__` and has genesis/create/metadata/
-transcript helpers and a two-generation case to copy. **Prove the test bites**:
-turn the fix off, rebuild, watch it go red, turn it back on — a test that was
-never red proves nothing. (3) `env -u BUZZ_DESKTOP_NOKEYRING just
-desktop-standalone` against hive, with Brian driving the UI and the agent
-reading the provider log and `bee --format compact sessions list --channel
-d244ad0a-d51d-4a2c-b98d-41795c5e9ca3` — minutes, and the only step that can
-answer an adapter question like item 40. (4) `just prod-desktop` **only** when
-Brian wants his daily driver updated: it is a 20-minute release build that
-installs over the running app, and using it to verify a UI change is what cost
-an hour on 2026-08-23 (§3a). (5) Land on a topic branch — `git commit -s`, `git
-rebase --signoff origin/main`, `just check`, `git push --force-with-lease`,
-fast-forward `main` — and **do not push to `main` while Brian is mid-test**: a
-green push makes `beekeeper-autodeploy.timer` restart the hive relay, even for
-a docs-only commit.
-
-1. **Re-test the duplicate create** (§2 item 1) on this build. The
-   single-provider-instance lock shipped in `build/2026-08-18.12`; nobody has
-   yet created a session on it and confirmed one click makes one execution.
-   Until that is done, item 1 is suspected-fixed, not fixed.
-2. ~~**Rehydration hardening** — §2 items 4–6 as a single bite.~~ **The code
-   shipped 2026-08-20 in `build/2026-08-20.7`** (§2 items 4, 5, 6 and item
-   1's disclosure half). What is left is live confirmation, not code, and it
-   is three specific runs: (a) a two-execution session where a sibling
-   advances and the joined execution is checked for the *later* work after a
-   turn boundary — refresh is turn-triggered and floored at 60 s, so a
-   too-quick check proves nothing; (b) a resumed execution, confirming it now
-   reports `no_umbrella_context` and not `no_prior_execution` (item 3's code
-   half shipped in `b9de9a6d` and still wants this same run); (c) a
-   >200-item session paged by `since` cursor across a refresh, confirming the
-   cursor survives it and `stoppedBy` reads true.
-3. **Verify Andy's People/roles flow** with a second identity
-   (viewer → operator → revoke). It plausibly closes §2 items 7–8; do not
-   strike them on commit messages alone.
-4. **Finish removing metadata-derived liveness from coding-session detail**
-   (§2 items 20 and 36). Agent Progress now reads the lease, and the project
-   shelf was reduced to neutral `Reported …` history, so neither competes with
-   Pulse. Audit the remaining coding-session detail/workspace surface and
-   either give it the shared coordination result or make every status claim
-   explicitly historical. Do not build a third fold.
-5. **Move `ChannelInfo`'s `project_ref: None` to its owning branch** (§2 item
-   33). It is on `feature/builtin-shell`; it belongs on
-   `feature/project-containers`. The assembly is green either way, but two
-   feature branches do not compile under `--tests` until it moves, and the
-   split map cannot be executed cleanly around it.
-6. **Step 0b of the split map — the `buzz-core` Pulse/coding-session
-   impurity.** `pulse_fold.rs` now takes seven coding-session imports on top
-   of the one `pulse.rs` already had, so `feature/project-pulse` does not
-   compile standalone. Same class as before, deeper.
-7. **P1**, whenever an hour exists. It gates the entire seed/checkpoint
-   track; everything downstream in the research report §7 is speculation
-   until it runs.
-
-
-The four rehydration defects (§2 items 3–6) are one subsystem and one
-coherent bite. Then 7–8 to make multi-member testing self-service. P1 whenever an hour
-exists. Longer horizon lives in the research report §7: relay-durable
-checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
+Everything struck through in the previous §3 lives in §2 by item number and is
+removed from here.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
+
+- **A seat runs the app-bundled `bee` sidecar, so a CLI fix reaches it only
+  after an app rebuild.** `desktop/src-tauri/tauri.conf.json:61` lists
+  `binaries/bee` as a sidecar and the provider's seat PATH reaches it before
+  `~/.local/bin/bee` or any worktree build. On the TeamRolesV1 night the runner
+  fetched a verdict with the stale sidecar and reported "OPERATION FETCH
+  FAILED" while the fixed binary sat in a worktree named in prose one turn
+  earlier (`review-2026-09-01/LIVE-RUN-TeamRolesV1.md` § "01:00", finding 13).
+  A path given to a seat in prose is honoured only sometimes; the reliable
+  forms are naming the exact binary as the **first command of the turn**, or
+  rebuilding and relaunching the app. Plan every CLI landing on the assumption
+  that no seat has it until the app is rebuilt — and say so in the ledger, as
+  §2 item 104 does.
 
 - **`pnpm lint` does not check formatting; only the commit hook does.** Biome's
   `lint` script reports rule violations but applies and checks no formatting,
@@ -6934,7 +6979,12 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   the batch's frozen contracts file, which had been seeded unformatted. It is
   harmless but it means a lane's `file:line` citations can shift by a few lines
   at integration. To see what the hook will do before committing:
-  `cd desktop && pnpm exec biome format --write <paths>`.
+  `cd desktop && pnpm exec biome format --write <paths>`. **`pnpm check`
+  does catch it** (it runs bare `biome check`, which includes the formatter)
+  and reports it as `× Formatter would have printed the following content:`
+  with no filename on that line — the path is two lines above, so grep for
+  `format ━` rather than for the error. It bit the batch-2 finalizer on two
+  files after `pnpm lint` had come back clean.
 - **The E2E mock bridge's viewer identity is fixed, and founder-gated product
   paths are invisible without it.** `DEFAULT_MOCK_IDENTITY.pubkey` is
   `deadbeef…` (`desktop/src/testing/e2eBridge.ts:1595`) and no secret exists
