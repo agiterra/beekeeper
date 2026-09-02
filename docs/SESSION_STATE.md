@@ -6536,6 +6536,402 @@ written and `bash -n` clean but **was not executed** — that harness needs
        whose goal pill is populated from its own kind:44227; and one hire under
        relay back-pressure that the retry carries through.
 
+105. **One name per thing, a fold that excludes instead of denying, and two
+     verbs a lead never had — landed 2026-09-01 night into 2026-09-02 (batch 2
+     "B", `review-2026-09-01/batch2/`, four commits on `lane/batch2-final-b`,
+     base `4daf64c08` = item 104's head).** This batch touches
+     `crates/buzz-relay/src/handlers/ingest.rs`, so **`just test` was required
+     and was run**, and **hive redeploys** — the agincus autodeploy timer has
+     no path filter.
+
+     - **B1 · core vocabulary, the requester, kind 44245 (`5a8ef8eba`).**
+       `crates/buzz-core/src/coding_session_identity.rs` gives four identity
+       words their own types through one `identity_newtype!` macro (`:93-174`)
+       so they cannot drift: `ProviderInstanceAlias` (`:192`),
+       `ProviderInstanceId` (`:207`), `RuntimeWord` (`:226`), `DriverSlug`
+       (`:237`). Item 102 was a provider **alias** compared with an instance
+       **id**; that comparison is now a compile error. The newtypes accept
+       **exactly what the wire accepts today** — non-blank and bounded, no new
+       control-character rule (`validate_identity`, `:79`), because
+       `providerInstanceRef = "claude\tprimary"` is a signed shape that decodes
+       now and refusing it would make B2's field flip a wire-breaking change
+       disguised as a refactor; the stricter shape is *reported* by
+       `is_canonical()` (`:125`) as a disclosure, never a gate. `matches_pubkey`
+       (`:267`) validates its own argument, so handing it another instance id
+       answers `false` instead of an unqualified `true`. **Delivered as typed
+       accessors, not flipped fields**: flipping breaks ten sites in crates no
+       batch-2 lane owned and makes `bee sessions hire` fallible (REPORT-B1 §6.1
+       tables all ten). B2 flips them.
+
+       Two additive optional keys on `CodingSessionLifecycleAction`:
+       `SessionHire.requested_by`
+       (`coding_session_lifecycle_command.rs:224`) names the seat that ran `bee
+       sessions hire`, `SessionCreate.hire_ref` (`:145`) names the 44221 a
+       create answers, and neither may appear on the other action —
+       `reject_foreign_additive_key` (`:961`, called at `:533` and `:595`
+       *before* the shape matrix) names the key, where it belongs, where it does
+       not, and the remedy, instead of the old generic "action has missing or
+       unsupported fields". **`requestedBy` is an unverified claim.** The relay
+       holds `event.pubkey` and does not compare it — one line beside
+       `hire_authority_verdict` would — so **any signer the relay admits for a
+       hire can attribute that request to another seat's pubkey**.
+       `hire_requester_matches_signer` (`:347`) answers three ways and **nothing
+       calls it yet**; the field doc (`:208-222`), POLICY.md §5, NIP-CSP and
+       `testdata/coding_session_hire_requester/vectors.json` all say so, and B2
+       owns closing it at the CLI and the founder's host.
+
+       **Kind 44245 `coding-session.policy`** — the lowest unused and
+       unreserved kind in this fork and in vanilla (44231 checkpoint, 44232
+       native snapshot, 44233/44234 git transition/check, 44235–44239
+       coding-session headroom, 44240 the shipped Pulse entry with 44241–44243
+       reserved by the Pulse plan, 44244 the team transaction), with the
+       allocation note and a compile-time assertion in
+       `crates/buzz-core/src/kind.rs`. **Regular, not NIP-33 replaceable**: the
+       `d` tag addresses the umbrella so a consumer folds the newest accepted
+       revision, and a second compile-time assertion says so — a replaceable
+       policy would let one author's write erase the revision a decision was
+       actually made under. Four ordered two-field tags `h`, `d`, `csp-v`,
+       `csp-genesis`; three required content keys and seven optional ones;
+       32 KiB cap. Four decoding rules, each with the reason a later reader will
+       otherwise relitigate: unknown fields are **rejected, not ignored**;
+       **absent is not null**; a record that sets nothing **is** the withdrawal
+       and is valid, while an empty sub-object or empty array is refused
+       (`validate_non_empty_collection`, `coding_session_policy.rs:723`, applied
+       at `:410`, `:451`, `:458`, so `sets_any_policy()` at `:307` asks whether
+       a *value* is set, never whether a key is present — without it a record
+       whose every collection was empty impersonated a withdrawal); and a limit
+       of zero is refused, not stored. SDK builder
+       `build_coding_session_policy` (`crates/buzz-sdk/src/coding_session_policy.rs:20`)
+       validates the channel before it signs (`:31` → `:56`). Relay structural
+       validation at `crates/buzz-relay/src/handlers/ingest.rs:4018`, and only
+       structural: **whether the signer held the standing to set policy is the
+       consuming fold's question** against the accepted NIP-CSAT chain, exactly
+       the division 44244 draws. **Nothing enforces a policy.** Until a consumer
+       exists a published policy is a *stated intention, not an enforced limit*,
+       and any surface that renders one must say so rather than showing a budget
+       bar nothing is counting (POLICY.md §4, NIP-CSP "What v1 deliberately does
+       not have").
+
+       Landing work the lane could not do: the two additive enum fields break
+       every struct-literal construction of the variant, and `cargo check
+       --workspace --all-targets` named **fourteen** sites — thirteen
+       `hire_ref: None,`/`requested_by: None,` one-liners across `buzz-cli`,
+       `buzz-test-client` and `buzz-session-provider`, plus one destructuring
+       pattern in the provider's live command path
+       (`crates/buzz-session-provider/src/commands.rs:453`, `hire_ref: _,`),
+       production code in a crate no lane owned. REPORT-B1 predicted thirteen;
+       item 104's own landing added the fourteenth (`crew_tests.rs:4004`) and
+       the compiler named it.
+
+     - **B1b · the fold excludes instead of denying (`5d3144323`), item 103
+       finding 6's other half and §3 track-2 item 6.** Live 22:13: the runner's
+       report `c737be4c` carried an `assignmentRef` naming an event that was not
+       a team transaction of the session, and
+       `fold_coding_session_team_transactions` treated that as a structural
+       failure of the whole supplied set — so `bee sessions operation get|list`
+       failed closed for **every** operation in the session until the lead
+       published a repair assignment. One seat's malformed publication denied
+       every seat the governance state.
+
+       **The rule now** (module doc,
+       `coding_session_team_transaction_fold.rs:276-311` at this batch's head):
+       exactly two classes of record input are hard errors, because only they
+       mean the *caller* filtered wrongly and have no safe partial meaning —
+       **cross-context** events (wrong session, genesis or channel) and
+       reference **cycles**. Everything a single seat can get wrong in a single
+       well-formed record is that record's own defect and excludes only that
+       record. `collect_record_defects` (new child module
+       `…_fold_defects.rs`) runs first and the authorization loop `continue`s
+       past every defective record (`…_fold.rs:351-364`); cross-record pointer
+       checks fire only when both pointers resolve
+       (`resolved_pointers_disagree`); `validate_references` is gone. And
+       `is_authorized` no longer propagates: `Ok(true)` authorizes, `Ok(false)`
+       excludes `Unauthorized`, `Err(detail)` excludes **that record** as
+       `WrongTypeReference` (`…_fold.rs:365-386`) — REVIEW-B1b F5 falsified an
+       unreachability argument, so the guarantee is structural rather than
+       argued.
+
+       **Twelve exclusion codes** after B1c's addition, each naming what it
+       means (`…_fold.rs:91-148`): `Unauthorized`, `DanglingReference`,
+       `WrongTypeReference`, `InvalidCorrection`, `DependentOnUnauthorized`,
+       `DependentOnSuperseded`, `DependentOnExcluded`, `Superseded`,
+       `CorrectionConflict`, `CompletionNotApproved`,
+       `CompletionBlockedByOpenDecision`, `TerminalConflict`. The Tauri adapter
+       carries all twelve as `snake_case` wire strings
+       (`desktop/src-tauri/src/commands/coding_session_team_fold.rs:169-199`)
+       and the Inspector prints the code beside the exact reason
+       (`ui/CodingSessionMissionInspector.tsx:870`), so the disclosure is a word
+       a person can read and not a colour.
+
+       **The signature/envelope ruling, stated because it is the one place the
+       headline is narrower than it sounds.** Two whole-set failures were kept
+       deliberately: an invalid signature and an invalid envelope
+       (`…_fold.rs:321-322`). They are record-shaped in principle and
+       unreachable only because the relay runs the same validators at ingest
+       (`crates/buzz-relay/src/handlers/ingest.rs:4005`). So the rule reads:
+       **one seat's malformed *governance record* never denies the session; a
+       forged event is not a governance record.** Retiring those two is a
+       thirteenth code and a ruling, not a patch. (The other three whole-set
+       failures are not judgements about a record at all: a malformed caller
+       `context`, the same event supplied twice, and a reference cycle.)
+
+     - **B1c · `note` and `decision` (`4a0a3110d`), item 103 finding 6 and §3
+       track-2 item 9 / track-3 item 10.** The live run used `mission.blocked`
+       four times as a note, and the rail read Blocked in red while two seats
+       worked, because a lead who wanted to *say something* had only terminals
+       to say it with. The frozen bodies, exact keys in wire order, every key
+       always present and optional values JSON `null` rather than absent:
+
+       ```
+       note              { "text": <non-blank, <= 8192 B, no NUL>,
+                           "refs": [<hex64>, ...] }                    refs <= 16, unique
+       decision.request  { "question": <non-blank, <= 8192 B>,
+                           "options": [<non-blank, <= 512 B>, ...],    <= 8, unique
+                           "heldOn": "founder" | <hex64 actor>,
+                           "blocks": [<hex64 assignment id>, ...],     <= 16, unique
+                           "recommendation": <<= 2048 B> | null }
+       decision.answer   { "requestRef": <hex64>,
+                           "choice": <integer 0..7> | <non-blank <= 2048 B>,
+                           "note": <<= 8192 B> | null }
+       ```
+
+       and the three fold keys, **always present** — `[]` and `null` are real
+       answers:
+
+       ```
+       "notes":             [{ "eventId", "authorPubkey", "refs": [...] }]
+       "decisions":         [{ "requestId", "heldOn", "blocks": [...],
+                               "answeredBy": <hex64>|null, "answerId": <hex64>|null }]
+       "waitingOnDecision": { "requestId", "heldOn" } | null
+       ```
+
+       `note` (`coding_session_team_transaction.rs:331`, validated `:529`)
+       changes nothing: its `refs` are **not causal**
+       (`causal_references` returns empty for a note, `:508`) so a note can
+       never be `DanglingReference`, it may never carry `supersedes` (`:467`),
+       and because a correction must preserve its operation type no note can be
+       superseded either. `bee sessions note` deliberately takes no `--wake-to`:
+       waking a seat for a record that changes no state spends a turn to deliver
+       an interruption. `decision.request` (`:342`) / `decision.answer` (`:380`)
+       are answerable only by the party in `heldOn` or by the founder;
+       `heldOn: "founder"` never equals a hex64 author, so a seat cannot
+       self-answer a founder-held ruling, and `heldOn` is part of the request's
+       **logical subject**, so a correction cannot move the ruling onto its own
+       asker either. `waitingOnDecision` is non-null exactly when a canonical
+       unanswered request blocks at least one **active** assignment, and it
+       carries **no terminal** — the waiting-on-a-person state finally has a
+       name. `blocks` is a pointer, not a causal reference, so correcting an
+       assignment no longer silently deletes the open ruling that blocked it.
+       New exclusion code `CompletionBlockedByOpenDecision`: a completion cannot
+       outrun a ruling it asked for, because the request is a signed fact nobody
+       answered while the completion is a claim the fold can test and find
+       unproven — and answering the request re-includes the very same
+       completion. `bee sessions decide answer --wake-to` defaults to the
+       asker's active seat role, read from the same receipt-backed 44228 chain
+       the fold uses, and is `None` rather than a guess when the asker holds no
+       seat.
+
+       **The honest limit, verbatim from the lane after its reviewer forced it:
+       neither reading of the `mission.blocked` guard catches any of Keystone's
+       four live records.** The relay already required non-empty `blockers`, so
+       all four were accepted and stored with real blocker lists while their
+       prose said work had resumed. The first reading refuses a shape no relay
+       ever stored; the second refuses a *prose-only* correction, and Keystone
+       changed the blockers between records. **Nothing at the schema layer can
+       refuse a terminal whose prose lies.** What closes the live defect is the
+       pair of verbs plus a lead pack that reaches for them (B2.6) — and that
+       reaches a seat only on a Desktop app rebuild (finding 13).
+
+     - **The integration commit (`23fd507be`) — two things no lane owned.**
+       A3's Playwright fold-response builder
+       (`desktop/tests/e2e/coding-session-mission-lens.spec.ts:392-394`) gains
+       `notes: []`, `decisions: []`, `waitingOnDecision: null`: B1c's decoder
+       does `hasExactFields` on the adapter response's top level, so without
+       them every team session in the smoke run throws `native coding-session
+       team fold returned a malformed response` — while `pnpm test` and `pnpm
+       typecheck` both pass, which is exactly why only the smoke project finds
+       it. Every other `foldResponse` in that spec and in
+       `tests/e2e/helpers/codingSessionMissionLensAssertions.ts` spreads that
+       object, so the one declaration reaches all of them; the same shape
+       `unseatedReports` took in batch 1. And **`docs/nips/NIP-CSP.md`** was
+       written, because 44245 had shipped with a design note and no wire
+       contract while 44244 has `NIP-CSTX.md`; `kind.rs` no longer says the
+       companion "is not yet written", POLICY.md names the NIP as the wire
+       contract and itself as the design note behind it, and
+       `docs/coding-session-analysis.md`'s kind table gains 44244 (missing since
+       it landed) and 44245.
+
+     - **Wire compatibility — what a build predating this batch does, read from
+       the code, not observed.** A **relay** that predates it rejects a 44245
+       outright: `required_scope_for_kind`
+       (`crates/buzz-relay/src/handlers/ingest.rs:350`) returns `Err` for an
+       unregistered kind and the relay refuses the event, so an old relay stores
+       no policy at all. The same relay refuses a `note` or a `decision.*` on
+       kind 44244: its 44244 arm delegates to the shared core validator, whose
+       operation vocabulary is a closed serde enum with no `other` arm, so an
+       unknown `type` token is `invalid: …` at ingest. **The consequence that
+       matters is on the read side**: a `bee` or a Desktop build predating B1c
+       that reads a session which *does* contain a note or a decision — because
+       a current relay accepted it — fails the fold for the **entire session**,
+       since an envelope error is one of the two whole-set hard errors B1b kept
+       (`coding_session_team_transaction_fold.rs:322`). That is finding 13's
+       shape exactly, and it is why the app rebuild below is not optional once a
+       lead starts using the verbs: an old bundled `bee` will read the whole
+       mission as broken. A build at or after this batch reads an old session
+       unchanged — `notes` and `decisions` come back `[]` and
+       `waitingOnDecision` `null`, which the live proof below shows.
+
+     - **Live acceptance — TeamRolesV1 reached `mission.completed`, and the
+       landed `bee` folds it.** Run at 02:4x on `23fd507be`'s own
+       `target/debug/bee` against `wss://hive.agiterra.org`, channel
+       `4aa32763-b8e6-49af-9420-b79e7a677aa7`, session `7a374285-…`, genesis
+       `17c2656a…`:
+
+       ```
+       terminal: {"eventId": "984767990e44caeaa5fe5cc5a8852295d85a87339ced496dc1b748095f90dc31",
+                  "type": "mission.completed"}
+       included: 13   notes: []   decisions: []   waitingOnDecision: null
+       conflicts: [{"subject": "terminal",
+                    "contenderEventIds": ["1a5dcc8c…", "98476799…"],
+                    "winnerEventId": "98476799…"}]
+       excluded:
+         1a5dcc8c  TerminalConflict     a newer authorized terminal transaction is canonical
+         46b03d08  InvalidCorrection    correction of c737be4c… is invalid: a correction must
+                                        preserve its logical subject
+         8771ecc1  Superseded           replaced by a valid same-subject correction
+         a810828b  Superseded           replaced by a valid same-subject correction
+         c737be4c  DanglingReference    reference f233c16b… is absent from the supplied
+                                        transaction set
+         e636c658  Superseded           replaced by a valid same-subject correction
+       assignments: 436c10ce settled  ·  743da428 settled  ·  b592bff5 settled
+       ```
+
+       Before B1b the same call was a hard error and the session was dark for
+       every seat. The three new keys come back empty on a session that predates
+       the verbs, which is the compatibility statement above, proved rather than
+       argued.
+
+     - **Finding 13 (live 01:00) — a seat runs whatever `bee` its harness puts
+       on PATH.** The runner received the lead's verdict wake (`4c0ca95a` →
+       `turn_queued` + `turn_started`, turn `0d870579`) and its transcript reads
+       `OPERATION FETCH FAILED … a correction must preserve its logical
+       subject`: it fetched with the **stale** app-bundled sidecar
+       (`desktop/src-tauri/tauri.conf.json:61`), not the fixed worktree binary
+       the founder turn named in prose, and ended without an acknowledgement.
+       An absolute path given in prose is honoured only sometimes; the
+       acknowledgement `9d3fd3cd` arrived only after a re-nudge that made the
+       exact binary the **first command of the turn**. **A CLI fix reaches a
+       seat only through an app rebuild.**
+
+     - **Finding 14 (live 02:35) — the completion had to fight its own
+       `mission.blocked`.** The fold records a `terminal` conflict between
+       Keystone's last `mission.blocked` `1a5dcc8c` (21:57) and the
+       `mission.completed` `98476799`; the completion wins deterministically and
+       the blocked is excluded `TerminalConflict`, so the projection is honest —
+       but a person reading the Mission rail saw **Blocked for 4 h 38 m over a
+       mission that was working**, then Completed with a conflict badge. The
+       lead never cleared its own blocked because the vocabulary has no way to
+       ("a terminal cannot clear itself"). **Ruling:** a `mission.completed`
+       that follows a `mission.blocked` by the same lead is the intended shape
+       and must not read as a conflict — the completion should `supersedes` the
+       blocked (a completion may correct a blocked; the reverse never), and the
+       lead pack says so. That is **B2.7**; until it lands the Inspector must
+       show the conflict's winner word, not just a badge.
+
+     - **Residuals carried deliberately.**
+       (a) **REVIEW-B1b F2 → B2.5, and it is now the entire remaining problem.**
+       Nothing stops a seat from *publishing* a dangling or subject-changing
+       record: `cmd_write` pre-checks only `mission.completed`
+       (`crates/buzz-cli/src/commands/sessions/operations.rs`). Four fix rounds
+       each removed one reader-side outage caused by a record the relay accepted
+       and stores forever; there is nothing left to harden on the read side.
+       B2.5 makes `bee sessions report|verdict|acknowledge|block|complete`
+       refuse locally, before signing, when a referenced id is not a
+       fold-included transaction of the session or when a `--supersedes` target
+       would change the logical subject.
+       (b) **REVIEW-B1b F3 and F4 — addressed as disclosure, not as code.** The
+       six `by_id[..]` index sites now each carry a comment naming the invariant
+       that keeps them from panicking (the defect collector `continue`s every
+       unresolved pointer first); the `WrongTypeReference` breadth — one code
+       for wrong operation type, wrong verdict subtype, and a pointer
+       contradicting the record it names — is disclosed in the code's own doc
+       and the reviewer could not make a consumer act wrongly on it.
+       (c) **REVIEW-B1b R4** — the exclusion code string is user-visible at
+       `ui/CodingSessionMissionInspector.tsx:870`, beside the exact reason. That
+       is deliberate and the disclosure is honest, but it means the code names
+       are product copy now: renaming one changes what a person reads.
+       (d) **`coding_session_team_transaction_fold.rs` is 1,066 lines**, 66 over
+       B1b's own R6 goal of everything under 1,000. Rust is not covered by
+       `just file-size-check` (Desktop/Web/Mobile only, and that gate passes),
+       so nothing enforces it. B1b split three children out of it
+       (`_defects.rs`, `_regression_tests.rs`, `_fuzz_tests.rs`) and B1c two
+       more (`_decisions.rs`, `_decision_tests.rs`); the remaining 104 lines
+       over B1b's 962 are match arms and struct fields that cannot move without
+       rewriting B1b's own functions. B2 splits it when it adds B2.5.
+       (e) Lane-level residuals unchanged and accepted: `notes`/`decisions` are
+       uncapped lists (every entry is a signed record and capping would hide
+       one); `bench.identities`' refusal calls a pubkey an "event id";
+       `challengerSampleRate: -0.0` is accepted and re-serialises as `-0.0`;
+       two message wordings (`options exceeds 512 bytes` reads as a collection
+       bound, and `heldOn must be a lowercase 64-hex event id` never mentions
+       `founder`); and `blocks` sits outside the request's logical subject, so a
+       correction may add or remove blocked assignments — which F3 made cheap,
+       because `blocks` no longer decide whether the request survives.
+
+     - **Gates on `23fd507be`, verbatim.** `cargo fmt --all -- --check` exit 0;
+       `cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all -- --check`
+       exit 0. `cargo clippy -p buzz-core -p buzz-sdk -p buzz-cli -p buzz-relay
+       -p buzz-session-provider -p buzz-test-client --all-targets -- -D
+       warnings` exit 0, `Finished dev profile … in 1m 17s`;
+       `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets
+       -- -D warnings` exit 0, `… in 1m 41s`. `cargo test` over the same six
+       crates exit 0: `buzz-cli` 779 passed, `buzz-core` 659 passed,
+       `buzz-relay` 961 passed / 72 ignored (+11 main), `buzz-sdk` 312 passed,
+       `buzz-session-provider` 487 passed (+2 startup), `buzz-test-client` 4
+       passed, 0 failed anywhere. `cargo test --manifest-path
+       desktop/src-tauri/Cargo.toml coding_session_team_fold` `16 passed`.
+       `cd desktop && pnpm typecheck` `$ tsc --noEmit`, no diagnostics;
+       `pnpm lint` `Checked 2764 files … Found 3 warnings. / Found 6 infos.`
+       (the same three pre-existing warnings item 104 names); `pnpm check`
+       `check-e2e-registration: ok — 169 entries, 168 specs, no drift.`;
+       `pnpm check:px-text` exit 0; `pnpm test` `ℹ tests 7388 / ℹ suites 81 /
+       ℹ pass 7388 / ℹ fail 0`; `node desktop/scripts/check-file-sizes.mjs`
+       exit 0. `pnpm build:e2e` `✓ built in 2.71s` (4173 and 4183 freed first);
+       `npx playwright test --project=smoke coding-session-mission-lens
+       coding-session-surface-host-screenshots crew-front-door` `25 passed
+       (1.3m)`.
+
+     - **`just test` — required by this batch, and run** (Postgres and Redis
+       from the repo's own compose, both healthy before the run;
+       `crates/buzz-relay/src/handlers/ingest.rs` is in the diff, which is what
+       makes it required). The `test-genesis` pre-step plus `run-tests.sh`'s
+       four sections, every one green, **669 s**, exit 0:
+
+       ```
+       genesis + authority-chain proofs (serial, isolated)  25 passed   0 failed
+       workspace unit tests                              5,893 passed   0 failed (658 ignored)
+       buzz-db tests                                       143 passed   0 failed (231 ignored)
+       buzz-auth                                             — no integration tests found
+       workspace integration tests                         227 passed   0 failed (309 ignored)
+       ────────────────────────────────────────────────────────────────────────
+       [run-tests] All tests passed!    TOTAL 6,288 passed, 0 failed
+       ```
+
+     - **`just ci`** was run on the exact commit that was pushed — this item's
+       own commit, the fifth and last of the batch — and its exit status was
+       captured rather than inferred from a log that merely looked clean. The
+       transcript and the `JUST_CI_EXIT` line are in
+       `review-2026-09-01/batch2/FINAL-B.md` §Gates, against that SHA. Nothing
+       was pushed that `just ci` had not proved.
+
+     - **What this item does NOT close.** Item 103's finding 12 (the launch
+       dialog) is still B3. Item 104's live acceptance is still entirely owed —
+       nothing in the A batch has been exercised on the relay, and the fold
+       proof above exercises B1b/B1c only. The `requestedBy` comparison, the
+       identity field flip, B2.5's pre-publish check, B2.6's lead pack and
+       B2.7's completion-supersedes-blocked are all B2. And no consumer of a
+       44245 exists in any surface.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -6848,71 +7244,85 @@ confirmations owed are their own short list; and the 2026-08-19 plans' numbered
 items keep their numbers under a heading of their own so the citations that
 point at them still resolve.**
 
-### Track 1 — landing now (batch 2, `review-2026-09-01/batch2/`)
+### Track 1 — next, in this order
 
-1. ~~**Batch A "honest edges"**~~ **LANDED** — see §2 item 104: derived CLI
-   wake ids, `bee sessions audit`, `bee sessions hire --check`, the corrected
-   hire-wait diagnosis, `bee --version` SHA (A1); the rate-limited grant retry
-   and the goal published at launch (A2); open-block ordering, the byline W1
-   word, no aggregate chip in Mission, honest bundle verbs, liveness beside
-   fold state, the **Audit** rail tab (A3); plus the per-turn `usage` carry and
-   the goal field's byte counter in the integration commit. No relay crate
-   touched. **Not proven live** — item 104's last bullet is the recipe.
-2. **B1 "one name per thing"** (touches relay ingest → **hive redeploys**):
-   identity newtypes, `requestedBy`/`hireRef` on hires, the session policy
-   record (kind 44245). Held on `origin/lane/batch2-b1-core` for Brian's word.
-3. **A4 Route rail + collapsed-by-default turn blocks**, cut from `main` now
-   that A has landed; design in the canvas §9 / DESIGN-SPEC §9.
-4. **B2/B3** on top of B1: CLI and provider consume the requester and the
-   policy; the launch dialog becomes one form (goal · lead · bench · budget ·
-   posture) that publishes goal + policy, and item 103's finding 12 — the Team
-   tab's missing provider control and the One-session tab's fallback model
-   leaking into unpinned seats — is removed by construction rather than
-   patched.
-5. **Morning, with Brian:** rebuild and relaunch the dev app so seats get the
-   fixed bundled `bee` (`tauri.conf.json:61` — a CLI fix reaches a seat only
-   through an app rebuild); decide B1's landing (relay restart); one governed
-   run on the new build.
+1. **Rebuild and relaunch the dev app, with Brian — before any further live
+   run.** Seats run the app-bundled `bee`
+   (`desktop/src-tauri/tauri.conf.json:61`), so every CLI change in §2 items
+   104 and 105 reaches a seat only through a rebuild. It is no longer only a
+   missing feature: a bundled `bee` predating item 105 that reads a session
+   containing a `note` or a `decision` fails the fold for the **whole session**
+   (item 105, "Wire compatibility"), the same shape as finding 13. With the app
+   stopped: `git merge --ff-only origin/main` in the main checkout, `cargo build
+   -p buzz-cli`, then `env -u BUZZ_DESKTOP_NOKEYRING just desktop-standalone`.
+   Then one governed run on the new build, which is also how items 104 and 105
+   get their live acceptance (below).
+2. **A4 Route rail + collapsed-by-default turn blocks** — cut from `main` now
+   that A and B have landed; design in the canvas §9 / DESIGN-SPEC §9.
+3. **B2, on top of B1.** Flip the four identity fields and fix the ten sites
+   (REPORT-B1 §6.1 tables them; `cargo check --workspace --all-targets` names
+   every one). Compare `requestedBy` with the signer at the CLI and at the
+   founder's host and **disclose a mismatch rather than dropping it** — today
+   any signer the relay admits for a hire can attribute the request to another
+   seat's pubkey, and `hire_requester_matches_signer` is called by nothing.
+   **B2.5**: `bee sessions report|verdict|acknowledge|block|complete` refuse
+   locally, before signing, when a referenced id is not a fold-included
+   transaction of the session or when a `--supersedes` target would change the
+   logical subject — this is the entire remaining half of item 105's fold work,
+   because nothing yet stops a seat *publishing* the records that caused four
+   fix rounds. **B2.6**: the lead pack (`personas/roles/lead/skills/…`) says the
+   same three things in prose. **B2.7**: `bee sessions complete` supersedes the
+   lead's own canonical `mission.blocked`, so finding 14's terminal conflict
+   stops happening. Split `coding_session_team_transaction_fold.rs` (1,066
+   lines) while B2 is in that file.
+4. **B3.** The launch dialog becomes one form — goal · lead · bench · budget ·
+   posture — that publishes a kind:44227 goal and a kind:44245 policy, so item
+   103's finding 12 (no provider control on the Team tab, the One-session tab's
+   fallback model leaking into unpinned seats, free-text role names, the
+   truncated lead name) is removed by construction rather than patched. Plus the
+   TypeScript decoder for 44245 and for `requestedBy`/`hireRef`, pinned to
+   `crates/buzz-core/testdata/coding_session_hire_requester/vectors.json` and
+   `docs/nips/NIP-CSP.md`.
+5. **Nothing consumes a 44245.** Until something does, a published policy is a
+   stated intention and every surface that shows one must say so. The first
+   consumer needs the newest-accepted-wins fold and the authority check beside
+   it (POLICY.md §4).
 
 ### Track 2 — core honesty found by the live runs (next batch)
 
-6. **The fold excludes a dangling reference; it must not fail closed for the
-   whole thread** (`coding_session_team_transaction_fold.rs`; TeamRolesV1
-   22:13 — one runner report with a bad `assignmentRef` made `operation
-   get|list` refuse every operation). Exclusion code `DanglingReference`.
-7. **The relay validates the brief cap.** `coding_session_lifecycle_command.rs:345`
-   still admits 12,288 bytes on ingest while both the CLI and the Desktop host
-   refuse at the real cap — relay-touching.
-8. **Two CLI follow-ups from §2 item 103.** `cmd_hire` still picks its receipt
-   by author-asserted `created_at` (`crew_cmds.rs:678-680`); it fails safe
-   behind `verify_hire_evidence` — a forged newest receipt can deny a hire's
-   automatic grant, never produce a wrong one — and the denial is now
-   recoverable with `seat-repair`. Item 104 landed `grant-seat`/`revoke-seat`
-   as real verbs, so the second half of this ("no CLI verb emits them") is
-   closed; what remains is the author-time receipt pick.
-9. **A terminal record whose body says work continues** — a `note`/`correction`
-   verb, so a lead stops publishing `mission.blocked` as a note (item 103
-   finding 6 used it four times, and the rail read Blocked in red while two
-   seats worked).
+6. **The relay validates the brief cap.**
+   `coding_session_lifecycle_command.rs:345` still admits 12,288 bytes on
+   ingest while both the CLI and the Desktop host refuse at the real cap —
+   relay-touching.
+7. **One CLI follow-up from §2 item 103.** `cmd_hire` still picks its receipt by
+   author-asserted `created_at` (`crew_cmds.rs:678-680`); it fails safe behind
+   `verify_hire_evidence` — a forged newest receipt can deny a hire's automatic
+   grant, never produce a wrong one — and the denial is now recoverable with
+   `seat-repair`. The other half of this item (no CLI verb emits
+   `grant-seat`/`revoke-seat`) closed in item 104.
 
 ### Track 3 — the observer's wire kinds (design next; Brian affirmed the list)
 
-10. Typed **decision** — question, options, who is blocked, since when —
-    raisable and answerable by either side.
-11. **Checkpoint report** subtype: tests written / red / green mid-lane.
-12. **Gate row** per seat (fmt, clippy, typecheck, lint, unit, e2e) with
-    summary line and timestamp; **findings disposition** (found / fixed /
-    cross-lane / needs ruling); **phase timing** (assignment→report latency).
-    With 10–12 the Audit tab becomes the observer's screen; without them it is
-    usage only. The eight observer needs Brian affirmed on 2026-09-01 are: who
-    is blocked on whom and since when; test truth per seat; gate state per
-    seat; findings and their disposition; rulings requested, as a queue; diff
-    shape (files touched, ownership violations, untracked files); cost and
-    time per seat and per phase; delivery honesty (queued / started / fallback
-    / failed / ungranted — **delivered by §2 item 103**).
-13. UI direction from the same night: lead synthesis as a wire kind, a
-    selection-driven inspector, one system-health row instead of a badge
-    forest, one surface that degrades instead of two lenses.
+8. **Checkpoint report** subtype: tests written / red / green mid-lane.
+9. **Gate row** per seat (fmt, clippy, typecheck, lint, unit, e2e) with summary
+   line and timestamp; **findings disposition** (found / fixed / cross-lane /
+   needs ruling); **phase timing** (assignment→report latency). With 8 and 9 the
+   Audit tab becomes the observer's screen; without them it is usage only. The
+   typed **decision** — question, options, who is blocked, since when, raisable
+   and answerable by either side — was the fourth of these and **shipped in §2
+   item 105** as the 44244 `decision.request`/`decision.answer` verbs plus the
+   fold's `decisions` and `waitingOnDecision`; nothing renders them yet, so the
+   Mission rail showing "waiting on the founder" is the first UI consumer owed.
+   The eight observer needs Brian affirmed on 2026-09-01 are: who is blocked on
+   whom and since when (**wire half delivered by item 105**); test truth per
+   seat; gate state per seat; findings and their disposition; rulings requested,
+   as a queue (**wire half delivered by item 105**); diff shape (files touched,
+   ownership violations, untracked files); cost and time per seat and per phase;
+   delivery honesty (queued / started / fallback / failed / ungranted —
+   **delivered by §2 item 103**).
+10. UI direction from the same night: lead synthesis as a wire kind, a
+    selection-driven inspector, one system-health row instead of a badge forest,
+    one surface that degrades instead of two lenses.
 
 ### Live confirmations still owed (run one, then strike it here)
 
@@ -6921,6 +7331,13 @@ point at them still resolve.**
   agree row for row); a `bee sessions report` whose derived wake id actually
   reaches the lead; a team launch whose goal pill fills from its own kind:44227;
   a hire that the grant retry carries through real back-pressure.
+- **Item 105's two verbs** — the fold read is proved on the wire (item 105's
+  live block), but nothing has *published* a `note` or a `decision` yet, and
+  nothing has published a 44245 at all. Owed on the rebuilt app: one `bee
+  sessions note` a lead writes instead of a `mission.blocked`; one `bee sessions
+  decide request --held-on founder` that puts `waitingOnDecision` on the wire
+  with no terminal, answered with `bee sessions decide answer` whose wake
+  actually reaches the asker; and one signed 44245 the relay accepts.
 - Batch-1 acceptance #2 (dropped → exactly one re-arm) and #3 (start vs publish
   race) — unit-proven only (§2 item 103).
 - Item 99's byte-identical create/44223 proof after a relaunch.
@@ -6969,7 +7386,28 @@ removed from here.
   forms are naming the exact binary as the **first command of the turn**, or
   rebuilding and relaunching the app. Plan every CLI landing on the assumption
   that no seat has it until the app is rebuilt — and say so in the ledger, as
-  §2 item 104 does.
+  §2 item 104 does. **Since §2 item 105 the stale sidecar is worse than a
+  missing feature**: the team-transaction operation vocabulary is a closed serde
+  enum with no `other` arm, and the fold treats an envelope error as one of its
+  two whole-set hard errors
+  (`coding_session_team_transaction_fold.rs:321-322`), so a `bee` predating the
+  `note`/`decision` verbs reads a session containing one as a **failure of the
+  entire session**, not as an unknown row. Rebuild before a lead starts using
+  the verbs, not after.
+
+- **A fresh worktree needs two setup steps before any Tauri or desktop gate,
+  and both fail in a way that reads as a product bug.** `cargo test
+  --manifest-path desktop/src-tauri/Cargo.toml` panics in `build.rs` with
+  `failed to build Tauri application: resource path
+  'binaries/buzz-acp-aarch64-apple-darwin' doesn't exist` — the fix is the
+  repo's own `just _ensure-sidecar-stubs`, which touches gitignored stub files
+  (do **not** copy binaries from the live checkout; the recipe exists for
+  exactly this). And `desktop/node_modules` is per-worktree, so `pnpm
+  typecheck`/`test`/`build:e2e` need `pnpm install --frozen-lockfile` first;
+  without it a `.test.mjs` run fails with `Cannot find package '@/shared'`,
+  which looks like a broken import. A test file run directly also needs the
+  loader the `test` script passes — `node --import ./test-loader.mjs
+  --experimental-strip-types --test <file>`, not bare `node --test`.
 
 - **`pnpm lint` does not check formatting; only the commit hook does.** Biome's
   `lint` script reports rule violations but applies and checks no formatting,
