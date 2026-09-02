@@ -162,6 +162,17 @@ export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;
  */
 export const KIND_CODING_SESSION_POLICY = 44245;
 
+/**
+ * Kind:44246 observation (NIP-CSOB) — a checkpoint, a gate row, a finding or
+ * a phase's own measured span.
+ *
+ * Declared here for the same reason 44245 is, and read by nothing in Desktop
+ * yet: the renderer is owed (ledger item 108, lane L5). The integer is
+ * mirrored in `mobile/lib/shared/relay/nostr_models.dart`, which CLAUDE.md
+ * requires not to drift from this file.
+ */
+export const KIND_CODING_SESSION_OBSERVATION = 44246;
+
 // ── Project Pulse (44240) ────────────────────────────────────────────────────
 //
 // NIP-PU: an author's explicit claim about a project — a plan, milestone,
@@ -172,8 +183,18 @@ export const KIND_CODING_SESSION_POLICY = 44245;
 // observed fact — worktree state stays in the coding-session kinds.
 export const KIND_PULSE_ENTRY = 44240;
 
-// Every coding-session kind, in one place, so the regression guard keeping them
-// out of the chat timeline cannot silently miss a newly added member.
+// The coding-session kinds Desktop's own consumer reads, in one place, so the
+// regression guard keeping them out of the chat timeline cannot silently miss a
+// newly added member.
+//
+// It is NOT every allocated coding-session kind: 44245 (policy) and 44246
+// (observation) are deliberately absent, because Desktop does not read either
+// off the wire yet and this list also drives which kinds the e2e mock relay
+// serves (`src/testing/e2eBridgeSessionFacts.ts`). Nothing leaks from the
+// omission — the chat timeline is an allowlist
+// (`CHANNEL_TIMELINE_CONTENT_KINDS`), so a kind absent from both sets is
+// absent from the timeline too. Add them here when a reader for them lands,
+// and bump the count in `kinds.test.mjs`.
 export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_COMMAND,

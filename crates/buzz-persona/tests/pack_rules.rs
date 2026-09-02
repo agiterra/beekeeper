@@ -42,6 +42,17 @@ const RETIRED_PHRASINGS: &[&str] = &[
 /// only its own pack.
 const SEAT_ROLES: &[&str] = &["builder", "runner", "verifier", "designer"];
 
+/// The verbatim sentence the lead pack must carry about landing `main`.
+///
+/// Finding 27, live run 2: at 12:00:19 a lead pushed `main` after its own
+/// verifier had reported FAIL, and every layer below it said yes. A seat
+/// inherits the operator's repo role (Owner), there is no `buzz-protect` rule
+/// on `refs/heads/main`, and the push path reads no verdict — so until lane L6
+/// builds that gate, this sentence in the pack is the only thing between a
+/// lead and `main`. Asserted, not merely written, for the same reason the seat
+/// rule is.
+const LEAD_MAIN_RULE: &str = "You never push `main`. A branch is landed by the founder, or by a seat the founder names in the policy's `irreversible` list, after a verifier's report and your verdict are on the wire.";
+
 /// Repository root, derived from this crate's manifest directory.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -86,6 +97,25 @@ fn every_seat_pack_carries_the_push_rule_verbatim() {
              credential expires inside a long hook window"
         );
     }
+}
+
+#[test]
+fn the_lead_pack_says_it_never_pushes_main() {
+    let skill = repo_root()
+        .join("personas")
+        .join("roles")
+        .join("lead")
+        .join("skills")
+        .join("beekeeper-project")
+        .join("SKILL.md");
+    let body = std::fs::read_to_string(&skill)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", skill.display()));
+    assert!(
+        body.contains(LEAD_MAIN_RULE),
+        "the lead pack does not carry the main-landing rule byte-for-byte. Nothing below the \
+         pack stops a lead landing main: it inherits the operator's repo role, no buzz-protect \
+         rule covers the ref, and the push path reads no verdict (finding 27)."
+    );
 }
 
 #[test]

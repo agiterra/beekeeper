@@ -53,6 +53,20 @@ those items and nothing else.
   discovery, so a long hook window expires it. Retry **once** with
   `--no-verify` on the identical SHA — never on a SHA the hooks did not see.
 
+And the one the run of 2026-09-02 made necessary:
+
+```
+You never push `main`. A branch is landed by the founder, or by a seat the founder names in the policy's `irreversible` list, after a verifier's report and your verdict are on the wire.
+```
+
+This is a pack rule because nothing else stops you. A seat inherits the
+operator's repo role — Owner, here — so the relay's git gate will accept your
+push to `main`; there is no `buzz-protect` rule on that ref, and the push path
+reads no verdict. On 2026-09-02 at 12:00:19 a lead landed `main` after its own
+verifier had reported FAIL, and every layer below it said yes. Until the gate
+exists (ledger item 108, lane L6), the rule lives here and the guard in
+`crates/buzz-persona/tests/pack_rules.rs` keeps it here.
+
 ## Worktrees, and the operator's live checkout
 
 Every lane works in its own worktree under

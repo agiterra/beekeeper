@@ -3611,9 +3611,17 @@ mod tests {
                 "{key} was not removed from the child environment: {plan:?}"
             );
         }
+        // The `|| var_os(...)` is the same isolation the sibling test above
+        // uses, and it is here for the same reason: the injection loops
+        // deliberately leave an inherited value alone, so on a machine whose
+        // own environment already carries `CLAUDE_CODE_EXECUTABLE` the key
+        // never enters the plan and this assertion failed on a tree with no
+        // defect in it (finding 20, live run 2). What is being asserted is
+        // that the fence did not *drop* the variable — inherited counts.
         assert!(
             plan.iter()
-                .any(|(key, value)| key == "CLAUDE_CODE_EXECUTABLE" && value.is_some()),
+                .any(|(key, value)| key == "CLAUDE_CODE_EXECUTABLE" && value.is_some())
+                || std::env::var_os("CLAUDE_CODE_EXECUTABLE").is_some(),
             "the fence dropped a per-runtime variable it should have kept: {plan:?}"
         );
     }

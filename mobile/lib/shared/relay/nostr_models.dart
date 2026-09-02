@@ -46,7 +46,7 @@ abstract final class EventKind {
   static const huddleParticipantLeft = 48102;
   static const huddleEnded = 48103;
 
-  // --- Coding sessions (44220-44230, 44244-44245, 24223) --------------------
+  // --- Coding sessions (44220-44230, 44244-44246, 24223) --------------------
   // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile is a
   // read-only observer: it subscribes to the fact kinds and never publishes a
   // command kind.
@@ -93,6 +93,14 @@ abstract final class EventKind {
   /// here because this table and
   /// `desktop/src/shared/constants/kinds.ts` must not drift (CLAUDE.md).
   static const codingSessionPolicy = 44245;
+
+  /// Kind:44246 observation (NIP-CSOB) — a checkpoint, a gate row, a finding,
+  /// or a phase's own measured span.
+  ///
+  /// Mobile neither writes nor reads the record yet; the integer is mirrored
+  /// here because this table and
+  /// `desktop/src/shared/constants/kinds.ts` must not drift (CLAUDE.md).
+  static const codingSessionObservation = 44246;
 
   /// Kind:24223 ephemeral provider lease proving the provider is reachable.
   static const codingSessionLease = 24223;
