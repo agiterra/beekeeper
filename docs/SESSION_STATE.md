@@ -5979,6 +5979,231 @@ written and `bash -n` clean but **was not executed** — that harness needs
        exactly one lead prompt, no `--wake-to`, and a resolved report source in
        the provider store.
 
+103. **Two producers spent two lead turns on one report, and no persistent
+     surface said so; fixed across the runner, the CLI, Desktop's arbitration
+     and the Mission UI on 2026-09-01 (batch `review-2026-09-01/`, five
+     commits on `lane/turns-ui-final`, base `dcaea5f63`).** The cleantest run
+     of 2026-08-31 is the wire evidence for both defects, and neither was
+     visible in the product.
+     - **Defect 1 — one operation, two turns.** Report `795ce319…` was woken
+       twice: the provider's `team-wake-2abd9f9a…` started 19:14:11 and
+       Desktop's `team-wake-v1:795ce319…:42dcf1b7…` started 19:16:33. The
+       provider had reached `turn_queued` at 19:13:59; Desktop's 15-second
+       grace expired at 19:14:08 and it published a second command, because
+       `pendingCodingSessionTeamWake` suppressed only on transcript echoes and
+       **an echo exists only once a turn starts**. Both producers byte-match
+       the pointer deliberately, so the lead saw one operation as two turns.
+     - **Defect 2 — a seat ran without a seat, and the CLI said the opposite.**
+       The builder's `created` receipt was signed at 19:11:28, three seconds
+       after the 19:11:25 hire, and the CLI's 60-second window still closed
+       without it — leaving an execution with `agentRef` and `role` and no live
+       `grant-seat`. There was no recovery path (re-hiring seats a second
+       agent), and the CLI told the operator the typed fold "excludes an
+       unauthoritative report". It never did: inclusion is assignee equality
+       (`coding_session_team_transaction_fold.rs:508-510`), and no seat was
+       ever consulted.
+     - **The ruling both sides now implement.** A provider-signed wake that
+       reaches `turn_queued` transfers durable **custody** of the operation to
+       the lead runner. Permanent resolution comes only from `turn_started` or
+       the lead's own prompt echo. `DUPLICATE_OPERATION` is **settlement** of
+       that attempt on both sides, never a failure, and never counts toward
+       the all-dropped re-arm rule. Custody is released by a non-duplicate
+       drop/refuse on the custodian, which re-enables exactly one Desktop
+       re-arm with a new `:r1` command id.
+     - **Fix 1 — the runner fences the operation, not the id**
+       (`3786f99a0`). `team_wake::operation_fence_key`
+       (`crates/buzz-session-provider/src/team_wake.rs:405`) keys a wake by
+       target generation + canonicalised pointer; `commands.rs:649-670`
+       refuses a second command carrying that key with
+       `DUPLICATE_OPERATION` and spends zero turns. Process-local at admission
+       (`InFlightTurn::operation_key`, `lib.rs:657`), durable at start
+       (`operations.jsonl`, `state.rs:66`, written at `lib.rs:4640` just
+       before `consume_command` so a crash between the two writes is safe).
+       Prose is never fenced; a new generation is a new operation.
+     - **Fix 2 — a two-minute window and a repair that never re-hires**
+       (`3338ca97c`). `HIRE_WAIT_SECONDS = 120` matches Desktop's
+       `CODING_SESSION_CREW_RECEIPT_TIMEOUT_MS`
+       (`crates/buzz-cli/src/commands/sessions/crew.rs:1460`).
+       `bee sessions seat-repair` (`crew_cmds.rs:1266`) re-verifies the whole
+       signed chain from one channel read and submits at most one 44228
+       `grant-seat`, never a 44221. Selection is evidence-driven, never
+       author time (I4): founder-signed candidates only, receipts filtered by
+       cryptographic binding before any choice, verifying candidates grouped
+       by the write they imply — one group proceeds, two disagreeing roles are
+       `ambiguous` with zero writes and a remedy that converges via the
+       accepted chain.
+     - **Fix 3 — the fold discloses instead of the CLI lying**
+       (`3338ca97c`). `CodingSessionTeamFold.unseated_reports`
+       (`crates/buzz-core/src/coding_session_team_transaction_fold.rs:191`)
+       lists every **included** report whose author holds no live seat for the
+       assignment's role, wired to `bee sessions operation` and the Tauri
+       adapter as `unseatedReports` with the schema string unchanged. A grep
+       guard (`crew_tests.rs:3420`) fails if either false sentence returns.
+     - **Fix 4 — Desktop reads the lead's receipts before it covers**
+       (`e25ee2fc3`). `codingSessionTeamWakeEvidence.ts` verifies 44220
+       commands and 44224 receipts for one exact lead generation — the signer
+       must be the lead's `providerAuthorityPubkey` and the receipt's
+       `session` target must match (I15) — indexed by exact pointer bytes,
+       bounded, with a visible `overflowed` flag.
+       `codingSessionTeamDeliveryStatus.ts` folds them into the frozen
+       delivery vocabulary. One history fetch plus one live subscription per
+       kind: no interval, no re-fetch timer.
+     - **The UI consolidation** (`d2824cdfd` + `c3fed23e6`). Deleted: the
+       pinned Mission transaction card and its chain list, the goal-pill row
+       above the narrative, the provenance popover's duplicated seat roster and
+       context-load rows, the chip's activity phrase, and the inline tool-row
+       wall in Live. Merged: header row 1 and row 2 into one container with
+       exactly one `border-b`, below row 2. Moved: the goal's edit control into
+       the Inspector's Current goal; the canonical chain into stream rows; the
+       seat roster into the rail's Team section, which now sits third so the
+       ungranted seat's repair command is in the first screen. Added: `A → B ·
+       Type` transaction rows at chat weight in the stream, delivery and
+       seat-authority badges that carry an icon *and* a word, and a collapsed
+       execution bundle whose count equals exactly what it hides.
+     - **Prompt attribution — Brian's item 10.** Session messages looked like
+       they came from him. Three causes: a turn one seat sends another is
+       stamped with the seat's actor key and rendered as a hash or as `You`;
+       Desktop signs its automatic commands (`team-wake-`, the hire host's
+       dispatch of a lead-written brief) with the founder's key; and a prompt
+       with **no** operator stamp read `You`, which was a guess. Now:
+       `Name · Role` for a seat, `Beekeeper · team wake`, `<hiring seat> · via
+       your Desktop` / `Your Desktop (hire host)`, and `Operator not
+       recorded`. `You` is reserved for a prompt stamped with the viewer's own
+       key and no automatic prefix
+       (`lib/codingSessionPromptAttribution.ts`).
+     - **One defect the wiring itself found.** The delivery plan was skipped
+       whenever `readCodingSessionTeamWakeState` returned null — every session
+       this Desktop has never had to cover. A fully verified `turn_queued`
+       provider wake rendered as *"No team wake deliveries observed."*: absent
+       local state reported as an observed absence, the exact class of
+       dishonesty this batch exists to remove. The ledger records Desktop's
+       own attempts; the evidence disclosed is the relay's, and it exists
+       whether or not this machine has a ledger
+       (`hooks/useCodingSessionTeamWake.ts:271`). Caught by U-E5, which is red
+       without the fix and green with it; the lanes could not see it because
+       every hook test seeds state first.
+     - **The ten acceptance tests → the tests that carry them.**
+       #1 cleantest replay (headline) → `D-T1` model + hook;
+       #2 dropped/refused re-arm → `D-T2` (Desktop),
+       `a_dropped_owner_releases_the_fence_for_a_rearmed_command` (runner);
+       #3 start at the publish boundary → `D-T3`;
+       #4 crash after publish before settlement →
+       `a_duplicate_replayed_after_a_restart_is_refused_from_the_durable_ledger`,
+       `the_owner_is_admitted_when_only_the_operation_ledger_recorded_it`;
+       #5 fallback started during a provider outage →
+       `a_desktop_fallback_start_settles_the_provider_intent_across_a_restart`;
+       #6 evidence ages out → `D-T6` and
+       `team_wake_t0_driver_publisher_survives_pressure_restart_and_rollover`;
+       #7 create receipt after the CLI window →
+       `seat_repair_grants_once_is_idempotent_and_never_hires`,
+       `a_benign_unanswered_earlier_hire_never_shadows_the_running_seat`;
+       #8 forged / mismatched receipts →
+       `forged_mismatched_and_unbacked_evidence_never_grants_a_seat`,
+       `a_forged_later_receipt_cannot_deny_the_repair` (seat), `D-T4` (wake);
+       #9 duplicate-producer attack →
+       `a_duplicate_team_wake_pointer_is_refused_and_spends_no_turn`,
+       `two_same_pointer_commands_replayed_into_a_live_execution`;
+       #10 live relay-backed run → **owed, see below**.
+       Brian's item 9 (zero-switch observation) →
+       `item 9: Mission - Live shows the whole team state with no clicks`.
+     - **Gates on the integrated tree, verbatim.**
+       `cargo fmt --all --check` exit 0.
+       `cargo clippy -p buzz-session-provider -p buzz-cli -p buzz-core
+       --all-targets -- -D warnings` → `Finished dev profile … in 2m 22s`,
+       exit 0.
+       `cargo test -p buzz-cli -p buzz-core` → `717 passed; 0 failed` /
+       `582 passed; 0 failed` / `2 passed; 0 failed`.
+       `cargo test -p buzz-session-provider` → `487 passed; 0 failed` +
+       `2 passed; 0 failed`.
+       `cargo test --manifest-path desktop/src-tauri/Cargo.toml` →
+       `2840 passed; 0 failed; 18 ignored` (+ 7 + 3).
+       `pnpm typecheck` exit 0. `pnpm lint` → `Found 3 warnings. Found 6
+       infos.` (the pre-existing set, none in a file this batch touched).
+       `pnpm check:px-text`, `pnpm check:pubkey-truncation` exit 0.
+       `pnpm check:e2e-registration` → `ok — 169 entries, 168 specs, no
+       drift.` `node desktop/scripts/check-file-sizes.mjs` exit 0.
+       `pnpm test` → `tests 7304 / pass 7304 / fail 0`.
+       `pnpm build:e2e && npx playwright test --project=smoke
+       coding-session-mission-lens coding-session-surface-host-screenshots
+       coding-session-reachability` → **17 passed**, 0 skipped.
+       `git diff --check` exit 0.
+       **`just ci` (the full repository gate: repo-wide fmt/lint/static
+       checks, Rust, Tauri, desktop, web and mobile suites, desktop and web
+       builds) — exit 0, ending `All tests passed!` on 1,716 Flutter tests.**
+       **`just test` was not required and was not run: no
+       `crates/buzz-relay`, `crates/buzz-db` or `crates/buzz-auth` file is in
+       the diff** (`git diff --name-only dcaea5f63..HEAD`).
+     - **Conversation byte-identity (I8).** The DOM dump was re-captured by
+       the baseline's own method against the integrated build and diffed
+       against `review-2026-09-01/baseline-dcaea5f63/conversation-lens.outerHTML.txt`.
+       **4 of 168 element lines differ, and both causes are intended**: the
+       identity accents shift because `codingSessionAgentAccent` replaced
+       amber with `primary` (§9 addendum; hues are hash-assigned, DESIGN-SPEC
+       §6), and one prompt caption moves from `You` to `Operator not
+       recorded`. **The brief predicted the baseline fixture contained none of
+       the item-10 rows; it contains one** — an unstamped prompt — so that is
+       the single Conversation-lens case item 10 changes, and it is a
+       correction, not a leak. No Mission structure reaches Conversation: no
+       transaction row, no delivery badge, no participant bar, no header
+       change. Masking beyond the brief's clock tokens was **required and is
+       disclosed**: the fixture mints fresh keys on every run, so hex64 ids
+       and React `useId` values can never match a stored baseline even at
+       identical code.
+     - **Design conformance (DESIGN-SPEC §8), checked literally.** Header:
+       exactly one `border-b` between the title and the first stream row —
+       held, `data-flush="true"` on row 1 and the rule on the participant bar;
+       row 2 contains `coding-session-mission-density` and the chips — held.
+       Stream: monogram `size-6` ×2 and body `text-sm` — held (the assertion
+       had been reading the *title*, which is also `text-sm`; it now targets
+       the body). Attention rows print the delivery `detail` as a text node —
+       held. Rail order `Current goal · Mission state · Team · Changes ·
+       Files · Structured tests · Accepted plan · Seat-reported plans ·
+       Reports · Integrity` — held. `No test report yet` — **now present**
+       (§9 addendum; was `No structured test results published.`). Team row
+       for an ungranted seat contains the `<code>` remedy — held. Integrity ›
+       Delivery shows the badge word and the duplicate-refused count — held.
+       Prompt attribution: a seat-signed turn renders `Name · Role` and `You`
+       appears only under the viewer's own stamped prompts — held. Tokens: no
+       hex, no `text-[`, no arbitrary rem — held.
+     - **Screenshots:** `review-2026-09-01/final-shots/`, **30 PNGs, 30
+       distinct SHA-256**. `zero-switch-wide.png` is Brian's item 9 at
+       1400×900: three seat chips with their W1 words and `queued` /
+       `ungranted` badges, two `A → B` rows with the `queued` badge on the
+       report, the live strip, and the Inspector open on Current goal →
+       Mission state → Team with the `seat-repair` command visible — with no
+       `[aria-pressed]` control touched, asserted by recording every such
+       control's state before and after reading the surface.
+     - **Disclosed residuals.** (a) The §2a residual is unchanged: a lead
+       execution that dies with a wake queued and no founder Desktop present
+       still loses the wake until one returns; it is disclosed as a `failed`
+       row with the frozen residual sentence. (b) **Retention, from Lane P:**
+       the durable fence expires with `command_horizon` (default 86,400 s,
+       `config.rs:261-265`) keyed on when the *owner started*, while
+       `past_horizon` gates on the incoming command's `created_at` — so a
+       duplicate minted after that window is admitted after the next provider
+       restart. Closing it means letting `operations.jsonl` outlive
+       `commands.jsonl`, which forfeits the bound that makes it a strict
+       subset; not taken. (c) R-8: a row reads `failed` between a thrown
+       publish and a successful retry — honest but pessimistic. (d) `cmd_hire`
+       still selects its receipt by author time; it fails safe behind
+       `verify_hire_evidence`. (e) No CLI verb emits `revoke-seat` or a
+       standalone `grant-seat`.
+     - **Live acceptance owed (#10).** Not run. Restart the app from the
+       landed SHA (`git merge --ff-only` in the main checkout, coordinated
+       with Brian, then `env -u BUZZ_DESKTOP_NOKEYRING just
+       desktop-standalone`), then one fresh provider-signed team run proving:
+       exactly one lead prompt per report; the receipt-suppressed fallback (no
+       `team-wake-v1:` published while a provider command is queued or
+       started); the duplicate-producer path answering `DUPLICATE_OPERATION`
+       on the wire; `bee sessions seat-repair --channel
+       f4829942-15a8-4e74-accd-51c8448f250f --session-ref
+       41712db5-519f-492f-a6e7-f8407c8ba1dc --actor
+       1ddd35c685a81932fbfeced5251a0fe97ec3fe41bf3262ff747a4773aeb68b5e`
+       granting once and answering `already_granted` on a second run with zero
+       writes; and the UI showing those delivery states truthfully. Cite the
+       event ids with `bee events query --kinds 44220,44224 --channel
+       f4829942-15a8-4e74-accd-51c8448f250f`.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -6289,6 +6514,46 @@ than replace them, and it is not started.
 - ~~**Live proof owed: a Keystone hire with `--class builder` at the standard tier whose create carries the routing record.**~~ **DONE 2026-08-30:** Keystone re-ran `review-2026-08-30/brief-routing-proof-lane1.md` unchanged, independently accepted and verified the one-commit lane at `a00554e8b5d4763a132b9181bfa26eec7bbeaeed`, and reported the full hire → host route → create → seat chain on the wire. The later Helios verifier run in §2 item 98 independently proves the create and 44223 now carry the same complete routing record; item 97's persistence/echo acceptance is closed.
 - ~~**Live proof owed from §2 item 98: cross-provider verifier routing.**~~ **DONE at `f5843828`:** Helios hired a live Claude builder and the host independently chose a Codex verifier; the signed create names failure-mode diversity (item 98). **The exact-echo clause found item 99:** the create omitted `profile` while 44223 wrote `profile:null`. The producer fix is implemented; one post-relaunch byte-identical create/44223 proof remains.
 - **Morning: stop the idle seats in Task Management Goals, fast-forward the live checkout (item 93 changed buzz-core → tauri relaunch), cargo build -p buzz-cli, relaunch.**
+- **Live acceptance of the 2026-09-01 turns/UI batch (§2 item 103, acceptance
+  test #10).** The batch is gated and unpushed on `lane/turns-ui-final`; every
+  other acceptance test is green at unit/DOM/e2e level. The exact recipe,
+  including the `bee sessions seat-repair` invocation against cleantest, is in
+  item 103's last bullet.
+- **What an observer of an agent team needs to see** — Brian affirmed this
+  list on 2026-09-01 ("Yes, you got it"), written from orchestrating that
+  batch mostly blind. Start the next Mission/team slice from it; do not
+  re-derive it.
+  1. Who is blocked on whom, and since when — open assignments with age, from
+     the fold, never from silence.
+  2. Test truth per seat, live: written / red / green / count / last run —
+     **needs a checkpoint report subtype on the wire.**
+  3. Gate state as a row per seat (fmt, clippy, typecheck, lint, unit, e2e)
+     with summary line + timestamp — **needs a wire kind.**
+  4. Findings and their disposition (found / fixed / cross-lane / needs
+     ruling) — **needs a wire kind.**
+  5. Rulings requested of the human, as a queue — **needs a typed decision
+     kind** (question, options, who is blocked, since when).
+  6. Diff shape: files touched, ownership violations, untracked files —
+     mostly covered by report `files` once seats report.
+  7. Cost and time: tokens per seat/cumulative (the usage block exists) and
+     wall time per phase plus assignment→report latency — **phase timing does
+     not exist.**
+  8. Delivery honesty: queued / started / fallback / failed / ungranted —
+     **delivered by §2 item 103.**
+  Items 2–5 and phase timing are the next wire kinds to design. Related UI
+  direction from the same night: lead synthesis as a wire kind,
+  selection-driven inspector, one system-health row instead of a badge
+  forest, one surface that degrades instead of two lenses.
+- **Two Lane C follow-ups from §2 item 103, each worth its own item.**
+  (a) `cmd_hire` still picks its receipt by author-asserted `created_at`
+  (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:678-680`); it fails
+  safe behind `verify_hire_evidence` — a forged newest receipt can deny a
+  hire's automatic grant, never produce a wrong one — and the denial is now
+  recoverable with `seat-repair`. (b) **No CLI verb emits `revoke-seat` or a
+  standalone `grant-seat`.** `seat-repair` and `hire`'s automatic path are the
+  only `grant-seat` publishers, and nothing publishes `revoke-seat` at all,
+  which is why `seat-repair`'s `ambiguous` remedy has to point at the
+  founder's Desktop hire host rather than at a `bee` command.
 
 **Read §2 item 84 first (2026-08-28 evening).** The designer seat is now
 Banksy — the pack carries Brian's Banksy direction, a `see-the-app` drive
@@ -6528,6 +6793,34 @@ exists. Longer horizon lives in the research report §7: relay-durable
 checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
+
+- **`pnpm lint` does not check formatting; only the commit hook does.** Biome's
+  `lint` script reports rule violations but applies and checks no formatting,
+  while the `pre-commit` hook runs `biome check --write` and rewrites files.
+  Four lane worktrees handed in "lint exit 0" trees that the hook then
+  reformatted at commit time — 6 files for one lane, 14 for another, including
+  the batch's frozen contracts file, which had been seeded unformatted. It is
+  harmless but it means a lane's `file:line` citations can shift by a few lines
+  at integration. To see what the hook will do before committing:
+  `cd desktop && pnpm exec biome format --write <paths>`.
+- **The E2E mock bridge's viewer identity is fixed, and founder-gated product
+  paths are invisible without it.** `DEFAULT_MOCK_IDENTITY.pubkey` is
+  `deadbeef…` (`desktop/src/testing/e2eBridge.ts:1595`) and no secret exists
+  for it, so a fixture that signs founder events with a fresh key can never be
+  viewed *as* the founder. Anything gated on `currentUser === founder` — the
+  whole team-wake delivery plan
+  (`lib/codingSessionTeamWake.ts:317-321`) — then renders empty and looks like
+  a product bug. The seam is the localStorage override
+  `buzz:e2e-identity-override.v1` (`{privateKey, pubkey, username}`), and the
+  only identity that is both overridable and a seeded channel member is
+  `DEFAULT_REAL_IDENTITY` (tyler, private key
+  `3dbaebadb5df…6c03`). Sign the fixture's founder events with that key.
+- **An e2e fixture dated in the future sorts its rows out of the stream.**
+  `coding-session-mission-lens.spec.ts` used `GENESIS_CREATED_AT =
+  1_800_000_000` (2027) while seeding its transcript at `now`, so every signed
+  transaction sorted below every turn block and off the first screen. The
+  stream interleaves by time and was doing so correctly. Anchor fixture
+  timestamps to `Date.now()` when the same fixture also seeds runtime events.
 
 - **The dev instance on this machine must run in keyring mode, whatever the
   docs say.** `docs/local-desktop-instances.md` recommends
