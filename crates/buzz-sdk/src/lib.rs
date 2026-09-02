@@ -14,6 +14,7 @@
 
 pub mod builders;
 pub mod coding_session;
+pub mod coding_session_observation;
 pub mod coding_session_policy;
 pub mod coding_session_team_transaction;
 pub mod mentions;

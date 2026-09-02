@@ -74,6 +74,7 @@ mod crew_wire_tests;
 mod hire_evidence;
 #[cfg(test)]
 mod hire_evidence_tests;
+pub mod observations;
 pub mod operations;
 mod operations_authority;
 mod operations_precheck;
@@ -2601,6 +2602,21 @@ pub async fn dispatch(
         SessionsCmd::Note(args) => operations::cmd_note(client, args).await,
         SessionsCmd::Decide(cmd) => operations::cmd_decide(client, cmd).await,
         SessionsCmd::Operation(cmd) => operations::cmd_read(client, cmd).await,
+        SessionsCmd::Observe(cmd) => observations::cmd_observe(client, cmd).await,
+        SessionsCmd::Observations {
+            channel,
+            session_ref,
+            genesis,
+        } => {
+            observations::cmd_observations(
+                client,
+                &channel,
+                &session_ref,
+                genesis.as_deref(),
+                format,
+            )
+            .await
+        }
         SessionsCmd::Policy(cmd) => policy::cmd_policy(client, cmd).await,
         SessionsCmd::Send {
             channel,

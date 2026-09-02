@@ -131,12 +131,23 @@ fn an_open_request_blocking_active_work_waits_on_a_person_without_a_terminal() {
     assert!(answered.canonical_terminal.is_none());
 }
 
+/// **Finding 16, live run 2 (10:38–10:40).** The first decision ever put on
+/// this wire — `2099cdb3`, held on the founder, three options — carried
+/// `blocks: []` because no assignment existed yet: the lead was asking
+/// *before* assigning. The lead then ended its turn "held on you: the ruling"
+/// and the fold answered `waitingOnDecision: null`, so the rail could not say
+/// "waiting on the founder" for exactly the case the verb was built for.
+///
+/// The rule this asserts: the oldest canonical unanswered `decision.request`
+/// **is** the waiting state, whatever `blocks` holds. `blocks` stays in
+/// `decisions[].blocks` and answers *which assignments it holds up*, never
+/// *whether anyone is waiting*.
 #[test]
-fn a_request_blocking_nothing_active_is_open_but_holds_no_mission_up() {
+fn a_founder_held_question_with_no_blocks_is_the_waiting_state() {
     let founder = Keys::generate();
     let actor = Keys::generate();
     let context = context(&founder, vec![(&actor, "builder")]);
-    // No `blocks` at all: a real open question about nothing in flight.
+    // The live shape: no `blocks` at all, and no assignment anywhere.
     let request = signed(
         &decision_request("Which relay?", "founder", Vec::new()),
         &actor,
@@ -144,11 +155,74 @@ fn a_request_blocking_nothing_active_is_open_but_holds_no_mission_up() {
     );
     let request_id = request.id.to_hex();
 
-    let fold = fold_coding_session_team_transactions(&[request], &context).unwrap();
+    let fold =
+        fold_coding_session_team_transactions(std::slice::from_ref(&request), &context).unwrap();
     assert_eq!(fold.decisions.len(), 1);
     assert_eq!(fold.decisions[0].request_event_id, request_id);
     assert!(fold.decisions[0].blocks.is_empty());
-    assert!(fold.waiting_on_decision.is_none());
+    let waiting = fold
+        .waiting_on_decision
+        .clone()
+        .expect("a question nobody answered is a mission waiting on a person");
+    assert_eq!(waiting.request_event_id, request_id);
+    assert_eq!(waiting.held_on, "founder");
+    // Nothing else moved: the waiting state is not a terminal and excludes
+    // nothing.
+    assert!(fold.canonical_terminal.is_none());
+    assert!(fold.excluded.is_empty());
+
+    // Answered, the waiting state clears — the only thing that clears it.
+    let answer = signed(&decision_answer(&request_id, 0), &founder, 2);
+    let answered = fold_coding_session_team_transactions(&[request, answer], &context).unwrap();
+    assert!(answered.waiting_on_decision.is_none());
+    assert!(answered.decisions[0].answer_event_id.is_some());
+}
+
+/// Two open questions are two real facts; the rail can only point at one, so
+/// it points at the one that has been waiting longest.
+#[test]
+fn the_oldest_unanswered_question_is_the_one_being_waited_on() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let first = signed(
+        &decision_request("Which relay?", "founder", Vec::new()),
+        &actor,
+        1,
+    );
+    let first_id = first.id.to_hex();
+    let second = signed(
+        &decision_request("Rebase or merge?", &actor.public_key().to_hex(), Vec::new()),
+        &founder,
+        2,
+    );
+    let second_id = second.id.to_hex();
+
+    let events = vec![first, second];
+    let fold = fold_coding_session_team_transactions(&events, &context).unwrap();
+    assert_eq!(fold.decisions.len(), 2);
+    assert_eq!(
+        fold.waiting_on_decision.clone().unwrap().request_event_id,
+        first_id
+    );
+    assert_eq!(fold.waiting_on_decision.clone().unwrap().held_on, "founder");
+
+    // Supplied in the other order the answer is identical: the fold sorts its
+    // own records, so nothing here depends on how a relay handed them over.
+    let reversed: Vec<Event> = events.iter().cloned().rev().collect();
+    assert_eq!(
+        fold_coding_session_team_transactions(&reversed, &context).unwrap(),
+        fold
+    );
+
+    // Answer the older one and the younger one takes its place, held on the
+    // seat it names rather than on the founder.
+    let mut answered = events;
+    answered.push(signed(&decision_answer(&first_id, 0), &founder, 3));
+    let fold = fold_coding_session_team_transactions(&answered, &context).unwrap();
+    let waiting = fold.waiting_on_decision.clone().unwrap();
+    assert_eq!(waiting.request_event_id, second_id);
+    assert_eq!(waiting.held_on, actor.public_key().to_hex());
 }
 
 #[test]
@@ -275,7 +349,8 @@ fn a_request_naming_an_unresolvable_assignment_stays_a_real_open_question() {
     assert_eq!(fold.decisions[0].request_event_id, request_id);
     assert_eq!(fold.decisions[0].blocks, vec![missing]);
     assert_eq!(fold.decisions[0].answer_event_id, Some(answer_id));
-    // Nothing active is blocked, so nothing is waiting.
+    // The question was answered, so nothing is waiting. An unresolvable
+    // `blocks` pointer never decided that either way (finding 16).
     assert!(fold.waiting_on_decision.is_none());
 }
 
@@ -311,9 +386,13 @@ fn correcting_an_assignment_never_deletes_the_question_it_blocks() {
     assert_eq!(fold.decisions.len(), 1);
     assert_eq!(fold.decisions[0].request_event_id, request_id);
     assert_eq!(fold.decisions[0].blocks, vec![first_id]);
-    // The blocked id is now superseded, so it no longer holds the mission up —
-    // the question is still open and still listed, which is the honest answer.
-    assert!(fold.waiting_on_decision.is_none());
+    // The blocked id is now superseded, so the *completion* rule no longer
+    // holds anything up — but the question is still open and nobody answered
+    // it, so the mission is still waiting on a person (finding 16).
+    assert_eq!(
+        fold.waiting_on_decision.clone().unwrap().request_event_id,
+        request_id
+    );
     assert_eq!(
         exclusion_code_string(&fold, &fold.excluded[0].event_id),
         "Superseded"
@@ -360,7 +439,7 @@ fn a_wrong_type_answer_pointer_excludes_that_record_alone() {
 
     assert_eq!(
         fold.included_event_ids,
-        vec![assignment_id, report_id, request_id, good_note_id]
+        vec![assignment_id, report_id, request_id.clone(), good_note_id]
     );
     assert_eq!(
         exclusion_code_string(&fold, &bad_answer_id),
@@ -369,7 +448,13 @@ fn a_wrong_type_answer_pointer_excludes_that_record_alone() {
     assert_eq!(fold.excluded.len(), 1);
     assert_eq!(fold.decisions.len(), 1);
     assert_eq!(fold.decisions[0].answer_event_id, None);
-    assert!(fold.waiting_on_decision.is_none());
+    // The only answer was excluded, so the question stands unanswered and the
+    // mission is waiting — a wrong-type pointer costs that record its place,
+    // never the question its waiting state.
+    assert_eq!(
+        fold.waiting_on_decision.clone().unwrap().request_event_id,
+        request_id
+    );
     assert_eq!(fold.notes.len(), 1);
 }
 
@@ -445,6 +530,11 @@ fn a_completion_cannot_outrun_an_open_ruling_it_asked_for() {
 
 #[test]
 fn a_completion_is_not_blocked_by_a_request_about_other_work() {
+    // Finding 16's third consequence, stated as a test: widening the waiting
+    // state must widen **no exclusion**. `completion_blocked_by_open_decision`
+    // keys on `open_blocks`, so a request naming nothing this completion names
+    // still lets the completion fold — while the fold now also says, honestly,
+    // that a person is being waited on.
     let founder = Keys::generate();
     let actor = Keys::generate();
     let context = context(&founder, vec![(&actor, "builder")]);
@@ -484,8 +574,15 @@ fn a_completion_is_not_blocked_by_a_request_about_other_work() {
     )
     .unwrap();
     assert_eq!(fold.canonical_terminal.unwrap().event_id, completed_id);
-    assert!(fold.waiting_on_decision.is_none());
-    assert!(fold.excluded.is_empty());
+    assert!(
+        fold.excluded.is_empty(),
+        "a question about other work excludes nothing"
+    );
+    assert_eq!(
+        fold.waiting_on_decision.unwrap().held_on,
+        "founder",
+        "the completion folds AND the open question is still waiting on a person"
+    );
 }
 
 #[test]

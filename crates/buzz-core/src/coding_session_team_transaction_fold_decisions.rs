@@ -82,12 +82,13 @@ pub struct CodingSessionTeamFoldDecision {
     pub answer_event_id: Option<String>,
 }
 
-/// The one open decision that is actually holding the mission up.
+/// The open decision the mission is waiting on a person for.
 ///
-/// Present exactly when a canonical unanswered `decision.request` names at
-/// least one **active** assignment in `blocks`. This is the mission's
-/// waiting-on-a-person state, and it deliberately carries no terminal: nothing
-/// is settled, work simply cannot finish until the named party rules.
+/// Present exactly when some canonical `decision.request` has no canonical
+/// answer — the oldest such request, whatever its `blocks` holds (finding 16;
+/// see [`waiting_on_decision`]). This is the mission's waiting-on-a-person
+/// state, and it deliberately carries no terminal: nothing is settled, work
+/// simply cannot finish until the named party rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingSessionTeamFoldWaitingOnDecision {
     /// Event id of the open request a reader can go and answer.
@@ -201,35 +202,34 @@ pub(super) fn open_request_blocks<'a>(
         .collect()
 }
 
-/// Return the oldest unanswered canonical request that blocks active work.
+/// Return the oldest canonical `decision.request` nobody has answered.
 ///
-/// A request that names no assignment, or whose named assignments are not
-/// active, is a real open question but is not holding this mission up, so it
-/// never produces a waiting state.
+/// **`blocks` decides nothing here (finding 16, live run 2).** The first
+/// decision ever put on this wire — `2099cdb3`, held on the founder — carried
+/// `blocks: []` because the lead was asking *before* it assigned anything. The
+/// lead then stopped and said so, and the fold answered `waitingOnDecision:
+/// null`: a mission held on a person, reported as held on nobody.
+///
+/// So the rule is the plain one. An unanswered question held on a party **is**
+/// the waiting state. `blocks` stays in
+/// [`CodingSessionTeamFoldDecision::blocks`] and answers a different question
+/// — *which assignments does this hold up* — which is what
+/// [`completion_blocked_by_open_decision`] reads, through `open_blocks`, and
+/// which this change deliberately leaves alone: widening the waiting state
+/// widens no exclusion.
+///
+/// Two things this function does not decide. It does not know whether the lead
+/// has an open turn — the fold sees no turns at all — so "the lead is waiting"
+/// is a rendering qualifier its consumer owns. And "oldest" is the caller's
+/// supplied order after the fold's own sort, the same `(created_at, event id)`
+/// ordering every other 44244 projection uses; the rail can point at one
+/// question, so it points at the one that has been waiting longest.
 pub(super) fn waiting_on_decision(
-    records: &[Record<'_>],
-    active: &[usize],
     decisions: &[CodingSessionTeamFoldDecision],
 ) -> Option<CodingSessionTeamFoldWaitingOnDecision> {
-    let active_assignments: HashSet<&str> = active
-        .iter()
-        .filter(|index| {
-            matches!(
-                records[**index].payload.body,
-                CodingSessionTeamTransactionBody::Assignment(_)
-            )
-        })
-        .map(|index| records[*index].id.as_str())
-        .collect();
     decisions
         .iter()
-        .find(|decision| {
-            decision.answer_event_id.is_none()
-                && decision
-                    .blocks
-                    .iter()
-                    .any(|reference| active_assignments.contains(reference.as_str()))
-        })
+        .find(|decision| decision.answer_event_id.is_none())
         .map(|decision| CodingSessionTeamFoldWaitingOnDecision {
             request_event_id: decision.request_event_id.clone(),
             held_on: decision.held_on.clone(),

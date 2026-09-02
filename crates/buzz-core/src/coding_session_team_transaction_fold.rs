@@ -258,7 +258,14 @@ pub struct CodingSessionTeamFold {
     pub notes: Vec<CodingSessionTeamFoldNote>,
     /// Canonical decision requests with their answers, in included order.
     pub decisions: Vec<CodingSessionTeamFoldDecision>,
-    /// The open decision blocking active work, when there is one.
+    /// The oldest canonical `decision.request` nobody has answered, when there
+    /// is one.
+    ///
+    /// A question held on a party with no answer on the wire, whatever its
+    /// `blocks` names (finding 16). Which assignments that question holds up is
+    /// a different fact, kept in
+    /// [`CodingSessionTeamFoldDecision::blocks`] and read only by
+    /// [`CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision`].
     pub waiting_on_decision: Option<CodingSessionTeamFoldWaitingOnDecision>,
     /// Newest authorized valid terminal event, never inferred from silence.
     pub canonical_terminal: Option<CodingSessionTeamCanonicalTerminal>,
@@ -484,7 +491,7 @@ pub fn fold_coding_session_team_transactions(
     let unseated_reports = disclose_unseated_reports(&records, &by_id, &active, context);
     let notes = list_notes(&records, &active);
     let decisions = project_decisions(&records, &active, &mut conflicts);
-    let waiting_on_decision = waiting_on_decision(&records, &active, &decisions);
+    let waiting_on_decision = waiting_on_decision(&decisions);
     conflicts.sort_by(|left, right| {
         left.subject
             .cmp(&right.subject)

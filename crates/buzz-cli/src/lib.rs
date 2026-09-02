@@ -2624,6 +2624,39 @@ pub enum SessionsCmd {
     /// Read signed team operations and their deterministic fold.
     #[command(subcommand)]
     Operation(TeamOperationCmd),
+    /// Publish one observation: something you saw while working (kind 44246).
+    ///
+    /// An observation **settles nothing**. It grants nothing, blocks nothing
+    /// and excludes nothing — a mission's state is decided entirely by kind
+    /// 44244. Any active seat or the founder may observe; the relay validates
+    /// structure only, and it is the reader that says who wrote what.
+    ///
+    /// Every duration and `--started-at-ms` you pass is **your own
+    /// measurement**. It is printed as your claim and is never used for
+    /// ordering, discovery or dedupe.
+    #[command(subcommand)]
+    Observe(SessionObserveCmd),
+    /// Print this umbrella's bounded observation fold (kind 44246).
+    ///
+    /// One row per checkpoint and phase, and one per `(author, gate)` and
+    /// `(author, findingId)` — a later observation by the same author about the
+    /// same gate or finding is the newer statement, and both event ids are
+    /// listed because the older one is still on the wire. `--format compact`
+    /// prints one line each.
+    #[command(
+        after_help = "Examples:\n  bee sessions observations --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions observations --channel <uuid> --session-ref <uuid>"
+    )]
+    Observations {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id. Resolved from the relay when omitted.
+        #[arg(long)]
+        genesis: Option<String>,
+    },
     /// Set, read, or withdraw this umbrella's session policy (kind 44245).
     ///
     /// One signed record saying how a mission is meant to be run: posture,
@@ -3246,6 +3279,150 @@ pub enum TeamDecisionCmd {
         #[arg(long = "wake-to")]
         wake_to: Option<String>,
     },
+}
+
+/// `bee sessions observe` — publish one NIP-CSOB observation (44246).
+#[derive(Subcommand)]
+pub enum SessionObserveCmd {
+    /// Where you are in your own loop, and what you have written so far.
+    Checkpoint(SessionObserveCheckpointArgs),
+    /// What one or more named gates said, and what command said it.
+    #[command(
+        after_help = "Examples:\n  bee sessions observe gate --channel <uuid> --session-ref <uuid> --gate 'just ci:passed:just ci'\n  bee sessions observe gate --channel <uuid> --session-ref <uuid> --gate 'cargo clippy:failed:cargo clippy --all-targets -- -D warnings' --summary '3 warnings'"
+    )]
+    Gate(SessionObserveGateArgs),
+    /// One finding and what you did about it.
+    Finding(SessionObserveFindingArgs),
+    /// One phase's own measured span. Every number here is your own claim.
+    Phase(SessionObservePhaseArgs),
+}
+
+/// Coordinates every `observe` subcommand shares.
+#[derive(clap::Args, Clone)]
+pub struct SessionObserveCheckpointArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// The assignment this is about. A pointer, never a causal reference.
+    #[arg(long)]
+    pub assignment: Option<String>,
+    /// planning | red | green | gates | reporting
+    #[arg(long)]
+    pub phase: String,
+    /// Tests written so far in this lane.
+    #[arg(long = "tests-written", default_value_t = 0)]
+    pub tests_written: u32,
+    /// Of those, how many you have observed failing first.
+    #[arg(long = "tests-red", default_value_t = 0)]
+    pub tests_red: u32,
+    /// Of those, how many now pass.
+    #[arg(long = "tests-green", default_value_t = 0)]
+    pub tests_green: u32,
+    /// The last command you ran.
+    #[arg(long = "last-command")]
+    pub last_command: Option<String>,
+    /// Its summary line, on one line.
+    #[arg(long = "last-summary")]
+    pub last_summary: Option<String>,
+    /// Free prose.
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+/// Flags for `bee sessions observe gate`.
+#[derive(clap::Args, Clone)]
+pub struct SessionObserveGateArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// The assignment this is about. A pointer, never a causal reference.
+    #[arg(long)]
+    pub assignment: Option<String>,
+    /// One row, as `NAME:OUTCOME:COMMAND`. Repeatable, up to 32, unique by name.
+    #[arg(long)]
+    pub gate: Vec<String>,
+    /// Summary line for the row at the same position. Repeatable.
+    #[arg(long)]
+    pub summary: Vec<String>,
+    /// Your own measured duration for the row at the same position, in ms.
+    #[arg(long = "duration-ms")]
+    pub duration_ms: Vec<u64>,
+}
+
+/// Flags for `bee sessions observe finding`.
+#[derive(clap::Args, Clone)]
+pub struct SessionObserveFindingArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// The assignment this is about. A pointer, never a causal reference.
+    #[arg(long)]
+    pub assignment: Option<String>,
+    /// Your own stable id for this finding, unique within your own findings.
+    #[arg(long = "finding-id")]
+    pub finding_id: String,
+    /// One line naming the finding.
+    #[arg(long)]
+    pub title: String,
+    /// found | fixed | cross-lane | needs-ruling | wont-fix
+    #[arg(long)]
+    pub disposition: String,
+    /// Free prose.
+    #[arg(long)]
+    pub detail: Option<String>,
+    /// An event id a reader can follow. Repeatable, up to 16, unique.
+    #[arg(long = "ref")]
+    pub reference: Vec<String>,
+    /// The `decision.request` this finding is waiting on.
+    #[arg(long)]
+    pub decision: Option<String>,
+}
+
+/// Flags for `bee sessions observe phase`.
+#[derive(clap::Args, Clone)]
+pub struct SessionObservePhaseArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id. Resolved from the relay when omitted.
+    #[arg(long)]
+    pub genesis: Option<String>,
+    /// The assignment this is about. A pointer, never a causal reference.
+    #[arg(long)]
+    pub assignment: Option<String>,
+    /// The phase's name, in your own words.
+    #[arg(long)]
+    pub phase: String,
+    /// When you say it started, in ms since the Unix epoch. Your own claim.
+    #[arg(long = "started-at-ms")]
+    pub started_at_ms: u64,
+    /// When you say it ended. Your own claim.
+    #[arg(long = "ended-at-ms")]
+    pub ended_at_ms: Option<u64>,
+    /// Your own measured duration, in ms.
+    #[arg(long = "duration-ms")]
+    pub duration_ms: Option<u64>,
 }
 
 /// `bee sessions policy` — set, read, or withdraw a session policy (44245).
@@ -3893,6 +4070,127 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    /// The four `observe` verbs and the reader parse the forms NIP-CSOB
+    /// documents, and every closed word is refused at the wire rather than by
+    /// clap — so the CLI can never accept a token the relay will not store.
+    #[test]
+    fn the_observation_verbs_parse_the_forms_the_nip_documents() {
+        let channel = "d3e440ea-89f8-4aee-8a02-17edc3e7272e";
+        let session = "dc580cfb-6c80-4fc2-8f4e-dfc328acf222";
+        for args in [
+            vec![
+                "bee",
+                "sessions",
+                "observe",
+                "checkpoint",
+                "--channel",
+                channel,
+                "--session-ref",
+                session,
+                "--phase",
+                "red",
+                "--tests-written",
+                "4",
+                "--tests-red",
+                "4",
+            ],
+            vec![
+                "bee",
+                "sessions",
+                "observe",
+                "gate",
+                "--channel",
+                channel,
+                "--session-ref",
+                session,
+                "--gate",
+                "just ci:passed:just ci",
+            ],
+            vec![
+                "bee",
+                "sessions",
+                "observe",
+                "finding",
+                "--channel",
+                channel,
+                "--session-ref",
+                session,
+                "--finding-id",
+                "16",
+                "--title",
+                "the waiting state",
+                "--disposition",
+                "fixed",
+            ],
+            vec![
+                "bee",
+                "sessions",
+                "observe",
+                "phase",
+                "--channel",
+                channel,
+                "--session-ref",
+                session,
+                "--phase",
+                "red",
+                "--started-at-ms",
+                "1756800000000",
+            ],
+            vec![
+                "bee",
+                "sessions",
+                "observations",
+                "--channel",
+                channel,
+                "--session-ref",
+                session,
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args.clone()).is_ok(), "{args:?}");
+        }
+
+        // `--gate` is repeatable, and so are its positional companions.
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "observe",
+            "gate",
+            "--channel",
+            channel,
+            "--session-ref",
+            session,
+            "--gate",
+            "just ci:passed:just ci",
+            "--gate",
+            "cargo fmt:failed:cargo fmt --check",
+            "--summary",
+            "ok",
+            "--summary",
+            "1 file",
+            "--duration-ms",
+            "10",
+            "--duration-ms",
+            "20",
+        ])
+        .is_ok());
+
+        // A phase timing without its own start is refused: the whole record is
+        // a measurement, and a measurement with no beginning is not one.
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "observe",
+            "phase",
+            "--channel",
+            channel,
+            "--session-ref",
+            session,
+            "--phase",
+            "red",
+        ])
+        .is_err());
+    }
+
     #[test]
     fn operation_get_accepts_a_wake_pointer_or_one_complete_explicit_scope() {
         let id = "ab".repeat(32);
@@ -4515,6 +4813,8 @@ mod tests {
                 "inbox",
                 "list",
                 "note",
+                "observations",
+                "observe",
                 "operation",
                 "policy",
                 "registry",
@@ -4576,10 +4876,11 @@ mod tests {
             ("repos", 6),
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
             // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, B2's
-            // `policy` (batch 2 B), and `delete`.
-            // `subcommand_names_are_stable` above names all thirty-one, so
+            // `policy` (batch 2 B), `delete`, `whoami`, and batch 3 L1's
+            // `observe` and `observations`.
+            // `subcommand_names_are_stable` above names all thirty-four, so
             // this count and that list cannot drift apart.
-            ("sessions", 32),
+            ("sessions", 34),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

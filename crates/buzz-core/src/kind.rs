@@ -769,6 +769,42 @@ pub const KIND_CODING_SESSION_TEAM_TRANSACTION: u32 = 44244;
 /// them.
 pub const KIND_CODING_SESSION_POLICY: u32 = 44245;
 
+/// NIP-CSOB: Coding-session observation — one thing a seat saw while working.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for grouping. Content is strict public JSON
+/// ([`crate::coding_session_observation::CodingSessionObservationPayload`])
+/// carrying exactly one of four closed types — `checkpoint`, `gate`,
+/// `finding`, `phase` — and a pointer-only `assignmentRef`. Ordered tags: `h`,
+/// `d`, `csob-v`, `csob-genesis`, `csob-type`. The signature is the author;
+/// **any active seat or the founder may observe, and the relay validates
+/// structure only**, the same division 44244 and 44245 draw.
+///
+/// **Why this is not four more 44244 subtypes.** Two facts about that kind's
+/// fold decided it, and both are citable. Its operation vocabulary is a closed
+/// serde enum with no `other` arm, and `fold_coding_session_team_transactions`
+/// returns `Err` for the **whole set** when an envelope fails to validate, so a
+/// build predating a new token
+/// reads a session carrying one gate row as a broken mission — the finding-13
+/// cliff, this time on the stream every seat writes many times an hour, while
+/// a build that never heard of 44246 simply never queries it. And that fold is
+/// bounded for a handful of assignments: hundreds of observations would evict
+/// the records mission state depends on. An observation also carries no
+/// authority, supersession or causal reference, so 44244's correction
+/// validator and twelve exclusion codes buy nothing and would let an
+/// observation's defect become a governance disclosure.
+///
+/// **Allocation.** 44246 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231 (checkpoint), 44232 (native snapshot), 44233/44234
+/// (git transition/check) and 44235–44239 (headroom) are reserved by the
+/// continuity research, 44240 is the shipped Pulse entry with 44241–44243
+/// reserved by the Pulse plan, 44244 is the team transaction and 44245 the
+/// policy. A grep for `44246` over this tree and over `vanilla/main` matched
+/// nothing but lockfile hashes before this constant.
+///
+/// The wire contract is `docs/nips/NIP-CSOB.md`.
+pub const KIND_CODING_SESSION_OBSERVATION: u32 = 44246;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1465,6 +1501,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
     KIND_CODING_SESSION_POLICY,
+    KIND_CODING_SESSION_OBSERVATION,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1734,6 +1771,19 @@ const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_POLICY))
 const _: () = assert!(KIND_CODING_SESSION_POLICY <= u16::MAX as u32);
 // The next free number, and nothing between it and the team transaction.
 const _: () = assert!(KIND_CODING_SESSION_POLICY == KIND_CODING_SESSION_TEAM_TRANSACTION + 1);
+// An observation is append-only history for the same reason a policy is, and
+// for one more: a replaceable observation would let a seat's newest gate row
+// erase the failing one a person was reading. Newest-wins is a *fold* rule
+// here, applied per (author, gate) and per (author, findingId), and the older
+// event stays on the wire where a reader can still find it.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_OBSERVATION));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_OBSERVATION));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_OBSERVATION
+));
+const _: () = assert!(KIND_CODING_SESSION_OBSERVATION <= u16::MAX as u32);
+// The next free number, and nothing between it and the policy.
+const _: () = assert!(KIND_CODING_SESSION_OBSERVATION == KIND_CODING_SESSION_POLICY + 1);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

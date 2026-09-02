@@ -218,9 +218,9 @@ fn validate_causal_types(
         CodingSessionTeamTransactionBody::Note(_) => {}
         // Neither does a request: `blocks` are pointers too (REVIEW-B1c F3), so
         // correcting the assignment a question is about must never delete the
-        // question. `waiting_on_decision` re-resolves `blocks` against the
-        // current active set each fold, which is the honest reading of "this
-        // ruling blocks that work".
+        // question. Since finding 16 `blocks` no longer decides the waiting
+        // state either — it is re-resolved against the current active set only
+        // to answer which completions one open ruling holds up.
         CodingSessionTeamTransactionBody::DecisionRequest(_) => {}
         CodingSessionTeamTransactionBody::DecisionAnswer(body) => {
             if let Some(request) = get(&body.request_ref) {

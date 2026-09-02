@@ -36,6 +36,9 @@ pub mod coding_session_lease;
 pub mod coding_session_lifecycle_command;
 /// NIP-CSN: append-only human-authored session-name revisions (44229).
 pub mod coding_session_name;
+/// NIP-CSOB: signed coding-session observations (44246) - checkpoint reports,
+/// gate rows, findings dispositions, and phase timing.
+pub mod coding_session_observation;
 /// Provider-authored coding-session facts: receipts (44224), metadata (44223),
 /// and transcript envelopes (44225).
 pub mod coding_session_payload;

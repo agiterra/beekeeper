@@ -1887,6 +1887,90 @@ resume. Everything else in the record is read and shown, never counted.
 
 ---
 
+## Observations (kind 44246)
+
+An observation is **something its author saw, not a decision**. It settles
+nothing, authorizes nothing and excludes nothing; a mission's state is decided
+entirely by kind 44244. Any active seat or the founder may observe, and the
+relay validates structure only.
+
+> **Residual — read before you run these.** Registering kind 44246 at ingest is
+> a separate change. Until it lands the relay stores no 44246, so every `observe`
+> below is refused by the relay and `observations` reads an empty fold. The
+> refusal is the relay's, not the CLI's: `bee` builds and signs a valid event
+> first. Everything in this section is exercised by unit tests
+> (`cargo test -p buzz-core coding_session_observation`,
+> `cargo test -p buzz-cli --lib observation`) and none of it has been written
+> live.
+
+```bash
+# Where you are in your own loop.
+bee sessions observe checkpoint --channel "$CHANNEL" --session-ref "$SESSION" \
+  --phase red --tests-written 4 --tests-red 4 --tests-green 0 \
+  --last-command "cargo test -p buzz-core coding_session_observation" \
+  --last-summary "4 failed"
+
+# What your gates said. One --gate per row, NAME:OUTCOME:COMMAND, up to 32,
+# unique by name. --summary and --duration-ms pair positionally with the rows.
+bee sessions observe gate --channel "$CHANNEL" --session-ref "$SESSION" \
+  --gate "cargo fmt --check:passed:cargo fmt --check" \
+  --gate "cargo clippy:failed:cargo clippy --all-targets -- -D warnings" \
+  --summary "" --summary "3 warnings emitted" \
+  --duration-ms 1200 --duration-ms 41000
+
+# What you found, and what you did about it.
+bee sessions observe finding --channel "$CHANNEL" --session-ref "$SESSION" \
+  --finding-id 16 --title "the waiting state does not fire" \
+  --disposition fixed --ref "$ASSIGNMENT"
+
+# How long a phase took. Every number here is YOUR OWN measurement.
+bee sessions observe phase --channel "$CHANNEL" --session-ref "$SESSION" \
+  --phase red --started-at-ms 1756800000000 --ended-at-ms 1756800413000 \
+  --duration-ms 413000
+
+# The bounded fold, and one line per fact.
+bee sessions observations --channel "$CHANNEL" --session-ref "$SESSION" | jq .
+bee --format compact sessions observations --channel "$CHANNEL" \
+  --session-ref "$SESSION"
+```
+
+What to check, and what each answer means:
+
+| Run | Expect |
+|---|---|
+| `observe gate` with no `--gate` | usage refusal naming `--gate NAME:OUTCOME:COMMAND`; nothing signed |
+| `observe gate --gate "just ci:green:just ci"` | refusal listing `passed, failed, not-run` |
+| `observe gate` with the same gate name twice | the relay-side validator refuses it: one observation states each gate once |
+| `observe checkpoint --phase review` | refusal listing the five loop phases |
+| `observe finding --disposition wontfix` | refusal listing the five dispositions (the token is `wont-fix`) |
+| `observe finding --assignment <id nobody published>` | **accepted.** The pointer is disclosed under `unresolved`, and excludes nothing |
+| two `observe finding` runs with one `--finding-id` | `observations` shows the **later** disposition and lists **both** event ids, `droppedEventIds: 0` |
+| two `observe gate` runs naming one gate | same: newest statement, both ids, older event still on the wire |
+| a gate republished more than 16 times | the newest 16 ids are listed, `droppedEventIds` counts the rest, and `truncated.entryEventIds` sums them |
+| an event whose `pubkey` was rewritten after signing | listed under `ignored` with an `invalid observation signature` reason; **never** attributed to the rewritten key |
+| `observations` on a session with none | every collection prints as `[]`, never `null`, and every `truncated` count prints as `0` |
+| `--format compact` on a phase row | the line ends `(author's own measurement)` |
+
+Two rules worth checking by hand, because they are the ones a reader can be
+lied to about:
+
+- **Nothing here is ordered by a time anyone claimed.** `startedAtMs`,
+  `endedAtMs` and `durationMs` are the author's own measurement. "Newest" is
+  last in the order the relay handed the events over.
+- **A malformed 44246 costs only itself.** Publish something unreadable
+  alongside a good observation and `observations` still prints the good one,
+  with the bad one listed under `ignored` with its reason. This is the whole
+  reason these four facts are not kind 44244 subtypes: on that kind, one bad
+  envelope reads a whole session as a broken mission.
+- **The signature is the author, and it is checked.** The fold verifies every
+  event before naming anybody its author, so `author` on a row — and the
+  `(author, gate)` / `(author, findingId)` keys that decide which statement is
+  newest — is a key that actually signed. It carries **no seat model**: a
+  stranger's observation folds like a seat's, listed under its own pubkey, so
+  whoever renders one must say whose it is.
+
+---
+
 ## Per-turn accounting (`bee sessions audit`)
 
 ```bash

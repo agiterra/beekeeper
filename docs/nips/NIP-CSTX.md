@@ -405,3 +405,20 @@ in the semantic projection; all signed events remain append-only history.
 contains transport-neutral valid and invalid payload vectors. Core runs the
 fixture through the strict decoder; SDK, desktop, mobile, and relay adapters
 SHOULD run the same file rather than transcribing its examples.
+
+## Why observation is its own kind (kind 44246, NIP-CSOB)
+
+A seat's checkpoint reports, gate rows, findings dispositions and phase timings
+are **not** operations on this kind, and deliberately so. Three properties of
+the fold above decided it. Its operation vocabulary is a closed enum with no
+`other` arm and `fold_coding_session_team_transactions` returns `Err` for the
+**whole set** when an envelope fails to validate — not one of the two
+record-class hard errors, but one of the three further whole-set failures
+described above — so a build predating a new token would read a session carrying
+one gate row as a broken mission, on the stream a team writes most often. Its
+projections are bounded for a handful of assignments, and hundreds of
+observations would evict the records mission state depends on. And an
+observation carries no authority, no supersession and no causal reference, so
+this kind's correction validator and twelve exclusion codes buy it nothing while
+letting its defects become governance disclosures. Kind 44246 therefore has no
+exclusion codes at all and a fold that cannot fail. See `docs/nips/NIP-CSOB.md`.
