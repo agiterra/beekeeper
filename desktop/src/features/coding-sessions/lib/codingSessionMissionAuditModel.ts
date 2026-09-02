@@ -14,9 +14,9 @@
  *   reported nothing gets `null`, and the table renders `—`. A `0` here is a
  *   measured zero.
  * - **No new wire.** Everything comes from items this client already holds:
- *   `result` items for duration, cost and (once the projection carries it)
- *   usage; `tool` items for names, arguments and result sizes.
- *   {@link CODING_SESSION_AUDIT_USAGE_LIMIT} documents the one gap.
+ *   `result` items for duration, cost and per-turn usage; `tool` items for
+ *   names, arguments and result sizes.
+ *   {@link CODING_SESSION_AUDIT_USAGE_LIMIT} says what an empty column means.
  * - **Bounded.** Turns and every list are capped, and each cap that bites
  *   emits a visible notice rather than silently shortening the truth.
  * - **Names, not judgements.** "Handed twice" counts repeats; it does not
@@ -29,20 +29,19 @@ import { tokenizeShellCommand } from "@/features/agents/ui/agentSessionToolClass
 /**
  * Why the token columns can read `—` for every turn on a live session.
  *
- * Per-turn `usage` **is** on the wire — `crates/buzz-core/src/
- * coding_session_payload.rs` carries it on the `result` item and
- * `codingSessionTranscriptItemContract.ts:120-140` types it — but the desktop
- * transcript projection drops it when it builds the row
- * (`codingSessionTranscriptItems.ts` `buildResultLifecycleItem`, which keeps
- * `durationMs` and `costUsd` and nothing else). The same gap is already
- * recorded against context load in `codingSessionContextLoad.ts`.
+ * Per-turn `usage` is on the wire (`crates/buzz-core/src/
+ * coding_session_payload.rs` `TurnUsageReport`, typed at
+ * `codingSessionTranscriptItemContract.ts:120-140`) and, since batch 2, the
+ * desktop transcript projection carries it through
+ * (`codingSessionTranscriptItems.ts` `buildResultUsage`). So an empty column
+ * is now a statement about the *driver*, not about this client: the turns
+ * closed without any driver publishing a count.
  *
- * This module reads `usage` off the item defensively, so it lights up the day
- * the projection carries it and reports `—` honestly until then. It never
- * substitutes an estimate.
+ * This module reads `usage` defensively and never substitutes an estimate,
+ * so `—` keeps meaning "nobody reported this", never "we lost it".
  */
 export const CODING_SESSION_AUDIT_USAGE_LIMIT =
-  "Per-turn token usage is published on the wire but not yet carried by this client's transcript projection.";
+  "No turn in this session published a token count; these drivers report usage only on some turns, and this client never estimates one.";
 
 /** Bounds. Raising one is a product decision, never a way past a full list. */
 export const CODING_SESSION_AUDIT_LIMITS = {
@@ -408,11 +407,11 @@ const NO_USAGE: TurnUsage = {
 /**
  * Read the `result` item's `usage` block, defensively.
  *
- * The field is not on `TranscriptItem` because the projection does not carry
- * it yet (see {@link CODING_SESSION_AUDIT_USAGE_LIMIT}). Reading it through a
- * narrow record check rather than widening a shared renderer type keeps the
- * gap in one place, and means this model needs no change on the day the
- * projection starts publishing it.
+ * `TranscriptItem`'s lifecycle member now carries the block
+ * (`agentSessionTypes.ts`), and the projection fills it, but the read stays
+ * field-by-field and total: the block is additive, every field is
+ * independently optional, and an unreadable one must become `null` rather
+ * than `0`. See {@link CODING_SESSION_AUDIT_USAGE_LIMIT}.
  */
 function readTurnUsage(item: TranscriptItem | undefined): TurnUsage {
   if (item === undefined) return NO_USAGE;

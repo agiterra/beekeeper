@@ -623,6 +623,39 @@ export function toolIdFromToolResult(
     : null;
 }
 
+/** The six numbers `TurnUsageReport` may carry, in the order the wire lists them. */
+const RESULT_USAGE_FIELDS = [
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "toolCalls",
+  "contextWindow",
+] as const;
+
+/**
+ * The `result` item's per-turn `usage` block, read defensively.
+ *
+ * Only the six fields the wire's `TurnUsageReport` defines survive, and only
+ * when they are finite numbers — the block is additive and every field is
+ * independently optional, so an unreadable or absent field is dropped rather
+ * than reported as `0`. A block with nothing readable in it becomes `null`,
+ * which is what "the driver reported no usage" means to every consumer.
+ */
+function buildResultUsage(
+  raw: unknown,
+): NonNullable<Extract<TranscriptItem, { type: "lifecycle" }>["usage"]> | null {
+  if (!isRecord(raw)) return null;
+  const usage: Record<string, number> = {};
+  for (const field of RESULT_USAGE_FIELDS) {
+    const value = raw[field];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      usage[field] = value;
+    }
+  }
+  return Object.keys(usage).length > 0 ? usage : null;
+}
+
 function buildResultLifecycleItem(
   item: Record<string, unknown>,
   ctx: Identity,
@@ -635,10 +668,11 @@ function buildResultLifecycleItem(
   const durationMs =
     typeof item.durationMs === "number" ? item.durationMs : null;
   const costUsd = typeof item.costUsd === "number" ? item.costUsd : null;
+  const usage = buildResultUsage(item.usage);
   const resultText = typeof item.result === "string" ? item.result : "";
 
-  // Duration and cost travel as structured fields, never baked into `text` —
-  // the model reads them directly and the result prose stays clean.
+  // Duration, cost and usage travel as structured fields, never baked into
+  // `text` — the model reads them directly and the result prose stays clean.
   return {
     id: ctx.id,
     type: "lifecycle",
@@ -648,6 +682,7 @@ function buildResultLifecycleItem(
     outcome: subtype,
     durationMs,
     costUsd,
+    usage,
     timestamp: ctx.timestamp,
     turnId: ctx.turnId,
     sessionId: ctx.sessionId,

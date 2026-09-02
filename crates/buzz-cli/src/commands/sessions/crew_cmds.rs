@@ -2428,7 +2428,7 @@ async fn resolve_seat_session_ref(
     }
 }
 
-/// `bee sessions grant --role <slug>` — the seat tier of the grant verb.
+/// `bee sessions grant-seat --role <slug>` — the role-seat verb.
 ///
 /// The collaborator and viewer tiers are *operator* grants: they say what a
 /// human may do to a session. A role seat says who an actor **is** inside one

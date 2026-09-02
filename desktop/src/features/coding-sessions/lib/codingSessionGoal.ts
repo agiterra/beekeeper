@@ -51,6 +51,26 @@ export function codingSessionGoalOverflow(
     : null;
 }
 
+/**
+ * The sentence an over-cap goal is refused with, in one place.
+ *
+ * Two surfaces say it — the crew tab's byte counter, at the field, and the
+ * launch block's own line under the button — and they must say the same
+ * words with the same numbers, or a person who fixes one reading is told a
+ * different story by the other.
+ */
+export function codingSessionGoalOverflowSentence(overflow: {
+  bytes: number;
+  cap: number;
+}): string {
+  return (
+    `This goal is ${overflow.bytes.toLocaleString()} UTF-8 bytes and the ` +
+    `cap is ${overflow.cap.toLocaleString()} — shorten it by ` +
+    `${(overflow.bytes - overflow.cap).toLocaleString()} bytes, or the ` +
+    "session would launch with no goal published."
+  );
+}
+
 export function buildCodingSessionGoalEvent(input: {
   channelId: string;
   content: string;

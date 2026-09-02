@@ -12,10 +12,13 @@ import {
   codingSessionCrewProviderRefusal,
   codingSessionCrewProviderNote,
   codingSessionCrewReadinessRoles,
+  CodingSessionCrewGoalNotes,
   CodingSessionCrewLaunchSteps,
   CodingSessionCrewRoster,
   CodingSessionCrewSkillNotice,
 } from "./NewCodingSessionCrewTab.tsx";
+import { MAX_CODING_SESSION_GOAL_BYTES } from "../lib/codingSessionGoal.ts";
+import { codingSessionCrewLaunchBlock } from "../lib/codingSessionCrew.ts";
 import { codingSessionCrewLaunchRuntimeBinding } from "./useCodingSessionCrewLaunch.ts";
 import { leadSeat as selectDownstreamLaunchLead } from "../lib/codingSessionCrewLaunch.ts";
 
@@ -481,4 +484,73 @@ test("no model resolved yet says nothing about one", () => {
   });
   assert.match(note, /this computer&#x27;s provider|this computer's provider/);
   assert.doesNotMatch(note, /, on /);
+});
+
+test("the goal field counts the bytes the cap is measured in", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewGoalNotes, {
+      // Four UTF-8 bytes from two characters: the character count the field
+      // itself can enforce is not the number the signer refuses on.
+      bytes: 4,
+      goalOutcome: null,
+      overflow: null,
+    }),
+  );
+  assert.match(html, /4 of 4,096 UTF-8 bytes\./);
+  assert.doesNotMatch(html, /text-destructive/);
+});
+
+test("at the cap the counter becomes the launch block's own refusal", () => {
+  const overflow = { bytes: 5000, cap: MAX_CODING_SESSION_GOAL_BYTES };
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewGoalNotes, {
+      bytes: overflow.bytes,
+      goalOutcome: null,
+      overflow,
+    }),
+  );
+  assert.match(html, /5,000 UTF-8 bytes and the cap is 4,096/);
+  assert.match(html, /shorten it by 904 bytes/);
+  assert.match(html, /text-destructive/);
+  // The same words the button's own block gives, so fixing one reading can
+  // never leave the other saying something different.
+  const block = codingSessionCrewLaunchBlock({
+    hasTeam: true,
+    seatCount: 1,
+    hasChannel: true,
+    canCreateChannel: true,
+    createInFlight: false,
+    isLaunching: false,
+    goal: "x".repeat(5000),
+  });
+  assert.match(html, new RegExp(block.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("a launch whose goal never went out says so at the field", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewGoalNotes, {
+      bytes: 12,
+      goalOutcome: {
+        published: false,
+        reason: "rate-limited: quota exceeded; retry in 2s",
+      },
+      overflow: null,
+    }),
+  );
+  assert.match(
+    html,
+    /The team launched, but its goal was not published: rate-limited/,
+  );
+  assert.match(html, /Set it from the session&#x27;s goal pill\./);
+});
+
+test("a launch that published its goal adds no line about it", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewGoalNotes, {
+      bytes: 12,
+      goalOutcome: { published: true, reason: null },
+      overflow: null,
+    }),
+  );
+  assert.doesNotMatch(html, /was not published/);
 });

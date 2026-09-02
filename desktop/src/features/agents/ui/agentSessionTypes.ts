@@ -174,6 +174,24 @@ export type TranscriptItem =
       /** Structured turn cost (USD) for coding-session "Turn result" items. */
       costUsd?: number | null;
       /**
+       * Per-turn token accounting, when the driver reported any.
+       *
+       * Mirrors the wire's `TurnUsageReport`
+       * (`crates/buzz-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
+       * field for field: six optional numbers and nothing else. There is no
+       * pricing identity on the wire — cost travels in `costUsd` above — so
+       * nothing here may be read as one. Every field is independently absent;
+       * absent is never `0`.
+       */
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+        toolCalls?: number;
+        contextWindow?: number;
+      } | null;
+      /**
        * Present when this row stands in for an item the producer dropped whole
        * because it exceeded the event cap. Structured rather than formatted
        * into `text` so the renderer can show it in the same pill vocabulary as

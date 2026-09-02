@@ -1440,6 +1440,19 @@ Openness is read from `isCompletedCodingSessionTurnBlock`, never from a clock
 comparison. Conversation cannot reach this path — it passes no transactions, so
 the projection returns before the merge.
 
+**The limit of the rule.** Two blocks of one stream *can* cross-order: an
+earlier block that never received a terminator sorts at its newest item, so if
+that item is later than the next block's start it renders below its own
+successor. This contradicts the "blocks of one stream can never cross-order"
+invariant `lib/codingSessionUmbrellaTimeline.ts:5-16` states, and §19a's
+promise is narrower than that invariant: a *settled* block keeps its start, and
+an *open* block sorts at its newest item. In practice the provider's crash
+recovery synthesises a terminal `Turn result`, so a non-last block without a
+terminator is rare — but it is reachable, and the honest reading of "an open
+block sorts at its newest item" is that the stale block moves. Recorded rather
+than special-cased: a rule that quietly re-pinned such a block to its start
+would put a block that may still be writing above rows that came after it.
+
 ### 19b. The turn-block byline carries the W1 word, and the rail breathes
 
 Finding 8. Only the roster chips and the live strip said `live`; the stream —

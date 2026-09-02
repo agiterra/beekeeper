@@ -17,7 +17,10 @@
  * the comfortable guess this rule exists to prevent.
  */
 
-import { codingSessionGoalOverflow } from "./codingSessionGoal";
+import {
+  codingSessionGoalOverflow,
+  codingSessionGoalOverflowSentence,
+} from "./codingSessionGoal";
 import { formatCodingSessionRuntimeLabel } from "./codingSessionLabels";
 import {
   CODING_SESSION_ADAPTER_DEFAULT_MODEL,
@@ -417,14 +420,7 @@ export function codingSessionCrewLaunchBlock(input: {
   // fail to publish its kind:44227 with nobody told, which is item 103's
   // finding 5 reproduced without any relay failure (batch 2 review, F1).
   const overflow = codingSessionGoalOverflow(input.goal);
-  if (overflow !== null) {
-    return (
-      `This goal is ${overflow.bytes.toLocaleString()} UTF-8 bytes and the ` +
-      `cap is ${overflow.cap.toLocaleString()} — shorten it by ` +
-      `${(overflow.bytes - overflow.cap).toLocaleString()} bytes, or the ` +
-      "session would launch with no goal published."
-    );
-  }
+  if (overflow !== null) return codingSessionGoalOverflowSentence(overflow);
   return null;
 }
 

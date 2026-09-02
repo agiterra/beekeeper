@@ -142,6 +142,50 @@ test("a result item carrying a usage block still projects", () => {
   assert.equal(item.title, "Turn result");
   assert.equal(item.text, "completed");
   assert.equal(item.unknownKind, undefined);
+  // Batch 2 integration: the block reaches the renderer type, so the Audit
+  // tab reads a real number instead of `not reported` on every live turn.
+  assert.deepEqual(item.usage, {
+    inputTokens: 1200,
+    outputTokens: 340,
+    cacheReadTokens: 96000,
+    cacheWriteTokens: 4000,
+    toolCalls: 7,
+    contextWindow: 1000000,
+  });
+});
+
+test("a partial usage block carries only the fields the driver reported", () => {
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "result",
+      subtype: "success",
+      durationMs: 1000,
+      result: "completed",
+      usage: {
+        outputTokens: 340,
+        // Unreadable and unknown fields are dropped rather than reported as
+        // numbers: absent must never arrive at the audit as `0`.
+        inputTokens: "1200",
+        cacheReadTokens: Number.NaN,
+        pricingIdentity: "anthropic/claude",
+      },
+    },
+    IDENTITY,
+  );
+  assert.deepEqual(item.usage, { outputTokens: 340 });
+});
+
+test("a usage block with nothing readable in it is null, never an empty object", () => {
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "result",
+      subtype: "success",
+      result: "completed",
+      usage: { inputTokens: null, outputTokens: "many" },
+    },
+    IDENTITY,
+  );
+  assert.equal(item.usage, null);
 });
 
 test("a result item with no usage block projects exactly as before", () => {
@@ -157,6 +201,7 @@ test("a result item with no usage block projects exactly as before", () => {
   );
   assert.equal(item.title, "Turn result");
   assert.equal(item.text, "completed");
+  assert.equal(item.usage, null);
 });
 
 test("a paired edit keeps the result's final args, discriminant, and paths", () => {

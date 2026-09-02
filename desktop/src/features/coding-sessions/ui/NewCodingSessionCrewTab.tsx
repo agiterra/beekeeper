@@ -20,6 +20,11 @@ import {
   codingSessionCrewProjectNote,
   type CodingSessionCrewLaunchStep,
 } from "../lib/codingSessionCrewLaunch";
+import {
+  codingSessionGoalOverflow,
+  codingSessionGoalOverflowSentence,
+  MAX_CODING_SESSION_GOAL_BYTES,
+} from "../lib/codingSessionGoal";
 import { codingSessionLeadWorktreeName } from "../lib/codingSessionWorktreeName";
 import {
   isNewCodingSessionTargetReady,
@@ -186,6 +191,65 @@ export function codingSessionCrewProviderNote(input: {
     }` +
     `${label ? `, on ${label} unless its seat names its own` : ""}, ` +
     "in the directory below."
+  );
+}
+
+/**
+ * Everything the goal field owes the person: its size, its cap, and what the
+ * launch did about it.
+ *
+ * Three sentences that used to be missing. The cap is in UTF-8 bytes and the
+ * field counts characters, so without a byte counter a person can type a goal
+ * the signer will refuse and see nothing until the button goes dead — and an
+ * over-cap goal used to launch a whole team and quietly publish no kind:44227
+ * (item 103 finding 5; batch 2 review A2 F1). At the cap the counter *becomes*
+ * the refusal, in the launch block's own words, so the two cannot drift. After
+ * a launch, a goal that did not go out says so here rather than showing up as
+ * an empty goal pill in the session, which reads as "nobody set one".
+ */
+export function CodingSessionCrewGoalNotes({
+  bytes,
+  goalOutcome,
+  overflow,
+}: {
+  /** The trimmed goal's size in UTF-8 bytes — the unit the cap is in. */
+  bytes: number;
+  /** What the last launch did about the goal, or null before one. */
+  goalOutcome: { published: boolean; reason: string | null } | null;
+  /** The overflow the shared helper reports, or null when the goal fits. */
+  overflow: { bytes: number; cap: number } | null;
+}) {
+  return (
+    <>
+      {overflow === null ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-crew-goal-bytes"
+        >
+          {`${bytes.toLocaleString()} of ${MAX_CODING_SESSION_GOAL_BYTES.toLocaleString()} UTF-8 bytes.`}{" "}
+          The lead's first turn carries this goal, and the launch publishes it
+          as the session's own goal.
+        </p>
+      ) : (
+        <p
+          className="text-2xs text-destructive"
+          data-testid="new-coding-session-crew-goal-bytes"
+        >
+          {codingSessionGoalOverflowSentence(overflow)}
+        </p>
+      )}
+      {goalOutcome !== null && !goalOutcome.published ? (
+        <p
+          className="text-2xs text-destructive"
+          data-testid="new-coding-session-crew-goal-unpublished"
+          role="alert"
+        >
+          {`The team launched, but its goal was not published: ${
+            goalOutcome.reason ?? "the goal publish did not go out"
+          }. Set it from the session's goal pill.`}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -390,6 +454,18 @@ export function NewCodingSessionCrewTab({
     teamReadiness.isPreparing ||
     teamReadiness.isScanning ||
     teamReadiness.isLaunchPreflighting;
+
+  // The goal's size in the unit the cap is in. Measured on the trimmed text by
+  // the same helper the launch block and the signer use, so the counter under
+  // the field can never disagree with the refusal under the button.
+  const goalBytes = React.useMemo(
+    () => new TextEncoder().encode(goal.trim()).byteLength,
+    [goal],
+  );
+  const goalOverflow = React.useMemo(
+    () => codingSessionGoalOverflow(goal),
+    [goal],
+  );
 
   // Every reason the button is off, in one sentence — and the same expression
   // the button is disabled on, so a disabled control can never be silent.
@@ -624,13 +700,20 @@ export function NewCodingSessionCrewTab({
           data-testid="new-coding-session-crew-goal"
           disabled={interactionLocked}
           id="coding-session-crew-goal"
+          // The cap is in UTF-8 bytes, so no character count can enforce it —
+          // this is only the ceiling no legal goal can be cut by (a character
+          // is never fewer than one byte), matching the goal pill's own bound.
+          // The byte counter below is what actually tells the truth.
+          maxLength={MAX_CODING_SESSION_GOAL_BYTES}
           onChange={(event) => setGoal(event.target.value)}
           placeholder="What is this team for?"
           value={goal}
         />
-        <p className="text-2xs text-muted-foreground">
-          The lead's first turn carries this goal and the roster above.
-        </p>
+        <CodingSessionCrewGoalNotes
+          bytes={goalBytes}
+          goalOutcome={result?.goal ?? null}
+          overflow={goalOverflow}
+        />
       </div>
 
       <div className="flex flex-col gap-2">
