@@ -163,6 +163,32 @@ If the `Seat:` line says `hire:`, the dispatch is `bee sessions hire --brief
 <this file>` and the brief *is* the new seat's first turn — do not follow it
 with a "start" message. See `skills/hire`.
 
+## Publish the assignment before you hire the seat that answers it
+
+Every hire is preceded by an assignment the seat can cite. A report carries an
+`assignmentRef`, and a report whose assignment does not exist in the session is
+excluded from the fold on its own account — permanently, no matter what is
+published afterwards. So run `bee sessions assign` first, put the returned event
+id in the brief, and dispatch the hire second. Live run 2026-09-01: a runner
+that had nothing to cite published a report naming an id nobody had signed
+(`c737be4c`), and until the fold learned to exclude one bad record on its own
+account, that single report made `bee sessions operation list` fail for every
+seat in the session.
+
+Two rules the brief should state outright, because a seat will otherwise reach
+for the wrong verb:
+
+- **A wrong reference is replaced, never corrected.** `--supersedes` changes an
+  operation's wording, never its subject. A report with the wrong
+  `assignmentRef` is replaced by a **new** report; a correction that moves the
+  subject is refused before signing and, if it reaches the wire, excluded
+  `InvalidCorrection`.
+- **`mission.blocked` never clears a blocker, and is not a status line.** It is
+  a terminal, published only when the mission has actually stopped. Say things
+  with `bee sessions note`; ask for a ruling with `bee sessions decide request`
+  and clear it with `decide answer`. A `mission.completed` may correct a
+  `mission.blocked` by the same author; the reverse is refused.
+
 ## Rules for a good brief
 
 - Exclusive file ownership per lane — two lanes never own the same file.

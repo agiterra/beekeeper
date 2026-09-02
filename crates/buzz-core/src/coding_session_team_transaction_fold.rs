@@ -76,7 +76,15 @@ impl CodingSessionTeamFoldContext {
             .any(|seat| seat.actor_pubkey == author && seat.role == role)
     }
 
-    fn may_lead(&self, author: &str) -> bool {
+    /// Whether `author` may act for the mission as a whole: the founder, an
+    /// active `lead` seat, or an actor holding a steer grant.
+    ///
+    /// Public since batch 2 lane B2 so `bee sessions policy set|clear` can
+    /// pre-check standing against the same context the fold judges with,
+    /// rather than growing a second, drifting copy of this rule in the CLI.
+    /// It remains a **courtesy to the author**: the fold, not the CLI, decides
+    /// whether a published record counts.
+    pub fn may_lead(&self, author: &str) -> bool {
         author == self.founder_pubkey
             || self.is_active_role(author, "lead")
             || self
@@ -273,8 +281,17 @@ enum ProjectionStage {
     Note,
     DecisionRequest,
     DecisionAnswer,
-    MissionCompleted,
-    MissionBlocked,
+    /// Both terminals, projected together.
+    ///
+    /// One stage rather than two since batch 2 lane B2. A correction group is
+    /// built inside a stage, so two stages made a `mission.completed` that
+    /// supersedes a `mission.blocked` a correction of a record its own stage
+    /// could not see: the completion was excluded as a dependant of an
+    /// inactive parent and the blocked stayed canonical — the opposite of what
+    /// finding 14 asked for. Uncorrected terminals are unaffected: they form
+    /// separate correction groups, both stay active, and `project_terminal`
+    /// records the `terminal` conflict exactly as before.
+    Terminal,
 }
 
 /// Validate and fold signed transactions against a supplied authority context.
@@ -448,20 +465,16 @@ pub fn fold_coding_session_team_transactions(
             });
         }
     }
-    for stage in [
-        ProjectionStage::MissionCompleted,
-        ProjectionStage::MissionBlocked,
-    ] {
-        project_stage(
-            &records,
-            &by_id,
-            &terminal_authorized,
-            &mut active,
-            &mut excluded,
-            &mut conflicts,
-            stage,
-        );
-    }
+    // One stage, not two: see [`ProjectionStage::Terminal`].
+    project_stage(
+        &records,
+        &by_id,
+        &terminal_authorized,
+        &mut active,
+        &mut excluded,
+        &mut conflicts,
+        ProjectionStage::Terminal,
+    );
 
     let canonical_terminal = project_terminal(&records, &mut active, &mut excluded, &mut conflicts);
     sort_indices(&mut active, &records);
@@ -549,6 +562,12 @@ pub use decisions::{
     CodingSessionTeamFoldDecision, CodingSessionTeamFoldNote,
     CodingSessionTeamFoldWaitingOnDecision,
 };
+
+// Stage projection and correction-group resolution live in a sibling file for
+// the same reason (FINAL-B §7 asked B2 to split this file).
+#[path = "coding_session_team_transaction_fold_projection.rs"]
+mod projection;
+use projection::project_stage;
 
 // Record-local defect detection lives in a sibling file so no file here passes
 // 1,000 lines (REVIEW-B1b R6). It is a child module, so it reads this module's
@@ -683,7 +702,19 @@ fn verdict_subtype(payload: &CodingSessionTeamTransactionPayload) -> Option<&'st
     }
 }
 
-fn logical_subject(payload: &CodingSessionTeamTransactionPayload) -> String {
+/// The subject a correction must preserve.
+///
+/// Two records belong to the same correction group when this string matches.
+/// `supersedes` changes an operation's *wording*, never what it is about: a
+/// report that names the wrong assignment is replaced by a **new** report, not
+/// corrected into one about a different assignment (live run TeamRolesV1,
+/// 23:15 — the runner's `46b03d08`).
+///
+/// Public since batch 2 lane B2 so the CLI can refuse that shape **before
+/// signing** rather than leaving the fold to exclude it afterwards
+/// (`crates/buzz-cli/src/commands/sessions/operations_precheck.rs`). One
+/// implementation, read by the writer and by the reader; two would drift.
+pub fn logical_subject(payload: &CodingSessionTeamTransactionPayload) -> String {
     match &payload.body {
         CodingSessionTeamTransactionBody::Assignment(body) => {
             format!("assignment:{}:{}", body.assignee_actor, body.assignee_role)
@@ -700,8 +731,14 @@ fn logical_subject(payload: &CodingSessionTeamTransactionPayload) -> String {
         CodingSessionTeamTransactionBody::Acknowledgement(body) => {
             format!("acknowledgement:{}", body.acknowledged_event_ref)
         }
-        CodingSessionTeamTransactionBody::MissionCompleted(_) => "mission.completed".into(),
-        CodingSessionTeamTransactionBody::MissionBlocked(_) => "mission.blocked".into(),
+        // One subject for both terminals, so a `mission.completed` may correct
+        // the `mission.blocked` it supersedes (finding 14). The *direction* is
+        // the type rule's job — `validate_coding_session_team_transaction_supersession`
+        // allows blocked → completed and refuses completed → blocked — and this
+        // string only says the two records are about the same thing: how this
+        // mission ended.
+        CodingSessionTeamTransactionBody::MissionCompleted(_)
+        | CodingSessionTeamTransactionBody::MissionBlocked(_) => "mission.terminal".into(),
         // A note can never carry `supersedes`, so no two notes ever share a
         // correction group and this constant is never used to compare subjects.
         CodingSessionTeamTransactionBody::Note(_) => "note".into(),
@@ -717,221 +754,6 @@ fn logical_subject(payload: &CodingSessionTeamTransactionPayload) -> String {
             format!("decision.answer:{}", body.request_ref)
         }
     }
-}
-
-fn project_stage(
-    records: &[Record<'_>],
-    by_id: &HashMap<String, usize>,
-    authorized: &HashSet<usize>,
-    active: &mut Vec<usize>,
-    excluded: &mut Vec<CodingSessionTeamFoldExclusion>,
-    conflicts: &mut Vec<CodingSessionTeamFoldConflict>,
-    stage: ProjectionStage,
-) {
-    let active_set: HashSet<usize> = active.iter().copied().collect();
-    let mut candidates = HashSet::new();
-    for &index in authorized {
-        if !matches_stage(&records[index].payload, stage) {
-            continue;
-        }
-        let inactive_parent = records[index]
-            .payload
-            .causal_references()
-            .into_iter()
-            // Safe by the same invariant: a record with an unresolvable causal
-            // reference never entered `authorized`.
-            .map(|reference| by_id[reference])
-            .find(|parent| !active_set.contains(parent));
-        if let Some(parent) = inactive_parent {
-            exclude_dependency(index, parent, records, excluded, "causal");
-        } else {
-            candidates.insert(index);
-        }
-    }
-
-    loop {
-        let invalid_children: Vec<(usize, usize)> = candidates
-            .iter()
-            .filter_map(|index| {
-                records[*index]
-                    .payload
-                    .supersedes
-                    .as_ref()
-                    // Safe by the same invariant, for `supersedes`: a correction
-                    // naming an absent target is excluded before authorization.
-                    .map(|reference| (*index, by_id[reference]))
-                    .filter(|(_, parent)| !candidates.contains(parent))
-            })
-            .collect();
-        if invalid_children.is_empty() {
-            break;
-        }
-        for (child, parent) in invalid_children {
-            if candidates.remove(&child) {
-                exclude_dependency(child, parent, records, excluded, "correction");
-            }
-        }
-    }
-
-    let (winners, mut stage_excluded, mut stage_conflicts) =
-        project_corrections(records, by_id, &candidates);
-    active.extend(winners);
-    excluded.append(&mut stage_excluded);
-    conflicts.append(&mut stage_conflicts);
-}
-
-fn matches_stage(payload: &CodingSessionTeamTransactionPayload, stage: ProjectionStage) -> bool {
-    matches!(
-        (&payload.body, stage),
-        (
-            CodingSessionTeamTransactionBody::Assignment(_),
-            ProjectionStage::Assignment
-        ) | (
-            CodingSessionTeamTransactionBody::Report(_),
-            ProjectionStage::Report
-        ) | (
-            CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation { .. }),
-            ProjectionStage::Refutation
-        ) | (
-            CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Disposition { .. }),
-            ProjectionStage::Disposition
-        ) | (
-            CodingSessionTeamTransactionBody::Acknowledgement(_),
-            ProjectionStage::Acknowledgement
-        ) | (
-            CodingSessionTeamTransactionBody::Note(_),
-            ProjectionStage::Note
-        ) | (
-            CodingSessionTeamTransactionBody::DecisionRequest(_),
-            ProjectionStage::DecisionRequest
-        ) | (
-            CodingSessionTeamTransactionBody::DecisionAnswer(_),
-            ProjectionStage::DecisionAnswer
-        ) | (
-            CodingSessionTeamTransactionBody::MissionCompleted(_),
-            ProjectionStage::MissionCompleted
-        ) | (
-            CodingSessionTeamTransactionBody::MissionBlocked(_),
-            ProjectionStage::MissionBlocked
-        )
-    )
-}
-
-fn exclude_dependency(
-    child: usize,
-    parent: usize,
-    records: &[Record<'_>],
-    excluded: &mut Vec<CodingSessionTeamFoldExclusion>,
-    edge: &str,
-) {
-    let parent_code = excluded
-        .iter()
-        .find(|item| item.event_id == records[parent].id)
-        .map(|item| item.code);
-    let code = match parent_code {
-        Some(CodingSessionTeamFoldExclusionCode::Unauthorized) => {
-            CodingSessionTeamFoldExclusionCode::DependentOnUnauthorized
-        }
-        Some(
-            CodingSessionTeamFoldExclusionCode::Superseded
-            | CodingSessionTeamFoldExclusionCode::CorrectionConflict,
-        ) => CodingSessionTeamFoldExclusionCode::DependentOnSuperseded,
-        _ => CodingSessionTeamFoldExclusionCode::DependentOnExcluded,
-    };
-    excluded.push(CodingSessionTeamFoldExclusion {
-        event_id: records[child].id.clone(),
-        code,
-        reason: format!(
-            "{edge} parent {} is not active in the canonical transaction graph",
-            records[parent].id
-        ),
-    });
-}
-
-fn project_corrections(
-    records: &[Record<'_>],
-    by_id: &HashMap<String, usize>,
-    authorized: &HashSet<usize>,
-) -> (
-    Vec<usize>,
-    Vec<CodingSessionTeamFoldExclusion>,
-    Vec<CodingSessionTeamFoldConflict>,
-) {
-    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
-    for &index in authorized {
-        let mut root = index;
-        while let Some(reference) = &records[root].payload.supersedes {
-            // Safe by the same invariant: every `supersedes` on an authorized
-            // record resolves.
-            let previous = by_id[reference];
-            if !authorized.contains(&previous) {
-                break;
-            }
-            root = previous;
-        }
-        groups.entry(root).or_default().push(index);
-    }
-
-    let mut active = Vec::new();
-    let mut excluded = Vec::new();
-    let mut conflicts = Vec::new();
-    for mut group in groups.into_values() {
-        sort_indices(&mut group, records);
-        let superseded: HashSet<usize> = group
-            .iter()
-            .filter_map(|index| {
-                records[*index]
-                    .payload
-                    .supersedes
-                    .as_ref()
-                    // Safe by the same invariant as the walk above.
-                    .map(|reference| by_id[reference])
-                    .filter(|previous| authorized.contains(previous))
-            })
-            .collect();
-        let mut heads: Vec<usize> = group
-            .iter()
-            .copied()
-            .filter(|index| !superseded.contains(index))
-            .collect();
-        sort_indices(&mut heads, records);
-        let Some(&winner) = heads.last() else {
-            continue;
-        };
-        active.push(winner);
-        for index in group {
-            if index == winner {
-                continue;
-            }
-            let (code, reason) = if heads.contains(&index) {
-                (
-                    CodingSessionTeamFoldExclusionCode::CorrectionConflict,
-                    "lost deterministic correction-fork ordering",
-                )
-            } else {
-                (
-                    CodingSessionTeamFoldExclusionCode::Superseded,
-                    "replaced by a valid same-subject correction",
-                )
-            };
-            excluded.push(CodingSessionTeamFoldExclusion {
-                event_id: records[index].id.clone(),
-                code,
-                reason: reason.into(),
-            });
-        }
-        if heads.len() > 1 {
-            conflicts.push(CodingSessionTeamFoldConflict {
-                subject: format!("correction:{}", logical_subject(&records[winner].payload)),
-                winner_event_id: records[winner].id.clone(),
-                contender_event_ids: heads
-                    .into_iter()
-                    .map(|index| records[index].id.clone())
-                    .collect(),
-            });
-        }
-    }
-    (active, excluded, conflicts)
 }
 
 fn settle_assignments(

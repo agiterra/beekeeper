@@ -44,6 +44,43 @@ If the acceptance cannot be run on this host, that is not an approval with a not
 
 A report without a command's exit code, a SHA, or a `file:line` did not happen — send it back.
 
+## A wrong reference is replaced, never corrected
+
+`--supersedes` changes an operation's **wording**, never what it is about. A
+report that cites the wrong `assignmentRef` is replaced by a **new** report
+citing the right one; a correction that moves the subject is excluded
+`InvalidCorrection` and the original stays wrong beside it. On 2026-09-01 a
+lead's acceptance step asked the runner for exactly that correction, the runner
+published it (`46b03d08`), and the fold failed closed for every seat until the
+session was repaired. `bee sessions report|verdict|acknowledge|block|complete`
+now refuse the shape before signing, naming the id and the rule — when you see
+that refusal, ask for a new record, not a rewritten one. The same holds for
+every id an operation cites: an operation may only reference a record this
+session actually holds and the fold includes.
+
+## `mission.blocked` is a terminal, and a terminal never clears itself
+
+Publish `mission.blocked` only when the mission has actually stopped. It is not
+a status line and not a note: on 2026-09-01 it was used four times to say
+"still working", the Mission rail read **Blocked** in red for 4 h 38 m while two
+seats worked, and nothing in the vocabulary could take it back. To say something
+without changing state, use `bee sessions note`. To clear something a person
+must rule on, use `bee sessions decide request` and then `decide answer` — a
+blocker is cleared by the ruling that unblocks it, never by another terminal.
+When the mission really does finish after a blocked, `bee sessions complete`
+now supersedes your own newest `mission.blocked` for you, so the fold sees one
+corrected terminal rather than a conflict; a completion may correct a blocked,
+and never the reverse.
+
+## Every hire is preceded by an assignment the seat can cite
+
+A seat's first report needs an `assignmentRef`, and a report whose assignment
+was never published is excluded from the fold forever. So publish the
+assignment (`bee sessions assign`) **before** you hire the seat that will
+answer it, and put its event id in the brief. A hire that arrives with no
+assignment to cite leaves the seat two bad options: invent a reference, or
+report nothing at all — and the live run produced both.
+
 ## Publish the disposition — twice, or it did not happen
 
 A verdict has two addressees and therefore two publishes. **The turn is not

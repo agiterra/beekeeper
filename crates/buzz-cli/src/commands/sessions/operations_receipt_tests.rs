@@ -15,6 +15,14 @@ use buzz_sdk::coding_session_team_transaction::{
 use nostr::{Event, EventBuilder, Keys, Kind, Tag, Timestamp};
 use serde_json::{json, Value};
 
+use super::super::operations_authority::{
+    project_receipt_backed_authority_chain, AUTHORITY_ACCEPTANCE_RECEIPT_TYPE,
+};
+use buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition;
+
+use super::super::operations_reads::{
+    transaction_matches_context, transaction_query_filter, transaction_value_matches_context,
+};
 use super::*;
 
 const CHANNEL: &str = "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86";

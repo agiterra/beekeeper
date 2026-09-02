@@ -1,3 +1,6 @@
+use nostr::Event;
+use serde_json::Value;
+
 use super::*;
 use nostr::{EventBuilder, Keys, Kind, Tag};
 
@@ -892,3 +895,6 @@ fn a_blocked_correction_must_change_its_blockers() {
     );
     assert!(validate_coding_session_team_transaction_supersession(&real, &first).is_ok());
 }
+
+#[path = "coding_session_team_transaction_terminal_tests.rs"]
+mod terminal_tests;

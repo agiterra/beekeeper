@@ -1,39 +1,30 @@
 //! Signed team-transaction transport for `bee sessions`.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::future::Future;
 use std::io::{self, Read};
 
-use buzz_core::coding_session_authority_transition::{
-    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionPayload,
-    CodingSessionAuthorityTransitionType, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
-};
-use buzz_core::coding_session_genesis::{
-    decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
-};
 use buzz_core::coding_session_team_transaction::{
     fold_coding_session_team_transactions, CodingSessionTeamAcknowledgement,
-    CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamAssignment,
-    CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
-    CodingSessionTeamDecisionRequest, CodingSessionTeamFold, CodingSessionTeamFoldContext,
-    CodingSessionTeamMissionBlocked, CodingSessionTeamMissionCompleted, CodingSessionTeamNote,
-    CodingSessionTeamReport, CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType,
-    CodingSessionTeamVerdict, CODING_SESSION_TEAM_DECISION_FOUNDER,
+    CodingSessionTeamAssignment, CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
+    CodingSessionTeamDecisionRequest, CodingSessionTeamFold, CodingSessionTeamMissionBlocked,
+    CodingSessionTeamMissionCompleted, CodingSessionTeamNote, CodingSessionTeamReport,
+    CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType, CodingSessionTeamVerdict,
+    CODING_SESSION_TEAM_DECISION_FOUNDER,
 };
-use buzz_core::kind::{
-    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_SYSTEM_MESSAGE,
-};
+use buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use buzz_sdk::coding_session_team_transaction::{
     build_coding_session_team_transaction, coding_session_team_transaction_payload,
     parse_coding_session_team_transaction,
 };
 use nostr::Event;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+pub(super) use super::operations_authority::{fetch_projected_authority, ProjectedAuthority};
+use super::operations_precheck::{precheck_operation, PrecheckRequest, PrecheckedOperation};
+use super::operations_reads::{fetch_founder_context, fetch_transactions};
 use crate::client::BuzzClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
@@ -141,10 +132,34 @@ async fn publish_operation(
         operation.wake_to.as_deref(),
         operation.delivery_command_id,
     )?;
+    // Refuse before signing (B2.5). The fold learned to exclude a bad record
+    // rather than fail the session closed; nothing stopped a seat writing one,
+    // and every record that forced B1b's four rounds would still be published
+    // today (REVIEW-B1b F2). The candidate payload is built first so the check
+    // reads the same `causalReferences` and `supersedes` the wire would carry.
+    let signer_pubkey = client.keys().public_key().to_hex();
+    let candidate = coding_session_team_transaction_payload(
+        operation.session_ref.clone(),
+        operation.genesis.clone(),
+        operation.supersedes.clone(),
+        delivery_command_id.clone(),
+        operation.body.clone(),
+    );
+    let prechecked = precheck_operation(
+        client,
+        PrecheckRequest {
+            channel: &operation.channel,
+            session_ref: &operation.session_ref,
+            genesis: &operation.genesis,
+            signer_pubkey: &signer_pubkey,
+            payload: &candidate,
+        },
+    )
+    .await?;
     let payload = coding_session_team_transaction_payload(
         operation.session_ref.clone(),
         operation.genesis.clone(),
-        operation.supersedes,
+        prechecked.supersedes.clone(),
         delivery_command_id.clone(),
         operation.body,
     );
@@ -156,14 +171,7 @@ async fn publish_operation(
     let event = client.sign_event_unchecked(builder)?;
 
     if transaction_type == CodingSessionTeamTransactionType::MissionCompleted {
-        verify_completion_before_submit(
-            client,
-            &operation.channel,
-            &operation.session_ref,
-            &operation.genesis,
-            &event,
-        )
-        .await?;
+        verify_completion_before_submit(&prechecked, &event)?;
     }
 
     let operation_id = event.id.to_hex();
@@ -189,10 +197,59 @@ async fn publish_operation(
             )
         }
     });
-    let output =
+    let mut output =
         submit_record_then_wake(&operation_id, || client.submit_event(event), wake).await?;
+    disclose_adopted_correction(
+        &mut output,
+        transaction_type,
+        operation.supersedes.as_deref(),
+        prechecked.supersedes.as_deref(),
+    );
     println!("{output}");
     Ok(())
+}
+
+/// Say, in the answer, that a completion corrected a terminal the caller did
+/// not name.
+///
+/// `bee sessions complete` adopts the lead's own canonical `mission.blocked` as
+/// its `supersedes` when the caller passed none (B2.7, live finding 14). That
+/// is the right record to sign — but the author asked to "publish a completion"
+/// and published "a correction of my own terminal", a materially different
+/// signed record, and the only output they see said nothing about it
+/// (REVIEW-B2 F4).
+///
+/// `supersedes` is **present and null** when a completion corrected nothing, so
+/// "corrected nothing" and "did not say" stay different answers. It is absent
+/// for every other verb, whose `--supersedes` is exactly what the caller typed.
+pub(super) fn disclose_adopted_correction(
+    output: &mut Value,
+    transaction_type: CodingSessionTeamTransactionType,
+    requested: Option<&str>,
+    effective: Option<&str>,
+) {
+    if transaction_type != CodingSessionTeamTransactionType::MissionCompleted {
+        return;
+    }
+    let Some(object) = output.as_object_mut() else {
+        return;
+    };
+    object.insert(
+        "supersedes".into(),
+        effective.map_or(Value::Null, |id| Value::String(id.to_owned())),
+    );
+    if requested.is_none() {
+        if let Some(adopted) = effective {
+            object.insert(
+                "correctedTerminal".into(),
+                Value::String(format!(
+                    "this completion corrects your mission.blocked {adopted}, which was this \
+                     session's canonical terminal, so the fold sees one corrected terminal \
+                     rather than a conflict"
+                )),
+            );
+        }
+    }
 }
 
 /// Publish a `note`: something said, with nothing changed.
@@ -644,470 +701,28 @@ fn decode_body(
     })
 }
 
-async fn fetch_transactions(
-    client: &BuzzClient,
-    channel: &str,
-    session_ref: &str,
-    genesis: &str,
-) -> Result<Vec<Event>, CliError> {
-    let filter = transaction_query_filter(channel, session_ref, genesis);
-    let values = client.query_all(filter).await?;
-    let events = values
-        .into_iter()
-        .filter(|value| transaction_value_matches_context(value, channel, session_ref, genesis))
-        .map(|value| {
-            serde_json::from_value(value).map_err(|error| {
-                CliError::Other(format!("relay returned malformed event: {error}"))
-            })
-        })
-        .collect::<Result<Vec<Event>, _>>()?;
-    Ok(events
-        .into_iter()
-        .filter(|event| transaction_matches_context(event, channel, session_ref, genesis))
-        .collect())
-}
-
-fn transaction_value_matches_context(
-    value: &Value,
-    channel: &str,
-    session_ref: &str,
-    genesis: &str,
-) -> bool {
-    let has_tag = |name: &str, expected: &str| {
-        value
-            .get("tags")
-            .and_then(Value::as_array)
-            .is_some_and(|tags| {
-                tags.iter().any(|tag| {
-                    tag.as_array().is_some_and(|parts| {
-                        parts.len() == 2
-                            && parts[0].as_str() == Some(name)
-                            && parts[1].as_str() == Some(expected)
-                    })
-                })
-            })
-    };
-    let payload: Value = match value
-        .get("content")
-        .and_then(Value::as_str)
-        .and_then(|content| serde_json::from_str(content).ok())
-    {
-        Some(payload) => payload,
-        None => return false,
-    };
-    value.get("kind").and_then(Value::as_u64)
-        == Some(u64::from(KIND_CODING_SESSION_TEAM_TRANSACTION))
-        && has_tag("h", channel)
-        && has_tag("d", session_ref)
-        && has_tag("cstx-genesis", genesis)
-        && payload.get("sessionRef").and_then(Value::as_str) == Some(session_ref)
-        && payload.get("genesisRef").and_then(Value::as_str) == Some(genesis)
-}
-
-fn transaction_query_filter(channel: &str, session_ref: &str, genesis: &str) -> Value {
-    json!({
-        "kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION],
-        "#h": [channel],
-        "#d": [session_ref],
-        "#cstx-genesis": [genesis],
-    })
-}
-
-fn transaction_matches_context(
-    event: &Event,
-    channel: &str,
-    session_ref: &str,
-    genesis: &str,
-) -> bool {
-    parse_coding_session_team_transaction(event).is_ok_and(|payload| {
-        payload.session_ref == session_ref
-            && payload.genesis_ref == genesis
-            && event
-                .tags
-                .iter()
-                .any(|tag| tag.as_slice() == ["h", channel])
-    })
-}
-
-pub(super) async fn fetch_founder_context(
-    client: &BuzzClient,
-    channel: &str,
-    session_ref: &str,
-    genesis: &str,
-) -> Result<CodingSessionTeamFoldContext, CliError> {
-    let rows = client
-        .query_all(json!({
-            "ids": [genesis],
-            "kinds": [KIND_CODING_SESSION_GENESIS],
-            "#h": [channel]
-        }))
-        .await?;
-    if rows.len() != 1 {
-        return Err(CliError::NotFound(format!(
-            "expected exactly one genesis {genesis} in channel {channel}, found {}",
-            rows.len()
-        )));
-    }
-    let event: Event = serde_json::from_value(rows[0].clone())
-        .map_err(|error| CliError::Other(format!("relay returned malformed genesis: {error}")))?;
-    buzz_core::verify_event(&event)
-        .map_err(|error| CliError::Other(format!("invalid genesis signature: {error}")))?;
-    let payload = decode_coding_session_genesis(&event.content)
-        .map_err(|error| CliError::Other(format!("invalid genesis content: {error}")))?;
-    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
-    let valid_envelope = tags.len() == 3
-        && tags.iter().all(|tag| tag.len() == 2)
-        && tags[0] == ["h", channel]
-        && tags[1] == ["csg-v", CODING_SESSION_GENESIS_TAG_VERSION]
-        && tags[2] == ["csg-session", payload.session_ref.as_str()];
-    if !valid_envelope {
-        return Err(CliError::Other("invalid genesis tag envelope".into()));
-    }
-    if payload.session_ref != session_ref {
-        return Err(CliError::Usage(
-            "--session-ref does not match the referenced genesis".into(),
-        ));
-    }
-    let authority =
-        fetch_projected_authority(client, channel, genesis, &event.pubkey.to_hex()).await?;
-    Ok(CodingSessionTeamFoldContext {
-        channel_ref: channel.to_owned(),
-        session_ref: session_ref.to_owned(),
-        genesis_ref: genesis.to_owned(),
-        founder_pubkey: event.pubkey.to_hex(),
-        active_seats: authority.seats,
-        active_grants: authority.grants,
-    })
-}
-
-const AUTHORITY_ACCEPTANCE_RECEIPT_TYPE: &str = "coding_session_authority_transition_accepted";
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AuthorityAcceptanceReceipt {
-    #[serde(rename = "type")]
-    receipt_type: String,
-    genesis_ref: String,
-    accepted_event_id: String,
-    seq: u32,
-    transition_type: CodingSessionAuthorityTransitionType,
-    grantee_pubkey: String,
-    #[serde(default)]
-    role: Option<String>,
-}
-
-async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<String, CliError> {
-    let raw = client
-        .get_public("/")
-        .await
-        .map_err(|error| CliError::Other(format!("failed to fetch relay info: {error}")))?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|error| CliError::Other(format!("relay info is not valid JSON: {error}")))?;
-    let relay_self = value
-        .get("self")
-        .and_then(Value::as_str)
-        .ok_or_else(|| CliError::Other("relay info is missing its trusted self pubkey".into()))?;
-    if relay_self.len() != 64 || !relay_self.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(CliError::Other(
-            "relay info self is not a valid 64-hex pubkey".into(),
-        ));
-    }
-    Ok(relay_self.to_ascii_lowercase())
-}
-
-/// Read the relay-receipt-backed accepted authority chain for one genesis.
-pub(super) async fn fetch_projected_authority(
-    client: &BuzzClient,
-    channel: &str,
-    genesis: &str,
-    founder: &str,
-) -> Result<ProjectedAuthority, CliError> {
-    let relay_self = fetch_trusted_relay_self(client).await?;
-    let transitions = client
-        .query_all(json!({
-            "kinds": [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
-            "#h": [channel],
-            "#csat-genesis": [genesis]
-        }))
-        .await?
-        .into_iter()
-        .map(serde_json::from_value)
-        .collect::<Result<Vec<Event>, _>>()
-        .map_err(|error| {
-            CliError::Other(format!("relay returned malformed authority event: {error}"))
-        })?;
-    let receipts = client
-        .query_all(json!({
-            "kinds": [KIND_SYSTEM_MESSAGE],
-            "#h": [channel],
-            "authors": [relay_self]
-        }))
-        .await?
-        .into_iter()
-        .map(serde_json::from_value)
-        .collect::<Result<Vec<Event>, _>>()
-        .map_err(|error| {
-            CliError::Other(format!(
-                "relay returned malformed authority receipt: {error}"
-            ))
-        })?;
-    project_receipt_backed_authority_chain(
-        &transitions,
-        &receipts,
-        channel,
-        genesis,
-        founder,
-        &relay_self,
-    )
-    .map_err(|error| CliError::Other(format!("invalid accepted authority chain: {error}")))
-}
-
-pub(super) struct ProjectedAuthority {
-    pub(super) grants: Vec<CodingSessionTeamActiveGrant>,
-    pub(super) seats: Vec<CodingSessionTeamActiveSeat>,
-    pub(super) seat_grant_refs: BTreeMap<String, String>,
-    pub(super) head_event_id: Option<String>,
-    pub(super) head_seq: u32,
-}
-
-fn validate_accepted_authority_transition(
-    event: &Event,
-    channel: &str,
-    genesis: &str,
-) -> Result<(String, CodingSessionAuthorityTransitionPayload), String> {
-    buzz_core::verify_event(event)
-        .map_err(|error| format!("invalid accepted authority-transition signature: {error}"))?;
-    if event.kind.as_u16() as u32 != KIND_CODING_SESSION_AUTHORITY_TRANSITION {
-        return Err("accepted authority transition has the wrong kind".into());
-    }
-    let payload = decode_coding_session_authority_transition(&event.content)?;
-    if payload.genesis_ref != genesis {
-        return Err("accepted authority transition crosses the supplied genesis".into());
-    }
-    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
-    if tags.len() != 3
-        || tags.iter().any(|tag| tag.len() != 2)
-        || tags[0] != ["h", channel]
-        || tags[1] != ["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION]
-        || tags[2] != ["csat-genesis", genesis]
-    {
-        return Err("accepted authority transition has an invalid envelope".into());
-    }
-    Ok((event.pubkey.to_hex(), payload))
-}
-
-fn project_receipt_backed_authority_chain(
-    transition_events: &[Event],
-    receipt_events: &[Event],
-    channel: &str,
-    genesis: &str,
-    founder: &str,
-    relay_self: &str,
-) -> Result<ProjectedAuthority, String> {
-    let mut transitions = BTreeMap::new();
-    for event in transition_events {
-        let event_id = event.id.to_hex();
-        transitions.entry(event_id).or_insert(event);
-    }
-
-    let mut receipt_ids = std::collections::BTreeSet::new();
-    let mut accepted_by_seq = BTreeMap::new();
-    let mut accepted_ids = std::collections::BTreeSet::new();
-    for event in receipt_events {
-        let value: Value = match serde_json::from_str(&event.content) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if value.get("type").and_then(Value::as_str) != Some(AUTHORITY_ACCEPTANCE_RECEIPT_TYPE) {
-            continue;
-        }
-        if value.get("genesisRef").and_then(Value::as_str) != Some(genesis) {
-            continue;
-        }
-        if !receipt_ids.insert(event.id.to_hex()) {
-            continue;
-        }
-        if u32::from(event.kind.as_u16()) != KIND_SYSTEM_MESSAGE {
-            return Err("authority acceptance receipt has the wrong kind".into());
-        }
-        buzz_core::verify_event(event)
-            .map_err(|error| format!("invalid authority-receipt signature: {error}"))?;
-        if event.pubkey.to_hex() != relay_self {
-            return Err("authority acceptance receipt is not signed by the trusted relay".into());
-        }
-        if !event
-            .tags
-            .iter()
-            .any(|tag| tag.as_slice() == ["h", channel])
-        {
-            return Err("authority acceptance receipt crosses the requested channel".into());
-        }
-        let role_key_present = value
-            .as_object()
-            .is_some_and(|object| object.contains_key("role"));
-        let receipt: AuthorityAcceptanceReceipt = serde_json::from_value(value)
-            .map_err(|error| format!("malformed authority acceptance receipt: {error}"))?;
-        if receipt.receipt_type != AUTHORITY_ACCEPTANCE_RECEIPT_TYPE {
-            return Err("authority receipt type mismatch".into());
-        }
-        let is_seat_receipt = matches!(
-            receipt.transition_type,
-            CodingSessionAuthorityTransitionType::GrantSeat
-                | CodingSessionAuthorityTransitionType::RevokeSeat
-        );
-        if is_seat_receipt != role_key_present || is_seat_receipt != receipt.role.is_some() {
-            return Err(
-                "authority receipt role presence does not match its transition type".into(),
-            );
-        }
-        let transition = transitions
-            .get(&receipt.accepted_event_id)
-            .ok_or_else(|| "authority receipt references a missing transition".to_owned())?;
-        let (signer, payload) =
-            validate_accepted_authority_transition(transition, channel, genesis)?;
-        if payload.genesis_ref != receipt.genesis_ref
-            || payload.seq != receipt.seq
-            || payload.transition_type != receipt.transition_type
-            || payload.grantee_pubkey != receipt.grantee_pubkey
-            || payload.role != receipt.role
-        {
-            return Err("authority receipt facts do not match the accepted transition".into());
-        }
-        if !accepted_ids.insert(receipt.accepted_event_id.clone()) {
-            return Err("duplicate authority receipts name the same accepted transition".into());
-        }
-        let accepted = (receipt.accepted_event_id.clone(), signer, payload);
-        if accepted_by_seq.insert(receipt.seq, accepted).is_some() {
-            return Err("conflicting authority receipts claim the same sequence".into());
-        }
-    }
-
-    let links: Vec<_> = accepted_by_seq.into_values().collect();
-    let mut expected_prev: Option<&str> = None;
-    let mut grants = BTreeMap::new();
-    let mut seats = BTreeMap::new();
-    let mut seat_grant_refs = BTreeMap::new();
-    for (offset, (event_id, signer, payload)) in links.iter().enumerate() {
-        let expected_seq = u32::try_from(offset + 1)
-            .map_err(|_| "authority chain exceeds u32 sequence space".to_owned())?;
-        if payload.seq != expected_seq || payload.prev_accepted.as_deref() != expected_prev {
-            return Err(format!(
-                "authority transition {} does not extend the canonical chain",
-                event_id
-            ));
-        }
-        let signer_is_founder = signer == founder;
-        let signer_is_operator = grants
-            .get(signer)
-            .is_some_and(|grant: &CodingSessionTeamActiveGrant| grant.may_steer);
-        let signer_is_lead = seats
-            .get(signer)
-            .is_some_and(|seat: &CodingSessionTeamActiveSeat| seat.role == "lead");
-        let is_seat_transition = matches!(
-            payload.transition_type,
-            CodingSessionAuthorityTransitionType::GrantSeat
-                | CodingSessionAuthorityTransitionType::RevokeSeat
-        );
-        let signer_is_authorized = if is_seat_transition {
-            signer_is_founder || signer_is_operator || signer_is_lead
-        } else {
-            signer_is_founder
-        };
-        if !signer_is_authorized {
-            return Err(format!(
-                "authority transition {event_id} has an unauthorized signer"
-            ));
-        }
-        if payload.transition_type == CodingSessionAuthorityTransitionType::GrantSeat
-            && payload.grantee_pubkey == *signer
-        {
-            return Err("seat grant cannot nominate its own signer".into());
-        }
-        if signer_is_lead
-            && !signer_is_founder
-            && !signer_is_operator
-            && payload.role.as_deref() == Some("lead")
-        {
-            return Err("active lead cannot grant or revoke lead authority".into());
-        }
-        match payload.transition_type {
-            CodingSessionAuthorityTransitionType::GrantOperator => {
-                grants.insert(
-                    payload.grantee_pubkey.clone(),
-                    CodingSessionTeamActiveGrant {
-                        actor_pubkey: payload.grantee_pubkey.clone(),
-                        grant_event_ref: event_id.clone(),
-                        may_steer: true,
-                    },
-                );
-            }
-            CodingSessionAuthorityTransitionType::GrantViewer => {
-                grants.insert(
-                    payload.grantee_pubkey.clone(),
-                    CodingSessionTeamActiveGrant {
-                        actor_pubkey: payload.grantee_pubkey.clone(),
-                        grant_event_ref: event_id.clone(),
-                        may_steer: false,
-                    },
-                );
-            }
-            CodingSessionAuthorityTransitionType::Revoke => {
-                if grants.remove(&payload.grantee_pubkey).is_none() {
-                    return Err("revoke names a pubkey with no active grant".into());
-                }
-            }
-            CodingSessionAuthorityTransitionType::GrantSeat => {
-                let role = payload
-                    .role
-                    .clone()
-                    .ok_or_else(|| "grant-seat requires role".to_owned())?;
-                seats.insert(
-                    payload.grantee_pubkey.clone(),
-                    CodingSessionTeamActiveSeat {
-                        actor_pubkey: payload.grantee_pubkey.clone(),
-                        role,
-                    },
-                );
-                seat_grant_refs.insert(payload.grantee_pubkey.clone(), event_id.clone());
-            }
-            CodingSessionAuthorityTransitionType::RevokeSeat => {
-                let expected_role = payload
-                    .role
-                    .as_deref()
-                    .ok_or_else(|| "revoke-seat requires role".to_owned())?;
-                match seats.get(&payload.grantee_pubkey) {
-                    Some(seat) if seat.role == expected_role => {
-                        seats.remove(&payload.grantee_pubkey);
-                        seat_grant_refs.remove(&payload.grantee_pubkey);
-                    }
-                    Some(_) => return Err("revoke-seat role does not match active seat".into()),
-                    None => return Err("revoke-seat names no active seat".into()),
-                }
-            }
-        }
-        expected_prev = Some(event_id);
-    }
-    Ok(ProjectedAuthority {
-        grants: grants.into_values().collect(),
-        seats: seats.into_values().collect(),
-        seat_grant_refs,
-        head_event_id: expected_prev.map(str::to_owned),
-        head_seq: u32::try_from(links.len())
-            .map_err(|_| "authority chain exceeds u32 sequence space".to_owned())?,
-    })
-}
-
-async fn verify_completion_before_submit(
-    client: &BuzzClient,
-    channel: &str,
-    session_ref: &str,
-    genesis: &str,
+/// Refuse a completion that the fold would not make this session's terminal.
+///
+/// Re-folds the session **with** the signed candidate. It reuses the set and
+/// the authority context the pre-publish check already fetched
+/// ([`PrecheckedOperation`]) rather than querying the relay a second time for
+/// the same two answers.
+fn verify_completion_before_submit(
+    prechecked: &PrecheckedOperation,
     candidate: &Event,
 ) -> Result<(), CliError> {
-    let mut events = fetch_transactions(client, channel, session_ref, genesis).await?;
+    // A completion always points at assignments, so the pre-publish check
+    // never short-circuits for one and this read is always present. Saying so
+    // as a refusal rather than an `expect` keeps the production path free of
+    // panics if that ever stops being true.
+    let session = prechecked.session.as_ref().ok_or_else(|| {
+        CliError::Other(
+            "completion verification needs this session's operations and nothing read them".into(),
+        )
+    })?;
+    let mut events = session.events.clone();
     events.push(candidate.clone());
-    let context = fetch_founder_context(client, channel, session_ref, genesis).await?;
-    let fold = fold_coding_session_team_transactions(&events, &context)
+    let fold = fold_coding_session_team_transactions(&events, &session.context)
         .map_err(|error| CliError::Usage(format!("completion verification failed: {error}")))?;
     let candidate_id = candidate.id.to_hex();
     let is_terminal = fold
@@ -1203,425 +818,8 @@ fn fold_json(fold: &CodingSessionTeamFold) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload;
-    use nostr::{EventBuilder, Keys, Kind, Tag};
-
-    use super::*;
-
-    const CHANNEL: &str = "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86";
-    const GENESIS: &str = "abababababababababababababababababababababababababababababababab";
-
-    fn seat_event(
-        signer: &Keys,
-        transition_type: CodingSessionAuthorityTransitionType,
-        grantee: &str,
-        role: &str,
-        seq: u32,
-        previous: Option<&Event>,
-    ) -> Event {
-        let payload = match transition_type {
-            CodingSessionAuthorityTransitionType::GrantSeat => {
-                CodingSessionAuthorityTransitionPayload::new_grant_seat(
-                    GENESIS,
-                    previous.map(|event| event.id.to_hex()),
-                    seq,
-                    grantee,
-                    role,
-                )
-            }
-            CodingSessionAuthorityTransitionType::RevokeSeat => {
-                CodingSessionAuthorityTransitionPayload::new_revoke_seat(
-                    GENESIS,
-                    previous.map(|event| event.id.to_hex()),
-                    seq,
-                    grantee,
-                    role,
-                )
-            }
-            _ => panic!("seat helper requires a seat transition"),
-        };
-        let tags = [
-            Tag::parse(["h", CHANNEL]).expect("h"),
-            Tag::parse(["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION])
-                .expect("version"),
-            Tag::parse(["csat-genesis", GENESIS]).expect("genesis"),
-        ];
-        EventBuilder::new(
-            Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
-            serde_json::to_string(&payload).expect("payload"),
-        )
-        .tags(tags)
-        .sign_with_keys(signer)
-        .expect("sign")
-    }
-
-    fn authority_receipt(transition: &Event, relay: &Keys) -> Event {
-        let payload = decode_coding_session_authority_transition(&transition.content)
-            .expect("transition payload");
-        let mut content = json!({
-            "type": AUTHORITY_ACCEPTANCE_RECEIPT_TYPE,
-            "genesisRef": payload.genesis_ref,
-            "acceptedEventId": transition.id.to_hex(),
-            "seq": payload.seq,
-            "transitionType": payload.transition_type,
-            "granteePubkey": payload.grantee_pubkey,
-        });
-        if let (Some(object), Some(role)) = (content.as_object_mut(), payload.role) {
-            object.insert("role".into(), Value::String(role));
-        }
-        EventBuilder::new(
-            Kind::Custom(KIND_SYSTEM_MESSAGE as u16),
-            content.to_string(),
-        )
-        .tags([Tag::parse(["h", CHANNEL]).expect("h")])
-        .sign_with_keys(relay)
-        .expect("receipt")
-    }
-
-    fn project_authority_chain(
-        events: &[Event],
-        channel: &str,
-        genesis: &str,
-        founder: &str,
-    ) -> Result<ProjectedAuthority, String> {
-        let relay = Keys::generate();
-        let receipts: Vec<Event> = events
-            .iter()
-            .map(|event| authority_receipt(event, &relay))
-            .collect();
-        project_receipt_backed_authority_chain(
-            events,
-            &receipts,
-            channel,
-            genesis,
-            founder,
-            &relay.public_key().to_hex(),
-        )
-    }
-
-    #[test]
-    fn fold_json_discloses_unseated_reports_under_fold() {
-        let fold = CodingSessionTeamFold {
-            included_event_ids: vec![id("11"), id("22")],
-            excluded: Vec::new(),
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: vec![
-                buzz_core::coding_session_team_transaction::CodingSessionTeamUnseatedReport {
-                    event_id: id("22"),
-                    author_pubkey: id("33"),
-                    assignment_ref: id("11"),
-                    assignee_role: "builder".into(),
-                },
-            ],
-            notes: Vec::new(),
-            decisions: Vec::new(),
-            waiting_on_decision: None,
-            canonical_terminal: None,
-        };
-
-        let wire = fold_json(&fold);
-        assert_eq!(
-            wire["unseatedReports"],
-            json!([{
-                "eventId": id("22"),
-                "authorPubkey": id("33"),
-                "assignmentRef": id("11"),
-                "assigneeRole": "builder",
-            }])
-        );
-
-        let empty = CodingSessionTeamFold {
-            included_event_ids: Vec::new(),
-            excluded: Vec::new(),
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: Vec::new(),
-            notes: Vec::new(),
-            decisions: Vec::new(),
-            waiting_on_decision: None,
-            canonical_terminal: None,
-        };
-        // Present and empty, never absent: an unknown disclosure and "no
-        // unseated reports" are different answers.
-        assert_eq!(fold_json(&empty)["unseatedReports"], json!([]));
-    }
-
-    #[test]
-    fn fold_json_prints_the_dangling_reference_code() {
-        let excluded = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusion {
-            event_id: id("22"),
-            code: buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusionCode::DanglingReference,
-            reason: format!(
-                "reference {} is absent from the supplied transaction set",
-                id("77")
-            ),
-        };
-        let fold = CodingSessionTeamFold {
-            included_event_ids: vec![id("11")],
-            excluded: vec![excluded],
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: Vec::new(),
-            notes: Vec::new(),
-            decisions: Vec::new(),
-            waiting_on_decision: None,
-            canonical_terminal: None,
-        };
-
-        let wire = fold_json(&fold);
-        assert_eq!(
-            wire["excluded"],
-            json!([{
-                "eventId": id("22"),
-                "code": "DanglingReference",
-                "reason": format!(
-                    "reference {} is absent from the supplied transaction set",
-                    id("77")
-                ),
-            }])
-        );
-        // `included` is still answered: one malformed record no longer denies
-        // every operation in the session (batch 2 2026-09-01, B1b).
-        assert_eq!(wire["includedEventIds"], json!([id("11")]));
-    }
-
-    #[test]
-    fn fold_json_prints_the_invalid_correction_code() {
-        let excluded = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusion {
-            event_id: id("33"),
-            code: buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusionCode::InvalidCorrection,
-            reason: format!(
-                "correction of {} is invalid: a correction must preserve its logical subject",
-                id("22")
-            ),
-        };
-        let fold = CodingSessionTeamFold {
-            included_event_ids: vec![id("11"), id("22")],
-            excluded: vec![excluded],
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: Vec::new(),
-            notes: Vec::new(),
-            decisions: Vec::new(),
-            waiting_on_decision: None,
-            canonical_terminal: None,
-        };
-
-        let wire = fold_json(&fold);
-        assert_eq!(wire["excluded"][0]["code"], "InvalidCorrection");
-        assert!(wire["excluded"][0]["reason"]
-            .as_str()
-            .expect("reason string")
-            .contains(&id("22")));
-        // The corrected record keeps its place in the projection.
-        assert_eq!(wire["includedEventIds"], json!([id("11"), id("22")]));
-    }
-
-    #[test]
-    fn fold_json_prints_the_wrong_type_reference_code() {
-        let excluded = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusion {
-            event_id: id("44"),
-            code: buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusionCode::WrongTypeReference,
-            reason: format!("team transaction {} has a wrong-type reference", id("44")),
-        };
-        let fold = CodingSessionTeamFold {
-            included_event_ids: vec![id("11"), id("22")],
-            excluded: vec![excluded],
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: Vec::new(),
-            notes: Vec::new(),
-            decisions: Vec::new(),
-            waiting_on_decision: None,
-            canonical_terminal: None,
-        };
-
-        let wire = fold_json(&fold);
-        assert_eq!(wire["excluded"][0]["code"], "WrongTypeReference");
-        assert_eq!(wire["includedEventIds"], json!([id("11"), id("22")]));
-    }
-
-    fn id(byte: &str) -> String {
-        byte.repeat(32)
-    }
-
-    #[test]
-    fn fold_json_lists_notes_decisions_and_the_waiting_state() {
-        use buzz_core::coding_session_team_transaction::{
-            CodingSessionTeamFoldDecision, CodingSessionTeamFoldNote,
-            CodingSessionTeamFoldWaitingOnDecision,
-        };
-
-        let fold = CodingSessionTeamFold {
-            included_event_ids: vec![id("11"), id("22"), id("33")],
-            excluded: Vec::new(),
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: Vec::new(),
-            notes: vec![CodingSessionTeamFoldNote {
-                event_id: id("22"),
-                author_pubkey: id("aa"),
-                refs: vec![id("11")],
-            }],
-            decisions: vec![CodingSessionTeamFoldDecision {
-                request_event_id: id("33"),
-                held_on: "founder".into(),
-                blocks: vec![id("11")],
-                answered_by: None,
-                answer_event_id: None,
-            }],
-            waiting_on_decision: Some(CodingSessionTeamFoldWaitingOnDecision {
-                request_event_id: id("33"),
-                held_on: "founder".into(),
-            }),
-            canonical_terminal: None,
-        };
-
-        let wire = fold_json(&fold);
-        assert_eq!(
-            wire["notes"],
-            json!([{ "eventId": id("22"), "authorPubkey": id("aa"), "refs": [id("11")] }])
-        );
-        assert_eq!(
-            wire["decisions"],
-            json!([{
-                "requestId": id("33"),
-                "heldOn": "founder",
-                "blocks": [id("11")],
-                "answeredBy": null,
-                "answerId": null,
-            }])
-        );
-        assert_eq!(
-            wire["waitingOnDecision"],
-            json!({ "requestId": id("33"), "heldOn": "founder" })
-        );
-        // Waiting on a person is not a terminal, and the CLI must not print one.
-        assert_eq!(wire["canonicalTerminal"], json!(null));
-
-        let quiet = CodingSessionTeamFold {
-            included_event_ids: Vec::new(),
-            excluded: Vec::new(),
-            conflicts: Vec::new(),
-            assignments: Vec::new(),
-            unseated_reports: Vec::new(),
-            notes: Vec::new(),
-            decisions: Vec::new(),
-            waiting_on_decision: None,
-            canonical_terminal: None,
-        };
-        let quiet_wire = fold_json(&quiet);
-        // Present and empty, never absent: "nothing was said" and "notes were
-        // not disclosed" are different answers.
-        assert_eq!(quiet_wire["notes"], json!([]));
-        assert_eq!(quiet_wire["decisions"], json!([]));
-        assert_eq!(quiet_wire["waitingOnDecision"], json!(null));
-    }
-
-    #[test]
-    fn decode_body_answers_every_type_in_the_closed_vocabulary() {
-        // One arm per wire token: a type the CLI cannot decode is a verb no
-        // seat can publish, however well the core schema supports it.
-        for (transaction_type, body) in [
-            (
-                CodingSessionTeamTransactionType::Note,
-                json!({"text": "said", "refs": []}),
-            ),
-            (
-                CodingSessionTeamTransactionType::DecisionRequest,
-                json!({
-                    "question": "Ship now?",
-                    "options": ["yes"],
-                    "heldOn": "founder",
-                    "blocks": [],
-                    "recommendation": null,
-                }),
-            ),
-            (
-                CodingSessionTeamTransactionType::DecisionAnswer,
-                json!({"requestRef": id("22"), "choice": 0, "note": null}),
-            ),
-        ] {
-            let decoded = decode_body(transaction_type, body).expect("decode body");
-            assert_eq!(decoded.transaction_type(), transaction_type);
-        }
-        assert!(decode_body(
-            CodingSessionTeamTransactionType::Note,
-            json!({"text": "said", "refs": [], "extra": 1})
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn authority_projection_folds_lead_verifier_role_change_and_revoke() {
-        let founder = Keys::generate();
-        let lead = Keys::generate();
-        let worker = Keys::generate();
-        let lead_grant = seat_event(
-            &founder,
-            CodingSessionAuthorityTransitionType::GrantSeat,
-            &lead.public_key().to_hex(),
-            "lead",
-            1,
-            None,
-        );
-        let verifier_grant = seat_event(
-            &lead,
-            CodingSessionAuthorityTransitionType::GrantSeat,
-            &worker.public_key().to_hex(),
-            "verifier",
-            2,
-            Some(&lead_grant),
-        );
-        let role_change = seat_event(
-            &founder,
-            CodingSessionAuthorityTransitionType::GrantSeat,
-            &worker.public_key().to_hex(),
-            "builder",
-            3,
-            Some(&verifier_grant),
-        );
-        let authority = project_authority_chain(
-            &[
-                lead_grant.clone(),
-                verifier_grant.clone(),
-                role_change.clone(),
-            ],
-            CHANNEL,
-            GENESIS,
-            &founder.public_key().to_hex(),
-        )
-        .expect("seat projection");
-        assert!(authority.seats.iter().any(|seat| {
-            seat.actor_pubkey == lead.public_key().to_hex() && seat.role == "lead"
-        }));
-        assert!(authority.seats.iter().any(|seat| {
-            seat.actor_pubkey == worker.public_key().to_hex() && seat.role == "builder"
-        }));
-
-        let revoke = seat_event(
-            &founder,
-            CodingSessionAuthorityTransitionType::RevokeSeat,
-            &worker.public_key().to_hex(),
-            "builder",
-            4,
-            Some(&role_change),
-        );
-        let authority = project_authority_chain(
-            &[lead_grant, verifier_grant, role_change, revoke],
-            CHANNEL,
-            GENESIS,
-            &founder.public_key().to_hex(),
-        )
-        .expect("revoke projection");
-        assert!(!authority
-            .seats
-            .iter()
-            .any(|seat| seat.actor_pubkey == worker.public_key().to_hex()));
-    }
-}
+#[path = "operations_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 #[path = "operations_receipt_tests.rs"]
