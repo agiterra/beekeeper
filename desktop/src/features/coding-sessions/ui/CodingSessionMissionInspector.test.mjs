@@ -1136,6 +1136,10 @@ test("R2 §8: rail section order puts Team third, above Changes", async () => {
   assert.deepEqual(headings, [
     "Current goal",
     "Mission state",
+    // Batch 3 L2: the decision queue is the state plane's companion — a
+    // ruling held on a person is the most actionable thing a rail can carry,
+    // so it sits with the state rather than below four panels of detail.
+    "Decisions",
     "Team",
     "Changes",
     "Files",
@@ -1275,4 +1279,79 @@ test("A3.4: a state with no signed record claims no provenance and never counts 
   } finally {
     view.cleanup();
   }
+});
+
+// ── Batch 3 L2.6: the redaction vault's marker is not a path ────────────────
+
+const PRIVATE_CONTEXT_MARKER = `[elided private context: 183 bytes, sha256:${"ab".repeat(32)}]`;
+
+test("L2.6: a withheld path reads as a sentence, and the digest is not re-surfaced", async () => {
+  const model = deriveCodingSessionMissionInspectorModel(
+    input({
+      reports: [
+        {
+          sourceEventId: "e".repeat(64),
+          authorLabel: "Bob",
+          summary: "Lane W1 done.",
+          assignmentRef: "a".repeat(64),
+          branch: null,
+          baseSha: null,
+          headSha: null,
+          files: [PRIVATE_CONTEXT_MARKER],
+          tests: [],
+        },
+      ],
+    }),
+  );
+  const view = await renderInspector({
+    model,
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  // The marker itself never reaches the reader as content.
+  assert.equal(view.queryByText(PRIVATE_CONTEXT_MARKER), null);
+  assert.ok(view.getByTestId("mission-file-private-context"));
+  assert.ok(view.getByText(/paths private to the seat's host/));
+  // Critique A2: the bytes and the digest are NOT re-surfaced in Mission — a
+  // redaction disclosed as a redaction is the whole point.
+  assert.equal(view.queryByText("183"), null);
+  assert.equal(view.queryByText("ab".repeat(32)), null);
+  view.cleanup();
+});
+
+// ── Critique A1: a refused 44227 is not silence ─────────────────────────────
+
+test("A1: a goal this surface refused says so, and names what disagreed", async () => {
+  for (const [disagreements, named] of [
+    [["founder"], "founder"],
+    [["session"], "session"],
+  ]) {
+    const view = await renderInspector({
+      model: deriveCodingSessionMissionInspectorModel(
+        input({ goal: { kind: "rejected", disagreements } }),
+      ),
+      variant: "panel",
+      focusedExecutionKey: null,
+    });
+    assert.ok(view.getByTestId("mission-goal-rejected"));
+    assert.ok(
+      view.getByText(
+        `A goal is published on this channel but it names a different ${named}. This surface will not show a goal it cannot bind to this mission.`,
+      ),
+    );
+    // The one sentence that would be a lie here.
+    assert.equal(view.queryByText("No accepted mission goal published."), null);
+    view.cleanup();
+  }
+});
+
+test("A1: the resolved-and-absent case is untouched", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  assert.ok(view.getByText("No accepted mission goal published."));
+  assert.equal(view.queryByTestId("mission-goal-rejected"), null);
+  view.cleanup();
 });

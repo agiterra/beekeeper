@@ -56,7 +56,10 @@ test("U-T6: the inspector variant is the edit control and nothing else", () => {
     FOUNDER,
   );
   assert.match(withGoal, /coding-session-goal-edit-inspector/);
-  assert.match(withGoal, />Edit goal</);
+  // Finding 23: the control says which of the two things it does, so a goal
+  // that is already published never sits under a button reading `Set goal`.
+  assert.match(withGoal, />Change goal</);
+  assert.doesNotMatch(withGoal, />Set goal</);
   assert.doesNotMatch(withGoal, /Goal:/);
   assert.doesNotMatch(withGoal, /Ship the portable team loop/);
   assert.doesNotMatch(withGoal, /coding-session-goal-workspace/);

@@ -160,6 +160,16 @@ function governedMissionEvents(
      * with `Element type is invalid`.
      */
     withDecisionRequest?: boolean;
+    /**
+     * Add the founder's signed answer to that request, plus a second request
+     * the mission is still waiting on.
+     *
+     * Batch 3 L2: `decisions` and `waitingOnDecision` have been on the wire
+     * since item 105 and nothing rendered them, so no fixture ever produced an
+     * answered ruling or a mission held on a person. Off by default, for the
+     * same reason `withDecisionRequest` is.
+     */
+    withDecisionAnswer?: boolean;
   } = {},
 ): {
   events: RelayEvent[];
@@ -302,7 +312,7 @@ function governedMissionEvents(
     RELAY_SECRET,
   ) as unknown as RelayEvent;
   const transaction = (
-    type: "assignment" | "report" | "decision.request",
+    type: "assignment" | "report" | "decision.request" | "decision.answer",
     body: Record<string, unknown>,
     secret: Uint8Array,
     createdAt: number,
@@ -387,10 +397,44 @@ function governedMissionEvents(
         stepAt(10),
       )
     : null;
+  // The founder's ruling on that request, and a second one still open — the
+  // two states §1g's queue has to tell apart. The second one `blocks` the open
+  // assignment, so the row can say what it is holding up as well as who holds
+  // it; the first blocks nothing, which is live run 2's own shape.
+  const decisionAnswer =
+    decisionRequest && options.withDecisionAnswer
+      ? transaction(
+          "decision.answer",
+          {
+            requestRef: decisionRequest.id,
+            choice: 0,
+            note: null,
+          },
+          FOUNDER_SECRET,
+          stepAt(11),
+        )
+      : null;
+  const openDecisionRequest =
+    decisionRequest && options.withDecisionAnswer
+      ? transaction(
+          "decision.request",
+          {
+            question: "Ship the verifier's gate in this batch, or the next?",
+            options: ["This batch", "The next batch"],
+            heldOn: "founder",
+            blocks: [assignment.id],
+            recommendation: null,
+          },
+          BUILDER_ACTOR_SECRET,
+          stepAt(12),
+        )
+      : null;
   const transactions = [
     assignment,
     report,
     ...(decisionRequest ? [decisionRequest] : []),
+    ...(decisionAnswer ? [decisionAnswer] : []),
+    ...(openDecisionRequest ? [openDecisionRequest] : []),
   ];
   const inputEventIds = transactions.map((event) => event.id).sort();
   return {
@@ -442,14 +486,27 @@ function governedMissionEvents(
               requestId: decisionRequest.id,
               heldOn: "founder",
               blocks: [],
-              answeredBy: null,
-              answerId: null,
+              answeredBy: decisionAnswer ? FOUNDER : null,
+              answerId: decisionAnswer ? decisionAnswer.id : null,
             },
+            ...(openDecisionRequest
+              ? [
+                  {
+                    requestId: openDecisionRequest.id,
+                    heldOn: "founder",
+                    blocks: [assignment.id],
+                    answeredBy: null,
+                    answerId: null,
+                  },
+                ]
+              : []),
           ]
         : [],
-      waitingOnDecision: decisionRequest
-        ? { requestId: decisionRequest.id, heldOn: "founder" }
-        : null,
+      waitingOnDecision: openDecisionRequest
+        ? { requestId: openDecisionRequest.id, heldOn: "founder" }
+        : decisionRequest && !decisionAnswer
+          ? { requestId: decisionRequest.id, heldOn: "founder" }
+          : null,
       canonicalTerminal: null,
     },
   };
@@ -1007,6 +1064,8 @@ async function openMockApp(
      * test disclosure.
      */
     asFounder?: boolean;
+    /** Canonical fold answer for kind:44245, when the scenario needs one. */
+    policyFoldResponse?: Record<string, unknown>;
   },
 ) {
   await page.emulateMedia({ reducedMotion: input.reducedMotion });
@@ -1033,6 +1092,7 @@ async function openMockApp(
     },
   );
   await installMockBridge(page, {
+    codingSessionPolicyFoldResponse: input.policyFoldResponse,
     codingSessionTeamFoldResponse:
       input.foldResponse ?? GOVERNED_MISSION.foldResponse,
     globalAgentConfig: {
@@ -1779,5 +1839,249 @@ test("A4: the Route rail maps the session, and folds to a scrubber below its wid
   // folded for rather than a 40 px sliver with no context.
   await page.getByTestId("coding-session-umbrella-workspace").screenshot({
     path: `${SCREENSHOTS}/route-narrow.png`,
+  });
+});
+
+// ── Batch 3, lane L2 ────────────────────────────────────────────────────────
+
+/**
+ * A mission carrying one answered ruling, one open ruling, and the founder's
+ * own wake for the answer.
+ *
+ * Live run 2 is the source for every shape here: an identifier-only wake in a
+ * "You" bubble (finding 17), a founder-held request whose `blocks` is empty
+ * (finding 16), and a second request the mission is actually waiting on.
+ */
+const DECISION_MISSION = governedMissionEvents({
+  withDecisionRequest: true,
+  withDecisionAnswer: true,
+});
+
+/** One signed 44244 of the given `cstx-type` from a fixture's events. */
+function transactionOfType(
+  fixture: typeof GOVERNED_MISSION,
+  type: string,
+): RelayEvent {
+  const found = fixture.events.filter(
+    (event) =>
+      event.kind === KIND_CODING_SESSION_TEAM_TRANSACTION &&
+      event.tags.some((tag) => tag[0] === "cstx-type" && tag[1] === type),
+  );
+  if (found.length === 0) throw new Error(`fixture has no ${type}`);
+  return found[0];
+}
+
+/**
+ * The founder's wake for an operation, as a signed transcript prompt.
+ *
+ * Byte-identical to what the CLI put on the wire at 10:42 in live run 2: the
+ * whole turn text is the pointer, and the operator stamp is the founder's own
+ * key — which is why it rendered as raw JSON in a "You" bubble.
+ */
+function wakePromptTranscript(input: {
+  createdAt: number;
+  operationId: string;
+  type: string;
+}): RelayEvent {
+  return signedTranscript({
+    createdAt: input.createdAt,
+    eventSeq: 4,
+    item: {
+      kind: "user_prompt",
+      content: JSON.stringify({
+        operationId: input.operationId,
+        type: input.type,
+      }),
+      operatorPubkey: FOUNDER,
+    },
+    secret: BUILDER_SECRET,
+    target: BUILDER_TARGET,
+    turnId: "builder-turn",
+  });
+}
+
+/** A folded policy: one record in force, one stranger's record refused. */
+function policyFoldResponse(): Record<string, unknown> {
+  return {
+    schema: "buzz-coding-session-policy-fold-adapter/v1",
+    implementation: "buzz-core",
+    selected: {
+      eventId: "a5956d50".repeat(8),
+      authorPubkey: FOUNDER,
+      authorIsFounder: true,
+      createdAt: GENESIS_CREATED_AT,
+      record: {
+        sessionRef: SESSION_REF,
+        genesisRef: "ce5d87ed".repeat(8),
+        posture: "ship",
+        budget: {
+          turns: 40,
+          tokensPerSeat: null,
+          tokensPerSession: null,
+          costUsdPerSession: 25,
+          contextTier: null,
+        },
+        attention: "decisions",
+        gates: null,
+        bench: null,
+        irreversible: null,
+        stop: null,
+        setsAnyPolicy: true,
+      },
+    },
+    excluded: [
+      {
+        eventId: "c3".repeat(32),
+        authorPubkey: VERIFIER_ACTOR,
+        createdAt: GENESIS_CREATED_AT + 5,
+        code: "unauthorized",
+        reason:
+          "signed by an identity that could not steer this umbrella when it was published",
+      },
+    ],
+    enforcement:
+      "a published policy is a stated intention, not an enforced limit: only budget.turns is enforced (at the provider's turn gate); every other field is read and shown, never counted",
+  };
+}
+
+test("L2: an identifier-only wake reads as one line in both lenses", async ({
+  page,
+}) => {
+  const answer = transactionOfType(DECISION_MISSION, "decision.answer");
+  const request = transactionOfType(DECISION_MISSION, "decision.request");
+  await openMockApp(page, {
+    asFounder: true,
+    foldResponse: DECISION_MISSION.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, DECISION_MISSION, "running", (now) => [
+    wakePromptTranscript({
+      createdAt: now - 27,
+      operationId: answer.id,
+      type: "decision.answer",
+    }),
+  ]);
+
+  // Conversation first — the lens finding 17 was reported against. It holds no
+  // fold, so §1f's unresolved line is the honest reading; what it is NOT is
+  // the pointer's own JSON.
+  const bubble = page.getByTestId("coding-session-user-message-wake");
+  await expect(bubble).toHaveText(
+    `You sent a wake for operation ${answer.id.slice(0, 8)} — this lens holds no session records; open Mission to read it.`,
+  );
+  await expect(page.getByText(`{"operationId"`)).toHaveCount(0);
+  // The stream is long; without this the shot is of whatever the scroller
+  // settled on rather than of the row the test is about.
+  // REVIEW-L2 F14: this scenario deliberately writes **no** PNG.
+  //
+  // Three captures were tried — the whole workspace, the bubble's row, and the
+  // line element itself, scrolled to centre and then to top. Every one came
+  // back with a floating element over the subject: this fixture's stream keeps
+  // a sticky provenance header at the top of the scroller and a provider
+  // notice plus the composer dock at the bottom, and `locator.screenshot()`
+  // captures the page region, not the element in isolation. A PNG whose
+  // filename claims a line it does not contain is worse than no PNG, so the
+  // evidence for this scenario is the assertion above and the masked DOM
+  // dumps in `batch3/baseline-1dd98e876/`, which carry the rendered line
+  // verbatim.
+
+  // Mission holds the fold, so the same module resolves the operation and the
+  // line names the **request**, never the answer's own id.
+  await page.getByTestId("coding-session-lens-mission").click();
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toBeVisible({ timeout: 15_000 });
+  const missionBubble = page.getByTestId("coding-session-user-message-wake");
+  await expect(missionBubble).toHaveText(
+    `You answered decision ${request.id.slice(0, 8)}: Land the inspector now`,
+  );
+  // No PNG here either, for the reason given above.
+});
+
+test("L2: the rail says who is waiting and lists every ruling", async ({
+  page,
+}) => {
+  const request = transactionOfType(DECISION_MISSION, "decision.request");
+  const assignment = transactionOfType(DECISION_MISSION, "assignment");
+  await openMockApp(page, {
+    asFounder: true,
+    foldResponse: DECISION_MISSION.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, DECISION_MISSION);
+  await page.getByTestId("coding-session-lens-mission").click();
+  const inspector = page.getByTestId("coding-session-mission-inspector");
+  await expect(inspector).toBeVisible({ timeout: 15_000 });
+
+  // No lead seat holds an open turn in this fixture, so waiting IS the state.
+  const state = page.getByTestId("mission-state-summary");
+  await expect(state).toHaveAttribute("data-mission-waiting", "state-line");
+  await expect(state).toContainText("Waiting on the founder");
+
+  const rows = page.getByTestId("mission-decision-row");
+  await expect(rows).toHaveCount(2);
+  // Open first, then the answered one.
+  await expect(rows.first()).toHaveAttribute("data-decision-state", "open");
+  await expect(rows.first()).toContainText("Open · held on the founder");
+  await expect(rows.first()).toContainText(
+    `holds up 1 assignment: ${assignment.id.slice(0, 8)}`,
+  );
+  await expect(rows.last()).toHaveAttribute("data-decision-state", "answered");
+  await expect(rows.last()).toContainText("Answered by the founder");
+  // `blocks: []` is a real answer from the fold, never a blank.
+  await expect(rows.last()).toContainText("holds up no assignment yet");
+  await expect(rows.last()).toContainText(request.id.slice(0, 8));
+  // The rail scrolls, so the shot is of the section itself — a panel-sized
+  // capture put the queue below the fold and showed nothing it is about.
+  const queueSection = page.locator(
+    'section:has([data-testid="mission-decision-queue"])',
+  );
+  await queueSection.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await queueSection.screenshot({
+    path: `${SCREENSHOTS}/decision-queue.png`,
+  });
+});
+
+test("L2: the Context tab renders the folded policy and what it refused", async ({
+  page,
+}) => {
+  await openMockApp(page, {
+    asFounder: true,
+    foldResponse: DECISION_MISSION.foldResponse,
+    policyFoldResponse: policyFoldResponse(),
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, DECISION_MISSION);
+  await page.getByTestId("coding-session-lens-mission").click();
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("coding-session-surface-tab-mission-context").click();
+  const policy = page.getByTestId("mission-session-policy");
+  await expect(policy).toBeVisible({ timeout: 15_000 });
+  await expect(policy).toHaveAttribute("data-policy-state", "record");
+  await expect(policy).toContainText("only budget.turns is enforced");
+  // The one enforced field says so; a cost ceiling nothing counts does not,
+  // and gets no bar of any kind.
+  await expect(
+    policy.locator('[data-policy-field="budget.turns"]'),
+  ).toHaveAttribute("data-policy-enforced", "yes");
+  await expect(
+    policy.locator('[data-policy-field="budget.costUsdPerSession"]'),
+  ).toHaveAttribute("data-policy-enforced", "no");
+  await expect(
+    page.getByTestId("mission-session-policy-refused"),
+  ).toContainText("unauthorized");
+  const policySection = page.locator(
+    'section:has([data-testid="mission-session-policy"])',
+  );
+  await policySection.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await policySection.screenshot({
+    path: `${SCREENSHOTS}/context-session-policy.png`,
   });
 });

@@ -164,6 +164,8 @@ type MockBridgeOptions = {
   relaySelf?: string | null;
   /** Canonical buzz-core adapter response for Mission transaction E2E. */
   codingSessionTeamFoldResponse?: Record<string, unknown>;
+  /** Canonical buzz-core adapter response for the session-policy fold. */
+  codingSessionPolicyFoldResponse?: Record<string, unknown>;
   /** Native-like huddle state seeded from authoritative role-bearing membership. */
   huddle?: MockHuddleSeed;
   /** Builderlab account returned by hosted-community onboarding. Null/omitted = signed out. */

@@ -536,6 +536,8 @@ type E2eConfig = {
     relaySelfDelayMs?: number;
     /** Canonical buzz-core adapter response for Mission transaction E2E. */
     codingSessionTeamFoldResponse?: Record<string, unknown>;
+    /** Canonical buzz-core adapter response for the session-policy fold. */
+    codingSessionPolicyFoldResponse?: Record<string, unknown>;
     /** Delay (ms) applied to `start_pairing` so pairing loading UI is observable. */
     pairingStartDelayMs?: number;
     /**
@@ -1632,6 +1634,7 @@ let mockIdentityLostCleared = false;
 // Same pattern for `mock.identityLocked`.
 let mockIdentityLockedCleared = false;
 let mockCodingSessionTeamFoldResponse: Record<string, unknown> | null = null;
+let mockCodingSessionPolicyFoldResponse: Record<string, unknown> | null = null;
 
 // ── get_event defer/release seam ────────────────────────────────────────────
 // When `window.__BUZZ_E2E_DEFER_GET_EVENT__` is set to a target event ID,
@@ -10617,6 +10620,10 @@ export function maybeInstallE2eTauriMocks() {
   mockCodingSessionTeamFoldResponse = config.mock?.codingSessionTeamFoldResponse
     ? structuredClone(config.mock.codingSessionTeamFoldResponse)
     : null;
+  mockCodingSessionPolicyFoldResponse = config.mock
+    ?.codingSessionPolicyFoldResponse
+    ? structuredClone(config.mock.codingSessionPolicyFoldResponse)
+    : null;
 
   mockClosedChannelLiveSubscription = false;
   mockWebsocketUnavailable = false;
@@ -13915,6 +13922,15 @@ export function maybeInstallE2eTauriMocks() {
         const response = mockCodingSessionTeamFoldResponse;
         if (!response) {
           throw new Error("mock Mission fold response is not configured");
+        }
+        return structuredClone(response);
+      }
+      case "fold_coding_session_policies_command": {
+        const response = mockCodingSessionPolicyFoldResponse;
+        if (!response) {
+          throw new Error(
+            "mock session-policy fold response is not configured",
+          );
         }
         return structuredClone(response);
       }

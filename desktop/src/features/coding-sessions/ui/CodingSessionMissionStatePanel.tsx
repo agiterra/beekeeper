@@ -1,8 +1,10 @@
 import { Check, Circle, CircleDot, OctagonAlert } from "lucide-react";
 
-import type {
-  CodingSessionMissionCanonicalStep,
-  CodingSessionMissionStateInput,
+import {
+  codingSessionMissionAskedRelative,
+  type CodingSessionMissionCanonicalStep,
+  type CodingSessionMissionStateInput,
+  type CodingSessionMissionWaitingModel,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import {
   missionRowBodyClass,
@@ -70,18 +72,66 @@ export function codingSessionMissionPhase(
  * answer is "blocked" — what a person has to do about it.
  */
 export function CodingSessionMissionStatePanel({
+  nowMs = Date.now(),
   state,
+  waiting = null,
 }: {
+  /** The clock, read once at render — never a timer (I1). */
+  nowMs?: number;
   state: CodingSessionMissionStateInput;
+  /**
+   * The fold's waiting-on-a-person fact, already qualified by this surface's
+   * own liveness (`isStateLine`). Null — the default — leaves this panel
+   * byte-identical to what it rendered before the queue existed.
+   */
+  waiting?: CodingSessionMissionWaitingModel | null;
 }) {
   const label = STATE_LABEL[state.kind];
   const phase = codingSessionMissionPhase(state);
   const phaseWord = phase ?? "phase not established";
+  const asked =
+    waiting === null
+      ? null
+      : codingSessionMissionAskedRelative(waiting.askedAtMs, nowMs);
+  // §1g: with a timestamp the timeline already shows, append the age; with
+  // none, append nothing — never `0m`.
+  const waitingLine =
+    waiting === null
+      ? null
+      : asked === null
+        ? waiting.line
+        : `${waiting.line} · asked ${asked}`;
+  const placement = waiting?.placement ?? null;
   return (
-    <div data-mission-state={state.kind} data-testid="mission-state-summary">
+    <div
+      data-mission-state={state.kind}
+      data-mission-waiting={placement ?? undefined}
+      data-testid="mission-state-summary"
+    >
       <p className="text-sm font-medium">
-        {label} <span className="text-muted-foreground">· {phaseWord}</span>
+        {/* Three placements, one rule: the waiting fact never removes a fact.
+            With no open lead turn a running mission is *only* waiting, so
+            waiting is the state. With the lead working it is a second fact
+            beside the state. And a mission that has **ended** does not stop
+            having ended because somebody owes a ruling (F4) — there the
+            terminal word keeps the line and the waiting fact is appended to
+            it. Saying only one of two true things is how a rail lies by
+            omission. */}
+        {placement === "state-line" && waitingLine !== null
+          ? waitingLine
+          : placement === "appended" && waitingLine !== null
+            ? `${label} · ${lowerFirst(waitingLine)}`
+            : label}{" "}
+        <span className="text-muted-foreground">· {phaseWord}</span>
       </p>
+      {placement === "beside" && waitingLine !== null ? (
+        <p
+          className={cn(missionRowBodyClass(), "mt-1 font-medium")}
+          data-testid="mission-state-waiting"
+        >
+          {waitingLine}
+        </p>
+      ) : null}
       <PhaseIndicator current={phase} label={label} />
       {state.kind === "blocked" ? (
         <div
@@ -152,6 +202,11 @@ export function CodingSessionMissionStatePanel({
       ) : null}
     </div>
   );
+}
+
+/** `Waiting on …` → `waiting on …`, so it reads as a clause after the state word. */
+function lowerFirst(value: string): string {
+  return value.length === 0 ? value : value[0].toLowerCase() + value.slice(1);
 }
 
 function PhaseIndicator({

@@ -13,6 +13,14 @@ import {
   deriveContextFacts,
   deriveFiles,
 } from "./codingSessionMissionInspectorBounds";
+import type { CodingSessionGoalDisagreement } from "./codingSessionMissionGoal";
+import {
+  deriveDecisions,
+  type CodingSessionMissionDecisionInput,
+  type CodingSessionMissionDecisionModel,
+  type CodingSessionMissionWaitingModel,
+  type CodingSessionMissionWaitingOnDecisionInput,
+} from "./codingSessionMissionDecisions";
 
 export {
   addTruncation,
@@ -35,6 +43,17 @@ import { MISSION_INSPECTOR_LIMITS } from "./codingSessionMissionInspectorBounds"
 
 export type CodingSessionMissionGoalInput =
   | { kind: "absent" }
+  /**
+   * A 44227 exists for this channel and this surface refused it on identity.
+   *
+   * Critique A1: rendering this as `absent` makes "nobody set a goal" and "a
+   * goal is here and we would not bind it" the same sentence, which is a claim
+   * about the wire made from the outcome of a local join.
+   */
+  | {
+      kind: "rejected";
+      disagreements: readonly CodingSessionGoalDisagreement[];
+    }
   | {
       kind: "available";
       sourceEventId: string;
@@ -192,6 +211,34 @@ export type CodingSessionMissionInspectorInput = {
   participants: readonly CodingSessionParticipantPresence[];
   contextLoads: ReadonlyMap<string, CodingSessionContextLoad | null>;
   missionState: CodingSessionMissionStateInput;
+  /**
+   * The fold's `decisions[]`. **Absent means no fold ran** — which is
+   * `unknown`, not "nothing was asked" — so the queue can say which.
+   */
+  decisions?: readonly CodingSessionMissionDecisionInput[];
+  /** The fold's `waitingOnDecision`; null is a folded "nothing is waiting". */
+  waitingOnDecision?: CodingSessionMissionWaitingOnDecisionInput | null;
+  /**
+   * Whether the lead seat has an open turn right now.
+   *
+   * The one input to the waiting state this surface owns rather than reads:
+   * liveness is a fact about executions, which the fold has never seen.
+   */
+  leadHasOpenTurn?: boolean;
+  /** Actor pubkey → display name, from the surface's own resolver. */
+  resolveActorLabel?: (pubkey: string) => string | null;
+  /**
+   * The viewer's own key, so a ruling held on them reads `you` rather than
+   * eight characters of their own pubkey (F12).
+   */
+  currentUserPubkey?: string | null;
+  /**
+   * The umbrella's founder key, so an answer signed by it reads `the founder`
+   * — the same words the fold's own `heldOn: "founder"` produces. Without it
+   * the founder's answer would read as eight hex characters of their key,
+   * which is true and useless.
+   */
+  founderPubkey?: string | null;
   usage: CodingSessionMissionUsageInput | null;
   rejectedEventCount: number | null;
   rejectionsTruncated: boolean;
@@ -201,6 +248,10 @@ export type CodingSessionMissionInspectorInput = {
 
 export type CodingSessionMissionGoalModel =
   | { kind: "absent" }
+  | {
+      kind: "rejected";
+      disagreements: readonly CodingSessionGoalDisagreement[];
+    }
   | {
       kind: "available";
       sourceEventId: string;
@@ -279,6 +330,16 @@ export type CodingSessionMissionInspectorModel = {
   >;
   contextFacts: CodingSessionMissionContextFact[];
   missionState: CodingSessionMissionStateInput;
+  /** The decision queue, bounded; ordered open-first, newest asked first. */
+  decisions: CodingSessionMissionDecisionModel[];
+  /** Rows the bound dropped — disclosed by the queue, never silent (I10). */
+  decisionsTruncated: number;
+  /** The sentence for those rows, naming what was actually dropped (F13). */
+  decisionsTruncatedNotice: string | null;
+  /** False when no fold supplied `decisions`: unknown, not empty (I9). */
+  decisionsKnown: boolean;
+  /** The waiting-on-a-person fact, or null when nothing is waiting. */
+  waiting: CodingSessionMissionWaitingModel | null;
   usage: CodingSessionMissionUsageInput | null;
   integrity: {
     rejectedEventCount: number | null;
@@ -398,6 +459,7 @@ export function deriveCodingSessionMissionInspectorModel(
       truncations,
     ),
     missionState: deriveMissionState(input.missionState, truncations),
+    ...deriveDecisions(input),
     usage: hasUsage(input.usage) ? { ...input.usage } : null,
     integrity: {
       rejectedEventCount:
@@ -747,3 +809,25 @@ function hasUsage(
     ].some((value) => value !== null)
   );
 }
+
+export {
+  codingSessionMissionAskedRelative,
+  MAX_CODING_SESSION_MISSION_DECISION_ROWS,
+} from "./codingSessionMissionDecisions";
+export type {
+  CodingSessionMissionDecisionInput,
+  CodingSessionMissionDecisionModel,
+  CodingSessionMissionWaitingModel,
+  CodingSessionMissionWaitingOnDecisionInput,
+} from "./codingSessionMissionDecisions";
+export {
+  codingSessionGoalRejectionSentence,
+  codingSessionPrivateContextLine,
+  isCodingSessionPrivateContextMarker,
+  selectCodingSessionUmbrellaGoal,
+} from "./codingSessionMissionGoal";
+export type {
+  CodingSessionGoalDisagreement,
+  CodingSessionGoalLike,
+  CodingSessionUmbrellaGoalSelection,
+} from "./codingSessionMissionGoal";

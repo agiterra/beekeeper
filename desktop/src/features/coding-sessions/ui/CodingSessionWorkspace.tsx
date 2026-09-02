@@ -27,10 +27,8 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionActorNameResolver } from "@/features/coding-sessions/lib/useCodingSessionActorNames";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
-import {
-  codingSessionGoalKey,
-  useCodingSessionGoals,
-} from "@/features/coding-sessions/useCodingSessionGoals";
+import { useCodingSessionGoals } from "@/features/coding-sessions/useCodingSessionGoals";
+import { selectCodingSessionUmbrellaGoal } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { codingSessionClosureKey } from "@/features/coding-sessions/lib/codingSessionClosure";
@@ -184,16 +182,18 @@ export function CodingSessionWorkspace({
 
   const isMember = channel?.isMember ?? false;
   const umbrella = resolution.umbrella;
-  const goal =
-    umbrella.sessionRef && umbrella.founderPubkey
-      ? (goalSnapshot.goals.get(
-          codingSessionGoalKey(
-            channelId,
-            umbrella.sessionRef,
-            umbrella.founderPubkey,
-          ),
-        ) ?? null)
-      : null;
+  // Finding 23: this used to be an exact-key `Map.get`, and a published goal
+  // that any one of the three keys spelled differently simply vanished — the
+  // Inspector said `No accepted mission goal published` over a goal that was
+  // on the wire. One case-folded selection, and a foreign-signed goal is its
+  // own answer rather than silence.
+  const goalSelection = selectCodingSessionUmbrellaGoal({
+    channelId,
+    founderPubkey: umbrella.founderPubkey,
+    goals: goalSnapshot.goals.values(),
+    sessionRef: umbrella.sessionRef,
+  });
+  const goal = goalSelection.kind === "available" ? goalSelection.goal : null;
   const sessionName =
     umbrella.sessionRef && umbrella.founderPubkey
       ? (nameSnapshot.names.get(

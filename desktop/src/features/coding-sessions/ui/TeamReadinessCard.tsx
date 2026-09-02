@@ -20,6 +20,7 @@ import { Input } from "@/shared/ui/input";
 import {
   groupTeamReadinessFacts,
   teamReadinessLaunchGate,
+  teamReadinessPrepareScope,
 } from "../lib/teamReadinessModel";
 import type { TeamReadinessPrepareStep } from "../lib/teamReadinessPrepare";
 
@@ -73,12 +74,14 @@ export function TeamReadinessCard(props: {
       : firstReady
         ? "ready"
         : "blocked";
-  const selected = new Set(props.selectedRoles);
   const allPacks = props.scan?.packs ?? [];
-  const foundRoles = new Set(allPacks.map((pack) => pack.role));
-  const missingRoles = props.selectedRoles.filter(
-    (role) => !foundRoles.has(role),
-  );
+  // Finding 15: the launch's own seats are the question; every other pack is
+  // refreshed and disclosed in one line, not turned into a field.
+  const prepareScope = teamReadinessPrepareScope({
+    packs: allPacks,
+    selectedRoles: props.selectedRoles,
+  });
+  const missingRoles = prepareScope.missingRoles;
 
   return (
     <section
@@ -168,17 +171,23 @@ export function TeamReadinessCard(props: {
           className="flex flex-col gap-3 rounded-md border border-border bg-background/60 p-3"
           data-testid="team-readiness-role-confirmation"
         >
-          <legend className="sr-only">Confirm every refreshed role name</legend>
+          <legend className="sr-only">Confirm the names for this launch</legend>
           <div>
             <p className="text-sm font-medium">
-              Confirm every refreshed role name
+              Confirm the names for this launch
             </p>
             <p className="text-2xs text-muted-foreground">
-              Launch roles: {props.selectedRoles.join(", ") || "none"}. The
-              installer refreshes every discovered pack in{" "}
-              {props.scan.directory}, so every name below is sent for
-              confirmation.
+              Launch roles: {props.selectedRoles.join(", ") || "none"}, from{" "}
+              {props.scan.directory}.
             </p>
+            {prepareScope.otherLine ? (
+              <p
+                className="text-2xs text-muted-foreground"
+                data-testid="team-readiness-other-packs"
+              >
+                {prepareScope.otherLine}
+              </p>
+            ) : null}
           </div>
           {missingRoles.length > 0 ? (
             <p className="text-sm text-destructive" role="alert">
@@ -189,9 +198,9 @@ export function TeamReadinessCard(props: {
               role-pack folder, then scan again.
             </p>
           ) : null}
-          {allPacks.length > 0 ? (
+          {prepareScope.confirm.length > 0 ? (
             <div className="grid gap-2 sm:grid-cols-2">
-              {allPacks.map((pack) => (
+              {prepareScope.confirm.map((pack) => (
                 <label
                   className="flex flex-col gap-1 text-xs"
                   htmlFor={`team-readiness-name-${pack.role}`}
@@ -200,9 +209,7 @@ export function TeamReadinessCard(props: {
                   <span className="font-medium capitalize">
                     {pack.role}
                     <span className="ml-1 font-normal text-muted-foreground">
-                      {selected.has(pack.role)
-                        ? "· selected launch role"
-                        : "· also refreshed"}
+                      · selected launch role
                     </span>
                   </span>
                   <Input
@@ -219,8 +226,9 @@ export function TeamReadinessCard(props: {
             </div>
           ) : (
             <p className="text-sm text-destructive" role="alert">
-              No role packs were discovered. Add role packs to this project,
-              then scan again before preparing.
+              {allPacks.length === 0
+                ? "No role packs were discovered. Add role packs to this project, then scan again before preparing."
+                : "This launch names no role whose pack is in this folder. Pick the launch's roles, then scan again before preparing."}
             </p>
           )}
           <p className="text-2xs text-muted-foreground">
@@ -242,7 +250,7 @@ export function TeamReadinessCard(props: {
                 props.preparing ||
                 props.externalBusy ||
                 missingRoles.length > 0 ||
-                allPacks.length === 0
+                prepareScope.confirm.length === 0
               }
               onClick={props.onConfirmPrepare}
               type="button"

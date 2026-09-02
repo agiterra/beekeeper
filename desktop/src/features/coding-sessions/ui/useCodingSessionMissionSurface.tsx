@@ -9,6 +9,7 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import {
   deriveCodingSessionMissionInspectorModel,
+  selectCodingSessionUmbrellaGoal,
   type CodingSessionMissionInspectorInput,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { mergeCodingSessionMissionWorkspaceInput } from "@/features/coding-sessions/lib/codingSessionMissionWorkspaceModel";
@@ -19,8 +20,14 @@ import type { CodingSessionObservedChanges } from "@/features/coding-sessions/li
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { CodingSessionActorNameResolver } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { CODING_SESSION_UNKNOWN_ACTOR } from "@/features/coding-sessions/lib/codingSessionTurnByline";
+import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { useCodingSessionMissionEvidence } from "@/features/coding-sessions/lib/useCodingSessionMissionEvidence";
+import {
+  buildCodingSessionWakeOperationIndex,
+  type CodingSessionWakeOperationIndex,
+} from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import { useCodingSessionSessionPolicy } from "@/features/coding-sessions/hooks/useCodingSessionSessionPolicy";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import { shouldAutoOpenAgentsSurface } from "./CodingSessionUmbrellaWorkspaceModel";
@@ -38,6 +45,13 @@ export type CodingSessionMissionSurfaceResult = {
   transactions: readonly CodingSessionMissionTransactionInput[];
   /** Report ids the Rust fold listed under `unseatedReports`. */
   unseatedReportEventIds: readonly string[];
+  /**
+   * The fold's operations, keyed by event id, for the wake reading (§1f).
+   *
+   * Built from the same fold rows the stream renders and nothing else, so a
+   * wake line can never say more than the signed record does.
+   */
+  wakeOperations: CodingSessionWakeOperationIndex;
 };
 
 // U-F8: shared frozen empties. Returning fresh `[]` literals made
@@ -115,13 +129,27 @@ export function useCodingSessionMissionSurface(input: {
     ],
   );
   const evidence = useCodingSessionMissionEvidence(scope);
+  // Item 107's owed reader. Scoped to the same channel/session/genesis/founder
+  // the fold uses, and read only while Mission is open — a one-shot read with
+  // a refresh, never a poll (I1).
+  const policy = useCodingSessionSessionPolicy(scope);
+  // The same case-folded selection the workspace made, applied again here so
+  // this surface trusts a goal for the reasons it can check rather than on
+  // three exact-equality comparisons that finding 23 showed can each miss.
+  const goalSelection = selectCodingSessionUmbrellaGoal({
+    channelId: input.channelId,
+    founderPubkey: input.umbrella.founderPubkey,
+    goals: input.goal === null ? [] : [input.goal],
+    sessionRef: input.umbrella.sessionRef,
+  });
   const trustedGoal =
-    input.goal !== null &&
-    input.goal.channelId === input.channelId &&
-    input.goal.sessionRef === input.umbrella.sessionRef &&
-    input.goal.founderPubkey === input.umbrella.founderPubkey
-      ? input.goal
-      : null;
+    goalSelection.kind === "available" ? goalSelection.goal : null;
+  // F6: `disagreements` is rebuilt by every call and is a `useMemo` dependency
+  // below, so a fresh array meant `inspectorInput` — and with it the entire
+  // Inspector model — re-derived on **every** render of every Mission surface.
+  // The content-equality cache is the repo's own answer to exactly this trap
+  // (AGENTS.md § "React render perf").
+  const goalDisagreements = useStableArrayShallow(goalSelection.disagreements);
   const contextLoads = React.useMemo(
     () => new Map(input.contextLoads.map((entry) => [entry.key, entry.load])),
     [input.contextLoads],
@@ -162,9 +190,21 @@ export function useCodingSessionMissionSurface(input: {
     input.participants,
     input.umbrella.executions,
   ]);
-  const inspectorInput = React.useMemo(
+  // Only this surface knows whether the lead is mid-turn, and that is the one
+  // qualifier the fold's waiting state needs: a mission whose lead is working
+  // is waiting *and* running, and the rail says both (finding 16's ruling).
+  const leadHasOpenTurn = React.useMemo(
     () =>
-      mergeCodingSessionMissionWorkspaceInput({
+      input.participants.some(
+        (participant) =>
+          participant.role?.trim().toLowerCase() === "lead" &&
+          participant.status.kind === "working",
+      ),
+    [input.participants],
+  );
+  const inspectorInput = React.useMemo(
+    () => ({
+      ...mergeCodingSessionMissionWorkspaceInput({
         evidence: { ...evidence.inspectorInput, missionState },
         goal: trustedGoal,
         goalAuthorLabel:
@@ -175,14 +215,33 @@ export function useCodingSessionMissionSurface(input: {
         contextLoads,
         seatPlans,
       }),
+      // Critique A1: a 44227 this surface refused on identity is not silence,
+      // and the card must not answer it with `Set goal`. Overrides the merged
+      // `goal` only in that one case; every other path is untouched.
+      ...(goalSelection.kind === "rejected"
+        ? {
+            goal: {
+              kind: "rejected" as const,
+              disagreements: goalDisagreements,
+            },
+          }
+        : {}),
+      founderPubkey: input.umbrella.founderPubkey,
+      leadHasOpenTurn,
+      resolveActorLabel: input.resolveActorName,
+    }),
     [
       evidence.inspectorInput,
       contextLoads,
       input.observedChanges,
       input.participants,
       input.resolveActorName,
+      input.umbrella.founderPubkey,
+      leadHasOpenTurn,
       seatPlans,
       missionState,
+      goalSelection.kind,
+      goalDisagreements,
       trustedGoal,
     ],
   );
@@ -193,6 +252,14 @@ export function useCodingSessionMissionSurface(input: {
   const pending = React.useMemo(
     () => readCodingSessionMissionStreamEvidence(evidence.inspectorInput),
     [evidence.inspectorInput],
+  );
+  const wakeOperations = React.useMemo(
+    () =>
+      buildCodingSessionWakeOperationIndex({
+        assignments: evidence.inspectorInput.assignments ?? [],
+        transactions: pending.transactions,
+      }),
+    [evidence.inspectorInput.assignments, pending.transactions],
   );
   // The Audit tab reads the umbrella's own signed transcripts — every
   // generation, not just the live one, because a seat that was restarted spent
@@ -252,9 +319,16 @@ export function useCodingSessionMissionSurface(input: {
               content: (
                 <CodingSessionMissionContext
                   errorMessage={evidence.errorMessage}
-                  loading={evidence.isLoading}
+                  founderPubkey={input.umbrella.founderPubkey}
+                  loading={evidence.isLoading || policy.isLoading}
                   model={model}
-                  onRefresh={evidence.refresh}
+                  onRefresh={() => {
+                    evidence.refresh();
+                    policy.refresh();
+                  }}
+                  policyErrorMessage={policy.errorMessage}
+                  policyFold={policy.fold}
+                  resolveActorLabel={input.resolveActorName}
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
               ),
@@ -286,9 +360,15 @@ export function useCodingSessionMissionSurface(input: {
       input.isNarrow,
       input.onFocusParticipant,
       input.onOpenTrace,
+      input.resolveActorName,
       input.seatAuthorities,
+      input.umbrella.founderPubkey,
       model,
       pending.unseatedReportEventIds,
+      policy.errorMessage,
+      policy.fold,
+      policy.isLoading,
+      policy.refresh,
     ],
   );
   return React.useMemo(
@@ -297,12 +377,14 @@ export function useCodingSessionMissionSurface(input: {
       missionState: model.missionState,
       transactions: pending.transactions,
       unseatedReportEventIds: pending.unseatedReportEventIds,
+      wakeOperations,
     }),
     [
       model.missionState,
       pending.transactions,
       pending.unseatedReportEventIds,
       surfaces,
+      wakeOperations,
     ],
   );
 }

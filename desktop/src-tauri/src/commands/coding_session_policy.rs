@@ -25,9 +25,10 @@
 //! "unknown ≠ empty" is exactly the distinction the 44245 record exists to
 //! keep.
 
+use buzz_core_pkg::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core_pkg::coding_session_policy::{
-    decode_coding_session_policy, validate_coding_session_policy_envelope,
-    CodingSessionPolicyPayload,
+    decode_coding_session_policy, fold_coding_session_policies, signer_may_steer_at,
+    validate_coding_session_policy_envelope, CodingSessionPolicyGrant, CodingSessionPolicyPayload,
 };
 use buzz_sdk_pkg::coding_session_policy::build_coding_session_policy;
 use nostr::Event;
@@ -39,8 +40,24 @@ pub const CODING_SESSION_POLICY_BUILD_REQUEST_SCHEMA: &str =
 /// Closed wire-schema identifier accepted by the decode boundary.
 pub const CODING_SESSION_POLICY_READ_REQUEST_SCHEMA: &str =
     "buzz-coding-session-policy-read-request/v1";
+/// Closed wire-schema identifier accepted by the fold boundary.
+pub const CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA: &str =
+    "buzz-coding-session-policy-fold-request/v1";
 /// Closed wire-schema identifier this native adapter answers with.
 pub const CODING_SESSION_POLICY_ADAPTER_SCHEMA: &str = "buzz-coding-session-policy-adapter/v1";
+/// Closed wire-schema identifier the fold boundary answers with.
+pub const CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA: &str =
+    "buzz-coding-session-policy-fold-adapter/v1";
+
+/// The one sentence every surface rendering a policy owes its reader.
+///
+/// Byte-identical to `bee sessions policy get`'s own `enforcement` field
+/// (`crates/buzz-cli/src/commands/sessions/policy.rs`). Repeated here rather
+/// than imported because Desktop does not depend on the CLI crate; the test
+/// `the_enforcement_sentence_is_the_clis_own` holds the two together.
+pub const POLICY_ENFORCEMENT_DISCLOSURE: &str =
+    "a published policy is a stated intention, not an enforced limit: only budget.turns is \
+     enforced (at the provider's turn gate); every other field is read and shown, never counted";
 
 /// A draft policy on its way to a signer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,6 +84,88 @@ pub struct CodingSessionPolicyReadRequest {
     pub schema: String,
     /// The raw signed event, verified here before anything is read off it.
     pub event: serde_json::Value,
+}
+
+/// One accepted authority transition, as the caller's own projection has it.
+///
+/// `accepted_at` is the **relay receipt's** `created_at`, not the transition's
+/// own: acceptance is what put the grant in the canonical chain, and standing
+/// is evaluated at the policy record's time against that.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionPolicyFoldGrant {
+    /// Pubkey the transition grants or revokes.
+    pub grantee: String,
+    /// Seconds since the epoch at which the relay accepted it.
+    pub accepted_at: u64,
+    /// The transition's own wire word.
+    pub transition_type: String,
+}
+
+/// Every published 44245 for one umbrella, on its way to the fold.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionPolicyFoldRequest {
+    /// Exact closed request-schema identifier.
+    pub schema: String,
+    /// Umbrella this fold is scoped to.
+    pub session_ref: String,
+    /// The umbrella's immutable authority anchor.
+    pub genesis_ref: String,
+    /// The umbrella's founder, who may always set policy.
+    pub founder_pubkey: String,
+    /// The accepted authority chain, in accepted order.
+    pub grants: Vec<CodingSessionPolicyFoldGrant>,
+    /// Raw signed kind-44245 events, verified here before any is read.
+    pub events: Vec<serde_json::Value>,
+}
+
+/// The policy in force, with its provenance.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionPolicyFoldSelected {
+    /// The event the record was read from.
+    pub event_id: String,
+    /// Who signed it.
+    pub author_pubkey: String,
+    /// Whether that signer is the umbrella's founder.
+    pub author_is_founder: bool,
+    /// Seconds since the epoch, as the signer stamped it.
+    pub created_at: u64,
+    /// What it says.
+    pub record: CodingSessionPolicyAdapterRecord,
+}
+
+/// One published record this fold refused, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionPolicyFoldExclusion {
+    /// The refused event.
+    pub event_id: String,
+    /// Who signed it.
+    pub author_pubkey: String,
+    /// Seconds since the epoch, as the signer stamped it.
+    pub created_at: u64,
+    /// The fold's own closed code word.
+    pub code: String,
+    /// One sentence naming the rule it failed.
+    pub reason: String,
+}
+
+/// Newest-accepted-wins, plus everything it refused.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionPolicyFoldResponse {
+    /// Exact closed adapter-schema identifier.
+    pub schema: String,
+    /// Names the crate whose rules produced this, never "desktop".
+    pub implementation: String,
+    /// The policy in force, or null when nobody with standing set one.
+    pub selected: Option<CodingSessionPolicyFoldSelected>,
+    /// Every refused record, newest first. Never empty-by-omission.
+    pub excluded: Vec<CodingSessionPolicyFoldExclusion>,
+    /// The enforcement sentence, byte-identical to the CLI's.
+    pub enforcement: String,
 }
 
 /// Spending ceilings, every key present.
@@ -338,6 +437,117 @@ pub async fn build_coding_session_policy_event(
     tauri::async_runtime::spawn_blocking(move || build_adapter(request))
         .await
         .map_err(|error| format!("session-policy build task failed: {error}"))?
+}
+
+fn transition_type(word: &str) -> Result<CodingSessionAuthorityTransitionType, String> {
+    // Through serde, so the words this adapter accepts are exactly the words
+    // `buzz-core` signs — a hand-written match here would be a second spelling
+    // of a closed vocabulary.
+    serde_json::from_value(serde_json::Value::String(word.to_owned()))
+        .map_err(|_| format!("grants[].transitionType is not an authority transition: {word}"))
+}
+
+fn fold_adapter(
+    request: CodingSessionPolicyFoldRequest,
+) -> Result<CodingSessionPolicyFoldResponse, String> {
+    if request.schema != CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA {
+        return Err(format!(
+            "request.schema must be {CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA}"
+        ));
+    }
+    let grants = request
+        .grants
+        .iter()
+        .map(|grant| {
+            Ok(CodingSessionPolicyGrant {
+                grantee: grant.grantee.clone(),
+                accepted_at: grant.accepted_at,
+                transition_type: transition_type(&grant.transition_type)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    // Signature first, and separately from the fold: `fold_coding_session_policies`
+    // adjudicates *standing*, not authenticity, so an unverified event reaching
+    // it would be a claim about who set a policy made by nobody. A record that
+    // fails here is listed as refused with the fold's own `undecodable` word
+    // rather than dropped — a forged ceiling in a channel is a fact its reader
+    // needs, and silence would make it look like no record at all.
+    let mut verified: Vec<Event> = Vec::new();
+    let mut excluded: Vec<CodingSessionPolicyFoldExclusion> = Vec::new();
+    for value in request.events {
+        let event: Event = match serde_json::from_value(value) {
+            Ok(event) => event,
+            Err(error) => {
+                return Err(format!("events[] is not a signed Nostr event: {error}"));
+            }
+        };
+        match event.verify() {
+            Ok(()) => verified.push(event),
+            Err(error) => excluded.push(CodingSessionPolicyFoldExclusion {
+                event_id: event.id.to_hex(),
+                author_pubkey: event.pubkey.to_hex(),
+                created_at: event.created_at.as_secs(),
+                code: "undecodable".to_owned(),
+                reason: format!("event signature is invalid: {error}"),
+            }),
+        }
+    }
+    let founder = request.founder_pubkey.clone();
+    let fold = fold_coding_session_policies(
+        &verified,
+        &request.session_ref,
+        &request.genesis_ref,
+        &founder,
+        &|author, created_at| signer_may_steer_at(author, created_at, &founder, &grants),
+    );
+    let selected = match fold.selected.as_ref() {
+        Some(selected) => Some(CodingSessionPolicyFoldSelected {
+            event_id: selected.event_id.clone(),
+            author_pubkey: selected.author.clone(),
+            author_is_founder: selected.author_is_founder,
+            created_at: selected.created_at,
+            record: flatten(&selected.record)?,
+        }),
+        None => None,
+    };
+    excluded.extend(
+        fold.excluded
+            .iter()
+            .map(|item| CodingSessionPolicyFoldExclusion {
+                event_id: item.event_id.clone(),
+                author_pubkey: item.author.clone(),
+                created_at: item.created_at,
+                code: item.code.as_str().to_owned(),
+                reason: item.reason.clone(),
+            }),
+    );
+    excluded.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.event_id.cmp(&left.event_id))
+    });
+    Ok(CodingSessionPolicyFoldResponse {
+        schema: CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA.to_owned(),
+        implementation: "buzz-core".to_owned(),
+        selected,
+        excluded,
+        enforcement: POLICY_ENFORCEMENT_DISCLOSURE.to_owned(),
+    })
+}
+
+/// Fold an umbrella's published kind-44245 records into the one in force.
+///
+/// The same `buzz-core` fold and the same standing rule the session provider
+/// and `bee sessions policy get` use, so Desktop cannot give a third answer
+/// about whose ceiling is real (REVIEW-B2 F1).
+#[tauri::command]
+pub async fn fold_coding_session_policies_command(
+    request: CodingSessionPolicyFoldRequest,
+) -> Result<CodingSessionPolicyFoldResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || fold_adapter(request))
+        .await
+        .map_err(|error| format!("session-policy fold task failed: {error}"))?
 }
 
 /// Verify a signed kind-44245 event and return what it says.

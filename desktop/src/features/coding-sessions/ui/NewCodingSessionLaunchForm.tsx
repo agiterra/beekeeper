@@ -391,10 +391,31 @@ export function NewCodingSessionForm({
     null,
   );
 
+  /**
+   * The roles this launch actually seats: the lead's, plus every benched
+   * identity's own role.
+   *
+   * REVIEW-L2 F7: both call sites passed the lead's role alone, so Prepare
+   * confirmed **one** name for a two-seat launch and refreshed the builder pack
+   * the bench seat will be hired against silently — counted in `N other packs
+   * were refreshed…`. `candidates` already carries each identity's role, which
+   * is what `benchIdentityOptions` renders as its detail line.
+   */
+  const launchRoles = React.useMemo(() => {
+    const roles = new Set<string>();
+    if (lead.kind === "agent") roles.add(lead.role);
+    for (const pubkey of benchIdentities) {
+      const role = candidates.find(
+        (candidate) => candidate.pubkey === pubkey,
+      )?.role;
+      if (role) roles.add(role);
+    }
+    return [...roles].sort();
+  }, [benchIdentities, candidates, lead]);
   const teamReadiness = useProjectTeamReadiness({
     projectRef: projectContext?.projectRef ?? null,
     checkoutPath: projectContext?.defaultWorkdir ?? null,
-    selectedRoles: lead.kind === "agent" ? [lead.role] : [],
+    selectedRoles: launchRoles,
     channelIds: channelId === null ? [] : [channelId],
     refreshRuntimeTargets: async () => {
       const refreshed = await refreshRuntimeTarget();
@@ -817,7 +838,7 @@ export function NewCodingSessionForm({
             readiness={teamReadiness.readiness}
             scan={teamReadiness.scan}
             scanning={teamReadiness.isScanning}
-            selectedRoles={lead.kind === "agent" ? [lead.role] : []}
+            selectedRoles={launchRoles}
             runtimeTarget={selectedTarget}
           />
         ) : null}

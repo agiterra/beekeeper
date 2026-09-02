@@ -27,6 +27,10 @@ import {
   type CodingSessionPromptSeatResolver,
 } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import {
+  codingSessionWakeReadingForText,
+  type CodingSessionWakeOperationIndex,
+} from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { Markdown } from "@/shared/ui/markdown";
 import { RedactedText } from "@/shared/ui/RedactedPill";
@@ -75,7 +79,19 @@ type CodingSessionTranscriptProps = {
    * own `sessionRef` and can join both to this host's hire record.
    */
   hireDispatch?: CodingSessionHireDispatchVouch | null;
+  /**
+   * Fold-resolved operations, so an identifier-only team wake renders as the
+   * one line §1f freezes instead of as its own pointer JSON (finding 17).
+   *
+   * Absent is the honest empty index, not a licence to guess: a surface that
+   * holds no fold still replaces the JSON, with the unresolved line naming the
+   * operation it could not resolve.
+   */
+  wakeOperations?: CodingSessionWakeOperationIndex;
 };
+
+/** The empty index — one frozen instance, so an absent prop is reference-stable. */
+const NO_WAKE_OPERATIONS: CodingSessionWakeOperationIndex = new Map();
 
 /**
  * Everything the deeply nested message row needs to name a prompt's author.
@@ -107,12 +123,15 @@ const CodingSessionPromptAttributionContext = React.createContext<{
    * hires, and a name this client cannot check is a claim, not an attribution.
    */
   hireDispatch?: CodingSessionHireDispatchVouch | null;
+  /** Fold-resolved operations for the wake reading; empty when none is held. */
+  wakeOperations: CodingSessionWakeOperationIndex;
 }>({
   currentUserPubkey: null,
   profiles: undefined,
   textSettledEchoIds: new Set(),
   resolveSeat: undefined,
   hireDispatch: null,
+  wakeOperations: NO_WAKE_OPERATIONS,
 });
 
 const GENERIC_AGENT_IDENTITY = {
@@ -143,6 +162,7 @@ export function CodingSessionTranscript({
   items,
   resolveSeat,
   scrollRef,
+  wakeOperations,
 }: CodingSessionTranscriptProps) {
   const model = useStableCodingSessionTranscriptModel(items, isWorking);
   // Only ever non-empty on the machine whose provider signed these items; see
@@ -157,6 +177,7 @@ export function CodingSessionTranscript({
       resolveSeat,
       textSettledEchoIds,
       hireDispatch: hireDispatch ?? null,
+      wakeOperations: wakeOperations ?? NO_WAKE_OPERATIONS,
     }),
     [
       currentUserPubkey,
@@ -164,6 +185,7 @@ export function CodingSessionTranscript({
       operatorProfiles,
       resolveSeat,
       textSettledEchoIds,
+      wakeOperations,
     ],
   );
   const rows = React.useMemo(
@@ -656,12 +678,37 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
       // this client matched the message to what it sent by comparing the
       // words, which two identical messages defeat.
       const settledByText = promptAttribution.textSettledEchoIds.has(item.id);
+      // Finding 17: a turn whose whole text is a team-wake pointer is a
+      // machine's addressing, not a person's words. It is read here — never
+      // parsed for meaning — into the one line §1f freezes, identically in
+      // both lenses because both render this component. Prose returns `null`
+      // and takes the untouched path below.
+      //
+      // `{Who}` is resolved from the **author key**, not from the byline: the
+      // byline calls an automatic `team-wake-` command `Beekeeper · team wake`
+      // (which is the right caption for a turn nobody typed) and §1f's
+      // sentence wants the person or seat the record is signed by. Same
+      // resolver, without the two automatic-prefix branches.
+      const wakeLine = codingSessionWakeReadingForText({
+        operations: promptAttribution.wakeOperations,
+        // F2: the key that signed **this turn**. The reading refuses to name
+        // an act unless it matches the operation's own author.
+        signerPubkey: item.operatorPubkey ?? null,
+        text: item.text,
+        who: resolveCodingSessionPromptAuthor({
+          currentUserPubkey: promptAttribution.currentUserPubkey,
+          operatorPubkey: item.operatorPubkey,
+          profiles: promptAttribution.profiles,
+          resolveSeat: promptAttribution.resolveSeat,
+        }).label,
+      });
       return (
         <div
           className="group flex flex-col items-end gap-1"
           data-role="user-message"
           data-settled-by={settledByText ? "text" : undefined}
           data-testid="coding-session-user-message"
+          data-wake-pointer={wakeLine === null ? undefined : "read"}
           title={
             settledByText
               ? "Matched to the turn you sent by its text — this provider's echo named no command id."
@@ -669,7 +716,11 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
           }
         >
           <div className="min-w-0 max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1 ring-border/40">
-            <Markdown content={item.text.trim() || " "} mediaInset />
+            {wakeLine === null ? (
+              <Markdown content={item.text.trim() || " "} mediaInset />
+            ) : (
+              <p data-testid="coding-session-user-message-wake">{wakeLine}</p>
+            )}
           </div>
           <p className="pe-1 text-2xs text-muted-foreground">
             <span

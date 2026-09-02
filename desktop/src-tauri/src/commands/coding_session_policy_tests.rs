@@ -383,3 +383,239 @@ fixture is what let a decoder stay green while it would have thrown for every re
     assert!(wire["withdrawal"]["record"]["budget"].is_null());
     assert!(wire["read"]["authorPubkey"].is_string());
 }
+
+// ── L2.3: the fold boundary ─────────────────────────────────────────────────
+
+/// Sign a kind-44245 event at a caller-chosen time, for newest-wins ordering.
+fn signed_policy_at(keys: &Keys, policy: serde_json::Value, at: u64) -> nostr::Event {
+    let payload =
+        decode_coding_session_policy(&serde_json::to_string(&policy).expect("serialize policy"))
+            .expect("decode policy");
+    build_coding_session_policy(CHANNEL, payload)
+        .expect("builder")
+        .custom_created_at(Timestamp::from_secs(at))
+        .sign_with_keys(keys)
+        .expect("sign")
+}
+
+fn minimal_policy(turns: u32) -> serde_json::Value {
+    json!({
+        "schema": "buzz-coding-session-policy/v1",
+        "sessionRef": SESSION,
+        "genesisRef": genesis(),
+        "budget": { "turns": turns }
+    })
+}
+
+/// The withdrawal record: legal, sets nothing, and is a decision somebody made.
+fn withdrawal_policy() -> serde_json::Value {
+    json!({
+        "schema": "buzz-coding-session-policy/v1",
+        "sessionRef": SESSION,
+        "genesisRef": genesis()
+    })
+}
+
+fn fold_request(
+    founder: &Keys,
+    events: Vec<nostr::Event>,
+    grants: Vec<CodingSessionPolicyFoldGrant>,
+) -> CodingSessionPolicyFoldRequest {
+    CodingSessionPolicyFoldRequest {
+        schema: CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA.to_owned(),
+        session_ref: SESSION.to_owned(),
+        genesis_ref: genesis(),
+        founder_pubkey: founder.public_key().to_hex(),
+        grants,
+        events: events
+            .iter()
+            .map(|event| serde_json::to_value(event).expect("serialize event"))
+            .collect(),
+    }
+}
+
+#[test]
+fn a_strangers_newer_ceiling_loses_to_the_founders_and_is_listed_as_refused() {
+    // REVIEW-B2 F1 in one test: a stranger publishes a bigger ceiling, later.
+    // The founder's record still wins, and the stranger's is disclosed rather
+    // than dropped — "a stranger published one" and "nobody did" are different
+    // facts. Matches `bee sessions policy get` on the same two events.
+    let founder = fixed_keys(0x11);
+    let stranger = fixed_keys(0x22);
+    let response = fold_adapter(fold_request(
+        &founder,
+        vec![
+            signed_policy_at(&founder, minimal_policy(40), 1_800_000_000),
+            signed_policy_at(&stranger, minimal_policy(9_999), 1_800_000_100),
+        ],
+        vec![],
+    ))
+    .expect("fold");
+
+    let selected = response.selected.expect("the founder's record is in force");
+    assert!(selected.author_is_founder);
+    assert_eq!(selected.author_pubkey, founder.public_key().to_hex());
+    assert_eq!(selected.record.budget.expect("budget").turns, Some(40));
+    assert_eq!(response.excluded.len(), 1);
+    assert_eq!(response.excluded[0].code, "unauthorized");
+    assert_eq!(
+        response.excluded[0].author_pubkey,
+        stranger.public_key().to_hex()
+    );
+    assert!(response.excluded[0].reason.contains("could not steer"));
+    assert_eq!(response.enforcement, POLICY_ENFORCEMENT_DISCLOSURE);
+    assert_eq!(response.schema, CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA);
+}
+
+#[test]
+fn an_operator_granted_before_the_record_may_set_policy() {
+    // Standing is evaluated at the record's own time, which is the whole point
+    // of carrying the receipt stamps across the boundary.
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let grants = vec![CodingSessionPolicyFoldGrant {
+        grantee: operator.public_key().to_hex(),
+        accepted_at: 1_800_000_050,
+        transition_type: "grant-operator".to_owned(),
+    }];
+    let after = fold_adapter(fold_request(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(12),
+            1_800_000_100,
+        )],
+        grants.clone(),
+    ))
+    .expect("fold");
+    assert_eq!(
+        after
+            .selected
+            .expect("selected")
+            .record
+            .budget
+            .expect("budget")
+            .turns,
+        Some(12)
+    );
+
+    // The same operator, signing *before* the grant was accepted, has none.
+    let before = fold_adapter(fold_request(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(12),
+            1_800_000_000,
+        )],
+        grants,
+    ))
+    .expect("fold");
+    assert!(before.selected.is_none());
+    assert_eq!(before.excluded[0].code, "unauthorized");
+}
+
+#[test]
+fn a_withdrawal_is_a_record_that_sets_nothing_never_no_record() {
+    let founder = fixed_keys(0x11);
+    let response = fold_adapter(fold_request(
+        &founder,
+        vec![
+            signed_policy_at(&founder, minimal_policy(40), 1_800_000_000),
+            signed_policy_at(&founder, withdrawal_policy(), 1_800_000_100),
+        ],
+        vec![],
+    ))
+    .expect("fold");
+    let selected = response.selected.expect("the withdrawal is the record");
+    assert!(!selected.record.sets_any_policy);
+    assert!(selected.record.budget.is_none());
+    // Superseding an older good record is not a refusal — newest-wins simply
+    // passes over it.
+    assert!(response.excluded.is_empty());
+}
+
+#[test]
+fn no_records_at_all_is_null_and_still_carries_the_enforcement_sentence() {
+    let founder = fixed_keys(0x11);
+    let response = fold_adapter(fold_request(&founder, vec![], vec![])).expect("fold");
+    assert!(response.selected.is_none());
+    assert!(response.excluded.is_empty());
+    assert_eq!(response.enforcement, POLICY_ENFORCEMENT_DISCLOSURE);
+}
+
+#[test]
+fn a_forged_policy_never_reaches_the_fold_and_is_listed_as_undecodable() {
+    let founder = fixed_keys(0x11);
+    let event = signed_policy_at(&founder, minimal_policy(40), 1_800_000_000);
+    let mut wire = serde_json::to_value(&event).expect("serialize event");
+    wire["sig"] = json!("00".repeat(64));
+    let response = fold_adapter(CodingSessionPolicyFoldRequest {
+        schema: CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA.to_owned(),
+        session_ref: SESSION.to_owned(),
+        genesis_ref: genesis(),
+        founder_pubkey: founder.public_key().to_hex(),
+        grants: vec![],
+        events: vec![wire],
+    })
+    .expect("fold");
+    assert!(response.selected.is_none());
+    assert_eq!(response.excluded.len(), 1);
+    assert_eq!(response.excluded[0].code, "undecodable");
+    assert!(response.excluded[0].reason.contains("signature is invalid"));
+}
+
+#[test]
+fn a_record_for_another_umbrella_is_refused_by_name() {
+    let founder = fixed_keys(0x11);
+    let response = fold_adapter(CodingSessionPolicyFoldRequest {
+        schema: CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA.to_owned(),
+        session_ref: "11111111-2222-3333-4444-555555555555".to_owned(),
+        genesis_ref: genesis(),
+        founder_pubkey: founder.public_key().to_hex(),
+        grants: vec![],
+        events: vec![serde_json::to_value(signed_policy_at(
+            &founder,
+            minimal_policy(40),
+            1_800_000_000,
+        ))
+        .expect("serialize")],
+    })
+    .expect("fold");
+    assert!(response.selected.is_none());
+    assert_eq!(response.excluded[0].code, "wrongUmbrella");
+}
+
+#[test]
+fn the_fold_boundary_refuses_a_request_whose_schema_is_not_its_own() {
+    let founder = fixed_keys(0x11);
+    let mut request = fold_request(&founder, vec![], vec![]);
+    request.schema = "buzz-coding-session-policy-read-request/v1".to_owned();
+    let error = fold_adapter(request).expect_err("schema refusal");
+    assert!(error.contains(CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA));
+}
+
+#[test]
+fn an_unknown_transition_word_is_refused_by_name_rather_than_ignored() {
+    let founder = fixed_keys(0x11);
+    let error = fold_adapter(fold_request(
+        &founder,
+        vec![],
+        vec![CodingSessionPolicyFoldGrant {
+            grantee: "ab".repeat(32),
+            accepted_at: 1,
+            transition_type: "grant-everything".to_owned(),
+        }],
+    ))
+    .expect_err("vocabulary refusal");
+    assert!(error.contains("grant-everything"));
+}
+
+#[test]
+fn the_enforcement_sentence_names_the_one_enforced_field_and_nothing_else() {
+    // The sentence Desktop prints is the CLI's own (`policy.rs`). It is copied
+    // rather than imported because Desktop does not depend on buzz-cli; this
+    // holds the copy honest.
+    assert!(POLICY_ENFORCEMENT_DISCLOSURE.contains("only budget.turns is enforced"));
+    assert!(POLICY_ENFORCEMENT_DISCLOSURE.contains("stated intention, not an enforced limit"));
+    assert!(!POLICY_ENFORCEMENT_DISCLOSURE.contains("until a consumer exists"));
+}

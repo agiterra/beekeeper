@@ -381,7 +381,12 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.install_crew_role_packs = {
+    installed: [installedLead],
+    skipped: [],
+    seated: ["lead"],
+    dropped: [],
+  };
   answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = {
     provisioned: true,
@@ -396,11 +401,12 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
   await screen.findByText("SELECTED_ROLE_KEY_UNVERIFIED");
   fireEvent.click(screen.getByTestId("team-readiness-prepare"));
   const name = await screen.findByLabelText("lead agent name");
-  const verifierName = screen.getByLabelText("verifier agent name");
   assert.equal(name.value, "Helios");
-  assert.equal(verifierName.value, "Parallax");
+  // Finding 15: this launch names `lead`, so `lead` is the only name it asks
+  // about. The verifier's pack is still refreshed, still under its own stored
+  // name, and the screen says so in one line instead of a sixth field.
+  assert.equal(screen.queryByLabelText("verifier agent name"), null);
   fireEvent.change(name, { target: { value: "Aurora" } });
-  fireEvent.change(verifierName, { target: { value: "Prism" } });
   fireEvent.click(screen.getByTestId("team-readiness-prepare-confirm"));
   await screen.findByText(/Prepared for the first session/);
   await waitFor(() => {
@@ -433,13 +439,21 @@ test("real Tauri wrappers run Prepare in order, preserve names, and always re-re
     calls.find(({ command }) => command === "install_crew_role_packs").args,
     {
       directory: "/repo/personas/roles",
-      names: { lead: "Aurora", verifier: "Prism" },
+      // Every discovered pack still gets a name; the unasked one keeps the
+      // default the scan read off it.
+      names: { lead: "Aurora", verifier: "Parallax" },
       expectedRelayUrl: "wss://hive.example",
     },
   );
   assert.match(
     screen.getByTestId("team-readiness-card").textContent,
-    /verifier· also refreshed/,
+    /1 other pack was refreshed and is not part of this launch\./,
+  );
+  // The install answered with only the lead, so the verifier's refresh is
+  // disclosed by name — a silent refresh must not become a hidden failure.
+  assert.match(
+    screen.getByTestId("team-readiness-card").textContent,
+    /These role packs did not refresh: verifier\./,
   );
   assert.match(
     screen.getByTestId("team-readiness-card").textContent,
@@ -494,7 +508,12 @@ test("production Prepare composition starts the role before fresh readiness beco
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.install_crew_role_packs = {
+    installed: [installedLead],
+    skipped: [],
+    seated: ["lead"],
+    dropped: [],
+  };
   answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = {
     provisioned: true,
@@ -546,6 +565,8 @@ test("profile sync failure stays a warning while Prepare republishes and continu
     skipped: [],
   };
   answers.install_crew_role_packs = {
+    seated: ["lead"],
+    dropped: [],
     installed: [installedLead],
     skipped: [],
     profileSyncError: "relay rejected the signed profile",
@@ -613,7 +634,12 @@ test("the full Prepare UI is idempotent across two confirmed runs", async () => 
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.install_crew_role_packs = {
+    installed: [installedLead],
+    skipped: [],
+    seated: ["lead"],
+    dropped: [],
+  };
   answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = {
     provisioned: true,
@@ -694,7 +720,12 @@ test("partial native failure keeps completed UI steps and re-reads readiness", a
     ],
     skipped: [],
   };
-  answers.install_crew_role_packs = { installed: [installedLead], skipped: [] };
+  answers.install_crew_role_packs = {
+    installed: [installedLead],
+    skipped: [],
+    seated: ["lead"],
+    dropped: [],
+  };
   answers.restart_managed_agent = ({ pubkey }) => ({ pubkey });
   answers.provision_coding_session_provider = () => {
     throw new Error("password prompt was cancelled");
@@ -937,7 +968,12 @@ test("a stale A Prepare cannot mutate or unlock a newer B Prepare", async () => 
   );
 
   await act(async () =>
-    installResolvers[1]({ installed: [installedLead], skipped: [] }),
+    installResolvers[1]({
+      installed: [installedLead],
+      skipped: [],
+      seated: ["lead"],
+      dropped: [],
+    }),
   );
   await screen.findByText(/Re-read Team Readiness: done/);
   assert.deepEqual(

@@ -286,10 +286,28 @@ export function useProjectTeamReadiness(input: {
             relayUrl,
           );
           requireCurrentOperation(generation);
-          if (installed.profileSyncError)
-            setPrepareWarning(
-              `Role profiles need another relay sync: ${installed.profileSyncError}`,
-            );
+          // A pack refreshed without being asked about is still a pack that
+          // can fail, and a silent refresh must not become a hidden failure
+          // (finding 15). Every discovered role the install did not produce is
+          // named here, alongside the roster roles it dropped.
+          const refreshedRoles = new Set(
+            installed.installed.map((entry) => entry.role.trim().toLowerCase()),
+          );
+          const notRefreshed = scan.packs
+            .map((pack) => pack.role.trim().toLowerCase())
+            .filter((role) => role.length > 0 && !refreshedRoles.has(role));
+          const disclosures = [
+            installed.profileSyncError
+              ? `Role profiles need another relay sync: ${installed.profileSyncError}`
+              : null,
+            notRefreshed.length > 0
+              ? `These role packs did not refresh: ${[...new Set(notRefreshed)].sort().join(", ")}.`
+              : null,
+            installed.dropped.length > 0
+              ? `These roster roles hold no seat: ${[...installed.dropped].sort().join(", ")}.`
+              : null,
+          ].filter((line): line is string => line !== null);
+          if (disclosures.length > 0) setPrepareWarning(disclosures.join(" "));
           installedRoles = installed.installed;
         },
         startRoles: async () => {

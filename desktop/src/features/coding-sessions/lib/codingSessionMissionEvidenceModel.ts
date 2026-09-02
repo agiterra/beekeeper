@@ -276,6 +276,10 @@ export function emptyCodingSessionMissionInspectorInput(
     participants: [],
     contextLoads: new Map(),
     missionState: { kind: "unknown", detail },
+    // Absent, not empty: no fold has run, so "nothing was asked" is a claim
+    // this projection cannot make (I9).
+    decisions: undefined,
+    waitingOnDecision: null,
     usage: null,
     rejectedEventCount: 0,
     rejectionsTruncated: false,

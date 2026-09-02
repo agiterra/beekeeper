@@ -126,6 +126,10 @@ export async function assertConversationAndMissionLenses(
   expect(await inspector.locator("section > h3").allTextContents()).toEqual([
     "Current goal",
     "Mission state",
+    // Batch 3 L2: the decision queue sits with the state plane. A ruling held
+    // on a person is the most actionable row the rail carries, so it is above
+    // Team for the same reason Team is above Changes.
+    "Decisions",
     "Team",
     "Changes",
     "Files",

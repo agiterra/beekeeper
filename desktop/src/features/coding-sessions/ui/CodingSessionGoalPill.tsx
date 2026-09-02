@@ -135,7 +135,9 @@ export function CodingSessionGoalPill({
           variant="ghost"
         >
           <Pencil className="size-3.5" />
-          {goal ? "Edit goal" : "Set goal"}
+          {/* Finding 23: `Set goal` beside a goal that exists reads as "there
+              is none". The control says which of the two things it does. */}
+          {goal ? "Change goal" : "Set goal"}
         </Button>
         {dialog}
       </>

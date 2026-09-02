@@ -196,3 +196,73 @@ export function groupTeamReadinessFacts(
     ready: facts.filter((fact) => fact.state === "ready"),
   };
 }
+
+/** One discovered role pack, as `scan_project_role_packs_directory` returns it. */
+export type TeamReadinessRolePack = {
+  role: string;
+  defaultName: string;
+  installed: boolean;
+};
+
+/** Which packs this launch confirms, and what it says about the rest. */
+export type TeamReadinessPrepareScope = {
+  /** The packs whose names this launch actually asks about, role-sorted. */
+  confirm: TeamReadinessRolePack[];
+  /** Roles this launch names that the folder has no pack for. */
+  missingRoles: string[];
+  /** Roles refreshed without being asked about, role-sorted. */
+  otherRoles: string[];
+  otherCount: number;
+  /** §1g's line, or null when there is nothing else to say. */
+  otherLine: string | null;
+};
+
+/**
+ * Scope Prepare to the seats this launch actually names.
+ *
+ * Live run 2, 10:36 (finding 15): a two-seat launch put **six** name fields on
+ * screen under "Confirm every refreshed role name", because the installer
+ * refreshes every pack under `personas/roles` and the screen therefore asked
+ * about every pack. It read as role selection and was pack maintenance, and
+ * the two seats a person was actually launching were lost in it.
+ *
+ * The install is unchanged — every discovered pack is still refreshed, and
+ * every one still gets its stored name, so nothing silently loses a name. What
+ * changes is the question: a launch asks about its own lead and bench, and
+ * says in one line how many other packs it refreshed. Refreshed silently is
+ * not refreshed secretly.
+ */
+export function teamReadinessPrepareScope(input: {
+  packs: readonly TeamReadinessRolePack[];
+  selectedRoles: readonly string[];
+}): TeamReadinessPrepareScope {
+  const selected = new Set(normalizeTeamReadinessRoles(input.selectedRoles));
+  const byRole = (left: { role: string }, right: { role: string }) =>
+    left.role.localeCompare(right.role);
+  const confirm = input.packs
+    .filter((pack) => selected.has(pack.role.trim().toLowerCase()))
+    .slice()
+    .sort(byRole);
+  const others = input.packs
+    .filter((pack) => !selected.has(pack.role.trim().toLowerCase()))
+    .slice()
+    .sort(byRole);
+  const found = new Set(
+    input.packs.map((pack) => pack.role.trim().toLowerCase()),
+  );
+  return {
+    confirm,
+    missingRoles: [...selected].filter((role) => !found.has(role)).sort(),
+    otherRoles: others.map((pack) => pack.role),
+    otherCount: others.length,
+    // §1g freezes the plural form; the singular is spelled out rather than
+    // printed as "1 other packs were", which would be the kind of small lie
+    // that makes a reader distrust the rest of the screen.
+    otherLine:
+      others.length === 0
+        ? null
+        : others.length === 1
+          ? "1 other pack was refreshed and is not part of this launch."
+          : `${others.length} other packs were refreshed and are not part of this launch.`,
+  };
+}

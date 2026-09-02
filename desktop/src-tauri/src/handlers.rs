@@ -250,6 +250,7 @@ pub(crate) fn invoke_handler(
         fold_coding_session_team_transactions,
         build_coding_session_policy_event,
         decode_coding_session_policy_record,
+        fold_coding_session_policies_command,
         install_crew_role_packs,
         pick_crew_role_packs_directory,
         scan_project_role_packs_directory,

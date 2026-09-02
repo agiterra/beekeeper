@@ -27,6 +27,12 @@ import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/c
 import { cn } from "@/shared/lib/cn";
 import { codingSessionUnseatedReportDetail } from "./CodingSessionMissionDeliveryBadge";
 import { CodingSessionMissionDeliveryList } from "./CodingSessionMissionDeliveryList";
+import {
+  codingSessionGoalRejectionSentence,
+  codingSessionPrivateContextLine,
+  isCodingSessionPrivateContextMarker,
+} from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import { CodingSessionMissionDecisionQueue } from "./CodingSessionMissionDecisionQueue";
 import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
 
 export type CodingSessionMissionInspectorProps = {
@@ -130,7 +136,10 @@ export function CodingSessionMissionInspector({
           truncations={truncationsFor(model, "mission-state")}
         >
           <MissionStateAndLiveness model={model} />
-          <CodingSessionMissionStatePanel state={model.missionState} />
+          <CodingSessionMissionStatePanel
+            state={model.missionState}
+            waiting={model.waiting}
+          />
           {model.missionState.kind !== "unknown" &&
           model.missionState.kind !== "conflict" ? (
             <SignedSource eventId={model.missionState.sourceEventId} />
@@ -140,6 +149,18 @@ export function CodingSessionMissionInspector({
                 <SignedSource eventId={eventId} key={eventId} />
               ))
             : null}
+        </InspectorSection>
+
+        {/* Item 105's first UI consumer. Beside Mission state rather than
+            inside it: the state is what the mission *is*, and the queue is the
+            list of rulings it is holding — two facts, two sections. */}
+        <InspectorSection title="Decisions">
+          <CodingSessionMissionDecisionQueue
+            decisions={model.decisions}
+            decisionsKnown={model.decisionsKnown}
+            decisionsTruncated={model.decisionsTruncated}
+            decisionsTruncatedNotice={model.decisionsTruncatedNotice}
+          />
         </InspectorSection>
 
         <InspectorSection
@@ -221,56 +242,77 @@ export function CodingSessionMissionInspector({
             <EmptyCopy>No observed or seat-reported files.</EmptyCopy>
           ) : (
             <ul aria-label="Mission files" className="space-y-2">
-              {model.files.map((file) => (
-                <li className="min-w-0" key={file.path}>
-                  <code className="block break-all text-xs text-foreground">
-                    {file.path}
-                  </code>
-                  <p className="mt-0.5 text-2xs text-muted-foreground">
-                    {file.observed ? "Observed file edit" : null}
-                    {file.observed && file.reportedBy.length > 0 ? " · " : null}
-                    {file.reportedBy.length > 0
-                      ? `Reported by ${file.reportedBy.map((source) => source.authorLabel).join(", ")}`
-                      : null}
-                    {file.editCount !== null
-                      ? ` · ${file.editCount} ${file.editCount === 1 ? "edit" : "edits"}`
-                      : null}
-                  </p>
-                  {file.observed
-                    ? file.observedSourceEventIds.map((eventId) => (
-                        <SignedSource eventId={eventId} key={eventId} />
-                      ))
-                    : null}
-                  {file.observed && !file.observedSourceKnown ? (
-                    <div className="mt-1">
-                      <p className="text-2xs text-amber-700 dark:text-amber-300">
-                        Observed source is unavailable in this projection.
+              {model.files.map((file) => {
+                // Finding 24: a seat whose host withheld the paths reports the
+                // vault's content-addressed marker in their place. It is a
+                // receipt, not a path, and printing it as one told a reader
+                // their files were called `[elided private context: 183 bytes,
+                // sha256:…]`.
+                const privateContext = isCodingSessionPrivateContextMarker(
+                  file.path,
+                );
+                return (
+                  <li className="min-w-0" key={file.path}>
+                    {!privateContext ? (
+                      <code className="block break-all text-xs text-foreground">
+                        {file.path}
+                      </code>
+                    ) : (
+                      <p
+                        className="text-xs text-foreground"
+                        data-testid="mission-file-private-context"
+                      >
+                        {codingSessionPrivateContextLine(file.editCount)}
                       </p>
-                      {onOpenFileTrace ? (
-                        <button
-                          className="mt-1 rounded-sm text-2xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          onClick={() => onOpenFileTrace(file.path)}
-                          type="button"
-                        >
-                          Open Trace for source evidence
-                        </button>
-                      ) : (
-                        <p className="mt-1 text-2xs text-muted-foreground">
-                          Trace action requires final integration.
+                    )}
+                    <p className="mt-0.5 text-2xs text-muted-foreground">
+                      {file.observed ? "Observed file edit" : null}
+                      {file.observed && file.reportedBy.length > 0
+                        ? " · "
+                        : null}
+                      {file.reportedBy.length > 0
+                        ? `Reported by ${file.reportedBy.map((source) => source.authorLabel).join(", ")}`
+                        : null}
+                      {file.editCount !== null
+                        ? ` · ${file.editCount} ${file.editCount === 1 ? "edit" : "edits"}`
+                        : null}
+                    </p>
+                    {file.observed
+                      ? file.observedSourceEventIds.map((eventId) => (
+                          <SignedSource eventId={eventId} key={eventId} />
+                        ))
+                      : null}
+                    {file.observed && !file.observedSourceKnown ? (
+                      <div className="mt-1">
+                        <p className="text-2xs text-amber-700 dark:text-amber-300">
+                          Observed source is unavailable in this projection.
                         </p>
-                      )}
-                    </div>
-                  ) : null}
-                  {file.reportedBy.map((source) => (
-                    <div key={source.sourceEventId}>
-                      <p className="mt-1 text-2xs text-muted-foreground">
-                        {source.authorLabel} report source
-                      </p>
-                      <SignedSource eventId={source.sourceEventId} />
-                    </div>
-                  ))}
-                </li>
-              ))}
+                        {onOpenFileTrace ? (
+                          <button
+                            className="mt-1 rounded-sm text-2xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => onOpenFileTrace(file.path)}
+                            type="button"
+                          >
+                            Open Trace for source evidence
+                          </button>
+                        ) : (
+                          <p className="mt-1 text-2xs text-muted-foreground">
+                            Trace action requires final integration.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
+                    {file.reportedBy.map((source) => (
+                      <div key={source.sourceEventId}>
+                        <p className="mt-1 text-2xs text-muted-foreground">
+                          {source.authorLabel} report source
+                        </p>
+                        <SignedSource eventId={source.sourceEventId} />
+                      </div>
+                    ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </InspectorSection>
@@ -537,6 +579,28 @@ function EmptyCopy({ children }: { children: React.ReactNode }) {
 function Goal({ goal }: { goal: CodingSessionMissionGoalModel }) {
   if (goal.kind === "absent") {
     return <EmptyCopy>No accepted mission goal published.</EmptyCopy>;
+  }
+  // Critique A1: a record this surface refused says so, and says which
+  // identity it could not bind — `No accepted mission goal published` over a
+  // goal that is on the wire is a claim about the wire made from the outcome
+  // of a local join.
+  //
+  // Live run 3's own miss was **not reproduced** through the real readers
+  // (REVIEW-L2 F8): the published goal passes every one of them. This branch
+  // removes the class; the remaining suspect is a reader that has not resolved
+  // yet, whose sentence is L4's to add. Until it does, `absent` below still
+  // covers two facts, and that is stated rather than hidden.
+  if (goal.kind === "rejected") {
+    return (
+      <p
+        className="text-xs text-amber-700 dark:text-amber-300"
+        data-goal-state="rejected"
+        data-testid="mission-goal-rejected"
+        role="status"
+      >
+        {codingSessionGoalRejectionSentence(goal.disagreements)}
+      </p>
+    );
   }
   if (goal.kind === "conflict") {
     return (

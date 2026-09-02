@@ -1,4 +1,11 @@
 import { renderCodingSessionContextLoad } from "@/features/coding-sessions/lib/codingSessionContextLoad";
+import {
+  codingSessionMissionPolicyRefusedOmitted,
+  codingSessionMissionPolicyView,
+  type CodingSessionMissionPolicyView,
+  type CodingSessionPolicyRefusedRow,
+  type CodingSessionPolicyFoldResult,
+} from "@/features/coding-sessions/lib/codingSessionMissionPolicyView";
 import type {
   CodingSessionMissionInspectorModel,
   CodingSessionMissionInspectorSection,
@@ -11,16 +18,39 @@ export type CodingSessionMissionContextProps = {
   loading?: boolean;
   errorMessage?: string | null;
   onRefresh?: () => void;
+  /**
+   * The native fold's answer about this umbrella's kind:44245 records, or null
+   * while it is unknown. Item 107 owed this surface a reader; TypeScript never
+   * decides which record won.
+   */
+  policyFold?: CodingSessionPolicyFoldResult | null;
+  /** Why the policy could not be read, when it could not. */
+  policyErrorMessage?: string | null;
+  /** The umbrella's founder, so their own record reads `the founder`. */
+  founderPubkey?: string | null;
+  /** Actor pubkey → display name, from the surface's own resolver. */
+  resolveActorLabel?: (pubkey: string) => string | null;
 };
 
 /** Mission-only diagnostic context, separated from the work-state Inspector. */
 export function CodingSessionMissionContext({
   errorMessage = null,
+  founderPubkey = null,
   loading = false,
   model,
   onRefresh,
+  policyErrorMessage = null,
+  policyFold = null,
+  resolveActorLabel,
   variant,
 }: CodingSessionMissionContextProps) {
+  const policy = codingSessionMissionPolicyView({
+    fold: policyFold,
+    founderPubkey,
+    resolveActorLabel,
+  });
+  const policyRefusedOmitted =
+    codingSessionMissionPolicyRefusedOmitted(policyFold);
   return (
     <aside
       aria-label="Mission context"
@@ -119,11 +149,125 @@ export function CodingSessionMissionContext({
           )}
         </ContextSection>
 
+        <ContextSection title="Session policy">
+          <SessionPolicy
+            errorMessage={policyErrorMessage}
+            omittedRefusals={policyRefusedOmitted}
+            view={policy}
+          />
+        </ContextSection>
+
         <ContextSection title="Terminal usage">
           <Usage usage={model.usage} />
         </ContextSection>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The policy in force, what it says, and every record that is not it.
+ *
+ * Three outcomes, three sentences (§1g) — a withdrawal is not "none". Every
+ * set field prints as a row of words; **no field gets a bar, a meter or a
+ * progress ring**, because `budget.turns` is the only one anything counts and
+ * a bar over an uncounted limit is the same lie as a status reading Idle over
+ * a disconnected provider.
+ */
+function SessionPolicy({
+  errorMessage,
+  omittedRefusals,
+  view,
+}: {
+  errorMessage: string | null;
+  omittedRefusals: number;
+  view: CodingSessionMissionPolicyView;
+}) {
+  if (errorMessage !== null) {
+    return (
+      <p className="text-xs text-destructive" role="alert">
+        Session policy could not be read: {errorMessage}
+      </p>
+    );
+  }
+  if (view.kind === "unknown" || view.kind === "none") {
+    return (
+      <div data-policy-state={view.kind} data-testid="mission-session-policy">
+        <p className="text-xs text-muted-foreground">{view.sentence}</p>
+        {/* F5: a refused ceiling in this channel is a fact even when nothing
+            was selected — "nobody set one" and "somebody tried and was
+            refused" are different answers. */}
+        <RefusedRecords omitted={omittedRefusals} rows={view.refused} />
+      </div>
+    );
+  }
+  return (
+    <div data-policy-state={view.kind} data-testid="mission-session-policy">
+      <p className="text-xs font-medium">{view.sentence}</p>
+      {view.kind === "record" ? (
+        <dl className="mt-2 space-y-1">
+          {view.facts.map((fact) => (
+            <div
+              className="flex items-baseline justify-between gap-3"
+              key={fact.field}
+            >
+              <dt className="min-w-0 text-2xs text-muted-foreground">
+                {fact.label}
+                {/* The one enforced field is named, not implied. Everything
+                    else is a stated intention and says so. */}
+                <span className="ml-1">
+                  {fact.enforced ? "· enforced" : "· stated"}
+                </span>
+              </dt>
+              <dd
+                className="shrink-0 text-xs"
+                data-policy-field={fact.field}
+                data-policy-enforced={fact.enforced ? "yes" : "no"}
+              >
+                {fact.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      <SignedSource eventId={view.eventId} />
+      <RefusedRecords omitted={omittedRefusals} rows={view.refused} />
+    </div>
+  );
+}
+
+/** Every record the fold refused, with author, code and its own reason. */
+function RefusedRecords({
+  omitted,
+  rows,
+}: {
+  omitted: number;
+  rows: readonly CodingSessionPolicyRefusedRow[];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <p className="text-2xs font-medium text-muted-foreground">
+        Refused records
+      </p>
+      <ul className="mt-1 space-y-1">
+        {rows.map((row) => (
+          <li
+            className="text-2xs text-muted-foreground"
+            data-testid="mission-session-policy-refused"
+            key={row.eventId}
+          >
+            <span className="font-medium text-foreground">{row.code}</span> ·{" "}
+            {row.authorLabel} · {row.reason}
+          </li>
+        ))}
+      </ul>
+      {omitted > 0 ? (
+        <p className="mt-1 text-2xs text-muted-foreground" role="status">
+          {omitted} more refused records not shown
+        </p>
+      ) : null}
+    </div>
   );
 }
 

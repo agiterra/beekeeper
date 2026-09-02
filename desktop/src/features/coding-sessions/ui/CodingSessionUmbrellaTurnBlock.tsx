@@ -25,6 +25,7 @@ import type {
   CodingSessionUmbrellaRecord,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { CodingSessionActorNameResolver } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import type { CodingSessionWakeOperationIndex } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { cn } from "@/shared/lib/cn";
@@ -61,6 +62,7 @@ export function CodingSessionUmbrellaTurnBlock({
   showProvenance,
   stickyProvenance,
   umbrella,
+  wakeOperations,
 }: {
   /**
    * Resolves a seat's `agentRef` to a display name, exactly as the Agents rail
@@ -132,6 +134,12 @@ export function CodingSessionUmbrellaTurnBlock({
   showProvenance: boolean;
   stickyProvenance: boolean;
   umbrella: CodingSessionUmbrellaRecord;
+  /**
+   * Fold-resolved operations for the wake reading (finding 17). Deliberately
+   * **not** a Mission-gated prop: the sentence a wake reads as is the same in
+   * both lenses, so both pass the index they hold — Mission's fold, or none.
+   */
+  wakeOperations?: CodingSessionWakeOperationIndex;
 }) {
   const prompt = readCodingSessionTurnBlockPrompt(block);
   const handoff = prompt ? parseCodingSessionHandoffPrefill(prompt.text) : null;
@@ -482,6 +490,7 @@ export function CodingSessionUmbrellaTurnBlock({
         items={narrativeItems}
         operatorProfiles={operatorProfiles}
         resolveSeat={resolvePromptSeat}
+        wakeOperations={wakeOperations}
       />
       {bundleExecution ? (
         <CodingSessionMissionExecutionBundle
@@ -497,6 +506,7 @@ export function CodingSessionUmbrellaTurnBlock({
             items={executionItems}
             operatorProfiles={operatorProfiles}
             resolveSeat={resolvePromptSeat}
+            wakeOperations={wakeOperations}
           />
         </CodingSessionMissionExecutionBundle>
       ) : null}

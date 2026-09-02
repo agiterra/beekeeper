@@ -585,6 +585,18 @@ export function projectNativeTeamFoldToMissionInspector(input: {
     transactions: transactions.rows,
     transactionsTruncated: transactions.truncated,
     unseatedReportEventIds,
+    // Carried through verbatim. Item 105 put both on the wire and nothing
+    // rendered them for a batch; the fold decides what is waiting and what was
+    // asked, and this layer copies the answer rather than forming one.
+    decisions: fold.decisions.map((decision) => ({
+      requestId: decision.requestId,
+      heldOn: decision.heldOn,
+      blocks: [...decision.blocks],
+      answeredBy: decision.answeredBy,
+      answerId: decision.answerId,
+    })),
+    waitingOnDecision:
+      fold.waitingOnDecision === null ? null : { ...fold.waitingOnDecision },
     observedChanges: { files: [], unreportedEditCount: 0 },
     observedFileSources: new Map(),
     participants: [],

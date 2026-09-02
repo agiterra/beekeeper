@@ -882,6 +882,12 @@ export function UmbrellaCodingSessionWorkspace({
                 resolveMissionActor={resolveMissionActor}
                 resolvePromptSeat={resolvePromptSeat}
                 umbrella={umbrella}
+                // Not Mission-gated (finding 17): a wake pointer reads as the
+                // same §1f sentence in both lenses. Conversation subscribes to
+                // no fold, so the index it passes is empty and its line is the
+                // unresolved one — the honest answer for a surface that holds
+                // no records, and still not raw pointer JSON in a bubble.
+                wakeOperations={missionSurfaceResult.wakeOperations}
               />
             </CodingSessionColumn>
           </div>

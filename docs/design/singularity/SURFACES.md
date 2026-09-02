@@ -1988,3 +1988,157 @@ green, so nothing would ever have flagged them (REVIEW-B3 F5). The two
 survivors are in `NewCodingSessionLaunchNotes.tsx`, named for what they are;
 `resolveCodingSessionCrewSeats` is deleted with them, and so are the tests that
 were the only thing still calling either.
+
+## 22. 2026-09-02 (batch 3, lane L2) — the wake a person can read, the ruling they owe, the policy, and Prepare
+
+Four rulings, from the second live team run (`review-2026-09-01/LIVE-RUN-TeamRolesV1.md`,
+"Live run 2", channel `d3e440ea-…`). Each names the wire it renders and the copy
+it uses; the copy tables themselves are frozen in `review-2026-09-01/00-BATCH.md`
+§1f and §1g.
+
+### 22.1 An identifier-only wake is read, in one line, wherever a turn is shown
+
+**Wire source.** A 44220 whose whole `action.text` is one of the two objects
+`codingSessionTeamWakeText` mints — `{"operationId","type"}` or the five-field
+`buzz-team-wake/v1` object. Live: command `cli-wake-v1:4847ff06…`, event
+`b0bc2d8f`, text `{"operationId":"4847ff06…","type":"decision.answer"}`.
+
+**Ruling.** That turn renders as the single §1f sentence for its pointer `type`,
+never as its own JSON. It is one module (`codingSessionWakeReading.ts`) called
+from the one component both lenses render (`CodingSessionTranscript`), so
+Mission and Conversation cannot word it differently. The subject comes from the
+fold this surface holds; an operation the fold does not hold produces §1f's
+unresolved line and **never** a guessed subject. Prose is never re-read: a turn
+whose text is not one of the two exact shapes takes the untouched path, so the
+Conversation lens moves for wake bubbles and for nothing else.
+
+`{Who}` is resolved from the **author key**, not from the byline. The byline
+correctly calls an automatic `team-wake-` command `Beekeeper · team wake` — a
+caption for a turn nobody typed — while §1f's sentence wants the person or seat
+whose key signed the record.
+
+The raw pointer stays available in Trace and the Inspector, which render the
+signed record itself. What ends is a person being handed a JSON object in a
+chat bubble.
+
+**Known gap, stated rather than papered over.** Conversation subscribes to no
+fold, so its index is empty and its line is §1f's unresolved one. The defect
+(raw JSON in a bubble) is fixed in both lenses; the *resolved* subject appears
+only where a fold exists. Giving Conversation the resolved line means running
+the Mission evidence subscription in a lens that was deliberately built without
+one — a ruling, not a lane's call.
+
+### 22.2 The rail says who is waiting, and lists the rulings
+
+**Wire source.** The Rust fold's own `decisions[]` and `waitingOnDecision`
+(`invokeCodingSessionTeamFold.ts:82`, `:96`), on the wire since item 105 and
+rendered by nothing until now.
+
+**Ruling.** `waitingOnDecision` non-null puts §1g's `Waiting on the founder` /
+`Waiting on {Who}` on the Mission state plane. The **fact** is the fold's; the
+**qualifier** is this surface's, because only this surface knows liveness: with
+the lead holding an open turn the waiting line sits beside the state, and with
+no open lead turn it *is* the state line. A mission whose seats are working
+while a ruling is outstanding is both things, and saying only one of them is a
+rail lying by omission.
+
+The queue is a Mission section of its own, one row per `decisions[]` entry: the
+signed question, `Open · held on …` / `Answered by …`, and what it holds up.
+`blocks: []` is a real answer from the fold and reads `holds up no assignment
+yet` — it is exactly the shape live run 2's founder-held request `2099cdb3` had,
+and a row that rendered nothing there would read as "we don't know". Every state
+is carried by a word; the amber card is a second carrier, never the only one.
+Bounded at 50 rows with the omission disclosed. An absent `decisions` is
+`Decisions unknown`, never an empty list.
+
+### 22.3 The Inspector's Context tab renders the policy
+
+**Wire source.** Kind 44245 records for the umbrella, folded by
+`buzz_core::coding_session_policy::fold_coding_session_policies` through a new
+Tauri command (`fold_coding_session_policies_command`), with the accepted
+NIP-CSAT chain — receipt stamps included — supplying the same standing rule
+(`signer_may_steer_at`) the session provider and `bee sessions policy get` use.
+TypeScript decides nothing: not which record won, not who had standing, not
+when.
+
+**Ruling.** Three outcomes are three sentences (§1g): `No policy set for this
+session`; `Policy withdrawn by {Who}` — a withdrawal is a decision somebody
+made, and reading it as "none" erases both the decision and the person; or the
+record, printing the fields it sets and, verbatim, the enforcement sentence.
+
+`budget.turns` is the only field anything enforces (POLICY.md §4), so it is the
+only row that may say `enforced`; every other row says `stated`. **No field gets
+a bar, a meter or a progress ring** — a bar over a limit nothing counts is the
+same defect as a status reading Idle over a disconnected provider.
+
+Refused records are listed with author, code and the fold's own reason, as the
+CLI prints them. Silence there would make a stranger's competing ceiling
+indistinguishable from no record at all.
+
+### 22.4 Prepare confirms the seats this launch has
+
+**Wire source.** None — a local scan of `personas/roles` and the install it
+feeds.
+
+**Ruling.** Prepare asks about the lead and the bench **this launch names**, and
+says in one line how many other packs it refreshed (§1g). Live run 2, 10:36: a
+two-seat launch put six name fields on screen under "Confirm every refreshed
+role name", because the installer refreshes every discovered pack and the screen
+therefore asked about all of them — it read as role selection and was pack
+maintenance.
+
+The install is unchanged: every discovered pack is still refreshed and still
+keeps its stored name, so nothing loses a name by being unasked. What changes is
+the question. And a refresh that fails is named — refreshed silently is not
+refreshed secretly — alongside any roster role the install dropped.
+
+### 22.5 2026-09-02 (fix round 1) — the goal card, the Files card, and what a wake may claim
+
+Four rulings the first four sections did not record, from `DESIGN-CRITIQUE-RUN3.md`
+A1/A2 and `REVIEW-L2.md` F2–F5.
+
+**A wake line is composed only when three things agree.** The pointer parses as
+one of the two minted shapes (as before), **the turn's own signer is the
+operation's author**, and **the pointer's `type` is the record's own kind**.
+Any disagreement falls to the unresolved row *with the reason*, never to a
+sentence. The old rule composed `{Who}` from the turn's signer and the subject
+from the fold's record and never asked whether they were the same identity — so
+a member who typed the founder's pointer into the composer was rendered
+performing the founder's signed act (`Mallory answered decision 2099cdb3: C…`).
+The exact-field parse stops the accident; only the author join stops the act.
+`verdict` matches its two signed subtypes and nothing else. Copy in
+`00-BATCH.md` §1f, amended today.
+
+**A lens that holds no fold says so.** `— not in this session's records yet` is
+a claim about the *session* made from the absence of a *local* index. The
+one-seat lens now says `this lens holds no session records; open Mission to read
+it.` — the same shape of correction as A1 itself.
+
+**The goal card names which of three things is true.** A 44227 this surface
+refuses on identity renders `A goal is published on this channel but it names a
+different {founder | session}…`, naming what disagreed; a genuinely absent
+record keeps `No accepted mission goal published.`; the reader's own
+`unresolved`/`errored` states are L4's, and until they land `absent` still
+covers two facts — stated, not hidden. The gate itself is one case-folded,
+newest-wins selection instead of an exact map key plus three equality checks in
+three files. Live run 3's own miss was **not reproduced** through the real
+readers: the class is removed, the incident is not explained. The editor's
+control reads `Change goal` when one exists.
+
+**A redaction marker is not a file name.** The Files card asks
+`shared/lib/redactionMarker.ts` — the pattern's one owner, no second regex — and
+renders `N file edits · paths private to the seat's host`. The bytes and the
+digest are **not** re-surfaced in Mission: a redaction disclosed as a redaction
+is the point. `CHANGES` still counts such an edit as *named*; rejecting the
+candidate upstream in `deriveCodingSessionObservedChanges` is L4's §L4.2.
+
+**A refused record is never silence.** A policy fold that selected nothing but
+refused something reads `No policy in force · N refused` with every refusal
+listed — `No policy set for this session` is true only when nothing was refused
+either. Same rule as the goal card, one surface over.
+
+**A terminal state is never overwritten.** The waiting fact is appended to a
+`completed`, `blocked` or conflicted state (`Mission completed · waiting on the
+founder`), sits beside a running state whose lead is working, and *is* the state
+only for a running mission with no open lead turn. A mission that ended does not
+stop having ended because somebody owes a ruling.

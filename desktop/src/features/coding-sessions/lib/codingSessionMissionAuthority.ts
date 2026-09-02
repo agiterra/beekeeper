@@ -59,6 +59,21 @@ export type CodingSessionMissionAuthorityProjection = {
     role: string;
     grantEventRef: string;
   }>;
+  /**
+   * Every accepted transition, in accepted order, with the **receipt's** own
+   * `created_at`.
+   *
+   * `activeGrants` answers "who may steer now"; the policy fold asks "who
+   * could steer when this record was published", which is a different
+   * question and needs the times. Carried here rather than recomputed
+   * anywhere else, because two projections of one chain is exactly the defect
+   * REVIEW-B2 F1 named.
+   */
+  policyGrants: Array<{
+    grantee: string;
+    acceptedAt: number;
+    transitionType: CodingSessionAuthorityTransitionType;
+  }>;
 };
 
 function fail<T>(error: string): StrictDecodeResult<T> {
@@ -251,7 +266,12 @@ export function projectCodingSessionMissionAuthority(input: {
   const seenAcceptedIds = new Set<string>();
   const acceptedBySeq = new Map<
     number,
-    { eventId: string; signer: string; payload: AuthorityTransition }
+    {
+      eventId: string;
+      signer: string;
+      acceptedAt: number;
+      payload: AuthorityTransition;
+    }
   >();
   for (const event of input.receipts) {
     const coarse = parseCoarseJson(event.content);
@@ -311,6 +331,9 @@ export function projectCodingSessionMissionAuthority(input: {
     acceptedBySeq.set(payload.seq, {
       eventId: transitionEvent.id,
       signer: transition.value.signer,
+      // The relay receipt's own stamp, not the transition's: acceptance is
+      // what put this link in the chain.
+      acceptedAt: event.created_at,
       payload,
     });
   }
@@ -325,6 +348,8 @@ export function projectCodingSessionMissionAuthority(input: {
   >();
   let headEventId: string | null = null;
   const acceptedEventIds: string[] = [];
+  const policyGrants: CodingSessionMissionAuthorityProjection["policyGrants"] =
+    [];
   for (let seq = 1; seq <= acceptedBySeq.size; seq += 1) {
     const link = acceptedBySeq.get(seq);
     if (!link || link.payload.prevAccepted !== headEventId) {
@@ -392,6 +417,11 @@ export function projectCodingSessionMissionAuthority(input: {
       seats.delete(link.payload.granteePubkey);
     }
     acceptedEventIds.push(link.eventId);
+    policyGrants.push({
+      grantee: link.payload.granteePubkey,
+      acceptedAt: link.acceptedAt,
+      transitionType: link.payload.type,
+    });
     headEventId = link.eventId;
   }
   return {
@@ -404,6 +434,7 @@ export function projectCodingSessionMissionAuthority(input: {
       headEventId,
       headSeq: acceptedEventIds.length,
       acceptedEventIds,
+      policyGrants,
       activeGrants: [...grants.values()].sort((a, b) =>
         a.actorPubkey.localeCompare(b.actorPubkey),
       ),

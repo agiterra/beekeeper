@@ -36,6 +36,7 @@ import {
   listCodingSessionUmbrellaParticipants,
   type CodingSessionActorNameResolver,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import type { CodingSessionWakeOperationIndex } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import { CODING_SESSION_UNKNOWN_ACTOR } from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
@@ -82,6 +83,7 @@ export function CodingSessionUmbrellaTimelineView({
   resolveMissionActor,
   resolvePromptSeat,
   umbrella,
+  wakeOperations,
 }: {
   channelId: string;
   currentUserPubkey?: string | null;
@@ -129,6 +131,12 @@ export function CodingSessionUmbrellaTimelineView({
    */
   resolvePromptSeat?: CodingSessionPromptSeatResolver;
   umbrella: CodingSessionUmbrellaRecord;
+  /**
+   * Fold-resolved operations for the wake reading (finding 17). Not gated on
+   * `missionDensity`: §1f's sentence is the same line in both lenses, so the
+   * prop is passed straight through in both.
+   */
+  wakeOperations?: CodingSessionWakeOperationIndex;
 }) {
   const participants = React.useMemo(
     () => listCodingSessionUmbrellaParticipants(umbrella, actorNames),
@@ -471,6 +479,7 @@ export function CodingSessionUmbrellaTimelineView({
                 focusedExecutionKey === null && umbrella.executions.length > 1
               }
               umbrella={umbrella}
+              wakeOperations={wakeOperations}
             />
           </React.Fragment>
         );
