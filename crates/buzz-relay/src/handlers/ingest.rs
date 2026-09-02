@@ -18,11 +18,12 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
-    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
-    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
-    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
-    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
+    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
+    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
+    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
     KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
@@ -360,7 +361,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // Coding sessions: the operator-signed session origin, goal/name
         // revisions, authority-chain transitions, closure facts (44226–44230),
-        // and signed team transactions (44244),
+        // signed team transactions (44244), session policies (44245) and
+        // observations (44246),
         // the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
@@ -379,7 +381,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
         | KIND_CODING_SESSION_TRANSCRIPT
         | KIND_CODING_SESSION_TEAM_TRANSACTION
-        | KIND_CODING_SESSION_POLICY => Ok(Scope::MessagesWrite),
+        | KIND_CODING_SESSION_POLICY
+        | KIND_CODING_SESSION_OBSERVATION => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -739,6 +742,7 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_CLOSURE
             | KIND_CODING_SESSION_TEAM_TRANSACTION
             | KIND_CODING_SESSION_POLICY
+            | KIND_CODING_SESSION_OBSERVATION
     )
 }
 
@@ -762,6 +766,7 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_CLOSURE
             | KIND_CODING_SESSION_TEAM_TRANSACTION
             | KIND_CODING_SESSION_POLICY
+            | KIND_CODING_SESSION_OBSERVATION
     )
 }
 
@@ -4020,6 +4025,31 @@ async fn ingest_event_inner(
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
+    // NIP-CSOB, and NIP-CSP's division again: structure only. The schema, the
+    // five ordered two-field tags, the four closed vocabularies, every bound,
+    // and the parity between `d`/`csob-genesis`/`csob-type` and the content
+    // they restate are all answerable from this one event, so the relay
+    // answers them. Whether the signer held an active seat on this umbrella —
+    // or was its founder — is not: that is the consuming fold's question
+    // against the accepted NIP-CSAT chain, exactly as it is for the team
+    // transaction and the policy above. A relay that adjudicated it here would
+    // be asserting standing it cannot verify.
+    //
+    // Membership is still checked before any of this: 44246 is a
+    // coding-session kind (`is_coding_session_kind`), so it goes through the
+    // strict channel-membership gate first and a non-member is refused before
+    // its content is ever parsed.
+    //
+    // No `coding_session_content_cap` entry: that function bounds storage for
+    // the four provider-authored kinds that get *no* envelope validator. 44246
+    // has one, and `decode_coding_session_observation` already refuses content
+    // over MAX_CODING_SESSION_OBSERVATION_CONTENT_BYTES, so a second bound
+    // here would be redundant and could only drift from the first.
+    if kind_u32 == KIND_CODING_SESSION_OBSERVATION {
+        buzz_core::coding_session_observation::validate_coding_session_observation_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
     // The four provider-authored coding-session kinds get no envelope
     // validator: their content is the provider's own account of what a session
     // did, and a relay that parsed it would be asserting authority over facts
@@ -4817,6 +4847,10 @@ mod team_transaction_tests;
 #[cfg(test)]
 #[path = "ingest_coding_session_policy_tests.rs"]
 mod coding_session_policy_tests;
+
+#[cfg(test)]
+#[path = "ingest_coding_session_observation_tests.rs"]
+mod coding_session_observation_tests;
 
 #[cfg(test)]
 mod tests {
@@ -7560,7 +7594,7 @@ mod tests {
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 13] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 14] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -7574,6 +7608,7 @@ mod tests {
         KIND_CODING_SESSION_CLOSURE,
         KIND_CODING_SESSION_TEAM_TRANSACTION,
         KIND_CODING_SESSION_POLICY,
+        KIND_CODING_SESSION_OBSERVATION,
     ];
 
     #[test]
@@ -7583,7 +7618,8 @@ mod tests {
                 is_coding_session_kind(kind),
                 (44220..=44230).contains(&kind)
                     || kind == KIND_CODING_SESSION_TEAM_TRANSACTION
-                    || kind == KIND_CODING_SESSION_POLICY,
+                    || kind == KIND_CODING_SESSION_POLICY
+                    || kind == KIND_CODING_SESSION_OBSERVATION,
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }

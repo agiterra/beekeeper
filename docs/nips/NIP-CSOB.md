@@ -229,6 +229,24 @@ then have to un-believe: an observation binds nothing in the first place.
 The relay validates **structure**: schema, tags, closed vocabularies, bounds,
 tag-to-content parity. It adjudicates nothing else.
 
+Concretely, at ingest (`crates/buzz-relay/src/handlers/ingest.rs`): 44246 is a
+coding-session kind, so it takes `Scope::MessagesWrite` and passes the strict
+channel-membership gate **before** its content is parsed — a non-member is
+refused for want of standing in the channel, not for anything its JSON says.
+An admitted event is then handed to `buzz-core`'s own
+`validate_coding_session_observation_envelope`, so the relay and every reader
+refuse exactly the same bytes for exactly the same reason; there is no second
+implementation to drift. It carries no separate storage cap, because the
+decoder already bounds content at `MAX_CODING_SESSION_OBSERVATION_CONTENT_BYTES`
+and a second bound could only disagree with the first.
+
+What the relay does **not** decide is whether the signer held a seat. That is
+the authority question, and it belongs to the consuming fold against the
+accepted NIP-CSAT chain — exactly the division NIP-CSP draws for kinds 44244
+and 44245. A relay that adjudicated standing at ingest would be asserting
+something it cannot verify, and an observation refused that way would be a
+statement its author really made, silently deleted.
+
 `fold_coding_session_observations` **never fails**. There is no whole-set hard
 error and no exclusion code in this kind. An event that is malformed,
 cross-context, or not an observation at all is listed under `ignored` with a
@@ -268,9 +286,11 @@ gate and finding entries.
 | Kind allocation and assertions | `crates/buzz-core/src/kind.rs` |
 | Signed builder | `crates/buzz-sdk/src/coding_session_observation.rs` |
 | Writer and reader (`bee sessions observe`, `bee sessions observations`) | `crates/buzz-cli/src/commands/sessions/observations.rs` |
-| Relay structural validation | *owed* — until it lands, the relay stores no kind 44246 |
+| Relay structural validation | `crates/buzz-relay/src/handlers/ingest.rs` (scope, membership, envelope arm) |
 
-**Residual, stated plainly:** ingest registration for kind 44246 is a separate
-change. Until it lands, nothing can publish an observation, and the writer
-commands above will be refused by the relay. Every reader in this NIP is written
-against that arrival and is exercised by unit tests, not by a live write.
+**Residual, stated plainly:** ingest registration for kind 44246 landed with
+this NIP, so the relay will store an observation — but **nothing here has been
+written live yet.** Every reader and writer in this NIP is exercised by unit
+tests and by the relay's own integration suite, not by a live publish against
+a running community. Until a live write happens, treat the surfaces as proven
+against the code and unproven against the wire.
