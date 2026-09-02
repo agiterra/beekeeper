@@ -2111,7 +2111,9 @@ fn a_hires_outcome_is_the_seated_creates_receipt() {
     let (created_receipts, _) = decode_receipts(&created);
     let outcome = fold_hire(
         Some(seat("a")),
-        newest_create_receipt(&created_receipts, "create-hired"),
+        create_receipts_for_command(&created_receipts, "create-hired")
+            .into_iter()
+            .next(),
         None,
         true,
     );
@@ -2139,7 +2141,9 @@ fn a_hires_outcome_is_the_seated_creates_receipt() {
     let (failed_receipts, _) = decode_receipts(&failed);
     let outcome = fold_hire(
         Some(seat("b")),
-        newest_create_receipt(&failed_receipts, "create-hired"),
+        create_receipts_for_command(&failed_receipts, "create-hired")
+            .into_iter()
+            .next(),
         None,
         false,
     );
@@ -2194,7 +2198,9 @@ fn a_seated_but_ungranted_hire_says_it_cannot_report_yet() {
         None,
     )];
     let (records, _) = decode_receipts(&events);
-    let receipt = newest_create_receipt(&records, "create-hired");
+    let receipt = create_receipts_for_command(&records, "create-hired")
+        .into_iter()
+        .next();
 
     let ungranted = fold_hire(Some(seat.clone()), receipt.clone(), None, false);
     assert!(
@@ -2379,7 +2385,9 @@ fn every_hire_outcome_has_its_own_exit_code_and_sentence() {
             None,
         )];
         let (records, _) = decode_receipts(&events);
-        newest_create_receipt(&records, "create-hired")
+        create_receipts_for_command(&records, "create-hired")
+            .into_iter()
+            .next()
     };
 
     let cases = [
@@ -3368,7 +3376,9 @@ fn the_hire_window_matches_desktop_and_ungranted_copy_names_seat_repair() {
         None,
     )];
     let (records, _) = decode_receipts(&events);
-    let receipt = newest_create_receipt(&records, "create-hired");
+    let receipt = create_receipts_for_command(&records, "create-hired")
+        .into_iter()
+        .next();
     let expected = format!(
         "If the seat runs anyway, repair its authority with: bee sessions seat-repair \
          --channel {CHANNEL} --session-ref {UMBRELLA_HIRE} --actor {}. Never hire again.",
@@ -3426,4 +3436,928 @@ fn no_hire_copy_claims_the_typed_fold_excludes_an_ungranted_report() {
             );
         }
     }
+}
+
+// ── Derived team-operation wake command ids (batch 2, A1.1) ──────────────────
+
+use super::crew_cmds::{team_operation_wake_command_id, CLI_TEAM_WAKE_COMMAND_ID_PREFIX};
+use super::operations::{resolve_delivery_command_id, wake_shares_delivery_command_id};
+use buzz_core::coding_session_team_transaction::CodingSessionTeamTransactionType;
+
+/// The five operation classes whose wake must mint its own command id.
+const DERIVING_OPERATIONS: &[CodingSessionTeamTransactionType] = &[
+    CodingSessionTeamTransactionType::Report,
+    CodingSessionTeamTransactionType::Verdict,
+    CodingSessionTeamTransactionType::Acknowledgement,
+    CodingSessionTeamTransactionType::MissionCompleted,
+    CodingSessionTeamTransactionType::MissionBlocked,
+];
+
+#[test]
+fn a_wake_command_id_is_deterministic_per_operation_and_target() {
+    let operation = "f".repeat(64);
+    let lead = coding_session_target_key(&target("lead-session", 3));
+
+    let first = team_operation_wake_command_id(&operation, &lead);
+    let second = team_operation_wake_command_id(&operation, &lead);
+
+    assert_eq!(
+        first, second,
+        "the same operation and target must derive one id"
+    );
+    let (namespace, rest) = first
+        .split_once(':')
+        .unwrap_or_else(|| panic!("no namespace in {first}"));
+    assert_eq!(namespace, CLI_TEAM_WAKE_COMMAND_ID_PREFIX);
+    let (source, digest) = rest
+        .split_once(':')
+        .unwrap_or_else(|| panic!("no digest in {first}"));
+    assert_eq!(
+        source, operation,
+        "the id must name the operation it wakes for"
+    );
+    assert_eq!(
+        digest.len(),
+        12,
+        "digest is 12 hex characters, got {digest:?}"
+    );
+    assert!(
+        digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "digest is lowercase hex, got {digest:?}"
+    );
+}
+
+#[test]
+fn a_wake_command_id_differs_across_targets_and_operations() {
+    let operation = "a".repeat(64);
+    let other_operation = "b".repeat(64);
+    let lead = coding_session_target_key(&target("lead-session", 3));
+    let other_generation = coding_session_target_key(&target("lead-session", 4));
+    let other_seat = coding_session_target_key(&target("builder-session", 3));
+
+    let base = team_operation_wake_command_id(&operation, &lead);
+    assert_ne!(
+        base,
+        team_operation_wake_command_id(&operation, &other_generation)
+    );
+    assert_ne!(
+        base,
+        team_operation_wake_command_id(&operation, &other_seat)
+    );
+    assert_ne!(
+        base,
+        team_operation_wake_command_id(&other_operation, &lead)
+    );
+}
+
+/// The exact live-run shape from `docs/SESSION_STATE.md` item 103, finding 4:
+/// Bob's report carried the delivery command id of the assignment that had
+/// already been consumed on his own target, so the lead runner fenced the wake
+/// and published no 44224. The derived id must not be that id, and must not be
+/// anything else the CLI was handed.
+#[test]
+fn a_derived_wake_id_is_never_a_delivery_command_id_the_cli_received() {
+    // Prefixes are the live ids recorded in the ledger; the tails are
+    // synthetic because the ledger records only the prefixes.
+    let bob_report = format!("fc2769b3{}", "0".repeat(56));
+    let assignment_delivery = "f40a8195-4c2b-4a1d-9f83-1b2c3d4e5f60";
+    let received: Vec<String> = vec![
+        assignment_delivery.to_owned(),
+        "1f2e3d4c-5b6a-4798-8877-665544332211".to_owned(),
+        format!("team-wake-v1:{}:{}", "9".repeat(64), "a".repeat(24)),
+    ];
+
+    let derived =
+        team_operation_wake_command_id(&bob_report, &coding_session_target_key(&target("lead", 1)));
+
+    for id in &received {
+        assert_ne!(&derived, id, "the derived wake id reused a received id");
+    }
+    assert!(
+        derived.starts_with(&format!("{CLI_TEAM_WAKE_COMMAND_ID_PREFIX}:")),
+        "got {derived}"
+    );
+}
+
+#[test]
+fn only_an_assignment_shares_its_delivery_command_id_with_its_wake() {
+    assert!(wake_shares_delivery_command_id(
+        CodingSessionTeamTransactionType::Assignment
+    ));
+    for operation in DERIVING_OPERATIONS {
+        assert!(
+            !wake_shares_delivery_command_id(*operation),
+            "{} must derive its wake command id",
+            operation.as_str()
+        );
+    }
+}
+
+#[test]
+fn a_waking_report_refuses_a_caller_supplied_delivery_command_id() {
+    for operation in DERIVING_OPERATIONS {
+        let error = resolve_delivery_command_id(
+            *operation,
+            Some("lead"),
+            Some("f40a8195-4c2b-4a1d-9f83-1b2c3d4e5f60".to_owned()),
+        )
+        .expect_err(&format!(
+            "{} accepted an inherited delivery command id",
+            operation.as_str()
+        ));
+        assert!(
+            matches!(error, CliError::Usage(_)),
+            "{} refused with {error:?}, wanted a usage error",
+            operation.as_str()
+        );
+        assert!(
+            error.to_string().contains("AlreadyConsumed"),
+            "{} refusal must say why: {error}",
+            operation.as_str()
+        );
+
+        assert_eq!(
+            resolve_delivery_command_id(*operation, Some("lead"), None).expect("no id is fine"),
+            None,
+            "{} must record no deliveryCommandId it did not use",
+            operation.as_str()
+        );
+    }
+}
+
+#[test]
+fn an_assignment_keeps_the_shared_delivery_command_id_its_binding_needs() {
+    let named = resolve_delivery_command_id(
+        CodingSessionTeamTransactionType::Assignment,
+        Some("builder"),
+        Some("cmd-77".to_owned()),
+    )
+    .expect("an assignment may name its own delivery command");
+    assert_eq!(named.as_deref(), Some("cmd-77"));
+
+    let minted = resolve_delivery_command_id(
+        CodingSessionTeamTransactionType::Assignment,
+        Some("builder"),
+        None,
+    )
+    .expect("an assignment mints one when the caller named none");
+    assert!(minted.is_some(), "an assignment wake needs a shared id");
+}
+
+/// Recording a correlation id without waking anybody is unchanged: nothing is
+/// delivered, so nothing can be double-spent.
+#[test]
+fn a_recorded_operation_without_a_wake_keeps_its_correlation_id() {
+    for operation in DERIVING_OPERATIONS {
+        assert_eq!(
+            resolve_delivery_command_id(*operation, None, Some("cmd-9".to_owned()))
+                .expect("no wake, no refusal"),
+            Some("cmd-9".to_owned())
+        );
+    }
+}
+
+// ── The hire wait carries its last verification error (batch 2, A1.4) ────────
+
+fn wait_seat() -> HiredSeat {
+    HiredSeat {
+        event_id: "e".repeat(64),
+        create_signer: pk("cc"),
+        command_id: "create-hired".into(),
+        actor: pk(BOB),
+        role: "builder".into(),
+        session_ref: "6a8f1b2c-0000-4000-8000-000000000001".into(),
+        genesis_ref: "d".repeat(64),
+        provider_authority_pubkey: pk(PROVIDER),
+        provider_instance_ref: "claude-primary".into(),
+        model: None,
+        at: 1_000,
+        raw: json!({}),
+    }
+}
+
+fn wait_receipt() -> SeatReceipt {
+    SeatReceipt {
+        event_id: "f".repeat(64),
+        signer: pk(PROVIDER),
+        status: ReceiptStatus::Created,
+        target_key: Some(coding_session_target_key(&target("session-1", 1))),
+        error_code: None,
+        error_message: None,
+        at: 1_002,
+        raw: json!({}),
+    }
+}
+
+/// The exact 2026-09-01 shape: a seated create with no receipt yet, then a
+/// receipt two seconds later whose binding check refuses it. The wait must end
+/// on `seating` **and** name the refusal, never on a bare timeout.
+#[test]
+fn a_binding_failure_leaves_seating_carrying_the_reason() {
+    let mut wait = HireWait::new();
+
+    assert_eq!(
+        wait.observe(HireOutcome::Seating { seat: wait_seat() }, None),
+        None,
+        "a seat with no receipt is progress, not an answer"
+    );
+    assert_eq!(
+        wait.observe(
+            HireOutcome::Created {
+                seat: wait_seat(),
+                receipt: wait_receipt(),
+                granted: false,
+            },
+            Some(Err(CliError::Other(
+                "receipt target claude-primary does not match create target 1958c6c448e05eed"
+                    .into()
+            ))),
+        ),
+        None,
+        "a create whose evidence does not bind is not a hire answer"
+    );
+
+    assert!(
+        matches!(wait.held(), HireOutcome::Seating { .. }),
+        "the live seat must survive the failed verification"
+    );
+    let reason = wait
+        .last_evidence_error()
+        .expect("the wait must carry the verification failure out");
+    assert!(
+        reason.contains("does not match create target"),
+        "got {reason}"
+    );
+}
+
+#[test]
+fn a_verified_create_answers_immediately_and_carries_no_error() {
+    let mut wait = HireWait::new();
+    let answered = wait
+        .observe(
+            HireOutcome::Created {
+                seat: wait_seat(),
+                receipt: wait_receipt(),
+                granted: false,
+            },
+            Some(Ok(())),
+        )
+        .expect("a verified create is the answer");
+    assert!(matches!(answered, HireOutcome::Created { .. }));
+    assert_eq!(wait.last_evidence_error(), None);
+}
+
+/// A create whose provider metadata is merely late is held, as before — but
+/// the reason is still recorded, so a wait that ends there says why.
+#[test]
+fn a_late_metadata_create_is_held_with_its_reason() {
+    let mut wait = HireWait::new();
+    assert_eq!(
+        wait.observe(
+            HireOutcome::Created {
+                seat: wait_seat(),
+                receipt: wait_receipt(),
+                granted: false,
+            },
+            Some(Err(CliError::Unconfirmed(
+                "no provider metadata for the receipt's target yet".into()
+            ))),
+        ),
+        None
+    );
+    assert!(matches!(wait.held(), HireOutcome::Created { .. }));
+    assert!(wait
+        .last_evidence_error()
+        .is_some_and(|error| error.contains("no provider metadata")));
+}
+
+#[test]
+fn a_wait_that_saw_nothing_reports_unconfirmed_with_no_invented_error() {
+    let mut wait = HireWait::new();
+    assert_eq!(wait.observe(HireOutcome::Unconfirmed, None), None);
+    assert_eq!(wait.held(), HireOutcome::Unconfirmed);
+    assert_eq!(wait.last_evidence_error(), None);
+}
+
+// ── `bee sessions hire --check` publishes nothing (batch 2, A1.3) ────────────
+
+/// Every path a `--check` run touched, recorded by a real HTTP server.
+///
+/// The claim is about the wire — "this run published nothing" — so it is
+/// tested on the wire and not against a stubbed method.
+#[derive(Default)]
+struct CheckRecorder {
+    paths: std::sync::Mutex<Vec<String>>,
+}
+
+async fn serve_recorder(recorder: std::sync::Arc<CheckRecorder>) -> String {
+    use axum::body::Body;
+    use axum::extract::State;
+    use axum::http::{Response, StatusCode};
+
+    let app = axum::Router::new()
+        .route(
+            "/query",
+            axum::routing::post(
+                move |State(recorder): State<std::sync::Arc<CheckRecorder>>, _body: String| async move {
+                    recorder
+                        .paths
+                        .lock()
+                        .expect("path lock")
+                        .push("/query".to_owned());
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "application/json")
+                        .body(Body::from("[]"))
+                        .expect("query response")
+                },
+            ),
+        )
+        .route(
+            "/events",
+            axum::routing::post(
+                move |State(recorder): State<std::sync::Arc<CheckRecorder>>, _body: String| async move {
+                    recorder
+                        .paths
+                        .lock()
+                        .expect("path lock")
+                        .push("/events".to_owned());
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "application/json")
+                        .body(Body::from(json!({"accepted": true, "id": "x"}).to_string()))
+                        .expect("write response")
+                },
+            ),
+        )
+        .with_state(recorder.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+    format!("http://{addr}")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_hire_check(
+    client: &crate::client::BuzzClient,
+    genesis: &str,
+    brief: &str,
+    check: bool,
+) -> Result<(), CliError> {
+    super::crew_cmds::cmd_hire(
+        client,
+        CHANNEL,
+        "6a8f1b2c-0000-4000-8000-000000000001",
+        Some(genesis),
+        "builder",
+        Some("claude-primary"),
+        Some("sonnet"),
+        None,
+        Some(brief),
+        // `no_wait` is never read on the check path — it is consulted only
+        // after the publish — so it carries no meaning for the green run. It
+        // is `true` so the red run (the same test with the early return
+        // removed) fails on the recorded POST instead of waiting out the
+        // whole hire window.
+        true,
+        check,
+        &super::crew_cmds::HireRouting {
+            class: None,
+            risk: None,
+            profile: None,
+            review_flags: None,
+            challenger_sample: false,
+            override_model: None,
+            because: None,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn hire_check_validates_and_publishes_nothing() {
+    let recorder = std::sync::Arc::new(CheckRecorder::default());
+    let url = serve_recorder(recorder.clone()).await;
+    let client =
+        crate::client::BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+
+    let outcome = run_hire_check(
+        &client,
+        &"a".repeat(64),
+        "Rebase the lane and run the gate.",
+        true,
+    )
+    .await;
+
+    // The no-publish claim is checked BEFORE the exit code, so a run that
+    // published and then succeeded still fails here.
+    let paths = recorder.paths.lock().expect("path lock").clone();
+    assert!(
+        !paths.iter().any(|path| path == "/events"),
+        "--check must publish nothing; it posted to {paths:?}"
+    );
+    outcome.expect("a well-formed hire checks clean");
+}
+
+#[tokio::test]
+async fn hire_check_refuses_a_payload_the_relay_would_refuse() {
+    let recorder = std::sync::Arc::new(CheckRecorder::default());
+    let url = serve_recorder(recorder.clone()).await;
+    let client =
+        crate::client::BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+
+    let error = run_hire_check(&client, &"a".repeat(64), "   ", true)
+        .await
+        .expect_err("an empty brief is not a hire");
+    assert!(matches!(error, CliError::Usage(_)), "got {error:?}");
+
+    let paths = recorder.paths.lock().expect("path lock").clone();
+    assert!(
+        !paths.iter().any(|path| path == "/events"),
+        "a refused check must publish nothing; it posted to {paths:?}"
+    );
+}
+
+/// The printed facts are measured off the exact brief that would be signed.
+#[test]
+fn a_hire_check_report_measures_the_brief_against_the_relays_own_cap() {
+    let brief = "Rebase the lane and run the gate.";
+    let report = hire_check_report(&HireCheckRequest {
+        channel: CHANNEL,
+        session_ref: "6a8f1b2c-0000-4000-8000-000000000001",
+        genesis_ref: &"a".repeat(64),
+        role: "builder",
+        brief,
+        provider_instance: Some("claude-primary"),
+        model: Some("sonnet"),
+        routing: None,
+        proposal_unavailable: None,
+    });
+
+    assert_eq!(report["published"], json!(false));
+    assert_eq!(report["check"], json!(true));
+    assert_eq!(report["briefBytes"], json!(brief.len()));
+    assert_eq!(report["briefCapBytes"], json!(12 * 1024));
+    assert_eq!(report["briefWithinCap"], json!(true));
+    assert_eq!(report["role"], json!("builder"));
+    assert_eq!(report["routed"], json!(false));
+    assert_eq!(report["routing"], Value::Null);
+}
+
+/// The one field that measures rather than restates: a brief over the relay's
+/// cap prints `briefWithinCap: false` beside its size, and the check then
+/// refuses. Before, the report was built only after the builder had already
+/// refused the payload, so the field could never print `false` (REVIEW-A1 F11).
+#[test]
+fn an_oversized_brief_is_reported_as_over_the_cap() {
+    let brief = "x".repeat(12 * 1024 + 1);
+    let report = hire_check_report(&HireCheckRequest {
+        channel: CHANNEL,
+        session_ref: "6a8f1b2c-0000-4000-8000-000000000001",
+        genesis_ref: &"a".repeat(64),
+        role: "builder",
+        brief: &brief,
+        provider_instance: None,
+        model: None,
+        routing: None,
+        proposal_unavailable: None,
+    });
+    assert_eq!(report["briefBytes"], json!(brief.len()));
+    assert_eq!(report["briefCapBytes"], json!(12 * 1024));
+    assert_eq!(report["briefWithinCap"], json!(false));
+    assert_eq!(report["published"], json!(false));
+}
+
+// ── Evidence-first hire receipt selection (batch 2, A1.6) ────────────────────
+
+/// One complete, signed hire: genesis, seated create, provider receipt, and
+/// the provider's own metadata — everything `verify_hire_evidence` demands.
+struct SignedHire {
+    events: Vec<Value>,
+    channel: String,
+    session: String,
+    genesis: String,
+    seat: HiredSeat,
+}
+
+fn signed_hire(command_id: &str) -> SignedHire {
+    signed_hire_with_status(command_id, ReceiptStatus::Created)
+}
+
+/// The same complete hire, with the provider answering in `status`.
+///
+/// Parameterized because a failure-class answer is a different fact from a
+/// missing one, and the only way to test that difference is to build the
+/// receipt the provider would actually sign for it.
+fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHire {
+    use buzz_core::coding_session_genesis::CodingSessionGenesisPayload;
+    use buzz_core::coding_session_payload::{
+        Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, LIFECYCLE_RECEIPT_SCHEMA,
+        METADATA_SCHEMA,
+    };
+    use buzz_sdk::builders::{
+        build_coding_session_genesis, build_coding_session_lifecycle_command,
+        build_coding_session_lifecycle_receipt, build_coding_session_metadata,
+    };
+    use nostr::Keys;
+    use uuid::Uuid;
+
+    let channel = Uuid::new_v4();
+    let session = Uuid::new_v4().to_string();
+    let host = Keys::generate();
+    let provider = Keys::generate();
+    let actor = Keys::generate().public_key().to_hex();
+    let genesis_event =
+        build_coding_session_genesis(channel, &CodingSessionGenesisPayload::new(session.clone()))
+            .expect("genesis builder")
+            .sign_with_keys(&host)
+            .expect("sign genesis");
+    let genesis = genesis_event.id.to_hex();
+    // The receipt's instanceId is the provider's cryptographic short id; the
+    // create's providerInstanceRef is the human alias. Different namespaces,
+    // exactly as on the wire.
+    let seat_target = CodingSessionTarget {
+        driver: "claude-agent-acp".into(),
+        instance_id: "1958c6c448e05eed".into(),
+        session_id: "session-1".into(),
+        generation: 1,
+    };
+    let create_payload = CodingSessionLifecycleCommandPayload {
+        schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
+        command_id: command_id.into(),
+        action: CodingSessionLifecycleAction::SessionCreate {
+            project_ref: None,
+            repo_ref: None,
+            session_ref: Some(session.clone()),
+            genesis_ref: Some(genesis.clone()),
+            provider_instance_ref: "claude-primary".into(),
+            provider_authority_pubkey: provider.public_key().to_hex(),
+            model: None,
+            title: None,
+            initial_turn: Some("build it".into()),
+            actor: Some(actor.clone()),
+            role: Some("builder".into()),
+            routing: None,
+        },
+    };
+    let create = build_coding_session_lifecycle_command(channel, &create_payload)
+        .expect("create builder")
+        .sign_with_keys(&host)
+        .expect("sign create");
+    let created = matches!(
+        status,
+        ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
+    );
+    let receipt_payload = LifecycleReceipt {
+        schema: LIFECYCLE_RECEIPT_SCHEMA.into(),
+        command_id: command_id.into(),
+        status,
+        // A provider that created nothing names no session, and says why.
+        session: created.then(|| seat_target.clone()),
+        error: (!created).then(|| buzz_core::coding_session_payload::ReceiptError {
+            code: "ACTOR_UNAVAILABLE".into(),
+            message: "no key for that actor".into(),
+        }),
+        turn_id: None,
+    };
+    let receipt = build_coding_session_lifecycle_receipt(
+        channel,
+        command_id,
+        &serde_json::to_string(&receipt_payload).expect("serialize receipt"),
+    )
+    .expect("receipt builder")
+    .sign_with_keys(&provider)
+    .expect("sign receipt");
+    let metadata_payload = SessionMetadata {
+        schema: METADATA_SCHEMA.into(),
+        session: seat_target.clone(),
+        project_ref: None,
+        repo_ref: None,
+        title: None,
+        agent_ref: Some(actor.clone()),
+        role: Some("builder".into()),
+        provider: Some("claude-primary".into()),
+        runtime: Some("claude".into()),
+        model: None,
+        status: SessionStatus::Idle,
+        branch: None,
+        capabilities: Capabilities::v1_claude(),
+        session_ref: Some(session.clone()),
+        observed_commit: None,
+        dirty: None,
+        relay_reachable: None,
+        verified_at: None,
+        turn_budget: None,
+        routing: None,
+    };
+    let metadata = build_coding_session_metadata(
+        channel,
+        &seat_target,
+        &serde_json::to_string(&metadata_payload).expect("serialize metadata"),
+    )
+    .expect("metadata builder")
+    .sign_with_keys(&provider)
+    .expect("sign metadata");
+
+    let seat = HiredSeat {
+        event_id: create.id.to_hex(),
+        create_signer: host.public_key().to_hex(),
+        command_id: command_id.into(),
+        actor,
+        role: "builder".into(),
+        session_ref: session.clone(),
+        genesis_ref: genesis.clone(),
+        provider_authority_pubkey: provider.public_key().to_hex(),
+        provider_instance_ref: "claude-primary".into(),
+        model: None,
+        at: create.created_at.as_secs() as i64,
+        raw: serde_json::to_value(&create).expect("create JSON"),
+    };
+    SignedHire {
+        events: vec![
+            serde_json::to_value(genesis_event).expect("genesis JSON"),
+            serde_json::to_value(create).expect("create JSON"),
+            serde_json::to_value(receipt).expect("receipt JSON"),
+            serde_json::to_value(metadata).expect("metadata JSON"),
+        ],
+        channel: channel.to_string(),
+        session,
+        genesis,
+        seat,
+    }
+}
+
+/// A 44224 that names the create's commandId and is signed by somebody else —
+/// the shape that could deny a hire the moment selection trusted `created_at`.
+fn unbound_receipt(channel: &str, command_id: &str, created_at_offset: u64) -> Value {
+    use buzz_core::coding_session_payload::{LifecycleReceipt, LIFECYCLE_RECEIPT_SCHEMA};
+    use buzz_sdk::builders::build_coding_session_lifecycle_receipt;
+    use nostr::Keys;
+    use uuid::Uuid;
+
+    let stranger = Keys::generate();
+    let payload = LifecycleReceipt {
+        schema: LIFECYCLE_RECEIPT_SCHEMA.into(),
+        command_id: command_id.into(),
+        status: ReceiptStatus::Failed,
+        session: None,
+        error: Some(buzz_core::coding_session_payload::ReceiptError {
+            code: "ACTOR_UNAVAILABLE".into(),
+            message: "no key for that actor".into(),
+        }),
+        turn_id: None,
+    };
+    let channel = Uuid::parse_str(channel).expect("channel UUID");
+    let mut event = serde_json::to_value(
+        build_coding_session_lifecycle_receipt(
+            channel,
+            command_id,
+            &serde_json::to_string(&payload).expect("serialize receipt"),
+        )
+        .expect("receipt builder")
+        .custom_created_at(nostr::Timestamp::now() + created_at_offset)
+        .sign_with_keys(&stranger)
+        .expect("sign receipt"),
+    )
+    .expect("receipt JSON");
+    // The forgery does not have to be well signed to be *selected* by a rule
+    // that sorts on time; it only has to be newest.
+    if let Some(object) = event.as_object_mut() {
+        object.insert(
+            "created_at".into(),
+            json!(nostr::Timestamp::now().as_secs() + created_at_offset),
+        );
+    }
+    event
+}
+
+/// The rule A1.6 installs: the newest receipt does not win — the bound one
+/// does. Before this, `newest_create_receipt` took the newest by the author's
+/// own `created_at` and only then checked the binding, so any party able to
+/// publish a 44224 carrying the commandId could deny the hire.
+#[test]
+fn a_newer_unbound_receipt_never_displaces_the_bound_one() {
+    let hire = signed_hire("create-hired");
+    let mut events = hire.events.clone();
+    events.push(unbound_receipt(&hire.channel, "create-hired", 600));
+    let (receipts, _) = decode_receipts(&events);
+
+    let assessed = super::crew_cmds::assess_candidate(
+        &events,
+        &hire.channel,
+        &hire.session,
+        &hire.genesis,
+        &receipts,
+        hire.seat.clone(),
+    );
+
+    let verified = assessed
+        .verified
+        .as_ref()
+        .expect("the bound created receipt is the answer");
+    assert_eq!(verified.status, ReceiptStatus::Created);
+    assert_eq!(
+        assessed.unbound, 1,
+        "the stranger's receipt is ignored and counted, not hidden"
+    );
+    assert!(
+        assessed.failed.is_none(),
+        "an unbound failure is not a refusal: {:?}",
+        assessed.failed
+    );
+
+    let outcome = fold_hire(
+        Some(assessed.seat),
+        assessed.verified.or(assessed.failed),
+        None,
+        true,
+    );
+    assert!(
+        matches!(outcome, HireOutcome::Created { .. }),
+        "the hire is created, not failed: {outcome:?}"
+    );
+}
+
+/// A bound failure-class receipt is the provider's own answer, and it settles
+/// the hire as failed rather than leaving it seating.
+///
+/// The test this replaces built a `created` receipt and asserted only that a
+/// receipt was found, so the sentence it was named for — "a bound Failed-class
+/// receipt is a refusal" — was never exercised (REVIEW-A1 F6). This builds the
+/// receipt a provider signs when it refuses, and follows it all the way to the
+/// exit code.
+#[test]
+fn a_bound_failure_receipt_is_a_refusal_not_a_missing_answer() {
+    let hire = signed_hire_with_status("create-refused", ReceiptStatus::Failed);
+    let (receipts, _) = decode_receipts(&hire.events);
+    let assessed = super::crew_cmds::assess_candidate(
+        &hire.events,
+        &hire.channel,
+        &hire.session,
+        &hire.genesis,
+        &receipts,
+        hire.seat.clone(),
+    );
+
+    assert!(
+        assessed.verified.is_none(),
+        "a refusal is not a verified create: {:?}",
+        assessed.verified
+    );
+    let failed = assessed
+        .failed
+        .as_ref()
+        .expect("the provider's own refusal is bound and is the answer");
+    assert_eq!(failed.status, ReceiptStatus::Failed);
+    assert_eq!(
+        assessed.unbound, 0,
+        "the provider signed it; nothing here is unbound"
+    );
+
+    let outcome = fold_hire(
+        Some(assessed.seat),
+        assessed.verified.or(assessed.failed),
+        None,
+        true,
+    );
+    assert!(
+        matches!(outcome, HireOutcome::Failed { .. }),
+        "the hire failed and says so, rather than waiting out its window: {outcome:?}"
+    );
+    assert_eq!(super::crew::hire_exit_code(&outcome), 1, "{outcome:?}");
+}
+
+// ── What a hire says about the evidence it refused (REVIEW-A1 F7) ───────────
+
+/// A hire that ended on the host's own verified answer still discloses the
+/// candidate it refused first — in the past tense, because on a `created` hire
+/// the present tense reads as a failure that did not happen.
+#[test]
+fn an_overtaken_refusal_is_disclosed_as_history_on_a_successful_hire() {
+    let sentence = evidence_disclosure(
+        true,
+        Some("provider receipt is not bound to the signed seated create"),
+        1,
+    );
+    assert!(
+        sentence.contains("was refused") || sentence.contains("were refused"),
+        "past tense on a hire that then verified: {sentence}"
+    );
+    assert!(
+        !sentence.contains("The last hire evidence check refused the host's answer"),
+        "the present-tense sentence belongs to a hire that is still holding: {sentence}"
+    );
+    assert!(
+        sentence.contains("provider receipt is not bound to the signed seated create"),
+        "the reason itself is never dropped: {sentence}"
+    );
+    assert!(
+        sentence.contains("1 receipt(s)"),
+        "and the unbound count is still named: {sentence}"
+    );
+}
+
+/// A hire still holding `seating` says why it is holding, in the present
+/// tense: this is the sentence whose absence read as a slow host.
+#[test]
+fn a_hire_left_holding_says_why_in_the_present_tense() {
+    let sentence = evidence_disclosure(false, Some("no provider metadata for the seat"), 0);
+    assert!(
+        sentence.contains(
+            "The last hire evidence check refused the host's answer: no provider \
+             metadata for the seat"
+        ),
+        "{sentence}"
+    );
+}
+
+/// Nothing refused, nothing unbound, nothing to say.
+#[test]
+fn a_quiet_wait_adds_no_sentence() {
+    assert!(evidence_disclosure(true, None, 0).is_empty());
+    assert!(evidence_disclosure(false, None, 0).is_empty());
+}
+
+// ── Role-seat revocation (batch 2, A1.7) ────────────────────────────────────
+
+fn projected(seats: &[(&str, &str)]) -> super::operations::ProjectedAuthority {
+    super::operations::ProjectedAuthority {
+        grants: Vec::new(),
+        seats: seats
+            .iter()
+            .map(|(actor, role)| {
+                buzz_core::coding_session_team_transaction::CodingSessionTeamActiveSeat {
+                    actor_pubkey: (*actor).to_owned(),
+                    role: (*role).to_owned(),
+                }
+            })
+            .collect(),
+        seat_grant_refs: std::collections::BTreeMap::new(),
+        head_event_id: Some("d".repeat(64)),
+        head_seq: 4,
+    }
+}
+
+#[test]
+fn revoking_a_seat_nobody_holds_is_refused_not_written() {
+    let error = super::crew_cmds::decide_seat_revoke(&projected(&[]), &pk(BOB), "builder")
+        .expect_err("there is nothing to revoke");
+    assert_eq!(crate::error::exit_code(&error), 1, "{error}");
+    assert!(
+        error.to_string().contains("holds no active role seat"),
+        "{error}"
+    );
+}
+
+/// A revoke that named the wrong role would otherwise be forwarded to the
+/// relay and come back as a shape error. Refuse first, naming what is held.
+#[test]
+fn revoking_the_wrong_role_names_the_one_the_actor_actually_holds() {
+    let error = super::crew_cmds::decide_seat_revoke(
+        &projected(&[(&pk(BOB), "verifier")]),
+        &pk(BOB),
+        "builder",
+    )
+    .expect_err("the actor holds a different role");
+    assert_eq!(crate::error::exit_code(&error), 1, "{error}");
+    let text = error.to_string();
+    assert!(text.contains("holds role verifier"), "{text}");
+    assert!(text.contains("not builder"), "{text}");
+}
+
+#[test]
+fn revoking_the_exact_role_is_allowed() {
+    assert_eq!(
+        super::crew_cmds::decide_seat_revoke(
+            &projected(&[(&pk(BOB), "builder"), (&pk(ALICE), "lead")]),
+            &pk(BOB),
+            "builder",
+        )
+        .expect("the actor holds exactly this role"),
+        super::crew_cmds::SeatRevokeDecision::Append
+    );
+}
+
+/// `seat-repair`'s `ambiguous` remedy may only name commands that exist and
+/// that converge. Before A1.7 it pointed at the founder's Desktop app because
+/// no CLI verb could write a role seat.
+#[test]
+fn the_ambiguous_remedy_names_the_seat_verbs_that_now_exist() {
+    let source = include_str!("crew_cmds.rs");
+    assert!(
+        source.contains("revoke-seat --channel {channel_id} --genesis {genesis_ref}"),
+        "the ambiguous remedy must name the revoke that makes it converge"
+    );
+    assert!(
+        !source.contains("`bee sessions grant` covers only the"),
+        "the remedy still claims `grant` cannot write a role seat"
+    );
+    assert!(
+        source.contains("a grant alone will not converge while the disputed role"),
+        "the remedy must stay honest about needing the revoke first"
+    );
 }

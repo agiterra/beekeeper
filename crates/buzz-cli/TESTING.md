@@ -1718,7 +1718,10 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
 | 71 | `sessions assign/report/verdict/acknowledge/complete/block` | ☐ | Body accepts inline JSON, `@path`, or stdin; malformed/wrong-operation body is refused before write; `complete` refuses without an acknowledged approving disposition |
 | 72 | `sessions operation get/list` | ☐ | `get --id` verifies the exact signed 44244 and derives `h`/`d`/genesis scope from it; explicit scope remains all-three-or-none; signed provenance, exclusions, conflicts, settlement and canonical terminal disclosed |
-| 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; every installed seat pack tells the recipient to run `operation get --id`; shared `deliveryCommandId`; failed wake leaves stored operation visible and delivery unconfirmed |
+| 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; every installed seat pack tells the recipient to run `operation get --id`; an **assignment** shares its `deliveryCommandId` with its wake, every other class derives `cli-wake-v1:<operationId>:<12 hex>` and records none; failed wake leaves stored operation visible and delivery unconfirmed |
+| 74 | `sessions audit` | ☐ | Per-turn rows carry the frozen shape; an unreported number is `null`, never `0`; `costUsd` is the producer's own number off the `result` item; `handedTwice`/`roomDownloads`/`retryLoops` populate on a night with waste; a clipped execution's rows carry `toolCallsTruncated: true`; `--format compact` prints the turn rows **and** the `bounds` rows |
+| 75 | `sessions hire --check` | ☐ | Publishes nothing (`bee sessions list` shows no new seat); prints `published:false`, `briefBytes`, `briefCapBytes`, role and routing; exit 1 on an empty or oversized brief; refused together with `--no-wait` |
+| 76 | `sessions grant-seat` / `revoke-seat` | ☐ | Seat granted by founder / steering operator / lead; a lead cannot grant `lead`; second run is `already_granted` with no write; `revoke-seat` refuses a pubkey with no seat and one holding a different role, and the roster loses the seat after it; `grant --role <slug>` is a parse error naming the two tiers |
 
 ---
 
@@ -1750,8 +1753,25 @@ reported, not executed. The wake's unsigned `type` hint grants nothing. The CLI
 first queries the exact kind-44244 id, verifies id parity,
 signature, strict envelope and content, then uses its signed `h`, `d`, and
 `cstx-genesis` scope for the full fold. Managed seats need no unsigned scope
-environment. `--delivery-command-id` may preselect the shared correlation id;
-otherwise `--wake-to` mints one and writes it into both records.
+environment.
+
+**Wake command ids.** An *assignment* is the only class whose stored record can
+name its own delivery before it is signed, and the provider reads exactly that
+pairing back as the binding that makes a finished turn owe a report — so an
+assignment with `--wake-to` shares one id between the 44244 and the 44220, and
+`--delivery-command-id` may preselect it. Every other class (report, verdict,
+acknowledgement, mission.completed, mission.blocked) **derives** its wake's
+command id from the operation that was just stored and the exact target:
+`cli-wake-v1:<operationId>:<first 12 hex of sha256(target key)>`. That is why
+those records carry no `deliveryCommandId` and why passing
+`--delivery-command-id` alongside `--wake-to` on them is refused: the only id a
+caller could hand a report is the one that already delivered its assignment,
+already consumed on that target, so the lead runner fences the wake as
+`AlreadyConsumed` and the lead is never woken. That is exactly what happened on
+2026-09-01 (ledger item 103, finding 4). The namespace is distinct from
+Desktop's `team-wake-v1:` and from the provider's own derivation so a reader of
+a 44220 can tell which producer minted it; `bee sessions <verb>`'s JSON reports
+`delivery.commandIdSource` as `derived` or `shared`.
 
 The CLI verifies the genesis founder, every transaction signature, the relay's
 NIP-11 `self` identity, and every kind-40099 receipt backing the contiguous
@@ -1765,7 +1785,148 @@ CLI appends the exact actor/role `grant-seat` and reports `granted: true` only
 after relay acceptance is proven. `created_ungranted` preserves all seat
 evidence and means the live seat must not be hired again. Legacy
 `sessions grant --role collaborator|viewer` does not repair a missing role-seat
-transition.
+transition; `sessions grant-seat` writes one.
+
+---
+
+## Per-turn accounting (`bee sessions audit`)
+
+```bash
+bee sessions audit --channel "$CHANNEL" | jq .
+bee sessions audit --channel "$CHANNEL" --session-ref "$SESSION" | jq .
+bee --format compact sessions audit --channel "$CHANNEL"     # one JSON row per turn
+```
+
+Everything it prints comes off kind 44225 and nothing else: the terminal
+`result` item's `usage` block and `durationMs`, and the `tool_call` /
+`tool_result` pairs around them. Three rules make the numbers worth reading,
+and each is worth checking live:
+
+1. **Absent is `null`, never `0`.** A driver that reported no `outputTokens`
+   and a driver that measured zero are different facts. Confirm on a turn whose
+   adapter published no `usage` block: every token field is `null` and
+   `totals.session.inputTokens` is `null` too, not `0`.
+2. **`costUsd` is the producer's, or nothing.** The number comes off the
+   `result` item's own `costUsd` (`buzz_core::coding_session_payload::result_item`)
+   and is never computed here against a price list this binary happens to
+   carry. A turn whose producer published no cost reports `null`.
+3. **The bound is disclosed, in both output formats.** At most 4,096 items per
+   execution; `bounds[].itemsTruncated` says when it stopped and
+   `itemsPublished` says how much there was, and `--format compact` prints
+   those rows after the turn rows (they carry `itemsBound`, which no turn row
+   has).
+
+`toolCalls` prefers the driver's own `usage.toolCalls` and otherwise counts the
+`tool_call` items that turn published — both are measurements, neither is a
+guess. A count taken from an execution the fold stopped reading is a floor, and
+the row says so with `toolCallsTruncated: true` (the totals repeat the flag);
+truncation removes exactly the terminal `result` item that would have carried
+the driver's own count, so this is the common case on a long night.
+`contextWindow` prefers `usage.contextWindow` and otherwise takes the driver's
+own `context_window_updated` occupancy item.
+
+Two conventions differ on purpose: the item's **top-level** `inputTokens` /
+`outputTokens` (from `TurnCost`) are cache-inclusive, while the `usage` block's
+are disjoint from the two cache counts
+(`crates/buzz-core/src/coding_session_payload.rs`, `TurnUsageReport`). This
+table reads the `usage` block, so a driver that reported only the top-level
+pair shows `null` token columns beside a real `costUsd`.
+
+The three waste tables:
+
+- `handedTwice` — the same file path or the same command handed to one seat
+  twice or more. `bytes` is what was **published**, and only for the calls that
+  were answered: `resultsSeen` says how many of `count` those were, `bytes` is
+  `null` when none of them were, and the provider clips a tool result at 8 KiB,
+  so `bytesClipped: true` means the real figure is larger.
+- `roomDownloads` — `bee sessions status|inbox|send|operation` runs, per seat.
+  These pull the room into a seat's own context; `sessions audit` itself is not
+  one of them, and neither is a line that merely *mentions* the CLI — the
+  executable is recognized in command position only (`echo bee sessions status`
+  is not a read).
+- `retryLoops` — three or more *consecutive* identical commands that returned
+  identical results. Interleaved repeats are work, not a loop, and three
+  identical commands with three different results are work too. `count` is the
+  longest single run, not the total across runs, and `identicalResults` is
+  `null` — not `true` — when the transcript carries no result for the run.
+
+The row shape is frozen with the Desktop Mission Audit tab, so a disagreement
+between this table and that screen is a bug in one of them, not a matter of
+taste.
+
+---
+
+## Acceptance tests must not publish (`bee sessions hire --check`)
+
+```bash
+bee sessions hire --channel "$CHANNEL" --session-ref "$SESSION" \
+  --role builder --content "Rebase the lane and run the gate." --check
+```
+
+`--check` validates the brief and routing against the same SDK builder a real
+hire signs, prints the facts the hire would carry, and **publishes nothing**:
+
+```json
+{"check":true,"published":false,"role":"builder","briefBytes":33,
+ "briefCapBytes":12288,"briefWithinCap":true,"routed":false,...}
+```
+
+Exit 0 when the payload is one the relay would accept, 1 when it is not (an
+empty brief, an oversized brief, a bad role slug). A refused check still prints
+its facts first — an oversized brief prints `briefWithinCap: false` beside
+`briefBytes` and then the refusal — so the numbers are readable on exactly the
+run that needs them. It conflicts with
+`--no-wait`: waiting for a host that will never be asked is a contradiction.
+
+Use it for every acceptance test of the hire path. On 2026-09-01 a seat's
+acceptance test published a live kind:44221 and seated a real agent (ledger item
+103, finding 10); verify by running `bee sessions list --channel "$CHANNEL"`
+before and after and seeing no new row.
+
+---
+
+## Role seats (`bee sessions grant-seat` / `bee sessions revoke-seat`)
+
+```bash
+# The operator tiers, unchanged — and the set is closed, so a typo is a parse
+# error listing `collaborator` and `viewer`, never an accepted seat:
+bee sessions grant --channel "$CHANNEL" --genesis "$GENESIS" \
+  --pubkey "$PUBKEY" --role collaborator
+
+# A role seat — who an actor IS inside one umbrella — has its own verb:
+bee sessions grant-seat --channel "$CHANNEL" --genesis "$GENESIS" \
+  --pubkey "$ACTOR" --role builder
+
+bee sessions revoke-seat --channel "$CHANNEL" --genesis "$GENESIS" \
+  --pubkey "$ACTOR" --role builder
+```
+
+`--session-ref` is optional on both: the signed genesis names its own umbrella
+and is signature-verified before it is read.
+
+A role seat is the fact the typed team fold reads for verifier standing, and
+until these verbs existed only the hire path could write one — which is why
+`seat-repair`'s `ambiguous` remedy used to point at the founder's Desktop app.
+Writing seat authority is opted into: `grant` keeps a closed two-tier value set
+(`collaborator`, `viewer`), so a mistyped tier is refused by the parser instead
+of landing an accepted seat for a role nobody meant — which would then refuse
+every legitimate grant for that actor until someone ran `revoke-seat`.
+Standing is exactly the hire path's: founder, active steering operator, or
+active lead; a lead may not grant `lead`; an actor may not nominate itself; an
+actor already seated in a **different** role is refused, never silently
+re-roled. Granting the same role twice reports `already_granted` and writes
+nothing.
+
+`revoke-seat` is refused (exit 1) when the pubkey holds no seat, and when it
+holds a different role — the message names the role it actually holds. The
+relay's transition matrix remains the gate; this refuses first so an operator
+gets a sentence instead of a shape error. Acceptance is re-read from the
+receipt-backed projection before it is reported: a submitted transition nothing
+accepted exits 5 `unconfirmed`.
+
+To converge an `ambiguous` `seat-repair`: revoke the role the actor holds, then
+grant the one you mean with `grant-seat`, then re-run the repair and see
+`already_granted`.
 
 ---
 

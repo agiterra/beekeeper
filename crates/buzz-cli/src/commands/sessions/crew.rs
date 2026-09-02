@@ -31,7 +31,9 @@ use buzz_core::coding_session_command::{
 };
 use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use buzz_core::coding_session_lease::{decode_coding_session_lease, CodingSessionLeaseState};
-use buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleAction;
+use buzz_core::coding_session_lifecycle_command::{
+    CodingSessionLifecycleAction, MAX_LIFECYCLE_INITIAL_TURN_BYTES,
+};
 use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionStatus, NO_LIVE_EXECUTION, STALE_GENERATION,
 };
@@ -1788,12 +1790,17 @@ pub fn founder_seated_creates_for_actor(
 
 /// Every lifecycle (non-turn) receipt whose payload answers `command_id`.
 ///
-/// The repair's counterpart to [`newest_create_receipt`], which takes the
-/// newest by `created_at` before any signature check and so can be denied by a
-/// later forgery carrying the same commandId. This returns them all, in
-/// event-id order, and leaves the choice to
+/// Every lifecycle (non-turn) receipt answering `command_id`, in event-id
+/// order.
+///
+/// Deliberately *not* "the newest by `created_at`". Selecting on an author's
+/// own clock and checking the binding afterwards let anyone who could publish
+/// a 44224 carrying the commandId deny both the repair and the hire; this
+/// returns them all and leaves the choice to
 /// [`super::hire_evidence::create_receipt_binding`] — signature first, time
-/// never.
+/// never. Turn stages are excluded for the same reason [`newest_turn_stages`]
+/// excludes lifecycle outcomes: a turn receipt names a generation but never
+/// creates one, so it can never say whether a seat exists.
 pub fn create_receipts_for_command(
     receipts: &[ReceiptRecord],
     command_id: &str,
@@ -1831,45 +1838,6 @@ pub fn create_receipts_for_command(
     }
     found.sort_by(|left, right| left.event_id.cmp(&right.event_id));
     found
-}
-
-/// The newest lifecycle (non-turn) receipt answering `command_id`.
-///
-/// Turn stages are excluded for the same reason [`newest_turn_stages`] excludes
-/// lifecycle outcomes: a turn receipt names a generation but never creates one,
-/// so it can never say whether a seat exists.
-pub fn newest_create_receipt(receipts: &[ReceiptRecord], command_id: &str) -> Option<SeatReceipt> {
-    let mut best: Option<(i64, String, SeatReceipt)> = None;
-    for record in receipts {
-        if record.is_turn_status {
-            continue;
-        }
-        let Some(content) = content_of(&record.raw) else {
-            continue;
-        };
-        let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(content) else {
-            continue;
-        };
-        if receipt.command_id != command_id || receipt.status.is_turn_stage() {
-            continue;
-        }
-        let event_id = event_str(&record.raw, "id").unwrap_or_default();
-        let seat_receipt = SeatReceipt {
-            event_id: event_id.clone(),
-            signer: record.signer.clone(),
-            status: receipt.status,
-            target_key: record.target_key.clone(),
-            error_code: receipt.error.as_ref().map(|error| error.code.clone()),
-            error_message: receipt.error.as_ref().map(|error| error.message.clone()),
-            at: record.created_at,
-            raw: record.raw.clone(),
-        };
-        match &best {
-            Some((at, id, _)) if (*at, id.as_str()) >= (record.created_at, event_id.as_str()) => {}
-            _ => best = Some((record.created_at, event_id, seat_receipt)),
-        }
-    }
-    best.map(|(_, _, receipt)| receipt)
 }
 
 /// What a lead does next about one refusal code — the CLI's list of known
@@ -2333,4 +2301,212 @@ pub fn resolve_umbrella_genesis(events: &[Value], umbrella: &str) -> Result<Stri
         all.len(),
         all.join(", ")
     )))
+}
+
+/// What one hire wait is holding, and why the last signed answer it saw did
+/// not verify.
+///
+/// The second half is the point. Before this existed, a `Created` answer whose
+/// evidence failed to bind was dropped by a bare `Err(_) => {}` arm and the
+/// wait ran to its deadline still holding `Seating` — so on 2026-08-31 and
+/// 2026-09-01 an alias defect in the receipt comparison was read twice as "the
+/// host was slow", and the receipt it rejected had in fact arrived two seconds
+/// after the create (`docs/SESSION_STATE.md` item 103, finding 2). A binding
+/// defect must never again be indistinguishable from a slow provider, so the
+/// last verification error is carried out of the wait and printed.
+#[derive(Debug, Default)]
+pub struct HireWait {
+    held: Option<HireOutcome>,
+    last_evidence_error: Option<String>,
+    unbound_receipts: usize,
+}
+
+/// Everything one hire wait ended holding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HireWaitOutcome {
+    /// The answer, or the best partial fact the wait is holding.
+    pub outcome: HireOutcome,
+    /// The last verification failure the wait saw, if any.
+    pub last_evidence_error: Option<String>,
+    /// The most receipts the wait ever saw naming the create's commandId
+    /// without being bound to it. Reported, never hidden.
+    pub unbound_receipts: usize,
+}
+
+impl HireWait {
+    /// A wait holding nothing.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fold one poll's answer into the wait.
+    ///
+    /// `verification` carries the evidence check for a `Created` answer and is
+    /// `None` for every other outcome — a `Created` passed with `None` was
+    /// never checked, so it is held rather than returned, and says so. Returns
+    /// `Some` with the outcome the wait should return immediately, or `None`
+    /// to keep polling.
+    pub fn observe(
+        &mut self,
+        outcome: HireOutcome,
+        verification: Option<Result<(), CliError>>,
+    ) -> Option<HireOutcome> {
+        match outcome {
+            // A seat with no receipt yet is progress, not an answer: hold it
+            // and keep waiting for the provider to speak.
+            HireOutcome::Seating { .. } => {
+                self.held = Some(outcome);
+                None
+            }
+            HireOutcome::Unconfirmed => None,
+            HireOutcome::Created { .. } => match verification {
+                Some(Ok(())) => Some(outcome),
+                // A signed create and receipt can precede the provider's
+                // metadata by a moment. Preserve the live seat and keep
+                // polling; if metadata never arrives, the caller reports the
+                // explicit partial outcome — now with the reason attached.
+                Some(Err(error @ CliError::Unconfirmed(_))) => {
+                    self.last_evidence_error = Some(error.to_string());
+                    self.held = Some(outcome);
+                    None
+                }
+                // Malformed, forged, or cross-context facts are not a hire
+                // answer and never reach the authority writer. They are still
+                // recorded: this is the arm that hid the alias defect.
+                Some(Err(error)) => {
+                    self.last_evidence_error = Some(error.to_string());
+                    None
+                }
+                None => {
+                    self.last_evidence_error =
+                        Some("hire evidence was not checked for this answer".to_owned());
+                    self.held = Some(outcome);
+                    None
+                }
+            },
+            HireOutcome::Failed { .. } | HireOutcome::Refused(_) => Some(outcome),
+        }
+    }
+
+    /// The last verification failure seen, if any.
+    pub fn last_evidence_error(&self) -> Option<&str> {
+        self.last_evidence_error.as_deref()
+    }
+
+    /// The outcome the wait ends on when its deadline passes.
+    pub fn held(&self) -> HireOutcome {
+        self.held.clone().unwrap_or(HireOutcome::Unconfirmed)
+    }
+
+    /// Record what one poll's evidence selection discarded.
+    ///
+    /// `rejection` overwrites: the *last* refusal is the one that explains the
+    /// state the wait ends in. `unbound` is kept at its high-water mark — a
+    /// later poll that happened to see fewer must not erase the fact.
+    pub fn note(&mut self, rejection: Option<String>, unbound: usize) {
+        if let Some(rejection) = rejection {
+            self.last_evidence_error = Some(rejection);
+        }
+        self.unbound_receipts = self.unbound_receipts.max(unbound);
+    }
+
+    /// Close the wait on `outcome`, carrying everything it learned.
+    pub fn finish(&self, outcome: HireOutcome) -> HireWaitOutcome {
+        HireWaitOutcome {
+            outcome,
+            last_evidence_error: self.last_evidence_error().map(str::to_owned),
+            unbound_receipts: self.unbound_receipts,
+        }
+    }
+}
+
+/// The sentence a hire report adds about evidence it refused on the way.
+///
+/// `answered` is whether the hire ended on the host's own verified answer. It
+/// changes the tense and nothing else: a refusal that a later poll overtook is
+/// history, and printing it in the present tense on a `created` hire reads as
+/// a failure that did not happen (REVIEW-A1 F7). On a hire that ended holding
+/// something, the same fact is the reason it is holding — the sentence whose
+/// absence let an alias defect read as a slow host for two nights
+/// (`docs/SESSION_STATE.md` item 103, finding 2).
+///
+/// Returns an empty string when the wait refused nothing and saw no unbound
+/// receipt: there is no fact, so there is no sentence.
+pub fn evidence_disclosure(
+    answered: bool,
+    last_evidence_error: Option<&str>,
+    unbound_receipts: usize,
+) -> String {
+    let mut sentences = Vec::new();
+    if let Some(error) = last_evidence_error {
+        sentences.push(if answered {
+            format!("An earlier candidate receipt was refused before this answer verified: {error}")
+        } else {
+            format!("The last hire evidence check refused the host's answer: {error}")
+        });
+    }
+    if unbound_receipts > 0 {
+        sentences.push(format!(
+            "{unbound_receipts} receipt(s) named this create's commandId without being bound to \
+             it and were ignored."
+        ));
+    }
+    sentences.join(" ")
+}
+
+/// Everything `bee sessions hire --check` was asked to validate.
+///
+/// Borrowed rather than owned so the caller can build it from the exact values
+/// it would have signed: a check that re-derived its own inputs would not be
+/// checking the hire.
+pub struct HireCheckRequest<'a> {
+    /// Channel UUID the umbrella lives in.
+    pub channel: &'a str,
+    /// Umbrella session reference.
+    pub session_ref: &'a str,
+    /// Genesis the hire joins, after resolution.
+    pub genesis_ref: &'a str,
+    /// Role slug the hire would seat.
+    pub role: &'a str,
+    /// The brief exactly as it would be signed.
+    pub brief: &'a str,
+    /// Provider instance the hire names, or `None` for the host's default.
+    pub provider_instance: Option<&'a str>,
+    /// Model the hire names, or `None`.
+    pub model: Option<&'a str>,
+    /// The routing request the hire would carry, or `None` when unrouted.
+    pub routing: Option<&'a buzz_core::coding_session_routing::HireRoutingRequest>,
+    /// Why the local router could not answer, when it could not.
+    pub proposal_unavailable: Option<&'a str>,
+}
+
+/// The document `bee sessions hire --check` prints.
+///
+/// Every number is measured, never estimated: `briefBytes` is the UTF-8 length
+/// of the exact string that would be signed and `briefCapBytes` is the relay's
+/// own ceiling ([`MAX_LIFECYCLE_INITIAL_TURN_BYTES`]). `published` is present
+/// and `false` so a reader — or a grep over a seat's transcript — can tell a
+/// check from a hire without knowing which flags were passed. An acceptance
+/// test that publishes a live 44221 is not an acceptance test; one ran on
+/// 2026-09-01 (`docs/SESSION_STATE.md` item 103, finding 10).
+pub fn hire_check_report(request: &HireCheckRequest<'_>) -> Value {
+    let brief_bytes = request.brief.len();
+    serde_json::json!({
+        "check": true,
+        "published": false,
+        "channel": request.channel,
+        "sessionRef": request.session_ref,
+        "genesisRef": request.genesis_ref,
+        "role": request.role,
+        "briefBytes": brief_bytes,
+        "briefCapBytes": MAX_LIFECYCLE_INITIAL_TURN_BYTES,
+        "briefWithinCap": brief_bytes <= MAX_LIFECYCLE_INITIAL_TURN_BYTES,
+        "providerInstanceRef": request.provider_instance,
+        "model": request.model,
+        "routing": request
+            .routing
+            .and_then(|routing| serde_json::to_value(routing).ok()),
+        "routed": request.routing.is_some(),
+        "proposedUnavailable": request.proposal_unavailable,
+    })
 }

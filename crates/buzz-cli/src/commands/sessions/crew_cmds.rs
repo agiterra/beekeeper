@@ -46,10 +46,10 @@ use super::crew::{
     create_receipts_for_command, decode_leases, decode_resumes, decode_turn_commands,
     find_hire_refusal, find_hired_seat, fold_delivery, fold_hire, format_age,
     founder_seated_creates_for_actor, hire_exit_code, hire_payload, hire_report,
-    hire_unsupported_by_relay, newest_create_receipt, newest_turn_stages, plan_readdress,
-    resolve_send_target, resolve_umbrella_genesis, seat_repair_exit_code, short_pubkey, turn_load,
-    CrewExecution, FounderIndex, HireOutcome, ReaddressPlan, SeatRepairOutcome, TurnCommand,
-    TurnStage, DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
+    hire_unsupported_by_relay, newest_turn_stages, plan_readdress, resolve_send_target,
+    resolve_umbrella_genesis, seat_repair_exit_code, short_pubkey, turn_load, CrewExecution,
+    FounderIndex, HireOutcome, HireWait, HireWaitOutcome, ReaddressPlan, SeatRepairOutcome,
+    TurnCommand, TurnStage, DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
 use crate::client::BuzzClient;
@@ -215,17 +215,54 @@ async fn submit_with(
     Ok(merged)
 }
 
+/// The namespace prefix every CLI-minted team-operation wake command id
+/// carries.
+///
+/// Deliberately distinct from Desktop's `team-wake-v1:` and from the
+/// provider's own derivation, so a reader of a 44220 can tell which producer
+/// minted the command without consulting anything else.
+pub(super) const CLI_TEAM_WAKE_COMMAND_ID_PREFIX: &str = "cli-wake-v1";
+
+/// Hex characters of the target-key digest carried in a derived wake id.
+const CLI_TEAM_WAKE_TARGET_DIGEST_HEX: usize = 12;
+
+/// The deterministic 44220 command id for one stored operation against one
+/// exact delivery target.
+///
+/// Derived — never inherited. Reusing the command id that already delivered an
+/// assignment makes the lead runner fence the wake as `AlreadyConsumed`, which
+/// is what silently swallowed every CLI report wake in the 2026-09-01 live run
+/// (`docs/SESSION_STATE.md` item 103, finding 4). Deriving from
+/// `(operation, target)` keeps one operation naming exactly one wake per
+/// target forever, so a retry cannot double-spend a turn either.
+pub(super) fn team_operation_wake_command_id(operation_id: &str, target_key: &str) -> String {
+    let digest = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+        target_key.as_bytes(),
+    ));
+    let short = digest
+        .get(..CLI_TEAM_WAKE_TARGET_DIGEST_HEX)
+        .unwrap_or(digest.as_str());
+    format!("{CLI_TEAM_WAKE_COMMAND_ID_PREFIX}:{operation_id}:{short}")
+}
+
 /// Publish the provider wake paired with an already-stored team transaction.
 ///
 /// The 44220 text is deliberately a tiny routing pointer. The provider must
 /// fetch and verify the signed 44244 record rather than trust command prose.
+///
+/// `shared_command_id` is `Some` only for the one operation class whose stored
+/// record can name its own delivery before it is signed — an assignment, whose
+/// `deliveryCommandId` the provider reads back as the binding proving a turn
+/// was opened by that assignment (`crates/buzz-session-provider/src/team_wake.rs`).
+/// Every other class derives its command id from the operation that is now
+/// stored, via [`team_operation_wake_command_id`].
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn send_team_operation_wake(
     client: &BuzzClient,
     channel_id: &str,
     to: &str,
     session_ref: &str,
-    command_id: &str,
+    shared_command_id: Option<&str>,
     operation_id: &str,
     operation_type: &str,
 ) -> Result<Value, CliError> {
@@ -235,6 +272,14 @@ pub(super) async fn send_team_operation_wake(
         .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
     let facts = fetch_crew_facts(client, channel_id).await?;
     let execution = resolve_send_target(&facts.executions, to, Some(session_ref))?;
+    let (command_id, command_id_source) = match shared_command_id {
+        Some(shared) => (shared.to_owned(), "shared"),
+        None => (
+            team_operation_wake_command_id(operation_id, &execution.target_key),
+            "derived",
+        ),
+    };
+    let command_id = command_id.as_str();
     let text = team_operation_wake_text(operation_id, operation_type)?;
     let payload = CodingSessionCommandPayload {
         schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),
@@ -253,6 +298,9 @@ pub(super) async fn send_team_operation_wake(
         "team-operation wake already accepted",
         json!({
             "commandId": command_id,
+            // Which producer minted the id above, so a reader tracing a fenced
+            // wake can tell an inherited id from a derived one.
+            "commandIdSource": command_id_source,
             "operationId": operation_id,
             "operationType": operation_type,
             "target": execution.target_key,
@@ -657,6 +705,21 @@ const HIRE_ANSWER_KINDS: &[u32] = &[
     KIND_CODING_SESSION_COMMAND,
 ];
 
+/// One read of the channel for a hire answer, plus the evidence it discarded.
+///
+/// The discards are carried rather than dropped: a receipt that names the
+/// create's commandId but is not bound to it decides nothing, and a reader who
+/// is never told it existed cannot tell a quiet wait from a contested one.
+pub(super) struct HireAnswer {
+    /// What the channel says became of the hire.
+    pub(super) outcome: HireOutcome,
+    /// Receipts naming the create's commandId that were not cryptographically
+    /// bound to it.
+    pub(super) unbound_receipts: usize,
+    /// Why a bound success receipt failed verification, when one did.
+    pub(super) rejection: Option<String>,
+}
+
 /// Read the channel once and fold whatever answers the hire so far.
 ///
 /// The authority chain is read only once a seat exists — a hire with no seat
@@ -667,16 +730,38 @@ async fn read_hire_answer(
     client: &BuzzClient,
     channel_id: &str,
     session_ref: &str,
-    _genesis_ref: &str,
+    genesis_ref: &str,
     role: &str,
     since: i64,
-) -> Result<HireOutcome, CliError> {
+) -> Result<HireAnswer, CliError> {
     let events = fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await?;
     let (receipts, _) = decode_receipts(&events);
-    let seat = find_hired_seat(&events, session_ref, role, since);
-    let receipt = seat
-        .as_ref()
-        .and_then(|seat| newest_create_receipt(&receipts, &seat.command_id));
+    let mut unbound_receipts = 0;
+    let mut rejection = None;
+    // Evidence first, exactly as `seat-repair` chooses: the receipt is picked
+    // by its cryptographic binding to the seated create and then verified, and
+    // the author's own `created_at` decides nothing. Selecting by time and
+    // checking the binding afterwards let anyone who could publish a 44224
+    // carrying the commandId deny the hire.
+    let (seat, receipt) = match find_hired_seat(&events, session_ref, role, since) {
+        Some(seat) => {
+            let assessed = assess_candidate(
+                &events,
+                channel_id,
+                session_ref,
+                genesis_ref,
+                &receipts,
+                seat,
+            );
+            unbound_receipts = assessed.unbound;
+            rejection = assessed.rejection;
+            // A bound failure-class receipt is the provider's answer, not a
+            // missing one: the hire failed and says so.
+            let receipt = assessed.verified.or(assessed.failed);
+            (Some(assessed.seat), receipt)
+        }
+        None => (None, None),
+    };
     let refusal = if seat.is_some() {
         None
     } else {
@@ -692,7 +777,11 @@ async fn read_hire_answer(
         let (commands, _) = decode_turn_commands(&events);
         find_hire_refusal(&commands, &executions, session_ref, since)
     };
-    Ok(fold_hire(seat, receipt, refusal, false))
+    Ok(HireAnswer {
+        outcome: fold_hire(seat, receipt, refusal, false),
+        unbound_receipts,
+        rejection,
+    })
 }
 
 /// `bee sessions hire` — ask an umbrella's host to seat a role (plan D14).
@@ -914,6 +1003,7 @@ pub async fn cmd_hire(
     brief: Option<&str>,
     content: Option<&str>,
     no_wait: bool,
+    check: bool,
     routing: &HireRouting,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
@@ -973,7 +1063,39 @@ pub async fn cmd_hire(
         &brief_text,
         plan.request.clone(),
     );
-    let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
+    // The facts are measured off the exact payload that would be signed, and
+    // they are measured *before* the builder runs: a report printed only on
+    // the paths the builder accepts can never say `briefWithinCap: false`, so
+    // the field described a warning that did not exist (REVIEW-A1 F11). A
+    // refused check prints the facts and then the refusal.
+    let check_report = check.then(|| {
+        super::crew::hire_check_report(&super::crew::HireCheckRequest {
+            channel: channel_id,
+            session_ref,
+            genesis_ref: &genesis_ref,
+            role,
+            brief: &brief_text,
+            provider_instance: plan.provider_instance.as_deref(),
+            model: plan.model.as_deref(),
+            routing: plan.request.as_ref(),
+            proposal_unavailable: plan.proposal_unavailable.as_deref(),
+        })
+    });
+    // Validation is the SDK builder's, exactly as it would be for a real hire
+    // — so `--check` can only pass on a payload the relay would accept.
+    let builder = match build_coding_session_lifecycle_command(channel, &payload) {
+        Ok(builder) => builder,
+        Err(error) => {
+            if let Some(report) = &check_report {
+                println!("{report}");
+            }
+            return Err(sdk_err(error));
+        }
+    };
+    if let Some(report) = check_report {
+        println!("{report}");
+        return Ok(());
+    }
     let event = client.sign_event_unchecked(builder)?;
 
     // Taken before the write so a seated create published in the same second
@@ -1014,8 +1136,16 @@ pub async fn cmd_hire(
         Err(error) => return Err(error),
     };
 
-    let mut outcome = if no_wait {
-        HireOutcome::Unconfirmed
+    let HireWaitOutcome {
+        mut outcome,
+        last_evidence_error,
+        unbound_receipts,
+    } = if no_wait {
+        HireWaitOutcome {
+            outcome: HireOutcome::Unconfirmed,
+            last_evidence_error: None,
+            unbound_receipts: 0,
+        }
     } else {
         wait_for_hire(client, channel_id, session_ref, &genesis_ref, role, since).await?
     };
@@ -1076,7 +1206,29 @@ pub async fn cmd_hire(
             super::crew::seat_repair_remedy(channel_id, session_ref, &actor)
         );
     }
+    // A wait that ended holding something because verification kept refusing
+    // the host's answer must say so in the same sentence as the outcome — and
+    // a wait a later poll answered must say the same fact in the past tense,
+    // rather than reading as a failure on a hire that succeeded. Receipts that
+    // named the create's commandId without being bound to it decided nothing
+    // here; saying how many there were is the difference between a quiet wait
+    // and a contested one.
+    let disclosure = super::crew::evidence_disclosure(
+        matches!(outcome, HireOutcome::Created { .. }),
+        last_evidence_error.as_deref(),
+        unbound_receipts,
+    );
+    if !disclosure.is_empty() {
+        report.detail = format!("{} {disclosure}", report.detail);
+    }
     if let Some(object) = merged.as_object_mut() {
+        object.insert(
+            "lastEvidenceError".into(),
+            last_evidence_error
+                .as_ref()
+                .map_or(Value::Null, |error| json!(error)),
+        );
+        object.insert("unboundReceipts".into(), json!(unbound_receipts));
         object.insert("outcome".into(), json!(report.status));
         object.insert("detail".into(), json!(report.detail));
         object.insert(
@@ -1182,6 +1334,10 @@ pub async fn cmd_hire(
 /// Query failures inside the window are retried rather than raised: the
 /// request already landed, and turning a transient read error into a command
 /// failure would tell a lead its hire was never sent when it was.
+///
+/// Returns the outcome and the **last evidence verification error** seen, so a
+/// `seating` outcome caused by a binding defect can never again read as a slow
+/// host. The state machine itself is [`HireWait`], which is pure and tested.
 async fn wait_for_hire(
     client: &BuzzClient,
     channel_id: &str,
@@ -1189,55 +1345,27 @@ async fn wait_for_hire(
     genesis_ref: &str,
     role: &str,
     since: i64,
-) -> Result<HireOutcome, CliError> {
+) -> Result<HireWaitOutcome, CliError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(HIRE_WAIT_SECONDS);
-    let mut held = HireOutcome::Unconfirmed;
+    let mut wait = HireWait::new();
     loop {
-        if let Ok(outcome) =
+        if let Ok(answer) =
             read_hire_answer(client, channel_id, session_ref, genesis_ref, role, since).await
         {
-            match outcome {
-                // A seat with no receipt yet is progress, not an answer: hold
-                // it and keep waiting for the provider to speak.
-                HireOutcome::Seating { .. } => held = outcome,
-                HireOutcome::Unconfirmed => {}
-                answered @ HireOutcome::Created { .. } => {
-                    let evidence =
-                        fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await;
-                    let verification = evidence.and_then(|events| {
-                        let HireOutcome::Created { seat, receipt, .. } = &answered else {
-                            return Err(CliError::Other("created hire changed shape".into()));
-                        };
-                        super::hire_evidence::verify_hire_evidence(
-                            &events,
-                            &super::hire_evidence::HireEvidenceRequest {
-                                channel: channel_id,
-                                session_ref,
-                                genesis: genesis_ref,
-                                role,
-                                provider_instance: None,
-                            },
-                            seat,
-                            receipt,
-                        )
-                    });
-                    match verification {
-                        Ok(()) => return Ok(answered),
-                        // A signed create and receipt can precede the
-                        // provider's metadata by a moment. Preserve the live
-                        // seat and keep polling; if metadata never arrives,
-                        // the caller reports the explicit partial outcome.
-                        Err(CliError::Unconfirmed(_)) => held = answered,
-                        // Malformed, forged, or cross-context facts are not a
-                        // hire answer and never reach the authority writer.
-                        Err(_) => {}
-                    }
-                }
-                answered => return Ok(answered),
+            wait.note(answer.rejection, answer.unbound_receipts);
+            // `read_hire_answer` already ran the full evidence check on the
+            // same snapshot it chose the receipt from, so a `Created` here is
+            // verified by construction. Re-reading the channel to check it
+            // again would ask a second, later snapshot a question the first
+            // one already answered.
+            let verified = matches!(answer.outcome, HireOutcome::Created { .. }).then(|| Ok(()));
+            if let Some(answered) = wait.observe(answer.outcome, verified) {
+                return Ok(wait.finish(answered));
             }
         }
         if std::time::Instant::now() + HIRE_POLL >= deadline {
-            return Ok(held);
+            let held = wait.held();
+            return Ok(wait.finish(held));
         }
         tokio::time::sleep(HIRE_POLL).await;
     }
@@ -1431,10 +1559,15 @@ pub async fn cmd_seat_repair(
                      can make. Nothing was written. The disagreement: {roles}. Re-running \
                      alone will not clear it — both creates are signed history and neither can \
                      be withdrawn. Settle it on the umbrella's accepted authority chain by \
-                     granting the role you mean (the founder's Desktop hire host publishes the \
-                     kind:44228 `grant-seat`; `bee sessions grant` covers only the \
-                     collaborator/viewer tiers, not role seats); once that seat is accepted, \
-                     re-run this and it reports `already_granted`.",
+                     granting the role you mean: `bee sessions grant-seat --channel \
+                     {channel_id} --genesis {genesis_ref} --pubkey {actor} --role <slug>`. If \
+                     this actor already holds the other role there, withdraw it first with \
+                     `bee sessions \
+                     revoke-seat --channel {channel_id} --genesis {genesis_ref} --pubkey \
+                     {actor} --role <held-slug>` — a seated actor is never silently \
+                     re-roled, so a grant alone will not converge while the disputed role \
+                     stands. Once the seat you mean is accepted, re-run this and it reports \
+                     `already_granted`.",
                     by_write.len()
                 ),
                 format,
@@ -1566,16 +1699,16 @@ pub async fn cmd_seat_repair(
 }
 
 /// One candidate seated create, with what the signed evidence says about it.
-struct AssessedCandidate {
-    seat: super::crew::HiredSeat,
+pub(super) struct AssessedCandidate {
+    pub(super) seat: super::crew::HiredSeat,
     /// A bound success receipt for which the whole hire chain verifies.
-    verified: Option<super::crew::SeatReceipt>,
+    pub(super) verified: Option<super::crew::SeatReceipt>,
     /// A bound failure-class receipt: the provider answered, and said no.
-    failed: Option<super::crew::SeatReceipt>,
+    pub(super) failed: Option<super::crew::SeatReceipt>,
     /// Why the closest bound success receipt did not verify, when one existed.
-    rejection: Option<String>,
+    pub(super) rejection: Option<String>,
     /// How many receipts named this commandId but were not bound to it.
-    unbound: usize,
+    pub(super) unbound: usize,
 }
 
 /// Judge one candidate on signed evidence alone.
@@ -1585,7 +1718,7 @@ struct AssessedCandidate {
 /// carrying the commandId, whatever `created_at` it claims — is invisible here
 /// rather than fatal. It is still counted, and reported, because a repair that
 /// silently ignored competing evidence would be its own honesty bug.
-fn assess_candidate(
+pub(super) fn assess_candidate(
     events: &[Value],
     channel_id: &str,
     session_ref: &str,
@@ -2241,3 +2374,257 @@ mod tests {
 #[cfg(test)]
 #[path = "seat_repair_tests.rs"]
 mod seat_repair_tests;
+
+// ── Role seats: grant and revoke ────────────────────────────────────────────
+
+/// The umbrella one verified genesis founds.
+///
+/// `--session-ref` is optional on the seat verbs because the genesis already
+/// names its umbrella and is signature-verified before it is read; asking a
+/// caller to restate a fact the signed event carries is a way to be told a
+/// different one. The value is handed straight back to
+/// [`super::operations::fetch_founder_context`], which re-verifies the whole
+/// envelope including this pairing.
+async fn session_ref_of_genesis(
+    client: &BuzzClient,
+    channel_id: &str,
+    genesis: &str,
+) -> Result<String, CliError> {
+    let rows = client
+        .query_all(json!({
+            "ids": [genesis],
+            "kinds": [KIND_CODING_SESSION_GENESIS],
+            "#h": [channel_id],
+        }))
+        .await?;
+    if rows.len() != 1 {
+        return Err(CliError::NotFound(format!(
+            "expected exactly one genesis {genesis} in channel {channel_id}, found {}",
+            rows.len()
+        )));
+    }
+    let event: nostr::Event = serde_json::from_value(rows[0].clone())
+        .map_err(|error| CliError::Other(format!("relay returned malformed genesis: {error}")))?;
+    buzz_core::verify_event(&event)
+        .map_err(|error| CliError::Other(format!("invalid genesis signature: {error}")))?;
+    let payload = buzz_core::coding_session_genesis::decode_coding_session_genesis(&event.content)
+        .map_err(|error| CliError::Other(format!("invalid genesis content: {error}")))?;
+    Ok(payload.session_ref)
+}
+
+/// Resolve the umbrella a seat verb operates on.
+async fn resolve_seat_session_ref(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: Option<&str>,
+    genesis: &str,
+) -> Result<String, CliError> {
+    match session_ref {
+        Some(session_ref) => {
+            validate_session_ref(session_ref).map_err(CliError::Usage)?;
+            Ok(session_ref.to_owned())
+        }
+        None => session_ref_of_genesis(client, channel_id, genesis).await,
+    }
+}
+
+/// `bee sessions grant --role <slug>` — the seat tier of the grant verb.
+///
+/// The collaborator and viewer tiers are *operator* grants: they say what a
+/// human may do to a session. A role seat says who an actor **is** inside one
+/// umbrella, and it is the fact the typed team fold reads for verifier
+/// standing. Until this existed the only writer of `grant-seat` was the hire
+/// path itself, so a seat the hire failed to grant could only be repaired
+/// (`bee sessions seat-repair`) and a seat nobody hired could not be created
+/// at all — which is why `seat-repair`'s own `ambiguous` remedy had to point
+/// at the founder's Desktop app.
+///
+/// Standing is decided by exactly the same rule the hire path uses
+/// ([`super::seat_authority::ensure_hired_seat_grant`]): founder, active
+/// steering operator, or active lead; a lead may not grant `lead`; an actor
+/// may not nominate itself; an actor already seated in a different role is
+/// refused rather than overwritten. Idempotent — a seat that already holds
+/// this exact role is reported `already_granted` with no write.
+pub async fn cmd_grant_seat(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: Option<&str>,
+    genesis: &str,
+    actor: &str,
+    role: &str,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    validate_event_id_hex("--genesis", genesis).map_err(CliError::Usage)?;
+    crate::validate::validate_lower_hex64("--pubkey", actor)?;
+    validate_role_slug(role).map_err(CliError::Usage)?;
+    let session_ref = resolve_seat_session_ref(client, channel_id, session_ref, genesis).await?;
+
+    let grant = super::seat_authority::ensure_hired_seat_grant(
+        client,
+        channel_id,
+        &session_ref,
+        genesis,
+        actor,
+        role,
+    )
+    .await?;
+    println!(
+        "{}",
+        json!({
+            "outcome": if grant.already_active { "already_granted" } else { "granted" },
+            "transition": "grant-seat",
+            "eventId": grant.event_id,
+            "actor": actor,
+            "seat": format!("{}\u{b7}{role}", short_pubkey(actor)),
+            "role": role,
+            "sessionRef": session_ref,
+            "genesisRef": genesis,
+        })
+    );
+    Ok(())
+}
+
+/// What one `bee sessions revoke-seat` may do, decided on the accepted chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SeatRevokeDecision {
+    /// Append a `revoke-seat` for this exact actor and role.
+    Append,
+}
+
+/// Decide whether a revoke may be written, from the projected authority alone.
+///
+/// Pure so the refusals are testable without a relay. The relay's own
+/// transition matrix remains the gate — this exists so the CLI refuses locally
+/// with a sentence naming what the actor actually holds, instead of forwarding
+/// a write the relay will reject with a shape error.
+pub(super) fn decide_seat_revoke(
+    authority: &super::operations::ProjectedAuthority,
+    actor: &str,
+    role: &str,
+) -> Result<SeatRevokeDecision, CliError> {
+    let Some(seat) = authority
+        .seats
+        .iter()
+        .find(|seat| seat.actor_pubkey == actor)
+    else {
+        return Err(CliError::Refused(format!(
+            "actor {actor} holds no active role seat on this umbrella's accepted authority \
+             chain; there is nothing to revoke"
+        )));
+    };
+    if seat.role != role {
+        return Err(CliError::Refused(format!(
+            "actor {actor} holds role {} on this umbrella, not {role}; revoke the role it \
+             actually holds",
+            seat.role
+        )));
+    }
+    Ok(SeatRevokeDecision::Append)
+}
+
+/// `bee sessions revoke-seat` — withdraw one actor's exact role seat.
+///
+/// The counterpart `grant-seat` never had. It is the write that makes
+/// `seat-repair`'s `ambiguous` outcome converge when the founder wants the
+/// *other* role: two signed creates are history and neither can be withdrawn,
+/// so the only way to settle which role an actor holds is on the accepted
+/// kind:44228 chain.
+///
+/// Refused locally unless the pubkey holds that exact role — the relay's
+/// transition matrix is still the gate, this just refuses with a sentence
+/// naming what the actor really holds. Acceptance is re-read from the trusted
+/// projection before it is reported: a submitted transition nothing accepted is
+/// `unconfirmed`, never a success.
+pub async fn cmd_revoke_seat(
+    client: &BuzzClient,
+    channel_id: &str,
+    session_ref: Option<&str>,
+    genesis: &str,
+    actor: &str,
+    role: &str,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    validate_event_id_hex("--genesis", genesis).map_err(CliError::Usage)?;
+    crate::validate::validate_lower_hex64("--pubkey", actor)?;
+    validate_role_slug(role).map_err(CliError::Usage)?;
+    let session_ref = resolve_seat_session_ref(client, channel_id, session_ref, genesis).await?;
+    let channel = Uuid::parse_str(channel_id)
+        .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
+
+    let context =
+        super::operations::fetch_founder_context(client, channel_id, &session_ref, genesis).await?;
+    let founder = context.founder_pubkey.clone();
+
+    for attempt in 0..2 {
+        let authority =
+            super::operations::fetch_projected_authority(client, channel_id, genesis, &founder)
+                .await?;
+        decide_seat_revoke(&authority, actor, role)?;
+        let seq = authority
+            .head_seq
+            .checked_add(1)
+            .ok_or_else(|| CliError::Other("authority chain seq overflow".into()))?;
+        let payload =
+            buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_revoke_seat(
+                genesis,
+                authority.head_event_id,
+                seq,
+                actor,
+                role,
+            );
+        let builder =
+            buzz_sdk::builders::build_coding_session_authority_transition(channel, &payload)
+                .map_err(|error| CliError::Other(error.to_string()))?;
+        let event = client.sign_event_unchecked(builder)?;
+        let event_id = event.id.to_hex();
+        let outcome = client.submit_event(event).await.and_then(|raw| {
+            crate::commands::parse_write_response(&raw, "seat revocation already accepted")
+        });
+        let response = match outcome {
+            Ok(response) => response,
+            // Another accepted transition advanced the head after this attempt
+            // read it. Rebuild against a fresh projection exactly once; never
+            // replay the stale event.
+            Err(error) if attempt == 0 && super::is_chain_head_conflict(&error) => continue,
+            Err(error) => return Err(error),
+        };
+        let accepted = serde_json::from_str::<Value>(&response)
+            .ok()
+            .and_then(|value| value.get("accepted").and_then(Value::as_bool));
+        if accepted != Some(true) {
+            return Err(CliError::Refused(
+                "relay response did not prove acceptance of the seat revocation".into(),
+            ));
+        }
+        let projected =
+            super::operations::fetch_projected_authority(client, channel_id, genesis, &founder)
+                .await?;
+        if projected
+            .seats
+            .iter()
+            .any(|seat| seat.actor_pubkey == actor && seat.role == role)
+        {
+            return Err(CliError::Unconfirmed(format!(
+                "seat revocation {event_id} was submitted but the projected authority chain \
+                 still seats {actor} as {role}; inspect the chain before retrying"
+            )));
+        }
+        println!(
+            "{}",
+            json!({
+                "outcome": "revoked",
+                "transition": "revoke-seat",
+                "eventId": event_id,
+                "actor": actor,
+                "seat": format!("{}\u{b7}{role}", short_pubkey(actor)),
+                "role": role,
+                "sessionRef": session_ref,
+                "genesisRef": genesis,
+            })
+        );
+        return Ok(());
+    }
+    Err(CliError::Other(
+        "seat revocation exhausted its single head-conflict retry".into(),
+    ))
+}

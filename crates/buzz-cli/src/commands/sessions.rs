@@ -56,6 +56,9 @@ use crate::client::BuzzClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 
+pub mod audit;
+#[cfg(test)]
+mod audit_tests;
 pub mod catalog;
 pub mod crew;
 pub mod crew_cmds;
@@ -2284,6 +2287,10 @@ pub async fn dispatch(
         SessionsCmd::Tools { channel, target } => {
             cmd_tools(client, &channel, target.as_deref(), format).await
         }
+        SessionsCmd::Audit {
+            channel,
+            session_ref,
+        } => audit::cmd_audit(client, &channel, session_ref.as_deref(), format).await,
         SessionsCmd::Doctor { channel, target } => {
             cmd_doctor(client, &channel, target.as_deref(), format).await
         }
@@ -2294,6 +2301,40 @@ pub async fn dispatch(
             pubkey,
             role,
         } => cmd_grant(client, &channel, &genesis, &pubkey, role).await,
+        SessionsCmd::GrantSeat {
+            channel,
+            genesis,
+            pubkey,
+            role,
+            session_ref,
+        } => {
+            crew_cmds::cmd_grant_seat(
+                client,
+                &channel,
+                session_ref.as_deref(),
+                &genesis,
+                &pubkey,
+                &role,
+            )
+            .await
+        }
+        SessionsCmd::RevokeSeat {
+            channel,
+            genesis,
+            pubkey,
+            role,
+            session_ref,
+        } => {
+            crew_cmds::cmd_revoke_seat(
+                client,
+                &channel,
+                session_ref.as_deref(),
+                &genesis,
+                &pubkey,
+                &role,
+            )
+            .await
+        }
         SessionsCmd::Revoke {
             channel,
             genesis,
@@ -2414,6 +2455,7 @@ pub async fn dispatch(
             brief,
             content,
             no_wait,
+            check,
         } => {
             crew_cmds::cmd_hire(
                 client,
@@ -2426,6 +2468,7 @@ pub async fn dispatch(
                 brief.as_deref(),
                 content.as_deref(),
                 no_wait,
+                check,
                 &crew_cmds::HireRouting {
                     class,
                     risk,

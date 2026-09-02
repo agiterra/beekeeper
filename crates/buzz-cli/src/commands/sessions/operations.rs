@@ -37,6 +37,55 @@ use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 use crate::{TeamOperationCmd, TeamTransactionWriteArgs};
 
+/// Whether this operation class hands its stored `deliveryCommandId` straight
+/// to its 44220 wake.
+///
+/// Only an assignment does. Its record names the command that will carry it to
+/// the assignee, and the provider reads exactly that pairing back as the
+/// binding that makes a finished turn owe a report
+/// (`crates/buzz-session-provider/src/team_wake.rs`, `payload.delivery_command_id
+/// == Some(command_id)`). Every other class is *answering* an assignment, so
+/// the only id a caller could hand it is one already spent on the assignee's
+/// own target; the lead runner then fences the wake as `AlreadyConsumed` and
+/// the lead is never woken (`docs/SESSION_STATE.md` item 103, finding 4).
+pub(super) const fn wake_shares_delivery_command_id(
+    transaction_type: CodingSessionTeamTransactionType,
+) -> bool {
+    matches!(
+        transaction_type,
+        CodingSessionTeamTransactionType::Assignment
+    )
+}
+
+/// The `deliveryCommandId` this operation's stored 44244 record carries.
+///
+/// An assignment with `--wake-to` mints one when the caller named none, so the
+/// record and its wake share the id the provider's binding check compares. For
+/// every other class the wake's id is derived from the operation *after* it is
+/// signed, so no pre-sign value can name it: a caller-supplied id there would
+/// be recorded as this operation's delivery while a different command actually
+/// delivered it. That is refused rather than silently ignored.
+pub(super) fn resolve_delivery_command_id(
+    transaction_type: CodingSessionTeamTransactionType,
+    wake_to: Option<&str>,
+    requested: Option<String>,
+) -> Result<Option<String>, CliError> {
+    match (wake_to, requested) {
+        (None, requested) => Ok(requested),
+        (Some(_), requested) if wake_shares_delivery_command_id(transaction_type) => Ok(Some(
+            requested.unwrap_or_else(|| Uuid::new_v4().to_string()),
+        )),
+        (Some(_), Some(_)) => Err(CliError::Usage(format!(
+            "--delivery-command-id cannot be combined with --wake-to on a {}: the wake's \
+             command id is derived from this operation and its exact target, and reusing the \
+             command that already delivered an assignment makes the lead runner fence the wake \
+             as AlreadyConsumed. Drop --delivery-command-id.",
+            transaction_type.as_str()
+        ))),
+        (Some(_), None) => Ok(None),
+    }
+}
+
 /// Publish one operation after strict local structural validation.
 pub async fn cmd_write(
     client: &BuzzClient,
@@ -46,11 +95,11 @@ pub async fn cmd_write(
     validate_coordinates(&args.channel, &args.session_ref, &args.genesis)?;
     let body_value = read_json_argument(&args.body)?;
     let body = decode_body(transaction_type, body_value)?;
-    let delivery_command_id = match (&args.wake_to, args.delivery_command_id) {
-        (Some(_), Some(command_id)) => Some(command_id),
-        (Some(_), None) => Some(Uuid::new_v4().to_string()),
-        (None, command_id) => command_id,
-    };
+    let delivery_command_id = resolve_delivery_command_id(
+        transaction_type,
+        args.wake_to.as_deref(),
+        args.delivery_command_id.clone(),
+    )?;
     let payload = coding_session_team_transaction_payload(
         args.session_ref.clone(),
         args.genesis.clone(),
@@ -77,23 +126,25 @@ pub async fn cmd_write(
     }
 
     let operation_id = event.id.to_hex();
-    let wake = args
-        .wake_to
-        .as_deref()
-        .zip(delivery_command_id.as_deref())
-        .map(|(wake_to, command_id)| {
-            || {
-                super::crew_cmds::send_team_operation_wake(
-                    client,
-                    &args.channel,
-                    wake_to,
-                    &args.session_ref,
-                    command_id,
-                    &operation_id,
-                    transaction_type.as_str(),
-                )
-            }
-        });
+    // Only an assignment hands its stored `deliveryCommandId` to the wake; see
+    // [`wake_shares_delivery_command_id`]. Everything else lets
+    // `send_team_operation_wake` derive one from this operation and its target.
+    let shared_command_id = wake_shares_delivery_command_id(transaction_type)
+        .then(|| delivery_command_id.clone())
+        .flatten();
+    let wake = args.wake_to.as_deref().map(|wake_to| {
+        || {
+            super::crew_cmds::send_team_operation_wake(
+                client,
+                &args.channel,
+                wake_to,
+                &args.session_ref,
+                shared_command_id.as_deref(),
+                &operation_id,
+                transaction_type.as_str(),
+            )
+        }
+    });
     let output =
         submit_record_then_wake(&operation_id, || client.submit_event(event), wake).await?;
     println!("{output}");

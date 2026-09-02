@@ -1,4 +1,9 @@
 pub mod agent_management;
+/// The build script's own commit-stamp resolution, compiled here only for its
+/// tests — `build.rs` `include!`s the same file, and `cargo test` never runs a
+/// build script.
+#[cfg(test)]
+mod build_provenance;
 mod client;
 mod commands;
 mod error;
@@ -91,9 +96,25 @@ where
     }
 }
 
+/// This build's own provenance: crate version plus the git commit it was built
+/// from, e.g. `0.1.0 (6a683c9e3)`.
+///
+/// The commit is `unknown` when the build had no checkout to ask and no
+/// `BUZZ_CLI_GIT_SHA` in its environment (see `build.rs`). A seat reaches
+/// whichever `bee` its `PATH` finds first — on 2026-09-01 that was the desktop
+/// app's bundled sidecar, so a CLI fix that has landed in the repo may still
+/// not be the one running. This is how a seat says which one it ran.
+pub const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("BUZZ_CLI_GIT_SHA"),
+    ")"
+);
+
 #[derive(Parser)]
 #[command(
     name = "bee",
+    version = VERSION,
     about = "Beekeeper CLI — interact with a Beekeeper relay",
     long_about = "\
 Beekeeper CLI — interact with a Beekeeper relay
@@ -2345,6 +2366,36 @@ pub enum SessionsCmd {
         #[arg(long)]
         target: Option<String>,
     },
+    /// Per-turn usage and waste for a channel's coding sessions.
+    ///
+    /// Reads only what the transcript (kind 44225) already carries: the
+    /// terminal `result` item's `usage` block, its `costUsd` and duration, and
+    /// the `tool_call`/`tool_result` pairs around it. Every number is measured
+    /// — an absent measurement prints `null`, never `0`, and no cost is ever
+    /// computed here against a price list. At most 4,096 items are folded per
+    /// execution; the report discloses when it stopped, and a turn whose tool
+    /// count had to be taken from a clipped stream carries
+    /// `toolCallsTruncated: true`.
+    ///
+    /// Beyond the per-turn table it reports three kinds of waste: the same
+    /// file or command handed to one seat more than once (`handedTwice`, with
+    /// the published byte count, how many of those calls were answered, and
+    /// whether the provider clipped a result), the
+    /// `bee sessions status|inbox|send|operation` reads a seat pulled into its
+    /// own context (`roomDownloads`), and three or more consecutive identical
+    /// commands (`retryLoops`, whose `identicalResults` is `null` when the
+    /// results were never published).
+    #[command(
+        after_help = "Examples:\n  bee sessions audit --channel <uuid>\n  bee sessions audit --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions audit --channel <uuid>   # one JSON row per turn"
+    )]
+    Audit {
+        /// Channel UUID to audit
+        #[arg(long)]
+        channel: String,
+        /// Restrict the audit to one umbrella's executions
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
+    },
     /// Aggregate tool usage and error rates across transcripts
     #[command(
         after_help = "Examples:\n  bee sessions tools --channel <uuid>\n  bee sessions tools --channel <uuid> --target '<cs-target>'"
@@ -2371,9 +2422,17 @@ pub enum SessionsCmd {
     },
     /// Grant a pubkey authority over a coding session (NIP-CSAT kind 44228).
     ///
-    /// `collaborator` maps to a `grant-operator` transition (may steer);
-    /// `viewer` maps to `grant-viewer` (read-only). Only the session owner
-    /// (the genesis signer) may extend the chain.
+    /// Two tiers, and the set is closed. `collaborator` maps to
+    /// `grant-operator` (may steer) and `viewer` to `grant-viewer`
+    /// (read-only): both say what a human may do to a session, and only the
+    /// session owner (the genesis signer) may extend that chain.
+    ///
+    /// Who an actor *is* inside an umbrella — `lead`, `builder`, `verifier`, …
+    /// — is a **role seat**, and it has its own verb, `grant-seat`. Writing
+    /// authority is opted into, never reached by mistyping a tier here.
+    #[command(
+        after_help = "Examples:\n  bee sessions grant --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role collaborator\n\nA role seat is granted with `bee sessions grant-seat` and withdrawn with\n`bee sessions revoke-seat`; `revoke` only clears these two tiers."
+    )]
     Grant {
         /// Channel UUID the session's authority chain lives in
         #[arg(long)]
@@ -2384,9 +2443,72 @@ pub enum SessionsCmd {
         /// Grantee pubkey (64-char lowercase hex)
         #[arg(long)]
         pubkey: String,
-        /// Grant tier
+        /// Grant tier: `collaborator` (may steer) or `viewer` (read-only)
         #[arg(long, value_enum)]
         role: GrantRoleArg,
+    },
+    /// Seat one actor in a role inside an umbrella (NIP-CSAT kind 44228
+    /// `grant-seat`).
+    ///
+    /// A role seat says who an actor *is* — the fact the typed team fold reads
+    /// for verifier standing — as opposed to what a human may do to a session,
+    /// which is `grant`. It may be written by the founder, an active steering
+    /// operator, or an active lead (a lead may not grant `lead`), and it is
+    /// idempotent: an actor already holding that exact role reports
+    /// `already_granted` with no write. An actor holding a *different* role is
+    /// refused — withdraw the held seat with `revoke-seat` first, because a
+    /// seated actor is never silently re-roled.
+    #[command(
+        name = "grant-seat",
+        after_help = "Examples:\n  bee sessions grant-seat --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role builder\n\nExit codes: 0 granted or already granted, 1 refused, 5 submitted but\nunconfirmed by the accepted chain."
+    )]
+    GrantSeat {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+        /// Actor pubkey taking the seat (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Role slug the actor is seated in (`[a-z0-9-]`, 1-64 bytes)
+        #[arg(long)]
+        role: String,
+        /// Umbrella session reference; resolved from the signed genesis when
+        /// omitted
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
+    },
+    /// Withdraw one actor's exact role seat (NIP-CSAT kind 44228 `revoke-seat`).
+    ///
+    /// The counterpart of `grant-seat`, and the write that settles a
+    /// disputed role: two founder-signed seated creates are history and
+    /// neither can be withdrawn, so which role an actor holds is decided only
+    /// on the accepted authority chain. Refused unless the pubkey holds that
+    /// exact role — the relay's transition matrix remains the gate; this
+    /// refuses first, naming the role the actor really holds.
+    #[command(
+        name = "revoke-seat",
+        after_help = "Examples:\n  bee sessions revoke-seat --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role builder\n\nExit codes: 0 revoked, 1 refused (no seat, or a different role), 5 submitted\nbut unconfirmed by the accepted chain."
+    )]
+    RevokeSeat {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+        /// Actor pubkey losing its seat (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// The exact role slug it holds; a mismatch is refused
+        #[arg(long)]
+        role: String,
+        /// Umbrella session reference; resolved from the signed genesis when
+        /// omitted
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
     },
     /// Revoke a pubkey's live coding-session grant (NIP-CSAT kind 44228).
     ///
@@ -2672,6 +2794,12 @@ pub enum SessionsCmd {
         /// answer; the outcome is then reported as unconfirmed
         #[arg(long = "no-wait")]
         no_wait: bool,
+        /// Validate the brief and routing locally, print the facts the hire
+        /// would carry, and publish NOTHING. Exit 0 when the payload is one
+        /// the relay would accept, 1 when it is not. Use it for acceptance
+        /// tests: a test that seats a live agent is not a test.
+        #[arg(long, conflicts_with = "no_wait")]
+        check: bool,
     },
     /// Grant the role seat a receipt-backed hire created but never got.
     ///
@@ -3509,6 +3637,216 @@ mod tests {
         assert!(Cli::try_parse_from(["buzz", "users", "set-status", "--clear"]).is_ok());
     }
 
+    /// A seat must be able to say which `bee` it ran. `bee --version` is that
+    /// answer, and it names the commit, not just the crate version.
+    #[test]
+    fn version_names_the_build_commit() {
+        let version = Cli::command()
+            .get_version()
+            .expect("bee must answer --version")
+            .to_owned();
+        assert_eq!(version, VERSION, "--version must print the stamped build");
+        assert!(
+            version.starts_with(env!("CARGO_PKG_VERSION")),
+            "got {version}"
+        );
+        let commit = version
+            .rsplit_once(" (")
+            .and_then(|(_, tail)| tail.strip_suffix(')'))
+            .unwrap_or_else(|| panic!("no commit in {version}"));
+        let (sha, dirty) = commit
+            .strip_suffix("-dirty")
+            .map_or((commit, false), |sha| (sha, true));
+        assert!(
+            commit == "unknown"
+                || (sha.len() >= 7
+                    && sha
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())),
+            "the commit is a short hex sha, optionally `-dirty`, or the literal `unknown`, never \
+             invented: {commit:?}"
+        );
+        assert!(
+            !(commit == "unknown" && dirty),
+            "`unknown` names no commit, so there is nothing for `-dirty` to qualify: {commit:?}"
+        );
+    }
+
+    /// The seat verbs must exist and must take the flags the seat-repair
+    /// remedy tells an operator to type.
+    #[test]
+    fn the_seat_verbs_parse_the_forms_the_remedy_prints() {
+        let genesis = "a".repeat(64);
+        let pubkey = "b".repeat(64);
+        let channel = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+
+        // A role seat, on its own verb — writing seat authority is opted into,
+        // never reached by mistyping a tier.
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "grant-seat",
+            "--channel",
+            channel,
+            "--genesis",
+            &genesis,
+            "--pubkey",
+            &pubkey,
+            "--role",
+            "builder",
+        ])
+        .is_ok());
+        // `grant` keeps its closed tier set: a typo is a parse error naming
+        // the tiers, not an accepted 44228 seating role `colaborator` that
+        // then blocks every legitimate grant for that actor (REVIEW-A1 F5).
+        let rendered = match Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "grant",
+            "--channel",
+            channel,
+            "--genesis",
+            &genesis,
+            "--pubkey",
+            &pubkey,
+            "--role",
+            "colaborator",
+        ]) {
+            Ok(_) => panic!("a mistyped tier must not parse"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            rendered.contains("collaborator") && rendered.contains("viewer"),
+            "the parse error names the tiers that exist: {rendered}"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "bee",
+                "sessions",
+                "grant",
+                "--channel",
+                channel,
+                "--genesis",
+                &genesis,
+                "--pubkey",
+                &pubkey,
+                "--role",
+                "builder",
+            ])
+            .is_err(),
+            "a role seat is `grant-seat`, not a fourth tier on `grant`"
+        );
+        // The two operator tiers keep working, unchanged.
+        for tier in ["collaborator", "viewer"] {
+            assert!(
+                Cli::try_parse_from([
+                    "bee",
+                    "sessions",
+                    "grant",
+                    "--channel",
+                    channel,
+                    "--genesis",
+                    &genesis,
+                    "--pubkey",
+                    &pubkey,
+                    "--role",
+                    tier,
+                ])
+                .is_ok(),
+                "{tier} must still parse"
+            );
+        }
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "revoke-seat",
+            "--channel",
+            channel,
+            "--genesis",
+            &genesis,
+            "--pubkey",
+            &pubkey,
+            "--role",
+            "builder",
+        ])
+        .is_ok());
+        // Every flag of revoke-seat but --session-ref is required.
+        assert!(
+            Cli::try_parse_from([
+                "bee",
+                "sessions",
+                "revoke-seat",
+                "--channel",
+                channel,
+                "--genesis",
+                &genesis,
+                "--pubkey",
+                &pubkey,
+            ])
+            .is_err(),
+            "revoke-seat must name the exact role it withdraws"
+        );
+    }
+
+    /// `--check` is an acceptance-test flag; waiting for a host that will
+    /// never be asked is a contradiction, so the two are mutually exclusive.
+    #[test]
+    fn hire_check_and_no_wait_are_mutually_exclusive() {
+        let channel = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+        let session = "6a8f1b2c-0000-4000-8000-000000000001";
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "hire",
+            "--channel",
+            channel,
+            "--session-ref",
+            session,
+            "--role",
+            "builder",
+            "--content",
+            "go",
+            "--check",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "hire",
+            "--channel",
+            channel,
+            "--session-ref",
+            session,
+            "--role",
+            "builder",
+            "--content",
+            "go",
+            "--check",
+            "--no-wait",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn sessions_audit_takes_a_channel_and_an_optional_umbrella() {
+        let channel = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+        assert!(Cli::try_parse_from(["bee", "sessions", "audit", "--channel", channel]).is_ok());
+        assert!(Cli::try_parse_from([
+            "bee",
+            "sessions",
+            "audit",
+            "--channel",
+            channel,
+            "--session-ref",
+            "6a8f1b2c-0000-4000-8000-000000000001",
+        ])
+        .is_ok());
+        assert!(
+            Cli::try_parse_from(["bee", "sessions", "audit"]).is_err(),
+            "an audit with no channel has nothing to read"
+        );
+    }
+
     #[test]
     fn command_inventory_is_stable() {
         let expected_groups: Vec<&str> = vec![
@@ -3718,6 +4056,7 @@ mod tests {
             vec![
                 "acknowledge",
                 "assign",
+                "audit",
                 "block",
                 "catalog",
                 "complete",
@@ -3725,6 +4064,7 @@ mod tests {
                 "doctor",
                 "export",
                 "grant",
+                "grant-seat",
                 "hire",
                 "inbox",
                 "list",
@@ -3732,6 +4072,7 @@ mod tests {
                 "registry",
                 "report",
                 "revoke",
+                "revoke-seat",
                 "roster",
                 "route",
                 "seat-repair",
@@ -3783,7 +4124,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 24),
+            ("sessions", 27),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),
