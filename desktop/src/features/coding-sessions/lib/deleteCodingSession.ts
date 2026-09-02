@@ -32,38 +32,128 @@ export const SESSION_OWNED_KINDS = [
 ] as const;
 
 /**
- * Select the events belonging to one umbrella from a channel fetch.
+ * How a session's events actually attach to their umbrella.
  *
- * Grouping is by the `d` tag, which every owned kind carries and which
- * equals the `sessionRef`. Sorted and de-duplicated so the count shown to
- * the person and the deletion that follows describe the same set.
+ * There is no single grouping tag, and assuming there was is what made the
+ * first version of this file refuse every real session with "no genesis
+ * event". Three different linkages, one per family:
+ *
+ * | Kind | Attaches by |
+ * |---|---|
+ * | 44226 genesis | its **event id** — `["csg-session", …]` exists for the relay's uniqueness probe and diagnostics, and NIP-CSG says consumers must not select by it |
+ * | 44227 goal, 44229 name, 44230 closure, 44244 team txn | `["d", sessionRef]` |
+ * | 44223 metadata | `sessionRef` in its **content**; its tags carry only `cs-target` |
+ * | 44225 transcript | `["cs-target", …]` only — no sessionRef anywhere on it |
+ *
+ * So a transcript reaches its umbrella in two hops: the metadata for an
+ * execution names both that execution's `cs-target` and the umbrella's
+ * `sessionRef`, and the transcript names the same `cs-target`. An execution
+ * whose metadata never landed contributes no transcript — correctly, since
+ * nothing on the wire ties one to this session.
+ */
+function tagValue(event: RelayEvent, name: string): string | null {
+  const found = event.tags.find(
+    (tag) => tag[0] === name && typeof tag[1] === "string",
+  );
+  return found?.[1] ?? null;
+}
+
+/** `sessionRef` claimed by an event's JSON content, if it has one. */
+function contentSessionRef(event: RelayEvent): string | null {
+  try {
+    const parsed = JSON.parse(event.content) as { sessionRef?: unknown };
+    return typeof parsed.sessionRef === "string" ? parsed.sessionRef : null;
+  } catch {
+    // A payload this build cannot parse is a version skew, not a reason to
+    // sweep the event in — an unattributable event is left alone.
+    return null;
+  }
+}
+
+/** Kinds that carry their umbrella in a plain `d` tag. */
+const D_TAG_KINDS: readonly number[] = [
+  KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_NAME,
+  KIND_CODING_SESSION_TEAM_TRANSACTION,
+];
+
+/**
+ * The genesis of this umbrella, selected by canonical event id.
+ *
+ * `genesisRef` is what every session surface already holds and what the
+ * authority chain is rooted at. When a caller has only a `sessionRef` (the
+ * CLI), the genesis is found by its content's own `sessionRef` claim
+ * instead — the payload, never the `csg-session` tag.
+ */
+export function findGenesis(
+  events: readonly RelayEvent[],
+  sessionRef: string,
+  genesisRef: string | null,
+): RelayEvent | null {
+  const candidates = events.filter(
+    (event) => event.kind === KIND_CODING_SESSION_GENESIS,
+  );
+  if (genesisRef) {
+    return candidates.find((event) => event.id === genesisRef) ?? null;
+  }
+  return (
+    candidates.find((event) => contentSessionRef(event) === sessionRef) ?? null
+  );
+}
+
+/** True when this umbrella can be deleted as a session at all. */
+export function selectionHasGenesis(
+  events: readonly RelayEvent[],
+  sessionRef: string,
+  genesisRef: string | null = null,
+): boolean {
+  return findGenesis(events, sessionRef, genesisRef) !== null;
+}
+
+/**
+ * Every event belonging to one umbrella, as ids, sorted and de-duplicated so
+ * the count shown to the person and the deletion that follows describe the
+ * same set.
  */
 export function sessionOwnedEventIds(
   events: readonly RelayEvent[],
   sessionRef: string,
+  genesisRef: string | null = null,
 ): string[] {
   const ids = new Set<string>();
-  for (const event of events) {
-    if (!SESSION_OWNED_KINDS.includes(event.kind as never)) continue;
-    const belongs = event.tags.some(
-      (tag) => tag[0] === "d" && tag[1] === sessionRef,
-    );
-    if (!belongs || !event.id) continue;
-    ids.add(event.id);
-  }
-  return [...ids].sort();
-}
 
-/** True when the selection can actually be deleted as a session. */
-export function selectionHasGenesis(
-  events: readonly RelayEvent[],
-  sessionRef: string,
-): boolean {
-  return events.some(
-    (event) =>
-      event.kind === KIND_CODING_SESSION_GENESIS &&
-      event.tags.some((tag) => tag[0] === "d" && tag[1] === sessionRef),
-  );
+  const genesis = findGenesis(events, sessionRef, genesisRef);
+  if (genesis?.id) ids.add(genesis.id);
+
+  // Pass one: everything that names the umbrella directly, and the metadata
+  // that maps an execution onto it.
+  const targets = new Set<string>();
+  for (const event of events) {
+    if (!event.id) continue;
+    if (D_TAG_KINDS.includes(event.kind)) {
+      if (tagValue(event, "d") === sessionRef) ids.add(event.id);
+      continue;
+    }
+    if (event.kind === KIND_CODING_SESSION_METADATA) {
+      if (contentSessionRef(event) !== sessionRef) continue;
+      ids.add(event.id);
+      const target = tagValue(event, "cs-target");
+      if (target) targets.add(target);
+    }
+  }
+
+  // Pass two: the transcript of each execution the metadata attributed to
+  // this umbrella. Needs pass one's `cs-target` set, so it cannot merge.
+  if (targets.size > 0) {
+    for (const event of events) {
+      if (event.kind !== KIND_CODING_SESSION_TRANSCRIPT || !event.id) continue;
+      const target = tagValue(event, "cs-target");
+      if (target && targets.has(target)) ids.add(event.id);
+    }
+  }
+
+  return [...ids].sort();
 }
 
 /**
@@ -95,16 +185,18 @@ export function selectionHasGenesis(
 export async function deleteCodingSession({
   channelId,
   sessionRef,
+  genesisRef = null,
 }: {
   channelId: string;
   sessionRef: string;
+  genesisRef?: string | null;
 }): Promise<{ deleted: number }> {
   const events = await relayClient.fetchEvents({
     kinds: [...SESSION_OWNED_KINDS],
     "#h": [channelId],
     limit: 2000,
   });
-  if (!selectionHasGenesis(events, sessionRef)) {
+  if (!selectionHasGenesis(events, sessionRef, genesisRef)) {
     // Without a genesis the relay has nothing to authorize against and would
     // refuse every target as "must be event author". Saying so plainly beats
     // a refusal the person has to decode.
@@ -112,7 +204,7 @@ export async function deleteCodingSession({
       "This session has no genesis event, so it cannot be deleted as a session.",
     );
   }
-  const ids = sessionOwnedEventIds(events, sessionRef);
+  const ids = sessionOwnedEventIds(events, sessionRef, genesisRef);
   const event = await signRelayEvent({
     kind: KIND_DELETION,
     content: `Delete session ${sessionRef}`,

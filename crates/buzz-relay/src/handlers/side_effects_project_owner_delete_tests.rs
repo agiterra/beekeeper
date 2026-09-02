@@ -578,13 +578,19 @@ impl DeletionFixture {
             .expect("channel");
         let session_ref = uuid::Uuid::new_v4().to_string();
 
+        // The real NIP-CSG shape: `h`, `csg-v`, `csg-session` — and no `d`
+        // tag at all. An earlier version of this fixture gave the genesis a
+        // `d` tag, which meant these tests exercised an event shape the
+        // product never produces; the gate reads `sessionRef` out of the
+        // content, so it was right, but nothing here proved it.
         let genesis = EventBuilder::new(
             Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_GENESIS as u16),
             serde_json::json!({ "sessionRef": session_ref, "v": 1 }).to_string(),
         )
         .tags(vec![
             Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
-            Tag::parse(["d", session_ref.as_str()]).expect("d tag"),
+            Tag::parse(["csg-v", "csg1-1"]).expect("csg-v tag"),
+            Tag::parse(["csg-session", session_ref.as_str()]).expect("csg-session tag"),
         ])
         .sign_with_keys(founder)
         .expect("sign genesis");
@@ -606,6 +612,9 @@ impl DeletionFixture {
                 })
                 .to_string(),
             )
+            // Closures genuinely are `d`-tagged — NIP-CSG groups them by
+            // `d = sessionRef`, and that is what the gate's completeness
+            // check scans for.
             .tags(vec![
                 Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
                 Tag::parse(["d", session_ref.as_str()]).expect("d tag"),

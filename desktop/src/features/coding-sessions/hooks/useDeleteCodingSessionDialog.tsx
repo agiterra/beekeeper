@@ -23,6 +23,13 @@ import {
 export type DeletableCodingSession = {
   channelId: string;
   sessionRef: string;
+  /**
+   * The genesis event id. NIP-CSG makes this the umbrella's canonical
+   * identity — the `csg-session` tag exists for the relay's uniqueness probe
+   * and diagnostics, and consumers are told not to select by it — so the
+   * selection matches the genesis on this and never on a tag.
+   */
+  genesisRef: string | null;
   label: string;
   /** Stop coordinates for every execution this row still has running. */
   stops: EndCodingSessionRequest["stops"];
@@ -106,6 +113,7 @@ export function useDeleteCodingSessionDialog(onDeleted?: () => void): {
       const { deleted } = await deleteCodingSession({
         channelId: target.channelId,
         sessionRef: target.sessionRef,
+        genesisRef: target.genesisRef,
       });
       toast.success(
         deleted === 1

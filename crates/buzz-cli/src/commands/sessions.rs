@@ -1191,41 +1191,100 @@ const SESSION_OWNED_KINDS: &[u32] = &[
     KIND_CODING_SESSION_TEAM_TRANSACTION,
 ];
 
+/// First value of a named tag on a raw event JSON value.
+fn event_tag_value(event: &Value, name: &str) -> Option<String> {
+    event.get("tags")?.as_array()?.iter().find_map(|tag| {
+        let parts = tag.as_array()?;
+        (parts.len() >= 2 && parts[0].as_str() == Some(name))
+            .then(|| parts[1].as_str().map(str::to_string))?
+    })
+}
+
+/// The `sessionRef` an event's JSON content claims, if any.
+fn content_session_ref(event: &Value) -> Option<String> {
+    let content = event.get("content")?.as_str()?;
+    let parsed: Value = serde_json::from_str(content).ok()?;
+    parsed.get("sessionRef")?.as_str().map(str::to_string)
+}
+
+/// Kinds that carry their umbrella in a plain `d` tag.
+const SESSION_D_TAG_KINDS: &[u32] = &[
+    KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_TEAM_TRANSACTION,
+];
+
 /// Select the events belonging to one umbrella from a channel fetch.
 ///
-/// Grouping is by the `d` tag, which every one of [`SESSION_OWNED_KINDS`]
-/// carries and which equals the `sessionRef`. Returns `(event_id, kind)`
-/// pairs so the caller can report a breakdown before deleting anything.
+/// There is no single grouping tag, and assuming there was is what made the
+/// first version of this refuse every real session. Three linkages:
 ///
-/// Deliberately no fallback to "events that mention the genesis": a session
-/// deletion is irreversible and its scope must be something the operator can
-/// see and check, not inferred.
+/// * **44226 genesis** — matched on the `sessionRef` in its **content**. Its
+///   `["csg-session", …]` tag carries the same value, but NIP-CSG is
+///   explicit that the tag exists for the relay's uniqueness probe and for
+///   diagnostics and that consumers must not select by it. It carries no
+///   `d` tag at all.
+/// * **44227 goal, 44229 name, 44230 closure, 44244 team transaction** —
+///   `["d", sessionRef]`.
+/// * **44223 metadata and 44225 transcript** — keyed by `cs-target`, which
+///   names an *execution*, not the umbrella. The metadata for an execution
+///   names both, so a transcript reaches its umbrella in two hops. An
+///   execution whose metadata never landed contributes no transcript,
+///   correctly: nothing on the wire ties one to this session.
+///
+/// Returns `(event_id, kind)` pairs so the caller can report a breakdown
+/// before deleting anything. Deterministic so a dry run and the delete that
+/// follows it agree.
 pub fn session_owned_events(events: &[Value], session_ref: &str) -> Vec<(String, u32)> {
-    let mut selected: Vec<(String, u32)> = events
-        .iter()
-        .filter_map(|event| {
-            let kind = event.get("kind").and_then(Value::as_u64)? as u32;
-            if !SESSION_OWNED_KINDS.contains(&kind) {
-                return None;
+    let mut selected: Vec<(String, u32)> = Vec::new();
+    let mut targets: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for event in events {
+        let Some(kind) = event.get("kind").and_then(Value::as_u64).map(|k| k as u32) else {
+            continue;
+        };
+        let Some(id) = event.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if kind == KIND_CODING_SESSION_GENESIS {
+            if content_session_ref(event).as_deref() == Some(session_ref) {
+                selected.push((id.to_string(), kind));
             }
-            let tags = event.get("tags")?.as_array()?;
-            let matches = tags.iter().any(|tag| {
-                let parts = tag.as_array();
-                parts.is_some_and(|parts| {
-                    parts.len() >= 2
-                        && parts[0].as_str() == Some("d")
-                        && parts[1].as_str() == Some(session_ref)
-                })
-            });
-            if !matches {
-                return None;
+        } else if SESSION_D_TAG_KINDS.contains(&kind) {
+            if event_tag_value(event, "d").as_deref() == Some(session_ref) {
+                selected.push((id.to_string(), kind));
             }
-            let id = event.get("id")?.as_str()?.to_string();
-            Some((id, kind))
-        })
-        .collect();
-    // Deterministic so a dry run and the delete that follows it agree, and so
-    // the same session always produces the same tag order.
+        } else if kind == KIND_CODING_SESSION_METADATA
+            && content_session_ref(event).as_deref() == Some(session_ref)
+        {
+            selected.push((id.to_string(), kind));
+            if let Some(target) = event_tag_value(event, "cs-target") {
+                targets.insert(target);
+            }
+        }
+    }
+
+    // Second pass: the transcript of each execution the metadata attributed
+    // to this umbrella. Needs the first pass's `cs-target` set, so it cannot
+    // merge into the loop above.
+    if !targets.is_empty() {
+        for event in events {
+            let Some(kind) = event.get("kind").and_then(Value::as_u64).map(|k| k as u32) else {
+                continue;
+            };
+            if kind != KIND_CODING_SESSION_TRANSCRIPT {
+                continue;
+            }
+            let Some(id) = event.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if event_tag_value(event, "cs-target").is_some_and(|t| targets.contains(&t)) {
+                selected.push((id.to_string(), kind));
+            }
+        }
+    }
+
     selected.sort();
     selected.dedup();
     selected
@@ -2744,105 +2803,161 @@ mod tests {
     };
 
     // ── session delete selection ──────────────────────────────────────────
+    //
+    // Every fixture here is the shape a real relay returns, copied from live
+    // events. The first version of this selection assumed one `d` tag
+    // grouped every kind; that is true for four of them and false for the
+    // three that matter most, and the command refused every real session as
+    // a result. These fixtures exist so that cannot silently come back.
 
-    const SESSION_A: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
-    const SESSION_B: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a11";
+    const SESSION_A: &str = "d9c338f4-85ec-4d61-aac6-9ffbe5b1bf42";
+    const SESSION_B: &str = "6b0fbc42-dc5c-4911-be06-75dc8ffb4349";
+    const TARGET_A: &str = "coding-session/v1|16:claude-agent-acp16:b05136:ea97f1ab1:1";
+    const TARGET_B: &str = "coding-session/v1|16:claude-agent-acp16:b05136:99999999-1:1";
 
-    fn owned(id: &str, kind: u32, session_ref: &str) -> Value {
+    /// kind:44226 — no `d` tag; sessionRef in `csg-session` and in content.
+    fn del_genesis(id: &str, session_ref: &str) -> Value {
+        json!({
+            "id": id,
+            "kind": KIND_CODING_SESSION_GENESIS,
+            "content": json!({"sessionRef": session_ref, "v": 1}).to_string(),
+            "tags": [["h", "chan"], ["csg-v", "csg1-1"], ["csg-session", session_ref]],
+        })
+    }
+
+    /// kind:44223 — tags carry only `cs-target`; sessionRef lives in content.
+    fn del_metadata(id: &str, session_ref: &str, target: &str) -> Value {
+        json!({
+            "id": id,
+            "kind": KIND_CODING_SESSION_METADATA,
+            "content": json!({
+                "schema": "buzz-coding-session-metadata/v1",
+                "sessionRef": session_ref,
+            })
+            .to_string(),
+            "tags": [["h", "chan"], ["csm-v", "csm1-1"], ["cs-target", target]],
+        })
+    }
+
+    /// kind:44225 — `cs-target` only. Nothing on it names the umbrella.
+    fn del_transcript(id: &str, target: &str) -> Value {
+        json!({
+            "id": id,
+            "kind": KIND_CODING_SESSION_TRANSCRIPT,
+            "content": "{}",
+            "tags": [["h", "chan"], ["cst-v", "cst1-1"], ["cs-target", target]],
+        })
+    }
+
+    /// kinds 44227 / 44229 / 44230 / 44244 — plain `d` tag.
+    fn del_d_tagged(id: &str, kind: u32, session_ref: &str) -> Value {
         json!({
             "id": id,
             "kind": kind,
+            "content": "",
             "tags": [["h", "chan"], ["d", session_ref]],
         })
     }
 
-    /// The set a delete names is the session's own chain, complete. The
-    /// relay refuses anything short of it, so a selection that quietly
-    /// dropped a closure would produce a refusal the operator cannot act on.
+    /// The regression: a real genesis carries no `d` tag at all, so grouping
+    /// every kind by `d` found none and refused every real session.
     #[test]
-    fn selection_takes_the_whole_chain_of_one_session() {
-        let events = vec![
-            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
-            owned("a2", KIND_CODING_SESSION_CLOSURE, SESSION_A),
-            owned("a3", KIND_CODING_SESSION_CLOSURE, SESSION_A),
-            owned("a4", KIND_CODING_SESSION_TRANSCRIPT, SESSION_A),
-            owned("a5", KIND_CODING_SESSION_METADATA, SESSION_A),
-            owned("a6", KIND_CODING_SESSION_GOAL, SESSION_A),
-            owned("a7", KIND_CODING_SESSION_NAME, SESSION_A),
-            owned("a8", KIND_CODING_SESSION_TEAM_TRANSACTION, SESSION_A),
-        ];
-        let selected = session_owned_events(&events, SESSION_A);
-        assert_eq!(selected.len(), 8);
-        assert!(selected
-            .iter()
-            .any(|(_, kind)| *kind == KIND_CODING_SESSION_GENESIS));
-    }
-
-    /// A channel holds many sessions. Naming a neighbour's events would
-    /// delete a session nobody asked about, and the relay would accept it —
-    /// each event is in the same channel and the deletion carries a genesis.
-    #[test]
-    fn selection_never_reaches_a_neighbouring_session() {
-        let events = vec![
-            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
-            owned("b1", KIND_CODING_SESSION_GENESIS, SESSION_B),
-            owned("b2", KIND_CODING_SESSION_TRANSCRIPT, SESSION_B),
-        ];
-        let selected = session_owned_events(&events, SESSION_A);
+    fn a_genesis_is_matched_on_its_content_not_a_d_tag() {
+        let events = vec![del_genesis("g-a", SESSION_A)];
         assert_eq!(
-            selected,
-            vec![("a1".to_string(), KIND_CODING_SESSION_GENESIS)]
+            session_owned_events(&events, SESSION_A),
+            vec![("g-a".to_string(), KIND_CODING_SESSION_GENESIS)]
         );
+        assert!(session_owned_events(&events, SESSION_B).is_empty());
     }
 
-    /// The kind list is closed. A chat message carrying a matching `d` tag —
-    /// which nothing stops a client from publishing — must not be swept in
-    /// on the authorship exemption a session delete is granted.
+    /// Two hops: metadata names both the umbrella (content) and the
+    /// execution (`cs-target`); the transcript names only the execution.
     #[test]
-    fn selection_ignores_kinds_a_session_does_not_own() {
+    fn a_transcript_is_reached_through_its_executions_metadata() {
         let events = vec![
-            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
-            owned("m1", 40002, SESSION_A),
-            owned("c1", KIND_CODING_SESSION_COMMAND, SESSION_A),
+            del_genesis("g-a", SESSION_A),
+            del_metadata("m-a", SESSION_A, TARGET_A),
+            del_transcript("t-1", TARGET_A),
         ];
-        let selected = session_owned_events(&events, SESSION_A);
-        assert_eq!(
-            selected,
-            vec![("a1".to_string(), KIND_CODING_SESSION_GENESIS)]
-        );
+        let ids: Vec<String> = session_owned_events(&events, SESSION_A)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec!["g-a", "m-a", "t-1"]);
     }
 
-    /// A dry run and the delete that follows must name the same set in the
-    /// same order, or the receipt describes something other than what went.
+    /// Another umbrella's execution must not be swept in.
     #[test]
-    fn selection_is_deterministic_and_deduplicated() {
+    fn a_transcript_of_another_umbrella_is_left_alone() {
         let events = vec![
-            owned("a2", KIND_CODING_SESSION_CLOSURE, SESSION_A),
-            owned("a1", KIND_CODING_SESSION_GENESIS, SESSION_A),
-            owned("a2", KIND_CODING_SESSION_CLOSURE, SESSION_A),
+            del_genesis("g-a", SESSION_A),
+            del_metadata("m-a", SESSION_A, TARGET_A),
+            del_metadata("m-b", SESSION_B, TARGET_B),
+            del_transcript("t-1", TARGET_A),
+            del_transcript("t-9", TARGET_B),
         ];
-        let selected = session_owned_events(&events, SESSION_A);
-        assert_eq!(
-            selected,
-            vec![
-                ("a1".to_string(), KIND_CODING_SESSION_GENESIS),
-                ("a2".to_string(), KIND_CODING_SESSION_CLOSURE),
-            ]
-        );
+        let ids: Vec<String> = session_owned_events(&events, SESSION_A)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert!(ids.contains(&"t-1".to_string()));
+        assert!(!ids.contains(&"t-9".to_string()));
+        assert!(!ids.contains(&"m-b".to_string()));
     }
 
-    /// An event with no `d` tag belongs to no session and is never selected.
+    /// Nothing on the wire ties an orphan transcript to this umbrella, so
+    /// nothing here may claim it does.
     #[test]
-    fn selection_skips_an_event_with_no_session_ref() {
-        let events = vec![json!({
-            "id": "x1",
-            "kind": KIND_CODING_SESSION_TRANSCRIPT,
-            "tags": [["h", "chan"]],
-        })];
-        assert!(session_owned_events(&events, SESSION_A).is_empty());
+    fn an_orphan_transcript_with_no_metadata_is_not_swept_in() {
+        let events = vec![
+            del_genesis("g-a", SESSION_A),
+            del_transcript("t-1", TARGET_A),
+        ];
+        assert_eq!(session_owned_events(&events, SESSION_A).len(), 1);
     }
 
-    /// The receipt's breakdown counts what actually goes, per kind.
+    #[test]
+    fn goal_name_closure_and_team_transactions_match_on_the_d_tag() {
+        let events = vec![
+            del_genesis("g-a", SESSION_A),
+            del_d_tagged("goal", KIND_CODING_SESSION_GOAL, SESSION_A),
+            del_d_tagged("name", KIND_CODING_SESSION_NAME, SESSION_A),
+            del_d_tagged("close", KIND_CODING_SESSION_CLOSURE, SESSION_A),
+            del_d_tagged("txn", KIND_CODING_SESSION_TEAM_TRANSACTION, SESSION_A),
+            del_d_tagged("other", KIND_CODING_SESSION_CLOSURE, SESSION_B),
+        ];
+        let ids: Vec<String> = session_owned_events(&events, SESSION_A)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec!["close", "g-a", "goal", "name", "txn"]);
+    }
+
+    /// A chat message with a matching `d` tag must not ride in on the
+    /// authorship exemption a session delete carries.
+    #[test]
+    fn a_kind_the_session_does_not_own_is_never_selected() {
+        let events = vec![
+            del_genesis("g-a", SESSION_A),
+            del_d_tagged("msg", 40002, SESSION_A),
+        ];
+        assert_eq!(session_owned_events(&events, SESSION_A).len(), 1);
+    }
+
+    /// Undecodable content is a version skew, not a reason to guess.
+    #[test]
+    fn undecodable_content_is_left_alone() {
+        let broken = json!({
+            "id": "m-x",
+            "kind": KIND_CODING_SESSION_METADATA,
+            "content": "not json",
+            "tags": [["h", "chan"], ["cs-target", TARGET_A]],
+        });
+        let events = vec![del_genesis("g-a", SESSION_A), broken];
+        assert_eq!(session_owned_events(&events, SESSION_A).len(), 1);
+    }
+
     #[test]
     fn the_breakdown_counts_each_kind() {
         let selected = vec![

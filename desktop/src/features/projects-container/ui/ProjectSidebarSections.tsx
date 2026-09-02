@@ -394,6 +394,7 @@ export function ProjectSidebarSections({
           if (!entry.sessionRef) return;
           codingSessionDeleteDialog.requestDelete({
             channelId: entry.channelId,
+            genesisRef: entry.genesisRef,
             label: entry.label,
             sessionRef: entry.sessionRef,
             stops: entry.stopTargets.map((stop) => ({ ...stop })),
