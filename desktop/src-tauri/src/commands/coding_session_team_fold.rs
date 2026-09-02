@@ -170,6 +170,16 @@ impl From<&CodingSessionTeamFoldAdapterContext> for CodingSessionTeamFoldAdapter
 pub enum CodingSessionTeamFoldAdapterExclusionCode {
     /// Signer lacked the required active authority.
     Unauthorized,
+    /// A causal or `supersedes` reference named an event absent from the
+    /// supplied set, so this one record could not be placed in the graph.
+    DanglingReference,
+    /// This record's claim to correct another was invalid, so it alone was
+    /// rejected and the record it named was left untouched.
+    InvalidCorrection,
+    /// A reference resolved to a supplied record that cannot stand where this
+    /// record put it — wrong operation type, wrong verdict subtype, or a
+    /// pointer contradicting the record it names.
+    WrongTypeReference,
     /// A required parent was unauthorized.
     DependentOnUnauthorized,
     /// A required parent was superseded or lost a correction conflict.
@@ -301,6 +311,15 @@ fn exclusion_code(
     match code {
         CodingSessionTeamFoldExclusionCode::Unauthorized => {
             CodingSessionTeamFoldAdapterExclusionCode::Unauthorized
+        }
+        CodingSessionTeamFoldExclusionCode::DanglingReference => {
+            CodingSessionTeamFoldAdapterExclusionCode::DanglingReference
+        }
+        CodingSessionTeamFoldExclusionCode::InvalidCorrection => {
+            CodingSessionTeamFoldAdapterExclusionCode::InvalidCorrection
+        }
+        CodingSessionTeamFoldExclusionCode::WrongTypeReference => {
+            CodingSessionTeamFoldAdapterExclusionCode::WrongTypeReference
         }
         CodingSessionTeamFoldExclusionCode::DependentOnUnauthorized => {
             CodingSessionTeamFoldAdapterExclusionCode::DependentOnUnauthorized

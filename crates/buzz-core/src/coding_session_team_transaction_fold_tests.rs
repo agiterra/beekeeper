@@ -310,16 +310,10 @@ fn parallel_reports_remain_facts_and_only_governed_report_settles() {
 }
 
 #[test]
-fn rejects_dangling_cross_context_and_wrong_type_references() {
+fn rejects_cross_context_references() {
     let founder = Keys::generate();
     let actor = Keys::generate();
     let context = context(&founder, Vec::new());
-    let dangling = signed(&report(&id("11"), "Dangling"), &actor, 1);
-    assert!(fold_coding_session_team_transactions(&[dangling], &context)
-        .unwrap_err()
-        .contains("dangling"));
-
-    let assignment_event = signed(&assignment(&actor), &founder, 1);
     let cross_channel = signed_in_channel(&assignment(&actor), &founder, 2, OTHER_CHANNEL);
     assert!(
         fold_coding_session_team_transactions(&[cross_channel], &context)
@@ -344,15 +338,6 @@ fn rejects_dangling_cross_context_and_wrong_type_references() {
             .unwrap_err()
             .contains("genesis")
     );
-
-    let wrong_type = signed(&report(&assignment_event.id.to_hex(), "One"), &actor, 2);
-    let another = signed(&report(&wrong_type.id.to_hex(), "Two"), &actor, 3);
-    assert!(fold_coding_session_team_transactions(
-        &[assignment_event, wrong_type, another],
-        &context
-    )
-    .unwrap_err()
-    .contains("wrong-type"));
 }
 
 #[test]
@@ -381,7 +366,10 @@ fn correction_fork_uses_timestamp_then_event_id_and_discloses_conflict() {
 }
 
 #[test]
-fn rejects_correction_subject_and_verdict_subtype_changes() {
+// Fix round 2: both shapes were hard errors until 2026-09-01. They are now
+// exclusions of the correcting record alone, with the same diagnostic text
+// carried in `reason` instead of in a whole-fold `Err`.
+fn excludes_correction_subject_and_verdict_subtype_changes() {
     let founder = Keys::generate();
     let actor = Keys::generate();
     let verifier = Keys::generate();
@@ -390,11 +378,15 @@ fn rejects_correction_subject_and_verdict_subtype_changes() {
     let mut changed = assignment(&Keys::generate());
     changed.supersedes = Some(original.id.to_hex());
     let changed = signed(&changed, &founder, 2);
-    assert!(
-        fold_coding_session_team_transactions(&[original, changed], &context)
-            .unwrap_err()
-            .contains("logical subject")
+    let original_id = original.id.to_hex();
+    let changed_id = changed.id.to_hex();
+    let fold = fold_coding_session_team_transactions(&[original, changed], &context).unwrap();
+    assert_eq!(fold.included_event_ids, vec![original_id]);
+    assert_eq!(
+        exclusion_code_string(&fold, &changed_id),
+        "InvalidCorrection"
     );
+    assert!(exclusion_reason(&fold, &changed_id).contains("logical subject"));
 
     let assignment = signed(&assignment(&actor), &founder, 3);
     let report = signed(&report(&assignment.id.to_hex(), "Done"), &actor, 4);
@@ -411,12 +403,18 @@ fn rejects_correction_subject_and_verdict_subtype_changes() {
     );
     changed.supersedes = Some(refutation.id.to_hex());
     let changed = signed(&changed, &verifier, 6);
-    assert!(fold_coding_session_team_transactions(
-        &[assignment, report, refutation, changed],
-        &context
-    )
-    .unwrap_err()
-    .contains("subtype"));
+    let refutation_id = refutation.id.to_hex();
+    let changed_id = changed.id.to_hex();
+    let fold =
+        fold_coding_session_team_transactions(&[assignment, report, refutation, changed], &context)
+            .unwrap();
+    assert_eq!(
+        exclusion_code_string(&fold, &changed_id),
+        "InvalidCorrection"
+    );
+    assert!(exclusion_reason(&fold, &changed_id).contains("subtype"));
+    // The refutation it tried to correct keeps its place.
+    assert!(fold.included_event_ids.contains(&refutation_id));
 }
 
 #[test]
@@ -809,6 +807,20 @@ fn exclusion_code(
         .unwrap()
 }
 
+/// The exclusion code exactly as `fold_json` and the Tauri adapter print it,
+/// so these tests pin the wire string and not only the variant.
+fn exclusion_code_string(fold: &CodingSessionTeamFold, event_id: &str) -> String {
+    format!("{:?}", exclusion_code(fold, event_id))
+}
+
+fn exclusion_reason(fold: &CodingSessionTeamFold, event_id: &str) -> String {
+    fold.excluded
+        .iter()
+        .find(|item| item.event_id == event_id)
+        .map(|item| item.reason.clone())
+        .unwrap()
+}
+
 // ── Unseated-report disclosure (batch 2026-09-01, §1d) ───────────────────────
 //
 // Report inclusion is assignee-equality by design: the assignment names a
@@ -926,3 +938,13 @@ fn unseated_disclosure_follows_included_order_and_is_input_order_independent() {
         .collect();
     assert_eq!(disclosed, included);
 }
+
+// The regression suites for the four 2026-09-01 fix rounds, and the fuzz,
+// live in sibling files so no file here passes 1,000 lines (REVIEW-B1b R6).
+// They are children of this module, so every fixture helper above is in
+// scope unchanged.
+#[path = "coding_session_team_transaction_fold_regression_tests.rs"]
+mod regression;
+
+#[path = "coding_session_team_transaction_fold_fuzz_tests.rs"]
+mod fuzz;

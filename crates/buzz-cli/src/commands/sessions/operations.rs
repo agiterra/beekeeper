@@ -1078,6 +1078,92 @@ mod tests {
         assert_eq!(fold_json(&empty)["unseatedReports"], json!([]));
     }
 
+    #[test]
+    fn fold_json_prints_the_dangling_reference_code() {
+        let excluded = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusion {
+            event_id: id("22"),
+            code: buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusionCode::DanglingReference,
+            reason: format!(
+                "reference {} is absent from the supplied transaction set",
+                id("77")
+            ),
+        };
+        let fold = CodingSessionTeamFold {
+            included_event_ids: vec![id("11")],
+            excluded: vec![excluded],
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: Vec::new(),
+            canonical_terminal: None,
+        };
+
+        let wire = fold_json(&fold);
+        assert_eq!(
+            wire["excluded"],
+            json!([{
+                "eventId": id("22"),
+                "code": "DanglingReference",
+                "reason": format!(
+                    "reference {} is absent from the supplied transaction set",
+                    id("77")
+                ),
+            }])
+        );
+        // `included` is still answered: one malformed record no longer denies
+        // every operation in the session (batch 2 2026-09-01, B1b).
+        assert_eq!(wire["includedEventIds"], json!([id("11")]));
+    }
+
+    #[test]
+    fn fold_json_prints_the_invalid_correction_code() {
+        let excluded = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusion {
+            event_id: id("33"),
+            code: buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusionCode::InvalidCorrection,
+            reason: format!(
+                "correction of {} is invalid: a correction must preserve its logical subject",
+                id("22")
+            ),
+        };
+        let fold = CodingSessionTeamFold {
+            included_event_ids: vec![id("11"), id("22")],
+            excluded: vec![excluded],
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: Vec::new(),
+            canonical_terminal: None,
+        };
+
+        let wire = fold_json(&fold);
+        assert_eq!(wire["excluded"][0]["code"], "InvalidCorrection");
+        assert!(wire["excluded"][0]["reason"]
+            .as_str()
+            .expect("reason string")
+            .contains(&id("22")));
+        // The corrected record keeps its place in the projection.
+        assert_eq!(wire["includedEventIds"], json!([id("11"), id("22")]));
+    }
+
+    #[test]
+    fn fold_json_prints_the_wrong_type_reference_code() {
+        let excluded = buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusion {
+            event_id: id("44"),
+            code: buzz_core::coding_session_team_transaction::CodingSessionTeamFoldExclusionCode::WrongTypeReference,
+            reason: format!("team transaction {} has a wrong-type reference", id("44")),
+        };
+        let fold = CodingSessionTeamFold {
+            included_event_ids: vec![id("11"), id("22")],
+            excluded: vec![excluded],
+            conflicts: Vec::new(),
+            assignments: Vec::new(),
+            unseated_reports: Vec::new(),
+            canonical_terminal: None,
+        };
+
+        let wire = fold_json(&fold);
+        assert_eq!(wire["excluded"][0]["code"], "WrongTypeReference");
+        assert_eq!(wire["includedEventIds"], json!([id("11"), id("22")]));
+    }
+
     fn id(byte: &str) -> String {
         byte.repeat(32)
     }

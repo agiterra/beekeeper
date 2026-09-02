@@ -320,7 +320,7 @@ fn authority_head_sequence_rejects_values_above_the_canonical_u32_width() {
 }
 
 #[test]
-fn duplicate_malformed_tampered_and_incomplete_inputs_fail_closed() {
+fn duplicate_malformed_and_tampered_inputs_fail_closed() {
     let (founder, events, _, report_id, ..) = full_chain();
     let duplicate_events = vec![events[0].clone(), events[0].clone()];
     let duplicate = fold_adapter(request(&founder, &duplicate_events)).expect_err("duplicate id");
@@ -346,13 +346,22 @@ fn duplicate_malformed_tampered_and_incomplete_inputs_fail_closed() {
     .expect_err("tampered input id");
     assert!(invalid_signature.contains("invalid team-transaction signature"));
 
+    // An incomplete set is NOT a caller error: the one record that names an
+    // event nobody supplied is excluded and disclosed, and the fold still
+    // answers. (Batch 2 2026-09-01, B1b — the live c737be4c denial of service.)
     let report_only = events
         .iter()
         .find(|event| event.id.to_hex() == report_id)
         .expect("report event");
     let incomplete = fold_adapter(request(&founder, std::slice::from_ref(report_only)))
-        .expect_err("dangling assignment");
-    assert!(incomplete.contains("dangling reference"));
+        .expect("an unsupplied parent is one record's defect, not a fold failure");
+    assert!(incomplete.included_event_ids.is_empty());
+    assert_eq!(incomplete.excluded.len(), 1);
+    assert_eq!(incomplete.excluded[0].event_id, report_id);
+    assert_eq!(
+        incomplete.excluded[0].code,
+        CodingSessionTeamFoldAdapterExclusionCode::DanglingReference
+    );
 }
 
 #[test]
@@ -481,4 +490,107 @@ fn a_seated_report_author_crosses_the_boundary_with_an_empty_disclosure() {
     assert!(response.unseated_reports.is_empty());
     let wire = serde_json::to_value(&response).expect("serialize response");
     assert_eq!(wire["unseatedReports"], json!([]));
+}
+
+#[test]
+fn a_dangling_assignment_ref_is_excluded_and_the_rest_of_the_fold_survives() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let good_report = signed(&report(&assignment_event.id.to_hex()), &actor, 2);
+    let bad_report = signed(&report(&id("77")), &actor, 3);
+    let assignment_id = assignment_event.id.to_hex();
+    let good_report_id = good_report.id.to_hex();
+    let bad_report_id = bad_report.id.to_hex();
+    let events = vec![assignment_event, good_report, bad_report];
+
+    let response = fold_adapter(request(&founder, &events))
+        .expect("one malformed record cannot fail the fold");
+
+    assert_eq!(
+        response.included_event_ids,
+        vec![assignment_id, good_report_id]
+    );
+    assert_eq!(response.excluded.len(), 1);
+    assert_eq!(response.excluded[0].event_id, bad_report_id);
+    assert_eq!(
+        response.excluded[0].code,
+        CodingSessionTeamFoldAdapterExclusionCode::DanglingReference
+    );
+    assert!(response.excluded[0].reason.contains(&id("77")));
+
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    let mut exclusion_keys = wire["excluded"][0]
+        .as_object()
+        .expect("exclusion object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    exclusion_keys.sort_unstable();
+    assert_eq!(exclusion_keys, vec!["code", "eventId", "reason"]);
+    assert_eq!(wire["excluded"][0]["code"], "dangling_reference");
+}
+
+#[test]
+fn an_invalid_correction_is_excluded_alone_and_crosses_the_boundary_as_a_code() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let other_actor = Keys::generate();
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let other_assignment = signed(&assignment(&other_actor), &founder, 2);
+    let report_event = signed(&report(&assignment_event.id.to_hex()), &actor, 3);
+    // Fix round 2's live shape: a correction that moves the report to a
+    // different assignment, which changes its logical subject.
+    let mut correction_payload = report(&other_assignment.id.to_hex());
+    correction_payload.supersedes = Some(report_event.id.to_hex());
+    let correction = signed(&correction_payload, &actor, 4);
+    let report_id = report_event.id.to_hex();
+    let correction_id = correction.id.to_hex();
+    let events = vec![assignment_event, other_assignment, report_event, correction];
+
+    let response = fold_adapter(request(&founder, &events))
+        .expect("an invalid correction cannot fail the whole fold");
+
+    assert_eq!(response.included_event_ids.len(), 3);
+    assert!(response.included_event_ids.contains(&report_id));
+    assert_eq!(response.excluded.len(), 1);
+    assert_eq!(response.excluded[0].event_id, correction_id);
+    assert_eq!(
+        response.excluded[0].code,
+        CodingSessionTeamFoldAdapterExclusionCode::InvalidCorrection
+    );
+    assert!(response.excluded[0].reason.contains(&report_id));
+
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    assert_eq!(wire["excluded"][0]["code"], "invalid_correction");
+}
+
+#[test]
+fn a_wrong_type_reference_is_excluded_alone_and_crosses_the_boundary_as_a_code() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let assignment_event = signed(&assignment(&actor), &founder, 1);
+    let good_report = signed(&report(&assignment_event.id.to_hex()), &actor, 2);
+    // Fix round 3: a report whose `assignmentRef` names a report, not an
+    // assignment. One record's defect, not the session's.
+    let wrong_type = signed(&report(&good_report.id.to_hex()), &actor, 3);
+    let good_report_id = good_report.id.to_hex();
+    let wrong_type_id = wrong_type.id.to_hex();
+    let events = vec![assignment_event, good_report, wrong_type];
+
+    let response = fold_adapter(request(&founder, &events))
+        .expect("a wrong-type reference cannot fail the whole fold");
+
+    assert_eq!(response.included_event_ids.len(), 2);
+    assert!(response.included_event_ids.contains(&good_report_id));
+    assert_eq!(response.excluded.len(), 1);
+    assert_eq!(response.excluded[0].event_id, wrong_type_id);
+    assert_eq!(
+        response.excluded[0].code,
+        CodingSessionTeamFoldAdapterExclusionCode::WrongTypeReference
+    );
+    assert!(response.excluded[0].reason.contains("wrong-type"));
+
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    assert_eq!(wire["excluded"][0]["code"], "wrong_type_reference");
 }

@@ -91,6 +91,36 @@ impl CodingSessionTeamFoldContext {
 pub enum CodingSessionTeamFoldExclusionCode {
     /// The signer lacks the operation's required standing.
     Unauthorized,
+    /// A causal or `supersedes` reference names an event that is absent from
+    /// the supplied set, so this one record cannot be placed in the graph.
+    ///
+    /// This is a defect of the single record that carries the reference, not
+    /// of the supplied set: one seat publishing a malformed pointer must not
+    /// deny every other seat the governance projection. Contrast the failures
+    /// that remain hard errors in [`fold_coding_session_team_transactions`] —
+    /// only cross-context and cycle inputs are the *caller's* filter being
+    /// wrong, and have no safe partial meaning.
+    DanglingReference,
+    /// A reference resolves to a supplied record that cannot stand where this
+    /// record puts it: the wrong operation type (a report's `assignmentRef`
+    /// naming a verdict), the wrong verdict subtype (a disposition's
+    /// `refutationRef` naming another disposition), or a pointer that
+    /// contradicts the record it names (a verdict whose `assignmentRef` is not
+    /// the one its report answers).
+    ///
+    /// One record's own defect, like [`Self::DanglingReference`] and
+    /// [`Self::InvalidCorrection`]. The precise diagnostic is carried verbatim
+    /// in [`CodingSessionTeamFoldExclusion::reason`]; this code is the class.
+    WrongTypeReference,
+    /// This record claims to correct another and the correction is invalid:
+    /// it changes the logical subject, the signed author, the operation type
+    /// or the verdict subtype, or its envelope disagrees with the record it
+    /// names.
+    ///
+    /// Like [`Self::DanglingReference`] this is one record's own defect. The
+    /// record it names is left exactly as the projection already found it —
+    /// a rejected correction never revives, displaces or alters its target.
+    InvalidCorrection,
     /// A required canonical parent was individually unauthorized.
     DependentOnUnauthorized,
     /// A required parent lost correction projection or was superseded.
@@ -223,10 +253,36 @@ enum ProjectionStage {
 
 /// Validate and fold signed transactions against a supplied authority context.
 ///
-/// Structural graph failures are hard errors: dangling, cross-context, wrong
-/// type, invalid correction, and cycle inputs have no safe partial meaning.
-/// Valid but unauthorized or deterministically displaced events are disclosed
-/// in [`CodingSessionTeamFold::excluded`].
+/// **Exactly two classes of *record* input are hard errors**, because only they
+/// mean the *caller* filtered wrongly and have no safe partial meaning:
+/// **cross-context** events (wrong session, genesis or channel) and reference
+/// **cycles**. Nothing a single seat can put in a single well-formed record can
+/// fail this fold.
+///
+/// Three further whole-set failures exist that are not judgements about a
+/// governance record: a malformed caller `context`, the same event supplied
+/// twice, and an event whose signature or envelope does not validate. The last
+/// is record-shaped in principle; the relay validates both at ingest, so no
+/// stored event reaches it.
+///
+/// Everything a single seat can get wrong in a single record is that record's
+/// own defect and excludes only that record, because one malformed publication
+/// must never deny every seat the governance projection:
+///
+/// - a **dangling** reference (an id nobody supplied) →
+///   [`CodingSessionTeamFoldExclusionCode::DanglingReference`];
+/// - a **wrong-type** reference (a resolvable id that cannot stand where the
+///   record puts it) →
+///   [`CodingSessionTeamFoldExclusionCode::WrongTypeReference`];
+/// - an **invalid correction** (changed subject, author, operation type or
+///   verdict subtype, or a disagreeing envelope) →
+///   [`CodingSessionTeamFoldExclusionCode::InvalidCorrection`], leaving the
+///   record it names exactly as the projection already found it.
+///
+/// Dependants of an excluded record fall out as
+/// [`CodingSessionTeamFoldExclusionCode::DependentOnExcluded`]. Valid but
+/// unauthorized or deterministically displaced events are disclosed in
+/// [`CodingSessionTeamFold::excluded`] as before.
 pub fn fold_coding_session_team_transactions(
     events: &[Event],
     context: &CodingSessionTeamFoldContext,
@@ -266,20 +322,39 @@ pub fn fold_coding_session_team_transactions(
         });
     }
 
-    validate_references(&records, &by_id)?;
+    let defects = collect_record_defects(&records, &by_id);
     reject_cycles(&records, &by_id)?;
 
     let mut excluded = Vec::new();
     let mut authorized = HashSet::new();
     for (index, record) in records.iter().enumerate() {
-        if is_authorized(record, &records, &by_id, context)? {
-            authorized.insert(index);
-        } else {
+        if let Some(defect) = defects.get(&index) {
             excluded.push(CodingSessionTeamFoldExclusion {
+                event_id: record.id.clone(),
+                code: defect.code,
+                reason: defect.reason.clone(),
+            });
+            continue;
+        }
+        match is_authorized(record, &records, &by_id, context) {
+            Ok(true) => {
+                authorized.insert(index);
+            }
+            Ok(false) => excluded.push(CodingSessionTeamFoldExclusion {
                 event_id: record.id.clone(),
                 code: CodingSessionTeamFoldExclusionCode::Unauthorized,
                 reason: "signer lacks the operation's required active authority".into(),
-            });
+            }),
+            // `is_authorized` walks pointers two hops out. Every such hop is
+            // typed by `collect_record_defects` first, so this arm should be
+            // unreachable — but an unreachability argument is exactly what
+            // REVIEW-B1b F5 falsified, so a shape defect found here excludes
+            // this record *by construction* and can never fail the whole set.
+            Err(detail) => excluded.push(CodingSessionTeamFoldExclusion {
+                event_id: record.id.clone(),
+                code: CodingSessionTeamFoldExclusionCode::WrongTypeReference,
+                reason: detail,
+            }),
         }
     }
 
@@ -416,131 +491,13 @@ fn disclose_unseated_reports(
     disclosed
 }
 
-fn validate_references(
-    records: &[Record<'_>],
-    by_id: &HashMap<String, usize>,
-) -> Result<(), String> {
-    for record in records {
-        for reference in record.payload.causal_references() {
-            if !by_id.contains_key(reference) {
-                return Err(format!(
-                    "team transaction {} has dangling reference {reference}",
-                    record.id
-                ));
-            }
-        }
-        if let Some(reference) = &record.payload.supersedes {
-            let previous = by_id.get(reference).ok_or_else(|| {
-                format!(
-                    "team transaction {} has dangling supersedes {reference}",
-                    record.id
-                )
-            })?;
-            validate_coding_session_team_transaction_supersession(
-                record.event,
-                records[*previous].event,
-            )?;
-            if verdict_subtype(&record.payload) != verdict_subtype(&records[*previous].payload) {
-                return Err("a verdict correction must preserve its subtype".into());
-            }
-            if logical_subject(&record.payload) != logical_subject(&records[*previous].payload) {
-                return Err("a correction must preserve its logical subject".into());
-            }
-        }
-        validate_causal_types(record, records, by_id)?;
-    }
-    Ok(())
-}
+// Record-local defect detection lives in a sibling file so no file here passes
+// 1,000 lines (REVIEW-B1b R6). It is a child module, so it reads this module's
+// private `Record`, `verdict_subtype` and `logical_subject` unchanged.
+#[path = "coding_session_team_transaction_fold_defects.rs"]
+mod defects;
 
-fn validate_causal_types(
-    record: &Record<'_>,
-    records: &[Record<'_>],
-    by_id: &HashMap<String, usize>,
-) -> Result<(), String> {
-    let get = |reference: &str| -> &Record<'_> { &records[by_id[reference]] };
-    match &record.payload.body {
-        CodingSessionTeamTransactionBody::Assignment(_) => {}
-        CodingSessionTeamTransactionBody::Report(body) => {
-            require_type(
-                get(&body.assignment_ref),
-                CodingSessionTeamTransactionType::Assignment,
-            )?;
-        }
-        CodingSessionTeamTransactionBody::Verdict(verdict) => {
-            require_type(
-                get(verdict.assignment_ref()),
-                CodingSessionTeamTransactionType::Assignment,
-            )?;
-            let report = get(verdict.report_ref());
-            require_type(report, CodingSessionTeamTransactionType::Report)?;
-            let CodingSessionTeamTransactionBody::Report(report_body) = &report.payload.body else {
-                return Err("verdict reportRef must name a report body".into());
-            };
-            if report_body.assignment_ref != verdict.assignment_ref() {
-                return Err("verdict assignmentRef must match its report's assignmentRef".into());
-            }
-            if let CodingSessionTeamVerdict::Disposition {
-                refutation_ref: Some(reference),
-                ..
-            } = verdict
-            {
-                let refutation = get(reference);
-                let CodingSessionTeamTransactionBody::Verdict(
-                    CodingSessionTeamVerdict::Refutation {
-                        assignment_ref,
-                        report_ref,
-                        ..
-                    },
-                ) = &refutation.payload.body
-                else {
-                    return Err("disposition refutationRef must name a refutation verdict".into());
-                };
-                if assignment_ref != verdict.assignment_ref() || report_ref != verdict.report_ref()
-                {
-                    return Err(
-                        "disposition refutationRef must govern the same assignment/report pair"
-                            .into(),
-                    );
-                }
-            }
-        }
-        CodingSessionTeamTransactionBody::Acknowledgement(body) => {
-            let acknowledged = get(&body.acknowledged_event_ref);
-            if !matches!(
-                acknowledged.payload.body,
-                CodingSessionTeamTransactionBody::Verdict(
-                    CodingSessionTeamVerdict::Disposition { .. }
-                )
-            ) {
-                return Err("acknowledgement must name a disposition verdict".into());
-            }
-        }
-        CodingSessionTeamTransactionBody::MissionCompleted(body) => {
-            for reference in &body.assignment_refs {
-                require_type(get(reference), CodingSessionTeamTransactionType::Assignment)?;
-            }
-        }
-        CodingSessionTeamTransactionBody::MissionBlocked(body) => {
-            for reference in &body.assignment_refs {
-                require_type(get(reference), CodingSessionTeamTransactionType::Assignment)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn require_type(
-    record: &Record<'_>,
-    expected: CodingSessionTeamTransactionType,
-) -> Result<(), String> {
-    if record.payload.transaction_type != expected {
-        return Err(format!(
-            "team transaction {} has a wrong-type reference",
-            record.id
-        ));
-    }
-    Ok(())
-}
+use defects::collect_record_defects;
 
 fn reject_cycles(records: &[Record<'_>], by_id: &HashMap<String, usize>) -> Result<(), String> {
     fn visit(
@@ -561,7 +518,12 @@ fn reject_cycles(records: &[Record<'_>], by_id: &HashMap<String, usize>) -> Resu
             references.push(reference);
         }
         for reference in references {
-            visit(by_id[reference], records, by_id, state)?;
+            // An absent parent is no edge at all; the record that names it is
+            // excluded as `DanglingReference` and cannot close a cycle.
+            let Some(&parent) = by_id.get(reference) else {
+                continue;
+            };
+            visit(parent, records, by_id, state)?;
         }
         state[index] = 2;
         Ok(())
@@ -585,6 +547,11 @@ fn is_authorized(
         | CodingSessionTeamTransactionBody::MissionCompleted(_)
         | CodingSessionTeamTransactionBody::MissionBlocked(_) => context.may_lead(&record.author),
         CodingSessionTeamTransactionBody::Report(body) => {
+            // Indexing is safe here, and at every other `by_id[..]` in this
+            // file, because `collect_record_defects` runs first and gives any
+            // record with an unresolvable pointer a `DanglingReference`; the
+            // authorization loop `continue`s past every such record before
+            // this line is reached (REVIEW-B1b F3).
             assignment_actor(&records[by_id[&body.assignment_ref]])? == record.author
         }
         CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation {
@@ -594,12 +561,24 @@ fn is_authorized(
             ..
         }) => context.may_lead(&record.author),
         CodingSessionTeamTransactionBody::Acknowledgement(body) => {
+            // Safe by the same invariant: an acknowledgement naming an absent
+            // disposition is already excluded `DanglingReference` and never
+            // reaches `is_authorized`.
             let disposition = &records[by_id[&body.acknowledged_event_ref]];
             let CodingSessionTeamTransactionBody::Verdict(verdict) = &disposition.payload.body
             else {
                 return Err("acknowledgement reference must name a verdict body".into());
             };
-            assignment_actor(&records[by_id[verdict.assignment_ref()]])? == record.author
+            // The disposition resolves, but *its* assignment may be the absent
+            // one. Standing is then unknowable, so this record is passed to
+            // stage projection rather than judged here: the dangling
+            // disposition is already excluded, so the acknowledgement falls out
+            // as `DependentOnExcluded` — the true reason — instead of being
+            // mislabelled `Unauthorized`.
+            match by_id.get(verdict.assignment_ref()) {
+                Some(&assignment) => assignment_actor(&records[assignment])? == record.author,
+                None => true,
+            }
         }
     })
 }
@@ -664,6 +643,8 @@ fn project_stage(
             .payload
             .causal_references()
             .into_iter()
+            // Safe by the same invariant: a record with an unresolvable causal
+            // reference never entered `authorized`.
             .map(|reference| by_id[reference])
             .find(|parent| !active_set.contains(parent));
         if let Some(parent) = inactive_parent {
@@ -681,6 +662,8 @@ fn project_stage(
                     .payload
                     .supersedes
                     .as_ref()
+                    // Safe by the same invariant, for `supersedes`: a correction
+                    // naming an absent target is excluded before authorization.
                     .map(|reference| (*index, by_id[reference]))
                     .filter(|(_, parent)| !candidates.contains(parent))
             })
@@ -774,6 +757,8 @@ fn project_corrections(
     for &index in authorized {
         let mut root = index;
         while let Some(reference) = &records[root].payload.supersedes {
+            // Safe by the same invariant: every `supersedes` on an authorized
+            // record resolves.
             let previous = by_id[reference];
             if !authorized.contains(&previous) {
                 break;
@@ -795,6 +780,7 @@ fn project_corrections(
                     .payload
                     .supersedes
                     .as_ref()
+                    // Safe by the same invariant as the walk above.
                     .map(|reference| by_id[reference])
                     .filter(|previous| authorized.contains(previous))
             })
