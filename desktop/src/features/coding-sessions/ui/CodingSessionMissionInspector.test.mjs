@@ -1202,3 +1202,77 @@ test("R2 §8: a granted seat prints its line too, so ungranted is comparable", a
   assert.match(ungranted.textContent, /bee sessions seat-repair/);
   view.cleanup();
 });
+
+test("A3.4: a blocked record and the seats still working are on one line", async () => {
+  // 2026-09-01: the lead used `mission.blocked` four times as a note (no note
+  // verb exists) and the rail read Blocked, in red, while two seats worked on
+  // for another twenty minutes. Both facts, or the surface lies.
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(
+      input({
+        missionState: {
+          kind: "blocked",
+          sourceEventId: "blocked-event",
+          summary: "Mission cannot proceed.",
+          blockers: ["Relay authority is unavailable."],
+          requiredAction: "Restore the relay signing authority.",
+          canonicalChain: [],
+        },
+        participants: [
+          {
+            executionKey: "lead",
+            label: "Keystone · Lead",
+            secondaryLabel: null,
+            role: "lead",
+            status: { kind: "working", label: "Working" },
+            disposition: "live",
+            activity: null,
+            lastTurnLabel: "last turn just now",
+          },
+          {
+            executionKey: "builder",
+            label: "Bob · Builder",
+            secondaryLabel: null,
+            role: "builder",
+            status: { kind: "working", label: "Working" },
+            disposition: "live",
+            activity: null,
+            lastTurnLabel: "last turn just now",
+          },
+        ],
+      }),
+    ),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  try {
+    const line = view.getByTestId("mission-state-and-liveness");
+    assert.equal(line.textContent, "Blocked (signed) · 2 seats live");
+    assert.equal(line.getAttribute("data-live-seats"), "2");
+    // Both facts live in the same section, so neither can be read alone.
+    const section = line.closest("section");
+    assert.match(section.textContent, /Blocked \(signed\)/);
+    assert.match(section.textContent, /2 seats live/);
+    assert.match(section.textContent, /Required action:/);
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("A3.4: a state with no signed record claims no provenance and never counts zero seats", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+    focusedExecutionKey: null,
+  });
+  try {
+    const line = view.getByTestId("mission-state-and-liveness");
+    assert.equal(
+      line.textContent,
+      "State unknown · seat liveness not projected",
+    );
+    assert.equal(line.getAttribute("data-live-seats"), "unknown");
+  } finally {
+    view.cleanup();
+  }
+});

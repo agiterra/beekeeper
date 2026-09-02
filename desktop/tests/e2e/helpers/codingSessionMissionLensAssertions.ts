@@ -105,13 +105,15 @@ export async function assertConversationAndMissionLenses(
   const surfaceTabs = page.getByRole("tablist", {
     name: "Session surface tabs",
   });
-  await expect(surfaceTabs.getByRole("tab")).toHaveCount(2);
+  // Three, since batch 2: Inspector, Context, Audit.
+  await expect(surfaceTabs.getByRole("tab")).toHaveCount(3);
   await expect(surfaceTabs.getByRole("tab", { name: "Inspector" })).toHaveCount(
     1,
   );
   await expect(surfaceTabs.getByRole("tab", { name: "Context" })).toHaveCount(
     1,
   );
+  await expect(surfaceTabs.getByRole("tab", { name: "Audit" })).toHaveCount(1);
   await expect(surfaceTabs.getByRole("tab", { name: "Agents" })).toHaveCount(0);
   await expect(
     surfaceTabs.getByRole("tab", { name: "Observed changes" }),
@@ -367,11 +369,12 @@ export async function assertNarrowMissionSurfaceHierarchy(
   const sheetTabs = page.getByRole("tablist", {
     name: "Session surface tabs",
   });
-  await expect(sheetTabs.getByRole("tab")).toHaveCount(2);
+  await expect(sheetTabs.getByRole("tab")).toHaveCount(3);
   await expect(sheetTabs.getByRole("tab", { name: "Inspector" })).toHaveCount(
     1,
   );
   await expect(sheetTabs.getByRole("tab", { name: "Context" })).toHaveCount(1);
+  await expect(sheetTabs.getByRole("tab", { name: "Audit" })).toHaveCount(1);
   await expect(
     inspector.getByRole("heading", { name: "Inspector", exact: true }),
   ).toHaveCount(0);

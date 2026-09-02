@@ -1,10 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import {
-  finalizeEvent,
-  generateSecretKey,
-  getPublicKey,
-  verifyEvent,
-} from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools/pure";
 
 import {
   buildCodingSessionCommandEvent,
@@ -69,13 +64,27 @@ function hex(bytes: Uint8Array): string {
 const CHANNEL_NAME = "engineering";
 const CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
-const BUILDER_SECRET = generateSecretKey();
+// Fixture keys are pinned, not generated. Two things depend on it: the seat
+// accent (`codingSessionAgentAccent` hashes the execution key, which carries
+// the provider pubkey, so a fresh key repainted every block a different
+// colour on every run) and the byte-identity harness this lane uses to prove
+// the Conversation lens DOM did not move. Any 32-byte value below the curve
+// order is a valid secret; these are deliberately unmistakable for real ones.
+const BUILDER_SECRET = hexToBytes(
+  "1111111111111111111111111111111111111111111111111111111111111111",
+);
 const BUILDER_PROVIDER = getPublicKey(BUILDER_SECRET);
-const VERIFIER_SECRET = generateSecretKey();
+const VERIFIER_SECRET = hexToBytes(
+  "2222222222222222222222222222222222222222222222222222222222222222",
+);
 const VERIFIER_PROVIDER = getPublicKey(VERIFIER_SECRET);
-const BUILDER_ACTOR_SECRET = generateSecretKey();
+const BUILDER_ACTOR_SECRET = hexToBytes(
+  "3333333333333333333333333333333333333333333333333333333333333333",
+);
 const BUILDER_ACTOR = getPublicKey(BUILDER_ACTOR_SECRET);
-const VERIFIER_ACTOR_SECRET = generateSecretKey();
+const VERIFIER_ACTOR_SECRET = hexToBytes(
+  "4444444444444444444444444444444444444444444444444444444444444444",
+);
 const VERIFIER_ACTOR = getPublicKey(VERIFIER_ACTOR_SECRET);
 // The founder is the E2E bridge's own known identity, not a fresh key.
 // Two gates need it to be: the team-wake delivery plan runs only for the
@@ -86,7 +95,9 @@ const FOUNDER_SECRET = hexToBytes(
   "3dbaebadb5dfd777ff25149ee230d907a15a9e1294b40b830661e65bb42f6c03",
 );
 const FOUNDER = getPublicKey(FOUNDER_SECRET);
-const RELAY_SECRET = generateSecretKey();
+const RELAY_SECRET = hexToBytes(
+  "5555555555555555555555555555555555555555555555555555555555555555",
+);
 const RELAY = getPublicKey(RELAY_SECRET);
 const BUILDER_TARGET: CodingSessionCommandTarget = {
   driver: "claude-agent-acp",
@@ -105,9 +116,13 @@ const VERIFIER_TARGET: CodingSessionCommandTarget = {
 // fixture is a builder plus a verifier, so it can never produce one; the wake
 // scenario adds this third seat rather than re-roling the verifier, whose
 // refutation authority other assertions depend on.
-const LEAD_SECRET = generateSecretKey();
+const LEAD_SECRET = hexToBytes(
+  "6666666666666666666666666666666666666666666666666666666666666666",
+);
 const LEAD_PROVIDER = getPublicKey(LEAD_SECRET);
-const LEAD_ACTOR_SECRET = generateSecretKey();
+const LEAD_ACTOR_SECRET = hexToBytes(
+  "7777777777777777777777777777777777777777777777777777777777777777",
+);
 const LEAD_ACTOR = getPublicKey(LEAD_ACTOR_SECRET);
 const LEAD_TARGET: CodingSessionCommandTarget = {
   driver: "claude-agent-acp",
@@ -662,6 +677,12 @@ function missionEvents(
     | "waiting_for_input"
     | "failed"
     | "disconnected" = "running",
+  /**
+   * Extra signed transcript events, built against the same run clock. Kept as
+   * a callback rather than a fixed list because the fixture anchors every
+   * timestamp to `Date.now()` and a caller has no way to see that clock.
+   */
+  extraTranscripts?: (now: number) => RelayEvent[],
 ): RelayEvent[] {
   const now = Math.floor(Date.now() / 1_000);
   return [
@@ -783,6 +804,71 @@ function missionEvents(
       target: VERIFIER_TARGET,
       turnId: "verifier-turn",
     }),
+    ...(extraTranscripts?.(now) ?? []),
+  ];
+}
+
+/**
+ * The three shapes the Audit tab exists to name, as signed builder items: one
+ * skill file handed over twice, and `bee sessions operation get` run twice
+ * back to back with a byte-identical answer — a room download and a retry loop
+ * in the same pair, exactly as the 2026-09-01 run produced them.
+ */
+function auditEvidenceTranscripts(now: number): RelayEvent[] {
+  const body = "S".repeat(512);
+  const call = (
+    eventSeq: number,
+    createdAt: number,
+    toolId: string,
+    toolName: string,
+    input: Record<string, string>,
+  ) =>
+    signedTranscript({
+      createdAt,
+      eventSeq,
+      item: { kind: "tool_call", tool: { toolName, toolId, input } },
+      secret: BUILDER_SECRET,
+      target: BUILDER_TARGET,
+      turnId: "builder-turn",
+    });
+  const answer = (
+    eventSeq: number,
+    createdAt: number,
+    toolId: string,
+    toolName: string,
+    input: Record<string, string>,
+    content: string,
+  ) =>
+    signedTranscript({
+      createdAt,
+      eventSeq,
+      item: {
+        kind: "tool_result",
+        toolId,
+        toolName,
+        input,
+        content,
+        isError: false,
+      },
+      secret: BUILDER_SECRET,
+      target: BUILDER_TARGET,
+      turnId: "builder-turn",
+    });
+  const skill = { path: "skills/lead/SKILL.md" };
+  const operation = { command: "bee sessions operation get --id 9f2c" };
+  return [
+    call(4, now - 27, "skill-1", "Read", skill),
+    answer(5, now - 27, "skill-1", "Read", skill, body),
+    call(6, now - 26, "skill-2", "Read", skill),
+    answer(7, now - 26, "skill-2", "Read", skill, body),
+    call(8, now - 25, "op-1", "Bash", operation),
+    answer(9, now - 25, "op-1", "Bash", operation, "operation 9f2c"),
+    call(10, now - 24, "op-2", "Bash", operation),
+    answer(11, now - 24, "op-2", "Bash", operation, "operation 9f2c"),
+    // Three in a row: `RETRY_LOOP_MIN` is 3, so two is repetition and only
+    // this makes a loop — the same threshold `bee sessions audit` uses.
+    call(12, now - 23, "op-3", "Bash", operation),
+    answer(13, now - 23, "op-3", "Bash", operation, "operation 9f2c"),
   ];
 }
 
@@ -794,6 +880,7 @@ async function seedAndOpen(
     | "waiting_for_input"
     | "failed"
     | "disconnected" = "running",
+  extraTranscripts?: (now: number) => RelayEvent[],
 ) {
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
@@ -804,7 +891,7 @@ async function seedAndOpen(
     },
     {
       channelName: CHANNEL_NAME,
-      events: missionEvents(governed, builderStatus),
+      events: missionEvents(governed, builderStatus, extraTranscripts),
     },
   );
   const trigger = page.getByTestId("channel-coding-sessions-trigger");
@@ -1386,4 +1473,104 @@ test("Mission remains accessible in dark, narrow, reduced-motion layout", async 
   await expect(
     page.getByTestId("coding-session-umbrella-composer"),
   ).toBeVisible();
+});
+
+test("A3.5: the Audit tab renders this session's own accounting", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openMockApp(page, { reducedMotion: "no-preference", theme: "buzz" });
+  await seedAndOpen(
+    page,
+    GOVERNED_MISSION,
+    "running",
+    auditEvidenceTranscripts,
+  );
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await page.getByTestId("coding-session-surface-tab-mission-audit").click();
+  const audit = page.getByTestId("coding-session-mission-audit");
+  await expect(audit).toBeVisible({ timeout: 15_000 });
+
+  // Per turn: one row per signed turn, and no invented zero where the driver
+  // reported nothing.
+  const rows = audit.getByTestId("mission-audit-turn-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("Bob · Builder");
+  await expect(
+    audit.getByTestId("mission-audit-not-reported").first(),
+  ).toHaveAttribute("title", "not reported");
+
+  // Totals: per seat, then Σ, with the partial-reporting disclosure.
+  await expect(audit.getByTestId("mission-audit-totals-row")).toHaveCount(3);
+  // Turn-granular (REVIEW-A3 F2): one disclosure per seat row plus one on Σ.
+  const disclosures = audit.getByTestId("mission-audit-partial-disclosure");
+  await expect(disclosures).toHaveCount(3);
+  await expect(disclosures.last()).toHaveText("(0 of 2 turns reported usage)");
+
+  // The three shapes of waste.
+  await expect(audit.getByTestId("mission-audit-handed-twice")).toContainText(
+    "skills/lead/SKILL.md",
+  );
+  // Named exactly as `bee sessions audit` names it: `sessions <verb>`.
+  await expect(audit.getByTestId("mission-audit-room-downloads")).toContainText(
+    "sessions operation",
+  );
+  const loops = audit.getByTestId("mission-audit-retry-loops");
+  await expect(loops).toContainText("identical results");
+  await expect(loops).toContainText("×3");
+
+  // Tall enough that all five sections are inside the rail's own scroller;
+  // the per-turn table still scrolls horizontally inside its container.
+  await page.setViewportSize({ width: 1400, height: 1600 });
+  await waitForAnimations(page);
+  await audit.screenshot({ path: `${SCREENSHOTS}/audit-wide.png` });
+});
+
+test("A3.2/A3.3: the working block says its W1 word and Mission's header drops the aggregate", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await openMockApp(page, { reducedMotion: "no-preference", theme: "buzz" });
+  await seedAndOpen(page);
+
+  // Conversation keeps its own agent control (and its aggregate) untouched,
+  // and never renders the W1 byline word.
+  await expect(
+    page.getByTestId("coding-session-agent-focus-trigger"),
+  ).toContainText(/agents/i);
+  await expect(
+    page.getByTestId("coding-session-umbrella-byline-liveness"),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toBeVisible({ timeout: 15_000 });
+  // A3.3: SURFACES A3/B2 — Mission's badge states the lifecycle word alone.
+  // It read `2 agents · 1 working` here, one row above the roster chips that
+  // say the same thing per seat, and `IDLE` over a session mid-turn.
+  const status = page.getByTestId("coding-session-status-badge");
+  await expect(status).toBeVisible();
+  await expect(status).not.toContainText(/agents/i);
+  await expect(status).not.toHaveAttribute("title", /agents/i);
+
+  // A3.2: exactly one block is working, and it is the one that says `live`.
+  const blocks = page.getByTestId("coding-session-umbrella-turn-block");
+  const liveness = page.getByTestId("coding-session-umbrella-byline-liveness");
+  await expect(liveness).toHaveCount(1);
+  await expect(liveness).toHaveText("live");
+  const working = blocks.filter({ has: liveness });
+  // REVIEW-A3 F7: the animation is on the block's own identity rail, never a
+  // ring around the whole card.
+  await expect(working).not.toHaveClass(/coding-session-agent-breathe/);
+  const rail = working.getByTestId("coding-session-umbrella-turn-rail");
+  await expect(rail).toHaveCount(1);
+  await expect(rail).toHaveClass(/coding-session-agent-breathe/);
+  const settled = blocks.filter({ hasNotText: "live" });
+  await expect(settled.first()).not.toHaveClass(/coding-session-agent-breathe/);
+  await expect(
+    settled.first().getByTestId("coding-session-umbrella-turn-rail"),
+  ).toHaveCount(0);
+  await waitForAnimations(page);
+  await working.screenshot({ path: `${SCREENSHOTS}/turn-block-live.png` });
 });

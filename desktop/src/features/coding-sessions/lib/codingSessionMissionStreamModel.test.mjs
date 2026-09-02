@@ -206,3 +206,173 @@ test("U-T4: with no transactions the projection is exactly the old one", () => {
     entries,
   );
 });
+
+/** A block whose items run past its start; `timestampMs` stays the start. */
+function blockAt(startMs, itemTimestamps, { completed = false } = {}) {
+  const items = itemTimestamps.map((iso, index) =>
+    item(`item-${index}`, "message", { role: "assistant", timestamp: iso }),
+  );
+  if (completed) {
+    items.push(
+      item("result", "lifecycle", {
+        renderClass: "status",
+        title: "Turn result",
+        timestamp: itemTimestamps[itemTimestamps.length - 1],
+      }),
+    );
+  }
+  return { ...block(items), timestampMs: startMs };
+}
+
+test("A3.1: an open turn block sorts at its newest item, so a row minted during it lands above", () => {
+  // Block opens at 100s, its newest item lands at 140s; the assignment is
+  // signed at 120s — during the turn.
+  const open = blockAt(100_000, [
+    "2026-09-01T00:01:40.000Z",
+    "2026-09-01T00:02:20.000Z",
+  ]);
+  const merged = projectCodingSessionMissionTimeline([open], "live", [
+    row("assignment", 120),
+  ]);
+  assert.deepEqual(
+    merged.map((entry) => entry.kind),
+    ["transaction", "turn-block"],
+  );
+});
+
+test("A3.1: once the block closes it drops back to start order", () => {
+  const settled = blockAt(
+    100_000,
+    ["2026-09-01T00:01:40.000Z", "2026-09-01T00:02:20.000Z"],
+    { completed: true },
+  );
+  const merged = projectCodingSessionMissionTimeline([settled], "live", [
+    row("assignment", 120),
+  ]);
+  assert.deepEqual(
+    merged.map((entry) => entry.kind),
+    ["turn-block", "transaction"],
+  );
+});
+
+test("A3.1: transaction rows and non-block entries keep their own start", () => {
+  const merged = projectCodingSessionMissionTimeline(
+    [conversationAt("early", 100_000)],
+    "live",
+    [row("later", 120)],
+  );
+  assert.deepEqual(
+    merged.map((entry) => entry.kind),
+    ["conversation", "transaction"],
+  );
+});
+
+/** A named block for one seat, so a multi-seat stream can be read as a list. */
+function seatBlock(executionKey, startSeconds, itemSeconds, { open } = {}) {
+  const iso = (seconds) => new Date(seconds * 1_000).toISOString();
+  const items = itemSeconds.map((seconds, index) =>
+    item(`${executionKey}-${index}`, "message", {
+      role: "assistant",
+      timestamp: iso(seconds),
+    }),
+  );
+  if (!open) {
+    items.push(
+      item(`${executionKey}-result`, "lifecycle", {
+        renderClass: "status",
+        title: "Turn result",
+        timestamp: iso(itemSeconds[itemSeconds.length - 1]),
+      }),
+    );
+  }
+  return {
+    ...block(items),
+    executionKey,
+    generationId: executionKey,
+    timestampMs: startSeconds * 1_000,
+  };
+}
+
+/** `block:lead` / `tx:assignment`, so an assertion reads like the stream. */
+function streamNames(merged) {
+  return merged.map((entry) =>
+    entry.kind === "transaction"
+      ? `tx:${entry.row.meta.sourceEventId}`
+      : entry.kind === "turn-block"
+        ? `block:${entry.executionKey}`
+        : entry.kind,
+  );
+}
+
+/**
+ * F1: the merge is a two-pointer walk over two lists that must both be sorted
+ * by the key it compares. A3.1 made `entrySeconds` non-monotonic over the
+ * narrative list, and a merge over a non-monotonic list compares every row
+ * against the first entry only — so one open block early in the stream hoisted
+ * every later transaction above every entry after it.
+ */
+test("A3.1/F1: one open block does not hoist later rows above settled blocks", () => {
+  const entries = [
+    seatBlock("lead", 60, [60, 540], { open: true }),
+    seatBlock("bob1", 120, [120]),
+    seatBlock("bob2", 300, [300]),
+  ];
+  const rows = [row("a", 180), row("b", 360)];
+  assert.deepEqual(
+    streamNames(projectCodingSessionMissionTimeline(entries, "live", rows)),
+    // The open block floats to its newest item (540s) — A3.1's whole rule —
+    // and everything settled keeps the order the wire produced.
+    ["block:bob1", "tx:a", "block:bob2", "tx:b", "block:lead"],
+  );
+});
+
+test("A3.1/F1: a settled block does not move when a different seat's block settles", () => {
+  const rows = [row("a", 180), row("b", 360)];
+  const settledOthers = ["block:bob1", "tx:a", "block:bob2", "tx:b"];
+  const whileOpen = streamNames(
+    projectCodingSessionMissionTimeline(
+      [
+        seatBlock("lead", 60, [60, 540], { open: true }),
+        seatBlock("bob1", 120, [120]),
+        seatBlock("bob2", 300, [300]),
+      ],
+      "live",
+      rows,
+    ),
+  );
+  const afterSettle = streamNames(
+    projectCodingSessionMissionTimeline(
+      [
+        seatBlock("lead", 60, [60, 540]),
+        seatBlock("bob1", 120, [120]),
+        seatBlock("bob2", 300, [300]),
+      ],
+      "live",
+      rows,
+    ),
+  );
+  // Only the block that settled moves. Everything else holds its place.
+  assert.deepEqual(
+    whileOpen.filter((name) => name !== "block:lead"),
+    settledOthers,
+  );
+  assert.deepEqual(
+    afterSettle.filter((name) => name !== "block:lead"),
+    settledOthers,
+  );
+  assert.deepEqual(afterSettle, ["block:lead", ...settledOthers]);
+});
+
+test("A3.1/F1: ties keep the narrative's own clamped order (stable sort)", () => {
+  const entries = [
+    seatBlock("first", 100, [100]),
+    seatBlock("second", 100, [100]),
+    seatBlock("third", 100, [100]),
+  ];
+  assert.deepEqual(
+    streamNames(
+      projectCodingSessionMissionTimeline(entries, "live", [row("z", 900)]),
+    ),
+    ["block:first", "block:second", "block:third", "tx:z"],
+  );
+});

@@ -102,16 +102,18 @@ test("R2 C2: a block with no tool items has no bundle", () => {
 });
 
 test("R2 C2: an unplaceable call keeps the classifier's own word", () => {
-  // The e2e fixture's `Read` tool arrives with no descriptor and a `generic`
-  // class — the wire did not say enough to call it a file read, and neither
-  // does the bundle. `Tool` is what the expanded row calls it too.
+  // A vendor-prefixed MCP call with no descriptor, no `toolKind`, and a name
+  // no rule matches: nothing on the wire says what it did, so the bundle says
+  // `Tool` — the same word the expanded row uses. Amended in batch 2: a
+  // *named* seat tool (`Read`, `Bash`, …) no longer lands here, because the
+  // name is exactly the fact that was being thrown away (finding 9).
   const summary = summarizeCodingSessionMissionExecution([
     {
-      id: "read-1",
+      id: "mcp-1",
       type: "tool",
       renderClass: "generic",
-      title: "Read",
-      toolName: "Read",
+      title: "mcp__vendor__do_a_thing",
+      toolName: "mcp__vendor__do_a_thing",
       buzzToolName: null,
       status: "completed",
       args: { path: "desktop/src/app/App.tsx" },
@@ -122,4 +124,73 @@ test("R2 C2: an unplaceable call keeps the classifier's own word", () => {
   ]);
   assert.equal(summary.count, 1);
   assert.deepEqual(summary.breakdown, [{ verb: "Tool", count: 1 }]);
+});
+
+/**
+ * A Claude-Code-style seat tool: the classifier has no rule for these names,
+ * so `descriptor.renderClass` is `generic` — exactly what the live run
+ * rendered as `Tool 49`.
+ */
+function agentTool(id, toolName, toolKind) {
+  return {
+    id,
+    type: "tool",
+    renderClass: "generic",
+    descriptor: { renderClass: "generic", label: "Ran tool", preview: null },
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    toolKind: toolKind ?? null,
+    status: "completed",
+    args: {},
+    result: "",
+    isError: false,
+    timestamp: "2026-09-01T00:00:00.000Z",
+  };
+}
+
+test("A3.3: a seat's Bash/Read/Edit/Grep bundle reads Terminal · Read · Edit · Search", () => {
+  const summary = summarizeCodingSessionMissionExecution([
+    ...Array.from({ length: 4 }, (_, index) =>
+      agentTool(`bash-${index}`, "Bash"),
+    ),
+    ...Array.from({ length: 2 }, (_, index) =>
+      agentTool(`read-${index}`, "Read"),
+    ),
+    ...Array.from({ length: 3 }, (_, index) =>
+      agentTool(`edit-${index}`, "Edit"),
+    ),
+    ...Array.from({ length: 2 }, (_, index) =>
+      agentTool(`grep-${index}`, "Grep"),
+    ),
+  ]);
+  assert.equal(summary.count, 11);
+  assert.deepEqual(summary.breakdown, [
+    { verb: "Terminal", count: 4 },
+    { verb: "Read", count: 2 },
+    { verb: "Edit", count: 3 },
+    { verb: "Search", count: 2 },
+  ]);
+});
+
+test("A3.3: ACP's own tool discriminant names a call the name rule misses", () => {
+  const summary = summarizeCodingSessionMissionExecution([
+    agentTool("a", "Preparing file…", "edit"),
+    agentTool("b", "mcp__thing__lookup", "search"),
+  ]);
+  assert.deepEqual(summary.breakdown, [
+    { verb: "Edit", count: 1 },
+    { verb: "Search", count: 1 },
+  ]);
+});
+
+test("A3.3: relay ops keep Relay and a genuinely unnamed call keeps Tool", () => {
+  const summary = summarizeCodingSessionMissionExecution([
+    tool("relay", "relay-op"),
+    agentTool("mystery", "mcp__vendor__do_a_thing"),
+  ]);
+  assert.deepEqual(summary.breakdown, [
+    { verb: "Relay", count: 1 },
+    { verb: "Tool", count: 1 },
+  ]);
 });

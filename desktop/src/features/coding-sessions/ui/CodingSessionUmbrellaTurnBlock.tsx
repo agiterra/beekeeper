@@ -10,6 +10,10 @@ import {
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import type { CodingSessionPromptSeatResolver } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
+import {
+  CODING_SESSION_CONTINUITY_STATUSES,
+  CODING_SESSION_CONTINUITY_TITLE,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptItems";
 import { buildCodingSessionTurnByline } from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import type { CodingSessionUmbrellaTurnBlock as TurnBlock } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import type {
@@ -38,6 +42,7 @@ export function CodingSessionUmbrellaTurnBlock({
   isWorking,
   label,
   labelsByExecutionKey,
+  liveness = null,
   missionExecutionBundle = false,
   missionRowClassName,
   onHandoff,
@@ -68,6 +73,17 @@ export function CodingSessionUmbrellaTurnBlock({
   /** The surface's resolved participant label, or null when it has none. */
   label: string | null;
   labelsByExecutionKey: ReadonlyMap<string, string>;
+  /**
+   * This seat's W1 answer, resolved by the surface from exactly the functions
+   * the roster chips use and handed down — never derived here from the
+   * transcript, which is how two places end up telling a reader two different
+   * things about one seat.
+   *
+   * Rendered only on a block that is still working, and only in Mission. A
+   * settled block is a record of what happened, and stamping today's word on
+   * yesterday's turn would make the record lie as soon as the seat moved on.
+   */
+  liveness?: CodingSessionTurnBlockLiveness | null;
   /**
    * Collapse this block's signed tool items into one C2 bundle row. Only ever
    * honoured together with `missionRowClassName`, so Conversation — which
@@ -122,15 +138,44 @@ export function CodingSessionUmbrellaTurnBlock({
     () => setBundleExpanded((open) => !open),
     [],
   );
+  // Mission-gated, twice over: `missionRowClassName` is the prop Conversation
+  // never passes, and the word only exists while the block is open.
+  const mission = missionRowClassName != null;
+  const liveWord =
+    mission && isWorking && liveness?.word ? liveness.word.trim() : null;
+  // The **word** is printed whenever the block is open, because a seat whose
+  // provider stopped answering mid-turn is exactly what a reader needs told.
+  // The **animation** is gated on W1's own answer, never on "a word exists":
+  // `isWorking` is the raw wire status, and a demoted seat is still `running`
+  // there while W1 reads `no provider answering`. Breathing over that word
+  // would say two things about one seat, and the roster chip — which tests
+  // `status.kind === "working"` — would say the calmer of them
+  // (`CodingSessionParticipantBar.tsx:69`). REVIEW-A3 F3.
+  const breathes = liveWord !== null && liveness?.live === true;
   // Double-gated on purpose: the bundle is Mission's, and `missionRowClassName`
   // is the one prop Conversation is guaranteed never to pass. A future caller
   // that sets only `missionExecutionBundle` still gets Conversation's DOM.
   const bundleExecution = missionExecutionBundle && missionRowClassName != null;
+  // Finding 9: a freshly hired seat's first block opened with "Rehydrated —
+  // verified session history is available to this agent" over an umbrella that
+  // held no earlier generation of it. The provider's claim is about its own
+  // native session and is left on the wire untouched; Mission simply does not
+  // repeat it when nothing on this screen could be the history it names.
+  const hasPriorGeneration = (execution?.priorGenerations.length ?? 0) > 0;
+  const missionItems = React.useMemo(
+    () =>
+      resolveCodingSessionMissionBlockItems({
+        hasPriorGeneration,
+        items: block.items,
+        mission,
+      }),
+    [block.items, hasPriorGeneration, mission],
+  );
   const narrativeItems = bundleExecution
-    ? block.items.filter((item) => !isCodingSessionMissionExecutionItem(item))
-    : block.items;
+    ? missionItems.filter((item) => !isCodingSessionMissionExecutionItem(item))
+    : missionItems;
   const executionItems = bundleExecution
-    ? block.items.filter(isCodingSessionMissionExecutionItem)
+    ? missionItems.filter(isCodingSessionMissionExecutionItem)
     : [];
   const accent = codingSessionAgentAccent(block.executionKey);
   const foldedSummary = isFolded ? foldedTurnSummary(block) : null;
@@ -195,6 +240,22 @@ export function CodingSessionUmbrellaTurnBlock({
       data-testid="coding-session-umbrella-turn-block"
       ref={registerNode}
     >
+      {breathes ? (
+        // DESIGN-SPEC §3 C1a: the **identity rail** breathes, not the card.
+        // `coding-session-agent-breathe` animates a box-shadow, so on the
+        // article it drew a ring around the whole block; every other use in
+        // the app is a chip or an 8px dot. This overlays the shell's own
+        // `border-l-2` so the glow hugs the rail. `coding-session.css` turns
+        // the animation off under `prefers-reduced-motion`. REVIEW-A3 F7.
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-y-0 -left-0.5 w-0.5 rounded-full coding-session-agent-breathe",
+            accent.dot,
+          )}
+          data-testid="coding-session-umbrella-turn-rail"
+        />
+      ) : null}
       <span className="sr-only">{byline.screenReader}</span>
       {showProvenance || stickyProvenance ? (
         <header
@@ -219,6 +280,14 @@ export function CodingSessionUmbrellaTurnBlock({
             />
             {name}
           </span>
+          {liveWord !== null ? (
+            <span
+              className="text-2xs font-medium text-foreground/75"
+              data-testid="coding-session-umbrella-byline-liveness"
+            >
+              {liveWord}
+            </span>
+          ) : null}
           {byline.detail ? (
             <span
               className="text-2xs text-muted-foreground"
@@ -332,6 +401,77 @@ export function CodingSessionUmbrellaTurnBlock({
     </article>
   );
 }
+
+/** One seat's W1 answer, as the surface resolved it for this block. */
+export type CodingSessionTurnBlockLiveness = {
+  /** The word itself — `live`, `waiting for you`, `no provider answering`, … */
+  word: string;
+  /**
+   * True only when W1 answers `working`. This is the animation's gate, and it
+   * is deliberately **not** "the word is non-empty": a demoted seat has a word
+   * and is not working.
+   */
+  live: boolean;
+};
+
+/**
+ * The items Mission renders for one block, keeping `items`' identity when the
+ * rehydration rule cannot bite.
+ *
+ * Reference stability is the point. `block.items` feeds
+ * `useStableCodingSessionTranscriptModel`'s `useMemo`
+ * (`CodingSessionTranscript.tsx`), so a fresh array on every render re-derives
+ * the transcript model for nothing. Filtering unconditionally did exactly that
+ * for every Mission block of a fresh seat, not just the one block that carries
+ * the row (REVIEW-A3 F8).
+ */
+export function resolveCodingSessionMissionBlockItems(input: {
+  hasPriorGeneration: boolean;
+  items: TurnBlock["items"];
+  mission: boolean;
+}): TurnBlock["items"] {
+  const hides = (item: TurnBlock["items"][number]) =>
+    hidesCodingSessionRehydrationClaim({
+      hasPriorGeneration: input.hasPriorGeneration,
+      item,
+      mission: input.mission,
+    });
+  if (!input.items.some(hides)) return input.items;
+  return input.items.filter((item) => !hides(item));
+}
+
+/**
+ * Should Mission omit this row as an unsupported rehydration claim?
+ *
+ * True for exactly one row: the provider's `session_rehydrated` continuity
+ * line, in Mission, on an execution this umbrella holds no earlier generation
+ * of. A freshly hired seat published it on the 2026-09-01 run and there was
+ * nothing on screen it could have been describing; the wire keeps the claim
+ * (it is about the provider's own native session) and the lens declines to
+ * repeat it.
+ *
+ * Matched on the row's title plus the exact prose
+ * `CODING_SESSION_CONTINUITY_STATUSES` mints for that slug, so `Started
+ * fresh`, `Resumed` and `Loaded` — each of which a fresh seat can say
+ * honestly — are untouched, and so is any slug a future provider adds.
+ */
+export function hidesCodingSessionRehydrationClaim(input: {
+  hasPriorGeneration: boolean;
+  item: TurnBlock["items"][number];
+  mission: boolean;
+}): boolean {
+  if (!input.mission || input.hasPriorGeneration) return false;
+  const { item } = input;
+  return (
+    item.type === "lifecycle" &&
+    item.title === CODING_SESSION_CONTINUITY_TITLE &&
+    item.text.startsWith(REHYDRATED_CONTINUITY_PROSE)
+  );
+}
+
+/** The `session_rehydrated` prose, read from the map that mints it. */
+const REHYDRATED_CONTINUITY_PROSE =
+  CODING_SESSION_CONTINUITY_STATUSES.get("session_rehydrated") ?? "Rehydrated";
 
 function foldedTurnSummary(block: TurnBlock): string | null {
   const source = resolveCodingSessionHandoffSource(block);

@@ -1419,3 +1419,197 @@ which is how the accent rail was lost once already.
 `No test report yet` rather than drawing a full green bar), and the mock's
 `Plan` checklist as an accepted plan (**W15** — the Inspector distinguishes the
 seat's own plan from an accepted one, and says so).
+
+---
+
+## 19. 2026-09-01 (late) — what the first live team run showed
+
+*(Lane A3 of batch 2, base `6a683c9e3`. Every ruling below answers a finding
+from the TeamRolesV1 run of 2026-09-01 — channel `4aa32763…`, session
+`7a374285…` — recorded in `review-2026-09-01/LIVE-RUN-TeamRolesV1.md` and
+`review-2026-09-01/batch2/00-BATCH2.md`. Appended, not edited.)*
+
+### 19a. An open turn block sorts at its newest item
+
+Finding 7. `lib/codingSessionMissionStreamModel.ts` `entrySeconds` sorted every
+turn block at its start, so an assignment signed *while* a seat was working
+rendered below the block it interrupted — the stream told the night's story out
+of order. Rule: a block with no terminator sorts at its newest item's
+timestamp; a settled block and every transaction row keep their start.
+Openness is read from `isCompletedCodingSessionTurnBlock`, never from a clock
+comparison. Conversation cannot reach this path — it passes no transactions, so
+the projection returns before the merge.
+
+### 19b. The turn-block byline carries the W1 word, and the rail breathes
+
+Finding 8. Only the roster chips and the live strip said `live`; the stream —
+where a reader actually is — said nothing, so a block that was still being
+written looked like a record. The byline now renders the seat's W1 word, and
+the block's identity rail wears `coding-session-agent-breathe`, both only on a
+block that is open and only in Mission.
+
+The word is **passed down** from the surface
+(`CodingSessionUmbrellaWorkspace.tsx` builds one map from
+`deriveCodingSessionStreamPresence`), never re-derived from the transcript: one
+resolution of W1 for the chip, the strip and the byline, so they cannot
+disagree. A settled block shows no word — stamping today's disposition on
+yesterday's turn would make the record lie the moment the seat moved on.
+`generation N` stays as the secondary. Reduced motion is handled by the class
+itself (`shared/styles/globals/coding-session.css`).
+
+### 19c. One header, honest bundle verbs, no unsupported "Rehydrated"
+
+Finding 9, three parts.
+
+**The aggregate is gone.** Mission passes `statusLabelOverride={null}`, so the
+header badge states the demoted lifecycle word alone (A3/B2). It read
+`2 AGENTS · 2 WORKING` one row above the roster chips that say the same thing
+per seat — and `IDLE` over a session with a seat mid-turn.
+
+**Bundle verbs name the call.** `lib/codingSessionMissionExecutionBundle.ts`
+consults the classifier first, then a seat tool-name table, then ACP's own
+`toolKind`, then the classifier's label. A turn
+of `Bash`×4 `Read`×2 `Edit`×3 `Grep`×2 reads `Terminal 4 · Read 2 · Edit 3 ·
+Search 2`; on the live run the same turn read `Relay 1 · Tool 49`, because the
+classifier's harness rules are written for `buzz-dev-mcp` names and a Claude
+Code seat calls none of them. A call nothing on the wire describes still reads
+`Tool`, the same word its expanded row uses.
+
+`Relay` therefore survives only where the classifier already recognised the
+call — a dev-MCP `shell` invocation of `bee`. A seat driven by Claude Code runs
+`bee` through `Bash`, which the classifier's buzz-CLI parser never sees
+(`agentSessionToolClassifier.ts` gates it on `shell`/`*_shell`/dev-MCP names,
+and `BUZZ_CLI_GROUPS` has no `sessions` entry), so that call reads `Terminal`
+here while the Audit tab counts it under "Downloads the room". Two names for
+one call; not introduced by this change — it read `Tool` before — and neither
+file is A3's. Recorded so the next reader does not have to rediscover it
+(REVIEW-A3 F6).
+
+**"Rehydrated" is not repeated without a history to point at.** A fresh hire's
+first block opened with `Rehydrated — verified session history is available to
+this agent` over an umbrella that held no earlier generation of it. The wire is
+untouched — the provider's claim is about its own native session — and Mission
+omits the row when this umbrella has no prior generation for that execution.
+`Started fresh`, `Resumed`, `Loaded` and `Restarted without prior context` are
+never touched, and neither is any slug a later provider adds.
+
+### 19d. The record and the room, on one line
+
+Finding 6. `mission.blocked` was used four times as a note — there is no note
+or correction verb — and the rail read Blocked, in red, while two seats worked
+on for another twenty minutes. Both facts were true; showing only the first
+made the surface lie about the session.
+
+The Mission state section now leads with `Blocked (signed) · 2 seats live`:
+the fold's state, its provenance, and the roster's own W1 count of working
+seats, with the phase indicator under it. `(signed)` appears only where a
+signed record establishes the state — `unknown` claims nothing. The count is
+never `0 seats live`: no working seat reads `no seat is working`, and no
+projection reads `seat liveness not projected`. Nothing here parses the blocker
+prose. **A note verb is still missing** and is the real fix; this is the honest
+rendering until one exists.
+
+### 19e. Audit — the third rail tab
+
+Finding 11, and Brian's ask ("we need to capture this so it is observable").
+`Audit` sits beside Inspector and Context and derives everything from items the
+client already holds: `result` items for duration, cost and per-turn `usage`;
+`tool` items for names, arguments and result sizes. No new wire kind, no new
+endpoint. Row shape is frozen with `bee sessions audit` (`00-BATCH2.md`).
+
+Sections, in order: **Per turn** (seat · started · duration · tools · out ·
+cache reads · cache writes · context window, groupable by seat), **Totals**
+(per seat, then `Σ this session` with the H5 partial disclosure
+`(2 of 3 seats reported)`), **Handed twice**, **Downloads the room**, **Retry
+loops**. Bounded at 200 turns and 50 rows per list, each cap announcing itself
+in words. Every absent number is an em dash whose hover and screen-reader text
+say `not reported`; cost prints only where a driver priced the turn. Where the
+driver published no tool count, the count of signed tool items this client
+holds is shown with a `*` and a sentence saying so — a different fact, marked
+as one.
+
+**Known gap, disclosed on the surface.** Per-turn `usage` is on the wire
+(`coding_session_payload.rs`; typed in
+`codingSessionTranscriptItemContract.ts`) but the desktop transcript projection
+drops it in `buildResultLifecycleItem`, which keeps only `durationMs` and
+`costUsd` — the same gap already recorded against context load in
+`codingSessionContextLoad.ts`. Until the projection carries it, the token
+columns read `—` and the section says why. The model reads `usage` off the item
+defensively, so it lights up with no further change the day the projection
+publishes it. `contextWindow` is real today: it falls back to the turn's own
+`context_window_updated` item.
+
+### 19f. Frozen with `bee sessions audit` (A3 ↔ A1)
+
+The Audit tab and the CLI table derive the same rows from the same items, so
+the ledger, a seat and the screen say one thing. Three derivations were
+frozen against `crates/buzz-cli/src/commands/sessions/audit.rs`:
+
+1. **`toolCalls`** — the driver's own `usage.toolCalls` when the turn's
+   `result` carried one, otherwise the count of `tool_call` items that turn
+   published. Both measure the same turn; neither is a guess, so this field is
+   never absent. The tab marks the fallback with `*` and a hover, because
+   *which* measurement a reader is looking at is itself a fact.
+2. **`retryLoops.count`** — the **longest** run of consecutive identical
+   `(command, result)` pairs, not the total across runs, with a minimum of 3.
+   A command a seat came back to twice, hours apart, is work.
+3. **`handedTwice.bytes`** — the summed **published** result bytes, with
+   `bytesClipped` set when any of them carried the provider's elision marker.
+   The provider clips a tool result at 8 KiB, so a clipped total is a floor and
+   the tab renders it as `≥`.
+
+Also shared: a room download is named `sessions <verb>` over the four verbs
+`status`, `inbox`, `send`, `operation` (never the invocation, never the
+object); `costUsd` is reported only when `usage` names a `pricingIdentity`;
+and items outside any turn are not a turn — inventing a row for them would put
+something in the table that nothing spent.
+
+Not shared, deliberately: the bounds. The CLI folds up to 4,096 items per
+execution; the tab bounds what a rail can hold — 200 turns, 50 rows per list —
+and announces each cap in words.
+
+
+### 19g. Fix round 1 (REVIEW-A3)
+
+- **The merge's sort precondition (F1, blocking).** `entrySeconds` is
+  deliberately non-monotonic over the narrative, and the two-pointer merge in
+  `projectCodingSessionMissionTimeline` requires both of its lists to be sorted
+  by the key it compares. One open block early in the stream was hoisting every
+  later transaction above every entry after it, and a settled block moved when
+  a *different* seat's block settled. The narrative list is now sorted on
+  `entrySeconds` just before the merge; `Array#sort` is stable, so ties keep
+  the narrative's clamped order.
+- **Partial reporting is per turn, not per seat (F2).** A seat with one
+  reporting turn in eight counted as "reported" and its Σ printed an eighth of
+  the work silently. Totals carry `reportedTurns`, every totals row discloses
+  `(1 of 3 turns reported usage)`, and the `*` marker now reaches the Σ.
+- **The animation follows W1, not the presence of a word (F3).** `isWorking`
+  is the raw wire status; the word is that status *after* reachability
+  demotion. A seat reading `no provider answering` was breathing in the stream
+  while its own roster chip sat still. The block now takes `{ word, live }`,
+  where `live` is the chip's own `status.kind === "working"`.
+- **Cost has no price-list gate (F4).** `usage.pricingIdentity` does not exist
+  on the wire, so the gate made the column dead and printed `not reported` over
+  a cost the driver had reported. `costUsd` is the item's own value.
+- **The audit folds only while its tab is open (F5).** The surface hook
+  assembles the seat inputs; `CodingSessionMissionAudit` — mounted only when
+  its tab is selected — does the fold in its own memo. A single-generation seat
+  hands over its transcript by reference. Measured on 2 seats × 2,000 tool
+  items with 8 KiB results: the fold is ~18 ms and is now paid only with the
+  tab open; an umbrella update with the tab closed costs 0.010 ms.
+- **The rail breathes, not the card (F7).** `coding-session-agent-breathe`
+  animates a box-shadow, so on the `<article>` it ringed the whole block. A
+  live block now renders a dedicated 2 px rail element over the shell's own
+  left border and puts the class there.
+- **`missionItems` keeps its identity (F8).**
+  `resolveCodingSessionMissionBlockItems` returns the very same array unless
+  the rehydration row is actually present, and the component memoises it.
+
+**Frozen row shape, amendment 00:20** (`00-BATCH2.md`), matched name for name
+with `bee sessions audit`: `toolCallsTruncated` beside `toolCalls` and repeated
+on totals; `handedTwice.resultsSeen` with `bytes` null when none came back;
+`identicalResults: boolean | null`, null unless the run published a result to
+compare; `costUsd` from the item's own value. On Desktop a "cut short"
+transcript is an input the caller states (`transcriptTruncated`), and no caller
+states it today — the tab folds exactly the projection it was handed, so the
+flag is honestly `false` rather than guessed.

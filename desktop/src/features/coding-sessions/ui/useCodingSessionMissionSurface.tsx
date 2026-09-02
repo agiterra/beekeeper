@@ -24,6 +24,7 @@ import type { CodingSessionReachabilityResolver } from "@/features/coding-sessio
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import { shouldAutoOpenAgentsSurface } from "./CodingSessionUmbrellaWorkspaceModel";
+import { CodingSessionMissionAudit } from "./CodingSessionMissionAudit";
 import { CodingSessionMissionContext } from "./CodingSessionMissionContext";
 import { CodingSessionMissionInspector } from "./CodingSessionMissionInspector";
 import type { CodingSessionSurfaceDescriptor } from "./CodingSessionSurfaceHost";
@@ -193,6 +194,34 @@ export function useCodingSessionMissionSurface(input: {
     () => readCodingSessionMissionStreamEvidence(evidence.inspectorInput),
     [evidence.inspectorInput],
   );
+  // The Audit tab reads the umbrella's own signed transcripts — every
+  // generation, not just the live one, because a seat that was restarted spent
+  // its earlier turns' tokens all the same.
+  //
+  // Only the *input* is assembled here. The fold itself lives inside
+  // `CodingSessionMissionAudit`, which the surface host mounts only while the
+  // Audit tab is selected, so a mission nobody is auditing pays nothing for it
+  // (REVIEW-A3 F5). A single-generation seat hands over its own transcript
+  // array by reference, so the component's memo does not re-fold when nothing
+  // it reads has moved.
+  const auditSeats = React.useMemo(() => {
+    const labels = new Map(
+      input.participants.map((participant) => [
+        participant.executionKey,
+        participant.label,
+      ]),
+    );
+    return input.umbrella.executions.map((execution) => ({
+      executionKey: execution.executionKey,
+      seat: labels.get(execution.executionKey) ?? CODING_SESSION_UNKNOWN_ACTOR,
+      transcript:
+        execution.priorGenerations.length === 0
+          ? execution.activeGeneration.transcript
+          : [...execution.priorGenerations, execution.activeGeneration].flatMap(
+              (record) => record.transcript,
+            ),
+    }));
+  }, [input.participants, input.umbrella.executions]);
   const surfaces = React.useMemo(
     () =>
       input.active
@@ -230,9 +259,23 @@ export function useCodingSessionMissionSurface(input: {
                 />
               ),
             },
+            {
+              id: "mission-audit",
+              label: "Audit",
+              content: (
+                <CodingSessionMissionAudit
+                  errorMessage={evidence.errorMessage}
+                  loading={evidence.isLoading}
+                  onRefresh={evidence.refresh}
+                  seats={auditSeats}
+                  variant={input.isNarrow ? "drawer" : "panel"}
+                />
+              ),
+            },
           ] satisfies CodingSessionSurfaceDescriptor[])
         : [],
     [
+      auditSeats,
       evidence.errorMessage,
       evidence.isLoading,
       evidence.refresh,
@@ -345,7 +388,8 @@ export function useCodingSessionMissionSurfaceActivation(input: {
       openedRef.current = false;
       if (
         input.activeTab === "mission-inspector" ||
-        input.activeTab === "mission-context"
+        input.activeTab === "mission-context" ||
+        input.activeTab === "mission-audit"
       ) {
         input.close();
       }

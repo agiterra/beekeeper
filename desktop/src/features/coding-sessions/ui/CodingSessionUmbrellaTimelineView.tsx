@@ -50,7 +50,10 @@ import { CodingSessionPendingTurns } from "./CodingSessionPendingTurns";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import type { CodingSessionPromptSeatResolver } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { UmbrellaConversationRow } from "./CodingSessionUmbrellaConversationRow";
-import { CodingSessionUmbrellaTurnBlock } from "./CodingSessionUmbrellaTurnBlock";
+import {
+  CodingSessionUmbrellaTurnBlock,
+  type CodingSessionTurnBlockLiveness,
+} from "./CodingSessionUmbrellaTurnBlock";
 
 /** The turn block's Mission shell: the card grammar, keeping the accent rail. */
 const MISSION_TURN_BLOCK_CLASS = missionRowClass("standard", {
@@ -69,6 +72,7 @@ export function CodingSessionUmbrellaTimelineView({
   missionDeliveries,
   missionDensity = null,
   missionFounderPubkey = null,
+  missionLiveness,
   missionTransactions,
   onHandoff,
   onFocusExecution,
@@ -86,6 +90,13 @@ export function CodingSessionUmbrellaTimelineView({
   missionDensity?: CodingSessionMissionDensity | null;
   /** Founder identity, so the founder's own rows read `You` and not a key. */
   missionFounderPubkey?: string | null;
+  /**
+   * Execution key → that seat's W1 answer, from the roster's own resolvers.
+   * Only a working block renders it; the map is the single source so the
+   * byline, the chip and the live strip cannot disagree — about the word *or*
+   * about whether the seat is actually working (REVIEW-A3 F3).
+   */
+  missionLiveness?: ReadonlyMap<string, CodingSessionTurnBlockLiveness>;
   /** Signed 44244 transactions. Rendered only while a Mission density is set. */
   missionTransactions?: readonly CodingSessionMissionTransactionInput[];
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
@@ -353,6 +364,11 @@ export function CodingSessionUmbrellaTimelineView({
               isWorking={workingBlockKeys.has(key)}
               label={labelsByExecutionKey.get(entry.executionKey) ?? null}
               labelsByExecutionKey={labelsByExecutionKey}
+              liveness={
+                missionDensity === null
+                  ? null
+                  : (missionLiveness?.get(entry.executionKey) ?? null)
+              }
               missionExecutionBundle={missionDensity === "live"}
               missionRowClassName={
                 missionDensity === null ? undefined : MISSION_TURN_BLOCK_CLASS

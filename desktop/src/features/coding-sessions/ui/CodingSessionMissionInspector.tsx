@@ -129,6 +129,7 @@ export function CodingSessionMissionInspector({
           title="Mission state"
           truncations={truncationsFor(model, "mission-state")}
         >
+          <MissionStateAndLiveness model={model} />
           <CodingSessionMissionStatePanel state={model.missionState} />
           {model.missionState.kind !== "unknown" &&
           model.missionState.kind !== "conflict" ? (
@@ -433,6 +434,64 @@ export function CodingSessionMissionInspector({
         </InspectorSection>
       </div>
     </aside>
+  );
+}
+
+/** Signed terminal state → the one word this line leads with. */
+const MISSION_STATE_WORD: Readonly<
+  Record<CodingSessionMissionInspectorModel["missionState"]["kind"], string>
+> = {
+  completed: "Completed",
+  blocked: "Blocked",
+  "waiting-on-person": "Waiting on a person",
+  "acknowledgement-required": "Acknowledgement required",
+  stalled: "Stalled",
+  running: "Running",
+  conflict: "State conflict",
+  unknown: "State unknown",
+};
+
+/**
+ * The record and the room, on one line: `Blocked (signed) · 2 seats live`.
+ *
+ * On the 2026-09-01 run a lead used `mission.blocked` four times as a note —
+ * there is no note verb — and the rail read Blocked, in red, while two seats
+ * went on working for another twenty minutes. Both halves were true; showing
+ * only the first made the surface lie about the session.
+ *
+ * `(signed)` is a claim about provenance and appears only when a signed record
+ * establishes the state; `unknown` carries no such record and says so. The
+ * liveness clause is the roster's own W1 count, never prose parsed out of the
+ * blocker body, and it never prints `0 seats live` — a count of nothing is
+ * spelled out in words instead.
+ */
+function MissionStateAndLiveness({
+  model,
+}: {
+  model: CodingSessionMissionInspectorModel;
+}) {
+  const state = model.missionState;
+  const word = MISSION_STATE_WORD[state.kind];
+  const provenance = state.kind === "unknown" ? "" : " (signed)";
+  const live = model.participants.filter(
+    (participant) => participant.status.kind === "working",
+  ).length;
+  const liveness =
+    model.participants.length === 0
+      ? "seat liveness not projected"
+      : live === 0
+        ? "no seat is working"
+        : `${live} seat${live === 1 ? "" : "s"} live`;
+  return (
+    <p
+      className="mb-1.5 text-xs font-medium"
+      data-live-seats={model.participants.length === 0 ? "unknown" : live}
+      data-mission-state={state.kind}
+      data-testid="mission-state-and-liveness"
+    >
+      {word}
+      {provenance} <span className="text-muted-foreground">· {liveness}</span>
+    </p>
   );
 }
 

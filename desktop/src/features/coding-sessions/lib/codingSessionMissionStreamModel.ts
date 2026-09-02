@@ -4,6 +4,7 @@ import type {
   CodingSessionUmbrellaTurnBlock,
 } from "./codingSessionUmbrellaTimeline";
 import { codingSessionUmbrellaEntryKey } from "./codingSessionUmbrellaTimeline";
+import { isCompletedCodingSessionTurnBlock } from "./codingSessionHandoff";
 import type { CodingSessionMissionDensity } from "./codingSessionMissionDensity";
 import { CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT } from "./codingSessionMissionContracts";
 import type { CodingSessionMissionTransactionRow } from "./codingSessionMissionTransactionRows";
@@ -50,10 +51,40 @@ export function codingSessionMissionStreamEntryKey(
   return codingSessionUmbrellaEntryKey(entry);
 }
 
+/**
+ * Where one narrative entry sits on the shared clock, in unix seconds.
+ *
+ * A settled entry sorts at its start, which is what it has always done. An
+ * **open** turn block does not: it is still growing, so its start is a lie
+ * about where it ends, and every row minted while the seat worked — the
+ * assignment that arrived mid-turn, the report a sibling filed — sorted
+ * *below* the block that was still running when they were signed (live-run
+ * finding 7). An open block therefore sorts at its newest item, so those rows
+ * land above it and the stream reads in the order the wire produced.
+ *
+ * Openness is the block's own terminator, via
+ * {@link isCompletedCodingSessionTurnBlock} — the same rule the footer and the
+ * handoff source use — never a clock comparison or a liveness guess.
+ */
 function entrySeconds(entry: CodingSessionUmbrellaTimelineEntry): number {
-  return Number.isFinite(entry.timestampMs)
+  const start = Number.isFinite(entry.timestampMs)
     ? Math.floor(entry.timestampMs / 1_000)
     : 0;
+  if (entry.kind !== "turn-block") return start;
+  if (isCompletedCodingSessionTurnBlock(entry)) return start;
+  return Math.max(start, newestItemSeconds(entry.items));
+}
+
+/** The newest parseable item timestamp, in unix seconds; 0 when none parses. */
+function newestItemSeconds(items: readonly TranscriptItem[]): number {
+  let newest = 0;
+  for (const item of items) {
+    const parsed = Date.parse(item.timestamp);
+    if (!Number.isFinite(parsed)) continue;
+    const seconds = Math.floor(parsed / 1_000);
+    if (seconds > newest) newest = seconds;
+  }
+  return newest;
 }
 
 /**
@@ -99,6 +130,18 @@ export function projectCodingSessionMissionTimeline(
   if (transactions === undefined || transactions.length === 0) {
     return projected;
   }
+
+  // The merge below is a two-pointer walk over two lists, and it is only
+  // correct if **both** are sorted by the key it compares. `entrySeconds` is
+  // deliberately non-monotonic over the narrative — an open block answers with
+  // its newest item, not its start — so the list has to be re-ordered on that
+  // key before the walk. Without this one line a single open block early in
+  // the stream hoisted every later transaction above every entry that followed
+  // it, and a settled block moved when a *different* seat's block settled
+  // (REVIEW-A3 F1). `Array#sort` is stable, so ties keep the narrative's own
+  // carefully-clamped order. Conversation never reaches this line: it passes
+  // no transactions and returned above.
+  projected.sort((left, right) => entrySeconds(left) - entrySeconds(right));
 
   const ordered = [...transactions].sort(
     (left, right) =>

@@ -39,8 +39,63 @@ const BUNDLE_VERB: Readonly<Partial<Record<AgentActivityRenderClass, string>>> =
     "relay-op": "Relay",
   };
 
+/**
+ * Seat tool name → C2 verb, for the calls the classifier has no rule for.
+ *
+ * The classifier's developer-harness rules are written for `buzz-dev-mcp`
+ * names (`shell`, `read_file`, `str_replace`); a seat driven by Claude Code
+ * calls the same things `Bash`, `Read`, `Edit`, `Grep`, and every one of them
+ * fell through to `generic`. That is what made the 2026-09-01 live run's
+ * bundle read `Relay 1 · Tool 49` over a turn that was almost entirely shell
+ * and file work — a true count of a word that told the reader nothing.
+ *
+ * Names only, lowercased; never the call's arguments. `Write` is an `Edit`
+ * because C2's verb names what the call did to the tree, not which API it
+ * used, and `Glob`/`Grep` are both `Search` for the same reason.
+ */
+const TOOL_NAME_VERB: Readonly<Record<string, string>> = {
+  bash: "Terminal",
+  bashoutput: "Terminal",
+  killshell: "Terminal",
+  shell: "Terminal",
+  terminal: "Terminal",
+  read: "Read",
+  notebookread: "Read",
+  readfile: "Read",
+  edit: "Edit",
+  multiedit: "Edit",
+  notebookedit: "Edit",
+  write: "Edit",
+  glob: "Search",
+  grep: "Search",
+  search: "Search",
+  websearch: "Search",
+};
+
+/**
+ * ACP's own tool discriminant → C2 verb, consulted after the name.
+ *
+ * Authoritative where the name is not: claude-agent-acp opens an edit titled
+ * `Preparing file…` while the arguments are still streaming, and an MCP tool
+ * carries a vendor-prefixed name no rule can match. `toolKind` is the
+ * producer's own word for what the call *is*.
+ */
+const TOOL_KIND_VERB: Readonly<Record<string, string>> = {
+  execute: "Terminal",
+  read: "Read",
+  edit: "Edit",
+  search: "Search",
+};
+
 /** Print order; classifier-labelled leftovers follow, alphabetically. */
-const VERB_ORDER = ["Terminal", "Read", "Edit", "Image", "Relay"] as const;
+const VERB_ORDER = [
+  "Terminal",
+  "Read",
+  "Edit",
+  "Search",
+  "Image",
+  "Relay",
+] as const;
 
 export type CodingSessionMissionExecutionSummary = {
   /** Signed tool items in this block — equals the rows the disclosure reveals. */
@@ -64,6 +119,39 @@ export function isCodingSessionMissionExecutionItem(
   return item.type === "tool";
 }
 
+/**
+ * The C2 verb for one signed tool item.
+ *
+ * Order is deliberate. The classifier speaks first, because it is the only
+ * thing that knows a shell command was really `bee` (`relay-op`) or that a
+ * dev-MCP call edited a file. Only when it answers `generic` — "I have no rule
+ * for this name" — do the seat-tool tables get a turn, and after them the
+ * classifier's own label, so an unrecognised call reads `Tool` here and
+ * `Ran tool` in the row the disclosure reveals. Nothing is dropped and no verb
+ * is invented, so the breakdown always sums to `count`.
+ */
+function bundleVerb(item: CodingSessionMissionExecutionItem): string {
+  const renderClass = item.descriptor?.renderClass ?? item.renderClass;
+  const classified = BUNDLE_VERB[renderClass];
+  if (classified !== undefined) return classified;
+  if (renderClass === "generic") {
+    const named = TOOL_NAME_VERB[normalizeToolName(item.toolName)];
+    if (named !== undefined) return named;
+    const kind = item.toolKind?.trim().toLowerCase();
+    const byKind = kind ? TOOL_KIND_VERB[kind] : undefined;
+    if (byKind !== undefined) return byKind;
+  }
+  return renderClassLabel(renderClass);
+}
+
+/** `MultiEdit` / `notebook_read` / `Buzz Dev MCP Shell` → `multiedit` … */
+function normalizeToolName(toolName: string): string {
+  return toolName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
 /** Summarise one turn block's signed tool items for the collapsed row. */
 export function summarizeCodingSessionMissionExecution(
   items: readonly TranscriptItem[],
@@ -73,8 +161,7 @@ export function summarizeCodingSessionMissionExecution(
   for (const item of items) {
     if (!isCodingSessionMissionExecutionItem(item)) continue;
     count += 1;
-    const renderClass = item.descriptor?.renderClass ?? item.renderClass;
-    const verb = BUNDLE_VERB[renderClass] ?? renderClassLabel(renderClass);
+    const verb = bundleVerb(item);
     counts.set(verb, (counts.get(verb) ?? 0) + 1);
   }
   const ordered = [...counts.entries()].sort((left, right) => {

@@ -395,6 +395,13 @@ test("R2 C2: Conversation's DOM is byte-identical with every Mission prop set", 
         },
       ],
       resolveMissionActor: () => ({ label: "Bob", executionKey: "builder" }),
+      // REVIEW-A3 I8: the reviewer's own cross-tree check passed this prop and
+      // the lane's in-tree one did not. It is a Mission prop like the rest —
+      // Conversation must ignore it just as completely.
+      missionLiveness: new Map([
+        ["lead", { word: "live", live: true }],
+        ["designer", { word: "no provider answering", live: false }],
+      ]),
     }),
   );
   assert.ok(bare.length > 2000, "the fixture must be substantial");
@@ -402,4 +409,127 @@ test("R2 C2: Conversation's DOM is byte-identical with every Mission prop set", 
   assert.equal(loaded, bare);
   assert.doesNotMatch(bare, /coding-session-mission-transaction-row/);
   assert.doesNotMatch(bare, /coding-session-mission-execution-bundle/);
+});
+
+/** The turn block on its own, in Mission, with the liveness the caller states. */
+function missionBlockProps(
+  umbrella,
+  block,
+  liveness,
+  { isWorking = true } = {},
+) {
+  return {
+    block,
+    blockKey: "block-under-test",
+    channelId: CHANNEL_ID,
+    currentUserPubkey: null,
+    isHighlighted: false,
+    isFolded: false,
+    isWorking,
+    label: "Keystone · Lead",
+    labelsByExecutionKey: new Map(),
+    liveness,
+    missionRowClassName: missionRowClass("standard", {
+      className: "border-l-2",
+    }),
+    onHandoff: () => {},
+    onRegisterNode: () => {},
+    onRevealFact: () => {},
+    operatorProfiles: undefined,
+    record: umbrella.executions[0].activeGeneration,
+    resolveFactLocation: () => null,
+    showProvenance: true,
+    stickyProvenance: false,
+    umbrella,
+  };
+}
+
+function firstTurnBlock(umbrella) {
+  return buildUmbrellaTimeline(umbrella, []).find(
+    (entry) => entry.kind === "turn-block",
+  );
+}
+
+/**
+ * F3: `isWorking` is the raw wire status; the W1 word is that status **after**
+ * reachability demotion. A seat whose provider stopped answering is still
+ * `running` on the wire and reads `no provider answering` on screen — and the
+ * roster chip for it does not breathe (`CodingSessionParticipantBar.tsx:69`).
+ * The block must make the same call, or one seat gets two answers.
+ */
+test("A3.2/F3: a demoted seat says its word and does not breathe", async () => {
+  const umbrella = umbrellaOfTwoSeats();
+  const markup = await renderInRouter(
+    React.createElement(
+      CodingSessionUmbrellaTurnBlock,
+      missionBlockProps(umbrella, firstTurnBlock(umbrella), {
+        word: "no provider answering",
+        live: false,
+      }),
+    ),
+  );
+  assert.match(markup, />no provider answering</);
+  assert.doesNotMatch(markup, /coding-session-agent-breathe/);
+});
+
+test("A3.2/F3: a seat W1 calls working breathes", async () => {
+  const umbrella = umbrellaOfTwoSeats();
+  const markup = await renderInRouter(
+    React.createElement(
+      CodingSessionUmbrellaTurnBlock,
+      missionBlockProps(umbrella, firstTurnBlock(umbrella), {
+        word: "live",
+        live: true,
+      }),
+    ),
+  );
+  assert.match(markup, />live</);
+  assert.match(markup, /coding-session-agent-breathe/);
+});
+
+/**
+ * F7: DESIGN-SPEC §3 C1/C1a puts the animation on the block's identity rail.
+ * `coding-session-agent-breathe` animates a `box-shadow`, so on the `<article>`
+ * it rings the whole card — every other use in the app is a chip or an 8px dot.
+ */
+test("A3.2/F7: the breathe is on the accent rail, never the card", async () => {
+  const umbrella = umbrellaOfTwoSeats();
+  const markup = await renderInRouter(
+    React.createElement(
+      CodingSessionUmbrellaTurnBlock,
+      missionBlockProps(umbrella, firstTurnBlock(umbrella), {
+        word: "live",
+        live: true,
+      }),
+    ),
+  );
+  const rail = markup.match(
+    /<span[^>]*data-testid="coding-session-umbrella-turn-rail"[^>]*>/,
+  );
+  assert.ok(rail, "the live block renders its own rail element");
+  assert.match(rail[0], /coding-session-agent-breathe/);
+  for (const shell of shellClasses(markup)) {
+    assert.doesNotMatch(
+      shell,
+      /coding-session-agent-breathe/,
+      "the card shell must not carry the animation",
+    );
+  }
+});
+
+test("A3.2/F7: a settled block renders no rail element at all", async () => {
+  const umbrella = umbrellaOfTwoSeats();
+  const markup = await renderInRouter(
+    React.createElement(
+      CodingSessionUmbrellaTurnBlock,
+      missionBlockProps(
+        umbrella,
+        firstTurnBlock(umbrella),
+        { word: "live", live: true },
+        { isWorking: false },
+      ),
+    ),
+  );
+  assert.doesNotMatch(markup, /coding-session-umbrella-turn-rail/);
+  assert.doesNotMatch(markup, /coding-session-agent-breathe/);
 });

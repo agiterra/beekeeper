@@ -463,6 +463,27 @@ export function UmbrellaCodingSessionWorkspace({
       workspaceActorName,
     ],
   );
+  // One W1 resolution for the whole surface. The chips, the live strip and
+  // now the turn-block byline all read this map, so a seat cannot be `live`
+  // in one place and `idle` two inches away (finding 8).
+  //
+  // `live` is the chip's own test verbatim (`CodingSessionParticipantBar.tsx`
+  // `item.status.kind === "working"`) rather than "the word is non-empty": a
+  // seat demoted by reachability keeps a word and stops being live, and the
+  // block's animation has to make the same call the chip makes (REVIEW-A3 F3).
+  const missionLiveness = React.useMemo(
+    () =>
+      new Map(
+        streamPresence.participants.map((participant) => [
+          participant.executionKey,
+          {
+            word: participant.disposition,
+            live: participant.status.kind === "working",
+          },
+        ]),
+      ),
+    [streamPresence.participants],
+  );
   const handleFocusExecution = React.useCallback(
     (executionKey: string | null) => setFocusedExecutionKey(executionKey),
     [],
@@ -649,7 +670,14 @@ export function UmbrellaCodingSessionWorkspace({
           sessionTitle={authoritativeTitle}
           sessionClosed={sessionClosed}
           status={umbrellaWorkspaceStatus(umbrella)}
-          statusLabelOverride={umbrellaAgentStatusSummary(agentFocusItems)}
+          // SURFACES A3/B2: Mission's header shows the demoted lifecycle word
+          // and nothing else. The `2 AGENTS · 2 WORKING` aggregate it used to
+          // carry restated — less precisely, and one row above — what the
+          // roster chips and the live strip already say per seat, and it read
+          // `IDLE` over a session with a seat mid-turn on the 2026-09-01 run.
+          statusLabelOverride={
+            mission ? null : umbrellaAgentStatusSummary(agentFocusItems)
+          }
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces
             .filter(
@@ -666,7 +694,8 @@ export function UmbrellaCodingSessionWorkspace({
                 surfaceEntry.id === "agents"
                   ? "agents"
                   : surfaceEntry.id === "mission-inspector" ||
-                      surfaceEntry.id === "mission-context"
+                      surfaceEntry.id === "mission-context" ||
+                      surfaceEntry.id === "mission-audit"
                     ? "inspector"
                     : "changes",
               count: surfaceEntry.count ?? 0,
@@ -801,6 +830,7 @@ export function UmbrellaCodingSessionWorkspace({
                 // they caused.
                 missionDeliveries={mission ? teamWake.deliveries : undefined}
                 missionFounderPubkey={umbrella.founderPubkey}
+                missionLiveness={mission ? missionLiveness : undefined}
                 missionTransactions={
                   mission ? missionSurfaceResult.transactions : undefined
                 }
