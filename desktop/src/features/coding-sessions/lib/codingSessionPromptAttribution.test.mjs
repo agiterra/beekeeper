@@ -189,24 +189,70 @@ test("item 10b: automatic founder-signed commands are not You", () => {
   assert.equal(isCodingSessionTeamWakeCommandId(undefined), false);
 
   // The hire host dispatches a brief a LEAD wrote, signed with the founder's
-  // key. Named when the signed hire evidence names the hiring seat.
+  // key. Named when a hire record vouches for the execution AND the prompt's
+  // own signer is that host's key AND it carries no 44220 command id.
   assert.equal(
     resolveCodingSessionPromptAuthorLabel({
       currentUserPubkey: LOCAL,
-      hiringSeatLabel: "Keystone · Lead",
-      isHireHostDispatch: true,
+      hireDispatch: { label: "Keystone · Lead", hostPubkey: LOCAL },
       operatorPubkey: LOCAL,
     }),
     "Keystone · Lead · via your Desktop",
   );
-  // Unnamed when it does not — still never plain "You".
+  // Unnamed when the vouch names no requester — still never plain "You".
   const anonymous = resolveCodingSessionPromptAuthor({
     currentUserPubkey: LOCAL,
-    isHireHostDispatch: true,
+    hireDispatch: { label: null, hostPubkey: LOCAL },
     operatorPubkey: LOCAL,
   });
   assert.equal(anonymous.label, "Your Desktop (hire host)");
   assert.equal(anonymous.kind, "hire-host");
+});
+
+test("N1: the dispatch never outranks the signer, and text is never consulted", () => {
+  // The three ways this branch must NOT fire, each of them a signed fact the
+  // first attempt ignored in favour of a `[From the lead] ` text prefix.
+  const HOST = "a1".repeat(32);
+  const OTHER = "b2".repeat(32);
+  const vouch = { label: "Keystone", hostPubkey: HOST };
+
+  // 1. A different signer. The vouch is about the execution; the signer is
+  //    about this event, and the signer wins.
+  assert.equal(
+    resolveCodingSessionPromptAuthor({
+      hireDispatch: vouch,
+      operatorPubkey: OTHER,
+      currentUserPubkey: OTHER,
+    }).kind,
+    "you",
+  );
+  // 2. A later turn to the same seat: a 44220 command carries a command id,
+  //    the create's initial turn does not.
+  assert.equal(
+    resolveCodingSessionPromptAuthor({
+      commandId: "csc-later-turn",
+      hireDispatch: vouch,
+      operatorPubkey: HOST,
+    }).kind,
+    "operator",
+  );
+  // 3. No vouch at all — nothing about the words may create one.
+  assert.equal(
+    resolveCodingSessionPromptAuthor({
+      operatorPubkey: HOST,
+    }).kind,
+    "operator",
+  );
+  // And the resolver takes no `text` at all any more: passing one changes
+  // nothing, because nothing reads it.
+  assert.equal(
+    resolveCodingSessionPromptAuthor({
+      operatorPubkey: OTHER,
+      currentUserPubkey: OTHER,
+      text: "[From the lead] Take the badge lane.",
+    }).kind,
+    "you",
+  );
 });
 
 test("item 10: You survives exactly where it is true", () => {
@@ -237,4 +283,164 @@ test("item 10: You survives exactly where it is true", () => {
   });
   assert.equal(other.label, "Dana");
   assert.equal(other.kind, "operator");
+});
+
+// ── The hire host's dispatch, attributed from the wire ───────────────────────
+
+test("a hired seat's brief is attributed to the lead that asked for it", async () => {
+  const {
+    codingSessionHireDispatchLabelForSeat,
+    resolveCodingSessionPromptAuthorLabel,
+  } = await import("./codingSessionPromptAttribution.ts");
+  const host = "ff".repeat(32);
+  const lead = "a1".repeat(32);
+  const actor = "cd".repeat(32);
+  // The join, as the hire host recorded it: this actor, in this umbrella, and
+  // the key that signed the create it answered with.
+  const vouch = codingSessionHireDispatchLabelForSeat(
+    [
+      {
+        sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        seatActor: actor,
+        requesterLabel: "Keystone",
+        hostPubkey: host,
+      },
+    ],
+    { actorPubkey: actor, sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10" },
+  );
+  assert.deepEqual(vouch, { label: "Keystone", hostPubkey: host });
+  assert.equal(
+    resolveCodingSessionPromptAuthorLabel({
+      hireDispatch: vouch,
+      operatorPubkey: host,
+    }),
+    "Keystone · via your Desktop",
+  );
+  void lead;
+});
+
+test("N1: the seat join needs the session too, not the actor alone", async () => {
+  const { codingSessionHireDispatchLabelForSeat } = await import(
+    "./codingSessionPromptAttribution.ts"
+  );
+  const actor = "cd".repeat(32);
+  const outcomes = [
+    {
+      sessionRef: "11111111-1111-4111-8111-111111111111",
+      seatActor: actor,
+      requesterLabel: "Keystone",
+      hostPubkey: "ff".repeat(32),
+    },
+    {
+      sessionRef: "22222222-2222-4222-8222-222222222222",
+      seatActor: actor,
+      requesterLabel: "Parallax",
+      hostPubkey: "ff".repeat(32),
+    },
+  ];
+  // One identity hired into two umbrellas by two different leads. Joining on
+  // the actor alone showed the newer requester's name on both.
+  assert.equal(
+    codingSessionHireDispatchLabelForSeat(outcomes, {
+      actorPubkey: actor,
+      sessionRef: "11111111-1111-4111-8111-111111111111",
+    }).label,
+    "Keystone",
+  );
+  assert.equal(
+    codingSessionHireDispatchLabelForSeat(outcomes, {
+      actorPubkey: actor,
+      sessionRef: "22222222-2222-4222-8222-222222222222",
+    }).label,
+    "Parallax",
+  );
+  // A session this host answered no hire for gets no vouch at all.
+  assert.equal(
+    codingSessionHireDispatchLabelForSeat(outcomes, {
+      actorPubkey: actor,
+      sessionRef: "33333333-3333-4333-8333-333333333333",
+    }),
+    null,
+  );
+  // And no host key means no vouch: without it nothing could require the
+  // signer to be this computer's own operator.
+  assert.equal(
+    codingSessionHireDispatchLabelForSeat(
+      [{ sessionRef: "s", seatActor: actor, requesterLabel: "X" }],
+      { actorPubkey: actor, sessionRef: "s" },
+    ),
+    null,
+  );
+});
+
+test("a hire naming somebody other than its signer is disclosed, not believed", async () => {
+  const { codingSessionHireRequesterStanding } = await import(
+    "./codingSessionHireWire.ts"
+  );
+  const { codingSessionHireRequesterLabel } = await import(
+    "./codingSessionHireSeat.ts"
+  );
+  const { resolveCodingSessionPromptAuthorLabel } = await import(
+    "./codingSessionPromptAttribution.ts"
+  );
+  const signer = "a1".repeat(32);
+  const claimed = "b2".repeat(32);
+  const host = "ff".repeat(32);
+  const standing = codingSessionHireRequesterStanding({
+    requesterPubkey: signer,
+    action: { requestedBy: claimed },
+  });
+  assert.equal(standing.kind, "disputed");
+  const label = codingSessionHireRequesterLabel({
+    standing,
+    nameFor: (pubkey) => (pubkey === claimed ? "Keystone" : null),
+  });
+  // Both keys are on screen, and the word "unverified" is on the label — a
+  // forged attribution printed as a name is the failure this closes.
+  assert.match(label, /a1a1a1a1…a1a1/);
+  assert.match(label, /Keystone/);
+  assert.match(label, /unverified attribution/);
+  assert.match(
+    resolveCodingSessionPromptAuthorLabel({
+      hireDispatch: { label, hostPubkey: host },
+      operatorPubkey: host,
+    }),
+    /\(unverified attribution\) · via your Desktop$/,
+  );
+});
+
+test("a hire that claimed no requester is unknown, never mismatched", async () => {
+  const { codingSessionHireRequesterStanding } = await import(
+    "./codingSessionHireWire.ts"
+  );
+  const { codingSessionHireRequesterLabel } = await import(
+    "./codingSessionHireSeat.ts"
+  );
+  const signer = "a1".repeat(32);
+  const standing = codingSessionHireRequesterStanding({
+    requesterPubkey: signer,
+    action: {},
+  });
+  assert.equal(standing.kind, "unclaimed");
+  assert.equal(
+    codingSessionHireRequesterLabel({ standing, nameFor: () => null }),
+    "A seat (a1a1a1a1…a1a1)",
+  );
+});
+
+test("a create naming no hire falls back rather than guessing a lead", async () => {
+  const {
+    CODING_SESSION_HIRE_HOST_AUTHOR_LABEL,
+    resolveCodingSessionPromptAuthorLabel,
+  } = await import("./codingSessionPromptAttribution.ts");
+  // Batch 1 item 10's fallback survives for exactly the case it was written
+  // for: a vouch that names no requester. With no vouch at all there is no
+  // hire-host branch to take, and the byline is the signer's.
+  assert.equal(
+    resolveCodingSessionPromptAuthorLabel({
+      hireDispatch: { label: null, hostPubkey: "ff".repeat(32) },
+      operatorPubkey: "ff".repeat(32),
+    }),
+    CODING_SESSION_HIRE_HOST_AUTHOR_LABEL,
+  );
 });

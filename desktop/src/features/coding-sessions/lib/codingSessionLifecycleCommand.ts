@@ -59,7 +59,65 @@ export type CodingSessionCreateAction = {
   model: string | null;
   title: string | null;
   initialTurn: string | null;
+  /**
+   * Event id of the kind:44221 `session.hire` this create answers.
+   *
+   * Additive and optional exactly like `sessionRef`, `genesisRef` and the seat
+   * pair before it: an absent key is the pre-amendment form and stays valid
+   * forever, and an explicit `null` is refused rather than read as "absent"
+   * ({@link CODING_SESSION_HIRE_REF_ON_HIRE_REFUSAL}'s sibling rule). It
+   * closes the attribution loop from the create's end — a seated create naming
+   * no hire is a seat nobody can attribute to a request.
+   */
+  hireRef?: string;
 };
+
+/**
+ * Verbatim refusal when a create carries the hire's `requestedBy`.
+ *
+ * Frozen: `crates/buzz-core/testdata/coding_session_hire_requester/vectors.json`
+ * quotes this sentence as the one a TypeScript decoder must also produce, and
+ * a test in this feature asserts both sides still say it. "action has missing
+ * or unsupported fields" is true, unactionable, and is what the Rust decoder
+ * said until REVIEW-B1 F1.
+ */
+export const CODING_SESSION_REQUESTED_BY_ON_CREATE_REFUSAL =
+  "coding-session lifecycle command action.requestedBy is a hire field and " +
+  "does not belong on a create: requestedBy names the seat that ran `bee " +
+  "sessions hire`; a create names the hire it answers with hireRef";
+
+/** Verbatim refusal when a hire carries the create's `hireRef`. */
+export const CODING_SESSION_HIRE_REF_ON_HIRE_REFUSAL =
+  "coding-session lifecycle command action.hireRef is a create field and " +
+  "does not belong on a hire: a hire cannot answer itself; the founder's host " +
+  "writes hireRef on the create it publishes in reply";
+
+/** True for a lowercase 64-hex event id or pubkey — never an uppercase copy. */
+export function isCodingSessionLifecycleHex64(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+/**
+ * The refusal an action earns for carrying the *other* action's additive key,
+ * or null when neither key is crossed.
+ *
+ * The two keys never cross, and the refusal names the offending key and says
+ * where it belongs, because a reader who is told only that the key set is
+ * wrong fixes it by guessing.
+ */
+export function describeCrossedCodingSessionLifecycleKey(
+  action: unknown,
+): string | null {
+  if (typeof action !== "object" || action === null) return null;
+  const type = (action as { type?: unknown }).type;
+  if (type === "session.create" && Object.hasOwn(action, "requestedBy")) {
+    return CODING_SESSION_REQUESTED_BY_ON_CREATE_REFUSAL;
+  }
+  if (type === "session.hire" && Object.hasOwn(action, "hireRef")) {
+    return CODING_SESSION_HIRE_REF_ON_HIRE_REFUSAL;
+  }
+  return null;
+}
 
 export type CodingSessionResumeAction = {
   type: "session.resume";
@@ -131,6 +189,14 @@ export function buildCodingSessionCreateEvent(input: {
   title: string | null;
   initialTurn: string | null;
   /**
+   * The 44221 hire this create answers, when it answers one (2026-09-01).
+   *
+   * Trailing and present-or-absent, exactly like `routing` after it: a create
+   * nobody hired is byte-identical to the form every existing consumer already
+   * reads.
+   */
+  hireRef?: string;
+  /**
    * The routing decision that chose this seat's execution target, when one
    * did (2026-08-30).
    *
@@ -169,6 +235,12 @@ export function buildCodingSessionCreateEvent(input: {
       model: input.model,
       title: input.title,
       initialTurn: input.initialTurn,
+      // Additive key order after the historical base is `actor, role, hireRef,
+      // routing` (REPORT-B1 §3.2). The seat pair is emitted above with the
+      // rest of the 10-key form this builder has always written; `hireRef`
+      // lands here, before `routing`, so both trailing amendments keep every
+      // earlier form byte-identical when absent.
+      ...(input.hireRef === undefined ? {} : { hireRef: input.hireRef }),
       ...(input.routing === undefined || input.routing === null
         ? {}
         : { routing: input.routing }),
@@ -205,6 +277,7 @@ export function validateCodingSessionCreateInput(input: {
   model: string | null;
   title: string | null;
   initialTurn: string | null;
+  hireRef?: string;
   routing?: CodingSessionRoutingRecord | null;
 }): void {
   if (
@@ -295,6 +368,15 @@ export function validateCodingSessionCreateInput(input: {
     "action.initialTurn",
     MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES,
   );
+  // Lowercase 64-hex, never coerced: pubkeys and event ids are compared
+  // byte-for-byte against relay-signed facts, so an uppercase copy is a
+  // different string and is rejected rather than folded.
+  if (
+    input.hireRef !== undefined &&
+    !isCodingSessionLifecycleHex64(input.hireRef)
+  ) {
+    throw new Error("action.hireRef must be a lowercase 64-hex event id");
+  }
 }
 
 /** Build an exact-generation request to reattach a disconnected execution. */

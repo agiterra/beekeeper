@@ -9,7 +9,11 @@ import {
   resolveCodingSessionHandoffSource,
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
-import type { CodingSessionPromptSeatResolver } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
+import {
+  codingSessionHireDispatchLabelForSeat,
+  type CodingSessionPromptSeatResolver,
+} from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
+import { useCodingSessionHireOutcomes } from "@/features/coding-sessions/hooks/useCodingSessionHire";
 import {
   CODING_SESSION_CONTINUITY_STATUSES,
   CODING_SESSION_CONTINUITY_TITLE,
@@ -222,6 +226,22 @@ export function CodingSessionUmbrellaTurnBlock({
   const collapsedLine = collapsible
     ? codingSessionCollapsedTurnBlockLine(missionItems)
     : null;
+  // Signed evidence that this execution is a seat this computer hired: the
+  // hire host records the actor it seated **and the umbrella it seated it
+  // into**, and both must match. It carries the key that signed the create, so
+  // the renderer requires the prompt's own signer to be that key rather than
+  // overriding it (REVIEW-B3 F3, N1). Null on any other machine, where the
+  // ordinary signer-based byline renders instead of a name nobody here can
+  // check.
+  const hireOutcomes = useCodingSessionHireOutcomes();
+  const hireDispatch = React.useMemo(
+    () =>
+      codingSessionHireDispatchLabelForSeat(hireOutcomes, {
+        actorPubkey: record?.agentRef,
+        sessionRef: umbrella.sessionRef,
+      }),
+    [hireOutcomes, record?.agentRef, umbrella.sessionRef],
+  );
   // C1a: the seat's own identity, from `agentRef` resolved through kind-0 —
   // never `block.signerPubkey`, which one provider stamps on every seat.
   const byline = buildCodingSessionTurnByline({
@@ -457,6 +477,7 @@ export function CodingSessionUmbrellaTurnBlock({
       <CodingSessionTranscript
         currentUserPubkey={currentUserPubkey}
         generationId={block.generationId}
+        hireDispatch={hireDispatch}
         isWorking={isWorking}
         items={narrativeItems}
         operatorProfiles={operatorProfiles}
@@ -471,6 +492,7 @@ export function CodingSessionUmbrellaTurnBlock({
           <CodingSessionTranscript
             currentUserPubkey={currentUserPubkey}
             generationId={block.generationId}
+            hireDispatch={hireDispatch}
             isWorking={false}
             items={executionItems}
             operatorProfiles={operatorProfiles}

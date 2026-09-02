@@ -27,6 +27,10 @@ import {
 import { publishCodingSessionGenesis } from "../lib/codingSessionGenesis";
 import { publishCodingSessionGoal } from "../lib/codingSessionGoal";
 import {
+  buildCodingSessionPolicyEvent,
+  type CodingSessionPolicyDraft,
+} from "../lib/codingSessionPolicy";
+import {
   ensureCodingSessionCreateOperatorGrants,
   ensureCodingSessionSeatGrant,
 } from "../lib/codingSessionOperatorGrant";
@@ -75,6 +79,14 @@ export type CodingSessionCrewLaunchHostDeps = {
   publishGenesis: typeof publishCodingSessionGenesis;
   /** Publish the umbrella's kind:44227 goal. */
   publishGoal: typeof publishCodingSessionGoal;
+  /**
+   * Turn a policy draft into the exact unsigned kind:44245 event.
+   *
+   * Every rule about what a policy may contain belongs to `buzz-core` and
+   * reaches this hook through the Tauri boundary, so nothing on this side
+   * validates a bound, spells a vocabulary word, or knows the kind integer.
+   */
+  buildPolicyEvent: typeof buildCodingSessionPolicyEvent;
   stageCreateHint: typeof stageCodingSessionCreateHint;
   recordWorkdirUse: typeof recordCodingSessionWorkdirUse;
   /** The three custody/membership steps `publishSeatedCodingSessionCreate` runs. */
@@ -101,6 +113,7 @@ export const DEFAULT_CODING_SESSION_CREW_LAUNCH_DEPS: CodingSessionCrewLaunchHos
     ensureProviderMembership: ensureProviderChannelMembership,
     publishGenesis: publishCodingSessionGenesis,
     publishGoal: publishCodingSessionGoal,
+    buildPolicyEvent: buildCodingSessionPolicyEvent,
     stageCreateHint: stageCodingSessionCreateHint,
     recordWorkdirUse: recordCodingSessionWorkdirUse,
     seatDeps: {
@@ -179,6 +192,15 @@ export function useCodingSessionCrewLaunch(input: {
    */
   workdir: string | null;
   title: string | null;
+  /**
+   * The session policy this launch publishes, or null when it sets none.
+   *
+   * Held here rather than inside `CodingSessionCrewLaunchInput` for the same
+   * reason the workdir is: it is a form field that keeps changing under a
+   * stable launch callback, and the draft the person can still see when they
+   * press the button is the one that must be signed.
+   */
+  policy?: CodingSessionPolicyDraft | null;
   /** Injected in tests; this computer's relay, disk and keyring by default. */
   deps?: CodingSessionCrewLaunchHostDeps;
 }) {
@@ -211,6 +233,7 @@ export function useCodingSessionCrewLaunch(input: {
       try {
         const { providerAuthorityPubkey, providerInstanceRef } =
           codingSessionCrewLaunchRuntimeBinding(runtimeTarget);
+        const policyDraft = current.policy ?? null;
         const launched = await deps.runLaunch(launchInput, {
           ensureChannel: current.ensureChannelId ?? undefined,
           createLeadWorktree: deps.createWorktree,
@@ -256,6 +279,46 @@ export function useCodingSessionCrewLaunch(input: {
             }
             return genesis;
           },
+          validatePolicy: policyDraft
+            ? async () => {
+                // The channel may not exist yet, and neither do the refs — the
+                // point of the dry run is the *body*, whose cross-field rules
+                // (`tokensPerSeat` above `tokensPerSession`, a zero limit, an
+                // empty collection) are what would otherwise refuse after the
+                // genesis. Canonical placeholders let core read the whole
+                // record; a refusal comes back in core's own words.
+                await deps.buildPolicyEvent({
+                  channelRef: "00000000-0000-4000-8000-000000000000",
+                  sessionRef: "00000000-0000-4000-8000-000000000000",
+                  genesisRef: "00".repeat(32),
+                  draft: policyDraft,
+                });
+              }
+            : undefined,
+          publishPolicy: policyDraft
+            ? async ({ channelId, sessionRef, genesisRef }) => {
+                const built = await deps.buildPolicyEvent({
+                  channelRef: channelId,
+                  sessionRef,
+                  genesisRef,
+                  draft: policyDraft,
+                });
+                // What is signed is Rust's own serialization of the record,
+                // never this side's: a producer and a reader that disagree
+                // about the bytes cannot survive one launch.
+                const event = await deps.signer({
+                  kind: built.kind,
+                  content: built.content,
+                  tags: built.tags.map((tag) => [...tag]),
+                });
+                const accepted = await deps.publisher.publishEvent(
+                  event,
+                  "Timed out while publishing the session policy.",
+                  "Failed to publish the session policy.",
+                );
+                return { eventId: accepted.id };
+              }
+            : undefined,
           publishSeatCreate: async ({
             seat,
             index,
@@ -318,10 +381,10 @@ export function useCodingSessionCrewLaunch(input: {
                     role: seat.role,
                     providerInstanceRef,
                     providerAuthorityPubkey,
-                    // Verbatim: the seat's model was decided once, in
-                    // `resolveCodingSessionCrewSeats`, and that is the model
-                    // the family check and the roster both read. A fallback
-                    // applied here would publish a model no check ever saw.
+                    // Verbatim: the seat's model was decided once, by
+                    // `resolveCodingSessionLeadModel`, and that is the model
+                    // readiness gated on. A fallback applied here would
+                    // publish a model no check ever saw.
                     model: seat.model,
                     title: index === 0 && current.title ? current.title : null,
                     // The goal reaches the primary as its own turn, after the

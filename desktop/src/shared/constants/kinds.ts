@@ -151,6 +151,17 @@ export const KIND_CODING_SESSION_CLOSURE = 44230;
 // buzz-core (`buzz-coding-session-team-transaction/v1`).
 export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;
 
+/**
+ * Kind:44245 session policy (NIP-CSP), addressable by `d` = sessionRef.
+ *
+ * Declared here so no surface writes the integer itself. Desktop never encodes
+ * or decodes the record — that belongs to `buzz-core` behind
+ * `desktop/src-tauri/src/commands/coding_session_policy.rs` — but the launch
+ * form names the kind when it says what pressing the button publishes, and a
+ * literal there could drift from the wire without anything failing.
+ */
+export const KIND_CODING_SESSION_POLICY = 44245;
+
 // ── Project Pulse (44240) ────────────────────────────────────────────────────
 //
 // NIP-PU: an author's explicit claim about a project — a plan, milestone,

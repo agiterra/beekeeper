@@ -125,13 +125,22 @@ export function hasStrictLifecycleCommandJson(
       ...unseated,
       ...unseated.map((form) => [...form, "actor", "role"]),
     ];
+    // The 2026-09-01 attribution amendment: `hireRef` names the 44221 hire a
+    // seated create answers. Trailing and independent of the seat pair and of
+    // routing, exactly as buzz-core enumerates it — 3 bases x seated x
+    // attributed x routed = 24 accepted shapes
+    // (`coding_session_lifecycle_command.rs`, matrix at REPORT-B1 2.3).
+    const hireForms = [
+      ...seatForms,
+      ...seatForms.map((form) => [...form, "hireRef"]),
+    ];
     // The 2026-08-30 routing amendment, trailing and independent — so every
     // seat form doubles rather than being replaced. Enumerating fewer would
     // drop every routed create on the floor, which on this surface is not a
     // strictness nuance but a blank session list.
     return hasExactFields(action, [
-      ...seatForms,
-      ...seatForms.map((form) => [...form, "routing"]),
+      ...hireForms,
+      ...hireForms.map((form) => [...form, "routing"]),
     ]);
   }
   return (
@@ -170,6 +179,15 @@ export function hasStrictLifecycleCommandValues(
         /^[0-9a-f]{64}$/.test(action.actor) &&
         typeof action.role === "string" &&
         isRoleSlug(action.role));
+    // Absent is not null. A key-set check sees an explicit null as *present*,
+    // so without this line the same bytes would mean "no hire" to this reader
+    // and "malformed" to buzz-core's strict decoder. Uppercase is rejected,
+    // never coerced: these ids are compared byte-for-byte against signed
+    // facts.
+    const hireRefValid =
+      !Object.hasOwn(action, "hireRef") ||
+      (typeof action.hireRef === "string" &&
+        /^[0-9a-f]{64}$/.test(action.hireRef));
     return (
       boundedNullable(action.projectRef, MAX_REFERENCE_BYTES) &&
       boundedNullable(action.repoRef, MAX_REFERENCE_BYTES) &&
@@ -180,6 +198,7 @@ export function hasStrictLifecycleCommandValues(
       sessionRefValid &&
       genesisValid &&
       seatValid &&
+      hireRefValid &&
       (!Object.hasOwn(action, "routing") ||
         hasStrictRoutingRecord(action.routing))
     );

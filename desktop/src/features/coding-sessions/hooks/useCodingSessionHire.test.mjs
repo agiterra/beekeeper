@@ -554,3 +554,120 @@ test("F2: a confirmation the relay never lets through is not retryable", async (
   );
   assert.deepEqual(publishes, ["grant-operator"]);
 });
+
+// ── B3.2: the create names the hire it answers, and the requester is named ────
+
+test("B3.2: the seated create carries hireRef = the 44221's own event id", async () => {
+  // Before this, a seated create pointed at nothing: the founder's Desktop
+  // signed it, so the brief read as the founder's own words and nothing on the
+  // wire recorded which lead had asked (batch 1, item 10).
+  const host = await harness();
+  const hire = await signedHire();
+  await host.deliver(hire);
+  const create = host.published.find(
+    (event) =>
+      event.kind === 44221 &&
+      JSON.parse(event.content).action.type === "session.create",
+  );
+  assert.ok(create, "the hire must be answered with a seated create");
+  const action = JSON.parse(create.content).action;
+  assert.equal(action.hireRef, hire.id);
+  assert.equal(action.actor, ADA_PUBKEY);
+  // The two keys never cross: a create carries hireRef and never requestedBy.
+  assert.equal(Object.hasOwn(action, "requestedBy"), false);
+  host.teardown();
+});
+
+test("B3.2: a refusal names the requesting seat rather than 'A seat'", async () => {
+  // The relay does not compare `requestedBy` with the signer (POLICY.md §5),
+  // so this host does — and a hire whose claim holds earns the plain name.
+  const { buildCodingSessionHireEvent } = await import(
+    "../lib/codingSessionHireWire.ts"
+  );
+  const host = await harness();
+  await host.deliver(
+    finalizeEvent(
+      {
+        created_at: HIRE_CREATED_AT,
+        ...buildCodingSessionHireEvent({
+          channelId: CHANNEL_ID,
+          commandId: "csl-hire-refused-1",
+          sessionRef: SESSION_REF,
+          genesisRef: GENESIS_REF,
+          // A role nothing on this computer can fill: refused, and the
+          // refusal is what this test reads.
+          role: "archaeologist",
+          providerInstanceRef: "claude-primary",
+          model: null,
+          brief: "Dig.",
+          requestedBy: LEAD_PUBKEY,
+        }),
+      },
+      LEAD_SECRET,
+    ),
+  );
+  const lines = host.published
+    .filter((event) => event.kind !== 44220)
+    .map((event) => event.content)
+    .filter((content) => content.includes("asked to hire"));
+  assert.ok(lines.length > 0, "the umbrella must be told about the refusal");
+  // Named, not "A seat". The lead is not one of this host's managed agents in
+  // this fixture, so the canonical short pubkey is the honest name.
+  assert.match(lines[0], /^A seat \(/);
+  assert.equal(lines[0].includes("A seat asked"), false);
+  host.teardown();
+});
+
+// ── REVIEW-B3 N2: the store is community-scoped and must be reset with one ────
+
+test("N2: switching communities clears the hire-outcome store", async () => {
+  // CLAUDE.md: `resetCommunityState()` is the canonical inventory of
+  // community-scoped singletons, and React remounting clears React state only.
+  // This store became a *rendered* fact this batch — a hired seat's first turn
+  // is attributed from it — so a hire answered in community A could otherwise
+  // put a lead's name on a transcript row in community B.
+  const {
+    publishCodingSessionHireOutcomes,
+    readCodingSessionHireOutcomes,
+    resetCodingSessionHireOutcomes,
+  } = await import("./useCodingSessionHire.ts");
+  resetCodingSessionHireOutcomes();
+  publishCodingSessionHireOutcomes([
+    {
+      commandId: "csl-hire-a",
+      channelId: CHANNEL_ID,
+      sessionRef: SESSION_REF,
+      role: "builder",
+      state: "seated",
+      detail: null,
+      seatCommandId: "csl-seat-a",
+      granted: true,
+      seatActor: ADA_PUBKEY,
+      requesterLabel: "Keystone",
+      hostPubkey: OPERATOR_PUBKEY,
+    },
+  ]);
+  assert.equal(readCodingSessionHireOutcomes().length, 1);
+
+  // The reset the community switch runs, read from the module that owns the
+  // inventory rather than called directly — so deleting the line fails here.
+  const source = await import("node:fs").then((fs) =>
+    fs.readFileSync(
+      new URL("../../communities/useCommunityInit.ts", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.match(
+    source,
+    /resetCodingSessionHireOutcomes\(\);/,
+    "resetCommunityState() must reset the hire-outcome store",
+  );
+  assert.match(
+    source,
+    /import \{ resetCodingSessionHireOutcomes \}/,
+    "…and import it from the hook that owns it",
+  );
+
+  resetCodingSessionHireOutcomes();
+  assert.deepEqual(readCodingSessionHireOutcomes(), []);
+});

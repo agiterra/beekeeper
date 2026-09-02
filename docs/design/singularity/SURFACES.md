@@ -1814,3 +1814,177 @@ takes ~310 px, so a 1400 px window leaves the body 1089 and the rail folds.
 **Still true, and worth repeating**: the rail needs roughly a **1590 px
 window**, not 1440 — the gate measures the workspace body and the app's chrome
 takes ~310 px, so §9's own `Route` artboard size does not render the rail.
+## 21. 2026-09-02 — the launch dialog becomes one form (lane B3)
+
+The dialog had two tabs, *One session* and *Team*, and finding 12 of the
+2026-09-01 live run is what two tabs cost. The Team tab carried **no provider
+control at all**, so a team's lead ran on whatever the One-session tab happened
+to be showing; that tab's `effectiveModel` was handed to
+`resolveCodingSessionCrewSeats` as `fallbackModel` and became the published
+model of every seat that pinned none. Role names were typed as free text. The
+lead's name was truncated to the point where two identities called Keystone
+read identically.
+
+The 2026-09-01 ruling: *"the dialog collapses to one form: goal · who leads ·
+governed switch · bench · budget/posture · working directory · access;
+readiness shows only blockers, honest unknowns behind a disclosure; nobody is
+seated at launch except the lead, or you."*
+
+### 21.1 The form
+
+One column, in the order of the thinking:
+
+| Field | What it decides | Source of truth |
+|---|---|---|
+| **Goal** | the mission, published as its own kind:44227 and carried as the lead's first turn | one state, whoever leads |
+| **Who leads** | you, or one seated identity | managed agents whose pack declares a role |
+| **Governed** | genesis + authority chain, or not | **derived from the lead**, never a free switch |
+| **Provider and model** | what the lead runs on | the identity's own model, or an override with a reason |
+| **Bench** | who the lead may hire, and on which runtimes | published as `bench.identities` / `bench.providers` |
+| **Posture, budget, limits** | the kind:44245 record | native `buzz-core` validation, no TypeScript rules |
+| **Working directory / worktree** | where the lead runs | unchanged |
+| **Access** | the channel or the project | unchanged |
+| **Readiness** | blockers inline, unknowns behind *Details* | one pure function, shared with the button |
+
+### 21.2 Two defects removed by construction, not by a check
+
+- **The fallback-model leak.** Closed on the path the form actually takes.
+  `resolveCodingSessionCrewSeats` — which took the leaking parameter — had no
+  production caller left once the Team tab went, and is **deleted**; removing
+  its third argument closed the leak on a dead function while the live path
+  still published the model *picker's* default for an identity that declared
+  none (REVIEW-B3 F1). `resolveCodingSessionLeadModel`
+  (`lib/codingSessionLaunchForm.ts`) now settles it, and it has exactly two
+  sources: the identity's own model, or an explicit pick — which is an
+  **override** and owes a reason. Neither, and the launch is **blocked**, in
+  words, rather than borrowing a model from a control that was never about
+  this seat. An empty string is not a model either: a runtime whose models
+  command has not answered publishes `defaultModel: ""`, and that used to
+  reach the create builder on the governed branch and throw *after* the
+  genesis, the goal and the policy were signed (F2).
+- **Free-text roles.** The lead's role is read from its pack and rendered. The
+  select offers only identities that carry one; the rest are not leads.
+
+### 21.3 Governed is decided by who leads
+
+An agent lead is always governed — a seat holds authority only through a
+genesis and an accepted chain, so an ungoverned agent lead would be an agent
+with no standing to report, to hire, or to be granted anything. Leading it
+yourself is always ungoverned: a governed session exists so somebody who is
+*not* you can hold a seat in it, and founding a roster of one, yourself, would
+publish three records answering no question. The switch is shown and derived
+rather than shown and free, and it states the reason either way.
+
+**Consequence, recorded rather than buried:** the launch form no longer offers
+an ungoverned *seated* create. That shape existed (One session + an agent
+seat) and is gone. Seating an identity into an existing session is still the
+join dialog's job (`AddCodingSessionProviderDialog`), which is where the seat
+field with its role box now lives alone.
+
+### 21.4 Blockers and unknowns are different facts
+
+A **blocker** is inline, always visible, phrased as something to do, and it is
+**the** expression the button is disabled on: `canLaunch` is
+`readiness.canLaunch`, nothing more. Busy states — preparing a project's
+channel, re-checking readiness, a create already in flight — are blockers with
+their own sentences rather than a second `&&` beside the button, because that
+is what left a disabled control with nothing under it during preparation, which
+is the item-79 shape this form claims to have removed (REVIEW-B3 F7).
+
+An **unknown** sits behind *Details*: it never blocks, and it is never dropped,
+because "this computer could not check" and "it is fine" are different facts
+and only the first is ever an excuse. Today's unknowns: unread project
+readiness, a role pack nobody asked about, a role pack this computer does not
+hold, an ungoverned session, and a published policy nothing enforces. *A lead
+that names no model is not among them* — for an agent lead it is a blocker
+(§21.2); leading it yourself it stays an unknown, because the picker is your
+own choice.
+
+### 21.5 The policy is stated, not enforced — and says so
+
+`docs/design/portable-team-loop/POLICY.md` §4 in one constant,
+`CODING_SESSION_POLICY_STATED_NOT_ENFORCED`, rendered under every policy
+control: *"Stated, not enforced. This is published as the mission's intention;
+nothing in this build refuses a turn, a token or a push because of it."*
+The sentence quotes POLICY.md §4's own words — *"a published policy is a
+stated intention, not an enforced limit"* — rather than paraphrasing it, so the
+disclosure and the contract cannot soften independently (REVIEW-B3 F9).
+`CODING_SESSION_POLICY_ENFORCED_FIELDS` is empty and is the single place that
+claim is made; B2.4 gives `budget.turns` its first consumer, and adding that
+one string is what flips the row.
+
+The draft is validated **before the genesis is signed**. Every 44245 rule is
+core's, which is right, and the consequence was that a cross-field refusal —
+`tokensPerSeat` above `tokensPerSession`, say — was first evaluated after the
+session was founded and its goal published (F4). A dry run through the same
+native builder costs one call and moves the refusal back to where it costs
+nothing; and when a step *does* fail after the genesis, the failure says so in
+words and names the session and genesis ids, because a founded, seatless
+umbrella nobody can find is the same defect as a badge pointing at a message
+that is not there.
+
+No policy rule lives in TypeScript. The draft crosses a native boundary
+(`desktop/src-tauri/src/commands/coding_session_policy.rs`) and comes back as
+the exact unsigned event **plus Rust's own serialization of the content**, so
+what the keyring signs is what the decoder read. The TypeScript side is an
+exact-field decoder pinned in both directions to a fixture the adapter
+generates.
+
+### 21.6 What a launch publishes, said before it is pressed
+
+The plan list names each event and carries its kind integer in `data-kind`,
+read from `shared/constants/kinds.ts` rather than typed out, so the sentence
+and the wire cannot drift: 44226 genesis, 44227
+goal, 44245 policy (only when one was set), **one** 44221 create, 44228 grants,
+44220 first turn. A launch that sets no policy publishes none — the withdrawal
+record is a deliberate act of taking a policy back, not the default shape of a
+session nobody wrote a policy for.
+
+### 21.7 Attribution closes at both ends
+
+The seated create a hire is answered with now carries `hireRef` = the 44221
+hire's own event id, and a hire carries `requestedBy`. The founder's host
+compares `requestedBy` with the hire's **own signer** before naming anybody:
+the relay does not (POLICY.md §5), so a name printed without asking would be a
+forgeable claim rendered as fact. Three answers, three sentences — `attributed`
+earns the plain name, `unclaimed` names the signer and claims nothing,
+`disputed` shows both keys and the words *unverified attribution*. A hired
+seat's first turn reads `<requester> · via your Desktop`, **rendered**, and the
+branch that produces it consults **three signed facts and no words**:
+
+1. a hire record vouches for this execution — joined by the actor it seated
+   **and** the umbrella it was seated into, never the actor alone;
+2. the prompt carries no 44220 command id, because the brief travels inside the
+   create while any later turn to that seat is a command;
+3. the stamped `operatorPubkey` **is** the key that signed that create.
+
+(3) is what keeps the branch from outranking the signer: it does not override
+`operatorPubkey`, it requires a particular value of it. The first attempt
+derived the same fact from the `[From the lead] ` text prefix and took that
+branch before it looked at the signer at all — which rendered a lane message
+signed by the **builder seat** as `Your Desktop (hire host)`, and would have
+taken a prompt stamped with the reader's own key away from them on the strength
+of a string (REVIEW-B3 N1). A content prefix never outranks a signature, and the
+Conversation byte-identity fixture now carries exactly that message so the check
+can see it.
+
+Batch 1 item 10's `Your Desktop (hire host)` survives for the case it was
+written for — a vouch that names no requester. With no vouch at all there is no
+hire-host branch to take, and the byline is simply the signer's.
+
+The store the vouch is read from is community-scoped, so it is reset by
+`resetCommunityState()`: it became a *rendered* fact this batch, and a hire
+answered in one community would otherwise put a lead's name on a transcript row
+in the next.
+
+### 21.8 What the deleted tab left behind
+
+`NewCodingSessionCrewTab.tsx` is gone, not merely emptied. Deleting the
+component alone left a 385-line module named for a tab that no longer exists,
+carrying twelve exports of which ten had lost their last production caller —
+including `CodingSessionCrewRoster`, the roster that told the "four rows, one
+live agent" lie D14 removed — with a test suite keeping every one of them
+green, so nothing would ever have flagged them (REVIEW-B3 F5). The two
+survivors are in `NewCodingSessionLaunchNotes.tsx`, named for what they are;
+`resolveCodingSessionCrewSeats` is deleted with them, and so are the tests that
+were the only thing still calling either.

@@ -721,3 +721,146 @@ test("a failed launch, or one with no provider named, opens nothing", () => {
     null,
   );
 });
+
+// ── B3.1: the session policy, between the genesis and the first create ────────
+
+test("a policy is published after the genesis and before any seat is created", async () => {
+  // Order is the point. A seat should be able to read the posture and the
+  // budget it is working under off the wire rather than out of the founder's
+  // memory, so the record has to exist before the seat does.
+  const deps = recordingDeps({
+    publishPolicy: async ({ sessionRef, genesisRef }) => {
+      deps.log.push("policy");
+      assert.equal(sessionRef, "11111111-1111-4111-8111-111111111111");
+      assert.equal(genesisRef, "genesis-1");
+      return { eventId: "policy-1" };
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, policySet: true },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.policyEventId, "policy-1");
+  assert.deepEqual(deps.log.slice(0, 3), ["genesis", "policy", "publish:lead"]);
+  const step = result.steps.find((entry) => entry.id === "policy");
+  assert.equal(step.state, "done");
+});
+
+test("a launch that set no policy publishes none, and shows no step for one", async () => {
+  // The withdrawal record is a deliberate act of taking a policy back, never
+  // the default shape of a session nobody wrote a policy for.
+  const deps = recordingDeps({
+    publishPolicy: async () => {
+      deps.log.push("policy");
+      return { eventId: "policy-1" };
+    },
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+  assert.equal(result.policyEventId, null);
+  assert.equal(deps.log.includes("policy"), false);
+  assert.equal(
+    result.steps.some((entry) => entry.id === "policy"),
+    false,
+  );
+});
+
+test("a policy that will not publish stops the launch, by name", async () => {
+  // Unlike the goal — which still reaches the lead in its first turn — a
+  // policy that fails to publish is a ceiling the founder set and nobody can
+  // read. Launching anyway would put a team to work under limits that exist
+  // only on the screen that is about to close.
+  const deps = recordingDeps({
+    publishPolicy: async () => {
+      throw new Error("rate-limited: quota exceeded");
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, policySet: true },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "policy");
+  assert.match(result.failureReason, /policy was not published/);
+  assert.match(result.failureReason, /quota exceeded/);
+  // The genesis stands: a failed step never un-founds the session before it.
+  assert.equal(result.genesisRef, "genesis-1");
+  assert.equal(deps.log.includes("publish:lead"), false);
+});
+
+test("a launch asked for a policy with nothing able to publish one is refused", async () => {
+  const deps = recordingDeps({});
+  delete deps.publishPolicy;
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, policySet: true },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "policy");
+  assert.match(result.failureReason, /nothing here can publish one/);
+});
+
+test("F4: a policy core refuses is refused before the session is founded", async () => {
+  // Every 44245 rule belongs to buzz-core, which is right — and meant a
+  // cross-field refusal was first evaluated after 44226 and 44227 were already
+  // on the wire. The dry run costs one call and moves it back to where it
+  // costs nothing.
+  const deps = recordingDeps({
+    validatePolicy: async () => {
+      deps.log.push("validate");
+      throw new Error("budget.tokensPerSeat must not exceed tokensPerSession");
+    },
+    publishPolicy: async () => {
+      deps.log.push("policy");
+      return { eventId: "policy-1" };
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, policySet: true },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "family-check");
+  assert.match(result.failureReason, /must not exceed tokensPerSession/);
+  // Nothing was founded, so there is no orphan to name.
+  assert.equal(result.genesisRef, null);
+  assert.equal(deps.log.includes("genesis"), false);
+  assert.deepEqual(deps.log, ["validate"]);
+});
+
+test("F4: a failure after the genesis names the session it left behind", async () => {
+  const deps = recordingDeps({
+    publishPolicy: async () => {
+      throw new Error("rate-limited: quota exceeded");
+    },
+  });
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, policySet: true },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  // In words, and with the ids — the step list says it only as an icon and a
+  // colour, and a session a person cannot find is the same defect as a badge
+  // pointing at a message that is not there.
+  assert.match(result.failureReason, /already founded and has no seats/);
+  assert.match(
+    result.failureReason,
+    /session 11111111-1111-4111-8111-111111111111/,
+  );
+  assert.match(result.failureReason, /genesis genesis-1/);
+  const step = result.steps.find((entry) => entry.id === "policy");
+  assert.match(step.detail, /already founded and has no seats/);
+});
+
+test("F4: a launch that never founded anything names no orphan", async () => {
+  const deps = recordingDeps({
+    publishGenesis: async () => {
+      throw new Error("relay refused the genesis");
+    },
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, "genesis");
+  assert.doesNotMatch(result.failureReason, /already founded/);
+});

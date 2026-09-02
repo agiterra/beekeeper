@@ -50,6 +50,8 @@ import {
 import {
   CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
   CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
+  describeCrossedCodingSessionLifecycleKey,
+  isCodingSessionLifecycleHex64,
   MAX_CODING_SESSION_LIFECYCLE_CONTENT_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_IDENTIFIER_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_REFERENCE_BYTES,
@@ -89,17 +91,38 @@ export const CODING_SESSION_HIRE_ACTION_KEYS = [
 ] as const;
 
 /**
+ * The 2026-09-01 form: the seven keys plus `requestedBy`, before `routing`.
+ *
+ * `requestedBy` is the pubkey of the seat that ran `bee sessions hire`. It is
+ * additive and independent of `routing`, so the two amendments multiply rather
+ * than replace each other: **four** accepted key sets, exactly the matrix
+ * `buzz-core` decodes (`coding_session_lifecycle_command.rs`; REPORT-B1 2.3).
+ * A hire that predates either amendment keeps being read forever.
+ */
+export const CODING_SESSION_HIRE_ATTRIBUTED_ACTION_KEYS = [
+  ...CODING_SESSION_HIRE_ACTION_KEYS,
+  "requestedBy",
+] as const;
+
+/**
  * The 2026-08-30 form: the seven keys plus `routing`, last.
  *
- * Two accepted key sets, not one growing set — a relay, a CLI or a lead that
- * predates the router keeps publishing the seven-key form and keeps being
- * read. Trailing position matches how every other additive amendment on this
- * wire has landed (`sessionRef`, `genesisRef`, the seat pair).
+ * Trailing position matches how every other additive amendment on this wire
+ * has landed (`sessionRef`, `genesisRef`, the seat pair).
  */
 export const CODING_SESSION_HIRE_ROUTED_ACTION_KEYS = [
   ...CODING_SESSION_HIRE_ACTION_KEYS,
   "routing",
 ] as const;
+
+/** All four accepted key sets, built from the two independent axes. */
+export const CODING_SESSION_HIRE_ACTION_KEY_SETS: readonly (readonly string[])[] =
+  [
+    CODING_SESSION_HIRE_ACTION_KEYS,
+    CODING_SESSION_HIRE_ATTRIBUTED_ACTION_KEYS,
+    CODING_SESSION_HIRE_ROUTED_ACTION_KEYS,
+    [...CODING_SESSION_HIRE_ATTRIBUTED_ACTION_KEYS, "routing"],
+  ];
 
 /** The `session.hire` action, exactly as it appears on the wire. */
 export type CodingSessionHireAction = {
@@ -116,6 +139,18 @@ export type CodingSessionHireAction = {
   model: string | null;
   /** The seat's whole first turn. Non-empty. */
   brief: string;
+  /**
+   * The seat that asked for this hire, or absent on a hire that predates the
+   * amendment.
+   *
+   * **An unverified claim, not an attribution.** The relay verifies the
+   * event's signature and therefore holds `event.pubkey`, but v1 deliberately
+   * does not compare the two — so any signer the relay admits for a hire can
+   * name a different seat here (POLICY.md 5). This host closes that gap for
+   * itself with {@link codingSessionHireRequesterStanding}; a surface that
+   * renders the name without asking is printing a claim as a fact.
+   */
+  requestedBy?: string;
   /**
    * What the lead knows about the job, for the host's router — or absent on
    * a hire that predates the amendment.
@@ -188,6 +223,8 @@ export function buildCodingSessionHireEvent(input: {
   providerInstanceRef: string | null;
   model: string | null;
   brief: string;
+  /** The seat asking for the hire; absent reproduces the seven-key form. */
+  requestedBy?: string;
   /** Present only on a routed hire; absent reproduces the seven-key form. */
   routing?: CodingSessionHireRoutingRequest;
 }): CodingSessionLifecycleCommandEventInput {
@@ -203,8 +240,11 @@ export function buildCodingSessionHireEvent(input: {
       providerInstanceRef: input.providerInstanceRef,
       model: input.model,
       brief: input.brief,
-      // `undefined` counts as absent, so a hire that names no routing is
-      // byte-identical to the pre-amendment form.
+      // `undefined` counts as absent on both amendments, so a hire that names
+      // neither is byte-identical to the pre-amendment form.
+      ...(input.requestedBy === undefined
+        ? {}
+        : { requestedBy: input.requestedBy }),
       ...(input.routing === undefined ? {} : { routing: input.routing }),
     },
   });
@@ -237,6 +277,7 @@ export function validateCodingSessionHireInput(input: {
   providerInstanceRef: string | null;
   model: string | null;
   brief: string;
+  requestedBy?: string;
   routing?: CodingSessionHireRoutingRequest;
 }): void {
   if (input.channelId.trim().length === 0) {
@@ -284,6 +325,12 @@ export function validateCodingSessionHireInput(input: {
     throw new Error(
       `action.brief exceeds ${MAX_CODING_SESSION_HIRE_BRIEF_BYTES} bytes`,
     );
+  }
+  if (
+    input.requestedBy !== undefined &&
+    !isCodingSessionLifecycleHex64(input.requestedBy)
+  ) {
+    throw new Error("action.requestedBy must be a lowercase 64-hex public key");
   }
   if (input.routing !== undefined) {
     const read = readCodingSessionHireRoutingRequest(input.routing);
@@ -371,10 +418,18 @@ export function classifyCodingSessionHireEvent(
   };
   const malformed = (failingKey: string, reason: string) =>
     ({ kind: "malformed", failingKey, reason, address }) as const;
-  const routed = hasExactKeys(action, [
-    ...CODING_SESSION_HIRE_ROUTED_ACTION_KEYS,
-  ]);
-  if (!routed && !hasExactKeys(action, [...CODING_SESSION_HIRE_ACTION_KEYS])) {
+  // Before the key-set check, so the reader is told which key is in the wrong
+  // place rather than that the key set does not match — the same ordering
+  // `reject_foreign_additive_key` uses in buzz-core (REVIEW-B1 F1).
+  const crossed = describeCrossedCodingSessionLifecycleKey(action);
+  if (crossed) return malformed("action.hireRef", crossed);
+  const routed = Object.hasOwn(action, "routing");
+  const attributed = Object.hasOwn(action, "requestedBy");
+  if (
+    !CODING_SESSION_HIRE_ACTION_KEY_SETS.some((keys) =>
+      hasExactKeys(action, [...keys]),
+    )
+  ) {
     return malformed("action", describeHireKeySet(action));
   }
   if (routed) {
@@ -415,6 +470,13 @@ export function classifyCodingSessionHireEvent(
       boundedNonempty(action.brief, MAX_CODING_SESSION_HIRE_BRIEF_BYTES),
       `must be non-empty and at most ${MAX_CODING_SESSION_HIRE_BRIEF_BYTES} bytes`,
     ],
+    [
+      // Absent is not null, and uppercase is not folded: a hire that carries
+      // the key carries a canonical pubkey or it is malformed.
+      "action.requestedBy",
+      !attributed || isCodingSessionLifecycleHex64(action.requestedBy),
+      "must be a lowercase 64-hex public key",
+    ],
   ] as const) {
     if (!ok) return malformed(key, why);
   }
@@ -438,11 +500,44 @@ export function classifyCodingSessionHireEvent(
       providerInstanceRef: action.providerInstanceRef as string | null,
       model: action.model as string | null,
       brief: action.brief as string,
+      ...(attributed ? { requestedBy: action.requestedBy as string } : {}),
       ...(routed
         ? { routing: action.routing as CodingSessionHireRoutingRequest }
         : {}),
     },
   };
+}
+
+/**
+ * How much this host may say about who asked for a seat.
+ *
+ * Three answers, never two. `attributed` is the only one that licenses a name
+ * on screen: the hire claimed a requester **and** that claim equals the key
+ * that signed the event, which is a comparison this host makes for itself
+ * rather than trusting the relay to have made (it does not — POLICY.md 5).
+ * `unclaimed` is a hire from before the amendment: unknown, never mismatched.
+ * `disputed` is a hire naming somebody other than its own signer, which is
+ * exactly the forgery v1 leaves open, and it is disclosed rather than dropped
+ * — a seat still needs answering, and the person still needs telling.
+ */
+export type CodingSessionHireRequesterStanding =
+  | { kind: "attributed"; requesterPubkey: string }
+  | { kind: "unclaimed"; requesterPubkey: string }
+  | { kind: "disputed"; claimedPubkey: string; signerPubkey: string };
+
+/** Compare a hire's claim with its own signer. */
+export function codingSessionHireRequesterStanding(request: {
+  requesterPubkey: string;
+  action: { requestedBy?: string };
+}): CodingSessionHireRequesterStanding {
+  const signer = request.requesterPubkey.trim().toLowerCase();
+  const claimed = request.action.requestedBy;
+  if (claimed === undefined) {
+    return { kind: "unclaimed", requesterPubkey: signer };
+  }
+  return claimed === signer
+    ? { kind: "attributed", requesterPubkey: signer }
+    : { kind: "disputed", claimedPubkey: claimed, signerPubkey: signer };
 }
 
 /**
@@ -545,7 +640,9 @@ function unaddressable(
  * half of what is wrong fixes half of it.
  */
 function describeHireKeySet(action: Record<string, unknown>): string {
-  const allowed = new Set<string>(CODING_SESSION_HIRE_ROUTED_ACTION_KEYS);
+  const allowed = new Set<string>(
+    CODING_SESSION_HIRE_ACTION_KEY_SETS.flatMap((keys) => [...keys]),
+  );
   const unknown = Object.keys(action).filter((key) => !allowed.has(key));
   const missing = CODING_SESSION_HIRE_ACTION_KEYS.filter(
     (key) => !Object.hasOwn(action, key),
@@ -555,7 +652,9 @@ function describeHireKeySet(action: Record<string, unknown>): string {
   if (missing.length > 0) parts.push(`missing key(s) ${missing.join(", ")}`);
   return `${
     parts.length > 0 ? parts.join("; ") : "the key set does not match"
-  } — a session.hire carries ${CODING_SESSION_HIRE_ACTION_KEYS.join(", ")} plus an optional routing`;
+  } — a session.hire carries ${CODING_SESSION_HIRE_ACTION_KEYS.join(
+    ", ",
+  )} plus an optional requestedBy and an optional routing`;
 }
 
 function isOptionalReference(value: unknown): value is string | null {

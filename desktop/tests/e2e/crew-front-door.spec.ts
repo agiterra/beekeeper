@@ -618,6 +618,50 @@ async function openNewCodingSessionDialog(page: Page) {
   await page.getByTestId("channel-coding-sessions-new").click();
 }
 
+/**
+ * Seed a founded session in the channel and open its "add provider" dialog.
+ *
+ * The join dialog is where a seat is still chosen field by field — the launch
+ * form asks the *lead* question instead, with the role read from the
+ * identity's own pack.
+ */
+async function openJoinDialogOnSeededSession(page: Page) {
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toBeVisible();
+  await page.evaluate(
+    ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    {
+      channelName: CHANNEL_NAME,
+      events: (() => {
+        const genesis = genesisEvent();
+        return [
+          genesis,
+          ...createAndReceiptEvents(genesis.id),
+          metadataEvent(),
+        ];
+      })(),
+    },
+  );
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toHaveAttribute("aria-label", "Coding sessions (1)", { timeout: 15_000 });
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-session-open").click();
+  await expect(page.getByTestId("coding-session-header")).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByTestId("coding-session-add-provider").click();
+  await expect(
+    page.getByTestId("add-coding-session-provider-dialog"),
+  ).toBeVisible();
+}
+
 test.describe("crew front door", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
@@ -897,153 +941,65 @@ test.describe("crew front door", () => {
     });
   });
 
-  test("03 — the Team tab names its project, seats a worktree, and can launch", async ({
+  test("03 — the one form seats the lead, and says so before it is pressed", async ({
     page,
   }) => {
+    // This test drove the *Team* tab until 2026-09-01. There is no Team tab:
+    // the ruling collapsed both tabs into one form, because two tabs were two
+    // answers to "what am I starting?" and the Team half had no provider
+    // control at all — so the lead ran on whatever the other tab was showing
+    // and that tab's model leaked into every unpinned seat (item 103, finding
+    // 12). What is checked here is what this spec uniquely covered: that the
+    // front door still says what pressing it does, still refuses in words
+    // rather than in silence, and still cuts the lead its own worktree.
     await openApp(page);
     await openNewCodingSessionDialog(page);
-    await page.getByTestId("new-coding-session-tab-crew").click();
 
-    const crewTab = page.getByTestId("new-coding-session-crew");
-    await expect(crewTab).toBeVisible();
-    await expect(page.getByTestId("new-coding-session-crew-team")).toHaveValue(
-      CREW_TEAM_ID,
-    );
-    const roster = page.getByTestId("new-coding-session-crew-roster");
-    await expect(roster).toBeVisible({ timeout: 15_000 });
-    await expect(roster.locator("li")).toHaveCount(4);
-    await expect(roster).toContainText("lead");
-    await expect(roster).toContainText("runner");
-
-    // F7: every row read "vendor not declared · sonnet" and the launch was
-    // refused with "change the seat in this computer's teams.json". The seat
-    // names the runtime it will run on, and that runtime runs one vendor.
-    await expect(roster).not.toContainText("vendor not declared");
-    // The seat declares the vendor and its runtime agrees, so the roster
-    // states it plainly rather than annotating where it came from.
-    await expect(roster.locator("li").first()).toContainText(
-      "anthropic · sonnet",
-    );
-    await expect(
-      page.getByTestId("new-coding-session-crew-refusal"),
-    ).toHaveCount(0);
-
-    // Item 79: Launch is disabled here — with no goal yet — and a disabled
-    // control that says nothing is the front door refusing in silence.
-    await expect(
-      page.getByTestId("new-coding-session-crew-launch"),
-    ).toBeDisabled();
-    await expect(
-      page.getByTestId("new-coding-session-crew-blocked"),
-    ).toHaveText("Write the goal — the lead's first turn carries it.");
-
-    // Item 79(e) asked this tab to disclose the distance between the button's
-    // name and what pressing it does. D14 moved that distance rather than
-    // closing it: the launch no longer runs every seat on one provider, it
-    // creates the lead alone and the other rows are only who the lead may
-    // hire (`planCodingSessionCrewLaunch`, codingSessionCrewLaunch.ts:213).
-    // So the sentence under test is the current one
-    // (`CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE`,
-    // NewCodingSessionCrewTab.tsx), and a tab that dropped it would again
-    // show four roles beside "Launch team" and start one agent.
-    await expect(crewTab).toContainText("Launching seats the lead only.");
-    await expect(crewTab).toContainText(
-      "The roles below are who it may hire — it hires them with " +
-        "`bee sessions hire`",
+    const form = page.getByTestId("new-coding-session-form");
+    await expect(form).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("new-coding-session-tab-crew")).toHaveCount(
+      0,
     );
 
-    // Item 87(a), found live: a team launched from inside the Bee Keeper
-    // project signed `projectRef: None`, so the session was founded into a
-    // channel nobody was looking at and the project's session list never
-    // showed it. This dialog was opened from a channel, so the honest answer
-    // is that there is no project — said out loud rather than left to be
-    // discovered afterwards.
+    // Item 79: the button is off with no goal, and the reason is on screen.
+    await expect(page.getByTestId("new-coding-session-submit")).toBeDisabled();
     await expect(
-      page.getByTestId("new-coding-session-crew-project"),
-    ).toContainText(
-      "This session will not belong to a project — it lives in the channel " +
-        "above, not in a project's sessions.",
+      page.getByTestId("new-coding-session-blocker-goal"),
+    ).toContainText("Write the goal — the lead's first turn carries it.");
+
+    await page
+      .getByTestId("new-coding-session-goal")
+      .fill("Close ledger item 77.");
+    await page
+      .getByTestId("new-coding-session-lead-select")
+      .selectOption(CREW_ROLES[0].pubkey);
+
+    // D14's sentence, in the form's own voice: exactly one seat is created,
+    // and the rest is a bench the lead may hire from.
+    await expect(
+      page.getByTestId("new-coding-session-plan-create"),
+    ).toContainText("the only seat this launch creates");
+    await expect(page.getByTestId("new-coding-session-bench")).toContainText(
+      "bee sessions hire",
     );
 
-    // Item 87(d): the tab had no worktree field at all, so the lead ran in the
-    // checkout the tab named — the operator's own — while every seat it hired
-    // got a worktree. Same field as the one-session path, on by default,
-    // prefilled for the seat it belongs to.
+    // Item 87(d): the lead gets a worktree of its own, on by default, rather
+    // than running in the operator's checkout while every seat it hires gets
+    // one.
     const worktreeToggle = page.getByTestId("coding-session-worktree-toggle");
     await expect(worktreeToggle).toBeVisible();
     await expect(worktreeToggle).toHaveAttribute("data-state", "checked");
-    await expect(page.getByTestId("coding-session-worktree-name")).toHaveValue(
-      "team-roles-lead",
-    );
 
-    // …and with a goal typed, the front door actually opens.
-    await page
-      .getByTestId("new-coding-session-crew-goal")
-      .fill("Close ledger item 77.");
-    await expect(
-      page.getByTestId("new-coding-session-crew-blocked"),
-    ).toHaveCount(0);
-    await expect(
-      page.getByTestId("new-coding-session-crew-launch"),
-    ).toBeEnabled();
+    await expect(page.getByTestId("new-coding-session-submit")).toBeEnabled();
     await waitForAnimations(page);
-    await crewTab.screenshot({ path: `${SHOTS}/06-crew-tab.png` });
-
-    // The honesty question this tab has to answer before it signs anything:
-    // one of these five seats has no role pack on this computer, and it says
-    // so on that seat's own line — before the launch, not after staging
-    // reports it.
-    await expect(
-      roster.getByTestId(`crew-seat-no-role-pack-${CREW_ROLES[1].personaId}`),
-    ).toContainText(
-      "carries no role skills: this computer has no role pack behind it.",
-    );
-    await expect(
-      roster.locator("[data-testid^='crew-seat-no-role-pack-']"),
-    ).toHaveCount(1);
-    await roster.screenshot({ path: `${SHOTS}/07-crew-roster.png` });
+    await form.screenshot({ path: `${SHOTS}/06-crew-tab.png` });
   });
 
   test("04 — the join dialog's seat field: default role, mismatch, no pack", async ({
     page,
   }) => {
     await openApp(page);
-    await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
-    await expect(
-      page.getByTestId("channel-coding-sessions-trigger"),
-    ).toBeVisible();
-    await page.evaluate(
-      ({ channelName, events }) => {
-        const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
-        if (!seed) throw new Error("signed-event seeding hook is missing");
-        for (const event of events) seed({ channelName, event });
-      },
-      {
-        channelName: CHANNEL_NAME,
-        events: (() => {
-          const genesis = genesisEvent();
-          return [
-            genesis,
-            ...createAndReceiptEvents(genesis.id),
-            metadataEvent(),
-          ];
-        })(),
-      },
-    );
-    await expect(
-      page.getByTestId("channel-coding-sessions-trigger"),
-    ).toHaveAttribute("aria-label", "Coding sessions (1)", {
-      timeout: 15_000,
-    });
-    await page.getByTestId("channel-coding-sessions-trigger").click();
-    await page.getByTestId("channel-coding-session-open").click();
-    await expect(page.getByTestId("coding-session-header")).toBeVisible({
-      timeout: 15_000,
-    });
-
-    await page.getByTestId("coding-session-add-provider").click();
-    const dialog = page.getByTestId("add-coding-session-provider-dialog");
-    await expect(dialog).toBeVisible();
+    await openJoinDialogOnSeededSession(page);
 
     const seatField = page.getByTestId("new-coding-session-seat");
     await expect(seatField).toBeVisible();
@@ -1091,10 +1047,15 @@ test.describe("crew front door", () => {
     // ("absence is not a claim", codingSessionActorSeat.ts:180-190).
     // `fromRawManagedAgent` used to map a missing `has_role_pack` to `false`,
     // so `undefined` never reached the component and every ordinary managed
-    // agent read as one whose role pack is missing. It now maps to
-    // `undefined`, and this drives the whole path to prove it.
+    // agent read as one whose role pack is missing.
+    //
+    // Driven through the join dialog since 2026-09-01: the launch form has no
+    // seat field any more. Seating there is the *lead* question, answered with
+    // an identity whose role is read from its pack, and an agent lead is a
+    // governed session. Joining an existing session is where a seat is still
+    // chosen field by field.
     await openApp(page);
-    await openNewCodingSessionDialog(page);
+    await openJoinDialogOnSeededSession(page);
 
     const seatField = page.getByTestId("new-coding-session-seat");
     await page.getByTestId("new-coding-session-seat-agent").click();
@@ -1129,32 +1090,39 @@ test.describe("crew front door", () => {
     });
   });
 
-  test("06 — the pending screen names the seat, and what custody staged", async ({
+  test("06 — an ungoverned session reaches the pending screen, and claims no seat", async ({
     page,
   }) => {
+    // Until 2026-09-01 this drove the One-session tab with an agent seat and
+    // read the pending screen's seat line. The launch form does not offer that
+    // shape any more, and the removal is deliberate rather than incidental: a
+    // seat holds authority only through a genesis and an accepted authority
+    // chain, so an ungoverned agent seat was an agent with no standing to
+    // report, to hire, or to be granted anything. Picking an agent to lead
+    // makes the session governed, and the governed sequence has its own spec
+    // (`coding-session-launch-form.spec.ts`).
+    //
+    // What is still reachable here — and still worth pinning — is the
+    // ungoverned path: you lead, one execution, and a pending screen that
+    // claims no seat rather than implying one.
     await openApp(page);
     await openNewCodingSessionDialog(page);
 
-    await page.getByTestId("new-coding-session-seat-agent").click();
-    await page
-      .getByTestId(`new-coding-session-seat-agent-${CREW_ROLES[3].pubkey}`)
-      .click();
-    await expect(page.getByTestId("new-coding-session-seat-role")).toHaveValue(
-      "verifier",
+    await expect(page.getByTestId("new-coding-session-governed")).toContainText(
+      "Not governed",
     );
     await page
-      .getByTestId("new-coding-session-initial-turn")
-      .fill("Pin the seat line.");
-
+      .getByTestId("new-coding-session-goal")
+      .fill("Pin the pending screen.");
     await page.getByTestId("new-coding-session-submit").click();
 
     const pending = page.getByTestId("new-coding-session-pending");
     await expect(pending).toBeVisible({ timeout: 20_000 });
-    const seatLine = page.getByTestId("pending-coding-session-seat");
-    await expect(seatLine).toBeVisible();
-    await expect(seatLine).toContainText("Seated:");
+    // Absence is not a claim: an unseated create says nothing about a seat.
+    await expect(page.getByTestId("pending-coding-session-seat")).toHaveCount(
+      0,
+    );
     await waitForAnimations(page);
-    await pending.screenshot({ path: `${SHOTS}/12-pending-seated.png` });
-    await seatLine.screenshot({ path: `${SHOTS}/13-pending-seat-line.png` });
+    await pending.screenshot({ path: `${SHOTS}/12-pending-unseated.png` });
   });
 });

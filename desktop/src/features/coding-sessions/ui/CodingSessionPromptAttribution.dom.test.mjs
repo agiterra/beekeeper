@@ -251,3 +251,139 @@ test("item 10: Conversation passes no seat resolver, so a seat is not named", as
     "unrecorded",
   ]);
 });
+
+// ── B3.2 / REVIEW-B3 F3, N1: the hire-host dispatch, rendered ───────────────
+//
+// F3: the resolver, the label and their unit tests existed and no surface
+// called them, so `<requester> · via your Desktop` was unreachable while
+// SURFACES §21.7 said it rendered.
+//
+// N1: the first fix derived "this is a hire dispatch" from the `[From the
+// lead] ` **text prefix**, before any signed fact, and took that branch before
+// it ever looked at `operatorPubkey` — so a lane message signed by the builder
+// seat rendered as `Your Desktop (hire host)`. The derivation is now three
+// signed conditions and text is never consulted; the attack is pinned below.
+
+/** The umbrella a hired seat produces: its first turn IS the lead's brief. */
+function umbrellaWithHiredSeat() {
+  const umbrellas = groupCodingSessionCatalog([
+    seat({
+      sessionId: "11111111-1111-1111-1111-111111111113",
+      agentRef: BOB_ACTOR,
+      role: "builder",
+      transcript: [
+        prompt("h-1", {
+          // The prefix the host and the CLI both write. It is *not* what makes
+          // this a dispatch — nothing about the words is.
+          text: "[From the lead] Take the badge lane. Red test first.",
+          operatorPubkey: FOUNDER,
+          turnId: "turn-hired-1",
+        }),
+      ],
+    }),
+  ]);
+  return umbrellas[0];
+}
+
+/** The hire record this host would have written for that seat. */
+function seatedOutcome(umbrella, overrides = {}) {
+  return {
+    commandId: "csl-hire-1",
+    channelId: CHANNEL_ID,
+    sessionRef: umbrella.sessionRef,
+    role: "builder",
+    state: "seated",
+    detail: null,
+    seatCommandId: "csl-seat-1",
+    granted: true,
+    seatActor: BOB_ACTOR,
+    requesterLabel: "Keystone",
+    hostPubkey: FOUNDER,
+    ...overrides,
+  };
+}
+
+test("F3: a hired seat's first turn is attributed to the lead that asked", async () => {
+  const { resetCodingSessionHireOutcomes, publishCodingSessionHireOutcomes } =
+    await import("../hooks/useCodingSessionHire.ts");
+  const umbrella = umbrellaWithHiredSeat();
+  resetCodingSessionHireOutcomes();
+  publishCodingSessionHireOutcomes([seatedOutcome(umbrella)]);
+  const html = await renderMission(umbrella);
+  assert.match(html, /Keystone · via your Desktop/);
+  assert.match(html, /data-author-kind="hire-host"/);
+  resetCodingSessionHireOutcomes();
+});
+
+test("N1: a hire record for another umbrella does not attribute this one", async () => {
+  const { resetCodingSessionHireOutcomes, publishCodingSessionHireOutcomes } =
+    await import("../hooks/useCodingSessionHire.ts");
+  const umbrella = umbrellaWithHiredSeat();
+  resetCodingSessionHireOutcomes();
+  publishCodingSessionHireOutcomes([
+    seatedOutcome(umbrella, {
+      sessionRef: "99999999-9999-4999-8999-999999999999",
+    }),
+  ]);
+  const html = await renderMission(umbrella);
+  assert.doesNotMatch(html, /Keystone · via your Desktop/);
+  assert.doesNotMatch(html, /data-author-kind="hire-host"/);
+  resetCodingSessionHireOutcomes();
+});
+
+test("N1: with no hire record the prompt belongs to its signer, not to a guess", async () => {
+  // The honest fallback is the *signer's* byline. This fixture stamps the
+  // founder, who is the reader, so it reads `You` — the prefix in the text
+  // buys nothing.
+  const { resetCodingSessionHireOutcomes } = await import(
+    "../hooks/useCodingSessionHire.ts"
+  );
+  resetCodingSessionHireOutcomes();
+  const html = await renderMission(umbrellaWithHiredSeat());
+  assert.match(html, /data-author-kind="you"/);
+  assert.doesNotMatch(html, /via your Desktop/);
+  assert.doesNotMatch(html, /Your Desktop \(hire host\)/);
+});
+
+test("N1: a builder-signed message beginning `[From the lead] ` is the builder's", async () => {
+  // The reviewer's attack, permanently. A lane message signed by the builder
+  // seat whose text carries the prefix rendered as `Your Desktop (hire host)`
+  // — a screen naming the wrong author, on the strength of a string.
+  const { resetCodingSessionHireOutcomes, publishCodingSessionHireOutcomes } =
+    await import("../hooks/useCodingSessionHire.ts");
+  const umbrella = umbrellaWithHiredSeat();
+  // Even with a *valid* hire vouch in the store, a lane message is not the
+  // initial turn of a seated create and must not be attributed to a lead.
+  resetCodingSessionHireOutcomes();
+  publishCodingSessionHireOutcomes([seatedOutcome(umbrella)]);
+  const html = await renderInRouter(
+    React.createElement(CodingSessionUmbrellaTimelineView, {
+      channelId: CHANNEL_ID,
+      currentUserPubkey: FOUNDER,
+      laneMessages: [
+        {
+          id: "lane-1",
+          authorPubkey: BOB_ACTOR,
+          content: "[From the lead] Rebase the lane and run the gate.",
+          timestampMs: 1_756_000_000_000,
+        },
+      ],
+      missionDensity: "live",
+      onHandoff: () => {},
+      umbrella,
+    }),
+  );
+  // Scoped to the lane row: the *transcript's* first turn in this fixture is a
+  // real dispatch and is correctly named, so a whole-document assertion would
+  // prove nothing.
+  const start = html.indexOf(
+    'data-testid="coding-session-umbrella-conversation"',
+  );
+  assert.ok(start > 0, "the lane message must render");
+  const row = html.slice(start, html.indexOf("</div>", start) + 6);
+  assert.match(row, /data-author-kind="operator"/);
+  assert.match(row, /efefd4e5…d4e5/);
+  assert.doesNotMatch(row, /Your Desktop \(hire host\)/);
+  assert.doesNotMatch(row, /via your Desktop/);
+  resetCodingSessionHireOutcomes();
+});

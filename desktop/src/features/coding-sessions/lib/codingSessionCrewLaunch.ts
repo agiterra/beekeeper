@@ -105,6 +105,13 @@ export type CodingSessionCrewLaunchResult = {
    * actually working.
    */
   leadWorkdir: string | null;
+  /**
+   * The kind:44245 this launch published, or null when it published none.
+   *
+   * Null is two different facts — no policy was written, or the launch stopped
+   * before the policy step — and the step list is what separates them.
+   */
+  policyEventId: string | null;
   /** The step that stopped the launch, by id. Null on success. */
   failedStep: string | null;
   failureReason: string | null;
@@ -194,6 +201,32 @@ export type CodingSessionCrewLaunchDeps = {
     actorPubkey: string;
     role: string;
   }) => Promise<void>;
+  /**
+   * Publish the session's kind:44245 policy, when the form set one.
+   *
+   * Between the genesis and the first create on purpose: the policy is a fact
+   * about the umbrella, and a seat that reads its own session should be able
+   * to find the posture and the budget it is working under already on the
+   * wire rather than in the founder's memory. Absent from a caller that
+   * cannot publish one; a launch that was asked for a policy and has no way
+   * to publish it is a named refusal rather than a silent omission.
+   */
+  publishPolicy?: (input: {
+    channelId: string;
+    sessionRef: string;
+    genesisRef: string;
+  }) => Promise<{ eventId: string }>;
+  /**
+   * Run the policy draft through the native validator **before** anything is
+   * signed, and reject with core's own sentence when it refuses.
+   *
+   * Every 44245 rule lives in `buzz-core`, which is right, and the consequence
+   * was that a cross-field refusal — `tokensPerSeat` above `tokensPerSession`,
+   * say — was first evaluated after the genesis and the goal were already on
+   * the wire (REVIEW-B3 F4). The dry run costs one call and moves the refusal
+   * back to where it costs nothing.
+   */
+  validatePolicy?: () => Promise<void>;
   sendFirstTurn: (input: {
     channelId: string;
     target: CodingSessionCommandTarget;
@@ -253,12 +286,21 @@ export type CodingSessionCrewLaunchInput = {
     /** Runtime name, so a refusal can say which provider it means. */
     label?: string | null;
   };
+  /**
+   * True when the launch form set at least one policy field.
+   *
+   * A launch that sets none publishes none: the withdrawal record is a
+   * deliberate act of taking a policy back, not the default shape of a
+   * session nobody wrote a policy for.
+   */
+  policySet?: boolean;
 };
 
 /** Step ids, so a caller can talk about a failure without matching prose. */
 export const CODING_SESSION_CREW_LAUNCH_WORKTREE_STEP = "lead-worktree";
 export const CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP = "channel";
 export const CODING_SESSION_CREW_LAUNCH_GENESIS_STEP = "genesis";
+export const CODING_SESSION_CREW_LAUNCH_POLICY_STEP = "policy";
 export const CODING_SESSION_CREW_LAUNCH_GRANT_STEP = "grant-operator";
 export const CODING_SESSION_CREW_LAUNCH_TURN_STEP = "first-turn";
 export const CODING_SESSION_CREW_LAUNCH_FAMILY_STEP = "family-check";
@@ -305,6 +347,16 @@ export function planCodingSessionCrewLaunch(
         ]
       : []),
     step(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "Found the session"),
+    // Only when one was written. A step that always appears and usually does
+    // nothing teaches a reader to stop reading the list.
+    ...(input.policySet
+      ? [
+          step(
+            CODING_SESSION_CREW_LAUNCH_POLICY_STEP,
+            "Publish the session policy",
+          ),
+        ]
+      : []),
     // Exactly one, because exactly one seat is created (D14). A step list
     // showing four creates would be the same lie the roster used to tell.
     ...(lead
@@ -500,13 +552,25 @@ export async function launchCodingSessionCrew(
   // Where the lead will actually run. Starts as the checkout the person named
   // and is replaced by the worktree step when one is asked for.
   let leadWorkdir: string | null = input.workdir?.trim() || null;
+  // The signed policy this launch published, or null when it published none.
+  let policyEventId: string | null = null;
   const fail = (
     id: string,
     reason: string,
     sessionRef: string | null,
     genesisRef: string | null,
   ): CodingSessionCrewLaunchResult => {
-    mark(id, "failed", reason);
+    // A failure after the genesis leaves a real umbrella on the relay with no
+    // seats and no grants. The step list says so only as an icon and a colour;
+    // this says it in words, and names the ids, because a session the person
+    // cannot find is the same defect as a badge pointing at a message that is
+    // not there (REVIEW-B3 F4).
+    const orphaned =
+      genesisRef !== null && seated.length === 0
+        ? ` This session was already founded and has no seats: session ${sessionRef}, genesis ${genesisRef}. Nothing else was published.`
+        : "";
+    const said = `${reason}${orphaned}`;
+    mark(id, "failed", said);
     return {
       ok: false,
       channelId,
@@ -516,8 +580,9 @@ export async function launchCodingSessionCrew(
       hireableSeats: [...hireable],
       seatsWithoutRolePack,
       leadWorkdir,
+      policyEventId,
       failedStep: id,
-      failureReason: reason,
+      failureReason: said,
       steps: steps.map((entry) => ({ ...entry })),
     };
   };
@@ -576,6 +641,21 @@ export async function launchCodingSessionCrew(
       null,
       null,
     );
+  }
+  // Still inside the step that costs nothing: the policy is validated by the
+  // one implementation of its rules before the session is founded, so a
+  // refusal never leaves a founded, seatless umbrella behind.
+  if (input.policySet && deps.validatePolicy) {
+    try {
+      await deps.validatePolicy();
+    } catch (error) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
+        describe(error, "The session policy was refused."),
+        null,
+        null,
+      );
+    }
   }
   mark(CODING_SESSION_CREW_LAUNCH_FAMILY_STEP, "done");
 
@@ -650,6 +730,40 @@ export async function launchCodingSessionCrew(
     );
   }
   mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "done");
+
+  if (input.policySet) {
+    mark(CODING_SESSION_CREW_LAUNCH_POLICY_STEP, "running");
+    if (!deps.publishPolicy) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_POLICY_STEP,
+        "This launch set a policy, and nothing here can publish one.",
+        sessionRef,
+        genesisRef,
+      );
+    }
+    try {
+      // Fatal, unlike the goal: a goal that fails to publish still reaches the
+      // lead in its first turn, but a policy that fails to publish is a
+      // ceiling the founder set and nobody can read. Launching anyway would
+      // put a team to work under limits that exist only on the screen that is
+      // about to close.
+      policyEventId = (
+        await deps.publishPolicy({
+          channelId: launchChannelId,
+          sessionRef,
+          genesisRef,
+        })
+      ).eventId;
+    } catch (error) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_POLICY_STEP,
+        describe(error, "The session policy was not published."),
+        sessionRef,
+        genesisRef,
+      );
+    }
+    mark(CODING_SESSION_CREW_LAUNCH_POLICY_STEP, "done");
+  }
 
   for (const [index, seat] of created.entries()) {
     const id = codingSessionCrewLaunchSeatStepId(index);
@@ -763,6 +877,7 @@ export async function launchCodingSessionCrew(
     hireableSeats: hireable,
     seatsWithoutRolePack,
     leadWorkdir,
+    policyEventId,
     failedStep: null,
     failureReason: null,
     steps: steps.map((entry) => ({ ...entry })),

@@ -14,6 +14,8 @@
  * Pure. Every effect — staging custody, cutting the worktree, signing,
  * publishing — belongs to the hook that consumes this plan.
  */
+import { truncatePubkey } from "@/shared/lib/pubkey";
+import type { CodingSessionHireRequesterStanding } from "./codingSessionHireWire";
 import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionStatus } from "./codingSessionTypes";
 import type {
@@ -300,5 +302,53 @@ export function selectUnansweredCodingSessionHires<
   // order the relay handed them over.
   return pending.sort(
     (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
+  );
+}
+
+/**
+ * What to call the seat that asked for a hire — and what not to claim about it.
+ *
+ * `requestedBy` is a claim the relay does not check. It verifies the event's
+ * signature, so it holds `event.pubkey`, but v1 deliberately does not compare
+ * the two (`docs/design/portable-team-loop/POLICY.md` §5): any signer the
+ * relay admits for a hire can attribute the request to a different seat's
+ * pubkey and nothing on the wire objects.
+ *
+ * This host therefore makes the comparison itself, and the three answers are
+ * three different sentences:
+ *
+ * - **attributed** — the claim equals the signer, so the name is a fact and is
+ *   used plainly.
+ * - **unclaimed** — a hire from before the amendment. Unknown, never
+ *   mismatched: the signer is named, and nothing is claimed about who asked.
+ * - **disputed** — the hire named somebody other than its own signer. Both
+ *   keys are shown. It is disclosed rather than dropped, because a lead is
+ *   still waiting on the seat and the person still needs to know their
+ *   session contains a forged attribution.
+ */
+export function codingSessionHireRequesterLabel(input: {
+  standing: CodingSessionHireRequesterStanding;
+  /** Display name for a pubkey this computer knows, else null. */
+  nameFor: (pubkey: string) => string | null;
+}): string {
+  const { standing } = input;
+  if (standing.kind === "disputed") {
+    const claimed =
+      input.nameFor(standing.claimedPubkey) ??
+      truncatePubkey(standing.claimedPubkey);
+    return `A seat signed by ${truncatePubkey(
+      standing.signerPubkey,
+    )} claiming to be ${claimed} (unverified attribution)`;
+  }
+  // `attributed` and `unclaimed` render the same string, and that is correct
+  // rather than an oversight: in both cases `requesterPubkey` **is** the key
+  // that signed the hire, so the fact on screen is the same fact. They were
+  // two identical branches, which said a distinction was being drawn that is
+  // not, and an edit to one would silently not have applied to the other
+  // (REVIEW-B3 F6). The standing still differs, and the disputed case above is
+  // where it shows.
+  return (
+    input.nameFor(standing.requesterPubkey) ??
+    `A seat (${truncatePubkey(standing.requesterPubkey)})`
   );
 }

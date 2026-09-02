@@ -33,6 +33,7 @@ import {
 } from "../lib/codingSessionHirePolicy";
 import type { CodingSessionRegistrySource } from "../lib/codingSessionHireRouting";
 import {
+  codingSessionHireRequesterLabel,
   codingSessionHireUmbrellaProjectRef,
   isCodingSessionHireAuthorized,
   selectUnansweredCodingSessionHires,
@@ -41,6 +42,7 @@ import {
 import type { CodingSessionHireCatalogSource } from "../lib/codingSessionHireCatalog";
 import {
   classifyCodingSessionHireEvent,
+  codingSessionHireRequesterStanding,
   type CodingSessionHireClassification,
   type CodingSessionHireRequest,
 } from "../lib/codingSessionHireWire";
@@ -130,6 +132,28 @@ export type CodingSessionHireOutcome = {
    * grant failed. A false here means the agent cannot report to its lead.
    */
   granted: boolean;
+  /**
+   * The actor this host seated, when it seated one.
+   *
+   * The join a transcript needs: an execution carries `agentRef`, and this is
+   * the same key, so the seat's first turn can be attributed to the lead that
+   * asked for it (REVIEW-B3 F3).
+   */
+  seatActor: string | null;
+  /**
+   * What to call the seat that asked, already compared with the hire's own
+   * signer — `attributed` earns the name, `disputed` says so in the label.
+   * Null when this outcome seated nobody.
+   */
+  requesterLabel: string | null;
+  /**
+   * The operator whose key signed the seated create — this computer's own.
+   *
+   * Carried so a renderer can *require* a prompt's `operatorPubkey` to equal
+   * it before attributing the turn to the hiring lead, rather than overriding
+   * the signer on the strength of anything else (REVIEW-B3 N1).
+   */
+  hostPubkey: string | null;
 };
 
 /** A managed agent, narrowed to what seating one needs. */
@@ -345,6 +369,16 @@ export function resetCodingSessionHireOutcomes(): void {
   publishHireOutcomes([]);
 }
 
+/**
+ * Seed the store. Tests only — the host is the one writer in the product, and
+ * the doc above that store depends on it staying that way.
+ */
+export function publishCodingSessionHireOutcomes(
+  outcomes: readonly CodingSessionHireOutcome[],
+): void {
+  publishHireOutcomes(outcomes);
+}
+
 /** The published outcomes, as React state, for surfaces outside this hook. */
 export function useCodingSessionHireOutcomes(): readonly CodingSessionHireOutcome[] {
   return React.useSyncExternalStore(
@@ -425,6 +459,9 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             detail: error instanceof Error ? error.message : String(error),
             seatCommandId: null,
             granted: false,
+            seatActor: null,
+            requesterLabel: null,
+            hostPubkey: null,
           });
         });
       }
@@ -447,6 +484,9 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             detail: error instanceof Error ? error.message : String(error),
             seatCommandId: null,
             granted: false,
+            seatActor: null,
+            requesterLabel: null,
+            hostPubkey: null,
           });
         });
       }
@@ -489,6 +529,9 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           detail: `${reason} — and the envelope named no channel, command id or signer, so there was nobody to tell`,
           seatCommandId: null,
           granted: false,
+          seatActor: null,
+          requesterLabel: null,
+          hostPubkey: null,
         });
         return;
       }
@@ -501,6 +544,9 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         detail: reason,
         seatCommandId: null,
         granted: false,
+        seatActor: null,
+        requesterLabel: null,
+        hostPubkey: null,
       };
       const operator = current.input.operatorPubkey;
       const umbrella =
@@ -549,7 +595,19 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           text,
           notice: codingSessionHireRefusalNotice({
             role: address.role ?? "seat",
-            requesterLabel: "A seat",
+            // A malformed hire's action never parsed, so there is no
+            // `requestedBy` to compare — only the signer, which is a fact.
+            // "unclaimed" is the honest standing here, and it is not the same
+            // as a hire that named nobody on purpose.
+            requesterLabel: codingSessionHireRequesterLabel({
+              standing: {
+                kind: "unclaimed",
+                requesterPubkey: address.requesterPubkey,
+              },
+              nameFor: (pubkey) =>
+                current.input.agents.find((agent) => agent.pubkey === pubkey)
+                  ?.name ?? null,
+            }),
             text,
           }),
         },
@@ -708,6 +766,13 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
               model: plan.model,
               title: plan.title,
               initialTurn: plan.initialTurn,
+              // The hire this create answers, by event id. Without it a seated
+              // create is a seat nobody can attribute to a request: the
+              // founder's Desktop signed it, so the brief read as the
+              // founder's own words and the transcript said
+              // `Your Desktop (hire host)` because nothing on the wire
+              // recorded which lead had asked (batch 1, item 10).
+              hireRef: request.eventId,
               // The router's decision, verbatim and on the wire. A seat whose
               // model cannot be explained from the events is a seat running
               // weights nobody can account for.
@@ -765,6 +830,16 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         ...outcomeOf(request, "seated", grantFailure),
         seatCommandId: plan.commandId,
         granted: grantFailure === null,
+        seatActor: plan.actor,
+        hostPubkey: operator,
+        // Compared with the hire's own signer here, because the relay does not
+        // (POLICY.md §5). This is what the seat's first turn is attributed to.
+        requesterLabel: codingSessionHireRequesterLabel({
+          standing: codingSessionHireRequesterStanding(request),
+          nameFor: (pubkey) =>
+            current.input.agents.find((agent) => agent.pubkey === pubkey)
+              ?.name ?? null,
+        }),
       });
     }
   }, [enabled]);
@@ -881,7 +956,15 @@ async function publishRefusal(
       text: answer.text,
       notice: codingSessionHireRefusalNotice({
         role: request.action.role,
-        requesterLabel: "A seat",
+        // Named, not "A seat". The hire carries `requestedBy`, this host
+        // compares it with the signer itself — the relay does not
+        // (POLICY.md 5) — and the three answers are three different
+        // sentences, including the one that says the claim is disputed.
+        requesterLabel: codingSessionHireRequesterLabel({
+          standing: codingSessionHireRequesterStanding(request),
+          nameFor: (pubkey) =>
+            input.agents.find((agent) => agent.pubkey === pubkey)?.name ?? null,
+        }),
         text: answer.text,
       }),
     },
@@ -904,5 +987,8 @@ function outcomeOf(
     detail,
     seatCommandId: null,
     granted: false,
+    seatActor: null,
+    requesterLabel: null,
+    hostPubkey: null,
   };
 }

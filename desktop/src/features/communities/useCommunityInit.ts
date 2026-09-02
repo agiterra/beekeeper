@@ -42,6 +42,7 @@ import { resetCodingSessionPopoutBootstrapCache } from "@/features/coding-sessio
 import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { resetPendingCodingSessionTurns } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import { resetCodingSessionIngressStores } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
+import { resetCodingSessionHireOutcomes } from "@/features/coding-sessions/hooks/useCodingSessionHire";
 import { resetProjectPulseState } from "@/features/project-pulse";
 import { resetNavHotkeyBindings } from "@/features/hotkeys/lib/navHotkeyBindingsStore";
 import { resetProjectRouteMemory } from "@/features/projects-container/lib/projectRouteMemoryStore";
@@ -111,6 +112,11 @@ async function resetCommunityState({
   // that relay's authority, so a community switch must drop every one of them
   // rather than let the new relay's scopes collide with the old relay's facts.
   resetCodingSessionIngressStores();
+  // The hire host's own record of what this Desktop answered. It became a
+  // *rendered* fact this batch — a hired seat's first turn is attributed from
+  // it — so a hire answered in one community could otherwise put a lead's name
+  // on a transcript row in the next (REVIEW-B3 N2).
+  resetCodingSessionHireOutcomes();
   // Which coding-session conversation lanes are openable is per-relay: keeping
   // the old community's refs would hide chat in the new one (channel ids are
   // UUIDs, but a hidden message with no lane to render in is the one outcome

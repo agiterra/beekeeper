@@ -44,6 +44,27 @@ export function normalizeOperatorPubkey(value: unknown): string | null {
  */
 export const CODING_SESSION_TEAM_WAKE_COMMAND_PREFIX = "team-wake-";
 
+/**
+ * A signed vouch that one execution is a seat this computer hired.
+ *
+ * The only thing that may turn a prompt into a hire-host dispatch. It is
+ * produced by joining this host's own hire record to the execution by **actor
+ * and session**, and it carries the key that signed the create — so the branch
+ * below can *require* the signer to be that host rather than overriding it.
+ *
+ * The first attempt derived the same fact from the `[From the lead] ` text
+ * prefix, which is not a signed fact at all: it took a lane message signed by
+ * the builder seat and rendered it as `Your Desktop (hire host)`, and it took a
+ * prompt stamped with the reader's own key away from them on the strength of a
+ * string (REVIEW-B3 N1). Text is never consulted here again.
+ */
+export type CodingSessionHireDispatchVouch = {
+  /** What to call the lead that asked, already compared with the hire's signer. */
+  label: string | null;
+  /** The key that signed the seated create — this computer's own operator. */
+  hostPubkey: string;
+};
+
 /** What a `team-wake-` prompt is called. Never `You`; nobody typed it. */
 export const CODING_SESSION_TEAM_WAKE_AUTHOR_LABEL = "Beekeeper · team wake";
 
@@ -134,16 +155,10 @@ export function resolveCodingSessionPromptAuthor(input: {
   commandId?: string | null;
   currentUserPubkey?: string | null;
   /**
-   * The seat whose brief the hire host dispatched, when the umbrella's signed
-   * hire evidence names one. Only read when {@link isHireHostDispatch}.
+   * Signed evidence that this execution is a seat this computer hired, when
+   * there is any. See {@link CodingSessionHireDispatchVouch}.
    */
-  hiringSeatLabel?: string | null;
-  /**
-   * True when this prompt is the initial turn the founder's Desktop published
-   * inside a seated create — the words are the hiring lead's, not the
-   * founder's.
-   */
-  isHireHostDispatch?: boolean;
+  hireDispatch?: CodingSessionHireDispatchVouch | null;
   operatorPubkey?: string | null;
   profiles?: UserProfileLookup;
   resolveSeat?: CodingSessionPromptSeatResolver;
@@ -155,8 +170,24 @@ export function resolveCodingSessionPromptAuthor(input: {
       executionKey: null,
     };
   }
-  if (input.isHireHostDispatch === true) {
-    const hiringSeatLabel = input.hiringSeatLabel?.trim();
+  const operatorPubkey = normalizeOperatorPubkey(input.operatorPubkey);
+  // A hire-host dispatch is the initial turn carried *inside* a seated create,
+  // and all three of these are facts about signed events:
+  //
+  //   1. a hire record vouches for this execution (actor **and** session),
+  //   2. the prompt carries no 44220 command id — a later turn to the same
+  //      seat is a command and does carry one,
+  //   3. the stamped operator **is** the host that signed that create.
+  //
+  // (3) is what keeps this from outranking the signer: the branch does not
+  // override `operatorPubkey`, it requires a particular value of it.
+  if (
+    input.hireDispatch &&
+    !input.commandId &&
+    operatorPubkey !== null &&
+    operatorPubkey === normalizeOperatorPubkey(input.hireDispatch.hostPubkey)
+  ) {
+    const hiringSeatLabel = input.hireDispatch.label?.trim();
     return {
       label: hiringSeatLabel
         ? `${hiringSeatLabel} · via your Desktop`
@@ -165,7 +196,6 @@ export function resolveCodingSessionPromptAuthor(input: {
       executionKey: null,
     };
   }
-  const operatorPubkey = normalizeOperatorPubkey(input.operatorPubkey);
   if (!operatorPubkey) {
     return {
       label: CODING_SESSION_UNRECORDED_OPERATOR_LABEL,
@@ -209,8 +239,7 @@ export function resolveCodingSessionPromptAuthor(input: {
 export function resolveCodingSessionPromptAuthorLabel(input: {
   commandId?: string | null;
   currentUserPubkey?: string | null;
-  hiringSeatLabel?: string | null;
-  isHireHostDispatch?: boolean;
+  hireDispatch?: CodingSessionHireDispatchVouch | null;
   operatorPubkey?: string | null;
   profiles?: UserProfileLookup;
   resolveSeat?: CodingSessionPromptSeatResolver;
@@ -248,4 +277,45 @@ export function collectForeignOperatorPubkeys(
     }
   }
   return [...found].sort();
+}
+
+/**
+ * The requester's name for a seat this computer hired, or null.
+ *
+ * Reads the hire host's own outcome store — the record of what *this* Desktop
+ * did — and joins it to an execution by the actor it seated **and the umbrella
+ * it was seated into**. Only the founder's machine hosts hires, so elsewhere
+ * this is null and the ordinary signer-based byline renders instead of a name
+ * nobody here can check.
+ */
+export function codingSessionHireDispatchLabelForSeat(
+  outcomes: readonly {
+    sessionRef?: string | null;
+    seatActor?: string | null;
+    requesterLabel?: string | null;
+    hostPubkey?: string | null;
+  }[],
+  scope: {
+    actorPubkey: string | null | undefined;
+    sessionRef: string | null | undefined;
+  },
+): CodingSessionHireDispatchVouch | null {
+  const actor = scope.actorPubkey?.trim().toLowerCase();
+  const sessionRef = scope.sessionRef?.trim();
+  // Both, always. Joining on the actor alone showed the newer requester's name
+  // on both sessions when one identity was hired twice by two different leads
+  // (REVIEW-B3 N1).
+  if (!actor || !sessionRef) return null;
+  for (let index = outcomes.length - 1; index >= 0; index -= 1) {
+    const outcome = outcomes[index];
+    if (outcome.seatActor?.trim().toLowerCase() !== actor) continue;
+    if (outcome.sessionRef?.trim() !== sessionRef) continue;
+    const hostPubkey = outcome.hostPubkey?.trim().toLowerCase();
+    // No host key, no vouch: without it the renderer could not require the
+    // signer to be this computer's own operator, and the branch would be a
+    // guess again.
+    if (!hostPubkey) return null;
+    return { label: outcome.requesterLabel?.trim() || null, hostPubkey };
+  }
+  return null;
 }

@@ -23,6 +23,7 @@ import {
 import { useTextSettledCodingSessionEchoes } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import {
   resolveCodingSessionPromptAuthor,
+  type CodingSessionHireDispatchVouch,
   type CodingSessionPromptSeatResolver,
 } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
@@ -68,6 +69,12 @@ type CodingSessionTranscriptProps = {
    * no second seat to attribute to and passes nothing.
    */
   resolveSeat?: CodingSessionPromptSeatResolver;
+  /**
+   * Signed evidence that this execution is a seat this computer hired.
+   * Supplied by the umbrella, which knows the execution's `agentRef` and its
+   * own `sessionRef` and can join both to this host's hire record.
+   */
+  hireDispatch?: CodingSessionHireDispatchVouch | null;
 };
 
 /**
@@ -94,11 +101,18 @@ const CodingSessionPromptAttributionContext = React.createContext<{
    * Absent outside Mission, where there is only one seat to confuse.
    */
   resolveSeat?: CodingSessionPromptSeatResolver;
+  /**
+   * Signed evidence that this execution is a seat this computer hired, when
+   * there is any. Null everywhere else — only the founder's machine answers
+   * hires, and a name this client cannot check is a claim, not an attribution.
+   */
+  hireDispatch?: CodingSessionHireDispatchVouch | null;
 }>({
   currentUserPubkey: null,
   profiles: undefined,
   textSettledEchoIds: new Set(),
   resolveSeat: undefined,
+  hireDispatch: null,
 });
 
 const GENERIC_AGENT_IDENTITY = {
@@ -122,6 +136,7 @@ type CodingSessionTranscriptRow =
 
 export function CodingSessionTranscript({
   currentUserPubkey,
+  hireDispatch,
   operatorProfiles,
   generationId,
   isWorking,
@@ -141,8 +156,15 @@ export function CodingSessionTranscript({
       profiles: operatorProfiles,
       resolveSeat,
       textSettledEchoIds,
+      hireDispatch: hireDispatch ?? null,
     }),
-    [currentUserPubkey, operatorProfiles, resolveSeat, textSettledEchoIds],
+    [
+      currentUserPubkey,
+      hireDispatch,
+      operatorProfiles,
+      resolveSeat,
+      textSettledEchoIds,
+    ],
   );
   const rows = React.useMemo(
     () => buildCodingSessionTranscriptRows(model),
@@ -622,6 +644,10 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
       const author = resolveCodingSessionPromptAuthor({
         commandId: item.commandId,
         currentUserPubkey: promptAttribution.currentUserPubkey,
+        // A hired seat's first turn is signed by the founder's Desktop and
+        // written by a lead. Nothing about the *words* says so; the vouch, the
+        // absent command id and the stamped operator do.
+        hireDispatch: promptAttribution.hireDispatch,
         operatorPubkey: item.operatorPubkey,
         profiles: promptAttribution.profiles,
         resolveSeat: promptAttribution.resolveSeat,
