@@ -881,10 +881,29 @@ pub struct SessionMetadata {
     /// because it is the same value echoed from the create.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
-    /// Advertised provider instance reference.
-    pub provider: Option<String>,
-    /// Runtime slug behind the driver.
-    pub runtime: Option<String>,
+    /// Advertised provider instance **alias** (`claude-primary`), or `null`.
+    ///
+    /// Typed since batch 2 lane B2: an alias is not an instance id, and
+    /// `session.instanceId` on the same struct is one. The newtype is
+    /// `#[serde(transparent)]`, so no signed metadata changed shape.
+    ///
+    /// **The key is always written, `null` included** — deliberately no
+    /// `skip_serializing_if`. Kind 44223 is an exact-key contract on both
+    /// sides: `provider` and `runtime` are in the *required* list of the
+    /// Desktop decoder's `hasRequiredAndOptionalKeys` check
+    /// (`desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts`,
+    /// `parseBuzzCodingSessionMetadata`), so omitting either would make **every**
+    /// metadata event from an updated provider fail to decode on Desktop, not
+    /// just the ones with nothing to say. Checked, not assumed (REVIEW-B2 F8).
+    pub provider: Option<crate::coding_session_identity::ProviderInstanceAlias>,
+    /// **Runtime word** behind the driver (`claude`, `codex`), or `null`.
+    ///
+    /// Typed since batch 2 lane B2 so it can never be compared with
+    /// `session.driver`, which is a driver slug (`claude-agent-acp`).
+    ///
+    /// Always written, `null` included, for the same reason as
+    /// [`provider`](Self::provider).
+    pub runtime: Option<crate::coding_session_identity::RuntimeWord>,
     /// Effective model, or `null` when the adapter chose its own.
     pub model: Option<String>,
     /// Current lifecycle status.
@@ -973,7 +992,8 @@ impl SessionMetadata {
         &self,
     ) -> Result<Option<crate::coding_session_identity::ProviderInstanceAlias>, String> {
         self.provider
-            .as_deref()
+            .as_ref()
+            .map(crate::coding_session_identity::ProviderInstanceAlias::as_str)
             .map(crate::coding_session_identity::ProviderInstanceAlias::from_wire)
             .transpose()
             .map_err(|error| error.replace("providerInstanceRef", "metadata provider"))
@@ -991,7 +1011,8 @@ impl SessionMetadata {
         &self,
     ) -> Result<Option<crate::coding_session_identity::RuntimeWord>, String> {
         self.runtime
-            .as_deref()
+            .as_ref()
+            .map(crate::coding_session_identity::RuntimeWord::as_str)
             .map(crate::coding_session_identity::RuntimeWord::from_wire)
             .transpose()
             .map_err(|error| error.replace("runtime", "metadata runtime"))
@@ -1142,15 +1163,30 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
     }
     .validate()?;
     for (field, value) in [
-        ("projectRef", &metadata.project_ref),
-        ("repoRef", &metadata.repo_ref),
-        ("title", &metadata.title),
-        ("agentRef", &metadata.agent_ref),
-        ("provider", &metadata.provider),
-        ("runtime", &metadata.runtime),
-        ("model", &metadata.model),
-        ("branch", &metadata.branch),
-        ("observedCommit", &metadata.observed_commit),
+        ("projectRef", metadata.project_ref.as_deref()),
+        ("repoRef", metadata.repo_ref.as_deref()),
+        ("title", metadata.title.as_deref()),
+        ("agentRef", metadata.agent_ref.as_deref()),
+        // `provider` and `runtime` are identity newtypes since B2; they are
+        // read through `as_str` rather than `as_deref` on purpose, because
+        // neither type derefs to `str` — that is the hole they exist to close.
+        (
+            "provider",
+            metadata
+                .provider
+                .as_ref()
+                .map(crate::coding_session_identity::ProviderInstanceAlias::as_str),
+        ),
+        (
+            "runtime",
+            metadata
+                .runtime
+                .as_ref()
+                .map(crate::coding_session_identity::RuntimeWord::as_str),
+        ),
+        ("model", metadata.model.as_deref()),
+        ("branch", metadata.branch.as_deref()),
+        ("observedCommit", metadata.observed_commit.as_deref()),
     ] {
         if let Some(value) = value {
             if value.trim().is_empty() || value.len() > MAX_METADATA_REFERENCE_BYTES {
@@ -1961,8 +1997,8 @@ mod tests {
             title: nullable(Some("  ")),
             agent_ref: None,
             role: None,
-            provider: Some("claude-primary".into()),
-            runtime: Some("claude".into()),
+            provider: Some("claude-primary".try_into().expect("alias")),
+            runtime: Some("claude".try_into().expect("runtime")),
             model: Some("claude-sonnet-4-6".into()),
             status: SessionStatus::Idle,
             branch: None,
@@ -2032,8 +2068,8 @@ mod tests {
             title: None,
             agent_ref: None,
             role: None,
-            provider: Some("codex-primary".into()),
-            runtime: Some("codex".into()),
+            provider: Some("codex-primary".try_into().expect("alias")),
+            runtime: Some("codex".try_into().expect("runtime")),
             model: None,
             status: SessionStatus::Running,
             branch: None,
@@ -2420,8 +2456,8 @@ mod tests {
             title: None,
             agent_ref: None,
             role: None,
-            provider: Some("claude-primary".to_owned()),
-            runtime: Some("claude".to_owned()),
+            provider: Some("claude-primary".try_into().expect("alias")),
+            runtime: Some("claude".try_into().expect("runtime")),
             model: None,
             status: SessionStatus::Idle,
             branch: None,

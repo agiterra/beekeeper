@@ -406,6 +406,7 @@ mod tests {
             history: Vec::new(),
             roster: Vec::new(),
             inbox: Vec::new(),
+            policy: None,
         }
     }
 

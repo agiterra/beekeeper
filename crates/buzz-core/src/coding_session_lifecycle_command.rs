@@ -99,8 +99,15 @@ pub enum CodingSessionLifecycleAction {
         /// event id rather than querying by the umbrella label.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         genesis_ref: Option<String>,
-        /// Required capability-advertised provider instance reference.
-        provider_instance_ref: String,
+        /// Required capability-advertised provider instance **alias**
+        /// (`claude-primary`).
+        ///
+        /// Typed since batch 2 lane B2: the field, not merely the read. An
+        /// alias is not an instance id, and ledger item 102 is what happens
+        /// when both are `String`. The newtype is `#[serde(transparent)]`, so
+        /// nothing about the wire changed — every create that decoded
+        /// yesterday still decodes.
+        provider_instance_ref: ProviderInstanceAlias,
         /// Required signing pubkey of the selected provider catalog authority.
         provider_authority_pubkey: String,
         /// Optional provider-neutral model identifier.
@@ -183,9 +190,13 @@ pub enum CodingSessionLifecycleAction {
         /// Role slug the hired seat holds — `[a-z0-9-]+`, 1..=
         /// [`MAX_ROLE_SLUG_BYTES`] bytes, the same slug a seated create writes.
         role: String,
-        /// Provider instance the host should run the seat on, or `null` to
-        /// take the host policy's default. Written explicitly either way.
-        provider_instance_ref: Option<String>,
+        /// Provider instance **alias** the host should run the seat on, or
+        /// `null` to take the host policy's default. Written explicitly
+        /// either way.
+        ///
+        /// Typed since batch 2 lane B2; see
+        /// [`SessionCreate::provider_instance_ref`](Self::SessionCreate::provider_instance_ref).
+        provider_instance_ref: Option<ProviderInstanceAlias>,
         /// Model the host should run the seat on, or `null` to take the
         /// chosen identity's own. Written explicitly either way.
         model: Option<String>,
@@ -285,9 +296,15 @@ impl CodingSessionLifecycleAction {
             Self::SessionHire {
                 provider_instance_ref,
                 ..
-            } => provider_instance_ref.as_deref(),
+            } => provider_instance_ref
+                .as_ref()
+                .map(ProviderInstanceAlias::as_str),
             Self::SessionResume { .. } | Self::SessionStop { .. } => None,
         };
+        // The field carries the newtype since B2, but `#[serde(transparent)]`
+        // decoding does not run `from_wire` — a signed create may still carry
+        // a blank or oversized alias. Re-validating here keeps the accessor's
+        // three answers exactly what B1 froze.
         raw.map(ProviderInstanceAlias::from_wire).transpose()
     }
 }
@@ -415,7 +432,7 @@ impl CodingSessionLifecycleCommandPayload {
                 }
                 validate_optional(repo_ref, "action.repoRef", MAX_LIFECYCLE_REFERENCE_BYTES)?;
                 validate_required(
-                    provider_instance_ref,
+                    provider_instance_ref.as_str(),
                     "action.providerInstanceRef",
                     MAX_LIFECYCLE_REFERENCE_BYTES,
                 )?;
@@ -465,11 +482,13 @@ impl CodingSessionLifecycleCommandPayload {
                 validate_session_ref(session_ref)?;
                 validate_event_id_hex("action.genesisRef", genesis_ref)?;
                 validate_role_slug(role)?;
-                validate_optional(
-                    provider_instance_ref,
-                    "action.providerInstanceRef",
-                    MAX_LIFECYCLE_REFERENCE_BYTES,
-                )?;
+                if let Some(provider_instance_ref) = provider_instance_ref {
+                    validate_required(
+                        provider_instance_ref.as_str(),
+                        "action.providerInstanceRef",
+                        MAX_LIFECYCLE_REFERENCE_BYTES,
+                    )?;
+                }
                 validate_optional(model, "action.model", MAX_LIFECYCLE_REFERENCE_BYTES)?;
                 validate_required(brief, "action.brief", MAX_LIFECYCLE_INITIAL_TURN_BYTES)?;
                 if let Some(requested_by) = requested_by {
@@ -1298,7 +1317,7 @@ mod tests {
                 repo_ref: Some("30617:owner:amas-redux".into()),
                 session_ref: Some(session_reference()),
                 genesis_ref: Some("12".repeat(32)),
-                provider_instance_ref: "claude-primary".into(),
+                provider_instance_ref: "claude-primary".try_into().expect("alias"),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: Some("claude-sonnet-4-6".into()),
                 title: Some("Advance Buzz live sessions".into()),
@@ -1935,7 +1954,12 @@ mod tests {
         assert_eq!(session_ref, &session_reference());
         assert_eq!(genesis_ref, &"12".repeat(32));
         assert_eq!(role, "builder");
-        assert_eq!(provider_instance_ref.as_deref(), Some("claude-primary"));
+        assert_eq!(
+            provider_instance_ref
+                .as_ref()
+                .map(ProviderInstanceAlias::as_str),
+            Some("claude-primary")
+        );
         assert_eq!(model.as_deref(), Some("claude-sonnet-4-6"));
         assert_eq!(brief, "Rebase the lane and run the gate.");
         assert_eq!(

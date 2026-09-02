@@ -13,9 +13,11 @@ nothing at all. Budgets lived in a launch dialog, "red first" lived in
 said it once.
 
 This kind is additive. Clients that do not implement NIP-CSP continue to run
-coding sessions exactly as they do today and may ignore kind 44245. **Nothing
-in this repository enforces a policy yet** — see "Validation boundary" below,
-which is the one thing a surface rendering a 44245 must not get wrong.
+coding sessions exactly as they do today and may ignore kind 44245. **Exactly
+one field is enforced anywhere in this repository — `budget.turns`, at the
+provider's turn gate; every other field is read and shown, never counted** —
+see "Validation boundary" and "What v1 deliberately does not have" below, which
+together are the one thing a surface rendering a 44245 must not get wrong.
 
 ## Allocation
 
@@ -204,19 +206,50 @@ answered against the accepted NIP-CSAT chain, exactly the division kind 44244
 draws. A relay that adjudicated policy authority would be asserting standing it
 cannot verify at ingest time.
 
-Expected v1 signers are the founder or an active `lead`; nothing enforces that
-yet.
+The v1 signer rule is: **the founder, or a seat holding an operator grant** the
+relay had already accepted when the record was published. A `lead` role slug is
+not enough and is not an input — a consumer can prove an operator grant from the
+accepted NIP-CSAT chain and cannot prove a role slug it did not mint.
+
+Every consumer applies that one rule through the same function,
+`buzz_core::coding_session_policy::fold_coding_session_policies` with
+`signer_may_steer_at`: the provider's context projection and turn gate
+(`crates/buzz-session-provider/src/context_projector.rs`,
+`select_session_policy`), and `bee sessions policy set|get|clear`
+(`crates/buzz-cli/src/commands/sessions/policy.rs`). The grant is evaluated **at
+the record's own `created_at`**, so a later revoke does not retroactively
+invalidate a policy signed while the grant stood, and a later grant does not
+retroactively bless one signed before it existed.
+
+A record that fails the check is **listed with its reason**, never silently
+dropped and never promoted: a stranger's competing ceiling and "nobody set a
+policy" are different facts, and a reader that could not tell them apart would
+be the defect this rule exists to prevent.
 
 ## What v1 deliberately does not have
 
-- **No fold.** Newest-accepted-wins is stated here and implemented by whoever
-  writes the first consumer, beside the authority check it needs.
-- **No CLI and no UI.** `bee sessions policy` and the launch form are later
-  work; v1 freezes the record they will write.
-- **No enforcement.** Nothing in this repository refuses a turn because of a
-  budget in a 44245 today. Until a consumer exists, **a published policy is a
+- **No general enforcement.** Exactly one field binds anything:
+  **`budget.turns`**, which overrides the provider's `BUZZ_CSP_TURN_BUDGET`
+  ceiling for that umbrella and, when it is what refuses a turn, says
+  "published session policy" in the `BUDGET_EXHAUSTED` message so a reader can
+  tell which ceiling bound
+  (`crates/buzz-session-provider/src/commands.rs`, `exhausted_umbrella_budget`).
+  A policy published mid-session does not bind until that umbrella's next
+  create or resume.
+
+  **Every other field is read and shown, never counted** — `posture`,
+  `budget.tokensPerSeat`, `budget.tokensPerSession`, `budget.costUsdPerSession`,
+  `budget.contextTier`, `attention`, all four `gates.*`, all three `bench.*`,
+  `irreversible`, and both `stop.*`. For those, **a published policy is a
   stated intention, not an enforced limit** — and any surface that displays one
   MUST say so rather than showing a budget bar nothing is counting.
+- **No UI.** The launch form is later work. `bee sessions policy set|get|clear`
+  writes and reads the record (batch 2 lane B2). `get` folds the signer rule
+  above: it prints the newest record whose signer held standing, `null` when
+  none did, and every refused record under `excluded` with its author and a
+  reason. A withdrawal prints as a real record with `setsAnyPolicy: false` —
+  "nobody set one", "somebody took it back", and "a stranger published one" are
+  three different facts and the output keeps them apart.
 
 ## Implementation
 
@@ -226,6 +259,9 @@ yet.
 | Kind allocation and assertions | `crates/buzz-core/src/kind.rs` |
 | Signed builder | `crates/buzz-sdk/src/coding_session_policy.rs` |
 | Relay structural validation | `crates/buzz-relay/src/handlers/ingest.rs` |
+| Writer and reader (`bee sessions policy set\|get\|clear`) | `crates/buzz-cli/src/commands/sessions/policy.rs` |
+| Newest-accepted fold, in the context package | `crates/buzz-session-provider/src/context_projector.rs` |
+| The one enforced field, at the turn gate | `crates/buzz-session-provider/src/commands.rs` |
 | Field-by-field consumer map | `docs/design/portable-team-loop/POLICY.md` |
 
 `docs/design/portable-team-loop/POLICY.md` is the companion design note: it

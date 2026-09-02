@@ -383,6 +383,27 @@ fn is_terminal_pointer(object: &serde_json::Map<String, serde_json::Value>) -> b
             == Some(TEAM_WAKE_POINTER_SCHEMA)
 }
 
+/// Whether a parsed JSON value is one of the two pointer shapes [`wake_text`]
+/// produces.
+///
+/// The single recogniser behind both [`operation_fence_key`] and
+/// [`is_team_wake_pointer`]: a second one would be a second opinion about what
+/// a wake is, and the fence and the framing must never disagree about that.
+fn is_wake_pointer_value(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| is_report_pointer(object) || is_terminal_pointer(object))
+}
+
+/// Whether `text` is a team-wake pointer this provider itself mints.
+///
+/// Used by the delivery path to tell a provider-minted wake from words an
+/// operator typed. Prose is never a pointer, so a founder who types JSON-shaped
+/// prose that is not one of the two exact shapes is still treated as prose.
+pub fn is_team_wake_pointer(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text).is_ok_and(|value| is_wake_pointer_value(&value))
+}
+
 /// The durable identity of one team-wake *operation* addressed to one exact
 /// execution generation, or `None` when `text` is not a wake pointer.
 ///
@@ -404,8 +425,7 @@ fn is_terminal_pointer(object: &serde_json::Map<String, serde_json::Value>) -> b
 /// cannot be confused for one another.
 pub fn operation_fence_key(target: &CodingSessionTarget, text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
-    let object = value.as_object()?;
-    if !(is_report_pointer(object) || is_terminal_pointer(object)) {
+    if !is_wake_pointer_value(&value) {
         return None;
     }
     let canonical = serde_json::to_string(&value).ok()?;

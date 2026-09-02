@@ -71,7 +71,7 @@ fn signed_hire() -> (
             repo_ref: None,
             session_ref: Some(session.clone()),
             genesis_ref: Some(genesis.clone()),
-            provider_instance_ref: "provider-1".into(),
+            provider_instance_ref: "provider-1".try_into().expect("alias"),
             provider_authority_pubkey: provider.public_key().to_hex(),
             model: None,
             title: None,
@@ -110,9 +110,9 @@ fn signed_hire() -> (
         title: None,
         agent_ref: Some(actor.clone()),
         role: Some("builder".into()),
-        provider: Some("provider-1".into()),
+        provider: Some("provider-1".try_into().expect("alias")),
         // Live shape: the runtime word, not the driver slug.
-        runtime: Some("claude".into()),
+        runtime: Some("claude".try_into().expect("runtime")),
         model: None,
         status: SessionStatus::Idle,
         branch: None,
@@ -142,7 +142,7 @@ fn signed_hire() -> (
         session_ref: session.clone(),
         genesis_ref: genesis.clone(),
         provider_authority_pubkey: provider.public_key().to_hex(),
-        provider_instance_ref: "provider-1".into(),
+        provider_instance_ref: "provider-1".try_into().expect("alias"),
         model: None,
         at: create.created_at.as_secs() as i64,
         raw: serde_json::to_value(&create).expect("create JSON"),
@@ -343,8 +343,8 @@ fn provider_instance_must_match_request_create_receipt_and_metadata() {
         title: None,
         agent_ref: Some(seat.actor.clone()),
         role: Some("builder".into()),
-        provider: Some("provider-2".into()),
-        runtime: Some("wrong-runtime".into()),
+        provider: Some("provider-2".try_into().expect("alias")),
+        runtime: Some("wrong-runtime".try_into().expect("runtime")),
         model: None,
         status: SessionStatus::Idle,
         branch: None,
@@ -412,7 +412,7 @@ fn provider_instance_must_match_request_create_receipt_and_metadata() {
 #[test]
 fn receipt_instance_id_is_the_providers_short_id_not_the_create_alias() {
     let (events, seat, receipt, channel, genesis, _provider) = signed_hire();
-    assert_ne!(seat.provider_instance_ref, "1958c6c448e05eed");
+    assert_ne!(seat.provider_instance_ref.as_str(), "1958c6c448e05eed");
     let bound = create_receipt_binding(&channel, &seat, &receipt).expect("receipt binds");
     assert_eq!(
         bound.map(|target| target.instance_id),

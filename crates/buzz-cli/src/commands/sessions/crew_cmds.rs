@@ -24,6 +24,7 @@ use buzz_core::coding_session_command::{
     CodingSessionDelivery, TurnAttachment, ALLOWED_ATTACHMENT_MIMES, CODING_SESSION_COMMAND_SCHEMA,
     CODING_SESSION_COMMAND_TAG_VERSION, MAX_TURN_ATTACHMENTS,
 };
+use buzz_core::coding_session_identity::ProviderInstanceAlias;
 use buzz_core::coding_session_lifecycle_command::{
     validate_event_id_hex, validate_role_slug, validate_session_ref, CodingSessionLifecycleAction,
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
@@ -617,7 +618,8 @@ pub async fn cmd_create(
             repo_ref: repo.map(str::to_owned),
             session_ref: session_ref.map(str::to_owned),
             genesis_ref: genesis.map(str::to_owned),
-            provider_instance_ref: provider_instance.to_owned(),
+            provider_instance_ref: ProviderInstanceAlias::from_wire(provider_instance)
+                .map_err(|error| CliError::Usage(format!("--provider-instance: {error}")))?,
             provider_authority_pubkey: provider_authority.to_owned(),
             model: model.map(str::to_owned),
             title: title.map(str::to_owned),
@@ -1054,14 +1056,27 @@ pub async fn cmd_hire(
     let plan = resolve_hire_routing(client, channel_id, routing, provider_instance, model).await?;
 
     let command_id = Uuid::new_v4().to_string();
+    // The requester is this command's own signer, always (B2.2). It is a
+    // *claim* on the wire — the relay does not compare it with `event.pubkey`
+    // — but writing anything other than the key that is about to sign the
+    // event would make it a false claim from the one place that cannot be
+    // mistaken about the answer.
+    let requested_by = client.keys().public_key().to_hex();
+    let provider_instance_alias = plan
+        .provider_instance
+        .as_deref()
+        .map(ProviderInstanceAlias::from_wire)
+        .transpose()
+        .map_err(|error| CliError::Usage(format!("--provider-instance: {error}")))?;
     let payload = hire_payload(
         &command_id,
         session_ref,
         &genesis_ref,
         role,
-        plan.provider_instance.as_deref(),
+        provider_instance_alias,
         plan.model.as_deref(),
         &brief_text,
+        Some(requested_by.as_str()),
         plan.request.clone(),
     );
     // The facts are measured off the exact payload that would be signed, and
@@ -1119,6 +1134,18 @@ pub async fn cmd_hire(
         // router that could not answer is said out loud rather than looking
         // like a lead that chose not to run one.
         "proposedUnavailable": plan.proposal_unavailable,
+        // B2.2: who asked. Always this command's own signer, so the create the
+        // host publishes can name the hire it answers and the seat's first
+        // turn can be framed as the lead's rather than the founder's.
+        "requestedBy": requested_by,
+        // REVIEW-B1 F8, and POLICY.md §5. The relay verifies the event
+        // signature and therefore holds `event.pubkey`, but it does **not**
+        // compare it with `action.requestedBy` — that is a choice, not an
+        // impossibility. `bee` closes the hole on this side by writing its own
+        // signer and nothing else; a reader still has to treat the field as a
+        // claim, because any signer the relay admits for a hire can attribute
+        // the request to somebody else's pubkey.
+        "requestedByVerifiedByRelay": false,
     });
     let mut merged = match submit_with(client, event, "hire request already accepted", extra).await
     {
@@ -2384,7 +2411,7 @@ mod seat_repair_tests;
 /// names its umbrella and is signature-verified before it is read; asking a
 /// caller to restate a fact the signed event carries is a way to be told a
 /// different one. The value is handed straight back to
-/// [`super::operations::fetch_founder_context`], which re-verifies the whole
+/// [`super::operations_reads::fetch_founder_context`], which re-verifies the whole
 /// envelope including this pairing.
 async fn session_ref_of_genesis(
     client: &BuzzClient,
@@ -2553,7 +2580,8 @@ pub async fn cmd_revoke_seat(
         .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
 
     let context =
-        super::operations::fetch_founder_context(client, channel_id, &session_ref, genesis).await?;
+        super::operations_reads::fetch_founder_context(client, channel_id, &session_ref, genesis)
+            .await?;
     let founder = context.founder_pubkey.clone();
 
     for attempt in 0..2 {

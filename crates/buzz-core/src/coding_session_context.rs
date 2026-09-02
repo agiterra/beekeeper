@@ -20,17 +20,18 @@ use crate::coding_session_command::{
 };
 use crate::coding_session_lifecycle_command::{validate_role_slug, validate_session_ref};
 use crate::coding_session_payload::ReceiptStatus;
+use crate::coding_session_policy::CodingSessionPolicyPayload;
 
 /// Current private context-package schema version.
-pub const CODING_SESSION_CONTEXT_PACKAGE_VERSION: u64 = 3;
+pub const CODING_SESSION_CONTEXT_PACKAGE_VERSION: u64 = 4;
 /// Oldest private context-package schema version a reader still accepts.
 ///
 /// Every bump so far has been additive, so an older package still validates
 /// unchanged: version 2 added the optional `sourceEventBreakdown`
-/// reconciliation, version 3 the crew `roster` and `inbox`. Each bump exists
-/// so that an *older* reader — whose structs are `deny_unknown_fields` —
-/// fails with "unsupported … package version N" instead of an opaque
-/// unknown-field error.
+/// reconciliation, version 3 the crew `roster` and `inbox`, version 4 the
+/// newest accepted session `policy` (kind 44245). Each bump exists so that an
+/// *older* reader — whose structs are `deny_unknown_fields` — fails with
+/// "unsupported … package version N" instead of an opaque unknown-field error.
 pub const MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION: u64 = 1;
 /// Maximum seats listed in one package roster.
 ///
@@ -120,6 +121,74 @@ pub struct CodingSessionContextPackage {
     /// Additive (version 3), same wire discipline as `roster`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbox: Vec<CodingSessionContextInboxItem>,
+    /// The newest accepted kind-44245 session policy addressed at this
+    /// umbrella, or absent when the umbrella has none.
+    ///
+    /// Additive (version 4). **Omitted entirely** when there is no policy —
+    /// never written as an explicit `null` — so every package a v1/v2/v3
+    /// reader could parse is byte-identical to what it was.
+    ///
+    /// A policy is *stated intention*, not an enforced limit, with exactly one
+    /// exception named in `docs/design/portable-team-loop/POLICY.md` §4
+    /// (`budget.turns` at the provider's turn gate). Any surface that renders
+    /// this field owes its reader that sentence: a budget bar nothing is
+    /// counting is worse than no budget bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<CodingSessionContextPolicy>,
+}
+
+/// The newest accepted session policy (kind 44245) for one umbrella, with the
+/// provenance a reader needs to judge it.
+///
+/// The record travels beside its signer and its event id rather than alone,
+/// because "the policy says 240 turns" is not a fact a reader can act on
+/// without knowing **who said so**. The relay validates a 44245's structure
+/// and deliberately does not adjudicate whether its signer held the standing
+/// to set policy; that is this projection's question, and
+/// [`author_is_founder`](Self::author_is_founder) is the part of the answer a
+/// provider can prove from the umbrella's own genesis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionContextPolicy {
+    /// Signed source event id of the policy record.
+    pub event_id: String,
+    /// Signed source event creation time, Unix seconds. Newest wins, and this
+    /// is the value that decided it.
+    pub created_at: u64,
+    /// Pubkey that signed the record.
+    pub author: String,
+    /// Whether that author is the umbrella's founder.
+    ///
+    /// `false` means a granted operator signed it — an authority this
+    /// provider verified from the accepted NIP-CSAT chain, but not the
+    /// founder. It is deliberately a two-way fact rather than a role name: a
+    /// provider can prove "founder" and "granted", and cannot prove "lead".
+    pub author_is_founder: bool,
+    /// The decoded policy itself, exactly as
+    /// [`decode_coding_session_policy`](crate::coding_session_policy::decode_coding_session_policy)
+    /// read it.
+    pub record: CodingSessionPolicyPayload,
+}
+
+impl CodingSessionContextPolicy {
+    /// Validate the carried record and its agreement with the package.
+    ///
+    /// A policy filed under one umbrella while naming another would let a
+    /// package serve a budget nobody set for this session.
+    fn validate(&self, session_ref: &str, genesis_ref: &str) -> Result<(), String> {
+        validate_lower_hex("context policy eventId", &self.event_id, 64)?;
+        validate_lower_hex("context policy author", &self.author, 64)?;
+        self.record
+            .validate()
+            .map_err(|error| format!("context policy: {error}"))?;
+        if self.record.session_ref != session_ref {
+            return Err("context policy sessionRef does not match the package".into());
+        }
+        if self.record.genesis_ref != genesis_ref {
+            return Err("context policy genesisRef does not match the package".into());
+        }
+        Ok(())
+    }
 }
 
 /// What the signed record says about one seat, never what a lease says.
@@ -820,6 +889,9 @@ impl CodingSessionContextPackage {
 
         self.validate_roster()?;
         self.validate_inbox()?;
+        if let Some(policy) = &self.policy {
+            policy.validate(&self.session.session_ref, &self.session.genesis_ref)?;
+        }
 
         let encoded = serde_json::to_vec(self)
             .map_err(|error| format!("context package serialization failed: {error}"))?;

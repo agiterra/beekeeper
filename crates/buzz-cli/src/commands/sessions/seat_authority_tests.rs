@@ -23,6 +23,7 @@ fn authority() -> ProjectedAuthority {
             role: "lead".into(),
         }],
         seat_grant_refs: [(LEAD.into(), "22".repeat(32))].into_iter().collect(),
+        policy_grants: Vec::new(),
         head_event_id: Some("22".repeat(32)),
         head_seq: 2,
     }

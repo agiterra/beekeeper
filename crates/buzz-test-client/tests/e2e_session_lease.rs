@@ -239,7 +239,11 @@ async fn session_lease_authority_register_and_cold_reads_are_end_to_end() {
             repo_ref: None,
             session_ref: None,
             genesis_ref: None,
-            provider_instance_ref: target.instance_id.clone(),
+            provider_instance_ref: target
+                .instance_id
+                .as_str()
+                .try_into()
+                .expect("instance ref is a valid alias"),
             provider_authority_pubkey: provider.public_key().to_hex(),
             model: None,
             title: None,

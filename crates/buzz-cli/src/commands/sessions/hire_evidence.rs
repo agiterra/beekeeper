@@ -4,6 +4,7 @@ use buzz_core::coding_session_command::{coding_session_target_key, CodingSession
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
+use buzz_core::coding_session_identity::ProviderInstanceAlias;
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
     CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
@@ -252,7 +253,11 @@ pub(super) fn verify_hire_evidence(
                 && metadata.agent_ref.as_deref() == Some(actor.as_str())
                 && metadata.role.as_deref() == Some(role.as_str())
                 && metadata.session_ref.as_deref() == Some(request.session_ref)
-                && metadata.provider.as_deref() == Some(provider_instance_ref.as_str())
+                && metadata
+                    .provider
+                    .as_ref()
+                    .map(ProviderInstanceAlias::as_str)
+                    == Some(provider_instance_ref.as_str())
             // `metadata.runtime` is the human runtime word (`claude`); the
             // target's `driver` is the ACP driver slug (`claude-agent-acp`).
             // Comparing them refused the real cleantest metadata on

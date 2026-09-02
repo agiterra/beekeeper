@@ -5751,7 +5751,7 @@ mod tests {
                 repo_ref: None,
                 session_ref: Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into()),
                 genesis_ref: None,
-                provider_instance_ref: "claude-primary".into(),
+                provider_instance_ref: "claude-primary".try_into().expect("alias"),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: None,
                 title: Some("Advance Buzz live sessions".into()),

@@ -43,7 +43,7 @@ fn execution(session_id: &str, actor: &str, role: &str) -> CrewExecution {
         session_ref: Some("6a8f1b2c-0000-4000-8000-000000000001".into()),
         status: "idle".into(),
         model: Some("claude-opus".into()),
-        runtime: Some("claude".into()),
+        runtime: Some("claude".try_into().expect("runtime")),
         last_signed_seq: Some(1),
         last_signed_at: Some(1_000),
         liveness: Liveness::Quiet { age_secs: 10 },

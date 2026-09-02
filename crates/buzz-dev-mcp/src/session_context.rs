@@ -498,6 +498,13 @@ impl SessionContextState {
             json!(roster_view(package, self.self_target.as_deref())),
         );
         response.insert("rosterSemantics".into(), roster_semantics());
+        // Absent, not null, when the umbrella has no policy: a reader that saw
+        // `"policy": null` beside `policySemantics` would have to guess whether
+        // nobody set one or the projection could not read one.
+        if let Some(policy) = &package.policy {
+            response.insert("policy".into(), json!(policy));
+            response.insert("policySemantics".into(), policy_semantics());
+        }
         response.insert(
             "availableInboxItems".into(),
             json!(self.inbox_items(package).len()),
@@ -855,6 +862,24 @@ fn roster_semantics() -> Value {
         "liveness": "no lease is read here: a seat that is `active` may still be a stopped process. quietForMs is measured from the projection time, not from now — add staleness.ageSinceProjectionMs.",
         "quietForMs": "milliseconds between this seat's newest signed transcript item and this package's projection",
         "role": "null for a human-created execution; a role slug only for a seated agent",
+    })
+}
+
+/// What a published session policy is, and — the load-bearing half — what it
+/// is not.
+///
+/// Exactly one field in a kind-44245 record is enforced anywhere in this
+/// repository (`docs/design/portable-team-loop/POLICY.md` §4). A seat that
+/// read `gates.redFirst: true` and assumed something was checking would be
+/// wrong, and a surface that let it assume so would be the "control that lies
+/// about what it enforces" bug this project treats as a crash.
+fn policy_semantics() -> Value {
+    json!({
+        "authority": "authorIsFounder distinguishes the umbrella's founder from a granted operator; the relay validates a policy's structure and never adjudicates who was entitled to set one",
+        "enforced": "budget.turns only, at this provider's turn gate: a turn beyond it is refused BUDGET_EXHAUSTED and the refusal says the policy bound it",
+        "notEnforced": "every other field — posture, the remaining budgets, attention, gates, bench, irreversible, stop — is a stated intention that nothing in this repository checks. Read it, quote it, act on it yourself; do not report it as a limit something is holding you to.",
+        "withdrawal": "a record that sets no field at all is a policy somebody withdrew, which is a decision — not 'policy unknown'",
+        "freshness": "a snapshot like everything else here; a policy published after this package was projected is not in it",
     })
 }
 
@@ -1753,6 +1778,73 @@ mod tests {
                 .contains("no lease is read here"),
             "the roster must not be mistaken for a liveness answer"
         );
+    }
+
+    /// A published session policy reaches the seat, and reaches it with the
+    /// sentence that says what is and is not enforced. Showing a budget with
+    /// no such caveat is a budget bar nothing is counting.
+    #[test]
+    fn session_overview_carries_the_policy_and_says_what_it_does_not_enforce() {
+        use buzz_core::coding_session_context::CodingSessionContextPolicy;
+        use buzz_core::coding_session_policy::{
+            CodingSessionPolicyBudget, CodingSessionPolicyPayload,
+        };
+
+        let (mut package, mine) = crew_package();
+        package.policy = Some(CodingSessionContextPolicy {
+            event_id: "ab".repeat(32),
+            created_at: 900,
+            author: "cd".repeat(32),
+            author_is_founder: true,
+            record: CodingSessionPolicyPayload {
+                budget: Some(CodingSessionPolicyBudget {
+                    turns: Some(240),
+                    tokens_per_seat: None,
+                    tokens_per_session: None,
+                    cost_usd_per_session: None,
+                    context_tier: None,
+                }),
+                ..CodingSessionPolicyPayload::empty(
+                    package.session.session_ref.clone(),
+                    package.session.genesis_ref.clone(),
+                )
+            },
+        });
+        let state =
+            SessionContextState::from_package_serving(package, &coding_session_target_key(&mine));
+        let overview: Value = serde_json::from_str(
+            &state
+                .overview(SessionOverviewParams::default())
+                .expect("overview"),
+        )
+        .expect("overview JSON");
+
+        assert_eq!(overview["policy"]["record"]["budget"]["turns"], 240);
+        assert_eq!(overview["policy"]["authorIsFounder"], true);
+        assert!(
+            overview["policySemantics"]["notEnforced"]
+                .as_str()
+                .expect("notEnforced disclosure")
+                .contains("stated intention"),
+            "a policy field nothing checks must not be shown as a limit"
+        );
+    }
+
+    /// No policy, no key, no semantics block — and no reader left guessing
+    /// whether one was set.
+    #[test]
+    fn session_overview_omits_the_policy_when_there_is_none() {
+        let (package, mine) = crew_package();
+        let state =
+            SessionContextState::from_package_serving(package, &coding_session_target_key(&mine));
+        let overview: Value = serde_json::from_str(
+            &state
+                .overview(SessionOverviewParams::default())
+                .expect("overview"),
+        )
+        .expect("overview JSON");
+        assert!(overview.get("policy").is_none(), "{overview}");
+        assert!(overview.get("policySemantics").is_none(), "{overview}");
     }
 
     /// A package written before the crew fields existed still loads, and

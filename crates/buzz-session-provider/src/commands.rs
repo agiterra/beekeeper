@@ -21,6 +21,7 @@ use buzz_core::coding_session_command::{
 };
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
+    CodingSessionLifecycleCommandPayload,
 };
 use buzz_core::coding_session_routing::RoutingRecord;
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
@@ -200,6 +201,15 @@ pub struct CreatePlan {
     pub actor: Option<String>,
     /// The role slug that seat holds. Set exactly when `actor` is.
     pub role: Option<String>,
+    /// Signed kind:44221 `session.hire` event id this create answers, or
+    /// `None` when the create answers no hire.
+    ///
+    /// Carried so the create path can read the hire and learn **who asked for
+    /// this seat**. Nothing about the reference is trusted here: the event is
+    /// fetched by id, its own signature is checked by the relay that stores
+    /// it, and its `requestedBy` claim is compared with its signer before a
+    /// single byte of attribution is used.
+    pub hire_ref: Option<String>,
 }
 
 /// A validated request to reattach one exact prior generation.
@@ -289,6 +299,15 @@ pub struct CommandContext<'a> {
     /// Ceiling on turns started under one umbrella, or
     /// [`crate::config::UNLIMITED_TURN_BUDGET`] for no ceiling (D9).
     pub turn_budget: u64,
+    /// Per-umbrella turn ceilings read from published kind-44245 session
+    /// policies, keyed by `sessionRef`.
+    ///
+    /// Owned rather than borrowed because it is a small snapshot taken per
+    /// command: the map is provider state that a create or resume rewrites,
+    /// and a decision must be made against one consistent reading of it.
+    /// An umbrella absent from the map has no policy budget and falls back to
+    /// [`turn_budget`](Self::turn_budget).
+    pub policy_turn_budgets: HashMap<String, u32>,
     /// Number of adapter actors currently attached in this process.
     pub active_session_count: usize,
     /// Durable state: dedupe ledger and session records.
@@ -450,7 +469,7 @@ pub fn decide_lifecycle(
         initial_turn,
         actor,
         role,
-        hire_ref: _,
+        hire_ref,
         routing,
     } = &payload.action
     else {
@@ -463,7 +482,12 @@ pub fn decide_lifecycle(
     if !context
         .runtimes
         .iter()
-        .any(|descriptor| &descriptor.instance_ref == provider_instance_ref)
+        // Both sides name a provider instance **alias**: the descriptor's
+        // `instance_ref` is the alias this provider advertises in its catalog,
+        // and the create's `providerInstanceRef` is the alias the operator
+        // asked for. Comparing either with a `cs-target.instanceId` is ledger
+        // item 102 and is a compile error since B2.
+        .any(|descriptor| descriptor.instance_ref.as_str() == provider_instance_ref.as_str())
     {
         let mut offered: Vec<&str> = context
             .runtimes
@@ -475,7 +499,12 @@ pub fn decide_lifecycle(
             command_id: payload.command_id.clone(),
             code: PROVIDER_UNAVAILABLE,
             message: format!(
-                "unknown providerInstanceRef {provider_instance_ref:?}; this provider offers: {}",
+                // `.as_str()`, not the newtype: `{:?}` on a
+                // `ProviderInstanceAlias` renders `ProviderInstanceAlias("…")`
+                // into a message an operator reads, which is a Rust type name
+                // leaking onto the wire.
+                "unknown providerInstanceRef {:?}; this provider offers: {}",
+                provider_instance_ref.as_str(),
                 offered.join(", ")
             ),
         };
@@ -548,7 +577,7 @@ pub fn decide_lifecycle(
 
     LifecycleDecision::Create(Box::new(CreatePlan {
         command_id: payload.command_id.clone(),
-        runtime_instance_ref: provider_instance_ref.clone(),
+        runtime_instance_ref: provider_instance_ref.as_str().to_owned(),
         channel_id,
         cwd,
         project_ref: project_ref.clone(),
@@ -562,7 +591,59 @@ pub fn decide_lifecycle(
         routing: routing.clone(),
         actor: actor.clone(),
         role: role.clone(),
+        hire_ref: hire_ref.clone(),
     }))
+}
+
+/// What a consumer could verify about who asked for a hired seat.
+///
+/// Three answers, never two. A `session.hire` may carry `requestedBy` — the
+/// pubkey of the seat that ran `bee sessions hire` — and **the relay does not
+/// compare it with the event's signer** (`docs/design/portable-team-loop/
+/// POLICY.md` §5). It could; v1 does not. So any signer the relay admits for a
+/// hire can write another seat's pubkey there, and a consumer that printed the
+/// claim as fact would be attributing a brief to somebody who never asked for
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HireAttribution {
+    /// The hire claimed no requester. *Unknown*, never *mismatched*: a hire
+    /// signed before the key existed is not a hire whose requester disagrees
+    /// with its signer.
+    Unclaimed,
+    /// `requestedBy` equals the pubkey that signed the hire. This is the only
+    /// answer a consumer may render as attribution.
+    Attributed(String),
+    /// `requestedBy` names a pubkey that did not sign the hire. Disclosed, and
+    /// never used: the caller falls back to the unattributed delivery a hire
+    /// without the key would have got.
+    Disputed {
+        /// The pubkey the hire claimed asked for the seat.
+        claimed: String,
+        /// The pubkey that actually signed the hire.
+        signer: String,
+    },
+}
+
+/// Compare a decoded `session.hire`'s requester claim with its own signer.
+///
+/// `signer_pubkey_hex` must be the pubkey of the **signed event** the payload
+/// was decoded from — a locally verified fact, never a value out of the
+/// content. Any action that is not a hire answers [`HireAttribution::Unclaimed`],
+/// because it claims nothing.
+pub fn hire_attribution(
+    hire: &CodingSessionLifecycleCommandPayload,
+    signer_pubkey_hex: &str,
+) -> HireAttribution {
+    match hire.hire_requested_by() {
+        None => HireAttribution::Unclaimed,
+        Some(claimed) if claimed == signer_pubkey_hex => {
+            HireAttribution::Attributed(claimed.to_owned())
+        }
+        Some(claimed) => HireAttribution::Disputed {
+            claimed: claimed.to_owned(),
+            signer: signer_pubkey_hex.to_owned(),
+        },
+    }
 }
 
 /// Decide what a 44220 turn command means for this provider.
@@ -633,16 +714,12 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     // nothing, and a crew that could not stop its own runaway turn once the
     // budget ran out would be strictly worse off for having a budget.
     if matches!(command.action, TurnAction::Start { .. }) {
-        if let Some((used, limit)) = exhausted_turn_budget(context, record) {
+        if let Some((used, limit, source)) = exhausted_turn_budget(context, record) {
             return TurnDecision::Fail {
                 command_id: command.command_id,
                 target: command.target,
                 code: BUDGET_EXHAUSTED,
-                message: format!(
-                    "this team session has started {used} of its {limit} allowed turns; the \
-                     session founder can still send turns, and raising \"Turns per team \
-                     session\" takes effect the next time the provider starts"
-                ),
+                message: budget_exhausted_message(used, limit, source),
             };
         }
     }
@@ -777,29 +854,72 @@ fn operator_may_steer(record: &crate::state::SessionRecord, operator_pubkey: &st
     record.genesis_ref.is_some() && record.granted_operators.contains(operator_pubkey)
 }
 
-/// The umbrella allowance this turn would exceed, as `(used, limit)`, or
-/// `None` when the turn is within budget or outside the budget's reach.
+/// The umbrella allowance this turn would exceed, as `(used, limit, source)`,
+/// or `None` when the turn is within budget or outside the budget's reach.
 ///
 /// A thin wrapper over [`exhausted_umbrella_budget`] so the decision path and
 /// the create path answer the same question from the same facts.
 fn exhausted_turn_budget(
     context: &CommandContext<'_>,
     record: &crate::state::SessionRecord,
-) -> Option<(u64, u64)> {
+) -> Option<(u64, u64, TurnBudgetSource)> {
     exhausted_umbrella_budget(
         context.state,
         context.turn_budget,
+        record
+            .session_ref
+            .as_deref()
+            .and_then(|session_ref| context.policy_turn_budgets.get(session_ref).copied()),
         record.session_ref.as_deref(),
         context.operator_pubkey,
     )
+}
+
+/// Which ceiling refused a turn.
+///
+/// Two ceilings can bind the same turn and a reader has to be able to tell
+/// them apart, because they are changed in completely different places: one is
+/// an environment variable on the machine running the provider, the other is a
+/// signed record anyone reading the session can see. A refusal that named
+/// neither sent every reader to the wrong knob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnBudgetSource {
+    /// `BUZZ_CSP_TURN_BUDGET` on the host running this provider.
+    Environment,
+    /// `budget.turns` in the umbrella's newest accepted kind-44245 policy.
+    Policy,
+}
+
+/// The operator-facing sentence for an exhausted turn allowance.
+///
+/// Public so the create path — whose first turn never passes through
+/// [`decide_turn`] — answers with the same words rather than a paraphrase that
+/// drifts.
+pub fn budget_exhausted_message(used: u64, limit: u64, source: TurnBudgetSource) -> String {
+    match source {
+        TurnBudgetSource::Environment => format!(
+            "this team session has started {used} of its {limit} allowed turns; the session \
+             founder can still send turns, and raising \"Turns per team session\" takes effect \
+             the next time the provider starts"
+        ),
+        TurnBudgetSource::Policy => format!(
+            "this team session has started {used} of the {limit} turns its published session \
+             policy allows; the session founder can still send turns, and changing this ceiling \
+             means publishing a new session policy for this session, not restarting the provider"
+        ),
+    }
 }
 
 /// The umbrella allowance a turn by `operator_pubkey` would exceed, as
 /// `(used, limit)`, or `None` when it is within budget or outside the
 /// budget's reach.
 ///
+/// The ceiling is `policy_turns` when the umbrella published one, and
+/// `env_limit` otherwise — see [`TurnBudgetSource`], which the caller must
+/// name in its refusal so a reader knows which one to change.
+///
 /// Four ways a turn is outside its reach, and each is a fact rather than a
-/// tolerance: the host set no budget (`UNLIMITED_TURN_BUDGET`); the execution
+/// tolerance: no ceiling applies (`UNLIMITED_TURN_BUDGET`); the execution
 /// claimed no umbrella, so there is no crew to bound; the signer founded the
 /// *umbrella*, because a budget bounds delegated work and the founder is who
 /// it was protecting; or the umbrella has simply not spent its allowance yet.
@@ -813,10 +933,21 @@ fn exhausted_turn_budget(
 /// session with no genesis at all, and those founders must stay exempt.
 pub fn exhausted_umbrella_budget(
     state: &StateStore,
-    limit: u64,
+    env_limit: u64,
+    policy_turns: Option<u32>,
     session_ref: Option<&str>,
     operator_pubkey: &str,
-) -> Option<(u64, u64)> {
+) -> Option<(u64, u64, TurnBudgetSource)> {
+    // The one thing a published session policy enforces (POLICY.md §4). It
+    // *overrides* rather than tightens: a host ceiling and a session ceiling
+    // answer different questions — how much this machine will spend on
+    // anything, and how much this mission was authorized to spend — and the
+    // session's own signed answer is the more specific one. It therefore also
+    // binds where the host set no ceiling at all, which is the common case.
+    let (limit, source) = match policy_turns {
+        Some(turns) => (u64::from(turns), TurnBudgetSource::Policy),
+        None => (env_limit, TurnBudgetSource::Environment),
+    };
     if limit == crate::config::UNLIMITED_TURN_BUDGET {
         return None;
     }
@@ -825,7 +956,7 @@ pub fn exhausted_umbrella_budget(
         return None;
     }
     let used = state.turns_used(session_ref);
-    (used >= limit).then_some((used, limit))
+    (used >= limit).then_some((used, limit, source))
 }
 
 /// The role slug that carries interrupt authority within an umbrella (D7).
@@ -1100,6 +1231,7 @@ mod tests {
             // Unbudgeted by default: every decision test that predates D9
             // describes a provider with no crew budget configured.
             turn_budget: crate::config::UNLIMITED_TURN_BUDGET,
+            policy_turn_budgets: HashMap::new(),
             active_session_count: state.live_session_count(),
             state,
             projects,

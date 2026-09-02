@@ -61,6 +61,7 @@ fn package(roster: Vec<CodingSessionContextRosterEntry>) -> CodingSessionContext
         history: Vec::new(),
         roster,
         inbox: Vec::new(),
+        policy: None,
     }
 }
 

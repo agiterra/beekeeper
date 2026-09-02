@@ -69,14 +69,15 @@ use buzz_core::coding_session_context::coding_session_first_turn_brief;
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
+use buzz_core::coding_session_identity::{ProviderInstanceAlias, RuntimeWord};
 use buzz_core::coding_session_lease::CodingSessionLeaseState;
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
+    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
@@ -119,6 +120,25 @@ const RUNTIME_TICK: Duration = Duration::from_secs(2);
 /// proof-graph verification per minute per active rehydrated execution sits
 /// well inside a turn's own cost.
 const CONTEXT_REFRESH_MIN_INTERVAL_MS: i64 = 60_000;
+
+/// The role a provider-minted team wake is framed as, and recorded as in the
+/// signed `user_prompt` item's `senderRole`.
+///
+/// A valid role slug (`[a-z0-9-]`), so it survives
+/// `buzz_core::coding_session_lifecycle_command::validate_role_slug` on the
+/// transcript path. It names the *sender*, and the sender of a wake is this
+/// process — never the person whose key the process happens to hold.
+const PROVIDER_SENDER_ROLE: &str = "provider";
+
+/// Transcript `status` slug published when a hire's `requestedBy` disagrees
+/// with the pubkey that signed the hire.
+///
+/// The dispute is a fact about the session's own history, so it goes on the
+/// wire rather than only into this process's log. Consumers treat unknown
+/// continuity slugs additively — desktop keeps the generic "Status" row for
+/// one — so publishing it costs nothing and swallowing it would hide the only
+/// evidence that somebody attributed a brief to a seat that never asked for it.
+const HIRE_REQUESTER_DISPUTED_STATUS: &str = "hire_requester_disputed";
 /// Maximum time clean shutdown spends waiting for durable relay ACKs.
 const SHUTDOWN_DURABLE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Backlog of actor reports the provider loop will buffer.
@@ -556,6 +576,17 @@ pub struct Provider {
     /// them instead of trying to reconstruct a mapping that no longer means
     /// anything.
     context_refresh: HashMap<String, ContextRefreshState>,
+    /// Turn ceilings read from published kind-44245 session policies, keyed by
+    /// umbrella `sessionRef`.
+    ///
+    /// The **only** thing this provider enforces from a session policy
+    /// (`docs/design/portable-team-loop/POLICY.md` §4). Written when a create
+    /// or a resume reads the umbrella's newest accepted record off the relay,
+    /// and in memory only: it is a cache of a signed fact, and the next create
+    /// or resume re-reads it. The consequence, stated rather than hidden: a
+    /// policy published *while* a seat is already running does not bind that
+    /// umbrella until its next create or resume.
+    policy_turn_budgets: HashMap<String, u32>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
     /// Latest signed lease per exact target not yet handed to the relay task.
@@ -754,6 +785,7 @@ impl Provider {
             rest_client: None,
             relay_self: None,
             context_refresh: HashMap::new(),
+            policy_turn_budgets: HashMap::new(),
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
             pending_leases: HashMap::new(),
@@ -2279,6 +2311,8 @@ impl Provider {
         self.prompt_image
             .insert(target.session_id.clone(), startup.prompt_image_supported);
 
+        // Cloned before the plan is partially moved into the record below.
+        let hire_ref = plan.hire_ref.clone();
         let record = SessionRecord {
             session_id: target.session_id.clone(),
             generation: target.generation,
@@ -2327,6 +2361,59 @@ impl Provider {
             );
         }
 
+        // Who asked for this seat. Resolved after the record exists, because
+        // the requester's role and reply address are read out of *this*
+        // provider's own durable seat records — the same lookup a 44220 from a
+        // sibling goes through — and never out of the hire's content.
+        let attribution = self
+            .hire_attribution(
+                &plan.command_id,
+                plan.channel_id,
+                hire_ref.as_deref(),
+                relay,
+            )
+            .await;
+        if let Some(commands::HireAttribution::Disputed { claimed, signer }) = &attribution {
+            tracing::warn!(
+                target: "csp::hire",
+                command_id = %plan.command_id,
+                %claimed,
+                %signer,
+                "the hire this create answers claims a requester that did not sign it; the brief \
+                 is delivered unattributed"
+            );
+            self.enqueue_transcript(
+                plan.channel_id,
+                &target,
+                None,
+                payload::status_item(HIRE_REQUESTER_DISPUTED_STATUS),
+                Priority::High,
+            )?;
+        }
+        // Only a claim the hire's own signer made is attribution. Everything
+        // else — unclaimed, unreadable, disputed — delivers the founder-shaped
+        // turn this path has always delivered, because an unknown requester
+        // rendered as an attributed one is the exact failure this field exists
+        // to end.
+        let requester = match &attribution {
+            Some(commands::HireAttribution::Attributed(pubkey)) => Some(pubkey.clone()),
+            _ => None,
+        };
+        let initial_framing = match (&plan.initial_turn, requester.as_deref()) {
+            (Some(text), Some(requester)) => self.turn_framing(
+                &target.session_id,
+                requester,
+                CodingSessionDelivery::Boundary,
+                plan.channel_id,
+                text,
+            ),
+            _ => None,
+        };
+        let initial_operator = initial_framing
+            .as_ref()
+            .map(|framing| framing.sender_pubkey.clone())
+            .unwrap_or_else(|| plan.founder_pubkey.clone());
+
         if let Some((status, reason)) = create_disclosure(&startup.continuity, unavailable_reason) {
             self.enqueue_transcript(
                 plan.channel_id,
@@ -2358,6 +2445,17 @@ impl Provider {
             }
         }
 
+        // The umbrella's published policy, read *here* and not earlier: the
+        // predicate for "who may set policy" is the founder plus this
+        // session's `granted_operators`, and that set is empty until the
+        // authority backfill directly above has folded the chain. Read before
+        // the backfill — as this call used to be — and only the founder's
+        // ceiling could ever bind a create, because the grant set the fold
+        // consults did not exist yet. Still ahead of the budget check below,
+        // which is what may now be enforcing the ceiling this read records.
+        self.refresh_policy_turn_budget(&target.session_id, relay)
+            .await;
+
         // The initial turn is *dispatched* before the receipt is decided, so
         // `created_with_failed_initial_turn` means exactly what a consumer can
         // act on: the session exists but its first turn never reached the agent.
@@ -2374,18 +2472,19 @@ impl Provider {
             commands::exhausted_umbrella_budget(
                 &self.state,
                 self.config.turn_budget,
+                plan.session_ref
+                    .as_deref()
+                    .and_then(|session_ref| self.policy_turn_budget(session_ref)),
                 plan.session_ref.as_deref(),
                 &plan.founder_pubkey,
             )
         });
         let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
-            _ if budget_refusal.is_some() => budget_refusal.map(|(used, limit)| {
+            _ if budget_refusal.is_some() => budget_refusal.map(|(used, limit, source)| {
                 format!(
-                    "{}: this team session has started {used} of its {limit} \
-                     allowed turns, so the first turn was not delivered; the session founder can \
-                     still send turns, and raising \"Turns per team session\" takes effect the \
-                     next time the provider starts",
-                    payload::BUDGET_EXHAUSTED
+                    "{}: {}, so the first turn was not delivered",
+                    payload::BUDGET_EXHAUSTED,
+                    commands::budget_exhausted_message(used, limit, source)
                 )
             }),
             (None, _) => None,
@@ -2402,12 +2501,16 @@ impl Provider {
                     // A create's brief is text: 44221 carries no attachment
                     // field, so there is nothing to forward here.
                     attachments: Vec::new(),
-                    // The create's verified signer *is* the operator driving
-                    // this first turn — the same fact that made them founder.
-                    operator_pubkey: Some(plan.founder_pubkey.clone()),
-                    // A create's initial turn is the founder's own brief, so
-                    // it is never framed as a message from somebody else.
-                    framing: None,
+                    // Who drove this first turn. The create's verified signer
+                    // by default — the same fact that made them founder — but
+                    // a create that answers a hire whose requester equals the
+                    // hire's own signer is delivering *that seat's* brief, and
+                    // the signed transcript has to say so.
+                    operator_pubkey: Some(initial_operator.clone()),
+                    // Framed exactly like a 44220 from the same seat: a hired
+                    // seat's first words are a message from its lead, not
+                    // words its founder typed.
+                    framing: initial_framing.clone(),
                 })
                 .err()
                 .map(|error| format!("could not deliver the first turn: {error:?}")),
@@ -2649,6 +2752,223 @@ impl Provider {
             // execution is Fresh, and the bootstrap says exactly that.
             prior_context: !package.history.is_empty() || !package.roster.is_empty(),
         })
+    }
+
+    /// The turn ceiling this umbrella's published policy sets, if any.
+    ///
+    /// `None` means *no enforced policy ceiling*, and the environment budget
+    /// applies unchanged. It never means "policy unknown": a policy this
+    /// provider could not read leaves the umbrella absent from the map, and
+    /// the log line that dropped it says so.
+    fn policy_turn_budget(&self, session_ref: &str) -> Option<u32> {
+        self.policy_turn_budgets.get(session_ref).copied()
+    }
+
+    /// Record — or clear — the turn ceiling an umbrella's policy sets.
+    ///
+    /// `None` removes the entry rather than storing a zero, because zero is
+    /// [`config::UNLIMITED_TURN_BUDGET`] and "no policy" and "a policy that
+    /// lifts every ceiling" are different facts (NIP-CSP §2.4 refuses a
+    /// literal `turns: 0` for the same reason).
+    fn set_policy_turn_budget(&mut self, session_ref: &str, turns: Option<u32>) {
+        match turns {
+            Some(turns) => {
+                self.policy_turn_budgets
+                    .insert(session_ref.to_owned(), turns);
+            }
+            None => {
+                self.policy_turn_budgets.remove(session_ref);
+            }
+        }
+    }
+
+    /// Read this umbrella's newest accepted kind-44245 policy off the relay
+    /// and record the one field this provider enforces.
+    ///
+    /// Called from the create and resume paths, where the session record has
+    /// just been written and its authority chain folded, so the "who may set
+    /// policy" question is answerable from facts this provider already holds:
+    /// the umbrella's founder, and the operators it verified grants for. The
+    /// fold itself is
+    /// [`context_projector::select_session_policy`] — the same one the context
+    /// package uses — so a seat's `session_overview` and this gate can never
+    /// disagree about which record won.
+    ///
+    /// Every failure is a log line and no ceiling. A relay that cannot be read
+    /// must not silently invent a budget, and must not silently remove one
+    /// either: the previous reading stands until a successful read replaces
+    /// it.
+    async fn refresh_policy_turn_budget(&mut self, session_id: &str, relay: Option<&HarnessRelay>) {
+        let Some(record) = self.state.session(session_id) else {
+            return;
+        };
+        let (Some(session_ref), Some(genesis_ref), Some(founder)) = (
+            record.session_ref.clone(),
+            record.genesis_ref.clone(),
+            record.founder_pubkey.clone(),
+        ) else {
+            return;
+        };
+        let granted = record.granted_operators.clone();
+        let Some(relay) = relay else {
+            return;
+        };
+        let records = match context_projector::query_complete_kind_partition(
+            &relay.rest_client(),
+            record.channel_id,
+            KIND_CODING_SESSION_POLICY,
+        )
+        .await
+        {
+            Ok(records) => records,
+            Err(error) => {
+                tracing::info!(
+                    target: "csp::policy",
+                    %session_ref,
+                    "this umbrella's session policy could not be read; no policy ceiling is \
+                     enforced for it: {error}"
+                );
+                return;
+            }
+        };
+        let addressed: Vec<Event> = records
+            .into_iter()
+            .filter(|event| {
+                event.tags.iter().any(|tag| {
+                    let parts = tag.as_slice();
+                    parts.len() >= 2 && parts[0] == "d" && parts[1] == session_ref
+                })
+            })
+            .collect();
+        let mut notes = Vec::new();
+        let policy = context_projector::select_session_policy(
+            &addressed,
+            &session_ref,
+            &genesis_ref,
+            &founder,
+            &|author, _| author == founder || granted.contains(author),
+            &mut notes,
+        );
+        let turns = policy
+            .as_ref()
+            .and_then(|policy| policy.record.budget.as_ref())
+            .and_then(|budget| budget.turns);
+        if let Some(turns) = turns {
+            tracing::info!(
+                target: "csp::policy",
+                %session_ref,
+                turns,
+                "this umbrella's published session policy sets a turn ceiling; it overrides \
+                 BUZZ_CSP_TURN_BUDGET for this session"
+            );
+        }
+        self.set_policy_turn_budget(&session_ref, turns);
+    }
+
+    /// Read the `session.hire` a create answers and decide whether its
+    /// requester may be named.
+    ///
+    /// `None` means *this provider could not read the hire* — the create named
+    /// none, no relay query surface was available, the event is not on the
+    /// relay, it is not a hire, or it belongs to another channel. That is a
+    /// different fact from a hire that claimed no requester
+    /// ([`commands::HireAttribution::Unclaimed`]), and both fall back to the
+    /// same unattributed delivery, so the distinction only ever costs a log
+    /// line — but collapsing them in the type would make "we did not look" and
+    /// "nobody claimed" indistinguishable to the next reader.
+    ///
+    /// Nothing here is trusted from the create: the hire is fetched by its
+    /// exact id and kind, its signature is verified by
+    /// [`RestClient::query_event_by_id`](buzz_acp::relay::RestClient::query_event_by_id),
+    /// and its channel is checked against the create's own.
+    async fn hire_attribution(
+        &self,
+        command_id: &str,
+        channel_id: Uuid,
+        hire_ref: Option<&str>,
+        relay: Option<&HarnessRelay>,
+    ) -> Option<commands::HireAttribution> {
+        let hire_ref = hire_ref?;
+        let Some(relay) = relay else {
+            tracing::info!(
+                target: "csp::hire",
+                %command_id,
+                %hire_ref,
+                "no relay query surface; the hired seat's brief is delivered unattributed"
+            );
+            return None;
+        };
+        let hire = match relay
+            .rest_client()
+            .query_event_by_id(
+                hire_ref,
+                nostr::Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
+            )
+            .await
+        {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                tracing::info!(
+                    target: "csp::hire",
+                    %command_id,
+                    %hire_ref,
+                    "the hire this create answers is not on the relay; the brief is delivered \
+                     unattributed"
+                );
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::hire",
+                    %command_id,
+                    %hire_ref,
+                    "the hire this create answers could not be read: {error}"
+                );
+                return None;
+            }
+        };
+        // A hire in another channel is not this create's hire. The community
+        // boundary is the `h` tag everywhere else in this crate, and an
+        // attribution that crossed it would let a hire published anywhere name
+        // a requester for a seat in a room it was never part of.
+        let in_channel = hire.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.len() >= 2 && parts[0] == "h" && parts[1] == channel_id.to_string()
+        });
+        if !in_channel {
+            tracing::warn!(
+                target: "csp::hire",
+                %command_id,
+                %hire_ref,
+                "the hire this create answers belongs to another channel; ignoring its requester"
+            );
+            return None;
+        }
+        let payload =
+            match buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                &hire.content,
+            ) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::hire",
+                        %command_id,
+                        %hire_ref,
+                        "the hire this create answers does not decode: {error}"
+                    );
+                    return None;
+                }
+            };
+        if payload.hire_session_ref().is_none() {
+            tracing::warn!(
+                target: "csp::hire",
+                %command_id,
+                %hire_ref,
+                "the event this create names as its hire is not a session.hire"
+            );
+            return None;
+        }
+        Some(commands::hire_attribution(&payload, &hire.pubkey.to_hex()))
     }
 
     async fn resume_session(
@@ -2943,6 +3263,11 @@ impl Provider {
         )?;
         self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
         self.record_first_lease_prerequisites(&target, &outbox_before);
+        // A restart lost every in-memory policy ceiling, and a resume is where
+        // a seat comes back. Re-read it here or the umbrella runs unbounded
+        // under a policy its founder published and can see.
+        self.refresh_policy_turn_budget(&target.session_id, relay)
+            .await;
         tracing::info!(
             target: "csp",
             command_id = %plan.command_id,
@@ -3089,8 +3414,13 @@ impl Provider {
                 attachments,
                 deliver,
             } => {
-                let framing =
-                    self.turn_framing(&target.session_id, operator_pubkey, deliver, channel_id);
+                let framing = self.turn_framing(
+                    &target.session_id,
+                    operator_pubkey,
+                    deliver,
+                    channel_id,
+                    &text,
+                );
                 // The capability gate. A runtime that never advertised image
                 // prompts does not merely ignore an image block — `buzz-agent`
                 // fails the whole turn on one — so the attachments are dropped
@@ -3927,6 +4257,7 @@ impl Provider {
             horizon_secs: self.config.command_horizon.as_secs(),
             max_sessions: self.config.max_sessions,
             turn_budget: self.config.turn_budget,
+            policy_turn_budgets: self.policy_turn_budgets.clone(),
             active_session_count: self.sessions.live_count(),
             state: &self.state,
             projects,
@@ -3976,8 +4307,49 @@ impl Provider {
             // and never reaches this struct or any other signed payload.
             agent_ref: record.and_then(|record| record.actor.clone()),
             role: record.and_then(|record| record.role.clone()),
-            provider: Some(provider_ref),
-            runtime: Some(runtime_slug.clone()),
+            // Typed since B2. `from_wire` refuses only a blank or oversized
+            // value, neither of which this provider's own config can hold, so
+            // the `Err` arm is unreachable in practice — but it is *reported*
+            // and the field left `None` rather than panicked on, because a
+            // provider that aborts while publishing metadata takes every live
+            // seat with it.
+            //
+            // `SessionMetadata.provider` and `.runtime` carry no
+            // `skip_serializing_if`, so `None` is written as an explicit
+            // `"provider": null` / `"runtime": null` — the key is present and
+            // its value is null, not absent. That is still the honest
+            // outcome: a null cannot be misread as a *correct* alias the way a
+            // guessed or defaulted string could, and the reader fails closed
+            // on it — `context_projector::verify_metadata` compares
+            // `metadata.provider` against the create's own
+            // `providerInstanceRef` and rejects the whole metadata fact as
+            // "disagrees with its create/provider/target chain" when it is
+            // null. A refused linkage is the honest place for an unreadable
+            // alias to surface.
+            provider: match ProviderInstanceAlias::from_wire(provider_ref.clone()) {
+                Ok(alias) => Some(alias),
+                Err(error) => {
+                    tracing::warn!(
+                        provider_instance_ref = %provider_ref,
+                        %error,
+                        "metadata provider alias is not a valid alias; publishing it as an \
+                         explicit null, which the reader's linkage check will refuse"
+                    );
+                    None
+                }
+            },
+            runtime: match RuntimeWord::from_wire(runtime_slug.clone()) {
+                Ok(word) => Some(word),
+                Err(error) => {
+                    tracing::warn!(
+                        runtime = %runtime_slug,
+                        %error,
+                        "metadata runtime word is not a valid runtime word; publishing it as an \
+                         explicit null, which the reader's linkage check will refuse"
+                    );
+                    None
+                }
+            },
             model: record
                 .and_then(|record| record.model.clone())
                 .or_else(|| descriptor.map(|descriptor| descriptor.default_model.clone()))
@@ -4965,7 +5337,8 @@ impl Provider {
     }
 
     /// Addressing metadata for a turn whose signer is not this session's
-    /// founder, or `None` when it is (or when the record cannot say).
+    /// founder — or, since the founder-provider amendment, for a
+    /// provider-minted team-wake pointer whoever signed it.
     ///
     /// Resolved from this provider's own durable records, never from the
     /// command: the sender's seat is the sibling execution in the same
@@ -4984,16 +5357,31 @@ impl Provider {
     /// `founder_pubkey == None`. That is "this provider cannot tell", and it
     /// yields no framing at all — a legacy session keeps delivering bare
     /// prompts rather than labelling its founder a stranger.
+    ///
+    /// # The founder exemption stops at the wake pointer
+    ///
+    /// A team wake is not words the founder typed: it is 102 bytes of JSON
+    /// this provider minted, and the `[Context]` block is the only thing that
+    /// tells its recipient what scope it is in and where to answer. Exempting
+    /// it because the provider happens to run under the founder's key meant a
+    /// lead on a founder-run host received a naked pointer while the identical
+    /// pointer from a granted-operator host arrived framed — the same fact in
+    /// two shapes, decided by whose key started the process (COMMS-MAP finding
+    /// 3). So a founder-signed **pointer** is framed exactly like a peer's,
+    /// with the role the sender actually holds here: `provider`. Founder-typed
+    /// prose is unchanged and still bare.
     fn turn_framing(
         &self,
         session_id: &str,
         sender_pubkey: &str,
         delivery: CodingSessionDelivery,
         channel_id: Uuid,
+        text: &str,
     ) -> Option<session::TurnFraming> {
         let record = self.state.session(session_id)?;
         let founder = record.founder_pubkey.as_deref()?;
-        if founder.eq_ignore_ascii_case(sender_pubkey) {
+        let signer_is_founder = founder.eq_ignore_ascii_case(sender_pubkey);
+        if signer_is_founder && !team_wake::is_team_wake_pointer(text) {
             return None;
         }
         let umbrella = record.session_ref.clone();
@@ -5024,9 +5412,18 @@ impl Provider {
                     )
                 })
         });
-        let (sender_role, reply_target) = match seat {
+        let (seat_role, reply_target) = match seat {
             Some((role, target_key)) => (role, Some(target_key)),
             None => (None, None),
+        };
+        // The founder only reaches here for a pointer this provider minted, so
+        // the honest sender is the provider itself — not "operator", which
+        // would name a person who typed nothing, and not a seat role, which the
+        // founder does not hold by being the founder.
+        let sender_role = if signer_is_founder {
+            Some(PROVIDER_SENDER_ROLE.to_owned())
+        } else {
+            seat_role
         };
         Some(session::TurnFraming {
             channel_id,
@@ -5627,8 +6024,14 @@ mod tests {
 
     use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
 
+    #[path = "founder_wake_framing_tests.rs"]
+    mod founder_wake_framing_tests;
+    #[path = "hire_requester_tests.rs"]
+    mod hire_requester_tests;
     #[path = "operation_fence_tests.rs"]
     mod operation_fence_tests;
+    #[path = "session_policy_budget_tests.rs"]
+    mod session_policy_budget_tests;
     #[path = "team_wake_driver_tests.rs"]
     mod team_wake_driver_tests;
     #[path = "team_wake_pressure_tests.rs"]
@@ -6640,7 +7043,8 @@ mod tests {
                 &addressed_id,
                 &founder,
                 CodingSessionDelivery::Boundary,
-                channel_id
+                channel_id,
+                "ship it",
             ),
             None,
             "the founder's own turn is never framed as somebody else's message"
@@ -6652,6 +7056,7 @@ mod tests {
                 &sender_actor,
                 CodingSessionDelivery::Steer,
                 channel_id,
+                "ship it",
             )
             .expect("a sibling seat's turn is framed");
         assert_eq!(framed.sender_pubkey, sender_actor);
@@ -6673,6 +7078,7 @@ mod tests {
                 &"ef".repeat(32),
                 CodingSessionDelivery::Boundary,
                 channel_id,
+                "ship it",
             )
             .expect("a non-founder turn is framed");
         assert_eq!(stranger.sender_role, None);
@@ -6736,6 +7142,7 @@ mod tests {
                 &sender_actor,
                 CodingSessionDelivery::Boundary,
                 channel_id,
+                "ship it",
             )
             .expect("a sibling seat's turn is framed");
         assert_eq!(
@@ -6763,6 +7170,7 @@ mod tests {
                 &sender_actor,
                 CodingSessionDelivery::Boundary,
                 channel_id,
+                "ship it",
             )
             .expect("still framed as a non-founder turn");
         assert_eq!(unseated.sender_role, None);
@@ -6789,7 +7197,8 @@ mod tests {
                 &session_id,
                 &"cd".repeat(32),
                 CodingSessionDelivery::Boundary,
-                channel_id
+                channel_id,
+                "ship it",
             ),
             None
         );
@@ -7375,6 +7784,7 @@ mod tests {
             history: Vec::new(),
             roster: Vec::new(),
             inbox: Vec::new(),
+            policy: None,
         }
     }
 
@@ -8228,10 +8638,19 @@ mod tests {
             Some(genesis.pubkey.to_hex().as_str())
         );
         {
+            // Exactly two relay reads on a governed create, and each is named
+            // rather than counted: the genesis resolved by exact id, then this
+            // umbrella's session-policy partition (kind 44245), which is the
+            // read that supplies the one policy field this provider enforces.
             let captured = queries.lock().expect("queries lock");
-            assert_eq!(captured.len(), 1);
+            assert_eq!(captured.len(), 2, "{captured:?}");
             assert_eq!(captured[0][0]["ids"][0], genesis.id.to_hex());
             assert_eq!(captured[0][0]["kinds"][0], KIND_CODING_SESSION_GENESIS);
+            assert_eq!(captured[1][0]["kinds"][0], KIND_CODING_SESSION_POLICY);
+            assert!(
+                captured[1][0].get("ids").is_none(),
+                "the policy read is a channel partition, not an id lookup: {captured:?}"
+            );
         }
 
         let sink = CollectingSink::new();

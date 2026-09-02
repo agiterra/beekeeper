@@ -3,9 +3,13 @@
 Status: CONTRACT — frozen for batch 2 lane B1. Implemented in
 `crates/buzz-core/src/coding_session_policy.rs`, built by
 `crates/buzz-sdk/src/coding_session_policy.rs`, structurally validated at
-`crates/buzz-relay/src/handlers/ingest.rs`. **No fold, no CLI, and no UI exist
-yet** — this document names each field's future consumer so that the record and
-the thing that reads it cannot drift apart before the reader is written.
+`crates/buzz-relay/src/handlers/ingest.rs`. The first consumer landed in batch 2 lane B2: the session
+provider reads the newest accepted record for an umbrella into its context
+package and enforces exactly one field from it (see §4), and
+`bee sessions policy set|get|clear`
+(`crates/buzz-cli/src/commands/sessions/policy.rs`) writes and reads it. **No UI
+exists yet** — this document names each field's consumer so that the record and
+the thing that reads it cannot drift apart.
 
 The **wire contract** is `docs/nips/NIP-CSP.md`, written at landing as the
 companion to `NIP-CSTX.md`: envelope, exact keys, closed vocabularies, bounds,
@@ -35,7 +39,7 @@ memory of having said it once.
 | Schema | `buzz-coding-session-policy/v1` |
 | Addressing | `d = sessionRef`; newest **accepted** record wins |
 | Tags (exactly four, ordered, two fields each) | `h`, `d`, `csp-v`, `csp-genesis` |
-| Signer | the founder, or a lead |
+| Signer | the founder, or a seat holding an operator grant |
 | Content cap | 32 KiB |
 
 ### Why 44245
@@ -205,16 +209,118 @@ Tags for that record, in order:
 
 ---
 
-## 4. What is deliberately absent from v1
+## 4. Exactly one field is enforced; everything else is a stated intention
 
-- **No fold.** Newest-accepted-wins is stated here and implemented by whoever
-  writes the first consumer, beside the authority check it needs.
-- **No CLI and no UI.** `bee sessions policy` and the launch form are later
-  work; this lane freezes the record they will write.
-- **No enforcement.** Nothing in this repository refuses a turn because of a
-  budget in a 44245 today. Until a consumer exists, a published policy is a
-  **stated intention, not an enforced limit** — and any surface that displays
-  one must say so, rather than showing a budget bar that nothing is counting.
+Batch 2 lane B2 wrote the first consumer, so the older sentence here — "nothing
+in this repository refuses a turn because of a budget in a 44245" — is now
+false, for one field and no others. This section says which, and repeats the
+disclosure the rest of the record still owes its reader.
+
+### 4.1 Enforced: `budget.turns`, at the provider's turn gate
+
+`budget.turns`, when set, is the umbrella's turn ceiling. It **overrides**
+`BUZZ_CSP_TURN_BUDGET` for that session rather than tightening it, and it binds
+even where the host set no ceiling at all — the common case, since the
+environment default is unlimited. A host ceiling and a session ceiling answer
+different questions (*how much will this machine spend on anything* versus *how
+much was this mission authorized to spend*), and the session's own signed
+answer is the more specific one.
+
+- Where: `crates/buzz-session-provider/src/commands.rs`
+  `exhausted_umbrella_budget`, reached from `decide_turn`'s D9 gate and from
+  the create path's first-turn check, which share the predicate so the two can
+  never disagree about who is exempt.
+- The exemption is unchanged: the **umbrella's founder** is never refused for a
+  budget. A ceiling bounds delegated work and the founder is who it protects.
+- The refusal names the ceiling that bound it. A `BUDGET_EXHAUSTED` message
+  raised by a policy says so in the word *policy* and points at publishing a
+  new 44245; one raised by the environment says "Turns per team session" and
+  points at restarting the provider. Two ceilings changed in two completely
+  different places must never produce one indistinguishable sentence.
+- Who may set it: the umbrella's founder, or an identity holding a verified
+  operator grant on it. The relay stores a structurally valid 44245 from any
+  channel member, so a consumer that skipped this check would let anyone in the
+  room bind — or lift — the crew's allowance. A `lead` that holds no operator
+  grant is **not** recognized: a provider can prove a grant and cannot prove a
+  role slug it did not mint.
+- When it is read: at every create and every resume under the umbrella, from
+  the relay, folded newest-accepted-wins by
+  `context_projector::select_session_policy` — the same fold that fills the
+  context package, so `session_overview` and the gate always name the same
+  record. **A policy published while a seat is already running does not bind
+  that umbrella until its next create or resume.** That is a real gap, stated
+  rather than hidden.
+
+### 4.2 Not enforced: every other field
+
+`posture`, `budget.tokensPerSeat`, `budget.tokensPerSession`,
+`budget.costUsdPerSession`, `budget.contextTier`, `attention`, `gates.redFirst`,
+`gates.reviewEveryLane`, `gates.requiredGates`, `gates.verifierRequired`,
+`bench.identities`, `bench.providers`, `bench.challengerSampleRate`,
+`irreversible`, `stop.timeBoxSecs` and `stop.onMilestone` are **read and shown,
+and nothing checks them**. Publishing one changes no behaviour anywhere in this
+repository today.
+
+For each of them a published policy remains a **stated intention, not an
+enforced limit**, and *any surface that displays one must say so* — rather than
+showing a budget bar that nothing is counting, or a "red first" badge that no
+gate is holding a lane to. The context package's `session_overview` carries
+that sentence beside the record (`policySemantics.notEnforced`); a CLI or UI
+that renders a policy owes its reader the same one.
+
+### 4.3 The CLI writes it and reads it, through the same rule
+
+`bee sessions policy set|get|clear`
+(`crates/buzz-cli/src/commands/sessions/policy.rs`) is the writer and the
+reader, and it applies **the rule in §4.1 and no other**: the founder, or a seat
+holding an operator grant the relay had accepted at the relevant time.
+
+- `set` and `clear` refuse before signing when this key does not hold it
+  (`policy.rs` `require_policy_standing`), evaluated at *now* through
+  `buzz_core::coding_session_policy::signer_may_steer_at` — the same function
+  the provider's fold calls.
+- `get` **folds authority** rather than printing whatever the relay returned
+  (`policy.rs` `fold_policies` →
+  `buzz_core::coding_session_policy::fold_coding_session_policies`). It prints
+  the newest record with standing, `null` when there is none, and lists every
+  refused record under `excluded` with its author and a reason.
+
+A `lead` role slug is not enough anywhere, and is not an input to the rule: a
+provider can prove an operator grant from the accepted NIP-CSAT chain and cannot
+prove a role slug it did not mint.
+
+Both halves of that were wrong in the first cut, and the two defects were the
+same defect. `set` signed anyway for a lead without a grant and disclosed
+`willNotBind` — writing a permanent record onto a public relay that no consumer
+would act on, with the warning living only in one terminal. `get` folded no
+authority at all, so a stranger who published `budget.turns: 9999` into the
+channel had it printed back, with an author and an event id, as "the newest
+accepted policy", while the provider correctly ignored it (REVIEW-B2 F1, F2).
+
+### 4.4 Still absent from v1
+
+- **No UI.** The launch form is later work.
+- **No mid-session binding.** §4.1's last bullet: a policy published while a
+  seat is running does not bind until that umbrella's next create or resume.
+
+### 4.5 Reading a policy requires the app bundle and the provider to move together
+
+Carrying the policy into the context package bumped
+`CODING_SESSION_CONTEXT_PACKAGE_VERSION` to **4**
+(`crates/buzz-core/src/coding_session_context.rs`). The field itself is properly
+additive — a package with no policy is byte-identical to what it was — but the
+projector stamps the version **unconditionally**, and a reader compiled at v3
+refuses anything outside its `MIN..=CURRENT` window. So a v3 reader rejects
+*every* package from a v4 provider, not only the ones carrying a policy.
+
+That matters here more than it would elsewhere: **seats run the app-bundled
+`bee`/sidecar** (`desktop/src-tauri/tauri.conf.json`, ledger item 103 finding
+1), which reaches them only on an app rebuild. A provider updated ahead of the
+bundle breaks context reads for every seat — not the policy read, *every* read.
+Batch 2 B already made the rebuild urgent, because a bundled `bee` predating it
+reads a session containing a `note` or a `decision` as a failure of the whole
+session; this is the second, independent reason. **Land the provider and rebuild
+the app bundle in the same step.**
 
 ---
 

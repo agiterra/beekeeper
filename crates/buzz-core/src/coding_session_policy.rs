@@ -45,6 +45,12 @@ use crate::coding_session_command::MAX_IDENTIFIER_BYTES;
 use crate::coding_session_identity::ProviderInstanceAlias;
 use crate::kind::KIND_CODING_SESSION_POLICY;
 
+// The newest-accepted-wins fold, and the standing rule every consumer shares,
+// live in a sibling file so no file here passes 1,000 lines.
+#[path = "coding_session_policy_fold.rs"]
+mod fold;
+pub use fold::*;
+
 /// Exact v1 schema identifier, carried in content and in the `csp-v` tag.
 pub const CODING_SESSION_POLICY_SCHEMA: &str = "buzz-coding-session-policy/v1";
 

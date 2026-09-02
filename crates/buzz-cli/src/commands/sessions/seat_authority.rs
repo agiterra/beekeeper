@@ -5,7 +5,8 @@ use buzz_sdk::builders::build_coding_session_authority_transition;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::operations::{fetch_founder_context, fetch_projected_authority, ProjectedAuthority};
+use super::operations::{fetch_projected_authority, ProjectedAuthority};
+use super::operations_reads::fetch_founder_context;
 use crate::client::BuzzClient;
 use crate::error::CliError;
 

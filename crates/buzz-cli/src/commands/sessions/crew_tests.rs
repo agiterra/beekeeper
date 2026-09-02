@@ -71,7 +71,7 @@ fn execution(
         session_ref: session_ref.map(str::to_owned),
         status: "idle".into(),
         model: Some("claude-opus".into()),
-        runtime: Some("claude".into()),
+        runtime: Some("claude".try_into().expect("runtime")),
         last_signed_seq: Some(4),
         last_signed_at: Some(1_000),
         liveness: Liveness::Quiet { age_secs: 60 },
@@ -98,8 +98,8 @@ fn metadata_event(
         title: None,
         agent_ref: actor.map(str::to_owned),
         role: role.map(str::to_owned),
-        provider: Some("claude-primary".into()),
-        runtime: Some("claude".into()),
+        provider: Some("claude-primary".try_into().expect("alias")),
+        runtime: Some("claude".try_into().expect("runtime")),
         model: Some("claude-opus".into()),
         status,
         branch: None,
@@ -1412,7 +1412,7 @@ fn create_event(
             repo_ref: None,
             session_ref: session_ref.map(str::to_owned),
             genesis_ref: genesis_ref.map(str::to_owned),
-            provider_instance_ref: "instance-1".into(),
+            provider_instance_ref: "instance-1".try_into().expect("alias"),
             provider_authority_pubkey: pk(provider_authority),
             model: Some("claude-opus".into()),
             title: Some("a session".into()),
@@ -1973,7 +1973,7 @@ fn seated_create_event(
             repo_ref: None,
             session_ref: Some(session_ref.to_owned()),
             genesis_ref: Some("12".repeat(32)),
-            provider_instance_ref: "claude-primary".into(),
+            provider_instance_ref: "claude-primary".try_into().expect("alias"),
             provider_authority_pubkey: pk(PROVIDER),
             model: model.map(str::to_owned),
             title: Some("a session".into()),
@@ -2063,7 +2063,7 @@ fn a_hire_is_answered_by_the_seated_create_for_its_role_and_umbrella() {
     assert_eq!(seat.actor, pk(BOB));
     assert_eq!(seat.role, "builder");
     assert_eq!(seat.model.as_deref(), Some("claude-opus"));
-    assert_eq!(seat.provider_instance_ref, "claude-primary");
+    assert_eq!(seat.provider_instance_ref.as_str(), "claude-primary");
 
     assert_eq!(
         find_hired_seat(&events, UMBRELLA_HIRE, "runner", 1_000),
@@ -2512,9 +2512,10 @@ fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
         UMBRELLA_HIRE,
         &genesis,
         "builder",
-        Some("claude-primary"),
+        Some("claude-primary".try_into().expect("alias")),
         Some("claude-opus"),
         "Rebase the lane.",
+        None,
         None,
     );
     assert_eq!(
@@ -2542,6 +2543,7 @@ fn a_hire_publishes_the_seven_key_action_byte_for_byte() {
         None,
         None,
         "Rebase the lane.",
+        None,
         None,
     );
     let content = serde_json::to_string(&defaults).expect("serialize");
@@ -2599,6 +2601,7 @@ fn a_routed_hire_appends_the_routing_request_as_an_eighth_key() {
         None,
         None,
         "Rebase the lane.",
+        None,
         Some(request),
     );
     let content = serde_json::to_string(&payload).expect("serialize");
@@ -2682,9 +2685,12 @@ fn the_cli_emits_every_shared_fixture_request_byte_for_byte() {
             UMBRELLA_HIRE,
             &genesis,
             "builder",
-            model.as_ref().map(|_| "codex-primary"),
+            model
+                .as_ref()
+                .map(|_| "codex-primary".try_into().expect("alias")),
             model.as_deref(),
             "Rebase the lane.",
+            None,
             Some(request.clone()),
         );
         let content = serde_json::to_string(&payload).expect("serialize");
@@ -3633,7 +3639,7 @@ fn wait_seat() -> HiredSeat {
         session_ref: "6a8f1b2c-0000-4000-8000-000000000001".into(),
         genesis_ref: "d".repeat(64),
         provider_authority_pubkey: pk(PROVIDER),
-        provider_instance_ref: "claude-primary".into(),
+        provider_instance_ref: "claude-primary".try_into().expect("alias"),
         model: None,
         at: 1_000,
         raw: json!({}),
@@ -3996,7 +4002,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
             repo_ref: None,
             session_ref: Some(session.clone()),
             genesis_ref: Some(genesis.clone()),
-            provider_instance_ref: "claude-primary".into(),
+            provider_instance_ref: "claude-primary".try_into().expect("alias"),
             provider_authority_pubkey: provider.public_key().to_hex(),
             model: None,
             title: None,
@@ -4043,8 +4049,8 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         title: None,
         agent_ref: Some(actor.clone()),
         role: Some("builder".into()),
-        provider: Some("claude-primary".into()),
-        runtime: Some("claude".into()),
+        provider: Some("claude-primary".try_into().expect("alias")),
+        runtime: Some("claude".try_into().expect("runtime")),
         model: None,
         status: SessionStatus::Idle,
         branch: None,
@@ -4075,7 +4081,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         session_ref: session.clone(),
         genesis_ref: genesis.clone(),
         provider_authority_pubkey: provider.public_key().to_hex(),
-        provider_instance_ref: "claude-primary".into(),
+        provider_instance_ref: "claude-primary".try_into().expect("alias"),
         model: None,
         at: create.created_at.as_secs() as i64,
         raw: serde_json::to_value(&create).expect("create JSON"),
@@ -4300,6 +4306,7 @@ fn projected(seats: &[(&str, &str)]) -> super::operations::ProjectedAuthority {
             })
             .collect(),
         seat_grant_refs: std::collections::BTreeMap::new(),
+        policy_grants: Vec::new(),
         head_event_id: Some("d".repeat(64)),
         head_seq: 4,
     }
@@ -4363,4 +4370,113 @@ fn the_ambiguous_remedy_names_the_seat_verbs_that_now_exist() {
         source.contains("a grant alone will not converge while the disputed role"),
         "the remedy must stay honest about needing the revoke first"
     );
+}
+
+// ── B2 (batch 2): the requester travels, and the four identity words are typed ─
+
+/// COMMS-MAP §3, fact 1: a hired seat's brief arrived **unattributed** —
+/// nothing on the wire recorded which lead asked for the seat, and the only
+/// trace was a 16-byte `"[From the lead] "` prefix added in TypeScript. B2.2
+/// makes `bee sessions hire` always write `requestedBy`, and it is always the
+/// key that is about to sign: the one place that cannot be mistaken about the
+/// answer.
+#[test]
+fn a_hire_writes_the_requester_as_the_eighth_key_after_the_brief() {
+    let genesis = "12".repeat(32);
+    let requester = "ab".repeat(32);
+    let payload = hire_payload(
+        "hire-8",
+        UMBRELLA_HIRE,
+        &genesis,
+        "builder",
+        None,
+        None,
+        "Rebase the lane.",
+        Some(requester.as_str()),
+        None,
+    );
+    let content = serde_json::to_string(&payload).expect("serialize");
+    assert!(
+        content.contains(&format!(
+            r#""brief":"Rebase the lane.","requestedBy":"{requester}""#
+        )),
+        "requestedBy is the eighth key, immediately after the brief: {content}"
+    );
+    // And the relay's own strict decoder accepts it.
+    let decoded =
+        buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+            &content,
+        )
+        .expect("decodes");
+    assert_eq!(decoded.hire_requested_by(), Some(requester.as_str()));
+    assert_eq!(
+        decoded.hire_requester_matches_signer(&requester),
+        Some(true)
+    );
+    // The claim is a claim: a different signer is DISPUTED, not silently
+    // dropped and not silently believed (POLICY.md §5).
+    assert_eq!(
+        decoded.hire_requester_matches_signer(&"cd".repeat(32)),
+        Some(false)
+    );
+}
+
+/// A hire that names no requester is unchanged: the key is **omitted**, never
+/// written as an explicit `null`, so every hire signed before B2 stays
+/// byte-identical.
+#[test]
+fn a_hire_with_no_requester_is_byte_identical_to_the_seven_key_form() {
+    let genesis = "12".repeat(32);
+    let payload = hire_payload(
+        "hire-7",
+        UMBRELLA_HIRE,
+        &genesis,
+        "builder",
+        None,
+        None,
+        "Rebase the lane.",
+        None,
+        None,
+    );
+    let content = serde_json::to_string(&payload).expect("serialize");
+    assert!(!content.contains("requestedBy"), "got {content}");
+}
+
+/// B2.1: the four identity words are the field's own type now, not an accessor
+/// over a `String`. The newtypes are `#[serde(transparent)]`, so **the wire did
+/// not change** — that is the whole claim, and the test that proves it is a
+/// round trip of a value no constructor would accept.
+#[test]
+fn typing_the_identity_fields_did_not_tighten_the_wire() {
+    let genesis = "12".repeat(32);
+    // `claude\tprimary` is a signed shape that decoded yesterday. It must still
+    // decode: a newtype that refused it would have made B2's field flip a
+    // wire-breaking change disguised as a refactor.
+    let content = format!(
+        concat!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"hire-tab","#,
+            r#""action":{{"type":"session.hire","sessionRef":"{umbrella}","#,
+            r#""genesisRef":"{genesis}","role":"builder","#,
+            r#""providerInstanceRef":"claude\tprimary","model":null,"#,
+            r#""brief":"Rebase the lane."}}}}"#
+        ),
+        umbrella = UMBRELLA_HIRE,
+        genesis = genesis,
+    );
+    let decoded =
+        buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+            &content,
+        )
+        .expect("a tab in the alias still decodes");
+    assert_eq!(
+        serde_json::to_string(&decoded).expect("serialize"),
+        content,
+        "the newtype re-serializes the exact wire bytes"
+    );
+    // And the odd shape is *reported* rather than refused.
+    let alias = decoded
+        .provider_instance_alias()
+        .expect("alias reads")
+        .expect("alias present");
+    assert!(!alias.is_canonical());
 }

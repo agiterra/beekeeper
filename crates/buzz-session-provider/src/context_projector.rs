@@ -20,7 +20,6 @@ use uuid::Uuid;
 
 use buzz_acp::relay::RestClient;
 
-use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
     CodingSessionTarget, CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES,
@@ -30,12 +29,12 @@ use buzz_core::coding_session_context::{
     clip_coding_session_context_text, coding_session_context_role_for_item_kind,
     sanitize_coding_session_context_content, sanitize_coding_session_context_text,
     CodingSessionContextHistoryItem, CodingSessionContextIdentity, CodingSessionContextInboxItem,
-    CodingSessionContextPackage, CodingSessionContextProvenance, CodingSessionContextRosterEntry,
-    CodingSessionContextSeatStatus, CodingSessionContextSourceBreakdown,
-    CODING_SESSION_CONTEXT_CLIP_MARKER, CODING_SESSION_CONTEXT_PACKAGE_VERSION,
-    MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_INBOX_CONTENT_BYTES, MAX_CONTEXT_INBOX_ITEMS,
-    MAX_CONTEXT_PACKAGE_BYTES, MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES,
-    MAX_CONTEXT_ROSTER_ENTRIES,
+    CodingSessionContextPackage, CodingSessionContextPolicy, CodingSessionContextProvenance,
+    CodingSessionContextRosterEntry, CodingSessionContextSeatStatus,
+    CodingSessionContextSourceBreakdown, CODING_SESSION_CONTEXT_CLIP_MARKER,
+    CODING_SESSION_CONTEXT_PACKAGE_VERSION, MAX_CONTEXT_HISTORY_ITEMS,
+    MAX_CONTEXT_INBOX_CONTENT_BYTES, MAX_CONTEXT_INBOX_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
+    MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES, MAX_CONTEXT_ROSTER_ENTRIES,
 };
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
@@ -43,6 +42,7 @@ use buzz_core::coding_session_genesis::{
 use buzz_core::coding_session_goal::{
     latest_coding_session_goal, validate_coding_session_goal_envelope,
 };
+use buzz_core::coding_session_identity::ProviderInstanceAlias;
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
@@ -55,11 +55,14 @@ use buzz_core::coding_session_payload::{
     SessionStatus, TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA,
     TRANSCRIPT_SCHEMA,
 };
+use buzz_core::coding_session_policy::{
+    CodingSessionPolicyExclusionCode, CodingSessionPolicyGrant as Grant,
+};
 use buzz_core::kind::{
     event_kind_u32, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_SYSTEM_MESSAGE,
+    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_TRANSCRIPT, KIND_SYSTEM_MESSAGE,
 };
 use buzz_core::verify_event;
 use buzz_sdk::builders::coding_session_turn_receipt_semantic_key;
@@ -218,6 +221,15 @@ pub struct ContextProjectionInput {
     /// Same candidate discipline as `turn_commands`. Lifecycle outcomes are
     /// not read from here — those travel inside the execution bundles.
     pub turn_receipts: Vec<Event>,
+    /// Candidate kind-44245 session-policy records addressed at this umbrella.
+    ///
+    /// Candidates, and the same discipline again: the newest one whose signer
+    /// could steer this umbrella *and* whose envelope decodes wins, and one
+    /// that fails either check is skipped and disclosed in a provenance note
+    /// rather than failing the projection or — far worse — being folded into
+    /// "this umbrella has no policy". Those are different facts, and only one
+    /// of them is a decision somebody made.
+    pub policy_records: Vec<Event>,
     /// Whether a package with no verified execution chain is acceptable.
     ///
     /// `false` everywhere a package is meant to carry prior context: an
@@ -358,14 +370,6 @@ struct CandidateHistory {
     sanitized: bool,
 }
 
-#[derive(Debug)]
-struct Grant {
-    grantee: String,
-    accepted_at: u64,
-    transition_type:
-        buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType,
-}
-
 /// Fetch, group, and verify the complete bounded relay fact set for a session.
 ///
 /// This is the create-flow entry point. Control facts are queried in separate
@@ -396,6 +400,7 @@ pub async fn fetch_and_project_session_context(
     ids.insert(events[0].id);
     let mut transcript_complete = true;
     let mut command_complete = true;
+    let mut policy_complete = true;
     for kind in [
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
         KIND_CODING_SESSION_COMMAND,
@@ -405,12 +410,19 @@ pub async fn fetch_and_project_session_context(
         KIND_CODING_SESSION_TRANSCRIPT,
         KIND_CODING_SESSION_NAME,
         KIND_CODING_SESSION_GOAL,
+        KIND_CODING_SESSION_POLICY,
         KIND_SYSTEM_MESSAGE,
     ] {
         let partition = query_kind_partition(rest, request.channel_id, kind).await?;
         if partition.saturated {
             match kind {
                 KIND_CODING_SESSION_TRANSCRIPT => transcript_complete = false,
+                // Partitions page newest-first, so a saturated policy walk has
+                // lost only *older* revisions — never the newest-wins answer.
+                // Failing closed here would take rehydration away from every
+                // seat in a channel because somebody published thirty-two
+                // thousand policy revisions into it.
+                KIND_CODING_SESSION_POLICY => policy_complete = false,
                 // The inbox is a bounded convenience beside the history, never
                 // a link in the proof chain, so a channel with more turn
                 // traffic than this walk can exhaust gets a shorter inbox and
@@ -452,6 +464,11 @@ pub async fn fetch_and_project_session_context(
         // flipped here; the inbox's own gap gets its own sentence.
         coverage.notes.push(format!(
             "Turn-command query reached the relay's {RELAY_QUERY_PAGE_LIMIT}-row clamp; the inbox may omit older addressed commands"
+        ));
+    }
+    if !policy_complete {
+        coverage.notes.push(format!(
+            "Session-policy query reached the relay's {RELAY_QUERY_PAGE_LIMIT}-row clamp; the newest revision is still covered but older ones may be missing"
         ));
     }
     group_and_project_session_context_events(request, &events, coverage)
@@ -759,6 +776,18 @@ fn group_and_project_session_context_events(
         })
         .cloned()
         .collect();
+    // Addressed by `d`, exactly as the name and goal revisions are: a policy
+    // published into this channel for a *different* umbrella was never
+    // addressed here, and counting it would make every shared channel look
+    // full of broken policy.
+    let policy_records = events
+        .iter()
+        .filter(|event| {
+            event_kind_u32(event) == KIND_CODING_SESSION_POLICY
+                && tag_value(event, "d").as_deref() == Some(request.session_ref.as_str())
+        })
+        .cloned()
+        .collect();
     let total_history_items = executions
         .iter()
         .flat_map(|execution| &execution.generations)
@@ -779,6 +808,7 @@ fn group_and_project_session_context_events(
         goal_revisions,
         turn_commands,
         turn_receipts,
+        policy_records,
         allow_no_executions: request.allow_no_executions,
         coverage,
         generated_at: request.generated_at,
@@ -926,7 +956,7 @@ fn group_executions(
             receipt_event,
             &target,
             provider_authority_pubkey,
-            provider_instance_ref,
+            provider_instance_ref.as_str(),
             project_ref,
         )?];
         if !consumed_targets.insert(coding_session_target_key(&target)) {
@@ -994,7 +1024,7 @@ fn group_executions(
                 resume_receipt,
                 &next,
                 provider_authority_pubkey,
-                provider_instance_ref,
+                provider_instance_ref.as_str(),
                 project_ref,
             )?);
             current = next;
@@ -1070,7 +1100,8 @@ fn group_generation(
                     .map_err(ContextProjectionError::InvalidFact)?;
                 if payload.session != *target
                     || payload.session_ref.as_deref() != Some(request.session_ref.as_str())
-                    || payload.provider.as_deref() != Some(provider_instance_ref)
+                    || payload.provider.as_ref().map(ProviderInstanceAlias::as_str)
+                        != Some(provider_instance_ref)
                     || &payload.project_ref != project_ref
                 {
                     return Err(ContextProjectionError::Conflict(format!(
@@ -1291,6 +1322,7 @@ pub fn project_session_context(
     }
 
     let inbox = project_inbox(input, &seats, &founder, &grants, &mut notes)?;
+    let policy = project_policy(input, &founder, &grants, &mut notes);
     // One per retained command, plus the receipt that named its stage. Each
     // attributed stage belongs to exactly one item — `project_inbox` withholds
     // a stage two items would both claim — so no receipt is counted twice.
@@ -1341,6 +1373,7 @@ pub fn project_session_context(
             history,
             roster: roster.clone(),
             inbox: inbox.clone(),
+            policy: policy.clone(),
         };
         let encoded_len = serde_json::to_vec(&package)
             .map_err(|error| ContextProjectionError::InvalidFact(error.to_string()))?
@@ -1354,7 +1387,7 @@ pub fn project_session_context(
         history = package.history;
         if history.is_empty() {
             return Err(ContextProjectionError::Bound(format!(
-                "identity, provenance, roster and inbox alone exceed {} package bytes",
+                "identity, provenance, roster, inbox and policy alone exceed {} package bytes",
                 input.limits.max_package_bytes
             )));
         }
@@ -1365,6 +1398,124 @@ pub fn project_session_context(
             format!("Omitted {omitted} oldest verified history items to satisfy package bounds"),
         )?;
     }
+}
+
+/// The newest accepted session policy this umbrella has, or `None`.
+///
+/// "Newest accepted" is three checks, and each one is here because dropping it
+/// would let a different party set the mission's rules:
+///
+/// 1. **Addressed here.** The caller has already filtered on `d = sessionRef`;
+///    the payload's own `sessionRef` and `genesisRef` are re-checked against
+///    the package so a record cannot be filed under one umbrella while naming
+///    another.
+/// 2. **Signed by somebody who could steer this umbrella at the time.** The
+///    relay validates a 44245's *structure* and deliberately leaves authority
+///    to the consuming fold (NIP-CSP), and the relay's own gate for a stored
+///    event is channel membership — so without this check any member of the
+///    room could publish a policy and, since `budget.turns` is now enforced,
+///    bind or unbind the crew's turn allowance. The predicate is the same
+///    [`signer_may_steer`] the inbox uses: the founder, or a granted operator
+///    whose grant was accepted before the record was published. A `lead` that
+///    holds no operator grant is **not** recognized here, which is a real
+///    limit and the honest one — this projection can prove a grant and cannot
+///    prove a role slug it did not mint.
+/// 3. **Decodable.** A record that fails
+///    [`validate_coding_session_policy_envelope`] is skipped *and disclosed*,
+///    never folded into "this umbrella has no policy": a malformed policy and
+///    a withdrawn policy are different facts and only one of them is a
+///    decision somebody made.
+///
+/// A record that decodes but sets nothing is the withdrawal (NIP-CSP §2.3) and
+/// is returned like any other: it is how a policy is taken back under a
+/// newest-wins fold, and a consumer renders it "no policy", never "unknown".
+fn project_policy(
+    input: &ContextProjectionInput,
+    founder: &str,
+    grants: &[Grant],
+    notes: &mut Vec<String>,
+) -> Option<CodingSessionContextPolicy> {
+    select_session_policy(
+        &input.policy_records,
+        &input.session_ref,
+        &input.genesis_ref,
+        founder,
+        &|author, created_at| signer_may_steer(author, created_at, founder, grants),
+        notes,
+    )
+}
+
+/// The newest-accepted-wins fold, delegated to `buzz-core`.
+///
+/// The fold itself lives in
+/// [`buzz_core::coding_session_policy::fold_coding_session_policies`] since
+/// REVIEW-B2 F1, so that `bee sessions policy get` and this projection give the
+/// same answer about which record is in force and why the others are not. What
+/// stays here is this projection's own disclosure shape: a bounded provenance
+/// note and a `tracing::warn!` per refused record.
+///
+/// `may_set_policy` receives the author's pubkey and the record's `created_at`
+/// in Unix seconds. The projection answers it from the verified NIP-CSAT chain
+/// at publication time; a live provider answers it from the grants it has
+/// already folded onto the session record.
+pub(crate) fn select_session_policy(
+    records: &[Event],
+    session_ref: &str,
+    genesis_ref: &str,
+    founder: &str,
+    may_set_policy: &dyn Fn(&str, u64) -> bool,
+    notes: &mut Vec<String>,
+) -> Option<CodingSessionContextPolicy> {
+    let fold = buzz_core::coding_session_policy::fold_coding_session_policies(
+        records,
+        session_ref,
+        genesis_ref,
+        founder,
+        may_set_policy,
+    );
+
+    let mut unauthorized = 0u64;
+    let mut undecodable = 0u64;
+    for exclusion in &fold.excluded {
+        match exclusion.code {
+            CodingSessionPolicyExclusionCode::Unauthorized => {
+                unauthorized += 1;
+                tracing::warn!(
+                    target: "csp::context",
+                    event_id = %exclusion.event_id,
+                    author = %exclusion.author,
+                    "a session-policy record was signed by an identity that could not steer this \
+                     umbrella; skipping it"
+                );
+            }
+            CodingSessionPolicyExclusionCode::Undecodable
+            | CodingSessionPolicyExclusionCode::WrongUmbrella => {
+                undecodable += 1;
+                tracing::warn!(
+                    target: "csp::context",
+                    event_id = %exclusion.event_id,
+                    "a session-policy record for this umbrella was refused: {}",
+                    exclusion.reason
+                );
+            }
+        }
+    }
+
+    if unauthorized > 0 {
+        record_note(
+            notes,
+            format!(
+                "Skipped {unauthorized} session-policy record(s) signed by an identity that could not steer this session"
+            ),
+        );
+    }
+    if undecodable > 0 {
+        record_note(
+            notes,
+            format!("Skipped {undecodable} session-policy record(s) that failed verification"),
+        );
+    }
+    fold.selected
 }
 
 /// One verified turn-stage receipt, reduced to what the inbox reports.
@@ -1639,23 +1790,10 @@ fn inbox_sender_roles(seats: &[SeatFacts]) -> HashMap<&str, &str> {
 /// of `commands::operator_may_steer`, and the same predicate
 /// [`verify_lifecycle_command`] applies to a create or a resume.
 fn signer_may_steer(signer: &str, created_at: u64, founder: &str, grants: &[Grant]) -> bool {
-    if signer == founder {
-        return true;
-    }
-    let mut active = false;
-    for grant in grants
-        .iter()
-        .filter(|grant| grant.grantee == signer && grant.accepted_at <= created_at)
-    {
-        match grant.transition_type {
-            CodingSessionAuthorityTransitionType::GrantOperator => active = true,
-            CodingSessionAuthorityTransitionType::GrantViewer
-            | CodingSessionAuthorityTransitionType::Revoke => active = false,
-            CodingSessionAuthorityTransitionType::GrantSeat
-            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
-        }
-    }
-    active
+    // One rule, in `buzz-core`, since REVIEW-B2 F1. `bee sessions policy get`
+    // calls the same function, so the two surfaces cannot disagree about who
+    // may set policy.
+    buzz_core::coding_session_policy::signer_may_steer_at(signer, created_at, founder, grants)
 }
 
 /// The key one inbox item joins its receipts on.
@@ -2208,7 +2346,7 @@ fn verify_generation(
                 }
                 (
                     provider_authority_pubkey.clone(),
-                    provider_instance_ref.clone(),
+                    provider_instance_ref.as_str().to_owned(),
                     project_ref.clone(),
                     title.clone(),
                 )
@@ -2414,7 +2552,11 @@ fn verify_metadata(
         || &metadata.session != target
         || metadata.session_ref.as_deref() != Some(session_ref)
         || &metadata.project_ref != project_ref
-        || metadata.provider.as_deref() != Some(provider_instance_ref)
+        || metadata
+            .provider
+            .as_ref()
+            .map(ProviderInstanceAlias::as_str)
+            != Some(provider_instance_ref)
     {
         return Err(ContextProjectionError::InvalidFact(
             "session metadata disagrees with its create/provider/target chain".into(),
@@ -2589,6 +2731,7 @@ fn tag_value(event: &Event, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
     use nostr::{EventBuilder, Keys, Timestamp};
 
     use buzz_core::coding_session_command::CodingSessionDelivery;
@@ -2649,7 +2792,7 @@ mod tests {
                 repo_ref: None,
                 session_ref: Some(SESSION_REF.into()),
                 genesis_ref: Some(genesis_ref.clone()),
-                provider_instance_ref: "codex-primary".into(),
+                provider_instance_ref: "codex-primary".try_into().expect("alias"),
                 provider_authority_pubkey: provider.public_key().to_hex(),
                 model: Some("default".into()),
                 title: Some("Rehydrate me".into()),
@@ -2688,8 +2831,8 @@ mod tests {
             title: Some("Rehydrate me".into()),
             agent_ref: seat.map(|(actor, _)| actor.to_owned()),
             role: seat.map(|(_, role)| role.to_owned()),
-            provider: Some("codex-primary".into()),
-            runtime: Some("codex".into()),
+            provider: Some("codex-primary".try_into().expect("alias")),
+            runtime: Some("codex".try_into().expect("runtime")),
             model: Some("default".into()),
             status: SessionStatus::Idle,
             branch: None,
@@ -2739,6 +2882,7 @@ mod tests {
             input: ContextProjectionInput {
                 turn_commands: Vec::new(),
                 turn_receipts: Vec::new(),
+                policy_records: Vec::new(),
                 allow_no_executions: false,
                 channel_id,
                 session_ref: SESSION_REF.into(),
@@ -4405,5 +4549,128 @@ mod tests {
         assert!(!encoded.contains("acpSessionId"));
         assert!(!encoded.contains("workingDirectory"));
         assert_ne!(fixture.provider.public_key().to_hex(), "");
+    }
+
+    /// A signed kind-44245 policy record for the fixture's umbrella, with a
+    /// turn budget and an explicit publication time so newest-wins is a
+    /// decision rather than an accident of ordering.
+    fn policy_event(
+        fixture: &Fixture,
+        turns: Option<u32>,
+        created_at: u64,
+        signer: &Keys,
+    ) -> Event {
+        let payload = buzz_core::coding_session_policy::CodingSessionPolicyPayload {
+            budget: turns.map(|turns| {
+                buzz_core::coding_session_policy::CodingSessionPolicyBudget {
+                    turns: Some(turns),
+                    tokens_per_seat: None,
+                    tokens_per_session: None,
+                    cost_usd_per_session: None,
+                    context_tier: None,
+                }
+            }),
+            ..buzz_core::coding_session_policy::CodingSessionPolicyPayload::empty(
+                SESSION_REF,
+                fixture.input.genesis_ref.clone(),
+            )
+        };
+        buzz_sdk::coding_session_policy::build_coding_session_policy(
+            &fixture.input.channel_id.to_string(),
+            payload,
+        )
+        .unwrap()
+        .custom_created_at(Timestamp::from_secs(created_at))
+        .sign_with_keys(signer)
+        .unwrap()
+    }
+
+    /// The newest founder-signed record wins, and it travels with the
+    /// provenance a reader needs to judge it.
+    #[test]
+    fn the_newest_accepted_policy_for_the_umbrella_lands_in_the_package() {
+        let mut fixture = fixture(1);
+        let founder = fixture.founder.clone();
+        let older = policy_event(&fixture, Some(9), 1_000, &founder);
+        let newer = policy_event(&fixture, Some(3), 2_000, &founder);
+        fixture.input.policy_records = vec![newer.clone(), older];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        let policy = package.policy.expect("the umbrella's policy");
+        assert_eq!(policy.event_id, newer.id.to_hex());
+        assert_eq!(policy.created_at, 2_000);
+        assert_eq!(policy.author, founder.public_key().to_hex());
+        assert!(policy.author_is_founder);
+        assert_eq!(
+            policy.record.budget.and_then(|budget| budget.turns),
+            Some(3),
+            "the newest revision is the one that binds"
+        );
+    }
+
+    /// The additive discipline: an umbrella with no policy serves the exact
+    /// bytes it served before this field existed.
+    #[test]
+    fn an_umbrella_with_no_policy_omits_the_key_entirely() {
+        let fixture = fixture(1);
+        let package = project_session_context(&fixture.input).unwrap();
+        assert_eq!(package.policy, None);
+        let encoded: serde_json::Value = serde_json::to_value(&package).unwrap();
+        assert!(
+            encoded.get("policy").is_none(),
+            "absent is not null: {encoded}"
+        );
+    }
+
+    /// A stranger in the room cannot set the mission's rules, and a record
+    /// that fails to decode is disclosed rather than folded into "no policy".
+    #[test]
+    fn an_unauthorized_or_undecodable_policy_is_skipped_and_disclosed() {
+        let mut fixture = fixture(1);
+        let founder = fixture.founder.clone();
+        let stranger = Keys::generate();
+        // Newest of all, and signed by somebody with no standing here.
+        let usurper = policy_event(&fixture, Some(1), 3_000, &stranger);
+        // Structurally valid when built, then corrupted so its content no
+        // longer matches the envelope it is signed under.
+        let broken = policy_event(&fixture, Some(5), 2_500, &founder);
+        let broken = EventBuilder::new(broken.kind, "{\"schema\":\"nope\"}")
+            .tags(broken.tags.to_vec())
+            .custom_created_at(Timestamp::from_secs(2_500))
+            .sign_with_keys(&founder)
+            .unwrap();
+        let good = policy_event(&fixture, Some(7), 1_000, &founder);
+        fixture.input.policy_records = vec![usurper, broken, good.clone()];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        let policy = package
+            .policy
+            .expect("the founder's older record still wins");
+        assert_eq!(policy.event_id, good.id.to_hex());
+        let notes = package.provenance.notes.join(" | ");
+        assert!(
+            notes.contains("could not steer this session"),
+            "the unauthorized record is disclosed: {notes}"
+        );
+        assert!(
+            notes.contains("failed verification"),
+            "the undecodable record is disclosed: {notes}"
+        );
+    }
+
+    /// A record that sets nothing is the withdrawal (NIP-CSP §2.3), and it is
+    /// carried so a reader can say "no policy" instead of "policy unknown".
+    #[test]
+    fn a_withdrawal_record_is_carried_rather_than_dropped() {
+        let mut fixture = fixture(1);
+        let founder = fixture.founder.clone();
+        let set = policy_event(&fixture, Some(4), 1_000, &founder);
+        let withdrawn = policy_event(&fixture, None, 2_000, &founder);
+        fixture.input.policy_records = vec![set, withdrawn.clone()];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        let policy = package.policy.expect("the withdrawal is a decision");
+        assert_eq!(policy.event_id, withdrawn.id.to_hex());
+        assert!(!policy.record.sets_any_policy());
     }
 }

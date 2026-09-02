@@ -70,6 +70,10 @@ mod hire_evidence;
 #[cfg(test)]
 mod hire_evidence_tests;
 pub mod operations;
+mod operations_authority;
+mod operations_precheck;
+mod operations_reads;
+pub mod policy;
 pub mod registry;
 pub mod route;
 mod seat_authority;
@@ -2382,6 +2386,7 @@ pub async fn dispatch(
         SessionsCmd::Note(args) => operations::cmd_note(client, args).await,
         SessionsCmd::Decide(cmd) => operations::cmd_decide(client, cmd).await,
         SessionsCmd::Operation(cmd) => operations::cmd_read(client, cmd).await,
+        SessionsCmd::Policy(cmd) => policy::cmd_policy(client, cmd).await,
         SessionsCmd::Send {
             channel,
             to,
@@ -2606,8 +2611,8 @@ mod tests {
             title: title.map(str::to_owned),
             agent_ref: None,
             role: None,
-            provider: Some("claude-primary".into()),
-            runtime: Some("claude".into()),
+            provider: Some("claude-primary".try_into().expect("alias")),
+            runtime: Some("claude".try_into().expect("runtime")),
             model: model.map(str::to_owned),
             status,
             branch: None,

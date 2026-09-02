@@ -2565,6 +2565,18 @@ pub enum SessionsCmd {
     /// Read signed team operations and their deterministic fold.
     #[command(subcommand)]
     Operation(TeamOperationCmd),
+    /// Set, read, or withdraw this umbrella's session policy (kind 44245).
+    ///
+    /// One signed record saying how a mission is meant to be run: posture,
+    /// budgets, what the founder wants to be told, what a lane owes before its
+    /// work counts, who may be benched, which acts stay the founder's, and
+    /// when to stop.
+    ///
+    /// **Only `budget.turns` is enforced anywhere** — at the provider's turn
+    /// gate. Every other field is read and shown, never counted, and both
+    /// `set` and `get` say so in their own output.
+    #[command(subcommand)]
+    Policy(SessionPolicyCmd),
     /// Send a turn to a coding-session execution (kind 44220).
     ///
     /// `--to` names one execution three ways, tried in that order: an exact
@@ -3169,6 +3181,125 @@ pub enum TeamDecisionCmd {
         #[arg(long = "wake-to")]
         wake_to: Option<String>,
     },
+}
+
+/// `bee sessions policy` — set, read, or withdraw a session policy (44245).
+///
+/// `Set` is much larger than `Get`/`Clear` because NIP-CSP has eighteen fields
+/// and each is a flag. Boxing it is not available here — `clap`'s `Subcommand`
+/// derive flattens a variant's single `Args` field and cannot see through a
+/// `Box` — and a parsed command is constructed exactly once per process.
+#[allow(clippy::large_enum_variant)]
+#[derive(Subcommand)]
+pub enum SessionPolicyCmd {
+    /// Publish a session policy for this umbrella.
+    ///
+    /// Every flag is optional and every unset field is **omitted** from the
+    /// record, never written as an explicit `null`. A `set` that passes no
+    /// policy flag at all is refused: the record it would publish is the
+    /// withdrawal, and withdrawing a policy is a decision with its own verb
+    /// (`policy clear`).
+    #[command(
+        after_help = "Examples:\n  bee sessions policy set --channel <uuid> --session-ref <uuid> --genesis <hex64> --posture overnight --budget-turns 240 --red-first true --required-gate 'just ci'\n  bee sessions policy set --channel <uuid> --session-ref <uuid> --genesis <hex64> --irreversible push --irreversible deploy --time-box-secs 28800"
+    )]
+    Set(SessionPolicySetArgs),
+    /// Print the newest accepted policy for this umbrella, or `null`.
+    ///
+    /// `null` means nobody set one. A record that sets nothing is a
+    /// **withdrawal** somebody published, and prints as a real record with
+    /// `setsAnyPolicy: false` — those are different facts.
+    Get {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id.
+        #[arg(long)]
+        genesis: String,
+    },
+    /// Publish the empty withdrawal record, taking any policy back.
+    Clear {
+        /// Channel UUID containing the session.
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID.
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Session genesis event id.
+        #[arg(long)]
+        genesis: String,
+    },
+}
+
+/// Flags for `bee sessions policy set`.
+#[derive(clap::Args, Clone)]
+pub struct SessionPolicySetArgs {
+    /// Channel UUID containing the session.
+    #[arg(long)]
+    pub channel: String,
+    /// Canonical umbrella session UUID.
+    #[arg(long = "session-ref")]
+    pub session_ref: String,
+    /// Session genesis event id.
+    #[arg(long)]
+    pub genesis: String,
+    /// How this mission is being run: spike, ship, investigate, overnight.
+    #[arg(long)]
+    pub posture: Option<String>,
+    /// Ceiling on turns across the umbrella. **The one enforced field.**
+    #[arg(long = "budget-turns")]
+    pub budget_turns: Option<u32>,
+    /// Ceiling on tokens any one seat may spend (read and shown only).
+    #[arg(long = "tokens-per-seat")]
+    pub tokens_per_seat: Option<u64>,
+    /// Ceiling on tokens the umbrella may spend (read and shown only).
+    #[arg(long = "tokens-per-session")]
+    pub tokens_per_session: Option<u64>,
+    /// Ceiling on dollars the umbrella may spend (read and shown only).
+    #[arg(long = "cost-usd")]
+    pub cost_usd: Option<f64>,
+    /// Which context window seats run in: standard or long.
+    #[arg(long = "context-tier")]
+    pub context_tier: Option<String>,
+    /// What a person is shown: decisions, decisions-and-milestones, everything.
+    #[arg(long)]
+    pub attention: Option<String>,
+    /// Whether acceptance tests are written failing first.
+    #[arg(long = "red-first")]
+    pub red_first: Option<bool>,
+    /// Whether every lane is reviewed by somebody who did not write it.
+    #[arg(long = "review-every-lane")]
+    pub review_every_lane: Option<bool>,
+    /// A gate every lane must run; repeatable, at most 32, unique.
+    #[arg(long = "required-gate")]
+    pub required_gate: Vec<String>,
+    /// Whether a verifier must rule before the mission may settle.
+    #[arg(long = "verifier-required")]
+    pub verifier_required: Option<bool>,
+    /// Pubkey eligible for the bench (64-hex); repeatable, at most 64.
+    #[arg(long = "bench-identity")]
+    pub bench_identity: Vec<String>,
+    /// Provider **alias** eligible for the bench; repeatable, at most 16.
+    ///
+    /// An alias (`claude-primary`), never an instance id
+    /// (`1958c6c448e05eed`): they are different names for different things.
+    #[arg(long = "bench-provider")]
+    pub bench_provider: Vec<String>,
+    /// Fraction of eligible jobs given to a challenger, 0.0..=1.0.
+    #[arg(long = "challenger-sample-rate")]
+    pub challenger_sample_rate: Option<f64>,
+    /// An act that needs the founder's word: push, deploy, delete,
+    /// external-message. Repeatable.
+    #[arg(long)]
+    pub irreversible: Vec<String>,
+    /// Wall-clock seconds after which the lead stops opening work.
+    #[arg(long = "time-box-secs")]
+    pub time_box_secs: Option<u64>,
+    /// The milestone whose arrival ends the mission (at most 8 KiB).
+    #[arg(long = "on-milestone")]
+    pub on_milestone: Option<String>,
 }
 
 /// Signed team-operation read commands.
@@ -4297,6 +4428,7 @@ mod tests {
                 "list",
                 "note",
                 "operation",
+                "policy",
                 "registry",
                 "report",
                 "revoke",
@@ -4353,10 +4485,10 @@ mod tests {
             ("reactions", 3),
             ("repos", 5),
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
-            // `revoke-seat` (batch 2 A) and B1c's `decide` and `note`
-            // (batch 2 B). `subcommand_names_are_stable` above names all
-            // twenty-nine, so this count and that list cannot drift apart.
-            ("sessions", 29),
+            // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, and B2's
+            // `policy` (batch 2 B). `subcommand_names_are_stable` above names
+            // all thirty, so this count and that list cannot drift apart.
+            ("sessions", 30),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

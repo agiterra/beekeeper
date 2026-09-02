@@ -30,6 +30,7 @@ use buzz_core::coding_session_command::{
     CodingSessionDelivery, CodingSessionTarget,
 };
 use buzz_core::coding_session_genesis::decode_coding_session_genesis;
+use buzz_core::coding_session_identity::{ProviderInstanceAlias, RuntimeWord};
 use buzz_core::coding_session_lease::{decode_coding_session_lease, CodingSessionLeaseState};
 use buzz_core::coding_session_lifecycle_command::{
     CodingSessionLifecycleAction, MAX_LIFECYCLE_INITIAL_TURN_BYTES,
@@ -116,8 +117,12 @@ pub struct CrewExecution {
     pub status: String,
     /// Effective model, when metadata named one.
     pub model: Option<String>,
-    /// Runtime slug behind the driver, when metadata named one.
-    pub runtime: Option<String>,
+    /// Runtime **word** behind the driver (`claude`, `codex`), when metadata
+    /// named one.
+    ///
+    /// Typed since batch 2 lane B2 so it can never be compared with
+    /// `target.driver`, which is a driver slug (`claude-agent-acp`).
+    pub runtime: Option<RuntimeWord>,
     /// `event_seq` of the newest transcript item this generation signed.
     pub last_signed_seq: Option<u64>,
     /// `created_at` of that item, in Unix seconds.
@@ -151,7 +156,10 @@ impl CrewExecution {
         match (self.actor.as_deref(), self.role.as_deref()) {
             (Some(actor), Some(role)) => format!("{}·{role}", short_pubkey(actor)),
             (Some(actor), None) => short_pubkey(actor),
-            _ => match (self.runtime.as_deref(), self.model.as_deref()) {
+            _ => match (
+                self.runtime.as_ref().map(RuntimeWord::as_str),
+                self.model.as_deref(),
+            ) {
                 (Some(runtime), Some(model)) => format!("{runtime}·{model}"),
                 (Some(runtime), None) => runtime.to_owned(),
                 (None, Some(model)) => model.to_owned(),
@@ -1506,8 +1514,12 @@ pub struct HiredSeat {
     pub genesis_ref: String,
     /// Provider authority whose receipt may prove the execution exists.
     pub provider_authority_pubkey: String,
-    /// Provider instance the host ran it on — the request's, or the policy's.
-    pub provider_instance_ref: String,
+    /// Provider instance **alias** the host ran it on — the request's, or the
+    /// policy's.
+    ///
+    /// Typed since batch 2 lane B2. Comparing it with a receipt's
+    /// `cs-target.instanceId` is ledger item 102, and is now a compile error.
+    pub provider_instance_ref: ProviderInstanceAlias,
     /// Model the host chose, when the create named one.
     pub model: Option<String>,
     /// Event `created_at`, Unix seconds.
@@ -2211,9 +2223,10 @@ pub fn hire_payload(
     session_ref: &str,
     genesis_ref: &str,
     role: &str,
-    provider_instance_ref: Option<&str>,
+    provider_instance_ref: Option<ProviderInstanceAlias>,
     model: Option<&str>,
     brief: &str,
+    requested_by: Option<&str>,
     routing: Option<buzz_core::coding_session_routing::HireRoutingRequest>,
 ) -> buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
     buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload {
@@ -2225,10 +2238,10 @@ pub fn hire_payload(
             session_ref: session_ref.to_owned(),
             genesis_ref: genesis_ref.to_owned(),
             role: role.to_owned(),
-            provider_instance_ref: provider_instance_ref.map(str::to_owned),
+            provider_instance_ref,
             model: model.map(str::to_owned),
             brief: brief.to_owned(),
-            requested_by: None,
+            requested_by: requested_by.map(str::to_owned),
             routing,
         },
     }

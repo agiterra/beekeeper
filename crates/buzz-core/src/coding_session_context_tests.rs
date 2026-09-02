@@ -50,6 +50,7 @@ fn package() -> CodingSessionContextPackage {
         history: vec![history(1, "user_prompt"), history(2, "assistant_text")],
         roster: Vec::new(),
         inbox: Vec::new(),
+        policy: None,
     }
 }
 
