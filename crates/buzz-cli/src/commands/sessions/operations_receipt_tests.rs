@@ -87,6 +87,7 @@ async fn team_operation_is_recorded_before_wake_and_wake_failure_stays_visible()
             wake_order.lock().expect("order lock").push("wake");
             Err(CliError::Other("provider unavailable".into()))
         }),
+        None,
     )
     .await
     .expect("stored record remains a successful operation");

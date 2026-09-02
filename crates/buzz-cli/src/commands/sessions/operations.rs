@@ -6,11 +6,11 @@ use std::io::{self, Read};
 
 use buzz_core::coding_session_team_transaction::{
     fold_coding_session_team_transactions, CodingSessionTeamAcknowledgement,
-    CodingSessionTeamAssignment, CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
-    CodingSessionTeamDecisionRequest, CodingSessionTeamFold, CodingSessionTeamMissionBlocked,
-    CodingSessionTeamMissionCompleted, CodingSessionTeamNote, CodingSessionTeamReport,
-    CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType, CodingSessionTeamVerdict,
-    CODING_SESSION_TEAM_DECISION_FOUNDER,
+    CodingSessionTeamActiveSeat, CodingSessionTeamAssignment, CodingSessionTeamDecisionAnswer,
+    CodingSessionTeamDecisionChoice, CodingSessionTeamDecisionRequest, CodingSessionTeamFold,
+    CodingSessionTeamMissionBlocked, CodingSessionTeamMissionCompleted, CodingSessionTeamNote,
+    CodingSessionTeamReport, CodingSessionTeamTransactionBody, CodingSessionTeamTransactionType,
+    CodingSessionTeamVerdict, CODING_SESSION_TEAM_DECISION_FOUNDER,
 };
 use buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use buzz_sdk::coding_session_team_transaction::{
@@ -95,6 +95,9 @@ pub async fn cmd_write(
             genesis: args.genesis,
             supersedes: args.supersedes,
             delivery_command_id: args.delivery_command_id,
+            // A generic write says nothing about a wake it never sought; only
+            // the verbs that resolve a target for themselves can (REVIEW-L1 F4).
+            wake_omission: args.wake_to.is_none().then_some(WakeOmission::NotRequested),
             wake_to: args.wake_to,
             body,
         },
@@ -114,7 +117,68 @@ struct PublishOperation {
     supersedes: Option<String>,
     delivery_command_id: Option<String>,
     wake_to: Option<String>,
+    /// Why no wake was published, when none was. Reported under `delivery`,
+    /// never left as an absent key (REVIEW-L1 F4).
+    wake_omission: Option<WakeOmission>,
     body: CodingSessionTeamTransactionBody,
+}
+
+/// Why a record that could have woken somebody did not.
+///
+/// Three facts that used to be one absent key, and only one of them is a
+/// problem (REVIEW-L1 F4). "Empty means unknown" is exactly the shape §0.8 and
+/// I9 forbid: a reader could not tell a ruling held on a person from a ruling
+/// nobody will hear about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum WakeOmission {
+    /// The caller asked for no wake, and none was implied.
+    NotRequested,
+    /// The ruling is held on the founder, who is a person and not an
+    /// execution. Nothing to wake, and the Mission rail is how they find out.
+    FounderHeld,
+    /// The ruling is held on an actor holding no active seat in this session.
+    /// **This is the one that is a problem**: the party the mission is waiting
+    /// on will not hear about it until somebody looks.
+    NoSeat {
+        /// The pubkey the request named, in full, so the reader can act on it.
+        held_on: String,
+    },
+}
+
+/// The `delivery` value a record with no wake reports.
+///
+/// Always the same three keys plus `heldOn`, so a reader parses one field
+/// whether a wake happened or not, and every sentence says nobody was woken.
+pub(super) fn wake_omission_delivery(omission: &WakeOmission) -> Value {
+    let (status, held_on, message) = match omission {
+        WakeOmission::NotRequested => (
+            "not-requested",
+            Value::Null,
+            "no wake was asked for, so nobody was woken".to_owned(),
+        ),
+        WakeOmission::FounderHeld => (
+            "founder-held",
+            Value::Null,
+            "this ruling is held on the founder, who is a person rather than an execution, so \
+             nobody was woken — the Mission rail's waiting state is how they find out"
+                .to_owned(),
+        ),
+        WakeOmission::NoSeat { held_on } => (
+            "no-seat",
+            json!(held_on),
+            format!(
+                "{} holds no active seat in this session, so nobody was woken: grant it a seat \
+                 (`bee sessions grant-seat`) or answer the ruling yourself",
+                super::crew::short_pubkey(held_on)
+            ),
+        ),
+    };
+    json!({
+        "published": false,
+        "status": status,
+        "heldOn": held_on,
+        "message": message,
+    })
 }
 
 async fn publish_operation(
@@ -197,8 +261,13 @@ async fn publish_operation(
             )
         }
     });
-    let mut output =
-        submit_record_then_wake(&operation_id, || client.submit_event(event), wake).await?;
+    let mut output = submit_record_then_wake(
+        &operation_id,
+        || client.submit_event(event),
+        wake,
+        operation.wake_omission,
+    )
+    .await?;
     disclose_adopted_correction(
         &mut output,
         transaction_type,
@@ -270,6 +339,7 @@ pub async fn cmd_note(client: &BuzzClient, args: TeamNoteArgs) -> Result<(), Cli
             supersedes: None,
             delivery_command_id: None,
             wake_to: None,
+            wake_omission: Some(WakeOmission::NotRequested),
             body: CodingSessionTeamTransactionBody::Note(CodingSessionTeamNote {
                 text: args.text,
                 refs: args.refs,
@@ -300,8 +370,36 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
             for reference in &blocks {
                 validate_lower_hex64("--blocks", reference)?;
             }
-            // A request that names nobody to wake is still a real request; a
-            // request that names a seat wakes it exactly the way a report does.
+            // Finding 19 (live run 2): Bob's request, held on Keystone's
+            // pubkey, published NO wake, so the party the mission was waiting
+            // on learned nothing until a person looked. `decide answer` has
+            // defaulted its wake to the asker's role since REVIEW-B1c F4;
+            // `decide request` defaulted nothing, and `--wake-to` speaks
+            // cs-target keys, session ids and role slugs — never pubkeys —
+            // while `heldOn` is exactly a pubkey, so no caller had a name for
+            // the held-on party either. Resolve it here, through the same
+            // receipt-backed 44228 projection the fold uses. A founder-held
+            // request still wakes nobody and does not even query: the founder
+            // is a person, not an execution.
+            let (wake_to, wake_omission) = match wake_to {
+                Some(explicit) => (Some(explicit), None),
+                None if held_on == CODING_SESSION_TEAM_DECISION_FOUNDER => {
+                    (None, Some(WakeOmission::FounderHeld))
+                }
+                None => {
+                    let context =
+                        fetch_founder_context(client, &channel, &session_ref, &genesis).await?;
+                    match held_on_wake_role(&held_on, &context.active_seats) {
+                        Some(role) => (Some(role), None),
+                        None => (
+                            None,
+                            Some(WakeOmission::NoSeat {
+                                held_on: held_on.clone(),
+                            }),
+                        ),
+                    }
+                }
+            };
             publish_operation(
                 client,
                 PublishOperation {
@@ -314,6 +412,7 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
                     // surface, so there is nothing to inherit.
                     delivery_command_id: None,
                     wake_to,
+                    wake_omission,
                     body: CodingSessionTeamTransactionBody::DecisionRequest(
                         CodingSessionTeamDecisionRequest {
                             question,
@@ -351,10 +450,19 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
             // An answer nobody is told about is an answer that never lands,
             // and the batch forbids polling for it (REVIEW-B1c F4). Wake the
             // seat that asked, unless the caller named someone else.
-            let wake_to = match wake_to {
-                Some(explicit) => Some(explicit),
+            let (wake_to, wake_omission) = match wake_to {
+                Some(explicit) => (Some(explicit), None),
                 None => {
-                    resolve_asker_role(client, &channel, &session_ref, &genesis, &request).await?
+                    let (asker, role) =
+                        resolve_asker_role(client, &channel, &session_ref, &genesis, &request)
+                            .await?;
+                    match role {
+                        Some(role) => (Some(role), None),
+                        // The asker holds no seat, so there is no execution to
+                        // tell. Same disclosure as a request held on an
+                        // unseated actor (REVIEW-L1 F4).
+                        None => (None, Some(WakeOmission::NoSeat { held_on: asker })),
+                    }
                 }
             };
             publish_operation(
@@ -366,6 +474,7 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
                     supersedes,
                     delivery_command_id: None,
                     wake_to,
+                    wake_omission,
                     body: CodingSessionTeamTransactionBody::DecisionAnswer(
                         CodingSessionTeamDecisionAnswer {
                             request_ref: request,
@@ -380,6 +489,34 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
     }
 }
 
+/// The role of the seated execution a request's `heldOn` names, if any.
+///
+/// `--wake-to` speaks cs-target keys, provider session ids and role slugs, and
+/// never pubkeys, while `heldOn` is exactly a pubkey or the literal `founder`.
+/// This is the one translation between them, and it reads the same
+/// receipt-backed 44228 projection the fold does.
+///
+/// `None` twice over, and both mean *wake nobody*, honestly:
+///
+/// - **`founder`** is a person, not an execution. There is nothing to wake, and
+///   the Mission rail saying "waiting on the founder" is how a person finds out.
+/// - **An actor holding no active seat** has no execution either. Inventing one
+///   would be a guess, so the caller reports [`WakeOmission::NoSeat`] under
+///   `delivery` instead — the one case here that is actually a problem, and the
+///   one the absent key used to hide (REVIEW-L1 F4).
+pub(super) fn held_on_wake_role(
+    held_on: &str,
+    active_seats: &[CodingSessionTeamActiveSeat],
+) -> Option<String> {
+    if held_on == CODING_SESSION_TEAM_DECISION_FOUNDER {
+        return None;
+    }
+    active_seats
+        .iter()
+        .find(|seat| seat.actor_pubkey == held_on)
+        .map(|seat| seat.role.clone())
+}
+
 /// Resolve the seat role of the actor that published one `decision.request`.
 ///
 /// The answer's default wake target. `--wake-to` speaks cs-target keys, session
@@ -387,16 +524,18 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
 /// same receipt-backed 44228 chain the fold uses, is the one name for that
 /// actor the resolver understands.
 ///
-/// `None` when the asker holds no active seat: there is then no execution to
-/// wake, and inventing one would be a guess. The answer is still published and
-/// the omission is visible in the response's absent `delivery` key.
+/// Returns the asker's pubkey and its role. The role is `None` when the asker
+/// holds no active seat: there is then no execution to wake, and inventing one
+/// would be a guess. The answer is still published, and the omission is
+/// reported explicitly under `delivery` as
+/// [`WakeOmission::NoSeat`] — never as an absent key (REVIEW-L1 F4).
 async fn resolve_asker_role(
     client: &BuzzClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
     request_id: &str,
-) -> Result<Option<String>, CliError> {
+) -> Result<(String, Option<String>), CliError> {
     let values = client
         .query_all(operation_pointer_query_filter(request_id))
         .await?;
@@ -425,17 +564,19 @@ async fn resolve_asker_role(
     }
     let context = fetch_founder_context(client, channel, session_ref, genesis).await?;
     let asker = event.pubkey.to_hex();
-    Ok(context
+    let role = context
         .active_seats
         .iter()
         .find(|seat| seat.actor_pubkey == asker)
-        .map(|seat| seat.role.clone()))
+        .map(|seat| seat.role.clone());
+    Ok((asker, role))
 }
 
 async fn submit_record_then_wake<Submit, SubmitFuture, Wake, WakeFuture>(
     operation_id: &str,
     submit: Submit,
     wake: Option<Wake>,
+    omission: Option<WakeOmission>,
 ) -> Result<Value, CliError>
 where
     Submit: FnOnce() -> SubmitFuture,
@@ -459,6 +600,12 @@ where
         };
         if let Some(object) = output.as_object_mut() {
             object.insert("delivery".into(), delivery);
+        }
+    } else if let Some(omission) = omission {
+        // Present and explicit. The absent key used to carry three different
+        // meanings, one of them a real failure (REVIEW-L1 F4).
+        if let Some(object) = output.as_object_mut() {
+            object.insert("delivery".into(), wake_omission_delivery(&omission));
         }
     }
     Ok(output)

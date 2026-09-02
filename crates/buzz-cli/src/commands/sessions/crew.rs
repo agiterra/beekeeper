@@ -1603,6 +1603,17 @@ pub enum HireOutcome {
         /// The seated create.
         seat: HiredSeat,
     },
+    /// More than one seated create for this role verifies against its own
+    /// provider receipt, so which seat this hire got is genuinely ambiguous.
+    ///
+    /// Refused rather than resolved: the two tie-breakers that look obvious —
+    /// earliest wins, newest wins — both read the author's own `created_at`,
+    /// which is the defect T2.5 removed. Nothing is written and nothing is
+    /// granted; the operator settles it with `seat-repair`.
+    Ambiguous {
+        /// The refusal sentence, from [`ambiguous_hire_refusal`].
+        message: String,
+    },
     /// The host refused the hire itself.
     Refused(HireRefusal),
     /// Nothing answered: no seated create, no refusal. Never rendered as
@@ -1610,18 +1621,37 @@ pub enum HireOutcome {
     Unconfirmed,
 }
 
-/// Find the seated create that answers a hire for `role` in `umbrella`.
+/// Every seated create that could answer a hire for `role` in `umbrella`.
 ///
-/// Earliest qualifying create wins: a host answers one hire once, and if a
-/// later hire seats the same role again, this call's `since` cutoff — taken
-/// before its own request was published — is what separates them.
-pub fn find_hired_seat(
+/// **Not a choice (T2.5).** This used to be `find_hired_seat`, which kept the
+/// minimum `(created_at, event_id)` and handed that one create to the evidence
+/// check — so the answer was picked by the author's own clock and only then
+/// verified. `created_at` is a claim nothing signs into agreement with the
+/// wire: an earlier create no provider ever answered shadowed the seat that
+/// was actually running, and anyone able to publish a 44221 for the role could
+/// park the hire on a create that will never verify.
+///
+/// So no time is consulted beyond the caller's own `since` cutoff, which is
+/// taken before the hire request is published and exists only to keep a
+/// *previous* hire's seat out of the candidate set. The caller assesses every
+/// candidate and lets the signed provider evidence decide — exactly what
+/// [`founder_seated_creates_for_actor`] already does for `seat-repair`, and
+/// for the same reasons written out there.
+///
+/// Returned in event-id order, which is a content hash and therefore neither
+/// author-asserted nor dependent on the order the relay handed the events
+/// over. One logical command is one candidate: a host that retries a submit
+/// republishes the same `commandId` under a new event id, and that is our own
+/// retry rather than two seats to choose between. The role is part of the
+/// dedupe key because the same `commandId` republished with a *different* role
+/// is a genuine contradiction about what was written.
+pub fn hired_seat_candidates(
     events: &[Value],
     umbrella: &str,
     role: &str,
     since: i64,
-) -> Option<HiredSeat> {
-    let mut best: Option<HiredSeat> = None;
+) -> Vec<HiredSeat> {
+    let mut found: Vec<HiredSeat> = Vec::new();
     for event in events {
         if event.get("kind").and_then(Value::as_u64)
             != Some(u64::from(KIND_CODING_SESSION_LIFECYCLE_COMMAND))
@@ -1662,7 +1692,10 @@ pub fn find_hired_seat(
         if session_ref != umbrella || seat_role != role {
             continue;
         }
-        let candidate = HiredSeat {
+        if found.iter().any(|held| held.event_id == event_id) {
+            continue;
+        }
+        found.push(HiredSeat {
             event_id,
             create_signer,
             command_id: payload.command_id,
@@ -1673,18 +1706,80 @@ pub fn find_hired_seat(
             provider_authority_pubkey,
             provider_instance_ref,
             model,
+            // Retained for display only. Nothing in the selection reads it.
             at: created_at,
             raw: event.clone(),
-        };
-        match &best {
-            Some(held)
-                if (held.at, held.event_id.as_str())
-                    <= (candidate.at, candidate.event_id.as_str()) => {}
-            _ => best = Some(candidate),
-        }
+        });
     }
-    best
+    // Grouped so the dedupe sees its duplicates adjacent, then re-sorted into
+    // event-id order for the caller — deduped AFTER the event-id sort, so
+    // which copy survives is deterministic and not time-derived.
+    found.sort_by(|left, right| {
+        left.command_id
+            .cmp(&right.command_id)
+            .then_with(|| left.role.cmp(&right.role))
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    found.dedup_by(|left, right| left.command_id == right.command_id && left.role == right.role);
+    found.sort_by(|left, right| left.event_id.cmp(&right.event_id));
+    found
 }
+
+/// The refusal a hire prints when more than one seated create for its role
+/// verifies against its own receipt.
+///
+/// Two verified creates are two signed facts that disagree about which seat
+/// this hire got, and the CLI has nothing honest to break the tie with —
+/// choosing by time is the very defect this replaced. So it refuses, names the
+/// creates, and hands over the one command that can settle it deliberately.
+///
+/// Bounded: at most [`MAX_LISTED_HIRE_CANDIDATES`] create ids are named.
+pub fn ambiguous_hire_refusal(
+    channel: &str,
+    session_ref: &str,
+    candidates: &[&HiredSeat],
+) -> String {
+    let listed: Vec<&str> = candidates
+        .iter()
+        .take(MAX_LISTED_HIRE_CANDIDATES)
+        .map(|seat| seat.event_id.as_str())
+        .collect();
+    let ids = if candidates.len() > MAX_LISTED_HIRE_CANDIDATES {
+        format!(
+            "{}, +{} more not listed",
+            listed.join(", "),
+            candidates.len() - MAX_LISTED_HIRE_CANDIDATES
+        )
+    } else {
+        listed.join(", ")
+    };
+    let count = match candidates.len() {
+        2 => "two".to_owned(),
+        other => other.to_string(),
+    };
+    // One actor, or the honest plural. `seat-repair --actor` takes exactly one
+    // pubkey, so a set of candidates naming different actors cannot be reduced
+    // to a single remedy without picking for the operator — which is what this
+    // refusal exists to avoid.
+    let mut actors: Vec<&str> = candidates.iter().map(|seat| seat.actor.as_str()).collect();
+    actors.sort_unstable();
+    actors.dedup();
+    let remedy = match actors.as_slice() {
+        [only] => seat_repair_command(channel, session_ref, only),
+        many => format!(
+            "{} — these creates name different actors ({}), so repair the one you meant",
+            seat_repair_command(channel, session_ref, "<actor>"),
+            many.join(", ")
+        ),
+    };
+    format!(
+        "{count} seated creates for this role verify against their own receipts ({ids}); the \
+         CLI will not choose between them — repair the seat you meant with {remedy}"
+    )
+}
+
+/// The most seated creates one refusal sentence names before it truncates.
+const MAX_LISTED_HIRE_CANDIDATES: usize = 8;
 
 /// Every founder-signed seated create naming `actor` in `umbrella`.
 ///
@@ -2100,6 +2195,10 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool, channel: &str) -> HireRe
                 seat_repair_remedy(channel, &seat.session_ref, &seat.actor)
             ),
         },
+        HireOutcome::Ambiguous { message } => HireReport {
+            status: "ambiguous",
+            detail: message.clone(),
+        },
         HireOutcome::Refused(refusal) => HireReport {
             status: "refused",
             // The host's own words first, then what to do about them. An
@@ -2134,14 +2233,14 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool, channel: &str) -> HireRe
 
 /// The process exit code one hire outcome earns.
 ///
-/// `0` created with accepted role-seat authority, `1` refused, failed, or
-/// created without authority, `5` unconfirmed — including a seat published
-/// but never answered, which is not a success.
+/// `0` created with accepted role-seat authority, `1` refused, failed,
+/// ambiguous, or created without authority, `5` unconfirmed — including a seat
+/// published but never answered, which is not a success.
 pub fn hire_exit_code(outcome: &HireOutcome) -> i32 {
     match outcome {
         HireOutcome::Created { granted: true, .. } => 0,
         HireOutcome::Created { granted: false, .. } => 1,
-        HireOutcome::Failed { .. } | HireOutcome::Refused(_) => 1,
+        HireOutcome::Failed { .. } | HireOutcome::Refused(_) | HireOutcome::Ambiguous { .. } => 1,
         HireOutcome::Seating { .. } | HireOutcome::Unconfirmed => 5,
     }
 }
@@ -2398,7 +2497,11 @@ impl HireWait {
                     None
                 }
             },
-            HireOutcome::Failed { .. } | HireOutcome::Refused(_) => Some(outcome),
+            // An ambiguity is an answer — the wrong kind, and one no later
+            // poll can improve: another verifying create only makes it worse.
+            HireOutcome::Failed { .. }
+            | HireOutcome::Refused(_)
+            | HireOutcome::Ambiguous { .. } => Some(outcome),
         }
     }
 
@@ -2453,16 +2556,21 @@ pub fn evidence_disclosure(
 ) -> String {
     let mut sentences = Vec::new();
     if let Some(error) = last_evidence_error {
+        // "Earlier" was a time word, and after T2.5 the selection order is
+        // event id rather than time; the error also now names its own create,
+        // so the sentence does not have to imply one (REVIEW-L1 F3).
         sentences.push(if answered {
-            format!("An earlier candidate receipt was refused before this answer verified: {error}")
+            format!("A candidate receipt was refused before this answer verified: {error}")
         } else {
             format!("The last hire evidence check refused the host's answer: {error}")
         });
     }
     if unbound_receipts > 0 {
+        // Not "this create's": the count spans every seated create assessed
+        // for this role, which after T2.5 can be more than one (REVIEW-L1 F3).
         sentences.push(format!(
-            "{unbound_receipts} receipt(s) named this create's commandId without being bound to \
-             it and were ignored."
+            "{unbound_receipts} receipt(s) named a seated create's commandId for this role \
+             without being bound to it and were ignored."
         ));
     }
     sentences.join(" ")

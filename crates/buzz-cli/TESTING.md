@@ -937,7 +937,7 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 # stderr: "one of --brief <file> or --content <text> is required: a hired
 #          seat's first turn is the brief …" → user_error, exit 1
 
-# The four non-zero outcomes, and the exit code each earns:
+# The non-zero outcomes, and the exit code each earns:
 #   refused      → the host's policy refused; "code" is one of HIRE_OFF,
 #                  HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY (this
 #                  computer holds no identity for that role — only its
@@ -958,6 +958,13 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 #                  or accepted `grant-seat` authority failed; output retains
 #                  create/receipt ids plus `seatGrantError`; do not hire again;
 #                  repair it with `bee sessions seat-repair` (§6.13.4); exit 1
+#   ambiguous    → MORE THAN ONE seated create for this role verifies against
+#                  its own receipt, so which seat this hire got is genuinely
+#                  contested. The CLI refuses to choose — the two tie-breakers
+#                  that look obvious (earliest, newest) both read the author's
+#                  own `created_at`, which is the defect T2.5 removed — names
+#                  both create event ids, and prints the `seat-repair` command
+#                  to settle it deliberately. Nothing is written; exit 1
 bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
   --role builder --content 'x' --no-wait | jq '{outcome, detail}'
 # → {"outcome":"unconfirmed","detail":"the relay stored the hire; --no-wait
@@ -1040,8 +1047,20 @@ lane); **everything the CLI and the relay do is real.**
 | `--no-wait` | `outcome:"unconfirmed"`, detail says *nothing was asked*, exit **5** |
 | no brief / empty brief / `Builder` / non-UUID `--session-ref` | `user_error`, exit 1, each naming its own rule |
 
+**How a hire now chooses its answer (T2.5).** It does not choose by time.
+Every seated create for this `(umbrella, role)` published after the hire's own
+`since` cutoff is assessed, and the one whose provider receipt cryptographically
+verifies is the answer — the same rule `seat-repair` already used. So an earlier
+create that no provider ever answered can no longer shadow the seat that is
+actually running, and a 44221 anyone can publish can no longer park the hire on
+a create that will never verify. To check it by hand: publish a seated create
+for a role, let it go unanswered, run the hire, and confirm the outcome names
+the *verified* create's `commandId` rather than the older one.
+
 **Not exercised live:** the `failed` outcome (a provider receipt refusing the
-seated create) and the `seating` outcome (a create with no receipt inside 120 s)
+seated create), the `seating` outcome (a create with no receipt inside 120 s),
+and the `ambiguous` outcome (two verifying creates — reachable only by seating
+the same role twice with two answered providers)
 — unit-tested only; and the *"this relay does not accept hire requests yet"*
 path, which needs a relay built before this branch. No real host implements
 `session.hire` yet, so the policy codes other than `HIRE_OFF` have never been
@@ -1884,6 +1903,31 @@ the 44220 turn gate and a create's first turn; the refusal names the published
 policy rather than the environment variable. The founder is never refused. A
 policy published mid-session does not bind until that umbrella's next create or
 resume. Everything else in the record is read and shown, never counted.
+
+---
+
+## Who a decision woke, and who it did not
+
+Every `bee sessions decide` answer now carries a `delivery` object, present
+whether or not a wake was published. Three of its shapes mean *nobody was
+woken*, and only one of them is a problem:
+
+| `delivery.status` | When | What it means |
+|---|---|---|
+| the wake's own status | `--wake-to`, or a `heldOn` actor holding an active seat | a wake was published; read `delivery` as before |
+| `founder-held` | `decide request --held-on founder` | the founder is a person, not an execution. Nothing to wake; the Mission rail's waiting state is how they find out |
+| `no-seat` | `heldOn` names a pubkey with no active seat (and, on `decide answer`, an asker with none) | **the problem case.** The party the mission is waiting on will not hear about it. `delivery.heldOn` carries the whole pubkey; grant it a seat or answer the ruling yourself |
+| `not-requested` | `bee sessions note`, or a write that named no `--wake-to` | no wake was asked for |
+
+```bash
+bee sessions decide request --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS" --question 'Ship it?' --held-on founder \
+  | jq '.delivery'
+# → {"published":false,"status":"founder-held","heldOn":null,"message":"…nobody was woken…"}
+```
+
+Before this, all three produced an **absent** `delivery` key, so a ruling nobody
+would ever hear about was byte-identical to one deliberately held on a person.
 
 ---
 

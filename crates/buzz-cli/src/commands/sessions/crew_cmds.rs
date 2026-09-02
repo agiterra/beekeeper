@@ -43,14 +43,14 @@ use buzz_sdk::kind::{
 };
 
 use super::crew::{
-    build_executions, build_founder_index, build_inbox, caller_umbrella,
+    ambiguous_hire_refusal, build_executions, build_founder_index, build_inbox, caller_umbrella,
     create_receipts_for_command, decode_leases, decode_resumes, decode_turn_commands,
-    find_hire_refusal, find_hired_seat, fold_delivery, fold_hire, format_age,
-    founder_seated_creates_for_actor, hire_exit_code, hire_payload, hire_report,
-    hire_unsupported_by_relay, newest_turn_stages, plan_readdress, resolve_send_target,
-    resolve_umbrella_genesis, seat_repair_exit_code, short_pubkey, turn_load, CrewExecution,
-    FounderIndex, HireOutcome, HireWait, HireWaitOutcome, ReaddressPlan, SeatRepairOutcome,
-    TurnCommand, TurnStage, DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
+    find_hire_refusal, fold_delivery, fold_hire, format_age, founder_seated_creates_for_actor,
+    hire_exit_code, hire_payload, hire_report, hire_unsupported_by_relay, hired_seat_candidates,
+    newest_turn_stages, plan_readdress, resolve_send_target, resolve_umbrella_genesis,
+    seat_repair_exit_code, short_pubkey, turn_load, CrewExecution, FounderIndex, HireOutcome,
+    HireWait, HireWaitOutcome, ReaddressPlan, SeatRepairOutcome, TurnCommand, TurnStage,
+    DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
 use crate::client::BuzzClient;
@@ -729,7 +729,7 @@ pub(super) struct HireAnswer {
 /// has nothing to be granted — and it is a separate query because the chain
 /// lives in kind:40099 acceptance receipts rather than in the lifecycle
 /// stream the rest of this reads.
-async fn read_hire_answer(
+pub(super) async fn read_hire_answer(
     client: &BuzzClient,
     channel_id: &str,
     session_ref: &str,
@@ -739,30 +739,64 @@ async fn read_hire_answer(
 ) -> Result<HireAnswer, CliError> {
     let events = fetch_channel_events(client, channel_id, HIRE_ANSWER_KINDS).await?;
     let (receipts, _) = decode_receipts(&events);
-    let mut unbound_receipts = 0;
-    let mut rejection = None;
-    // Evidence first, exactly as `seat-repair` chooses: the receipt is picked
-    // by its cryptographic binding to the seated create and then verified, and
-    // the author's own `created_at` decides nothing. Selecting by time and
-    // checking the binding afterwards let anyone who could publish a 44224
-    // carrying the commandId deny the hire.
-    let (seat, receipt) = match find_hired_seat(&events, session_ref, role, since) {
-        Some(seat) => {
-            let assessed = assess_candidate(
+    // Evidence first, exactly as `seat-repair` chooses: EVERY seated create
+    // for this role is assessed, the receipt is picked by its cryptographic
+    // binding to that create and then verified, and the author's own
+    // `created_at` decides nothing (T2.5). Selecting one create by time and
+    // checking it afterwards let a create nobody answered shadow the seat that
+    // was running, and let anyone able to publish a 44221 park the hire.
+    let assessed: Vec<AssessedCandidate> = hired_seat_candidates(&events, session_ref, role, since)
+        .into_iter()
+        .map(|seat| {
+            assess_candidate(
                 &events,
                 channel_id,
                 session_ref,
                 genesis_ref,
                 &receipts,
                 seat,
-            );
-            unbound_receipts = assessed.unbound;
-            rejection = assessed.rejection;
+            )
+        })
+        .collect();
+    // Every candidate's unbound receipts are counted, not just the chosen
+    // one's: a reader who is never told a competing receipt existed cannot
+    // tell a quiet wait from a contested one. The sentence that renders this
+    // says it spans the role's seated creates, because with more than one
+    // candidate it does (REVIEW-L1 F3).
+    let unbound_receipts = assessed.iter().map(|candidate| candidate.unbound).sum();
+
+    let chosen = match select_hire_answer(&assessed) {
+        HireSelection::Ambiguous(verifying) => {
+            let seats: Vec<&super::crew::HiredSeat> =
+                verifying.iter().map(|candidate| &candidate.seat).collect();
+            return Ok(HireAnswer {
+                outcome: HireOutcome::Ambiguous {
+                    message: ambiguous_hire_refusal(channel_id, session_ref, &seats),
+                },
+                unbound_receipts,
+                // No create was chosen, so no create's refusal is "the"
+                // refusal; the first in event-id order stands for the set and
+                // names itself.
+                rejection: assessed.iter().find_map(attributed_rejection),
+            });
+        }
+        HireSelection::Answer(chosen) => chosen,
+    };
+    // **The chosen create's own refusal, and nobody else's** (REVIEW-L1 F3).
+    // Aggregating across candidates made a hire that verified print a
+    // `lastEvidenceError` about a create it did not take — the reader's
+    // conclusion being that their successful hire had failed a check.
+    let rejection = chosen.and_then(attributed_rejection);
+    let (seat, receipt) = match chosen {
+        Some(candidate) => (
+            Some(candidate.seat.clone()),
             // A bound failure-class receipt is the provider's answer, not a
             // missing one: the hire failed and says so.
-            let receipt = assessed.verified.or(assessed.failed);
-            (Some(assessed.seat), receipt)
-        }
+            candidate
+                .verified
+                .clone()
+                .or_else(|| candidate.failed.clone()),
+        ),
         None => (None, None),
     };
     let refusal = if seat.is_some() {
@@ -1315,7 +1349,11 @@ pub async fn cmd_hire(
             match &outcome {
                 HireOutcome::Created { granted, .. } => json!(granted),
                 HireOutcome::Failed { .. } | HireOutcome::Seating { .. } => json!(false),
-                HireOutcome::Refused(_) | HireOutcome::Unconfirmed => Value::Null,
+                // Null, not false: an ambiguous hire may well have granted
+                // seats behind it, and this run refuses to say which.
+                HireOutcome::Refused(_)
+                | HireOutcome::Unconfirmed
+                | HireOutcome::Ambiguous { .. } => Value::Null,
             },
         );
         object.insert(
@@ -1724,6 +1762,58 @@ pub async fn cmd_seat_repair(
             format,
         ),
     }
+}
+
+/// What every assessed seated create for one role adds up to.
+pub(super) enum HireSelection<'a> {
+    /// The hire's answer: the one candidate whose receipt verifies, or — when
+    /// none does — the best partial fact about the role, or nothing at all.
+    Answer(Option<&'a AssessedCandidate>),
+    /// More than one candidate verifies against its own receipt. A real
+    /// disagreement about which seat this hire got, refused rather than
+    /// resolved.
+    Ambiguous(Vec<&'a AssessedCandidate>),
+}
+
+/// Choose a hire's answer from signed evidence alone (T2.5).
+///
+/// Pure, so the rule is testable without a relay, and deliberately blind to
+/// `created_at`: the rule this replaced kept the minimum
+/// `(created_at, event_id)` and verified only that one create, so an earlier
+/// create no provider ever answered shadowed the seat that was running, and
+/// anyone able to publish a 44221 for the role could park the hire on a create
+/// that will never verify.
+///
+/// With no verifying candidate the outcome is exactly today's: a bound
+/// failure-class receipt is the provider's own answer and outranks silence,
+/// and otherwise the first candidate in event-id order carries the `seating`
+/// outcome. On the single-candidate case — every ordinary hire — this is
+/// byte-for-byte the previous behaviour.
+pub(super) fn select_hire_answer(assessed: &[AssessedCandidate]) -> HireSelection<'_> {
+    let verifying: Vec<&AssessedCandidate> = assessed
+        .iter()
+        .filter(|candidate| candidate.verified.is_some())
+        .collect();
+    if verifying.len() > 1 {
+        return HireSelection::Ambiguous(verifying);
+    }
+    HireSelection::Answer(verifying.first().copied().or_else(|| {
+        assessed
+            .iter()
+            .find(|candidate| candidate.failed.is_some())
+            .or_else(|| assessed.first())
+    }))
+}
+
+/// One candidate's refusal, prefixed with the create it is about.
+///
+/// A bare reason cannot say which of a role's seated creates it belongs to, and
+/// after T2.5 there can be more than one (REVIEW-L1 F3).
+fn attributed_rejection(candidate: &AssessedCandidate) -> Option<String> {
+    candidate
+        .rejection
+        .as_ref()
+        .map(|reason| format!("seated create {}: {reason}", candidate.seat.command_id))
 }
 
 /// One candidate seated create, with what the signed evidence says about it.

@@ -519,3 +519,151 @@ fn other_verbs_answers_are_untouched() {
             .contains_key("supersedes"));
     }
 }
+
+// ── Finding 19: a request held on an actor wakes that actor ─────────────────
+
+/// **Live run 2, 2026-09-02.** Bob published a `decision.request` held on
+/// Keystone's pubkey and **no wake was published at all** — Keystone learned
+/// nothing until a person looked. `decide answer` has defaulted its wake to the
+/// asker's role since REVIEW-B1c F4; `decide request` defaulted nothing, and
+/// `--wake-to` speaks cs-target keys, session ids and role slugs, never
+/// pubkeys, while `heldOn` is exactly a pubkey. So even a caller who wanted to
+/// wake the held-on party had no name for them.
+///
+/// The rule: with no explicit `--wake-to`, a request held on an **actor**
+/// resolves that pubkey to the role of its seated execution, through the same
+/// receipt-backed 44228 projection the fold uses.
+#[test]
+fn a_request_held_on_an_actor_wakes_that_actors_seated_execution() {
+    let keystone = "11".repeat(32);
+    let bob = "22".repeat(32);
+    let seats = vec![
+        CodingSessionTeamActiveSeat {
+            actor_pubkey: keystone.clone(),
+            role: "lead".to_owned(),
+        },
+        CodingSessionTeamActiveSeat {
+            actor_pubkey: bob.clone(),
+            role: "builder".to_owned(),
+        },
+    ];
+
+    assert_eq!(
+        held_on_wake_role(&keystone, &seats),
+        Some("lead".to_owned()),
+        "the pubkey heldOn names resolves to the role --wake-to understands"
+    );
+    assert_eq!(held_on_wake_role(&bob, &seats), Some("builder".to_owned()));
+}
+
+/// The founder is a person, not an execution, and an actor with no seat has no
+/// execution to wake. Both answer `None` — the request is still published, and
+/// the absent `delivery` key is how a reader sees that nobody was woken.
+#[test]
+fn a_founder_held_request_and_an_unseated_actor_wake_nobody() {
+    let seats = vec![CodingSessionTeamActiveSeat {
+        actor_pubkey: "11".repeat(32),
+        role: "lead".to_owned(),
+    }];
+    assert_eq!(
+        held_on_wake_role(CODING_SESSION_TEAM_DECISION_FOUNDER, &seats),
+        None,
+        "a ruling held on the founder wakes no execution: the founder is a person"
+    );
+    assert_eq!(
+        held_on_wake_role(&"33".repeat(32), &seats),
+        None,
+        "an actor holding no active seat has no execution to wake, and inventing one is a guess"
+    );
+    assert_eq!(held_on_wake_role(&"11".repeat(32), &[]), None);
+}
+
+// ── Fix round 1: F4, three distinguishable "nobody was woken" shapes ────────
+
+/// **REVIEW-L1 F4.** `publish_operation` inserted `delivery` only when a wake
+/// was actually published, so three different facts produced byte-identical
+/// JSON: the ruling is held on the founder (nothing to wake — fine), the
+/// caller asked for no wake (fine), and **the party the mission is waiting on
+/// holds no seat and will not hear about it** (not fine). Empty meant unknown,
+/// which is the shape §0.8 and I9 forbid, and only the third case is a problem.
+///
+/// Now each says which it is, and every one of them says nobody was woken.
+#[test]
+fn each_reason_nobody_was_woken_has_its_own_shape() {
+    let held_on = "ede6301723c5772cd47166b61c680cf321359cd9b89e1c887225c1ef895a3602";
+
+    let founder = wake_omission_delivery(&WakeOmission::FounderHeld);
+    assert_eq!(founder["status"], "founder-held");
+    assert_eq!(founder["published"], false);
+    assert!(founder["heldOn"].is_null(), "{founder}");
+
+    let no_seat = wake_omission_delivery(&WakeOmission::NoSeat {
+        held_on: held_on.to_owned(),
+    });
+    assert_eq!(no_seat["status"], "no-seat");
+    assert_eq!(no_seat["published"], false);
+    assert_eq!(
+        no_seat["heldOn"], held_on,
+        "the whole pubkey, so the reader can go and grant it a seat: {no_seat}"
+    );
+
+    let not_requested = wake_omission_delivery(&WakeOmission::NotRequested);
+    assert_eq!(not_requested["status"], "not-requested");
+    assert_eq!(not_requested["published"], false);
+
+    // Distinguishable: three different status words and three different
+    // sentences, and every sentence says nobody was woken.
+    let all = [&founder, &no_seat, &not_requested];
+    let statuses: std::collections::BTreeSet<&str> = all
+        .iter()
+        .map(|value| value["status"].as_str().expect("status"))
+        .collect();
+    assert_eq!(statuses.len(), 3, "{all:?}");
+    let messages: std::collections::BTreeSet<&str> = all
+        .iter()
+        .map(|value| value["message"].as_str().expect("message"))
+        .collect();
+    assert_eq!(messages.len(), 3, "{all:?}");
+    for value in all {
+        assert!(
+            value["message"]
+                .as_str()
+                .expect("message")
+                .contains("nobody was woken"),
+            "{value}"
+        );
+    }
+    // The one that is actually a problem names the remedy.
+    assert!(
+        no_seat["message"]
+            .as_str()
+            .expect("message")
+            .contains("no active seat"),
+        "{no_seat}"
+    );
+}
+
+/// The omission reaches the caller's JSON under the same `delivery` key a real
+/// wake uses, so a reader parses one field rather than two.
+#[tokio::test]
+async fn an_omission_is_reported_under_the_same_delivery_key_as_a_wake() {
+    let operation_id = "ab".repeat(32);
+    let submitted_id = operation_id.clone();
+    let output = submit_record_then_wake(
+        &operation_id,
+        move || async move {
+            Ok(json!({ "event_id": submitted_id, "accepted": true, "message": "" }).to_string())
+        },
+        None::<fn() -> std::future::Ready<Result<Value, CliError>>>,
+        Some(WakeOmission::FounderHeld),
+    )
+    .await
+    .expect("a record with no wake is still a stored record");
+
+    assert_eq!(output["accepted"], true);
+    assert_eq!(
+        output["delivery"]["status"], "founder-held",
+        "the key is present and says why, rather than being absent: {output}"
+    );
+    assert_eq!(output["delivery"]["published"], false);
+}
