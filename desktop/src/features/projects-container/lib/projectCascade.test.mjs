@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  cascadeTerminalsFromEvents,
   channelBelongsToProject,
   describeProjectCascade,
   projectCascadeChannels,
@@ -135,6 +136,7 @@ test("counts break transports out from ordinary channels", () => {
     ],
     workflows: [workflow()],
     foreignWorkflows: [],
+    terminals: [],
   });
 
   assert.deepEqual(counts, {
@@ -143,6 +145,7 @@ test("counts break transports out from ordinary channels", () => {
     transports: 1,
     workflows: 1,
     foreignWorkflows: 0,
+    terminals: 0,
     total: 4,
   });
 });
@@ -155,6 +158,7 @@ test("foreign workflows are counted but excluded from the delete total", () => {
       workflow({ id: "w-2", ownerPubkey: OTHER }),
       workflow({ id: "w-3", ownerPubkey: OTHER }),
     ],
+    terminals: [],
   });
 
   assert.equal(counts.workflows, 1);
@@ -171,8 +175,42 @@ test("the summary counts only the workflows that get deleted", () => {
     channels: [channel({ id: "c-1" })],
     workflows: [workflow({ id: "w-1" })],
     foreignWorkflows: [workflow({ id: "w-2", ownerPubkey: OTHER })],
+    terminals: [],
   });
   assert.equal(describeProjectCascade(counts), "1 channel, 1 workflow");
+});
+
+test("shared terminals are counted and named in the summary", () => {
+  // Terminals used to be survivors the dialog had to disclose. They are
+  // deleted now, so they belong in the count the checkbox arms, not in the
+  // exclusion notes below it.
+  const counts = projectCascadeCounts({
+    channels: [channel({ id: "c-1" })],
+    workflows: [],
+    foreignWorkflows: [],
+    terminals: [
+      { sessionId: "t-1", ownerPubkey: "a".repeat(64), title: "build" },
+      { sessionId: "t-2", ownerPubkey: "a".repeat(64), title: "" },
+    ],
+  });
+  assert.equal(counts.terminals, 2);
+  assert.equal(counts.total, 3);
+  assert.equal(describeProjectCascade(counts), "1 channel, 2 shared terminals");
+});
+
+test("a project whose only children are terminals still has children", () => {
+  // Before terminals were deletable this was "nothing to delete" and the
+  // checkbox stayed disabled over a project that plainly had something in it.
+  const counts = projectCascadeCounts({
+    channels: [],
+    workflows: [],
+    foreignWorkflows: [],
+    terminals: [
+      { sessionId: "t-1", ownerPubkey: "a".repeat(64), title: "build" },
+    ],
+  });
+  assert.equal(counts.total, 1);
+  assert.equal(describeProjectCascade(counts), "1 shared terminal");
 });
 
 test("exclusion notes name the foreign workflows the cascade skips", () => {
@@ -250,4 +288,64 @@ test("an empty plan summarizes as the empty string", () => {
     }),
     "",
   );
+});
+
+test("terminals read their coordinate off the announce", () => {
+  // The relay's `#a` filter already scopes the fetch to this project, so what
+  // this reads is the coordinate each tombstone will name.
+  const events = [
+    {
+      id: "e1",
+      kind: 30623,
+      pubkey: OWNER,
+      created_at: 1,
+      content: "",
+      tags: [
+        ["d", "term-1"],
+        ["a", `30621:${OWNER}:platform`],
+        ["title", "build"],
+      ],
+    },
+  ];
+  assert.deepEqual(cascadeTerminalsFromEvents(events), [
+    { sessionId: "term-1", ownerPubkey: OWNER, title: "build" },
+  ]);
+});
+
+test("terminals are ordered, de-duplicated and lowercased", () => {
+  // The count under the checkbox and the deletion that follows it must
+  // describe the same set, in the same order.
+  const other = "b".repeat(64);
+  const announce = (pubkey, sessionId) => ({
+    id: `${pubkey}:${sessionId}`,
+    kind: 30623,
+    pubkey,
+    created_at: 1,
+    content: "",
+    tags: [["d", sessionId]],
+  });
+  const terminals = cascadeTerminalsFromEvents([
+    announce(other.toUpperCase(), "term-2"),
+    announce(OWNER, "term-1"),
+    announce(OWNER, "term-1"),
+  ]);
+  assert.equal(terminals.length, 2);
+  assert.equal(terminals[0].ownerPubkey, OWNER);
+  assert.equal(terminals[1].ownerPubkey, other);
+});
+
+test("an announce with no session id is skipped", () => {
+  // Otherwise it would become a tombstone for `30623:<owner>:` — a
+  // coordinate that names nothing.
+  const events = [
+    {
+      id: "e1",
+      kind: 30623,
+      pubkey: OWNER,
+      created_at: 1,
+      content: "",
+      tags: [],
+    },
+  ];
+  assert.deepEqual(cascadeTerminalsFromEvents(events), []);
 });

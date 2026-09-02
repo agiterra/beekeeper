@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { deleteShellAnnounce } from "@/features/builtin-shell/observe/deleteShellAnnounce";
 import { channelsQueryKey } from "@/features/channels/hooks";
 import {
   projectsQueryKey,
@@ -400,6 +401,20 @@ export async function deleteProjectContainerCascade({
       await deleteWorkflow(workflow.id);
     } catch {
       failures.push(`workflow "${workflow.name}"`);
+    }
+  }
+  // Terminals last among the children: their announces are addressed
+  // independently of the channels, so nothing else here depends on them and
+  // their position only decides what a partial failure leaves behind. An
+  // announce is the cheapest thing to retry.
+  for (const terminal of targets.terminals) {
+    try {
+      await deleteShellAnnounce({
+        ownerPubkey: terminal.ownerPubkey,
+        sessionId: terminal.sessionId,
+      });
+    } catch {
+      failures.push(`terminal "${terminal.title || terminal.sessionId}"`);
     }
   }
 

@@ -72,6 +72,22 @@ impl CascadeChannel {
     }
 }
 
+/// One shared-terminal announce (kind:30623) a cascade would delete.
+///
+/// Addressed by `(owner, session_id)` rather than by event id: the announce
+/// is a replaceable head, so the coordinate is what a tombstone names and
+/// what stays correct if the head is republished between the plan and the
+/// delete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CascadeTerminal {
+    /// Session id (the announce's `d` tag).
+    pub session_id: String,
+    /// The announce owner's lowercase-hex pubkey.
+    pub owner_hex: String,
+    /// Human-readable title, empty when the announce carries none.
+    pub title: String,
+}
+
 /// One workflow definition (kind:30620) a cascade would delete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CascadeWorkflow {
@@ -96,9 +112,12 @@ pub struct CascadePlan {
     /// kind:5 `a`-tag tombstone only deletes the signer's own addressable
     /// events, so these survive the cascade and are reported, not deleted.
     pub foreign_workflows: usize,
-    /// Shell-session announces (kind:30623) on the project coordinate.
-    /// Counted, never deleted.
-    pub shell_sessions: usize,
+    /// Shared-terminal announces (kind:30623) bound to this project.
+    ///
+    /// Deleted by the cascade since terminals gained a delete verb. Before
+    /// that they were counted and reported as survivors, which was the
+    /// honest answer while the product had no way to remove one.
+    pub shell_sessions: Vec<CascadeTerminal>,
     /// Coding-session genesis events (kind:44226) inside the project's
     /// channels. Counted, never deleted — they die with their channel.
     pub coding_sessions: usize,
@@ -121,7 +140,7 @@ impl CascadePlan {
     /// `true` when the plan has no child deletions at all — the cascade
     /// then degenerates to exactly the default tombstone-only delete.
     pub fn has_no_children(&self) -> bool {
-        self.channels.is_empty() && self.workflows.is_empty()
+        self.channels.is_empty() && self.workflows.is_empty() && self.shell_sessions.is_empty()
     }
 }
 
@@ -132,6 +151,8 @@ pub enum CascadeStep {
     Channel(CascadeChannel),
     /// Publish a kind:5 `a`-tag tombstone for a kind:30620 definition.
     Workflow(CascadeWorkflow),
+    /// Publish a kind:5 `a`-tag tombstone for a kind:30623 announce.
+    Terminal(CascadeTerminal),
     /// Publish the kind:5 `a`-tag tombstone for the kind:30621 project.
     /// Always the final step.
     Project {
@@ -146,10 +167,21 @@ pub enum CascadeStep {
 /// through leaves the project present and the operation retryable. This is
 /// the single source of execution order; [`execute_cascade`] iterates it.
 pub fn cascade_steps(plan: &CascadePlan) -> Vec<CascadeStep> {
-    let mut steps: Vec<CascadeStep> =
-        Vec::with_capacity(plan.channels.len() + plan.workflows.len() + 1);
+    let mut steps: Vec<CascadeStep> = Vec::with_capacity(
+        plan.channels.len() + plan.workflows.len() + plan.shell_sessions.len() + 1,
+    );
     steps.extend(plan.channels.iter().cloned().map(CascadeStep::Channel));
     steps.extend(plan.workflows.iter().cloned().map(CascadeStep::Workflow));
+    // Terminals last among the children, and only because their announces are
+    // addressed independently of the channels: nothing else in the plan
+    // depends on them, so their position only decides what a partial failure
+    // leaves behind, and leaving an announce is the cheapest thing to retry.
+    steps.extend(
+        plan.shell_sessions
+            .iter()
+            .cloned()
+            .map(CascadeStep::Terminal),
+    );
     steps.push(CascadeStep::Project {
         slug: plan.slug.clone(),
     });
@@ -231,6 +263,37 @@ pub fn channels_for_project(
         .collect();
     channels.sort_by(|a, b| a.channel_id.cmp(&b.channel_id));
     channels
+}
+
+/// Every shared-terminal announce in a project's `#a`-filtered fetch.
+///
+/// The relay's `#a` filter already scopes this to the project — the announce
+/// carries the coordinate in a single-letter tag, so no client-side matching
+/// is needed the way it is for channels and repos. What is needed is the
+/// coordinate each tombstone will name: the announce's own `d` tag and the
+/// pubkey that signed it.
+///
+/// De-duplicated and ordered by `(owner, session_id)` so a dry run and the
+/// delete that follows it name the same set in the same order.
+pub fn terminals_for_project(events: &[Value]) -> Vec<CascadeTerminal> {
+    let mut terminals: Vec<CascadeTerminal> = events
+        .iter()
+        .filter_map(|event| {
+            let session_id = extract_d_tag(event);
+            if session_id.is_empty() {
+                return None;
+            }
+            let owner_hex = event.get("pubkey")?.as_str()?.to_ascii_lowercase();
+            Some(CascadeTerminal {
+                session_id,
+                owner_hex,
+                title: extract_tag_value(event, "title"),
+            })
+        })
+        .collect();
+    terminals.sort_by(|a, b| (&a.owner_hex, &a.session_id).cmp(&(&b.owner_hex, &b.session_id)));
+    terminals.dedup_by(|a, b| a.owner_hex == b.owner_hex && a.session_id == b.session_id);
+    terminals
 }
 
 /// Channels from `channels` where `author_hex` is **not** listed as an owner in
@@ -416,16 +479,11 @@ pub fn cascade_warnings(plan: &CascadePlan) -> Vec<String> {
             plan.foreign_workflows
         ));
     }
-    if plan.shell_sessions > 0 {
-        warnings.push(format!(
-            "{} shell-session announce(s) reference this project and will NOT be deleted.",
-            plan.shell_sessions
-        ));
-    }
     if plan.coding_sessions > 0 {
         warnings.push(format!(
-            "{} coding-session genesis event(s) live in these channels; they are not deleted \
-             individually and become unreachable with their channel.",
+            "{} coding-session(s) live in these channels. They are NOT deleted; they become \
+             unreachable with their channel and are reclaimed by an operator purge. To remove \
+             one outright, delete it first with `bee sessions delete`.",
             plan.coding_sessions
         ));
     }
@@ -483,7 +541,7 @@ pub fn plan_json(plan: &CascadePlan, dry_run: bool) -> Value {
             "channels_without_owner_grant": plan.unowned_channels.len(),
             "workflows": plan.workflows.len(),
             "foreign_workflows": plan.foreign_workflows,
-            "shell_sessions": plan.shell_sessions,
+            "shell_sessions": plan.shell_sessions.len(),
             "coding_sessions": plan.coding_sessions,
             "repos_detached": plan.detached_repos.len(),
         },
@@ -569,6 +627,7 @@ pub async fn enumerate_cascade(
     let shell_events = client
         .query_all(json!({ "kinds": [KIND_SHELL_SESSION], "#a": [coordinate] }))
         .await?;
+    let shell_sessions = terminals_for_project(&shell_events);
 
     // Repos: `project` is again multi-character, so scan announcements and
     // match client-side, unioned with the head's curated `a` members.
@@ -583,7 +642,7 @@ pub async fn enumerate_cascade(
         channels,
         workflows,
         foreign_workflows,
-        shell_sessions: shell_events.len(),
+        shell_sessions,
         coding_sessions,
         detached_repos,
         unowned_channels,
@@ -625,6 +684,23 @@ async fn delete_workflow(client: &BuzzClient, workflow: &CascadeWorkflow) -> Ste
         Err(e) => return StepOutcome::Failed(format!("build_workflow_delete failed: {e}")),
     };
     submit_delete(client, builder, "workflow was already deleted").await
+}
+
+/// Tombstone one shared-terminal announce.
+///
+/// The tombstone names the announce's own coordinate, so it works whether
+/// the caller announced the terminal themselves or is deleting it as an
+/// Owner of the project it sits in — the relay authorizes both.
+async fn delete_terminal(client: &BuzzClient, terminal: &CascadeTerminal) -> StepOutcome {
+    let builder = match buzz_sdk::build_delete_addressable(
+        KIND_SHELL_SESSION,
+        &terminal.owner_hex,
+        &terminal.session_id,
+    ) {
+        Ok(builder) => builder,
+        Err(e) => return StepOutcome::Failed(format!("build_delete_addressable failed: {e}")),
+    };
+    submit_delete(client, builder, "terminal announce was already deleted").await
 }
 
 /// Sign, submit, and classify one child deletion. A relay-reported duplicate
@@ -690,6 +766,19 @@ where
                     &mut failed,
                     outcome,
                     json!({ "type": "workflow", "id": workflow.workflow_id, "channel_id": workflow.channel_id }),
+                );
+            }
+            CascadeStep::Terminal(terminal) => {
+                let outcome = delete_terminal(client, &terminal).await;
+                record(
+                    &mut deleted,
+                    &mut failed,
+                    outcome,
+                    json!({
+                        "type": "terminal",
+                        "id": terminal.session_id,
+                        "owner": terminal.owner_hex,
+                    }),
                 );
             }
             CascadeStep::Project { slug } => {
@@ -1148,6 +1237,102 @@ mod tests {
         .is_none());
     }
 
+    fn terminal(session_id: &str) -> CascadeTerminal {
+        CascadeTerminal {
+            session_id: session_id.into(),
+            owner_hex: OWNER.into(),
+            title: String::new(),
+        }
+    }
+
+    // ── terminals ────────────────────────────────────────────────────────────
+
+    /// The relay's `#a` filter already scopes the fetch, so what this reads
+    /// off each announce is the coordinate its tombstone will name.
+    #[test]
+    fn terminals_read_their_coordinate_off_the_announce() {
+        let events = vec![json!({
+            "id": "e1",
+            "kind": 30623,
+            "pubkey": OWNER,
+            "tags": [["d", "term-1"], ["a", COORD], ["title", "build"]],
+        })];
+        assert_eq!(
+            terminals_for_project(&events),
+            vec![CascadeTerminal {
+                session_id: "term-1".into(),
+                owner_hex: OWNER.into(),
+                title: "build".into(),
+            }]
+        );
+    }
+
+    /// The pubkey is lowercased and the order is stable, so a dry run and the
+    /// delete that follows it name the same set the same way.
+    #[test]
+    fn terminals_are_ordered_deduplicated_and_lowercased() {
+        let other = "b".repeat(64);
+        let events = vec![
+            json!({"kind": 30623, "pubkey": other.to_uppercase(), "tags": [["d", "term-2"]]}),
+            json!({"kind": 30623, "pubkey": OWNER, "tags": [["d", "term-1"]]}),
+            json!({"kind": 30623, "pubkey": OWNER, "tags": [["d", "term-1"]]}),
+        ];
+        let terminals = terminals_for_project(&events);
+        assert_eq!(terminals.len(), 2);
+        assert_eq!(terminals[0].owner_hex, OWNER);
+        assert_eq!(terminals[1].owner_hex, other);
+    }
+
+    /// An announce with no `d` tag names no coordinate and is skipped rather
+    /// than turned into a tombstone for `30623:<owner>:`.
+    #[test]
+    fn a_terminal_without_a_session_id_is_skipped() {
+        let events = vec![json!({"kind": 30623, "pubkey": OWNER, "tags": [["a", COORD]]})];
+        assert!(terminals_for_project(&events).is_empty());
+    }
+
+    /// Terminals are real steps now, and the project tombstone still goes
+    /// last — a failure part-way through must leave the head in place.
+    #[test]
+    fn terminals_are_deleted_before_the_project_tombstone() {
+        let mut plan = plan_with(vec![channel("c1", "stream")], Vec::new());
+        plan.shell_sessions = vec![terminal("t-1")];
+        let steps = cascade_steps(&plan);
+        assert!(matches!(steps[0], CascadeStep::Channel(_)));
+        assert!(matches!(steps[1], CascadeStep::Terminal(_)));
+        assert!(matches!(steps.last(), Some(CascadeStep::Project { .. })));
+    }
+
+    /// A project whose only child is a terminal has children — before
+    /// terminals were deletable this returned "nothing to do" and the
+    /// cascade degenerated to a plain tombstone.
+    #[test]
+    fn a_project_with_only_terminals_is_not_childless() {
+        let mut plan = plan_with(Vec::new(), Vec::new());
+        assert!(plan.has_no_children());
+        plan.shell_sessions = vec![terminal("t-1")];
+        assert!(!plan.has_no_children());
+    }
+
+    /// Terminals must no longer be reported as survivors, and coding
+    /// sessions still must be — with a pointer at the verb that removes one.
+    #[test]
+    fn the_warnings_name_only_what_actually_survives() {
+        let mut plan = plan_with(Vec::new(), Vec::new());
+        plan.shell_sessions = vec![terminal("t-1")];
+        plan.coding_sessions = 2;
+        let warnings = cascade_warnings(&plan).join(" ");
+        assert!(
+            !warnings.contains("shell-session"),
+            "terminals are deleted now, got {warnings:?}"
+        );
+        assert!(warnings.contains("coding-session(s)"), "got {warnings:?}");
+        assert!(
+            warnings.contains("bee sessions delete"),
+            "a survivor must come with the way to remove it, got {warnings:?}"
+        );
+    }
+
     // ── plan_json ────────────────────────────────────────────────────────────
 
     #[test]
@@ -1162,7 +1347,7 @@ mod tests {
                 channel_id: "c1".into(),
             }],
         );
-        plan.shell_sessions = 2;
+        plan.shell_sessions = vec![terminal("t-1"), terminal("t-2")];
         plan.coding_sessions = 3;
         plan.unowned_channels = vec![channel("c1", "stream")];
         let value = plan_json(&plan, true);

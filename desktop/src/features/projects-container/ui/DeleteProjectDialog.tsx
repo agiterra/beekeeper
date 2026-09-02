@@ -31,9 +31,12 @@ import { useProjectCascadeTargets } from "../useProjectCascadeTargets";
  * - **Default (box clear).** Only the kind:30621 event is deleted. Repos,
  *   channels, and forums survive and fall back to General. This is NIP-MP's
  *   stated contract and stays the default.
- * - **Box ticked.** The project's channels (session transports included) and
- *   their workflows are deleted first, then the project. Repositories are
- *   still never deleted — the relay keeps their name reservation.
+ * - **Box ticked.** The project's channels (session transports included),
+ *   their workflows, and the shared terminals announced into the project are
+ *   deleted first, then the project. Repositories are still never deleted
+ *   here — the relay keeps their name reservation, and deleting somebody's
+ *   repository is a larger act than deleting the grouping, so it stays a
+ *   per-repository decision.
  *
  * The one thing the copy must not hide is that a session transport channel
  * becomes unreachable *either way*: transports admit project members through
@@ -109,7 +112,8 @@ export function DeleteProjectDialog({
               onCheckedChange={(checked) => setCascade(checked === true)}
             />
             <span>
-              Also delete this project&apos;s channels and workflows
+              Also delete this project&apos;s channels, workflows and shared
+              terminals
               {isLoading
                 ? " (counting…)"
                 : hasChildren
@@ -127,6 +131,14 @@ export function DeleteProjectDialog({
               {note}
             </p>
           ))}
+
+          {counts.total > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Coding sessions in these channels are not deleted individually —
+              they become unreachable with their channel. To remove one
+              outright, delete it from its row first.
+            </p>
+          ) : null}
 
           {counts.transports > 0 ? (
             <p className="text-xs text-muted-foreground">

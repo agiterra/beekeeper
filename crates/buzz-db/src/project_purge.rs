@@ -159,17 +159,25 @@ pub const PROJECT_CHANNEL_SCOPED_TABLES: &[&str] = &[
 pub const PROJECT_PURGE_EXCLUSIONS: &[(&str, &str)] = &[
     (
         "git_repo_names",
-        "repositories are detached, never deleted — dropping the row would free \
-         the community-unique repo name for another owner to squat",
+        "the name reservation outlives the repository. A repo can now be \
+         deleted outright — its announcement and ref state are tombstoned and \
+         its object-store pointer removed, so it stops being cloneable — but \
+         the row stays, because dropping it would free the community-unique \
+         repo name for another owner to squat. A project cascade detaches \
+         rather than deletes by default, so most rows here also still have a \
+         live repository behind them",
     ),
     (
         "shell_session_acl",
-        "roster projection of kind:30623 announce heads, which a project cascade \
-         never tombstones; the rows are live. Enforced, not assumed: an announce \
-         h-tagged into one of this project's tombstoned channels would be \
-         destroyed by the channel arm and leave its projection row pointing at \
-         nothing, so the purge blocks on that instead \
-         (shell_announces_in_tombstoned_channels)",
+        "roster projection of kind:30623 announce heads. A cascade delete now \
+         tombstones those announces, and the relay drops the projection row \
+         with each one (delete_shell_session_acl) — so by the time a purge \
+         runs there is normally nothing here to reclaim. Any row that remains \
+         belongs to an announce still live, which is not this purge's to \
+         destroy. Enforced, not assumed: an announce h-tagged into one of this \
+         project's tombstoned channels would be destroyed by the channel arm \
+         and leave its projection row pointing at nothing, so the purge blocks \
+         on that instead (shell_announces_in_tombstoned_channels)",
     ),
     (
         "shell_session_acl_members",

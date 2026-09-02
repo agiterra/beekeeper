@@ -1,5 +1,5 @@
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
-import type { Channel } from "@/shared/api/types";
+import type { Channel, RelayEvent } from "@/shared/api/types";
 import type { Workflow } from "@/shared/api/workflowTypes";
 
 import { normalizeProjectRef } from "./projectContainerModel";
@@ -36,6 +36,28 @@ export type ProjectCascadeTargets = {
    * reported, and never issued. Mirrors the CLI's `foreign_workflows`.
    */
   foreignWorkflows: Workflow[];
+  /**
+   * Shared terminals announced into this project.
+   *
+   * Deleted by the cascade since terminals gained a delete verb. Before that
+   * they were survivors the dialog had to disclose, which was the honest
+   * answer while nothing in the product could remove one.
+   */
+  terminals: CascadeTerminal[];
+};
+
+/**
+ * One shared-terminal announce a cascade would delete.
+ *
+ * Addressed by `(ownerPubkey, sessionId)` rather than by event id: the
+ * announce is a replaceable head, so the coordinate is what a tombstone
+ * names and what stays correct if the head is republished between the count
+ * and the delete.
+ */
+export type CascadeTerminal = {
+  sessionId: string;
+  ownerPubkey: string;
+  title: string;
 };
 
 /** Counts the delete dialog renders, one per child type. */
@@ -47,6 +69,8 @@ export type ProjectCascadeCounts = {
   workflows: number;
   /** Workflows it will leave alone because someone else authored them. */
   foreignWorkflows: number;
+  /** Shared terminals the cascade deletes. */
+  terminals: number;
   /** Everything the cascade deletes, for the "nothing to do" check. */
   total: number;
 };
@@ -110,6 +134,40 @@ export function projectCascadeWorkflows(
   return { mine, foreign };
 }
 
+/**
+ * Parse the shared-terminal announces a cascade would delete.
+ *
+ * The relay's `#a` filter already scopes the fetch to this project, so no
+ * client-side matching is needed the way it is for channels. What is needed
+ * is the coordinate each tombstone will name: the announce's own `d` tag and
+ * the pubkey that signed it.
+ *
+ * Sorted and de-duplicated so the count under the checkbox and the deletion
+ * that follows it describe the same set, in the same order.
+ */
+export function cascadeTerminalsFromEvents(
+  events: readonly RelayEvent[],
+): CascadeTerminal[] {
+  const seen = new Map<string, CascadeTerminal>();
+  for (const event of events) {
+    const sessionId = event.tags.find((tag) => tag[0] === "d")?.[1];
+    if (!sessionId) continue;
+    const ownerPubkey = event.pubkey.toLowerCase();
+    const key = `${ownerPubkey}:${sessionId}`;
+    if (seen.has(key)) continue;
+    seen.set(key, {
+      sessionId,
+      ownerPubkey,
+      title: event.tags.find((tag) => tag[0] === "title")?.[1] ?? "",
+    });
+  }
+  return [...seen.values()].sort((a, b) =>
+    `${a.ownerPubkey}:${a.sessionId}`.localeCompare(
+      `${b.ownerPubkey}:${b.sessionId}`,
+    ),
+  );
+}
+
 /** Per-type counts for the delete dialog. */
 export function projectCascadeCounts(
   targets: ProjectCascadeTargets,
@@ -128,10 +186,14 @@ export function projectCascadeCounts(
     transports,
     workflows: targets.workflows.length,
     foreignWorkflows: targets.foreignWorkflows.length,
+    terminals: targets.terminals.length,
     // Only what is actually deleted. Foreign workflows are deliberately out:
     // counting them here would arm "delete everything" for a project whose
     // only children the caller cannot touch.
-    total: targets.channels.length + targets.workflows.length,
+    total:
+      targets.channels.length +
+      targets.workflows.length +
+      targets.terminals.length,
   };
 }
 
@@ -150,6 +212,7 @@ export function describeProjectCascade(counts: ProjectCascadeCounts): string {
   push(counts.forums, "forum", "forums");
   push(counts.transports, "session transport", "session transports");
   push(counts.workflows, "workflow", "workflows");
+  push(counts.terminals, "shared terminal", "shared terminals");
   return parts.join(", ");
 }
 

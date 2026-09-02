@@ -4,11 +4,14 @@ import * as React from "react";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { relayClient } from "@/shared/api/relayClient";
+import { KIND_SHELL_SESSION } from "@/shared/constants/kinds";
 import { getChannelsWorkflows } from "@/shared/api/tauriWorkflows";
 import { useFeatureEnabled } from "@/shared/features";
 
 import type { ProjectContainer } from "./hooks";
 import {
+  cascadeTerminalsFromEvents,
   describeProjectCascade,
   projectCascadeCounts,
   projectCascadeChannels,
@@ -22,6 +25,7 @@ const EMPTY_TARGETS: ProjectCascadeTargets = {
   channels: [],
   workflows: [],
   foreignWorkflows: [],
+  terminals: [],
 };
 
 export type ProjectCascadeTargetsResult = {
@@ -78,23 +82,47 @@ export function useProjectCascadeTargets(
     staleTime: 30_000,
   });
 
+  // Terminals are addressed by the project coordinate directly (the announce
+  // carries it in a single-letter `a` tag), so unlike workflows they need no
+  // channel set — a project with no channels can still have terminals.
+  const terminalsQuery = useQuery({
+    enabled: project !== null && (project?.owner.length ?? 0) > 0,
+    queryKey: ["project-cascade-terminals", project?.address ?? "none"],
+    queryFn: async () => {
+      const events = await relayClient.fetchEvents({
+        kinds: [KIND_SHELL_SESSION],
+        "#a": [project?.address ?? ""],
+        limit: 500,
+      });
+      return cascadeTerminalsFromEvents(events);
+    },
+    staleTime: 30_000,
+  });
+
   const targets = React.useMemo<ProjectCascadeTargets>(() => {
     if (!project) return EMPTY_TARGETS;
+    const terminals = terminalsQuery.data ?? [];
     if (!workflowsEnabled) {
-      return { channels, workflows: [], foreignWorkflows: [] };
+      return { channels, workflows: [], foreignWorkflows: [], terminals };
     }
     const { mine, foreign } = projectCascadeWorkflows(
       channelIds,
       workflowsQuery.data ?? [],
       selfPubkey,
     );
-    return { channels, workflows: mine, foreignWorkflows: foreign };
+    return {
+      channels,
+      workflows: mine,
+      foreignWorkflows: foreign,
+      terminals,
+    };
   }, [
     project,
     channels,
     channelIds,
     workflowsEnabled,
     workflowsQuery.data,
+    terminalsQuery.data,
     selfPubkey,
   ]);
 
@@ -114,6 +142,7 @@ export function useProjectCascadeTargets(
     project !== null &&
     (channelsQuery.isLoading ||
       identityQuery.isLoading ||
+      terminalsQuery.isLoading ||
       (workflowsEnabled && workflowsQuery.isLoading && channelIds.length > 0));
 
   return {

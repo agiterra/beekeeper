@@ -98,6 +98,7 @@ const targets = {
     { id: "w-1", name: "Nightly", channelId: "c-1", ownerPubkey: OWNER },
   ],
   foreignWorkflows: [],
+  terminals: [],
 };
 
 test("cascade deletes channels and workflows, then the project LAST", async () => {
@@ -177,6 +178,7 @@ test("cascade never signs a delete for a workflow it does not own", async () => 
           },
         ],
         foreignWorkflows: [],
+        terminals: [],
       },
     });
 
