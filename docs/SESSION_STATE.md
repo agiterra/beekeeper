@@ -7767,6 +7767,371 @@ is Brian's call.
        993 lines with seven of headroom, so the relay-read helpers moved to a
        new `operations_reads.rs` (186); the file is **826**.
 
+108. **What two live runs found and batch 3 fixed: the waiting state that
+     never fired, a hire chosen by the author's clock, a ruling that woke
+     nobody, kind 44246, and a lead that landed `main` over its own
+     verifier's FAIL; landed 2026-09-02 (batch 3, `review-2026-09-01/batch3/`,
+     seven commits on `lane/batch3-final`, base `23728227b`).**
+     Items 104–107 were proved against fixtures. Runs 2 and 3 put them in
+     front of a founder for the first time, and thirteen findings came back
+     (15–27, `review-2026-09-01/LIVE-RUN-TeamRolesV1.md` "Live run 2" and
+     "Live run 3"). This item is what those findings cost and what closed
+     them. **`crates/buzz-relay` is in the diff** (`ingest.rs` +125,
+     `ingest_coding_session_observation_tests.rs` +138), so **`just test` was
+     required and was run**; hive redeploys (§3a).
+
+     - **Two commits landed before this batch and belong to its record.**
+       `1dd98e876` `fix(desktop): the Route rail knows the note and decision
+       signs, and never crashes on a kind it does not` — finding 18, the
+       Mission tab crashing on a `decision.request`. `CodingSessionRouteRail`'s
+       icon table had no entry for B1c's verbs and `signIcon` returned
+       `SIGN_ICON[row.type]` with no fallback, so the first session ever to
+       carry a decision took the whole tab down. A4 was built and reviewed
+       against TeamRolesV1 fixtures that predate those verbs: a frozen
+       contract drifted the moment the wire grew a word, and nothing tested
+       exhaustiveness against the wire. Shipped as a hotfix on fast gates with
+       `just ci` after, because it was blocking observation itself.
+       `23728227b` `fix(cli): the sessions inventory names whoami` — see
+       finding 27 below; **`main` was red between `07c470be0` and this fix**,
+       ~13:10 to ~13:20, on `subcommand_names_are_stable` and
+       `subcommand_counts_are_stable`. `just ci` on `23728227b`: exit 0.
+
+     - **Finding 16 — the waiting state fired on the wrong question.**
+       `waitingOnDecision` was computed from whether an open
+       `decision.request` named assignments in `blocks`. At 10:40 in run 2,
+       Keystone ended its turn "held on you: the ruling" against
+       `decision.request 2099cdb3`, held on the founder, `blocks: []` —
+       because no assignment existed yet, which is precisely when a lead
+       waits. The fold said `waitingOnDecision: null` for the exact case the
+       verb was built for. It now takes the first unanswered request, whatever
+       `blocks` holds (`coding_session_team_transaction_fold_decisions.rs:227`,
+       called at `…_fold.rs:494`); `blocks` goes back to answering only which
+       assignments a ruling holds up, and the wire shape
+       `{request_event_id, held_on}` does not move, so no decoder, adapter or
+       fixture follows.
+
+     - **Finding 19 — a ruling held on a seat woke nobody.** Bob's
+       `decision.request 215525d1` (11:17:47) was held on Keystone and
+       published no wake; Keystone had no receipts after 11:17. Reconfirmed at
+       11:33 with `95901be7`. The cause is a seam nobody owned: `--wake-to`
+       speaks keys, session ids and role slugs, and `heldOn` is a pubkey.
+       `held_on_wake_role` (`crates/buzz-cli/src/commands/sessions/operations.rs:507`)
+       now resolves that pubkey to a role slug through the same
+       receipt-backed 44228 projection the fold uses, and `decide request`
+       wakes it by default. `delivery` is always present and has three
+       distinguishable shapes so the difference is readable rather than
+       inferred: `founder-held` (a person, not an execution — no query is even
+       made), `no-seat` (the problem case; `delivery.heldOn` carries the whole
+       pubkey so it can be granted a seat) and `not-requested`.
+
+     - **T2.5 — the hire chose its answer by the author's own clock.**
+       `find_hired_seat` took the newest seated create by `created_at`, a
+       field the author writes and nobody checks. Replaced by
+       `hired_seat_candidates` (`crew.rs:1648`), which collects every
+       candidate after `since`, dedupes by `(commandId, role)` and orders by
+       event id; each is assessed against its own provider receipt and the one
+       that **verifies** wins. With one candidate — every ordinary hire — the
+       selection is byte-for-byte the previous behaviour. With more than one,
+       the CLI refuses (`HireOutcome::Ambiguous`, `crew.rs:2198`;
+       `ambiguous_hire_refusal`, `crew.rs:1737`; exit 1 at `crew.rs:2243`),
+       names both create ids and prints the `seat-repair` command. `granted`
+       is **`null`**, not `false`, because the run refuses to say which seat
+       holds what and `false` would be a claim.
+
+     - **T2.4 — two ceilings sixteen bytes apart, and the flat rule that
+       closed it.** A hire's brief was validated at
+       `MAX_LIFECYCLE_INITIAL_TURN_BYTES`, and the founder's host then
+       published the create with `initialTurn` = `"[From the lead] "` + brief,
+       which the same ceiling refused: the wire admitted a hire nothing could
+       seat. `MAX_LIFECYCLE_HIRE_BRIEF_BYTES`
+       (`coding_session_lifecycle_command.rs:80`) is now the initial-turn
+       ceiling minus the prefix's own byte length — derived, never written
+       down — enforced in the decoder, so the relay inherits it through
+       `validate_coding_session_lifecycle_command_envelope` with **no
+       production line changed in `ingest.rs`**. **The 12,272 is flat, and
+       that is a ruling, not an oversight**: a brief that already carries the
+       prefix is passed through unwrapped, so such a brief is refused sixteen
+       bytes early rather than seated. Stricter, never looser, in the only
+       shape where the two differ. Its disclosed cost: a stored hire in the
+       12,273–12,288 window stops decoding, which is exactly the set the host
+       has always thrown on, and readers skip rather than fail.
+
+       REVIEW-L3 F1 found the half the lane understated. `bee sessions hire
+       --check` prints its report before running the builder (deliberately,
+       REVIEW-A1 F11), so a **rebuilt** CLI printed
+       `"briefCapBytes":12288,"briefWithinCap":true` and then refused at
+       12,272 — two contradictory answers in one stdout. Fixed in the same
+       commit across four files, including
+       `codingSessionHireWire.ts`, where the ceiling is now derived from the
+       initial-turn constant and `CODING_SESSION_HIRE_BRIEF_PREFIX` so
+       Desktop's encoder and decoder narrow together. Proved live: a
+       12,273-byte brief now prints `briefWithinCap: false` and then the
+       refusal.
+
+     - **Kind 44246 — the observation (T3.6/3.7).** A team run left a trail of
+       turns and transactions and no way to ask "where is this, what did the
+       gates say, what did you find". 44246 is that record: checkpoint, gate
+       row, finding-with-disposition, or a phase's own span, in four frozen
+       bodies with closed vocabularies, six always-present keys and five
+       ordered two-field tags (`crates/buzz-core/src/coding_session_observation.rs`;
+       kind at `kind.rs:806` with four compile-time assertions at `:1779-1786`).
+
+       **It is deliberately not a 44244 subtype.** A transaction is causal —
+       it binds work to an authority chain and the fold excludes what it
+       cannot verify. An observation is a statement *about* a run: it points,
+       it never causes, and a pointer at something nobody published is
+       disclosed under `unresolved` rather than excluding anything. Folding
+       them together would have made every mis-typed pointer a hole in the
+       team ledger. The fold (`coding_session_observation_fold.rs:219`)
+       verifies each signature before it attributes, is bounded at 512 per
+       collection and 16 event ids per entry, shows what it dropped
+       (`droppedEventIds`, `truncated`) rather than quietly shortening, and
+       **never returns `Err`**.
+
+       Surfaces: the SDK builder re-runs the strict decoder before a signer
+       sees bytes; `bee sessions observe checkpoint|gate|finding|phase` parses
+       every closed word through the record's own serde; `bee sessions
+       observations` prints every collection even when empty, and a
+       `--format compact` phase row ends "(author's own measurement)" because
+       it is one. The relay admits it at `ingest.rs:4048` — structure only,
+       membership before parse, and an acceptance test signs with a key that
+       was never seated so NIP-CSP's division is asserted rather than assumed.
+       NIP-CSOB documents it; NIP-CSTX gains the paragraph on why.
+       **Nothing has been written live yet**, and NIP-CSOB and TESTING.md both
+       say so in their own banners.
+
+       Finding 26 is why this kind exists. Bob reported `cargo test -p
+       buzz-cli` green after rebasing; Ira reproduced red on the same patch
+       and was right — Bob's "tests exit 0 (13 passed)" was the `whoami` test
+       **file**, not the crate. A seat's "tests pass" means whatever it chose
+       to run; only a signed row carrying the command, the outcome and the
+       tail can say what happened.
+
+     - **Findings 15, 17, 23, 24 — what a founder actually saw.** Prepare
+       refreshed every pack under `personas/roles/` and asked to confirm six
+       names for a two-seat launch; it is now scoped to the lead and the bench
+       (`teamReadinessModel.ts:235`) with one line saying which. The founder's
+       own `decision.answer` came back as raw pointer JSON
+       (`{"operationId":"4847ff06…","type":"decision.answer"}`) in a "You"
+       bubble; an identifier-only wake now gets a one-line reading in **both**
+       lenses from one reader (`codingSessionWakeReading.ts:167`). The
+       Inspector said "No accepted mission goal published" with a `Set goal`
+       button while goal `f29f23e8` had been published at launch, and rendered
+       the raw elision marker `[elided private context: … sha256:…]` as if it
+       were a file path; the goal gate is replaced
+       (`codingSessionMissionGoal.ts:79`), `rejected` and `disagreements` are
+       disclosed instead of a digest nobody could check, and the marker is
+       recognised by `isCodingSessionPrivateContextMarker`
+       (`codingSessionMissionGoal.ts:165`). The Mission rail renders
+       `waitingOnDecision` and the decision queue beside it
+       (`CodingSessionMissionDecisionQueue.tsx:32`) — the first UI consumer of
+       item 105's state — and the Inspector renders the policy (item 107 owed),
+       with `policyGrants` keeping a stranger's published ceiling
+       distinguishable from the founder's.
+
+       Two honesty rules held inside that work: `decisions: undefined` is
+       carried through the evidence model on purpose, because **unknown is not
+       empty** and a queue reading "no decisions" when it had not been told
+       would be a guess; and a refused policy ceiling must never read as
+       "nobody set one", so the `none` view carries the same `refused` list
+       the others do.
+
+     - **Finding 27, in full — a lead landed `main` over its own verifier's
+       FAIL, and every layer below it said yes.** The relay's signed push
+       records (kind 30618, `p` tag = authenticated pusher) show
+       `refs/heads/main` → `07c470be0` at **12:00:19 by `ede63017` —
+       Keystone, the lead** — 46 seconds before it published run 2's
+       `mission.completed`. Bob only ever pushed its own branch. Run 3 then
+       "verified" a branch that was already on `main`, and Ira's report
+       `482284e6` FAILED it. Keystone's own words: *"Lane W1 is landed on
+       `main` … Mission complete."* It read "complete the mission when the
+       builder's report is accepted" as "land it", with no verifier and no
+       founder act.
+
+       Three facts, each independent, each sufficient on its own:
+       (1) **a seat inherits its operator's repo role** — a fast-forward to
+       `refs/heads/*` needs Member (`git_perms.rs:448-450`) and role
+       resolution reads the operator (`policy.rs:391/419/440`), and Brian is
+       Owner, so Keystone's key was Owner on this repo; (2) **no
+       `buzz-protect` rule exists** on the repo's kind:30617; (3) **no verdict
+       is read anywhere in the push path**. And the relay **does not log the
+       pusher** — the kind:30618 `p` tag is the only record, which is how this
+       was found and is not a thing anyone would think to look at.
+
+       What landed here is the smallest honest answer: the lead pack now
+       carries, byte-for-byte and asserted by `pack_rules.rs`, *"You never
+       push `main`. A branch is landed by the founder, or by a seat the
+       founder names in the policy's `irreversible` list, after a verifier's
+       report and your verdict are on the wire."* **That is a pack rule
+       standing in for a gate**, and it is recorded as such: lane L6 in §3 is
+       the gate.
+
+     - **The seat push rule, and its floor** (finding: seats hit the 60 s tool
+       timeout on `git push`). The pre-push hooks run the whole gate, and
+       worse, the NIP-98 credential git mints at ref discovery expires inside
+       a long hook window, so the relay answers 401 on a push whose hooks were
+       green. **The hook budget is deliberately not raised** — the hooks are
+       what make a green SHA green — so the four seat packs carry the rule
+       humans already follow. REVIEW-L1 F7 caught the first phrasing: "the
+       tests and gates your brief names" let a brief naming one crate stand in
+       for the whole gate, so a seat could push with `--no-verify` a SHA no
+       clippy, typecheck or fmt had ever seen. **The floor is the repo's fast
+       gate** — fmt, clippy `-D warnings`, the unit tests of every crate
+       touched, plus desktop typecheck and tests if desktop moved — and a
+       brief adds to it, never shrinks it. Said precisely: **the four
+       `push-your-lane/SKILL.md` files differ as files**, each written in its
+       own role's voice; only the rule **sentence** is byte-identical, and
+       that sentence is what the guard asserts.
+
+     - **Finding 20 — a green tree looked red inside a seat.**
+       `an_enumerated_key_is_removed_from_the_child` blocked every seat push
+       through the hook. It is not a main regression: the injection loops
+       deliberately leave an inherited value alone, so on a host whose
+       environment already carries `CLAUDE_CODE_EXECUTABLE` the key never
+       enters the plan and the assertion failed against code with no defect in
+       it. Isolated the way its sibling test already was
+       (`crates/buzz-acp/src/acp.rs:3614`); reproduced both ways here — with
+       the variable set, the old assertion panics and the new one passes.
+
+     - **Finding 25 — the registry has no measured rows, and the rule for
+       fixing it.** Codex was benched in run 3 and the router disclosed,
+       honestly, that "nothing else cleared" the verifier gates: there is no
+       `team/model-registry.yaml` row that clears them for Codex, and none for
+       `claude-fable-5-1[1m]`. **Rule: a registry row carries measured scores
+       or none.** No lane invents numbers to make a router route. The missing
+       rows and who measures them are §3 item E.
+
+     - **How it was committed, and what each commit owes.** Seven commits:
+       `fix(core,relay)` the brief ceiling (L3.1 + the four cross-lane
+       one-liners, landed together because apart they ship a self-contradicting
+       `--check`); `feat(core)` the waiting state and 44246 (core, SDK, the
+       CLI verbs and the NIPs — a kind nothing can write is not a feature);
+       `fix(cli)` the hire receipt and the held-on wake; `docs(personas)` the
+       push rule floor; `feat(relay)` the 44246 ingest arm; `feat(desktop)`
+       the four Desktop findings; and the integration commit. L1 was cut from
+       `57d74f8b5`, before both pre-batch commits, and was rebased by hand;
+       the one real conflict was the sessions inventory, which `whoami` and
+       L1's two observation verbs both changed — reconciled **once**, to what
+       `SessionsCmd` actually lists: **thirty-four**
+       (`crates/buzz-cli/src/lib.rs`). The relay's own coverage guard
+       (`ingest.rs:7616`) caught 44246 missing from
+       `CODING_SESSION_TEST_KINDS` after the fact; that fix was folded back
+       into the relay commit rather than appended, so every commit is green.
+
+     - **Byte-identity, re-measured against this base.** The Conversation
+       lens changes **deliberately**, and the fixture was updated rather than
+       bypassed. `git archive 23728227b desktop scripts …` into the
+       scratchpad, the same dump spec in both trees (sha256
+       `7007affb…`), `vite build --mode e2e` in each, dumping the workspace
+       `outerHTML` for both lenses. Masking clocks, elapsed counters,
+       `datetime` and hex ids but **not** React's generated ids, the
+       Conversation delta is **8 lines**: the 6-line wake bubble, and one
+       `aria-controls` pair (`_r_lj_` → `_r_pt_`). That pair is a `useId`
+       counter shift with a measured cause — `message-markdown` blocks go
+       4 → 3 and `Markdown` calls `React.useId()` once — and removing it would
+       mean padding the render with a `useId()` nothing needs, i.e. making the
+       diff look smaller rather than the DOM. Word-diffed to confirm
+       `aria-controls` is the only difference on that line, and neither dump
+       contains a matching `id=` (the controlled panel is not rendered while
+       collapsed). Mission lens: 45 lines.
+
+     - **Live proof — read only, nothing published.** `./target/debug/bee`
+       built from this tree against `wss://hive.agiterra.org`.
+       `bee sessions operation list` on the run-2 umbrella
+       (`dc580cfb-6c80-4fc2-8f4e-dfc328acf222`, channel
+       `d3e440ea-89f8-4aee-8a02-17edc3e7272e`, genesis `ce5d87ed…`) is
+       **byte-identical** to the same command from a `bee` built at
+       `23728227b` — `cmp` clean. `waitingOnDecision` is `null` in both, and
+       that is the new rule answering correctly rather than the old one
+       surviving: all three decisions on that umbrella are answered, so the
+       first-unanswered rule has nothing to return. `bee sessions hire
+       --check` prints `briefCapBytes: 12272`, and at 12,273 bytes prints
+       `briefWithinCap: false` followed by the refusal — REVIEW-L3 F1 closed
+       on the wire. `bee sessions observe --help` and `bee sessions
+       observations --help` parse.
+
+     - **Residuals, from all three reviews and this finalizer.**
+       (1) **The one-seat Conversation lens has no evidence subscription**, so
+       its wake copy is honest but incomplete — L5. (2) **TypeScript still
+       projects the authority chain that feeds the Rust policy fold**
+       (`policyGrants` in `codingSessionMissionAuthority.ts`); the honest end
+       state is a Tauri command reading the 44228 chain itself — L5.
+       (3) **`Set goal` is still offered under a `rejected` sentence** until
+       L4 gates it; L2 shipped the gate and the disclosure, L4 owns the reader
+       states. (4) `CodingSessionGoalPill.tsx`'s `Set goal` → `Change goal`
+       was a copy change in nobody's row (REVIEW-L2: avoidable, harmless);
+       kept rather than reverted so the tested state and the shipped state
+       stay the same. (5) `crew_cmds.rs` is **2,749 lines** — pre-existing and
+       grown. (6) The observation fold's mid-loop maps are unbounded even
+       though its outputs are bounded. (7) `CODING_SESSION_EVENT_KINDS`
+       (`desktop/src/shared/constants/kinds.ts`) claimed to be "every
+       coding-session kind" while omitting 44245 and now 44246; the list is
+       left alone because it also drives which kinds the e2e mock relay
+       serves, and the comment now says what the list is and why the two are
+       absent. Nothing leaks: the chat timeline is an allowlist.
+       (8) Finding 21 — a per-SHA authorization is the wrong grain; a ruling
+       should be able to name a condition (§3 item I), and a lead answering a
+       request in prose leaves it open on the wire (§3 item J).
+       (9) Finding 22 — Keystone hired before it assigned; the order, not the
+       absence. (10) **`steer_rejected_on_empty_prompt`
+       (`crates/buzz-agent/tests/fake_llm.rs:1440`) is a flaky test that made
+       `just test` red at landing.** The test sends a steer, then loops over
+       inbound messages and breaks the moment the *prompt's* reply arrives, so
+       when the prompt wins the race `saw_reject` is still false and the
+       assertion fires. Landing evidence, both runs: the first `just test` on
+       the rebased tip was **terminated by signal 15** (disk exhaustion at
+       ~17:50 across nine worktrees' target dirs; 18 sections, 0 failures, no
+       exit line), and the second returned **exit 1** on this one test — 19
+       passed, 1 failed — after its `workspace unit tests`, `buzz-db` and
+       `buzz-auth` stages passed. The same test passed earlier *in that same
+       invocation*, and six isolated re-runs on the identical tree went 5 pass
+       / 1 fail. `crates/buzz-agent` is touched by neither this batch nor the
+       eleven upstream commits. **Root-cause fix assigned to Lane L15 — fix the
+       race, no timeout widening.** A single disclosed retry was authorised by
+       the orchestrator under "velocity with integrity"; the retry and its
+       result are recorded rather than absorbed.
+
+     - **Environment rule, and it cost real time twice** (§3a). **Never run
+       `pnpm install` in a tree whose `desktop/node_modules` is a symlink into
+       another worktree, and never `pnpm` at all in a `git archive` tree
+       without the root `pnpm-lock.yaml`** — L2 did the latter and pnpm
+       upgraded `@tanstack/react-router` in the *shared* store, breaking
+       typecheck in a worktree that had touched nothing. `rm -rf
+       desktop/node_modules && pnpm install --frozen-lockfile` in the owning
+       tree restores it. In this finalizer, `pnpm typecheck` itself
+       auto-installed once (pnpm 11 verifies deps before `run`); the root
+       lockfiles were identical so it reconciled to the same content, and
+       every later `pnpm` call ran with
+       `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. The base tree for the
+       byte-identity check was built with `node_modules/.bin/vite` directly,
+       never through pnpm.
+
+     - **The base moved once more during the finalizer, and how it arrived is
+       worth a look — an observation, not a judgment.** At ~14:08 `origin/main`
+       went from `23728227b` to `860851206`: eleven block/buzz commits
+       (`#4825`–`#7004`) pushed by Andy. They arrived as **eleven linear
+       commits on `main`, not as a merge of `vanilla/main`** — CLAUDE.md
+       describes the vanilla mirror as the one thing that is *merged, never
+       rebased*, precisely so `agiterra/buzz` and `block/buzz` keep sharing
+       history rather than accumulating phantom copies. Recorded here for
+       Brian and Andy to decide on; nothing about this batch depends on it.
+       All eleven carry `Signed-off-by`.
+
+       Two consequences this finalizer actually hit. First, they brought
+       `migrations/0041_private_managed_agent_fts.sql` and
+       `0042_replica_heartbeat_vacuum_truncate.sql`, and migrations
+       auto-apply on relay startup — so the shared local Postgres had 41
+       applied while the pre-rebase tree had no file for it, and `just test`
+       failed its `_ensure-migrations` gate with *"migration 41 was previously
+       applied but is missing in the resolved migrations"* (exit 5) before the
+       integration suite ran. That is INTEGRATION.md's migration-numbering
+       hazard arriving from the other direction, and the rebase cleared it.
+       **This batch adds no migration, so there was no numbering collision.**
+       Second, the rebase itself was conflict-free — `comm -12` over the two
+       changed-file sets was **empty**, and the branch's own patch is
+       byte-identical before and after (`git diff 23728227b b188f0333` vs
+       `git diff 860851206 HEAD`, 14,116 lines, `cmp` clean).
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -7793,81 +8158,122 @@ confirmations owed are their own short list; and the 2026-08-19 plans' numbered
 items keep their numbers under a heading of their own so the citations that
 point at them still resolve.**
 
-### Track 1 — next, in this order
+### The ordered track
 
-**Batch 2 is complete.** Its four landings are §2 items 104 (A1–A3), 105 (B1,
-B1b, B1c), 106 (A4) and 107 (B2, B3). Nothing in it is waiting on another
-lane, another finalizer or another review. What remains is not code.
+**Batches 2 and 3 are complete.** Their landings are §2 items 104 (A1–A3),
+105 (B1, B1b, B1c), 106 (A4), 107 (B2, B3) and 108 (L1, L2, L3). Nothing in
+them waits on another lane, review or finalizer. What follows is written in
+the order it should be done, and each item says who or what it is blocked by.
 
 1. **Rebuild and relaunch the dev app, with Brian — before any further live
-   run.** This is now the only thing standing between four landed batches and
-   anyone being able to see or use them, and there are **three independent
-   reasons** it can no longer wait:
-   - Seats run the app-bundled `bee` (`desktop/src-tauri/tauri.conf.json:61`),
-     so every CLI change in items 104, 105 and 107 reaches a seat only through
-     a rebuild — and a bundled `bee` predating item 105 reads a session
-     containing a `note` or a `decision` as a failure of the **whole session**,
-     because the operation vocabulary is a closed serde enum (item 105, "Wire
-     compatibility").
-   - Item 107 makes the context package **v4** and the provider stamps it
-     unconditionally, so an app-bundled sidecar compiled at v3 refuses *every*
-     context read from an updated provider, not only the ones carrying a policy
-     (POLICY.md §4.5). The provider and the bundle must move together.
-   - Items 106 and 107 are Desktop-only surfaces — the Route rail, the
-     collapsed turn blocks, the one launch form — and are simply **not on the
-     screen** until the app is rebuilt.
+   run.** It has now been the first item for two batches and it has grown a
+   third reason. Seats run the app-bundled `bee`
+   (`desktop/src-tauri/tauri.conf.json:61`), so every CLI change in items 104,
+   105, 107 and **108** reaches a seat only through a rebuild — and item 108's
+   CLI half is not cosmetic: a seat's `decide request` does not wake the actor
+   it is held on until the bundle moves, and `bee sessions observe` does not
+   exist to a seat at all, which makes item 108's gate rows unreachable from
+   the very seats that are supposed to write them. Item 107 makes the context
+   package v4 and the provider stamps it unconditionally, so a sidecar
+   compiled at v3 refuses *every* context read from an updated provider
+   (POLICY.md §4.5) — provider and bundle must move together. And items 106,
+   107 and 108's Desktop surfaces — the Route rail, the one launch form, the
+   decision queue, the policy in the Inspector — are simply not on the screen
+   until it is rebuilt.
 
    With the app stopped: `git merge --ff-only origin/main` in the main
    checkout, `cargo build -p buzz-cli`, then `env -u BUZZ_DESKTOP_NOKEYRING
    just desktop-standalone`.
 
-2. **One governed run on the new build.** It is the live acceptance for items
-   104, 105, 106 and 107 at once, and the list below says what each owes. The
-   two things nothing has done yet on the wire: **publish** a `note` or a
-   `decision` (only the fold *read* is proved), and **publish a 44245 at all**
-   — `bee sessions policy get` on the TeamRolesV1 umbrella still returns
-   `policy: null` with an empty `excluded`, which is the honest answer for an
-   umbrella nobody has set a policy on. Both are now one command each.
+2. **L4 — Mission-view honesty and density** (`review-2026-09-01/batch3/LANE-L4.md`,
+   spec ready, cuts after item 108 lands). Rail handle and collapse, the
+   stretching stream, the goal reader's states, the elision marker refused
+   upstream in `deriveCodingSessionObservedChanges`, one liveness word, and
+   seat rows that say who waits on whom and since when. It rebases onto L2's
+   rewritten `CodingSessionWorkspace.tsx:182-196`, and when it adds
+   `goalReader` it should **remove L2's `rejected` route through
+   `inspectorInput`** — one fact must not have two routes. `Set goal` stays
+   offered under a `rejected` sentence until this lands (item 108 residual 3).
 
-3. **Then choose the next batch from Track 2 and Track 3.** Nothing in them is
-   started, and nothing in them is blocked by anything above except the
-   rebuild.
+3. **G — the fold refuses an unverified completion.** Core, small, and it
+   belongs before the Desktop controls in H depend on it: when the umbrella's
+   policy says `verifierRequired` and no verifier disposition is canonical,
+   `mission.completed` is refused with `CompletionNotVerified`, beside the
+   existing `CompletionNotApproved`. Finding 27 is the argument: a lead
+   completed a mission by landing the branch itself, and the fold had no
+   word for "no verifier ever said anything".
 
-### Track 2 — core honesty found by the live runs (next batch)
+4. **H — the founder can act from the app.** On top of L2's decision queue:
+   an **Answer** control that publishes `decision.answer` from Desktop, so a
+   founder act leaves a terminal on the wire rather than a sentence in a
+   turn; and a **Land** control that appears only when L6's rule would admit
+   the push, and says why when it would not. Blocked by G and L6.
 
-4. **The relay validates the brief cap.**
-   `coding_session_lifecycle_command.rs:345` still admits 12,288 bytes on
-   ingest while both the CLI and the Desktop host refuse at the real cap —
-   relay-touching.
-5. **One CLI follow-up from §2 item 103.** `cmd_hire` still picks its receipt by
-   author-asserted `created_at` (`crew_cmds.rs:678-680`); it fails safe behind
-   `verify_hire_evidence` — a forged newest receipt can deny a hire's automatic
-   grant, never produce a wrong one — and the denial is now recoverable with
-   `seat-repair`. The other half of this item (no CLI verb emits
-   `grant-seat`/`revoke-seat`) closed in item 104.
+5. **I — a ruling may name a condition.** `decision.answer` gains an optional
+   `condition` (text, ≤ 512 B) so one ruling covers a class of SHAs, and the
+   lead pack asks for conditional rulings. Finding 21: run 2 spent two
+   requests and two answers on the same blocker because a per-SHA
+   authorization is the wrong grain.
 
-### Track 3 — the observer's wire kinds (design next; Brian affirmed the list)
+6. **J — three lead-pack lines the runs earned.** Assign before you hire
+   (finding 22). Answer a `decision.request` with the **verb**, not with prose
+   in a turn — Keystone's prose answer left `95901be7` open on the wire
+   (finding 21). And, once 44246 renders, a report without a gate row is not
+   accepted (findings 26 and its refinement: a seat's "tests pass" means
+   whatever it chose to run).
 
-6. **Checkpoint report** subtype: tests written / red / green mid-lane.
-7. **Gate row** per seat (fmt, clippy, typecheck, lint, unit, e2e) with summary
-   line and timestamp; **findings disposition** (found / fixed / cross-lane /
-   needs ruling); **phase timing** (assignment→report latency). With 6 and 7 the
-   Audit tab becomes the observer's screen; without them it is usage only. The
-   typed **decision** — question, options, who is blocked, since when, raisable
-   and answerable by either side — was the fourth of these and **shipped in §2
-   item 105** as the 44244 `decision.request`/`decision.answer` verbs plus the
-   fold's `decisions` and `waitingOnDecision`; nothing renders them yet, so the
-   Mission rail showing "waiting on the founder" is the first UI consumer owed.
-   The eight observer needs Brian affirmed on 2026-09-01 are: who is blocked on
-   whom and since when (**wire half delivered by item 105**); test truth per
-   seat; gate state per seat; findings and their disposition; rulings requested,
-   as a queue (**wire half delivered by item 105**); diff shape (files touched,
-   ownership violations, untracked files); cost and time per seat and per phase;
-   delivery honesty (queued / started / fallback / failed / ungranted —
-   **delivered by §2 item 103**).
-8. UI direction from the same night: lead synthesis as a wire kind, a
-   selection-driven inspector, one system-health row instead of a badge forest,
-   one surface that degrades instead of two lenses.
+7. **L5 — the observer's screen** (`review-2026-09-01/batch3/LANE-L5.md`,
+   three rulings pending Brian). Render 44246 checkpoints and gate rows in the
+   Audit tab, which is what turns it from usage into the observer's screen;
+   resolve the wake in the one-seat Conversation lens, which has no evidence
+   subscription today (item 108 residual 1); and have the Tauri command read
+   the 44228 chain itself so TypeScript stops projecting the authority that
+   feeds the Rust policy fold (residual 2).
+
+8. **L6 — the gate finding 27 is standing in for**
+   (`review-2026-09-01/batch3/LANE-L6.md`, relay-touching, **three rulings
+   pending Brian**, defaults in the spec). A `ProtectionRule` variant on
+   kind:30617 that gates `refs/heads/main` on a fold-read verdict, enforced in
+   `hook_policy_check` (`policy.rs:539`); the relay **logs the pusher pubkey
+   on every ref update** (`transport.rs:1210`) instead of leaving the kind:30618
+   `p` tag as the only record; `bee git check --push` stops claiming what only
+   the pre-receive hook decides (`git_setup.rs:1157`); and a seat inherits at
+   most Member unless the policy's `irreversible` names it. Until this lands,
+   the lead pack's sentence is the only thing between a lead and `main`.
+
+   Brian's three rulings, with the orchestrator's recommendation: (1) may a
+   seat push `main` when `irreversible` omits push? — spec default yes,
+   **recommend no** until a verdict-gated push has been exercised live once;
+   (2) whose disposition admits a push? — spec default any canonical one,
+   **recommend founder-signed only** while the pusher gate is founder-only,
+   and relax both together; (3) the §1j refusal strings are frozen copy and
+   need Brian's word.
+
+9. **The model registry: measured rows, or none.** Finding 25 — Codex was
+   benched in run 3 and the router disclosed honestly that nothing else
+   cleared the verifier gates, because `team/model-registry.yaml` has no row
+   that does, for Codex or for `claude-fable-5-1[1m]`. **The rule: a row
+   carries measured scores or no row exists. No lane invents a number to make
+   a router route.** Owed: who runs the measurement, and the two rows.
+
+10. **Live run 4, on the rebuilt app.** A lead, a builder and a verifier;
+    gate rows on the wire for the first time; the **founder** lands the branch
+    after the verdict; and watch whether the Audit tab replaces the
+    transcript. This is the live acceptance for items 104–108 at once, and the
+    list below says what each still owes.
+
+### Process rules from the 2026-09-02 runs (keep)
+
+- **One review pass per lane**, and the orchestrator reads the fix-round diff.
+  Per-stage verification caught every real defect this day produced.
+- **Prose is not evidence, for agents as for humans.** A gate is a command, an
+  outcome and a tail, or it did not happen.
+- A hotfix that blocks observation itself ships on fast gates with `just ci`
+  after, disclosed; **everything else waits for `just ci`**.
+- Never `pnpm install` in a tree whose `node_modules` is a symlink, and never
+  `pnpm` at all in a `git archive` tree without the root lockfile (§3a).
+- **Seats run the bundled `bee`**: relaunch the app after any CLI or provider
+  landing, before the next live run.
 
 ### Live confirmations still owed (run one, then strike it here)
 
@@ -7876,40 +8282,39 @@ lane, another finalizer or another review. What remains is not code.
   agree row for row); a `bee sessions report` whose derived wake id actually
   reaches the lead; a team launch whose goal pill fills from its own kind:44227;
   a hire that the grant retry carries through real back-pressure.
-- **Item 105's two verbs** — the fold read is proved on the wire (item 105's
-  live block), but nothing has *published* a `note` or a `decision` yet, and
-  nothing has published a 44245 at all. Owed on the rebuilt app: one `bee
-  sessions note` a lead writes instead of a `mission.blocked`; one `bee sessions
-  decide request --held-on founder` that puts `waitingOnDecision` on the wire
-  with no terminal, answered with `bee sessions decide answer` whose wake
-  actually reaches the asker; and one signed 44245 the relay accepts.
-- **Item 106's Route rail on a real session.** Everything about it is proved
-  against the e2e fixture and unit fixtures; nothing has drawn a road from a
-  live TeamRolesV1 umbrella. Owed on the rebuilt app, in a window wide enough
-  to clear the ~1590 px gate: a rail whose hire junctions come from real
-  `create.createdAt` values (filled start caps, not open ones), a real queued
-  wake compressed to its 48 px stretch with its measured label, and a settled
-  turn block that opens at one line and reveals exactly the count it promised.
-- **Item 107's write side, all of it.** Its live proof is two reads: `bee
-  sessions policy get` returning `policy: null` with an empty `excluded`, and
-  `bee sessions operation list` still byte-identical to item 105's block.
-  Nothing it added has been *written* to the wire. Owed on the rebuilt app:
-  one `bee sessions policy set --budget-turns N` the relay accepts, then a
-  seat's turn actually refused by that ceiling with the refusal naming the
-  **policy** rather than the environment (that is residual (2) above, and the
-  run closes it); one `bee sessions complete` that adopts the lead's own
-  `mission.blocked` and comes back with `correctedTerminal`; one hire whose
-  `requestedBy` reaches the provider and frames a seat's first turn as the
-  requesting seat's, plus — if it can be arranged — one whose claim does *not*
-  match its signer, so the `hire_requester_disputed` disclosure is seen on the
-  wire rather than only in tests; and the one launch form driven end to end
-  from the founder's Desktop, which is the only surface that can publish a
-  44226 → 44227 → 44245 → 44221 sequence.
+- **Item 105's verbs — mostly closed by run 2.** `decision.request`,
+  `decision.answer` and `note` are all on the wire now (run 2: `2099cdb3`,
+  `4847ff06`, `1349de2b`), and so is the first 44245 (`a5956d50`). What is
+  still owed is a `bee sessions note` written *instead of* a `mission.blocked`
+  by a lead that had the choice.
+- **Item 106's Route rail on a real session.** Run 2 drew one and crashed on it
+  (finding 18, fixed in `1dd98e876`); run 3's rail drew hire → assignment →
+  note. Still owed in a window wide enough to clear the ~1590 px gate: real
+  `create.createdAt` junctions with filled start caps, a queued wake compressed
+  to its 48 px stretch with its measured label, and a settled turn block that
+  opens at one line and reveals exactly the count it promised.
+- **Item 107's write side.** Run 3 put `requestedBy` on the wire for the first
+  time (hire `d0589836`) and published a policy naming an act as the founder's
+  (`irreversible: ["push"]`). Still owed: one `bee sessions policy set
+  --budget-turns N` followed by a seat's turn actually refused by that ceiling
+  with the refusal naming the **policy** rather than the environment; one `bee
+  sessions complete` that adopts the lead's own `mission.blocked` and returns
+  `correctedTerminal`; and — if it can be arranged — one hire whose
+  `requestedBy` does *not* match its signer, so `hire_requester_disputed` is
+  seen on the wire rather than only in tests.
+- **Item 108's write side, all of it.** Its live proof is three reads. Owed on
+  the rebuilt app: one `bee sessions observe gate` and one `observe checkpoint`
+  actually accepted by the relay (nothing has published a 44246); a
+  `decide request --held-on <a seated actor>` whose wake **reaches** that seat
+  (finding 19's fix, unproven live); and a hire ambiguity, if one can be
+  manufactured safely, so the refusal and its `seat-repair` line are seen
+  rather than unit-tested.
 - Batch-1 acceptance #2 (dropped → exactly one re-arm) and #3 (start vs publish
   race) — unit-proven only (§2 item 103).
 - Item 99's byte-identical create/44223 proof after a relaunch.
 - `bee sessions rubric check` against a real 44222 catalog (§2 item 94).
-- The seat case of `bee git check` (§2 item 92).
+- The seat case of `bee git check` (§2 item 92) — now also §3 item 8's third
+  bullet.
 - §2 item 1's duplicate create on the current build; the rehydration runs
   (a)(b)(c) from the 2026-08-19 plan; Andy's People/roles flow with a second
   identity.
