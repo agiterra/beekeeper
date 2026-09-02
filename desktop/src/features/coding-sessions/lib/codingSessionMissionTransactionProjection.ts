@@ -61,6 +61,47 @@ type AcknowledgementBody = {
   note: string | null;
 };
 
+type NoteBody = {
+  text: string;
+  refs: string[];
+};
+
+type DecisionRequestBody = {
+  question: string;
+  options: string[];
+  heldOn: string;
+};
+
+type DecisionAnswerBody = {
+  requestRef: string;
+  choice: number | string;
+  note: string | null;
+};
+
+/** A 64-hex actor key — the one `heldOn` spelling that names a person. */
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * What a `decision.answer` row says: the option that was chosen, and the
+ * answerer's own note where there is one.
+ *
+ * A numeric `choice` is an index into the request's signed options, so the
+ * text comes from the request itself when the fold included it. When it did
+ * not, the row names the index rather than inventing the words that went with
+ * it — an answer whose question is out of view is still a fact worth showing.
+ */
+function decisionAnswerSummary(
+  body: DecisionAnswerBody,
+  optionsByRequestId: ReadonlyMap<string, readonly string[]>,
+): string {
+  const chosen =
+    typeof body.choice === "string"
+      ? body.choice
+      : (optionsByRequestId.get(body.requestRef)?.[body.choice] ??
+        `option ${body.choice + 1}`);
+  return body.note === null ? chosen : `${chosen} — ${body.note}`;
+}
+
 function decodeFrozenWireEvent(input: {
   event: ImmutableCodingSessionTeamWireEvent;
   channelRef: string;
@@ -276,13 +317,22 @@ function boundedSummary(value: string): string {
     : `${value.slice(0, MAX_TRANSACTION_SUMMARY_CHARS - 1)}\u2026`;
 }
 
+/**
+ * The stream's type for one signed record.
+ *
+ * `verdict` is the one wire type the surface splits, by its signed `subtype`;
+ * every other wire type is a stream type verbatim. The return used to be a
+ * cast, and a cast is how `note`, `decision.request` and `decision.answer`
+ * reached the surface as types the surface's own tables had never heard of.
+ * Without it, tsc names the gap the day the wire grows a verb.
+ */
 function transactionType(
   event: VerifiedCodingSessionTeamTransaction,
 ): CodingSessionMissionTransactionInput["type"] {
   if (event.payload.type === "verdict") {
     return (event.payload.body as VerdictBody).subtype;
   }
-  return event.payload.type as CodingSessionMissionTransactionInput["type"];
+  return event.payload.type;
 }
 
 /**
@@ -299,6 +349,17 @@ function projectTransactions(
 ): { rows: CodingSessionMissionTransactionInput[]; truncated: number } {
   const authorById = new Map(
     included.map((event) => [event.eventId, event.authorPubkey] as const),
+  );
+  const optionsByRequestId = new Map(
+    included
+      .filter((event) => event.payload.type === "decision.request")
+      .map(
+        (event) =>
+          [
+            event.eventId,
+            (event.payload.body as DecisionRequestBody).options,
+          ] as const,
+      ),
   );
   const ordered = [...included].sort(compareTransactions);
   const truncated = Math.max(
@@ -320,16 +381,33 @@ function projectTransactions(
           : null;
       const assignment =
         event.payload.type === "assignment" ? (body as AssignmentBody) : null;
+      const note = event.payload.type === "note" ? (body as NoteBody) : null;
+      const decisionRequest =
+        event.payload.type === "decision.request"
+          ? (body as DecisionRequestBody)
+          : null;
+      const decisionAnswer =
+        event.payload.type === "decision.answer"
+          ? (body as DecisionAnswerBody)
+          : null;
+      // A note's `refs` and a request's `blocks` are pointers, not parents —
+      // the wire says so — so neither becomes a parent here. An answer's
+      // `requestRef` is causal and does.
       const parentEventId =
         report?.assignmentRef ??
         verdict?.reportRef ??
         acknowledgement?.acknowledgedEventRef ??
+        decisionAnswer?.requestRef ??
         null;
       const counterpartyPubkey = assignment
         ? assignment.assigneeActor
-        : parentEventId
-          ? (authorById.get(parentEventId) ?? null)
-          : null;
+        : // A ruling held on a named actor has that actor as its counterparty;
+          // one held on `founder` names no key, so it has none.
+          decisionRequest && HEX64.test(decisionRequest.heldOn)
+          ? decisionRequest.heldOn
+          : parentEventId
+            ? (authorById.get(parentEventId) ?? null)
+            : null;
       return {
         sourceEventId: event.eventId,
         type,
@@ -346,7 +424,16 @@ function projectTransactions(
                 ? verdict.summary
                 : acknowledgement
                   ? (acknowledgement.note ?? "Disposition received.")
-                  : ((body.summary as string | undefined) ?? ""),
+                  : note
+                    ? note.text
+                    : decisionRequest
+                      ? decisionRequest.question
+                      : decisionAnswer
+                        ? decisionAnswerSummary(
+                            decisionAnswer,
+                            optionsByRequestId,
+                          )
+                        : ((body.summary as string | undefined) ?? ""),
         ),
         decision: verdict ? verdict.decision : null,
         requiredAction: verdict

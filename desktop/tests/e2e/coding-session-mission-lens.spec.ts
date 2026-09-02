@@ -148,7 +148,19 @@ const OBSERVED_FILE =
  *   `route-wide.png` shot shows a map rather than a legend (REVIEW-A4 F11).
  */
 function governedMissionEvents(
-  options: { anchorSeconds?: number; spacingSeconds?: number } = {},
+  options: {
+    anchorSeconds?: number;
+    spacingSeconds?: number;
+    /**
+     * Add one signed `decision.request` — a B1c verb — to the mission.
+     *
+     * Off by default so the fixtures that count stream rows keep counting the
+     * same ones. On for the Route fixture, because the rail is where a verb
+     * the surface has no sign for used to take the whole Mission tab down
+     * with `Element type is invalid`.
+     */
+    withDecisionRequest?: boolean;
+  } = {},
 ): {
   events: RelayEvent[];
   foldResponse: Record<string, unknown>;
@@ -290,7 +302,7 @@ function governedMissionEvents(
     RELAY_SECRET,
   ) as unknown as RelayEvent;
   const transaction = (
-    type: "assignment" | "report",
+    type: "assignment" | "report" | "decision.request",
     body: Record<string, unknown>,
     secret: Uint8Array,
     createdAt: number,
@@ -358,9 +370,31 @@ function governedMissionEvents(
     BUILDER_ACTOR_SECRET,
     stepAt(9),
   );
-  const inputEventIds = [assignment.id, report.id].sort();
+  // One open ruling, asked by the builder and held on the founder. This is a
+  // B1c verb the wire has carried since batch 2, and the surface must draw a
+  // sign for it rather than throwing on a glyph it has no entry for.
+  const decisionRequest = options.withDecisionRequest
+    ? transaction(
+        "decision.request",
+        {
+          question: "Land the inspector now, or hold for the verifier's gate?",
+          options: ["Land the inspector now", "Hold for the gate"],
+          heldOn: "founder",
+          blocks: [],
+          recommendation: null,
+        },
+        BUILDER_ACTOR_SECRET,
+        stepAt(10),
+      )
+    : null;
+  const transactions = [
+    assignment,
+    report,
+    ...(decisionRequest ? [decisionRequest] : []),
+  ];
+  const inputEventIds = transactions.map((event) => event.id).sort();
   return {
-    events: [...lifecycle, goal, grant, grantReceipt, assignment, report],
+    events: [...lifecycle, goal, grant, grantReceipt, ...transactions],
     foldResponse: {
       schema: "buzz-coding-session-team-fold-adapter/v1",
       implementation: "buzz-core",
@@ -402,8 +436,20 @@ function governedMissionEvents(
       // spreads this object, so this is the only place they have to be
       // declared.
       notes: [],
-      decisions: [],
-      waitingOnDecision: null,
+      decisions: decisionRequest
+        ? [
+            {
+              requestId: decisionRequest.id,
+              heldOn: "founder",
+              blocks: [],
+              answeredBy: null,
+              answerId: null,
+            },
+          ]
+        : [],
+      waitingOnDecision: decisionRequest
+        ? { requestId: decisionRequest.id, heldOn: "founder" }
+        : null,
       canonicalTerminal: null,
     },
   };
@@ -423,6 +469,7 @@ const GOVERNED_MISSION = governedMissionEvents();
 const ROUTE_MISSION = governedMissionEvents({
   anchorSeconds: GENESIS_CREATED_AT - 1_800,
   spacingSeconds: 180,
+  withDecisionRequest: true,
 });
 
 const UNGOVERNED_MISSION = {
@@ -1651,14 +1698,17 @@ test("A4: the Route rail maps the session, and folds to a scrubber below its wid
   const signs = rail.getByTestId("coding-session-route-sign");
   await expect(signs.first()).toBeVisible();
   // F12: assert against kinds that ARE members of the closed set. The stream
-  // renders one assignment and one report; the rail must show exactly those
-  // two 44244 signs and no refutation, which is a member this fixture never
-  // produces — so a stray sign from anywhere else fails here.
+  // renders one assignment, one report and one open ruling; the rail must show
+  // exactly those three 44244 signs and no refutation, which is a member this
+  // fixture never produces — so a stray sign from anywhere else fails here.
   const kinds = await signs.evaluateAll((nodes) =>
     nodes.map((node) => node.getAttribute("data-kind")),
   );
   expect(kinds.filter((kind) => kind === "assignment")).toHaveLength(1);
   expect(kinds.filter((kind) => kind === "report")).toHaveLength(1);
+  // B1c: a verb the rail had no glyph for used to throw `Element type is
+  // invalid` out of `RouteSignButton` and take the whole Mission tab with it.
+  expect(kinds.filter((kind) => kind === "decision.request")).toHaveLength(1);
   expect(kinds.filter((kind) => kind === "refutation")).toHaveLength(0);
   expect(kinds.filter((kind) => kind === "hire")).toHaveLength(2);
   for (const kind of kinds) {
@@ -1670,11 +1720,19 @@ test("A4: the Route rail maps the session, and folds to a scrubber below its wid
       "acknowledgement",
       "mission.completed",
       "mission.blocked",
+      "note",
+      "decision.request",
+      "decision.answer",
       "hire",
       "delivery",
       "seat-ungranted",
     ]).toContain(kind);
   }
+  // The ruling says its own word on the rail and in the screen-reader list.
+  await expect(signs.filter({ hasText: "ruling asked" }).first()).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Route signs, oldest first" }),
+  ).toContainText("Ruling asked");
   // §9.4: a gap longer than five minutes compresses to a dashed stretch that
   // carries its own duration.
   const stretches = rail.getByTestId("coding-session-route-stretch");

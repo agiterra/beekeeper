@@ -5,10 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildCodingSessionRouteTransactions,
+  CODING_SESSION_ROUTE_SIGN_WORD,
   deriveCodingSessionRoute,
 } from "../lib/codingSessionRouteModel.ts";
 import { buildCodingSessionMissionTransactionRows } from "../lib/codingSessionMissionTransactionRows.ts";
+import { CODING_SESSION_TEAM_TRANSACTION_TYPES } from "../lib/codingSessionTeamTransactionWire.ts";
 import {
+  CODING_SESSION_ROUTE_SIGN_ICON,
   CodingSessionRouteRail,
   layOutRouteStretchLabels,
 } from "./CodingSessionRouteRail.tsx";
@@ -531,4 +534,141 @@ test("F15: two overlapping wakes never stack their duration labels on top of eac
       .sort((left, right) => left.offsetPx - right.offsetPx)
       .map((stretch) => stretch.label),
   );
+});
+
+// ---------------------------------------------------------------------------
+// B1c — the note and decision verbs (hotfix, 2026-09-02)
+// ---------------------------------------------------------------------------
+
+const NOTE_ID = "c3".repeat(32);
+const DECISION_REQUEST_ID = "d4".repeat(32);
+const DECISION_ANSWER_ID = "f6".repeat(32);
+
+/** The three verbs B1c shipped on the wire, as the projection hands them over. */
+const B1C_INPUTS = [
+  {
+    sourceEventId: NOTE_ID,
+    type: "note",
+    authorPubkey: BUILDER_ACTOR,
+    createdAt: at(22, 4),
+    counterpartyPubkey: null,
+    parentEventId: null,
+    summary: "The sidecar is stale; nothing is blocked.",
+    decision: null,
+    requiredAction: null,
+    fileCount: null,
+    testCount: null,
+    unseated: false,
+  },
+  {
+    sourceEventId: DECISION_REQUEST_ID,
+    type: "decision.request",
+    authorPubkey: LEAD_ACTOR,
+    createdAt: at(22, 5),
+    counterpartyPubkey: FOUNDER,
+    parentEventId: null,
+    summary: "Land lane A now, or hold for the runner's gate?",
+    decision: null,
+    requiredAction: null,
+    fileCount: null,
+    testCount: null,
+    unseated: false,
+  },
+  {
+    sourceEventId: DECISION_ANSWER_ID,
+    type: "decision.answer",
+    authorPubkey: FOUNDER,
+    createdAt: at(22, 6),
+    counterpartyPubkey: LEAD_ACTOR,
+    parentEventId: DECISION_REQUEST_ID,
+    summary: "Hold for the runner's gate.",
+    decision: null,
+    requiredAction: null,
+    fileCount: null,
+    testCount: null,
+    unseated: false,
+  },
+];
+
+function b1cRoute() {
+  const inputs = [...INPUTS, ...B1C_INPUTS];
+  const rows = buildCodingSessionMissionTransactionRows({
+    transactions: inputs,
+    resolveActor: (pubkey) =>
+      ACTORS.get(pubkey) ?? { label: null, executionKey: null },
+    founderPubkey: FOUNDER,
+    deliveries: [],
+    density: "live",
+  });
+  const { route } = fixtureRoute({
+    transactions: buildCodingSessionRouteTransactions(rows, inputs),
+  });
+  return { route, rows };
+}
+
+test("a note and a decision pair render on the rail with their own words", () => {
+  const { route, rows } = b1cRoute();
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionRouteRail, { route }),
+  );
+  for (const kind of ["note", "decision.request", "decision.answer"]) {
+    assert.ok(
+      route.signs.some((sign) => sign.kind === kind),
+      `no sign of kind ${kind}`,
+    );
+  }
+  const words = route.signs.map((sign) => sign.word);
+  for (const word of ["note", "ruling asked", "ruling given"]) {
+    assert.ok(words.includes(word), `no sign word ${word} in ${words}`);
+  }
+  for (const row of rows.slice(-3)) {
+    assert.ok(
+      markup.includes(`aria-label="${row.title} · ${row.meta.timeLabel}"`),
+      `no sign labelled for ${row.title}`,
+    );
+  }
+  // Every row still reaches the screen-reader list — none is silently dropped.
+  const signList = markup.slice(
+    markup.indexOf('aria-label="Route signs, oldest first"'),
+    markup.indexOf('aria-label="Route roads"'),
+  );
+  assert.equal(
+    [...signList.matchAll(/<li>([^<]*)/g)].length,
+    route.signs.length,
+  );
+});
+
+test("a sign of a kind this build has never heard of renders a generic sign", () => {
+  const { route } = b1cRoute();
+  const unknown = {
+    ...route.signs[0],
+    key: "route-sign:from-the-future",
+    kind: "something.new",
+    word: "something new",
+    title: "Something new · 10:07 PM",
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionRouteRail, {
+      route: { ...route, signs: [...route.signs, unknown] },
+    }),
+  );
+  assert.match(markup, /data-kind="something.new"/);
+  assert.match(markup, /aria-label="Something new · 10:07 PM"/);
+});
+
+test("every wire transaction type the stream can render has a glyph and a word", () => {
+  const kinds = CODING_SESSION_TEAM_TRANSACTION_TYPES.flatMap((type) =>
+    type === "verdict" ? ["refutation", "disposition"] : [type],
+  );
+  for (const kind of kinds) {
+    assert.ok(
+      typeof CODING_SESSION_ROUTE_SIGN_ICON[kind] !== "undefined",
+      `no route sign glyph for ${kind}`,
+    );
+    assert.equal(
+      typeof CODING_SESSION_ROUTE_SIGN_WORD[kind],
+      "string",
+      `no route sign word for ${kind}`,
+    );
+  }
 });

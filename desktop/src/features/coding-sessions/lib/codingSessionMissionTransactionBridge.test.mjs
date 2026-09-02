@@ -1132,3 +1132,101 @@ test("D-T9: the decoder requires the fold's unseatedReports field", async () => 
   assert.deepEqual(accepted.fold.unseatedReports, []);
   assert.ok(Object.isFrozen(accepted.fold.unseatedReports));
 });
+
+// B1c's three verbs, projected. Before this the projection cast every wire
+// type it did not name straight through, so a `note` reached the surface with
+// an empty summary and a type the surface's own tables had no entry for.
+test("B1c: note and decision records project with their own signed words", async () => {
+  const noteEvent = transaction(
+    payload("note", {
+      text: "The sidecar is stale; nothing is blocked.",
+      refs: [],
+    }),
+    LEAD_SECRET,
+    10,
+  );
+  const requestEvent = transaction(
+    payload("decision.request", {
+      question: "Land lane A now, or hold for the runner's gate?",
+      options: ["Land lane A now", "Hold for the runner's gate"],
+      heldOn: FOUNDER,
+      blocks: [],
+      recommendation: null,
+    }),
+    LEAD_SECRET,
+    11,
+  );
+  const answerEvent = transaction(
+    payload("decision.answer", {
+      requestRef: requestEvent.id,
+      choice: 1,
+      note: "The gate is worth the wait.",
+    }),
+    FOUNDER_SECRET,
+    12,
+  );
+  const projected = await projectWithFold(
+    [noteEvent, requestEvent, answerEvent],
+    () => ({}),
+  );
+  const rows = new Map(
+    projected.transactions.map((row) => [row.sourceEventId, row]),
+  );
+  assert.equal(projected.transactions.length, 3);
+
+  const note = rows.get(noteEvent.id);
+  assert.equal(note.type, "note");
+  assert.equal(note.summary, "The sidecar is stale; nothing is blocked.");
+  // A note's `refs` are pointers, not causality: it never claims a parent.
+  assert.equal(note.parentEventId, null);
+  assert.equal(note.counterpartyPubkey, null);
+
+  const request = rows.get(requestEvent.id);
+  assert.equal(request.type, "decision.request");
+  assert.equal(
+    request.summary,
+    "Land lane A now, or hold for the runner's gate?",
+  );
+  // A ruling held on a named actor names that actor as its counterparty.
+  assert.equal(request.counterpartyPubkey, FOUNDER);
+  assert.equal(request.parentEventId, null);
+
+  const answer = rows.get(answerEvent.id);
+  assert.equal(answer.type, "decision.answer");
+  // The chosen option comes from the request's own signed options.
+  assert.equal(
+    answer.summary,
+    "Hold for the runner's gate — The gate is worth the wait.",
+  );
+  assert.equal(answer.parentEventId, requestEvent.id);
+  assert.equal(answer.counterpartyPubkey, LEAD);
+});
+
+test("B1c: an answer whose request the fold excluded names the index, not words", async () => {
+  const requestEvent = transaction(
+    payload("decision.request", {
+      question: "Land lane A now, or hold?",
+      options: ["Land lane A now", "Hold"],
+      heldOn: "founder",
+      blocks: [],
+      recommendation: null,
+    }),
+    LEAD_SECRET,
+    11,
+  );
+  const answerEvent = transaction(
+    payload("decision.answer", {
+      requestRef: requestEvent.id,
+      choice: 0,
+      note: null,
+    }),
+    FOUNDER_SECRET,
+    12,
+  );
+  const projected = await projectWithFold([answerEvent], () => ({}));
+  assert.equal(projected.transactions.length, 1);
+  assert.equal(projected.transactions[0].summary, "option 1");
+  // `heldOn: "founder"` names no key, so the request would carry no
+  // counterparty; the answer's is its request's author, unresolvable here.
+  assert.equal(projected.transactions[0].counterpartyPubkey, null);
+});

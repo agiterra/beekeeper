@@ -1,7 +1,9 @@
 import * as React from "react";
 import {
   Check,
+  CheckCheck,
   CircleCheckBig,
+  CircleQuestionMark,
   Clock3,
   ClipboardList,
   FileText,
@@ -11,6 +13,8 @@ import {
   LifeBuoy,
   OctagonAlert,
   Scale,
+  Signpost,
+  StickyNote,
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
@@ -31,8 +35,15 @@ const SIGN_COLUMN_X = 84;
 /** Breathing room under the newest sign so Now never sits on top of one. */
 const MAP_TAIL_PX = 16;
 
-/** One glyph per sign kind. A glyph means one thing on this surface, always. */
-const SIGN_ICON: Readonly<Record<CodingSessionRouteSignKind, LucideIcon>> = {
+/**
+ * One glyph per sign kind. A glyph means one thing on this surface, always —
+ * which is why `decision.answer` gets its own `CheckCheck` rather than reusing
+ * the gavel a disposition already owns, or the single check an acknowledgement
+ * does. Exported so a test can hold it against the wire's own type list.
+ */
+export const CODING_SESSION_ROUTE_SIGN_ICON: Readonly<
+  Record<CodingSessionRouteSignKind, LucideIcon>
+> = {
   assignment: ClipboardList,
   report: FileText,
   refutation: TriangleAlert,
@@ -40,10 +51,24 @@ const SIGN_ICON: Readonly<Record<CodingSessionRouteSignKind, LucideIcon>> = {
   acknowledgement: Check,
   "mission.completed": CircleCheckBig,
   "mission.blocked": OctagonAlert,
+  note: StickyNote,
+  "decision.request": CircleQuestionMark,
+  "decision.answer": CheckCheck,
   hire: GitBranch,
   delivery: Clock3,
   "seat-ungranted": Flag,
 };
+
+/**
+ * The glyph for a sign whose kind this build has never heard of.
+ *
+ * A relay one version ahead can sign a verb this table has no entry for, and
+ * an unlisted entry used to resolve to `undefined` — which React renders by
+ * throwing `Element type is invalid`, taking the whole Mission tab down over a
+ * single unknown sign. A generic signpost says "something happened here that
+ * this build cannot name", which is the honest reading and costs nothing else.
+ */
+const UNKNOWN_SIGN_ICON: LucideIcon = Signpost;
 
 /** Delivery badges that are not the plain queued clock. */
 const DELIVERY_ICON: Readonly<Record<string, LucideIcon>> = {
@@ -55,7 +80,7 @@ function signIcon(sign: CodingSessionRouteSign): LucideIcon {
   if (sign.kind === "delivery") {
     return DELIVERY_ICON[sign.word] ?? Clock3;
   }
-  return SIGN_ICON[sign.kind];
+  return CODING_SESSION_ROUTE_SIGN_ICON[sign.kind] ?? UNKNOWN_SIGN_ICON;
 }
 
 /**

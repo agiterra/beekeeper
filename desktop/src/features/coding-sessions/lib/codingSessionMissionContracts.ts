@@ -148,7 +148,22 @@ export function codingSessionSeatRepairRemedy(input: {
   return `bee sessions seat-repair --channel ${input.channelId} --session-ref ${input.sessionRef} --actor ${input.actorPubkey}`;
 }
 
-/** Closed set of signed 44244 operation types the stream renders as rows. */
+/**
+ * Closed set of signed 44244 operation types the stream renders as rows.
+ *
+ * `refutation` and `disposition` are the two `verdict` subtypes, split here
+ * because the surface words them apart; every other member is a wire `type`
+ * verbatim.
+ *
+ * Batch 1 froze this at seven members. **Amended for B1c**, which shipped
+ * `note`, `decision.request` and `decision.answer` on the wire
+ * (`codingSessionTeamTransactionWire.ts`) without widening it — so the type
+ * claimed a session could not carry those rows while the projection was
+ * already building them, and every table keyed on it came up `undefined`. The
+ * freeze protects the vocabulary from drift, not the contract from the truth:
+ * when the wire gains a verb the stream renders, this union gains it too, in
+ * the same change.
+ */
 export type CodingSessionMissionTransactionType =
   | "assignment"
   | "report"
@@ -156,7 +171,10 @@ export type CodingSessionMissionTransactionType =
   | "disposition"
   | "acknowledgement"
   | "mission.completed"
-  | "mission.blocked";
+  | "mission.blocked"
+  | "note"
+  | "decision.request"
+  | "decision.answer";
 
 /**
  * One canonical (fold-included) 44244 transaction, projected for the stream.

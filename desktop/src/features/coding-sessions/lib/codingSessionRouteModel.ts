@@ -63,7 +63,14 @@ import {
   ROUTE_STRETCH_PX,
 } from "./codingSessionRouteTypes";
 
-const ROUTE_TYPE_WORD: Readonly<
+/**
+ * The word one sign says, per transaction type.
+ *
+ * Exported so a test can hold it against the wire's own type list: a verb the
+ * relay can sign and this table has no word for is a sign that renders `null`,
+ * which is exactly what B1c's three verbs did before this table learned them.
+ */
+export const CODING_SESSION_ROUTE_SIGN_WORD: Readonly<
   Record<CodingSessionMissionTransactionType, string>
 > = {
   assignment: "assignment",
@@ -73,6 +80,9 @@ const ROUTE_TYPE_WORD: Readonly<
   acknowledgement: "acknowledgement",
   "mission.completed": "mission completed",
   "mission.blocked": "mission blocked",
+  note: "note",
+  "decision.request": "ruling asked",
+  "decision.answer": "ruling given",
 };
 
 /** Delivery kinds that mean "queued, not started" — the measured stretch (§9.4.3). */
@@ -285,7 +295,9 @@ export function deriveCodingSessionRoute(input: {
       road,
       at: row.createdAt,
       kind: row.type,
-      word: ROUTE_TYPE_WORD[row.type],
+      // A kind with no word says its own wire word — never `undefined`, which
+      // the screen-reader sign list would read out as "null".
+      word: CODING_SESSION_ROUTE_SIGN_WORD[row.type] ?? row.type,
       title: `${row.title} · ${row.meta.timeLabel}`,
       sourceEventId: row.meta.sourceEventId,
       weight: row.weight === "attention" ? "attention" : "standard",

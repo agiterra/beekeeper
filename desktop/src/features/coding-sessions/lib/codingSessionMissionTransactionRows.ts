@@ -88,7 +88,21 @@ const TYPE_WORD: Readonly<Record<CodingSessionMissionTransactionType, string>> =
     acknowledgement: "acknowledgement",
     "mission.completed": "mission completed",
     "mission.blocked": "mission blocked",
+    note: "note",
+    // B1c's two decision verbs read as a ruling asked for and a ruling given,
+    // which is what a person watching the team is actually waiting on. The
+    // wire words stay `decision.request` / `decision.answer`.
+    "decision.request": "ruling asked",
+    "decision.answer": "ruling given",
   };
+
+/**
+ * The row's word for one type. A type this build has never heard of says its
+ * own wire word rather than reading as `undefined` to a screen reader.
+ */
+function typeWord(type: CodingSessionMissionTransactionType): string {
+  return TYPE_WORD[type] ?? type;
+}
 
 function monogramOf(label: string): string {
   const trimmed = label.trim();
@@ -125,6 +139,47 @@ function party(input: {
   };
 }
 
+/**
+ * The frozen title word for one type.
+ *
+ * A `switch` rather than a conditional chain: a chain's final `else` silently
+ * titled every unlisted type `Verdict: …`, which is how B1c's three verbs came
+ * out of Mission wearing a verdict's words. The `never` binding makes the next
+ * new verb a compile error here, and the string fallback means an unknown one
+ * still says its own name instead of borrowing someone else's.
+ */
+function titleSuffixFor(
+  type: CodingSessionMissionTransactionType,
+  decision: string | null,
+): string {
+  switch (type) {
+    case "assignment":
+      return "Assignment";
+    case "report":
+      return "Report";
+    case "refutation":
+      return "Refutation";
+    case "disposition":
+      return `Verdict: ${decision ?? "decision not reported"}`;
+    case "acknowledgement":
+      return "Acknowledgement";
+    case "note":
+      return "Note";
+    case "decision.request":
+      return "Ruling asked";
+    case "decision.answer":
+      return "Ruling given";
+    case "mission.completed":
+      return "Mission completed";
+    case "mission.blocked":
+      return "Mission blocked";
+    default: {
+      const unlisted: never = type;
+      return String(unlisted);
+    }
+  }
+}
+
 function titleFor(input: {
   type: CodingSessionMissionTransactionType;
   actorLabel: string;
@@ -137,16 +192,7 @@ function titleFor(input: {
   if (input.type === "mission.blocked") {
     return `Mission blocked · ${input.actorLabel}`;
   }
-  const suffix =
-    input.type === "assignment"
-      ? "Assignment"
-      : input.type === "report"
-        ? "Report"
-        : input.type === "refutation"
-          ? "Refutation"
-          : input.type === "acknowledgement"
-            ? "Acknowledgement"
-            : `Verdict: ${input.decision ?? "decision not reported"}`;
+  const suffix = titleSuffixFor(input.type, input.decision);
   const parties =
     input.counterpartyLabel === null
       ? input.actorLabel
@@ -168,6 +214,11 @@ function weightFor(input: {
   if (input.type === "refutation" || input.requiredAction !== null) {
     return { weight: "attention", tone: "caution" };
   }
+  // B1c's three verbs are standard weight. A `decision.request` is the one
+  // that tempts otherwise, but this builder cannot see whether its answer has
+  // landed, and a request that reads `attention` forever after it was answered
+  // is a badge that lies. Weighting an *open* ruling is a fold fact, not a row
+  // fact, so it waits for the fold to report one.
   return { weight: "standard", tone: null };
 }
 
@@ -242,8 +293,8 @@ export function buildCodingSessionMissionTransactionRows(input: {
       },
       accessibleLabel:
         counterparty === null
-          ? `${actor.label}: ${TYPE_WORD[transaction.type]}`
-          : `${actor.label} to ${counterparty.label}: ${TYPE_WORD[transaction.type]}`,
+          ? `${actor.label}: ${typeWord(transaction.type)}`
+          : `${actor.label} to ${counterparty.label}: ${typeWord(transaction.type)}`,
       decision: transaction.decision,
       requiredAction: transaction.requiredAction,
       delivery,

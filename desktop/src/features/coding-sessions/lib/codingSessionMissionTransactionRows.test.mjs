@@ -74,6 +74,20 @@ test("U-T1: every transaction type renders its frozen title", () => {
       counterpartyPubkey: null,
       sourceEventId: "a7",
     }),
+    // B1c's three verbs. Before they were listed, the title chain's final
+    // `else` gave each of them a verdict's words.
+    transaction({
+      type: "note",
+      counterpartyPubkey: null,
+      sourceEventId: "a8",
+    }),
+    transaction({ type: "decision.request", sourceEventId: "a9" }),
+    transaction({
+      type: "decision.answer",
+      authorPubkey: FOUNDER,
+      counterpartyPubkey: BUILDER,
+      sourceEventId: "a10",
+    }),
   ]);
   assert.deepEqual(
     rows.map((row) => row.title),
@@ -85,6 +99,27 @@ test("U-T1: every transaction type renders its frozen title", () => {
       "Bob → Keystone · Acknowledgement",
       "Mission completed · Keystone",
       "Mission blocked · Keystone",
+      "Bob · Note",
+      "Bob → Keystone · Ruling asked",
+      "Keystone → Bob · Ruling given",
+    ],
+  );
+  // Every row stays standard weight: an open ruling is a fold fact, and this
+  // builder cannot see whether the answer has landed.
+  assert.deepEqual(
+    rows.slice(-3).map((row) => [row.weight, row.tone]),
+    [
+      ["standard", null],
+      ["standard", null],
+      ["standard", null],
+    ],
+  );
+  assert.deepEqual(
+    rows.slice(-3).map((row) => row.accessibleLabel),
+    [
+      "Bob: note",
+      "Bob to Keystone: ruling asked",
+      "Keystone to Bob: ruling given",
     ],
   );
 });

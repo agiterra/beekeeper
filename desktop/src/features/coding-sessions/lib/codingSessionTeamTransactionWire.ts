@@ -15,7 +15,15 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const GIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const ROLE = /^[a-z0-9-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const TYPES = new Set([
+/**
+ * Every operation type a signed 44244 may carry.
+ *
+ * Exported because the surfaces that render these records key tables on them,
+ * and a table that quietly misses one renders `undefined`. A test holds this
+ * list against the Route's own glyph and word tables, so adding a verb here
+ * without teaching the surface its sign fails in CI rather than in Mission.
+ */
+export const CODING_SESSION_TEAM_TRANSACTION_TYPES = [
   "assignment",
   "report",
   "verdict",
@@ -25,7 +33,24 @@ const TYPES = new Set([
   "note",
   "decision.request",
   "decision.answer",
-]);
+] as const satisfies readonly CodingSessionTeamTransactionPayload["type"][];
+
+const TYPES: ReadonlySet<string> = new Set(
+  CODING_SESSION_TEAM_TRANSACTION_TYPES,
+);
+
+type Unlisted<T extends never> = T;
+/**
+ * Compile-time proof the list above covers the payload union. A new member of
+ * {@link CodingSessionTeamTransactionPayload}'s `type` that is not listed makes
+ * this alias an error, here, rather than a record the decoder refuses.
+ */
+export type CodingSessionTeamTransactionTypesAreComplete = Unlisted<
+  Exclude<
+    CodingSessionTeamTransactionPayload["type"],
+    (typeof CODING_SESSION_TEAM_TRANSACTION_TYPES)[number]
+  >
+>;
 const DECISION_FOUNDER = "founder";
 const MAX_NOTE_REFS = 16;
 const MAX_DECISION_OPTIONS = 8;
