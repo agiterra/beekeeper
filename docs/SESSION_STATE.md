@@ -6269,6 +6269,72 @@ written and `bash -n` clean but **was not executed** — that harness needs
        Priority as ruled that night: identity vocabulary (2) → one generic
        signed policy record instead of a kind per concept → posture and
        budget on it → observer panels.
+     - **Live acceptance, part 2 (2026-09-01 21:34–22:05, session
+       `TeamRolesV1`, channel `4aa32763-b8e6-49af-9420-b79e7a677aa7`,
+       umbrella `7a374285-24ef-4ef6-bdfb-28748170eeef`, lead Keystone
+       `ede63017…`, builder Bob `1ddd35c6…`).** The headline test passed on
+       the wire: Bob's typed report `fc2769b3a5fa…` at 21:58:23 → provider
+       `team-wake-80f3bbbf68…` `turn_queued` 21:58:31 → `turn_started`
+       22:02:51 (**4 m 20 s queued, far past the 15 s grace**) → **no
+       `team-wake-v1:` command from Desktop** → exactly **one** lead
+       `user_prompt` carrying that pointer (echo at 22:02:51, operator
+       `1958c6c4…`). Then the duplicate-producer attack: the founder published
+       the byte-identical pointer as command `46eb8c19-…` at 22:05; the runner
+       answered `turn_refused` / `DUPLICATE_OPERATION` ("already custodied by
+       command team-wake-80f3bbbf…; this command spent no turn"), receipt on
+       the wire at 22:05:06, zero lead prompts added. Acceptance #7 passed
+       twice tonight (cleantest above; and Bob's seat here, grant appended on
+       create `17847a71…` after the hire host's grant failed). #2 and #3
+       (dropped-then-re-arm, start-vs-publish race) remain unit-proven only.
+     - **Found in the same run, all on the wire or the screen:**
+       (a) **The hire host does not retry a rate-limited grant.** Bob's create
+       was answered `created` in 2 s, then the host published a turn to the
+       lead reading "seated, but not granted: seat actor authority:
+       rate-limited: quota exceeded; retry in 2s" and stopped, after four
+       44228 writes in five seconds. The seat ran ungranted until repaired
+       from the founder key. (b) **`bee sessions report`'s wake reuses the
+       assignment's delivery command id.** Bob's CLI wake to the lead carried
+       `commandId f40a8195-…`, the id of the assignment turn already consumed
+       on Bob's own target, so the runner fenced it as `AlreadyConsumed` with
+       no receipt; only the provider's wake reached the lead. PLAN §T2 says
+       the wake id is derived from the report and target — this path is not.
+       (c) **The launch drops the goal.** The Team tab's goal became the
+       lead's first-turn text and no 44227 was published; the rail read "No
+       accepted mission goal published" all night. (d) **`mission.blocked`
+       used as a note.** Keystone published four terminal `mission.blocked`
+       records (`e636c658`, `a810828b`, `8771ecc1`, `1a5dcc8c`), three of
+       them corrections saying "nothing is blocked, work resumed", because
+       there is no note/correction verb; the state plane read **Blocked** in
+       red while both seats were working. A terminal whose body says work
+       continues must not be publishable, and the rail must show seat
+       liveness beside the fold's state, not beneath it. (e) **Stream order
+       for an open turn.** A block with an open turn sorts at its start time,
+       so rows that arrive during it land below it; rule: an open block sorts
+       by its newest item until it closes. (f) **The turn-block byline has no
+       W1 word** in Mission; only the chip and the live strip say `live`.
+       (g) The header still carries the `2 AGENTS · 2 WORKING` aggregate
+       beside chips that say it; the bundle verbs read `Relay 1 · Tool 49`
+       because the classifier returns generic words for Read/Edit/Bash; a
+       fresh hire's block says "Rehydrated" continuity (keyed on the actor's
+       history, not this session). (h) **A seat's acceptance test published a
+       live 44221.** Bob ran `bee sessions hire` with a 12,272-byte brief "to
+       confirm the gate doesn't trip"; it was refused `HIRE_ROLE_BUSY`, so
+       harmless, but tests must never publish to the live relay. (i) Keystone
+       kept reading `no_receipt_yet` from `seat-repair` after the binding fix
+       landed — it is running a `bee` older than `4376208ba`; which path is
+       owed in its report. (j) The launch dialog: the Team tab shows no
+       provider control and inherits the One-session tab's provider AND its
+       fallback model, which leaks into every unpinned seat (the red
+       `gpt-5.6-sol` line); role names are typed as free text in the Prepare
+       step; the lead identity name is truncated so two Keystones cannot be
+       told apart.
+     - **Usage, from the signed `result` items (the audit the product should
+       show):** Keystone first turn 546 s · 64 tools · 32k out · 5.1M cache
+       reads; Bob lane A 822 s · 88 tools · 57k out · 12.0M cache reads (≈136k
+       re-read per call); fill 22% / 20% of 1M. Largest reads: Keystone's own
+       skill files and `session_overview`; Bob's `operation get` ×2. Proposal
+       and table: `review-2026-09-01/LIVE-RUN-TeamRolesV1.md` — an **Audit**
+       rail tab and `bee sessions audit`, all from 44225, no new kind.
 
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
