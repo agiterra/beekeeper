@@ -7218,6 +7218,192 @@ anyone attacks the ~26 documented smoke failures. Reviving the rest of
 `ci.yml` under Woodpecker — or deleting it and stopping the implied coverage —
 is Brian's call.
 
+106. **The Route rail — a map of the session drawn only from signed evidence —
+     and settled turn blocks that open at one line; landed 2026-09-02 (batch 2
+     "A4", `review-2026-09-01/batch2/`, two commits on `lane/batch2-final-a4`,
+     base `2dceae53f` = item 105's head).** Desktop only: `git diff --stat
+     2dceae53f..HEAD -- crates/ migrations/` is empty, so **`just test` was not
+     required and was not run**. Hive still redeploys — the agincus autodeploy
+     timer has no path filter (§3a).
+
+     - **What draws from what.** `deriveCodingSessionRoute`
+       (`desktop/src/features/coding-sessions/lib/codingSessionRouteModel.ts:126`)
+       is the single entry point, and its entire input is already-decoded typed
+       evidence: `participants`, 44244 `transactions`, wake `deliveries`,
+       `seatAuthorities`, `hires`, plus `visibleAt` / `expandedRoads` / `nowMs`
+       (`:126-149`). **It takes no narrative input at all** — that is the
+       structural reason a sign cannot be minted from a model's prose rather
+       than a convention someone has to keep. Roads `:158-215` (founder first,
+       lead second, the rest in hire order); hire junctions `:234-264`; bridges
+       `:265-296`; signs to `:370` — exactly one per 44244 row, per **badged**
+       delivery, per created-but-ungranted seat and per dated hire, and nothing
+       else can mint one. `visibleAt` is the one input that is about the reader
+       and not the session, and it is labelled as such at `:139-142`. The
+       surface is `ui/CodingSessionRouteRail.tsx` (`<nav aria-label="Route">`
+       `:184`), the 40 px fold `ui/CodingSessionRouteScrubber.tsx`, the
+       derivation `ui/useCodingSessionRoute.ts`, the shapes and every constant
+       `lib/codingSessionRouteTypes.ts`, placed in the left gutter at
+       `ui/CodingSessionUmbrellaWorkspace.tsx:782-795`. Mission only:
+       Conversation is never passed the props, and that is proved below rather
+       than asserted.
+
+     - **The compression rule, and the bound that made it honest.** The walk at
+       `codingSessionRouteModel.ts:471-536` draws 12 px per minute
+       (`ROUTE_PX_PER_MINUTE`) up to five minutes (`ROUTE_MAX_GAP_SECONDS =
+       300`); a longer gap becomes one 48 px dashed `silence` carrying its
+       **measured** label, and a queued wake is always its own dashed `queued`
+       stretch with its whole measured span — counted once even when moments
+       fall inside it. REVIEW-A4 F2 found the wake had no compression at all
+       and measured a 1 h 30 m wake at 1,080 px; the §2a residual is a wake
+       that runs to Now until the lead or a Desktop returns, so an overnight
+       loss drew a ~5,760 px rail nobody could read. Fixed at `:487-500`: a
+       span longer than the gap ceiling takes the silence height cut across its
+       segments. **The label was deliberately not touched** — the measurement
+       is the fact, the pixels are not; an 8 h wake now reads `8h` on a 48 px
+       stretch and the rail is 204 px. Signs never overlap: a moment carrying
+       *k* signs owes the next moment *k* slots whatever the clock said
+       (`:517-519`). The known spec artefact is left alone and is a residual
+       below.
+
+     - **A local clock is drawn as a local clock.** A wake delivery's
+       `observedAtMs` is *Desktop's own observation*, not a receipt time, and
+       the first cut simply `continue`d past a delivery that had none — the
+       sign vanished with no trace. Now signs carry `timeSource: "signed" |
+       "local"` (`lib/codingSessionRouteTypes.ts:224-227`); a local sign is
+       drawn **hollow** with a `~` before its clock and says `— local time, not
+       signed` in its `aria-label`, its tooltip and the screen-reader list
+       (`ui/CodingSessionRouteRail.tsx:264`, `:687-709`), and a sign with no
+       time at all is counted per road and rendered as `N undated` on the road
+       head (`:637-643`) instead of disappearing.
+
+     - **The hire junction draws from the create's own signed second.**
+       `CodingSessionExecution` had no create time, so every hire was passed
+       `at: null` and R2's junction never fired; the road then started at the
+       seat's first *provider-authored transcript* moment, which no signature
+       covers, and drew that as if it were a hire. The four-line fix:
+       `lib/codingSessionTypes.ts:124-126` carries `createdAt` /
+       `createEventId`, populated from the accepted 44221 at
+       `lib/codingSessionUmbrellaModel.ts:295-296`, and the hire now passes
+       `at: execution.createdAt` (`ui/useCodingSessionRoute.ts:143`).
+       `startedAtSource` (`codingSessionRouteModel.ts:191`) is `"hire"` when
+       the create is dated and `"first-signed"` when it is not, **and the
+       difference is rendered**: a filled start cap versus an open one
+       (`CodingSessionRouteRail.tsx:317-333`) plus the clause in the sr-only
+       road list and the tooltip — `road starts since its create` /
+       `road starts since its first signed sign, not a create`
+       (`codingSessionRouteRoadStartClause`, `:751-761`). An unproven start is
+       still drawn; it is drawn *saying* it is unproven.
+
+     - **Settled turn blocks collapse, and the count is the reversibility
+       contract.** In **Mission Live only** — a double gate: the density gate
+       at `ui/CodingSessionUmbrellaTimelineView.tsx:451` and `mission`, which
+       is `missionRowClassName != null` and which Conversation never passes
+       (`ui/CodingSessionUmbrellaTurnBlock.tsx:211-215`) — a block settled by
+       `isCompletedCodingSessionTurnBlock` opens at one line: byline, W1 word,
+       the **first sentence of its first assistant message** verbatim, cut at
+       140 characters with an ellipsis and never a summary this client wrote
+       (`codingSessionCollapsedTurnBlockLine`, `:555`), and an event count.
+       Three blocks never collapse, each for a stated reason: the **working**
+       block, because it is the thing being watched; a block carrying an
+       **attention item** — error, permission prompt, failed tool call —
+       because a summary line is exactly what would swallow it
+       (`hasCodingSessionMissionAttentionItem`, `:528`, gated at `:215`); and
+       anything in Brief, Trace or Conversation. The count means *the rows
+       expanding reveals*: `revealedRowCount = narrativeItems.length +
+       (executionItems.length > 0 ? 1 : 0)` (`:220-221`), because in Live the
+       execution bundle is on by the same density gate that turns collapse on,
+       so a turn's tools arrive as **one** bundle row — counting raw items
+       over-promised by exactly the tools. State is `React.useState` on the
+       block, **seeded from `isWorking` and latched by an effect** (`:206-209`)
+       so a block the reader is watching cannot shut itself the instant the
+       turn settles; the disclosure toggles both ways with a real
+       `aria-expanded` each way (`:284`, `:357-375`); and nothing is persisted
+       — a reader who opened one turn has not asked for every future session to
+       open it.
+
+     - **`+N earlier` lifts a bound; it never removes one.** Roads past seven
+       and signs past 200 per road are counted in words, never dropped in
+       silence. Clicking a road's `+N earlier` marker — a real `<button>`
+       calling `onExpandRoad` — raises **that road's** limit to
+       `ROUTE_SIGNS_PER_ROAD_EXPANDED_LIMIT` (200 × 5) and no other road's
+       (`codingSessionRouteModel.ts:405-408`, `:596`), so the count keeps
+       telling the truth in both states. The same round closed the matching
+       escape: a **bridge belongs to a sign**, and bridges are now filtered by
+       `ownerSignKey` against the retained set *after* retention and *before*
+       any geometry (`:423-431`), so a dropped sign's arrow can no longer
+       resolve onto a neighbour's point — the review measured 200 signs, 14
+       hidden and **214** bridges, 13 of them stacked on one offset.
+
+     - **The Playwright race is fixed, not retried (REVIEW-A4 F14).**
+       `assertMissionRestartRecovery` read the fold hook with `page.evaluate`
+       immediately after `page.reload()`
+       (`desktop/tests/e2e/helpers/codingSessionMissionLensAssertions.ts:626`).
+       `reload()` resolves on `load`, but that hook is assigned inside
+       `@/testing/e2eBridge`, which `desktop/src/main.tsx:118` pulls in with a
+       **dynamic** `await import(…)` from `bootstrap()` — a separately fetched
+       chunk that lands strictly after `load`. The evaluate wins on a warm HTTP
+       cache and loses on a cold one (the first reload after a rebuild, a
+       loaded box), and the loss threw `Mission fold hook missing`, which reads
+       like a defect in the app: it cost the review a re-run to disprove. The
+       guard at `:636-638` waits on the actual precondition — one global
+       assignment, this suite's own idiom (`mock-bridge-global-config-shape`,
+       `persona-sync`, `entity-link-recipient-cards`, `observer-archive-policy`)
+       — and the existing `if (!setResponse) throw` stays. A `waitForTimeout`
+       would have been a guess and a retry would have hidden it. The other two
+       `page.reload()` sites in the helper (`:330`, `:551`) are followed by
+       `harness.seedAndOpen`, not a bare hook read, so they do not race.
+
+     - **Conversation is untouched, proved across trees.** The
+       `git archive`-based cross-tree check (item 104's method) against this
+       item's own base: `git archive 2dceae53f desktop scripts` extracted,
+       `node_modules` symlinked, one throwaway spec **byte-identical in both
+       trees** (`sha256 f9a34c29…`) rendering `CodingSessionUmbrellaTimelineView`
+       with `missionDensity: null` twice over the same two-seat fixture — once
+       bare, once with every Mission prop set including A4's
+       `missionCollapseSettled`, `missionExecutionBundle`, `missionRevealRef`
+       and `onMissionVisibleTimesChange`. Both trees: 17,190 bytes, `loaded ===
+       bare`, `sha256
+       73679b4aeaa06d0c6c9bceb601369c2ef8027e8e6fcddf0818e9edf9303e0831` —
+       **the same hash the lane measured over base `4daf64c08` before Batch B
+       landed**, so neither B nor A4 moved Conversation by a byte. Spec deleted
+       from both trees, extracted tree removed.
+
+     - **Design record.** `docs/design/singularity/SURFACES.md` § 20 (20a what
+       the rail is forbidden to be, 20b unknown drawn as unknown, 20c five
+       departures from §9's board with the reason for each, 20d the
+       collapsed-block contract, 20e the fold gates, 20f the fix round). Note
+       when reading 20b: its first bullet — "a hire with no signed time draws
+       no junction", written when the create time was not on the record — is
+       superseded by 20f and by the paragraph above; the residual it names is
+       closed.
+
+     - **Residuals, all disclosed rather than fixed.** (1) **The spec's own
+       artefact**: a 5:00 gap draws 60 px and a 5:01 gap draws 48 px, so a
+       *longer* silence is a *shorter* road (reproduced: `299s → 60px, 300s →
+       60px, 301s → 48px, 7200s → 48px`). This is DESIGN-SPEC §9.4.1 against
+       §9.4.2 as written; a lane that "fixed" it would put the code at odds
+       with the spec, so it is a spec amendment, not a landing condition.
+       (2) **The rail needs a ~1590 px window**, not the design's 1440: the
+       gate measures the workspace *body* and the app's chrome takes ~310 px,
+       so a 1400 px window leaves 1089 and folds to the scrubber (SURFACES
+       §20e). A design decision to revisit, not a defect. (3) On a session as
+       short as the e2e fixture's, roughly the upper 45 % of the rail is empty
+       — the map hangs at the bottom. Visible in `route-wide.png`, disclosed by
+       the lane, and unchanged by the fix round.
+
+     - **Gates**, worktree `beekeeper.worktrees/batch2-final-a4`, hermit
+       active, tree clean throughout; the main checkout was never touched — no
+       git command, no build, no relaunch there. `pnpm typecheck` clean;
+       `pnpm lint` `Checked 2773 files … Found 3 warnings` (the same three
+       pre-existing ones item 104 recorded); `pnpm check`
+       `check-e2e-registration: ok — 169 entries, 168 specs, no drift`;
+       `pnpm check:px-text` silent; `pnpm test` `tests 7431 / pass 7431 / fail
+       0`; `just file-size-check` exit 0; `pnpm build:e2e` after killing 4173
+       and 4183; `playwright --project=smoke coding-session-mission-lens
+       coding-session-surface-host-screenshots crew-front-door` **26 passed**,
+       and the mission-lens pair three consecutive times **18 passed** each;
+       34 PNGs, **0 duplicate SHA-256**; `just ci` exit 0.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -7252,14 +7438,21 @@ point at them still resolve.**
    104 and 105 reaches a seat only through a rebuild. It is no longer only a
    missing feature: a bundled `bee` predating item 105 that reads a session
    containing a `note` or a `decision` fails the fold for the **whole session**
-   (item 105, "Wire compatibility"), the same shape as finding 13. With the app
+   (item 105, "Wire compatibility"), the same shape as finding 13. **Item 106
+   raises the stakes on the same rebuild for a second reason**: the Route rail
+   and the collapsed turn blocks are Desktop-only and are simply not on the
+   screen until the app is rebuilt, so nobody can look at them — the map, the
+   local-time disclosure, the collapse rule — before this step. With the app
    stopped: `git merge --ff-only origin/main` in the main checkout, `cargo build
    -p buzz-cli`, then `env -u BUZZ_DESKTOP_NOKEYRING just desktop-standalone`.
-   Then one governed run on the new build, which is also how items 104 and 105
-   get their live acceptance (below).
-2. **A4 Route rail + collapsed-by-default turn blocks** — cut from `main` now
-   that A and B have landed; design in the canvas §9 / DESIGN-SPEC §9.
-3. **B2, on top of B1.** Flip the four identity fields and fix the ten sites
+   Then one governed run on the new build, which is also how items 104, 105 and
+   106 get their live acceptance (below).
+2. **B2 and B3, in one finalizer.** Both lanes cleared their adversarial
+   re-checks on 2026-09-02 (**REVIEW-B2 `LAND`**, **REVIEW-B3 `LAND`**), they
+   share no files but `docs/design/portable-team-loop/POLICY.md` and possibly
+   `crates/buzz-core/src/coding_session_policy.rs`, so `FINALIZER-B23.md` lands
+   them together as ledger item 107 rather than one finalizer each. **B2:**
+   flip the four identity fields and fix the ten sites
    (REPORT-B1 §6.1 tables them; `cargo check --workspace --all-targets` names
    every one). Compare `requestedBy` with the signer at the CLI and at the
    founder's host and **disclose a mismatch rather than dropping it** — today
@@ -7275,7 +7468,7 @@ point at them still resolve.**
    lead's own canonical `mission.blocked`, so finding 14's terminal conflict
    stops happening. Split `coding_session_team_transaction_fold.rs` (1,066
    lines) while B2 is in that file.
-4. **B3.** The launch dialog becomes one form — goal · lead · bench · budget ·
+   **B3:** the launch dialog becomes one form — goal · lead · bench · budget ·
    posture — that publishes a kind:44227 goal and a kind:44245 policy, so item
    103's finding 12 (no provider control on the Team tab, the One-session tab's
    fallback model leaking into unpinned seats, free-text role names, the
@@ -7283,18 +7476,18 @@ point at them still resolve.**
    TypeScript decoder for 44245 and for `requestedBy`/`hireRef`, pinned to
    `crates/buzz-core/testdata/coding_session_hire_requester/vectors.json` and
    `docs/nips/NIP-CSP.md`.
-5. **Nothing consumes a 44245.** Until something does, a published policy is a
+3. **Nothing consumes a 44245.** Until something does, a published policy is a
    stated intention and every surface that shows one must say so. The first
    consumer needs the newest-accepted-wins fold and the authority check beside
    it (POLICY.md §4).
 
 ### Track 2 — core honesty found by the live runs (next batch)
 
-6. **The relay validates the brief cap.**
+4. **The relay validates the brief cap.**
    `coding_session_lifecycle_command.rs:345` still admits 12,288 bytes on
    ingest while both the CLI and the Desktop host refuse at the real cap —
    relay-touching.
-7. **One CLI follow-up from §2 item 103.** `cmd_hire` still picks its receipt by
+5. **One CLI follow-up from §2 item 103.** `cmd_hire` still picks its receipt by
    author-asserted `created_at` (`crew_cmds.rs:678-680`); it fails safe behind
    `verify_hire_evidence` — a forged newest receipt can deny a hire's automatic
    grant, never produce a wrong one — and the denial is now recoverable with
@@ -7303,10 +7496,10 @@ point at them still resolve.**
 
 ### Track 3 — the observer's wire kinds (design next; Brian affirmed the list)
 
-8. **Checkpoint report** subtype: tests written / red / green mid-lane.
-9. **Gate row** per seat (fmt, clippy, typecheck, lint, unit, e2e) with summary
+6. **Checkpoint report** subtype: tests written / red / green mid-lane.
+7. **Gate row** per seat (fmt, clippy, typecheck, lint, unit, e2e) with summary
    line and timestamp; **findings disposition** (found / fixed / cross-lane /
-   needs ruling); **phase timing** (assignment→report latency). With 8 and 9 the
+   needs ruling); **phase timing** (assignment→report latency). With 6 and 7 the
    Audit tab becomes the observer's screen; without them it is usage only. The
    typed **decision** — question, options, who is blocked, since when, raisable
    and answerable by either side — was the fourth of these and **shipped in §2
@@ -7320,9 +7513,9 @@ point at them still resolve.**
    ownership violations, untracked files); cost and time per seat and per phase;
    delivery honesty (queued / started / fallback / failed / ungranted —
    **delivered by §2 item 103**).
-10. UI direction from the same night: lead synthesis as a wire kind, a
-    selection-driven inspector, one system-health row instead of a badge forest,
-    one surface that degrades instead of two lenses.
+8. UI direction from the same night: lead synthesis as a wire kind, a
+   selection-driven inspector, one system-health row instead of a badge forest,
+   one surface that degrades instead of two lenses.
 
 ### Live confirmations still owed (run one, then strike it here)
 
@@ -7338,6 +7531,13 @@ point at them still resolve.**
   decide request --held-on founder` that puts `waitingOnDecision` on the wire
   with no terminal, answered with `bee sessions decide answer` whose wake
   actually reaches the asker; and one signed 44245 the relay accepts.
+- **Item 106's Route rail on a real session.** Everything about it is proved
+  against the e2e fixture and unit fixtures; nothing has drawn a road from a
+  live TeamRolesV1 umbrella. Owed on the rebuilt app, in a window wide enough
+  to clear the ~1590 px gate: a rail whose hire junctions come from real
+  `create.createdAt` values (filled start caps, not open ones), a real queued
+  wake compressed to its 48 px stretch with its measured label, and a settled
+  turn block that opens at one line and reveals exactly the count it promised.
 - Batch-1 acceptance #2 (dropped → exactly one re-arm) and #3 (start vs publish
   race) — unit-proven only (§2 item 103).
 - Item 99's byte-identical create/44223 proof after a relaunch.
