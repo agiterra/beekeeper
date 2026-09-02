@@ -1458,13 +1458,21 @@ async fn steer_rejected_on_empty_prompt() {
             json!({"sessionId": sid, "expectedRunId": run_id, "prompt": []}),
         )
         .await;
+    // The steer's rejection and the prompt's reply are written by independent
+    // tasks, so either may arrive first. Scan until BOTH have been seen (or the
+    // budget runs out) — breaking on the prompt's reply alone raced the steer's
+    // rejection and failed one run in six (batch 3, 2026-09-02).
     let mut saw_reject = false;
+    let mut saw_prompt = false;
     for _ in 0..40 {
         let v = h.recv().await;
         if v["id"] == json!(s_id) {
             assert_eq!(v["error"]["code"], -32602, "empty prompt must be rejected");
             saw_reject = true;
         } else if v["id"] == json!(p_id) {
+            saw_prompt = true;
+        }
+        if saw_reject && saw_prompt {
             break;
         }
     }
