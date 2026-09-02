@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowRightLeft, ChevronDown, Flag } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, ChevronRight, Flag } from "lucide-react";
 
 import {
   buildCodingSessionHandoffPrefill,
@@ -43,6 +43,7 @@ export function CodingSessionUmbrellaTurnBlock({
   label,
   labelsByExecutionKey,
   liveness = null,
+  missionCollapseSettled = false,
   missionExecutionBundle = false,
   missionRowClassName,
   onHandoff,
@@ -84,6 +85,21 @@ export function CodingSessionUmbrellaTurnBlock({
    * yesterday's turn would make the record lie as soon as the seat moved on.
    */
   liveness?: CodingSessionTurnBlockLiveness | null;
+  /**
+   * Open a **settled** block at one line, expandable on click or keyboard.
+   *
+   * Mission Live only. A finished turn is a record; in a session of four seats
+   * the stream is mostly finished turns, and reading it meant scrolling past
+   * thousands of lines nobody was looking for. The working block never
+   * collapses (it is the thing being watched), and neither does a block
+   * carrying an attention item — an error, a permission prompt, a failed tool
+   * call is exactly what a summary line would swallow. Trace expands
+   * everything; Brief is untouched.
+   *
+   * Double-gated like the bundle: honoured only alongside
+   * `missionRowClassName`, which Conversation never passes.
+   */
+  missionCollapseSettled?: boolean;
   /**
    * Collapse this block's signed tool items into one C2 bundle row. Only ever
    * honoured together with `missionRowClassName`, so Conversation — which
@@ -179,6 +195,33 @@ export function CodingSessionUmbrellaTurnBlock({
     : [];
   const accent = codingSessionAgentAccent(block.executionKey);
   const foldedSummary = isFolded ? foldedTurnSummary(block) : null;
+  // Per block, in memory, and never persisted: a reader who opened one turn
+  // has not asked for every future session to open it too.
+  //
+  // Seeded from `isWorking` and latched by the effect below, because a block
+  // the reader is *watching* must not shut itself the instant the turn settles
+  // (REVIEW-A4 F3). The state is React state on a component keyed by the
+  // block's own key, so it survives every re-render of that block and dies
+  // with it.
+  const [settledExpanded, setSettledExpanded] = React.useState(isWorking);
+  React.useEffect(() => {
+    if (isWorking) setSettledExpanded(true);
+  }, [isWorking]);
+  const collapsible =
+    mission &&
+    missionCollapseSettled &&
+    completed &&
+    !isWorking &&
+    !hasCodingSessionMissionAttentionItem(missionItems);
+  // F5: the promise is about the rows Mission Live actually renders. In Live
+  // the execution bundle is on by the same density gate that turns collapse
+  // on, so a turn's tool items arrive as **one** bundle row, not as many —
+  // counting the raw items would over-promise by exactly the tools.
+  const revealedRowCount =
+    narrativeItems.length + (executionItems.length > 0 ? 1 : 0);
+  const collapsedLine = collapsible
+    ? codingSessionCollapsedTurnBlockLine(missionItems)
+    : null;
   // C1a: the seat's own identity, from `agentRef` resolved through kind-0 —
   // never `block.signerPubkey`, which one provider stamps on every seat.
   const byline = buildCodingSessionTurnByline({
@@ -215,6 +258,60 @@ export function CodingSessionUmbrellaTurnBlock({
           {isWorking ? "working" : completed ? "completed" : "activity"}
         </span>
       </button>
+    );
+  }
+
+  if (collapsible && collapsedLine !== null && !settledExpanded) {
+    return (
+      <article
+        className={cn(
+          "group/turn relative border-l-2 border-border/40 transition-colors",
+          missionRowClassName,
+          accent.border,
+          isHighlighted &&
+            "-mx-3 rounded-2xl bg-primary/5 px-3 ring-1 ring-primary/60",
+        )}
+        data-block={blockKey}
+        data-collapsed="true"
+        data-execution={block.executionKey}
+        data-highlighted={isHighlighted ? "true" : undefined}
+        data-signer={block.signerPubkey}
+        data-testid="coding-session-umbrella-turn-block"
+        ref={registerNode}
+      >
+        <span className="sr-only">{byline.screenReader}</span>
+        <button
+          aria-expanded={false}
+          className="flex w-full min-w-0 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-count={revealedRowCount}
+          data-testid="coding-session-umbrella-turn-collapsed"
+          onClick={() => setSettledExpanded(true)}
+          type="button"
+        >
+          <ChevronRight aria-hidden className="size-3.5 shrink-0 opacity-60" />
+          <span
+            aria-hidden
+            className={cn("size-2 shrink-0 rounded-full", accent.dot)}
+          />
+          <span className="max-w-48 shrink-0 truncate text-xs font-medium text-foreground/80">
+            {name}
+          </span>
+          {liveWord === null ? null : (
+            <span
+              className="shrink-0 text-2xs font-medium text-foreground/75"
+              data-testid="coding-session-umbrella-byline-liveness"
+            >
+              {liveWord}
+            </span>
+          )}
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {collapsedLine.sentence ?? "No message in this turn"}
+          </span>
+          <span className="shrink-0 text-2xs text-muted-foreground">
+            {revealedRowCount} {revealedRowCount === 1 ? "row" : "rows"}
+          </span>
+        </button>
+      </article>
     );
   }
 
@@ -257,6 +354,23 @@ export function CodingSessionUmbrellaTurnBlock({
         />
       ) : null}
       <span className="sr-only">{byline.screenReader}</span>
+      {collapsible && settledExpanded ? (
+        // F4: the disclosure has to work both ways. Without this the collapsed
+        // button advertised `aria-expanded="false"`, opened once, and then no
+        // `aria-expanded="true"` counterpart existed anywhere in the block — a
+        // screen reader was told a disclosure exists and then lost it.
+        <button
+          aria-expanded={true}
+          className="mb-2 flex items-center gap-1.5 text-2xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-count={revealedRowCount}
+          data-testid="coding-session-umbrella-turn-expanded"
+          onClick={() => setSettledExpanded(false)}
+          type="button"
+        >
+          <ChevronDown aria-hidden className="size-3.5 shrink-0 opacity-60" />
+          Collapse this turn
+        </button>
+      ) : null}
       {showProvenance || stickyProvenance ? (
         <header
           className={cn(
@@ -400,6 +514,64 @@ export function CodingSessionUmbrellaTurnBlock({
       ) : null}
     </article>
   );
+}
+
+/**
+ * Does this block carry something a person must not scroll past?
+ *
+ * DESIGN-SPEC C5's attention set, and the reason a settled block is allowed to
+ * collapse at all: everything a summary line would swallow — a failure, a
+ * permission prompt, an errored tool call — keeps the block open. This is the
+ * same predicate Brief uses to decide what it may never hide, minus the plain
+ * message and plan rows that are not, by themselves, attention.
+ */
+export function hasCodingSessionMissionAttentionItem(
+  items: TurnBlock["items"],
+): boolean {
+  return items.some((item) => {
+    if (item.type === "lifecycle") {
+      return item.renderClass === "error" || item.renderClass === "permission";
+    }
+    return item.type === "tool" && (item.isError || item.status === "failed");
+  });
+}
+
+/** The maximum length of a collapsed block's summary sentence. */
+export const CODING_SESSION_COLLAPSED_TURN_SENTENCE_MAX = 140;
+
+/**
+ * The one line a settled block opens at.
+ *
+ * The sentence is the **first sentence of the first assistant message**, taken
+ * verbatim and cut at {@link CODING_SESSION_COLLAPSED_TURN_SENTENCE_MAX} with
+ * an ellipsis — never a summary this client wrote.
+ *
+ * `itemCount` is the block's signed item count and is **not** what the line
+ * prints. The printed number is the count of rows expanding actually reveals,
+ * which in Mission Live is the narrative rows plus one execution-bundle row —
+ * the tools arrive behind the bundle's own count, one level down (REVIEW-A4
+ * F5). Counting raw items here over-promised by exactly the tool calls.
+ */
+export function codingSessionCollapsedTurnBlockLine(
+  items: TurnBlock["items"],
+): { sentence: string | null; itemCount: number } {
+  const assistant = items.find(
+    (item) => item.type === "message" && item.role === "assistant",
+  );
+  const text =
+    assistant !== undefined && assistant.type === "message"
+      ? assistant.text.trim().replace(/\s+/g, " ")
+      : "";
+  let sentence: string | null = null;
+  if (text.length > 0) {
+    const stop = text.search(/[.!?](\s|$)/);
+    const firstSentence = stop === -1 ? text : text.slice(0, stop + 1);
+    sentence =
+      firstSentence.length > CODING_SESSION_COLLAPSED_TURN_SENTENCE_MAX
+        ? `${firstSentence.slice(0, CODING_SESSION_COLLAPSED_TURN_SENTENCE_MAX - 1).trimEnd()}…`
+        : firstSentence;
+  }
+  return { sentence, itemCount: items.length };
 }
 
 /** One seat's W1 answer, as the surface resolved it for this block. */

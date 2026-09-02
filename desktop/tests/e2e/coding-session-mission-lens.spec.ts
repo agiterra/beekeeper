@@ -140,10 +140,22 @@ const GENESIS_CREATED_AT = Math.floor(Date.now() / 1_000) - 40;
 const OBSERVED_FILE =
   "desktop/src/features/coding-sessions/ui/CodingSessionUmbrellaWorkspace.tsx";
 
-function governedMissionEvents(): {
+/**
+ * @param options.anchorSeconds unix second the genesis is signed at.
+ * @param options.spacingSeconds seconds between the fixture's steps. The
+ *   default of 1 reproduces the original timings byte for byte; the Route
+ *   fixture uses minutes so roads have length, silences compress, and the
+ *   `route-wide.png` shot shows a map rather than a legend (REVIEW-A4 F11).
+ */
+function governedMissionEvents(
+  options: { anchorSeconds?: number; spacingSeconds?: number } = {},
+): {
   events: RelayEvent[];
   foldResponse: Record<string, unknown>;
 } {
+  const anchor = options.anchorSeconds ?? GENESIS_CREATED_AT;
+  const spacing = options.spacingSeconds ?? 1;
+  const stepAt = (offset: number) => anchor + offset * spacing;
   const genesisInput = buildCodingSessionGenesisEvent({
     channelId: CHANNEL_ID,
     sessionRef: SESSION_REF,
@@ -153,7 +165,7 @@ function governedMissionEvents(): {
       kind: genesisInput.kind,
       tags: genesisInput.tags,
       content: genesisInput.content,
-      created_at: GENESIS_CREATED_AT,
+      created_at: stepAt(0),
     },
     FOUNDER_SECRET,
   ) as unknown as RelayEvent;
@@ -199,7 +211,7 @@ function governedMissionEvents(): {
         kind: createInput.kind,
         tags: createInput.tags,
         content: createInput.content,
-        created_at: GENESIS_CREATED_AT + index + 1,
+        created_at: stepAt(index + 1),
       },
       FOUNDER_SECRET,
     ) as unknown as RelayEvent;
@@ -219,7 +231,7 @@ function governedMissionEvents(): {
           session: seat.target,
           error: null,
         }),
-        created_at: GENESIS_CREATED_AT + index + 2,
+        created_at: stepAt(index + 2),
       },
       seat.secret,
     ) as unknown as RelayEvent;
@@ -235,7 +247,7 @@ function governedMissionEvents(): {
       kind: goalInput.kind,
       tags: goalInput.tags,
       content: goalInput.content,
-      created_at: GENESIS_CREATED_AT + 5,
+      created_at: stepAt(5),
     },
     FOUNDER_SECRET,
   ) as unknown as RelayEvent;
@@ -256,7 +268,7 @@ function governedMissionEvents(): {
         ["csat-genesis", genesis.id],
       ],
       content: JSON.stringify(grantPayload),
-      created_at: GENESIS_CREATED_AT + 6,
+      created_at: stepAt(6),
     },
     FOUNDER_SECRET,
   ) as unknown as RelayEvent;
@@ -273,7 +285,7 @@ function governedMissionEvents(): {
         granteePubkey: BUILDER_ACTOR,
         role: "builder",
       }),
-      created_at: GENESIS_CREATED_AT + 7,
+      created_at: stepAt(7),
     },
     RELAY_SECRET,
   ) as unknown as RelayEvent;
@@ -319,7 +331,7 @@ function governedMissionEvents(): {
       acceptanceSteps: ["Run the real mock-bridge smoke test"],
     },
     FOUNDER_SECRET,
-    GENESIS_CREATED_AT + 8,
+    stepAt(8),
   );
   const report = transaction(
     "report",
@@ -344,7 +356,7 @@ function governedMissionEvents(): {
       anomalies: [],
     },
     BUILDER_ACTOR_SECRET,
-    GENESIS_CREATED_AT + 9,
+    stepAt(9),
   );
   const inputEventIds = [assignment.id, report.id].sort();
   return {
@@ -398,6 +410,20 @@ function governedMissionEvents(): {
 }
 
 const GOVERNED_MISSION = governedMissionEvents();
+
+/**
+ * The same governed mission, signed over half an hour instead of nine seconds.
+ *
+ * The Route rail is a map of *distance*: with every step one second apart the
+ * roads collapse to dots and the gutter reads as a legend (REVIEW-A4 F11).
+ * Three minutes a step gives the creates real separation, puts a compressed
+ * silence between the last create and the assignment, and leaves the report
+ * a few minutes behind Now — the shape the TeamRolesV1 run actually had.
+ */
+const ROUTE_MISSION = governedMissionEvents({
+  anchorSeconds: GENESIS_CREATED_AT - 1_800,
+  spacingSeconds: 180,
+});
 
 const UNGOVERNED_MISSION = {
   events: GOVERNED_MISSION.events.filter(
@@ -1585,4 +1611,115 @@ test("A3.2/A3.3: the working block says its W1 word and Mission's header drops t
   ).toHaveCount(0);
   await waitForAnimations(page);
   await working.screenshot({ path: `${SCREENSHOTS}/turn-block-live.png` });
+});
+
+test("A4: the Route rail maps the session, and folds to a scrubber below its width gates", async ({
+  page,
+}) => {
+  await openMockApp(page, {
+    foldResponse: ROUTE_MISSION.foldResponse,
+    reducedMotion: "no-preference",
+    theme: "buzz",
+  });
+  await seedAndOpen(page, ROUTE_MISSION);
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("coding-session-surface-close").click();
+  // The gate measures the **workspace body**, not the window: the app's own
+  // chrome takes ~310 px, so 1400 leaves the body 1089 and the rail folds.
+  // This is the first viewport whose body can give the rail 224 px without
+  // narrowing the reading column — §9.2's two gates, both of them.
+  // `openMockApp` sets 1400 itself, so this has to come after it.
+  await page.setViewportSize({ width: 2000, height: 1000 });
+
+  const rail = page.getByTestId("coding-session-route-rail");
+  await expect(rail).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Route" })).toHaveCount(1);
+  await expect(
+    page.getByRole("list", { name: "Route signs, oldest first" }),
+  ).toHaveCount(1);
+  await expect(page.getByRole("list", { name: "Route roads" })).toHaveCount(1);
+  await expect(rail.getByTestId("coding-session-route-now")).toContainText(
+    "Now · ",
+  );
+  // R8: the road heads name the seats with the same words the chips use.
+  await expect(rail).toContainText("Bob · Builder");
+  await expect(rail).toContainText("Parallax · Verifier");
+
+  const signs = rail.getByTestId("coding-session-route-sign");
+  await expect(signs.first()).toBeVisible();
+  // F12: assert against kinds that ARE members of the closed set. The stream
+  // renders one assignment and one report; the rail must show exactly those
+  // two 44244 signs and no refutation, which is a member this fixture never
+  // produces — so a stray sign from anywhere else fails here.
+  const kinds = await signs.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("data-kind")),
+  );
+  expect(kinds.filter((kind) => kind === "assignment")).toHaveLength(1);
+  expect(kinds.filter((kind) => kind === "report")).toHaveLength(1);
+  expect(kinds.filter((kind) => kind === "refutation")).toHaveLength(0);
+  expect(kinds.filter((kind) => kind === "hire")).toHaveLength(2);
+  for (const kind of kinds) {
+    expect([
+      "assignment",
+      "report",
+      "refutation",
+      "disposition",
+      "acknowledgement",
+      "mission.completed",
+      "mission.blocked",
+      "hire",
+      "delivery",
+      "seat-ungranted",
+    ]).toContain(kind);
+  }
+  // §9.4: a gap longer than five minutes compresses to a dashed stretch that
+  // carries its own duration.
+  const stretches = rail.getByTestId("coding-session-route-stretch");
+  await expect(stretches.first()).toBeVisible();
+  await expect(stretches.first()).toHaveText(/^· \d+[hms]/);
+  // R1/F1: the seat roads now start at their signed creates, so they have
+  // length and their caps are filled rather than open.
+  await expect(
+    rail.getByTestId("coding-session-route-road").first(),
+  ).toBeVisible();
+  await expect(page.getByRole("list", { name: "Route roads" })).toContainText(
+    "road starts since its create",
+  );
+  // F6: the whole rail is one tab stop.
+  const stops = await rail.locator("[tabindex='0']").count();
+  expect(stops).toBe(1);
+  await waitForAnimations(page);
+  await rail.screenshot({ path: `${SCREENSHOTS}/route-wide.png` });
+
+  // §9.6: clicking a sign reveals its stream row — scroll plus the ring.
+  const reportSign = signs.filter({ hasText: "report" }).first();
+  await reportSign.click();
+  await expect(page.locator("[data-highlighted='true']").first()).toBeVisible();
+  await expect(reportSign).toHaveAttribute("aria-pressed", "true");
+
+  // §9.6: `j` and `k` walk the signs, and they bind on the rail alone.
+  await signs.first().focus();
+  await expect(signs.first()).toBeFocused();
+  await page.keyboard.press("j");
+  await expect(signs.nth(1)).toBeFocused();
+  await page.keyboard.press("k");
+  await expect(signs.first()).toBeFocused();
+
+  // Below 1280 the map folds to the 40 px scrubber, which still names the
+  // attention signs in words rather than going quiet.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const scrubber = page.getByTestId("coding-session-route-scrubber");
+  await expect(scrubber).toBeVisible();
+  await expect(rail).toHaveCount(0);
+  await expect(scrubber).toHaveAttribute("aria-label", /^Route — /);
+  await expect(scrubber).toHaveAttribute("aria-expanded", "false");
+  await waitForAnimations(page);
+  // The whole workspace, so the shot shows the folded rail in the layout it
+  // folded for rather than a 40 px sliver with no context.
+  await page.getByTestId("coding-session-umbrella-workspace").screenshot({
+    path: `${SCREENSHOTS}/route-narrow.png`,
+  });
 });

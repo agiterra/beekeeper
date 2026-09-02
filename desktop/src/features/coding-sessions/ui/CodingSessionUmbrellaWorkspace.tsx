@@ -81,6 +81,9 @@ import {
 } from "./CodingSessionUmbrellaComposer";
 import { CodingSessionLensControl } from "./CodingSessionLensControl";
 import { CodingSessionParticipantBar } from "./CodingSessionParticipantBar";
+import { CodingSessionRouteRail } from "./CodingSessionRouteRail";
+import { CodingSessionRouteScrubber } from "./CodingSessionRouteScrubber";
+import { useCodingSessionRoute } from "./useCodingSessionRoute";
 import { CodingSessionLiveActivityBar } from "./CodingSessionLiveActivityBar";
 import { CodingSessionMissionDensityControl } from "./CodingSessionMissionDensityControl";
 import { CodingSessionUmbrellaTimelineView } from "./CodingSessionUmbrellaTimelineView";
@@ -529,6 +532,21 @@ export function UmbrellaCodingSessionWorkspace({
     seatAuthorities: teamWake.seatAuthorities,
     umbrella,
   });
+  // The Route rail (DESIGN-SPEC §9): a second projection of the rows the
+  // stream already renders, laid on a clock. The derivation and its two width
+  // gates live in `useCodingSessionRoute`; this file only places the result.
+  const routeRail = useCodingSessionRoute({
+    bodyWidthPx,
+    deliveries: teamWake.deliveries,
+    density: missionDensity,
+    founderPubkey: umbrella.founderPubkey,
+    participants: streamPresence.participants,
+    resolveMissionActor,
+    seatAuthorities: teamWake.seatAuthorities,
+    transactions: missionSurfaceResult.transactions,
+    umbrella,
+  });
+
   const surfaces = useCodingSessionWorkspaceSurfaces({
     actorNames: workspaceActorName,
     mission,
@@ -755,9 +773,32 @@ export function UmbrellaCodingSessionWorkspace({
         />
       ) : null}
       <div className="flex min-h-0 flex-1" ref={workspaceBodyRef}>
+        {/* §9.2: the map takes the left gutter when the body is wide enough to
+            give it 224 px without narrowing the reading column; otherwise the
+            40 px scrubber keeps the attention signs and Now. Mission only —
+            Conversation renders neither, which is what keeps its DOM
+            byte-identical. */}
+        {mission ? (
+          routeRail.fits ? (
+            <CodingSessionRouteRail
+              onExpandRoad={routeRail.expandRoad}
+              onFocusRoad={handleFocusExecution}
+              onRevealRow={routeRail.revealRow}
+              route={routeRail.route}
+            />
+          ) : (
+            <CodingSessionRouteScrubber
+              onExpandRoad={routeRail.expandRoad}
+              onFocusRoad={handleFocusExecution}
+              onRevealRow={routeRail.revealRow}
+              route={routeRail.route}
+            />
+          )
+        ) : null}
         <section
           aria-label="Umbrella session narrative"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+          ref={routeRail.sectionRef}
         >
           <div className={cn(gutter, "pb-2")}>
             {/* Mission's goal lives in the header subtitle (read) and the
@@ -833,6 +874,10 @@ export function UmbrellaCodingSessionWorkspace({
                 missionLiveness={mission ? missionLiveness : undefined}
                 missionTransactions={
                   mission ? missionSurfaceResult.transactions : undefined
+                }
+                missionRevealRef={mission ? routeRail.revealRef : undefined}
+                onMissionVisibleTimesChange={
+                  mission ? routeRail.setVisibleAt : undefined
                 }
                 resolveMissionActor={resolveMissionActor}
                 resolvePromptSeat={resolvePromptSeat}

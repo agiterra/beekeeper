@@ -111,6 +111,19 @@ export type CodingSessionExecution = {
    * observation resolved it; null when unknown.
    */
   operatorPubkey: string | null;
+  /**
+   * Signed `created_at` of that accepted create, in **unix seconds**, or null
+   * when no create observation resolved one.
+   *
+   * The only moment on this record that a signature covers. The Route rail
+   * draws a hire junction from it and nothing else: a road whose create is
+   * unknown starts at the seat's first *provider-authored* transcript time and
+   * says so, rather than passing a 44225 item's claimed clock off as the
+   * moment a person hired the seat (REVIEW-A4 F1/F9).
+   */
+  createdAt: number | null;
+  /** Signed event id of that create, or null when unknown. */
+  createEventId: string | null;
 };
 
 /**

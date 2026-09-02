@@ -76,6 +76,8 @@ export function CodingSessionUmbrellaTimelineView({
   missionTransactions,
   onHandoff,
   onFocusExecution,
+  onMissionVisibleTimesChange,
+  missionRevealRef,
   operatorProfiles,
   resolveMissionActor,
   resolvePromptSeat,
@@ -101,6 +103,21 @@ export function CodingSessionUmbrellaTimelineView({
   missionTransactions?: readonly CodingSessionMissionTransactionInput[];
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
   onFocusExecution?: (executionKey: string | null) => void;
+  /**
+   * Reports the signed times of the rows currently inside the scroller, so the
+   * Route rail's `You are here` band can follow the reader.
+   *
+   * An IntersectionObserver over the rows this view already registers — never
+   * a timer, never a scroll handler. Mission-only: Conversation passes nothing
+   * and no observer is created.
+   */
+  onMissionVisibleTimesChange?: (seconds: readonly number[]) => void;
+  /**
+   * Publishes this view's own `revealFact` so a sibling — the Route rail, which
+   * lives outside the scroller — can scroll a row into view and ring it. A ref
+   * rather than a callback prop so publishing it does not re-render the stream.
+   */
+  missionRevealRef?: React.MutableRefObject<((key: string) => void) | null>;
   operatorProfiles?: UserProfileLookup;
   actorNames?: CodingSessionActorNameResolver;
   /** Pubkey → seat name for transaction rows; the finalizer supplies it. */
@@ -225,6 +242,23 @@ export function CodingSessionUmbrellaTimelineView({
     },
     [],
   );
+  // Signed seconds per row key. Derived from the entries themselves rather
+  // than registered alongside the node, so `onRegisterNode` keeps the stable
+  // identity the turn block memoises on.
+  const secondsByRowKey = React.useMemo(() => {
+    const seconds = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.kind === "transaction-truncation") continue;
+      const key = codingSessionMissionStreamEntryKey(entry);
+      seconds.set(
+        key,
+        entry.kind === "transaction"
+          ? entry.row.createdAt
+          : Math.floor(entry.timestampMs / 1_000),
+      );
+    }
+    return seconds;
+  }, [entries]);
   const [revealed, setRevealed] = React.useState<{
     key: string;
     nonce: number;
@@ -240,6 +274,37 @@ export function CodingSessionUmbrellaTimelineView({
     const handle = window.setTimeout(() => setRevealed(null), 2400);
     return () => window.clearTimeout(handle);
   }, [revealed]);
+  React.useEffect(() => {
+    if (missionRevealRef === undefined) return;
+    missionRevealRef.current = revealFact;
+    return () => {
+      missionRevealRef.current = null;
+    };
+  }, [missionRevealRef, revealFact]);
+  // The band's source: which registered rows are on screen right now. No
+  // timer, no scroll listener, no author time — the observer reports entries
+  // and each entry answers with the signed second it was registered under.
+  const visibleRowKeys = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    if (onMissionVisibleTimesChange === undefined) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((observed) => {
+      for (const record of observed) {
+        const key = (record.target as HTMLElement).dataset.block;
+        if (key === undefined) continue;
+        if (record.isIntersecting) visibleRowKeys.current.add(key);
+        else visibleRowKeys.current.delete(key);
+      }
+      const seconds: number[] = [];
+      for (const key of visibleRowKeys.current) {
+        const value = secondsByRowKey.get(key);
+        if (value !== undefined) seconds.push(value);
+      }
+      onMissionVisibleTimesChange(seconds);
+    });
+    for (const node of blockNodes.current.values()) observer.observe(node);
+    return () => observer.disconnect();
+  }, [onMissionVisibleTimesChange, secondsByRowKey]);
 
   const pendingTurns = umbrella.executions.map((execution) => {
     const target = execution.activeGeneration.commandTarget;
@@ -285,8 +350,22 @@ export function CodingSessionUmbrellaTimelineView({
       {entries.map((entry) => {
         const key = codingSessionMissionStreamEntryKey(entry);
         if (entry.kind === "transaction") {
+          // The rail points at these rows, so they have to be registerable
+          // targets the way turn blocks already are. The wrapper exists only in
+          // Mission — Conversation never renders a transaction row at all.
           return (
-            <CodingSessionMissionTransactionRow key={key} row={entry.row} />
+            <div
+              data-block={key}
+              data-highlighted={revealed?.key === key ? "true" : undefined}
+              className={cn(
+                revealed?.key === key &&
+                  "-mx-3 rounded-2xl bg-primary/5 px-3 ring-1 ring-primary/60",
+              )}
+              key={key}
+              ref={(node) => registerBlockNode(key, node)}
+            >
+              <CodingSessionMissionTransactionRow row={entry.row} />
+            </div>
           );
         }
         if (entry.kind === "transaction-truncation") {
@@ -369,6 +448,7 @@ export function CodingSessionUmbrellaTimelineView({
                   ? null
                   : (missionLiveness?.get(entry.executionKey) ?? null)
               }
+              missionCollapseSettled={missionDensity === "live"}
               missionExecutionBundle={missionDensity === "live"}
               missionRowClassName={
                 missionDensity === null ? undefined : MISSION_TURN_BLOCK_CLASS

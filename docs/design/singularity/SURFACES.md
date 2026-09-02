@@ -1626,3 +1626,191 @@ compare; `costUsd` from the item's own value. On Desktop a "cut short"
 transcript is an input the caller states (`transcriptTruncated`), and no caller
 states it today — the tab folds exactly the projection it was handed, so the
 flag is honestly `false` rather than guessed.
+
+---
+
+## 20. 2026-09-02 — the Route rail (batch 2, lane A4)
+
+Brian's ask, verbatim: *"We are running huge margins on the side of our chat.
+Could the left margin be filled with some kind of highway system with bridges
+and road signs and roads — GPS for a user navigating a session?"*
+DESIGN-SPEC §9 answered it; this is what landed and what it cost.
+
+### 20a. What the rail is, and what it is forbidden to be
+
+A **second projection** of rows the Mission stream already renders, laid on a
+clock — never a third source. One sign exists per signed 44244 transaction, per
+44224 delivery whose frozen copy carries a badge, per created-but-ungranted
+seat, per **dated** accepted create. Prose is not an input:
+`deriveCodingSessionRoute` takes no transcript, no message and no turn block,
+so a turn, a note or an assistant sentence cannot become a sign even by
+accident (SURFACES C4). The word on a sign is the word the row uses —
+`codingSessionRouteModel.test.mjs` reads each row's own `accessibleLabel` and
+asserts the rail printed the same word, type for type, so the two vocabularies
+cannot drift apart while the rail cannot import the row builder's private
+table.
+
+Files: `lib/codingSessionRouteModel.ts` (the projection and the compression
+walk), `lib/codingSessionRouteTypes.ts` (shapes, constants, the duration
+sentence, the two width gates), `ui/CodingSessionRouteRail.tsx`,
+`ui/CodingSessionRouteScrubber.tsx`, `ui/useCodingSessionRoute.ts`.
+
+### 20b. Unknown is drawn as unknown
+
+- **A hire with no signed time draws no junction.** `CodingSessionExecution`
+  carries `operatorPubkey` — who signed the 44221 — but not the create's own
+  `created_at`, and `CodingSessionWorkspace.tsx` (which holds the catalog's
+  `creates`) is not this lane's file. So the workspace supplies every hire with
+  `at: null`, and the model emits no sign and no bridge for it. The road still
+  exists; it starts at the seat's first signed transcript moment and reports
+  `startedAtSource: "first-signed"` rather than claiming a hire time it does
+  not have. **Residual**: thread `creates` (or a `createdAt` on the execution)
+  through to the workspace and R2's junctions light up with no model change.
+- **A sign whose author no road claims goes off-road**, `road: null`, and still
+  appears in the sign column and the screen-reader list. The founder's lane is
+  a real key (`CODING_SESSION_ROUTE_FOUNDER_ROAD`), never `null`, precisely so
+  an unattributable signed act cannot be drawn as the reader's own.
+- **A queued wake with no local observation draws no stretch.** The measured
+  span comes from the delivery's `observedAtMs`, which is Desktop's own
+  observation, not a receipt time; absent, there is nothing to measure and
+  nothing is drawn.
+- Roads past seven, and signs past 200 per road, are **counted in words**
+  (`+N earlier`, `N more participants not drawn`), never dropped in silence.
+
+### 20c. Where the implementation departs from §9's board
+
+1. **The `You are here` sentence sits above the Now rule, not inside the
+   band.** The board's sample band spans twelve minutes and has room for its
+   own words; a band over rows signed seconds apart is a few pixels tall, and a
+   label pinned to it landed on top of the very signs it was there to locate.
+   The tint stays in the map; the sentence — `You are here · 7m to Now` — reads
+   in the head block where nothing can collide with it.
+2. **The live road head reuses `coding-session-agent-breathe`** rather than a
+   new `route-pulse` keyframe. Same 2.4 s tempo, and it is already inside
+   `coding-session.css`'s `prefers-reduced-motion` block — a file this lane
+   does not own. One animation vocabulary, one reduced-motion guard.
+3. **A decision held on a person is a mark on its own sign, not a second
+   sign.** R4 lists `Scale` amber as its own element, but every row that names
+   a `requiredAction` already has a sign, and a blocked terminal would then
+   carry two. The sign keeps its type glyph and wears the amber `Scale` beside
+   the word, so one fact renders once and colour is never the only carrier.
+4. **The `queued` stretch is one stretch even when moments fall inside it.**
+   TeamRolesV1's report wake was queued 4 m 20 s and a hire landed four minutes
+   in; the walk counts the span's segments first so the wait is labelled once,
+   with its whole measured length, rather than reported twice.
+5. **Two files, not one.** `codingSessionRouteModel.ts` alone came to 995
+   lines and `CodingSessionUmbrellaWorkspace.tsx` to 1,103; the ceiling is
+   split, never raised, so the shapes moved to `codingSessionRouteTypes.ts`
+   (re-exported, one import site) and the derivation to
+   `ui/useCodingSessionRoute.ts`.
+
+### 20d. Settled turn blocks open at one line (Mission Live)
+
+A settled block — settled by `isCompletedCodingSessionTurnBlock`, the same
+terminator test the footer and the stream's ordering use — opens at a byline,
+the **first sentence of its first assistant message** (verbatim, cut at 140
+characters with an ellipsis, never a summary this client wrote) and an event
+count. The count is the reversibility contract, the same one the C2 execution
+bundle already keeps: expanding reveals exactly those signed items and nothing
+else, and `CodingSessionUmbrellaTurnBlock.collapse.test.mjs` renders the same
+block shut and open and accounts for every promised item by kind.
+
+Three blocks never collapse, and each for a stated reason:
+
+- the **working** block, because it is the thing being watched;
+- a block carrying an **attention item** — an error, a permission prompt, a
+  failed tool call — because a summary line is exactly what would swallow it
+  (C5);
+- anything in **Brief**, **Trace** or **Conversation**, which are untouched.
+
+Expansion is per block, in memory, and deliberately **not** persisted: a reader
+who opened one turn has not asked for every future session to open it.
+
+### 20e. Gates on the fold
+
+The rail is shown only when the workspace **body** is ≥ 1280 px *and* the
+gutter left of the reading column can spare 224 px
+(`sectionWidth + (railShown ? 224 : 0) − 816 ≥ 224`). The rail's own width is
+added back when it is already shown, so the decision does not oscillate on the
+pixel where it flips. Below either gate the map folds to a 40 px scrubber that
+keeps the attention signs, the band and Now, and names them in its
+`aria-label` — folding hides detail, never a fact. Note for anyone writing an
+e2e against this: the gate measures the workspace body, and the app's chrome
+takes ~310 px, so a 1400 px window leaves the body 1089 and the rail folds.
+
+### 20f. Fix round 1 (REVIEW-A4)
+
+- **A road start is a signed create, or it says it is not (F1/F9).**
+  `CodingSessionExecution` now carries `createdAt`/`createEventId` from the
+  accepted 44221 the umbrella builder had already resolved to order attachments
+  (`codingSessionTypes.ts`, `codingSessionUmbrellaModel.ts`), so the hire
+  junction draws from a signed moment. Where no create was observed the road
+  still starts at the seat's first provider-authored transcript time — but it
+  now **wears an open start cap**, and every road control's tooltip and the new
+  `Route roads` screen-reader list say `road starts since its first signed
+  sign, not a create`. The previous build drew that case with a filled cap
+  identical to a dated junction and disclosed the difference only in a
+  document.
+- **The compression rule applies to a queued wake too (F2).** A wake is still
+  its own measured stretch and its label is still the exact span — the label is
+  the fact — but a span longer than five minutes is drawn at the 48 px silence
+  height instead of scaled. The §2a residual is a wake that runs to Now until
+  the lead or a Desktop returns; scaled, an overnight loss made a ~5,700 px
+  rail. `1h 30m` now renders in 48 px and says `1h 30m`.
+- **A block that settles under the reader stays open (F3/F4).**
+  `settledExpanded` is seeded from `isWorking` and latched, so a turn finishing
+  never shuts the block someone is watching, and the expanded block carries an
+  `aria-expanded="true"` control that shuts it again. The disclosure now works
+  in both directions instead of one.
+- **The collapsed count is the rows Live actually reveals (F5).** In Mission
+  Live the execution bundle is on by the same density gate that turns collapse
+  on, so a turn's tool items arrive as **one** bundle row. The line counts
+  narrative rows plus that row (`3 rows`, not `5 events`), and the bundle's own
+  count carries the tools one level down — C2's contract, composed with rather
+  than repeated.
+- **One tab stop, and `aria-pressed` that can be pressed (F6).** Every
+  focusable thing in the rail — lanes, signs, road heads, `+N earlier` — shares
+  one roving tabindex, so the rail is one stop in the page's tab order rather
+  than seven; the sign the rail revealed reports `aria-pressed="true"`.
+- **A local clock is drawn as a local clock (F7).** A delivery sign sits on
+  `observedAtMs`, which is Desktop's own observation, so it is drawn **hollow**,
+  prefixed `~`, and reads `— local time, not signed` to a screen reader. A
+  delivery whose observation never landed has no moment to place: it is counted
+  on its road as `N undated` instead of vanishing.
+- **A hidden sign carries no bridge (F8).** Bridges are filtered by their
+  owning sign after the per-road bound, so the map cannot draw 214 arrows for
+  200 signs while its own marker says 14 are not shown.
+- **Three §9 elements that were missing are built (F10).** R4's dotted tick
+  from lane to sign and the filled anchor an attention sign puts on its lane;
+  R1's end caps (live filled and breathing, idle a hollow ring, released a flat
+  cap); and §9.5's `+N earlier` as a **control** that lifts that road's bound in
+  place. Expanding lifts the bound to five times the fold — lifted, never
+  removed, so the count keeps telling the truth in both states.
+- **Overlapping duration labels stack (F15).** Two wakes on one lane put their
+  labels a few pixels apart at `text-2xs`; labels are now laid out top-down
+  with a minimum gap. The measurement is never rewritten to make room.
+- **The e2e fixture has real durations (F11/F12).** `governedMissionEvents`
+  takes an anchor and a spacing; the Route test signs the same mission over
+  half an hour, so `route-wide.png` shows roads with length, two hire
+  junctions, a compressed `18m` silence and the ticks — a map rather than a
+  legend. The spec asserts on kinds that ARE members of the closed set (one
+  assignment, one report, two hires, zero refutations, and every `data-kind`
+  inside the set), plus the dashed stretch, its duration label, the road-start
+  clause, the single tab stop and `aria-pressed`.
+
+- **Two housekeeping fixes, and one residual that is not this lane's (F13/F14).**
+  The dead `CODING_SESSION_ROUTE_FOUNDER_ROAD_KEY` export (whose doc sentence
+  described a reuse that never happened) and an orphan doc block describing a
+  table in another file are deleted. Separately, the required Playwright pair
+  ran green three times consecutively, but the `Mission fold hook missing`
+  flake the review saw once is a real race and is **still open**: the helper
+  evaluates the fold hook straight after `page.reload()`, while the hook is
+  installed by a *dynamic* import inside `bootstrap()` — so it lands after the
+  `load` event, in a chunk that has to be fetched. Warm cache wins, cold cache
+  loses. The remedy is a `page.waitForFunction` guard in
+  `tests/e2e/helpers/codingSessionMissionLensAssertions.ts`, which belongs to
+  Finalizer B, not to A4.
+
+**Still true, and worth repeating**: the rail needs roughly a **1590 px
+window**, not 1440 — the gate measures the workspace body and the app's chrome
+takes ~310 px, so §9's own `Route` artboard size does not render the rail.
