@@ -4528,7 +4528,8 @@ mod tests {
                 "status",
                 "tools",
                 "transcript",
-                "verdict"
+                "verdict",
+                "whoami"
             ]
         );
         assert_eq!(
@@ -4578,7 +4579,7 @@ mod tests {
             // `policy` (batch 2 B), and `delete`.
             // `subcommand_names_are_stable` above names all thirty-one, so
             // this count and that list cannot drift apart.
-            ("sessions", 31),
+            ("sessions", 32),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),
