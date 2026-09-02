@@ -39,8 +39,8 @@ const COPY: Record<
     failed: "Failed to close the session.",
     describe: (label) =>
       `"${label}" will move to Closed for every project member. ` +
-      "Its identity and transcript remain available. Closing does not stop " +
-      "provider executions; stop those separately when needed.",
+      "Its identity and transcript remain available. Any execution still " +
+      "running on its host is stopped and its slot freed.",
   },
   archived: {
     title: "Archive this session?",
@@ -50,8 +50,8 @@ const COPY: Record<
       `"${label}" will be closed and archived for every project member: it ` +
       "leaves the sidebar unless a filter asks for archived sessions, but its " +
       "identity and transcript remain available and it can be reopened. " +
-      "Archiving does not stop provider executions; stop those separately " +
-      "when needed.",
+      "Any execution still running on its host is stopped and its slot " +
+      "freed.",
   },
   open: {
     title: "Reopen this session?",
@@ -63,7 +63,20 @@ const COPY: Record<
   },
 };
 
-/** Shared confirmation for provider-independent close, archive and reopen facts. */
+/**
+ * Shared confirmation for the close, archive and reopen facts.
+ *
+ * The copy used to end "Closing does not stop provider executions; stop
+ * those separately when needed." That was true and is not any more: the
+ * host now subscribes to closure revisions and stops the executions a
+ * settled umbrella still holds, because before it did, a closed session went
+ * on occupying one of the host's (default four) session slots until a
+ * four-hour idle timeout — and the only symptom was a later create refused
+ * with a limit the operator could not reconcile with what they saw.
+ *
+ * The reopen copy still says a reopen starts no provider and consumes no
+ * slot, which remains exactly true.
+ */
 export function useCodingSessionClosureDialog(): {
   requestClosure: (request: CodingSessionClosureRequest | null) => void;
   dialog: React.ReactNode;

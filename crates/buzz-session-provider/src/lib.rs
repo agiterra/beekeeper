@@ -72,10 +72,10 @@ use buzz_core::coding_session_genesis::{
 use buzz_core::coding_session_identity::{ProviderInstanceAlias, RuntimeWord};
 use buzz_core::coding_session_lease::CodingSessionLeaseState;
 use buzz_core::kind::{
-    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
-    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
     KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT,
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
 };
@@ -1040,6 +1040,11 @@ impl Provider {
                 KIND_CODING_SESSION_COMMAND,
                 KIND_CODING_SESSION_LIFECYCLE_COMMAND,
                 KIND_CODING_SESSION_TEAM_TRANSACTION,
+                // A closure is not a command, but it is the only signal this
+                // host gets that an umbrella is finished. Without it a
+                // closed or archived session held its slot until the 4-hour
+                // idle timeout — see `release_settled_umbrella`.
+                KIND_CODING_SESSION_CLOSURE,
                 KIND_SYSTEM_MESSAGE,
             ]),
             require_mention: false,
@@ -1327,6 +1332,9 @@ impl Provider {
             KIND_CODING_SESSION_TEAM_TRANSACTION => {
                 self.on_team_transaction(channel_id, event)?;
             }
+            KIND_CODING_SESSION_CLOSURE => {
+                self.on_closure(event);
+            }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");
                 return Ok(());
@@ -1349,6 +1357,51 @@ impl Provider {
         };
         self.state.record_watermark(channel_id, mark)?;
         Ok(())
+    }
+
+    /// A closure revision arrived: if it settles an umbrella this host is
+    /// running, free the slot.
+    ///
+    /// Only `closed` and `archived` settle
+    /// ([`CodingSessionClosureAction::is_closed`]); an `open` revision is a
+    /// reopen, and a reopen has nothing to release — the executions it
+    /// refers to are already gone, and a reopened umbrella starts its next
+    /// execution through the ordinary create path and its ordinary slot
+    /// check.
+    ///
+    /// A malformed payload is logged and dropped rather than propagated: the
+    /// relay validated the envelope before storing it, so anything that fails
+    /// to decode here is a version skew, and a version skew must not stop
+    /// this provider from serving turns.
+    fn on_closure(&mut self, event: &Event) {
+        let payload = match buzz_core::coding_session_closure::decode_coding_session_closure(
+            &event.content,
+        ) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp",
+                    event_id = %event.id.to_hex(),
+                    "ignoring undecodable closure revision: {error}"
+                );
+                return;
+            }
+        };
+        if !payload.action.is_closed() {
+            return;
+        }
+        let released = self.release_settled_umbrella(&payload.session_ref);
+        if released == 0 {
+            // Said out loud because "nothing to release" and "released
+            // everything" are indistinguishable from the outside, and the
+            // whole point of this path is that a slot no longer goes quietly
+            // unaccounted for.
+            tracing::debug!(
+                target: "csp",
+                session_ref = %payload.session_ref,
+                "settled umbrella holds no live execution on this host"
+            );
+        }
     }
 
     /// Persist a structurally valid report as an untrusted wake candidate.
@@ -3276,6 +3329,105 @@ impl Provider {
             "session generation attached"
         );
         Ok(())
+    }
+
+    /// Release the host slot every execution under a settled umbrella holds.
+    ///
+    /// ## Why this exists
+    ///
+    /// A slot is an entry in [`SessionManager`]'s live map: one running actor
+    /// task owning one adapter child process. The create gate compares
+    /// `live_count()` against `max_sessions` (default 4), and the *only*
+    /// thing that removes an entry is `SessionManager::shutdown`.
+    ///
+    /// Closing or archiving a session was invisible to this provider — the
+    /// closure kind was not in its subscription at all — so a settled session
+    /// went on holding its slot until the 4-hour idle timeout reaped it.
+    /// Four archived sessions blocked every new one for four hours, and the
+    /// only visible symptom was a `SESSION_LIMIT` refusal naming a number
+    /// the operator could not reconcile with what they saw on screen.
+    ///
+    /// ## Why not `stop_session`
+    ///
+    /// That path is the answer to a kind:44221 `session.stop` *command*: it
+    /// consumes the command, publishes a lifecycle receipt against its id,
+    /// and is founder-only. A closure is a different, differently-authorized
+    /// fact, and there is no command here to receipt. Fabricating a
+    /// command_id so the two could share a function would put a receipt on
+    /// the wire for a command nobody sent.
+    ///
+    /// So this does the subset that is genuinely shared — the durable closed
+    /// flag, the lease release, the actor shutdown that frees the slot, and
+    /// the host-local cleanup — and no receipt.
+    ///
+    /// ## Authorization
+    ///
+    /// The relay already made this decision. A closure only exists here if
+    /// the relay accepted and stored it, and the provider only ever acts on
+    /// umbrellas it minted executions for. It deliberately does *not*
+    /// re-apply `stop_session`'s founder-only rule: a project Owner deleting
+    /// somebody else's session is exactly the case that rule would refuse,
+    /// and refusing here would leave the slot held with nothing left on the
+    /// relay to explain why.
+    ///
+    /// Returns the number of executions released, so callers can log
+    /// something truthful about a closure that had nothing to release.
+    fn release_settled_umbrella(&mut self, session_ref: &str) -> usize {
+        // Only sessions this provider is actually running. A record already
+        // marked closed, or one whose actor has exited on its own, holds no
+        // slot and must not be re-released — that would queue a second lease
+        // release and a second Stopped metadata for a session that already
+        // published both.
+        let live: Vec<String> = self
+            .sessions
+            .live_session_ids()
+            .map(str::to_owned)
+            .filter(|session_id| {
+                self.state.session(session_id).is_some_and(|record| {
+                    record.session_ref.as_deref() == Some(session_ref) && !record.closed
+                })
+            })
+            .collect();
+
+        for session_id in &live {
+            // Durable intent first, exactly as `stop_session` orders it: if
+            // this write fails the actor stays live and no contradictory
+            // ephemeral state has escaped.
+            if let Err(error) = self.state.update_session(session_id, |record| {
+                record.closed = true;
+                record.open_turn = None;
+            }) {
+                tracing::error!(
+                    target: "csp",
+                    %session_id,
+                    session_ref,
+                    "settled umbrella: could not record closed intent, leaving the \
+                     execution live rather than releasing it silently: {error}"
+                );
+                continue;
+            }
+            if let Err(error) = self.queue_lease(session_id, CodingSessionLeaseState::Released) {
+                // Not fatal: the lease has a TTL, so a missed release costs
+                // three minutes of a stale liveness signal. Holding the slot
+                // costs four hours.
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    "settled umbrella: lease release could not be queued, falling back \
+                     to TTL expiry: {error}"
+                );
+            }
+            self.sessions.shutdown(session_id);
+            self.discard_context_packages(session_id);
+            self.forget_redactions(session_id);
+            tracing::info!(
+                target: "csp",
+                %session_id,
+                session_ref,
+                "settled umbrella: execution stopped and its slot released"
+            );
+        }
+        live.len()
     }
 
     fn stop_session(&mut self, plan: StopPlan) -> anyhow::Result<()> {
@@ -10051,6 +10203,217 @@ mod tests {
             .next()
             .expect("one session record");
         assert_eq!(record.session_ref.as_deref(), Some(umbrella));
+    }
+
+    /// Build a kind:44230 closure revision for `umbrella`.
+    fn closure_event(channel_id: Uuid, umbrella: &str, action: &str, keys: &Keys) -> Event {
+        let content = serde_json::json!({
+            "action": action,
+            "genesisRef": "ab".repeat(32),
+            "sessionRef": umbrella,
+            "v": 1,
+        })
+        .to_string();
+        nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_CODING_SESSION_CLOSURE as u16),
+            content,
+        )
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag"),
+            nostr::Tag::parse(["d", umbrella]).expect("tag"),
+        ])
+        .sign_with_keys(keys)
+        .expect("sign closure")
+    }
+
+    /// Create one execution under `umbrella` and return the provider holding
+    /// it, with exactly one slot occupied.
+    async fn provider_with_one_live_umbrella(
+        dir: &tempfile::TempDir,
+        channel_id: Uuid,
+        umbrella: &str,
+    ) -> Provider {
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let event = create_event_with_session_ref(&provider, channel_id, "create-1", umbrella);
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle create");
+        assert_eq!(
+            provider.sessions.live_count(),
+            1,
+            "the fixture must actually be holding a slot"
+        );
+        provider
+    }
+
+    /// The bug this fixes. A slot is an entry in the live map, the create gate
+    /// compares `live_count()` against `max_sessions`, and closing a session
+    /// used to be invisible to this provider entirely — the closure kind was
+    /// not in its subscription — so the slot stayed held until the four-hour
+    /// idle timeout.
+    #[tokio::test]
+    async fn closing_an_umbrella_releases_the_slot_its_execution_holds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let mut provider = provider_with_one_live_umbrella(&dir, channel_id, umbrella).await;
+
+        let closure = closure_event(channel_id, umbrella, "closed", &Keys::generate());
+        provider
+            .handle_command_event(channel_id, &closure)
+            .await
+            .expect("handle closure");
+
+        assert_eq!(
+            provider.sessions.live_count(),
+            0,
+            "a closed umbrella must not go on occupying a slot"
+        );
+        let record = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("the session record survives; only the process is gone");
+        assert!(
+            record.closed,
+            "the durable record must agree with the released slot"
+        );
+    }
+
+    /// `archived` settles too — it is the disposition the project sidebar
+    /// offers, so if it did not free the slot the fix would miss the most
+    /// common way a session ends.
+    #[tokio::test]
+    async fn archiving_an_umbrella_releases_the_slot_as_well() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a11";
+        let mut provider = provider_with_one_live_umbrella(&dir, channel_id, umbrella).await;
+
+        let closure = closure_event(channel_id, umbrella, "archived", &Keys::generate());
+        provider
+            .handle_command_event(channel_id, &closure)
+            .await
+            .expect("handle closure");
+
+        assert_eq!(provider.sessions.live_count(), 0);
+    }
+
+    /// A reopen must not stop anything. `open` does not settle, and the
+    /// executions a reopened umbrella refers to are already gone — releasing
+    /// on one would kill a session somebody just brought back.
+    #[tokio::test]
+    async fn reopening_an_umbrella_releases_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a12";
+        let mut provider = provider_with_one_live_umbrella(&dir, channel_id, umbrella).await;
+
+        let closure = closure_event(channel_id, umbrella, "open", &Keys::generate());
+        provider
+            .handle_command_event(channel_id, &closure)
+            .await
+            .expect("handle closure");
+
+        assert_eq!(provider.sessions.live_count(), 1, "a reopen is not a stop");
+    }
+
+    /// Closing somebody else's umbrella must not reach into this one. The
+    /// release is keyed on the record's own `sessionRef`, so a closure for an
+    /// umbrella this host never minted an execution for has nothing to do.
+    #[tokio::test]
+    async fn a_closure_for_another_umbrella_leaves_this_one_running() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a13";
+        let mut provider = provider_with_one_live_umbrella(&dir, channel_id, umbrella).await;
+
+        let closure = closure_event(
+            channel_id,
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a99",
+            "closed",
+            &Keys::generate(),
+        );
+        provider
+            .handle_command_event(channel_id, &closure)
+            .await
+            .expect("handle closure");
+
+        assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    /// A payload this build cannot decode is a version skew, not a reason to
+    /// stop serving turns. It is logged and dropped, and the session it names
+    /// keeps running rather than being stopped on a guess.
+    #[tokio::test]
+    async fn an_undecodable_closure_is_ignored_rather_than_acted_on() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a14";
+        let mut provider = provider_with_one_live_umbrella(&dir, channel_id, umbrella).await;
+
+        let malformed = nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_CODING_SESSION_CLOSURE as u16),
+            "{\"action\":\"closed\"}",
+        )
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag"),
+            nostr::Tag::parse(["d", umbrella]).expect("tag"),
+        ])
+        .sign_with_keys(&Keys::generate())
+        .expect("sign");
+        provider
+            .handle_command_event(channel_id, &malformed)
+            .await
+            .expect("a malformed closure must not fail the dispatch");
+
+        assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    /// Closing twice must not release twice: the second pass sees a record
+    /// already marked closed and does nothing, so no second lease release or
+    /// duplicate host-local cleanup is queued for a session that already
+    /// published both.
+    #[tokio::test]
+    async fn a_repeated_closure_is_a_no_op() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a15";
+        let mut provider = provider_with_one_live_umbrella(&dir, channel_id, umbrella).await;
+
+        let closure = closure_event(channel_id, umbrella, "closed", &Keys::generate());
+        provider
+            .handle_command_event(channel_id, &closure)
+            .await
+            .expect("first closure");
+        assert_eq!(provider.sessions.live_count(), 0);
+
+        assert_eq!(
+            provider.release_settled_umbrella(umbrella),
+            0,
+            "nothing left to release"
+        );
+    }
+
+    /// The subscription is the whole reason this was invisible for so long,
+    /// so it is pinned directly rather than only through behaviour.
+    #[test]
+    fn the_subscription_carries_the_closure_kind() {
+        let kinds = [
+            KIND_CODING_SESSION_COMMAND,
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            KIND_CODING_SESSION_TEAM_TRANSACTION,
+            KIND_CODING_SESSION_CLOSURE,
+            KIND_SYSTEM_MESSAGE,
+        ];
+        assert!(
+            kinds.contains(&KIND_CODING_SESSION_CLOSURE),
+            "without this kind on the wire nothing below it can ever run"
+        );
     }
 
     /// The seated create, end to end: an execution is created as an agent, its
