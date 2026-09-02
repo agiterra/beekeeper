@@ -253,7 +253,11 @@ pub(super) fn verify_hire_evidence(
                 && metadata.role.as_deref() == Some(role.as_str())
                 && metadata.session_ref.as_deref() == Some(request.session_ref)
                 && metadata.provider.as_deref() == Some(provider_instance_ref.as_str())
-                && metadata.runtime.as_deref() == Some(target.driver.as_str())
+            // `metadata.runtime` is the human runtime word (`claude`); the
+            // target's `driver` is the ACP driver slug (`claude-agent-acp`).
+            // Comparing them refused the real cleantest metadata on
+            // 2026-09-01. The driver is already pinned twice above: by the
+            // exact `cs-target` tag and by `metadata.session`'s target key.
         })
     });
     if !metadata_matches {

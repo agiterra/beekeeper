@@ -58,7 +58,7 @@ fn signed_hire() -> (
     // provider's cryptographic short id, never the human alias the create and
     // metadata name (`provider-1` here, `claude-primary` on the wire).
     let target = CodingSessionTarget {
-        driver: "acp".into(),
+        driver: "claude-agent-acp".into(),
         instance_id: "1958c6c448e05eed".into(),
         session_id: "session-1".into(),
         generation: 1,
@@ -110,7 +110,8 @@ fn signed_hire() -> (
         agent_ref: Some(actor.clone()),
         role: Some("builder".into()),
         provider: Some("provider-1".into()),
-        runtime: Some("acp".into()),
+        // Live shape: the runtime word, not the driver slug.
+        runtime: Some("claude".into()),
         model: None,
         status: SessionStatus::Idle,
         branch: None,
