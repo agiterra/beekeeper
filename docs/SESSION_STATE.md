@@ -6238,6 +6238,37 @@ written and `bash -n` clean but **was not executed** — that harness needs
        provider from the lead identity's own model and say what to change.
        Also: the readiness card buries the one blocking line under five
        honest unknowns; the blocker should be the headline.
+     - **True redundancy, recorded 2026-09-01 (Brian: "if we have true
+       redundancy we need to make note of it").** Found while landing this
+       batch and mapping the comms path (`review-2026-09-01/COMMS-MAP.md`);
+       each is a fix, not a style note. (1) **Every wire fact is decoded in
+       five places** — `buzz-core`, relay ingest, `buzz-cli`, the Tauri
+       adapter, and a hand-written TypeScript decoder (plus the fold); one
+       additive field (`unseatedReports`) cost three lanes and a finalizer.
+       Fix: Desktop decodes through the Tauri bridge (as the fold already
+       does) and the TS decoders are deleted; "no Rust fold semantics in TS"
+       becomes "no Rust semantics in TS". (2) **The same concept carries two
+       names across layers**: provider alias vs cryptographic instance id
+       (`claude-primary` / `1958c6c448e05eed`), runtime word vs driver slug
+       (`claude` / `claude-agent-acp`), founder vs the seat that authored a
+       brief, echo vs receipt as "delivered". Every live defect this batch
+       fixed was one of these seams. Fix: one Rust identity type per concept,
+       used by the wire and the UI. (3) **Prose delivered twice or more per
+       seat**: persona body + fence briefing + continuity notice + 12 KiB
+       first-turn brief at open, then `session_overview` re-sends the brief
+       and every MCP reply carries ≈1.5 KB of static `provenanceSemantics`;
+       the goal appears three times before any work. Hire disclosures go out
+       as a 44220 turn *and* a lane message. (4) **Reads that download the
+       room**: `bee sessions status|inbox|send` page the whole channel to
+       exhaustion including every 44225 transcript; `operation get --id`
+       fetches all operations then filters locally. Fix: bound crew-fact
+       reads by kind and `since`, never pull transcripts for `send`.
+       (5) **Two 12,288-byte ceilings sixteen bytes apart** (CLI brief cap vs
+       Desktop `initialTurn` cap after the `[From the lead] ` prefix): a brief
+       of 12,273–12,288 bytes signs, lands, and throws in the hire host.
+       Priority as ruled that night: identity vocabulary (2) → one generic
+       signed policy record instead of a kind per concept → posture and
+       budget on it → observer panels.
 
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
