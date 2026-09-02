@@ -123,3 +123,47 @@ test("goal validates byte bounds and publishes the signed event", async () => {
   assert.equal(published, signed);
   assert.equal(accepted.id, signed.id);
 });
+
+test("F1: an over-cap goal is refused by the launch block, with both numbers", async () => {
+  const { codingSessionGoalOverflow, MAX_CODING_SESSION_GOAL_BYTES } =
+    await import("./codingSessionGoal.ts");
+  const { codingSessionCrewLaunchBlock } = await import(
+    "./codingSessionCrew.ts"
+  );
+
+  assert.equal(codingSessionGoalOverflow("Close ledger item 104."), null);
+  assert.equal(codingSessionGoalOverflow("   "), null, "blank is not overflow");
+  assert.equal(
+    codingSessionGoalOverflow("a".repeat(MAX_CODING_SESSION_GOAL_BYTES)),
+    null,
+    "exactly the cap fits",
+  );
+  // Measured in UTF-8 bytes, not characters: 2,049 two-byte characters is
+  // 4,098 bytes, and a character count would have called it well under.
+  assert.deepEqual(codingSessionGoalOverflow("é".repeat(2_049)), {
+    bytes: 4_098,
+    cap: 4_096,
+  });
+
+  const ready = {
+    hasTeam: true,
+    seatCount: 3,
+    hasChannel: true,
+    canCreateChannel: false,
+    createInFlight: false,
+    isLaunching: false,
+    goal: "Close ledger item 104.",
+  };
+  assert.equal(codingSessionCrewLaunchBlock(ready), null);
+
+  // The launch is refused before anything is signed, rather than launching a
+  // whole team and silently dropping its 44227 (batch 2 review, F1).
+  const blocked = codingSessionCrewLaunchBlock({
+    ...ready,
+    goal: "x".repeat(5_000),
+  });
+  assert.ok(blocked, "an over-cap goal must block the launch");
+  assert.match(blocked, /5,000 UTF-8 bytes/);
+  assert.match(blocked, /cap is 4,096/);
+  assert.match(blocked, /shorten it by 904 bytes/);
+});

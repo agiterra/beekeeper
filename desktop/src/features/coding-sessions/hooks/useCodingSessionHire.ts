@@ -49,6 +49,11 @@ import {
   buildCodingSessionCreateEvent,
   createCodingSessionLifecycleCommandId,
 } from "../lib/codingSessionLifecycleCommand";
+import {
+  codingSessionGrantFailureDetail,
+  codingSessionGrantFailureReason,
+  ensureCodingSessionGrantWithBackoff,
+} from "../lib/codingSessionGrantRetry";
 import { subscribeToObservedCodingSessionEvents } from "../lib/codingSessionObservedEvents";
 import { fetchCodingSessionRosterFold } from "../lib/codingSessionRoster";
 import { ensureCodingSessionOperatorGrant } from "../lib/codingSessionOperatorGrant";
@@ -186,6 +191,19 @@ export type CodingSessionHireDeps = {
   newTurnCommandId: () => string;
   /** This host's clock, Unix seconds. The staleness window is read from it. */
   now: () => number;
+  /**
+   * Wait between grant attempts. Optional: a caller that omits it gets real
+   * time, and a test that supplies one records the delays instead of serving
+   * them.
+   */
+  sleep?: (milliseconds: number) => Promise<void>;
+  /**
+   * Milliseconds, for the grant retry's wall-clock budget. Optional, and
+   * separate from {@link CodingSessionHireDeps.now} (which is Unix seconds):
+   * a test that fakes {@link CodingSessionHireDeps.sleep} fakes this too, or
+   * the budget it is trying to exercise never binds.
+   */
+  monotonicNow?: () => number;
 };
 
 /** The real thing: this computer's bus, disk, keystore, relay and clock. */
@@ -208,6 +226,10 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
   newSeatCommandId: createCodingSessionLifecycleCommandId,
   newTurnCommandId: createCodingSessionCommandId,
   now: () => Math.floor(Date.now() / 1000),
+  sleep: (milliseconds) =>
+    new Promise((resolve) => {
+      globalThis.setTimeout(resolve, milliseconds);
+    }),
 };
 
 export type UseCodingSessionHireInput = {
@@ -768,32 +790,35 @@ async function grantSeat(
       providerAuthorityPubkey: plan.providerAuthorityPubkey,
     });
   } catch (error) {
-    return grantFailureReason(error);
+    return codingSessionGrantFailureReason(error);
   }
-  try {
-    await deps.ensureOperatorGrant({
-      channelId: plan.channelId,
-      genesisRef: plan.genesisRef,
-      granteePubkey: plan.providerAuthorityPubkey,
-    });
-  } catch (error) {
-    return `provider wake authority: ${grantFailureReason(error)}`;
+  const providerFailure = await ensureCodingSessionGrantWithBackoff({
+    grant: () =>
+      deps.ensureOperatorGrant({
+        channelId: plan.channelId,
+        genesisRef: plan.genesisRef,
+        granteePubkey: plan.providerAuthorityPubkey,
+      }),
+    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    ...(deps.monotonicNow === undefined ? {} : { now: deps.monotonicNow }),
+  });
+  if (providerFailure !== null) {
+    return `provider wake authority: ${codingSessionGrantFailureDetail(providerFailure)}`;
   }
-  try {
-    await deps.ensureOperatorGrant({
-      channelId: plan.channelId,
-      genesisRef: plan.genesisRef,
-      granteePubkey: plan.actor,
-    });
-    return null;
-  } catch (error) {
-    return `seat actor authority: ${grantFailureReason(error)}`;
+  const actorFailure = await ensureCodingSessionGrantWithBackoff({
+    grant: () =>
+      deps.ensureOperatorGrant({
+        channelId: plan.channelId,
+        genesisRef: plan.genesisRef,
+        granteePubkey: plan.actor,
+      }),
+    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+    ...(deps.monotonicNow === undefined ? {} : { now: deps.monotonicNow }),
+  });
+  if (actorFailure !== null) {
+    return `seat actor authority: ${codingSessionGrantFailureDetail(actorFailure)}`;
   }
-}
-
-function grantFailureReason(error: unknown): string {
-  const said = error instanceof Error ? error.message.trim() : String(error);
-  return said.length > 0 ? said : "the grant did not go out";
+  return null;
 }
 
 /**

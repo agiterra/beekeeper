@@ -17,6 +17,7 @@
  * the comfortable guess this rule exists to prevent.
  */
 
+import { codingSessionGoalOverflow } from "./codingSessionGoal";
 import { formatCodingSessionRuntimeLabel } from "./codingSessionLabels";
 import {
   CODING_SESSION_ADAPTER_DEFAULT_MODEL,
@@ -410,6 +411,19 @@ export function codingSessionCrewLaunchBlock(input: {
   }
   if (input.goal.trim().length === 0) {
     return "Write the goal — the lead's first turn carries it.";
+  }
+  // Refused here, before the launch signs anything, rather than dropped
+  // afterwards. A goal over the cap used to launch a whole team and then
+  // fail to publish its kind:44227 with nobody told, which is item 103's
+  // finding 5 reproduced without any relay failure (batch 2 review, F1).
+  const overflow = codingSessionGoalOverflow(input.goal);
+  if (overflow !== null) {
+    return (
+      `This goal is ${overflow.bytes.toLocaleString()} UTF-8 bytes and the ` +
+      `cap is ${overflow.cap.toLocaleString()} — shorten it by ` +
+      `${(overflow.bytes - overflow.cap).toLocaleString()} bytes, or the ` +
+      "session would launch with no goal published."
+    );
   }
   return null;
 }

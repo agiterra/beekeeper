@@ -29,6 +29,28 @@ export function buildCodingSessionGoalFilter(
   };
 }
 
+/**
+ * Whether a goal is too large to publish, and by how much.
+ *
+ * The refusal a person reads has to name the two numbers they can act on —
+ * what they wrote and what fits — so this reports both rather than a boolean.
+ * Measured on the trimmed text in UTF-8 bytes, exactly as
+ * {@link buildCodingSessionGoalEvent} measures it, so the launch button and
+ * the signer can never disagree about whether a goal fits.
+ *
+ * Returns null for a goal that fits, **and for a blank one**: an empty goal is
+ * refused separately, with its own sentence, and reporting it as an overflow
+ * would be a size claim about nothing.
+ */
+export function codingSessionGoalOverflow(
+  content: string,
+): { bytes: number; cap: number } | null {
+  const bytes = new TextEncoder().encode(content.trim()).byteLength;
+  return bytes > MAX_CODING_SESSION_GOAL_BYTES
+    ? { bytes, cap: MAX_CODING_SESSION_GOAL_BYTES }
+    : null;
+}
+
 export function buildCodingSessionGoalEvent(input: {
   channelId: string;
   content: string;

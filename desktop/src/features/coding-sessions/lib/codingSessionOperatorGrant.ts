@@ -1,4 +1,8 @@
 import {
+  codingSessionGrantRetryDelayMs,
+  isCodingSessionGrantRateLimited,
+} from "./codingSessionGrantRetry";
+import {
   fetchCodingSessionRosterFold,
   publishCodingSessionAuthorityTransition,
   type CodingSessionRosterFold,
@@ -6,6 +10,57 @@ import {
 
 const RECEIPT_POLL_ATTEMPTS = 25;
 const RECEIPT_POLL_DELAY_MS = 200;
+/**
+ * The longest one rate-limited confirmation read may wait before re-reading.
+ *
+ * The relay's `retry in Ns` hint can be as large as 300 s, and this loop runs
+ * up to 25 times; without a clamp a single back-pressured confirmation could
+ * hold a grant for hours.
+ */
+const RECEIPT_BACKPRESSURE_MAX_DELAY_MS = 2_000;
+
+/**
+ * Read the authority fold once, distinguishing "the relay is busy" from "the
+ * relay answered".
+ *
+ * Returns null when the read was rate-limited. Every other failure is the
+ * caller's to propagate: a malformed filter or a dropped socket is not a
+ * reason to keep polling.
+ */
+async function readFoldThroughBackPressure(
+  fetchFold: (
+    channelId: string,
+    genesisRef: string,
+  ) => Promise<CodingSessionRosterFold>,
+  channelId: string,
+  genesisRef: string,
+): Promise<{ fold: CodingSessionRosterFold } | { rateLimited: string }> {
+  try {
+    return { fold: await fetchFold(channelId, genesisRef) };
+  } catch (error) {
+    if (!isCodingSessionGrantRateLimited(error)) throw error;
+    return {
+      rateLimited: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** How long a rate-limited confirmation read waits before re-reading. */
+function receiptBackPressureDelayMs(reason: string, attempt: number): number {
+  return Math.min(
+    codingSessionGrantRetryDelayMs(reason, attempt),
+    RECEIPT_BACKPRESSURE_MAX_DELAY_MS,
+  );
+}
+
+/**
+ * What a grant says when the transition went out but no read could confirm it.
+ *
+ * Deliberately carries no `rate-limited:` token: the write already landed, so
+ * this must never be retried by a caller that would republish it.
+ */
+const RECEIPT_BACKPRESSURE_MESSAGE =
+  "The relay accepted the transition, but it answered every confirmation read with back-pressure, so this host could not verify the receipt.";
 
 /** Whether this call appended a grant or reused the accepted active grant. */
 export type CodingSessionOperatorGrantResult = {
@@ -72,17 +127,39 @@ export async function ensureCodingSessionOperatorGrant(
     ...input,
     type: "grant-operator",
   });
+  // Past this line the 44228 exists. A rate-limited read is waited out and
+  // re-read here rather than thrown, because a caller that retries the whole
+  // grant would publish a second transition for a write that already landed
+  // (item 103 review, F2).
+  let backPressured: string | null = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const confirmed = await fetchFold(input.channelId, input.genesisRef);
-    if (
-      confirmed.accepted.get(input.granteePubkey.toLowerCase()) === "operator"
-    ) {
-      return { status: "granted", eventId: event.id };
+    const read = await readFoldThroughBackPressure(
+      fetchFold,
+      input.channelId,
+      input.genesisRef,
+    );
+    if ("fold" in read) {
+      backPressured = null;
+      if (
+        read.fold.accepted.get(input.granteePubkey.toLowerCase()) === "operator"
+      ) {
+        return { status: "granted", eventId: event.id };
+      }
+    } else {
+      backPressured = read.rateLimited;
     }
-    if (attempt + 1 < attempts) await wait(RECEIPT_POLL_DELAY_MS);
+    if (attempt + 1 < attempts) {
+      await wait(
+        backPressured === null
+          ? RECEIPT_POLL_DELAY_MS
+          : receiptBackPressureDelayMs(backPressured, attempt + 1),
+      );
+    }
   }
   throw new Error(
-    "The relay accepted the operator transition, but its signed receipt did not appear in the session authority chain.",
+    backPressured === null
+      ? "The relay accepted the operator transition, but its signed receipt did not appear in the session authority chain."
+      : RECEIPT_BACKPRESSURE_MESSAGE,
   );
 }
 
@@ -125,15 +202,35 @@ export async function ensureCodingSessionSeatGrant(
     granteePubkey: actorPubkey,
     role: input.role,
   });
+  // Same rule as the operator grant above: the write has landed, so a
+  // rate-limited read is re-read rather than turned into a republish.
+  let backPressured: string | null = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const confirmed = await fetchFold(input.channelId, input.genesisRef);
-    if (confirmed.activeSeats.get(actorPubkey) === input.role) {
-      return { status: "granted", eventId: event.id };
+    const read = await readFoldThroughBackPressure(
+      fetchFold,
+      input.channelId,
+      input.genesisRef,
+    );
+    if ("fold" in read) {
+      backPressured = null;
+      if (read.fold.activeSeats.get(actorPubkey) === input.role) {
+        return { status: "granted", eventId: event.id };
+      }
+    } else {
+      backPressured = read.rateLimited;
     }
-    if (attempt + 1 < attempts) await wait(RECEIPT_POLL_DELAY_MS);
+    if (attempt + 1 < attempts) {
+      await wait(
+        backPressured === null
+          ? RECEIPT_POLL_DELAY_MS
+          : receiptBackPressureDelayMs(backPressured, attempt + 1),
+      );
+    }
   }
   throw new Error(
-    "The relay accepted the seat transition, but its signed receipt did not appear in the session authority chain.",
+    backPressured === null
+      ? "The relay accepted the seat transition, but its signed receipt did not appear in the session authority chain."
+      : RECEIPT_BACKPRESSURE_MESSAGE,
   );
 }
 
