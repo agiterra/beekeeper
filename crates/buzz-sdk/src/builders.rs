@@ -5758,6 +5758,7 @@ mod tests {
                 initial_turn: None,
                 actor: None,
                 role: None,
+                hire_ref: None,
                 routing: None,
             },
         }
@@ -5820,6 +5821,7 @@ mod tests {
                 provider_instance_ref: None,
                 model: None,
                 brief: "Rebase the lane and run the gate.".into(),
+                requested_by: None,
                 routing: None,
             },
         };

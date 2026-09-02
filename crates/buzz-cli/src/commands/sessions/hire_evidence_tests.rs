@@ -78,6 +78,7 @@ fn signed_hire() -> (
             initial_turn: Some("build it".into()),
             actor: Some(actor.clone()),
             role: Some("builder".into()),
+            hire_ref: None,
             routing: None,
         },
     };

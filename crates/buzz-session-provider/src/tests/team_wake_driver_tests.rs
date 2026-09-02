@@ -140,6 +140,7 @@ fn execution_events(
             initial_turn: None,
             actor: Some(actor.public_key().to_hex()),
             role: Some(role.into()),
+            hire_ref: None,
             routing: Some(routing.clone()),
         },
     };

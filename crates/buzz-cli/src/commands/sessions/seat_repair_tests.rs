@@ -328,6 +328,7 @@ fn wire(options: WireOptions) -> Wire {
             initial_turn: Some("Read the brief".into()),
             actor: Some(actor.clone()),
             role: Some(options.role.into()),
+            hire_ref: None,
             routing: None,
         },
     };
@@ -882,6 +883,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
             initial_turn: Some("Read the brief".into()),
             actor: Some(wire.actor.clone()),
             role: Some(extra.role.into()),
+            hire_ref: None,
             routing: None,
         },
     };

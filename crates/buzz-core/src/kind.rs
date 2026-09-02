@@ -743,6 +743,31 @@ pub const KIND_CODING_SESSION_CLOSURE: u32 = 44230;
 /// See `docs/nips/NIP-CSTX.md`.
 pub const KIND_CODING_SESSION_TEAM_TRANSACTION: u32 = 44244;
 
+/// NIP-CSP: Coding-session policy — how one umbrella mission is meant to be
+/// run.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for lookup and grouping. Content is strict public JSON
+/// ([`crate::coding_session_policy::CodingSessionPolicyPayload`]) carrying the
+/// posture, budget, attention level, gates, bench, irreversible acts and stop
+/// conditions — every one of them optional, and omitted rather than written as
+/// an explicit `null`. Ordered tags: `h`, `d`, `csp-v`, `csp-genesis`.
+/// Consumers retain every revision and fold the newest accepted one, exactly
+/// as 44227/44229/44230 do; the signature is the author, and whether that
+/// author held the standing to set policy is the consumer's fold to answer
+/// against the accepted NIP-CSAT chain — the relay validates structure only.
+///
+/// **Allocation.** 44245 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231 (checkpoint), 44232 (native snapshot), 44233/44234
+/// (git transition/check) and 44235–44239 (headroom) are reserved by the
+/// continuity research, 44240 is the shipped Pulse entry with 44241–44243
+/// reserved by the Pulse plan, and 44244 is the team transaction.
+///
+/// See `docs/design/portable-team-loop/POLICY.md` for each field's consumer
+/// and why v1 rejects unknown fields rather than ignoring them. A
+/// `docs/nips/NIP-CSP.md` companion to `NIP-CSTX.md` is not yet written.
+pub const KIND_CODING_SESSION_POLICY: u32 = 44245;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1438,6 +1463,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_POLICY,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1696,6 +1722,17 @@ const _: () = assert!(!is_parameterized_replaceable(
     KIND_CODING_SESSION_TEAM_TRANSACTION
 ));
 const _: () = assert!(KIND_CODING_SESSION_TEAM_TRANSACTION <= u16::MAX as u32);
+// The policy record is append-only history too. The d tag addresses an
+// umbrella so a consumer can fold the newest accepted revision; it never opts
+// this regular kind into NIP-33 replacement, because a replaceable policy
+// would let one author's write erase the revision another decision was made
+// under.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_POLICY));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_POLICY));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_POLICY));
+const _: () = assert!(KIND_CODING_SESSION_POLICY <= u16::MAX as u32);
+// The next free number, and nothing between it and the team transaction.
+const _: () = assert!(KIND_CODING_SESSION_POLICY == KIND_CODING_SESSION_TEAM_TRANSACTION + 1);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

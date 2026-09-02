@@ -1419,6 +1419,7 @@ fn create_event(
             initial_turn: None,
             actor: None,
             role: None,
+            hire_ref: None,
             routing: None,
         },
     };
@@ -1979,6 +1980,7 @@ fn seated_create_event(
             initial_turn: Some("[From the lead] Rebase the lane.".into()),
             actor: Some(pk(actor)),
             role: Some(role.to_owned()),
+            hire_ref: None,
             routing: None,
         },
     };
@@ -4001,6 +4003,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
             initial_turn: Some("build it".into()),
             actor: Some(actor.clone()),
             role: Some("builder".into()),
+            hire_ref: None,
             routing: None,
         },
     };

@@ -956,6 +956,48 @@ pub struct SessionMetadata {
     pub routing: Option<crate::coding_session_routing::RoutingRecord>,
 }
 
+impl SessionMetadata {
+    /// This generation's provider instance **alias**, typed so it can never be
+    /// compared with a [`crate::coding_session_identity::ProviderInstanceId`].
+    ///
+    /// `Ok(None)` means the provider published no alias for this generation.
+    /// `Err` means the value on the wire is not an alias — blank, oversized,
+    /// or carrying control characters.
+    ///
+    /// This is the read that ledger item 102 got wrong in the other direction:
+    /// Desktop's hire path compared a receipt's cryptographic
+    /// `cs-target.instanceId` against the human-facing `providerInstanceRef`,
+    /// and because both are `String` nothing objected. Reading through this
+    /// accessor makes that comparison a compile error.
+    pub fn provider_alias(
+        &self,
+    ) -> Result<Option<crate::coding_session_identity::ProviderInstanceAlias>, String> {
+        self.provider
+            .as_deref()
+            .map(crate::coding_session_identity::ProviderInstanceAlias::from_wire)
+            .transpose()
+            .map_err(|error| error.replace("providerInstanceRef", "metadata provider"))
+    }
+
+    /// This generation's **runtime word** (`claude`, `codex`), typed so it can
+    /// never be compared with the target's
+    /// [`crate::coding_session_identity::DriverSlug`].
+    ///
+    /// The runtime word names the agent product; the driver slug names the ACP
+    /// adapter that drives it (`claude` vs `claude-agent-acp`). A command is
+    /// routed by driver and never by runtime, so the two are different
+    /// questions with different answers.
+    pub fn runtime_word(
+        &self,
+    ) -> Result<Option<crate::coding_session_identity::RuntimeWord>, String> {
+        self.runtime
+            .as_deref()
+            .map(crate::coding_session_identity::RuntimeWord::from_wire)
+            .transpose()
+            .map_err(|error| error.replace("runtime", "metadata runtime"))
+    }
+}
+
 /// How much of an umbrella's turn budget has been spent (D9).
 ///
 /// Both numbers are facts the publishing provider witnessed itself: `used`

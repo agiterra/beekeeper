@@ -2228,6 +2228,7 @@ pub fn hire_payload(
             provider_instance_ref: provider_instance_ref.map(str::to_owned),
             model: model.map(str::to_owned),
             brief: brief.to_owned(),
+            requested_by: None,
             routing,
         },
     }

@@ -33,6 +33,7 @@ use serde_json::Value;
 use crate::coding_session_command::{
     CodingSessionTarget, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
 };
+use crate::coding_session_identity::ProviderInstanceAlias;
 use crate::coding_session_payload::ACTOR_ROLE_PAIR;
 use crate::coding_session_routing::{HireRoutingRequest, RoutingRecord};
 use crate::kind::KIND_PROJECT;
@@ -129,6 +130,19 @@ pub enum CodingSessionLifecycleAction {
         /// when [`actor`](Self::SessionCreate::actor) is.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
+        /// Event id of the kind:44221 `session.hire` this create answers, when
+        /// it answers one (COMMS-MAP §3).
+        ///
+        /// The seventh additive key, and optional for the same reason the
+        /// others are: every create signed before the hire loop was closed
+        /// must stay valid forever, so the key is **omitted** rather than
+        /// written as an explicit `null` when the founder's host created the
+        /// seat itself. It closes the attribution loop from the create's end:
+        /// a seated create that names no hire is a seat nobody can trace back
+        /// to a request, which is exactly the state the live run left behind.
+        /// Lowercase 64-hex, resolved by event id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hire_ref: Option<String>,
         /// Why *this* execution target — the routing record echoed from the
         /// hire that produced this seat, or written by whatever chose the
         /// model (Brian's ruling of 2026-08-30).
@@ -179,6 +193,35 @@ pub enum CodingSessionLifecycleAction {
         /// prefixes it), so it is required and non-empty:
         /// 1..=[`MAX_LIFECYCLE_INITIAL_TURN_BYTES`] bytes.
         brief: String,
+        /// Lowercase 64-hex pubkey of the seat that ran `bee sessions hire` —
+        /// the hire event's own signer today (COMMS-MAP §3).
+        ///
+        /// An additive key, omitted rather than written as an explicit `null`,
+        /// because hires signed before it existed are already on relays.
+        ///
+        /// It exists because a hired seat's brief arrived **unattributed**: the
+        /// create's `initial_turn` is delivered with no framing and with the
+        /// founder named as operator, so nothing on the wire recorded which
+        /// lead asked for the seat — the only trace was a 16-byte
+        /// `"[From the lead] "` prefix added in TypeScript.
+        ///
+        /// **The relay does not check this claim — and that is a choice, not
+        /// an impossibility.** An earlier draft of this comment said the relay
+        /// *cannot*; it can. It verifies the event signature and therefore
+        /// holds `event.pubkey`, so comparing it with `action.requestedBy` is
+        /// one line beside `hire_authority_verdict`. v1 leaves the check to
+        /// the consumer because LANE-B1 §B1.2 scoped it there.
+        ///
+        /// The consequence is exact, and nothing enforces against it today:
+        /// **any signer the relay admits for a hire can attribute the request
+        /// to a different seat's pubkey.** Until a consumer calls
+        /// [`hire_requester_matches_signer`](CodingSessionLifecycleCommandPayload::hire_requester_matches_signer),
+        /// `requestedBy` is an *unverified claim*, not an attribution, and any
+        /// surface that renders it must say so. B2 owns closing this: compare
+        /// the claim with the signer at the CLI and at the founder's host, and
+        /// disclose a mismatch rather than dropping it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_by: Option<String>,
         /// The routing **request** behind this hire, or absent when nothing
         /// routed (Brian's ruling of 2026-08-30).
         ///
@@ -217,6 +260,38 @@ pub enum CodingSessionLifecycleAction {
     },
 }
 
+impl CodingSessionLifecycleAction {
+    /// The provider instance **alias** this action names, typed so it can
+    /// never be compared with a
+    /// [`crate::coding_session_identity::ProviderInstanceId`].
+    ///
+    /// `Ok(None)` means the action names no alias: a hire that left the choice
+    /// to the host's policy, or a resume/stop, which name an exact
+    /// `cs-target` instead. `Err` means the alias on the wire is not one —
+    /// blank, oversized, or carrying control characters.
+    ///
+    /// This is an accessor rather than the field's own type. Ledger item 102's
+    /// defect was comparing this alias with a receipt's cryptographic
+    /// `cs-target.instanceId`; typing the *reads* closes that hole without
+    /// changing a single byte on the wire, and without a construction-time
+    /// failure mode appearing inside `bee sessions hire`. Migrating the fields
+    /// themselves is B2's, whose crates hold every construction site.
+    pub fn provider_instance_alias(&self) -> Result<Option<ProviderInstanceAlias>, String> {
+        let raw = match self {
+            Self::SessionCreate {
+                provider_instance_ref,
+                ..
+            } => Some(provider_instance_ref.as_str()),
+            Self::SessionHire {
+                provider_instance_ref,
+                ..
+            } => provider_instance_ref.as_deref(),
+            Self::SessionResume { .. } | Self::SessionStop { .. } => None,
+        };
+        raw.map(ProviderInstanceAlias::from_wire).transpose()
+    }
+}
+
 /// Durable coding-session lifecycle command JSON payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -243,6 +318,55 @@ impl CodingSessionLifecycleCommandPayload {
         }
     }
 
+    /// The pubkey a `session.hire` claims ran it, or `None` for every other
+    /// action and for a hire that claimed none.
+    ///
+    /// `None` means *unknown*, never *mismatched*: a hire signed before the
+    /// key existed is not a hire whose requester disagrees with its signer.
+    pub fn hire_requested_by(&self) -> Option<&str> {
+        match &self.action {
+            CodingSessionLifecycleAction::SessionHire { requested_by, .. } => {
+                requested_by.as_deref()
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a hire's claimed requester equals the event's signer, or `None`
+    /// when the action is not a hire or claimed no requester.
+    ///
+    /// The relay *could* make this check and in v1 does not (see
+    /// [`SessionHire::requested_by`](CodingSessionLifecycleAction::SessionHire)),
+    /// so the decoder puts both values in the consumer's hands and the CLI or
+    /// the founder's host compares them. **Nothing calls this yet**, which is
+    /// why an unverified `requestedBy` is the current state of the wire.
+    ///
+    /// Three answers, not two: `Some(true)` attributed, `Some(false)`
+    /// disputed, `None` unclaimed. Collapsing the third into either of the
+    /// others is how an unattributed seat comes to look attributed.
+    pub fn hire_requester_matches_signer(&self, signer_pubkey_hex: &str) -> Option<bool> {
+        self.hire_requested_by()
+            .map(|requested_by| requested_by == signer_pubkey_hex)
+    }
+
+    /// The kind:44221 hire event id a `session.create` answers, or `None` for
+    /// every other action and for a create that answers no hire.
+    pub fn create_hire_ref(&self) -> Option<&str> {
+        match &self.action {
+            CodingSessionLifecycleAction::SessionCreate { hire_ref, .. } => hire_ref.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// This action's provider instance **alias**, typed.
+    ///
+    /// See [`CodingSessionLifecycleAction::provider_instance_alias`]. Returns
+    /// `Ok(None)` for a resume or a stop, which name a target rather than an
+    /// instance to select.
+    pub fn provider_instance_alias(&self) -> Result<Option<ProviderInstanceAlias>, String> {
+        self.action.provider_instance_alias()
+    }
+
     /// Validate all payload fields before signing a lifecycle command.
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA {
@@ -266,6 +390,7 @@ impl CodingSessionLifecycleCommandPayload {
                 initial_turn,
                 actor,
                 role,
+                hire_ref,
                 routing,
             } => {
                 validate_actor_role_pair(actor.as_deref(), role.as_deref())?;
@@ -308,6 +433,9 @@ impl CodingSessionLifecycleCommandPayload {
                 if let Some(role) = role {
                     validate_role_slug(role)?;
                 }
+                if let Some(hire_ref) = hire_ref {
+                    validate_event_id_hex("action.hireRef", hire_ref)?;
+                }
                 if let Some(routing) = routing {
                     routing
                         .validate()
@@ -331,6 +459,7 @@ impl CodingSessionLifecycleCommandPayload {
                 provider_instance_ref,
                 model,
                 brief,
+                requested_by,
                 routing,
             } => {
                 validate_session_ref(session_ref)?;
@@ -343,6 +472,9 @@ impl CodingSessionLifecycleCommandPayload {
                 )?;
                 validate_optional(model, "action.model", MAX_LIFECYCLE_REFERENCE_BYTES)?;
                 validate_required(brief, "action.brief", MAX_LIFECYCLE_INITIAL_TURN_BYTES)?;
+                if let Some(requested_by) = requested_by {
+                    validate_pubkey_hex("action.requestedBy", requested_by)?;
+                }
                 if let Some(routing) = routing {
                     routing
                         .validate()
@@ -392,30 +524,54 @@ pub fn decode_coding_session_lifecycle_command(
             // The seat pair is checked before the shape so a half-written seat
             // is answered by name rather than by the generic shape error.
             require_seat_pair_shape(action)?;
+            // Absent is not null on the additive hire reference: a producer
+            // with nothing to say omits the key. Checked before the shape
+            // matrix, because an explicit null is *present* to a key-set check
+            // and would then decode as `None` — a shape pun that lets one
+            // client write bytes a strict reader silently reinterprets.
+            reject_explicit_null(action, "hireRef")?;
+            reject_foreign_additive_key(
+                action,
+                "requestedBy",
+                "hire",
+                "create",
+                "requestedBy names the seat that ran `bee sessions hire`; a create names the \
+                 hire it answers with hireRef",
+            )?;
             let seated = action.get("actor").is_some();
             let routed = action.get("routing").is_some();
-            // Three historical key sets × seated-or-not × routed-or-not. Each
-            // additive pair is an independent axis, so the forms are built
-            // rather than listed: a hand-written list of twelve is a list that
-            // grows a hole the next time a key is added.
-            let mut forms: Vec<Vec<&str>> = Vec::with_capacity(12);
+            let attributed = action.get("hireRef").is_some();
+            // Three historical key sets × seated-or-not × attributed-or-not
+            // × routed-or-not. Each additive key is an independent axis, so
+            // the forms are built rather than listed: a hand-written list of
+            // twenty-four is a list that grows a hole the next time a key is
+            // added.
+            let mut forms: Vec<Vec<&str>> = Vec::with_capacity(24);
             for base in CREATE_ACTION_FORMS {
                 for with_seat in [false, true] {
-                    let mut form = base.to_vec();
+                    let mut seat_form = base.to_vec();
                     if with_seat {
-                        form.push("actor");
-                        form.push("role");
+                        seat_form.push("actor");
+                        seat_form.push("role");
                     }
-                    let mut routed_form = form.clone();
-                    routed_form.push("routing");
-                    forms.push(form);
-                    forms.push(routed_form);
+                    for with_hire in [false, true] {
+                        let mut form = seat_form.clone();
+                        if with_hire {
+                            form.push("hireRef");
+                        }
+                        let mut routed_form = form.clone();
+                        routed_form.push("routing");
+                        forms.push(form);
+                        forms.push(routed_form);
+                    }
                 }
             }
             let forms: Vec<&[&str]> = forms
                 .iter()
                 .filter(|form| {
-                    form.contains(&"actor") == seated && form.contains(&"routing") == routed
+                    form.contains(&"actor") == seated
+                        && form.contains(&"routing") == routed
+                        && form.contains(&"hireRef") == attributed
                 })
                 .map(Vec::as_slice)
                 .collect();
@@ -434,11 +590,42 @@ pub fn decode_coding_session_lifecycle_command(
             }
         }
         Some("session.hire") => {
-            require_exact_field_forms(
+            // Same rule as the create's `hireRef`: omitted, never null.
+            reject_explicit_null(action, "requestedBy")?;
+            reject_foreign_additive_key(
                 action,
-                &[HIRE_ACTION_FORM, HIRE_ACTION_FORM_ROUTED],
-                "action",
+                "hireRef",
+                "create",
+                "hire",
+                "a hire cannot answer itself; the founder's host writes hireRef on the create it \
+                 publishes in reply",
             )?;
+            // `requestedBy` and `routing` are independent axes, so the four
+            // accepted hire shapes are built from the base form rather than
+            // listed — the same discipline the create above uses, and for
+            // the same reason.
+            let requested = action.get("requestedBy").is_some();
+            let routed = action.get("routing").is_some();
+            let mut forms: Vec<Vec<&str>> = Vec::with_capacity(4);
+            for with_requester in [false, true] {
+                let mut form = HIRE_ACTION_FORM.to_vec();
+                if with_requester {
+                    form.push("requestedBy");
+                }
+                let mut routed_form = form.clone();
+                routed_form.push("routing");
+                forms.push(form);
+                forms.push(routed_form);
+            }
+            let forms: Vec<&[&str]> = forms
+                .iter()
+                .filter(|form| {
+                    form.contains(&"requestedBy") == requested
+                        && form.contains(&"routing") == routed
+                })
+                .map(Vec::as_slice)
+                .collect();
+            require_exact_field_forms(action, &forms, "action")?;
             // Checked here, before serde, because serde's own
             // `deny_unknown_fields` error is collapsed below into the single
             // sentence "malformed coding-session lifecycle command payload".
@@ -728,6 +915,65 @@ pub fn validate_session_ref(session_ref: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Check that a Nostr public key is canonical lowercase 64-hex.
+///
+/// The same rule [`validate_actor_pubkey`] applies, parameterized by field
+/// name so an additive key answers with its own name rather than borrowing
+/// `action.actor`'s.
+pub fn validate_pubkey_hex(field: &str, value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!("{field} must be a lowercase 64-hex public key"));
+    }
+    Ok(())
+}
+
+/// Refuse an additive key written as an explicit `null`, naming it.
+///
+/// Absent and null are different claims. A key-set check sees a null as
+/// *present*, and serde then decodes it to `None` — so without this the same
+/// signed bytes mean "unset" to one reader and "the additive form" to another,
+/// which is precisely the divergence the item-102 ingress rule forbids.
+fn reject_explicit_null(action: &Value, key: &str) -> Result<(), String> {
+    if action.get(key).is_some_and(Value::is_null) {
+        return Err(format!(
+            "coding-session lifecycle command action.{key} must be omitted when it is not set, \
+             never written as an explicit null"
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse the *other* action's additive key, naming it and saying where it
+/// belongs.
+///
+/// `requestedBy` and `hireRef` are the two halves of one loop — the hire names
+/// who asked, the create names the hire it answers — and putting either on the
+/// wrong action is the mistake most likely to sit beside the one
+/// [`reject_explicit_null`] already catches by name. Without this pass both
+/// fall through to `require_exact_field_forms`, whose sentence is
+/// "action has missing or unsupported fields": true, unactionable, and exactly
+/// the kind of answer that cost a lead fifteen minutes on 2026-08-30. Checked
+/// before the shape matrix so the key is named rather than counted.
+fn reject_foreign_additive_key(
+    action: &Value,
+    key: &str,
+    belongs_on: &str,
+    this_action: &str,
+    remedy: &str,
+) -> Result<(), String> {
+    if action.get(key).is_some() {
+        return Err(format!(
+            "coding-session lifecycle command action.{key} is a {belongs_on} field and does not \
+             belong on a {this_action}: {remedy}"
+        ));
+    }
+    Ok(())
+}
+
 /// Check that a Nostr event reference is canonical lowercase 64-hex.
 pub fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
     if value.len() != 64
@@ -740,9 +986,16 @@ pub fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The one accepted `session.hire` key set. Unlike the create, a hire has no
-/// historical forms to keep valid — it is new with the relay that validates
-/// it — so exactly these seven keys are accepted, nothing else.
+/// The base `session.hire` key set, before either additive key.
+///
+/// Unlike the create, a hire has no *historical* forms to keep valid — it is
+/// new with the relay that validates it — so exactly these seven keys are the
+/// floor. Two independent additive keys sit on top of it, each omitted rather
+/// than written as an explicit `null`, giving four accepted shapes in total:
+/// `routing` (the router request, Brian's ruling of 2026-08-30) and
+/// `requestedBy` (the requesting seat, COMMS-MAP §3). The decoder builds the
+/// four from this base rather than listing them, so the next additive key
+/// cannot leave a hole in a hand-written list.
 const HIRE_ACTION_FORM: &[&str] = &[
     "type",
     "sessionRef",
@@ -751,22 +1004,6 @@ const HIRE_ACTION_FORM: &[&str] = &[
     "providerInstanceRef",
     "model",
     "brief",
-];
-
-/// The same action plus the routing record (Brian's ruling of 2026-08-30).
-///
-/// Two forms rather than one nullable key, because hires signed before the
-/// router existed are already on relays and must stay valid: `routing` is
-/// omitted, never written as an explicit `null`.
-const HIRE_ACTION_FORM_ROUTED: &[&str] = &[
-    "type",
-    "sessionRef",
-    "genesisRef",
-    "role",
-    "providerInstanceRef",
-    "model",
-    "brief",
-    "routing",
 ];
 
 /// The exact prefix a host writes on the kind:44220 turn that answers a
@@ -1033,6 +1270,10 @@ fn validate_target(target: &CodingSessionTarget) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[path = "coding_session_hire_requester_tests.rs"]
+mod hire_requester_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::coding_session_routing::HireRoutingRequest;
@@ -1064,6 +1305,7 @@ mod tests {
                 initial_turn: Some("Start with the highest priority task.".into()),
                 actor: None,
                 role: None,
+                hire_ref: None,
                 routing: None,
             },
         }
@@ -1682,12 +1924,14 @@ mod tests {
             provider_instance_ref,
             model,
             brief,
+            requested_by,
             routing,
         } = &decoded.action
         else {
             panic!("expected a hire action")
         };
         assert_eq!(*routing, None);
+        assert_eq!(*requested_by, None);
         assert_eq!(session_ref, &session_reference());
         assert_eq!(genesis_ref, &"12".repeat(32));
         assert_eq!(role, "builder");

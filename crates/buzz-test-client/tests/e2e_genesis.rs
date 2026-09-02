@@ -241,6 +241,7 @@ async fn genesis_adoption_validates_referenced_history_live() {
             initial_turn: None,
             actor: None,
             role: None,
+            hire_ref: None,
             routing: None,
         },
     };
@@ -484,6 +485,7 @@ async fn genesis_is_linked_from_session_create_live() {
             initial_turn: None,
             actor: None,
             role: None,
+            hire_ref: None,
             routing: None,
         },
     };

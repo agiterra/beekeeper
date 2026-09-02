@@ -27,6 +27,9 @@ pub mod coding_session_context;
 pub mod coding_session_genesis;
 /// NIP-CSG: append-only human-authored session-goal revisions (44227).
 pub mod coding_session_goal;
+/// One name per thing: the four coding-session identity words (provider
+/// instance alias, provider instance id, runtime word, driver slug).
+pub mod coding_session_identity;
 /// Ephemeral provider-signed liveness leases for exact coding-session generations.
 pub mod coding_session_lease;
 /// NIP-CSL: Coding-session lifecycle command — session creation payload.
@@ -36,6 +39,9 @@ pub mod coding_session_name;
 /// Provider-authored coding-session facts: receipts (44224), metadata (44223),
 /// and transcript envelopes (44225).
 pub mod coding_session_payload;
+/// NIP-CSP: the signed session policy record (44245) - posture, budget,
+/// attention, gates, bench, irreversible acts, and stop conditions.
+pub mod coding_session_policy;
 /// The model registry and the router: which execution target a class, a risk
 /// tier and the live catalog select, and why.
 pub mod coding_session_routing;

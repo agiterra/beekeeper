@@ -1,0 +1,312 @@
+{
+  "schema": "buzz-coding-session-hire-requester-conformance/v1",
+  "note": "The requester travels with the hire, and the create names the hire it answers.\n\nBoth keys are ADDITIVE and OPTIONAL under the item-102 rule: an absent key is not the same as an explicit null, and a strict reader rejects the null. A hire signed before these keys existed is already on relays and stays valid forever, so the producer omits the key rather than writing `null`.\n\n`requestedBy` is the lowercase 64-hex pubkey of the seat that ran `bee sessions hire` - the hire event's own signer today. THE RELAY DOES NOT CHECK THIS CLAIM. It could: it verifies the event signature and therefore holds `event.pubkey`, and comparing that with `action.requestedBy` is one line. v1 deliberately does not, so a signer the relay admits for a hire can attribute the request to a different seat's pubkey and nothing on the wire objects. The decoder exposes the claim beside the signer (`hire_requester_matches_signer`, three-valued: attributed / disputed / unclaimed) so the CLI and the founder's host can compare them themselves - and until a consumer actually calls it, `requestedBy` is an UNVERIFIED CLAIM, not an attribution. Any surface that renders it must say so.\n\nBefore this key, a hired seat's brief arrived with `framing: None` and `operatorPubkey = founder`, so nothing on the wire recorded which lead asked for the seat; the only trace was a 16-byte \"[From the lead] \" prefix added in TypeScript.\n\n`hireRef` is the lowercase 64-hex event id of the kind:44221 `session.hire` this create answers. It closes the same loop from the other end: a seated create that names no hire is a seat nobody can attribute to a request.\n\nTHE TWO KEYS NEVER CROSS, and the refusal names the offending key and says where it belongs. Verbatim, these are the two sentences the decoder produces:\n  requestedBy on a create -> \"coding-session lifecycle command action.requestedBy is a hire field and does not belong on a create: requestedBy names the seat that ran `bee sessions hire`; a create names the hire it answers with hireRef\"\n  hireRef on a hire -> \"coding-session lifecycle command action.hireRef is a create field and does not belong on a hire: a hire cannot answer itself; the founder's host writes hireRef on the create it publishes in reply\"\nA TypeScript decoder pinned to this file must refuse both, and should carry the same two sentences: \"action has missing or unsupported fields\" is true, unactionable, and was what this decoder said until REVIEW-B1 F1.",
+  "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+  "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+  "requestedBy": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f",
+  "hireRef": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+  "hireActionKeyOrder": [
+    "type",
+    "sessionRef",
+    "genesisRef",
+    "role",
+    "providerInstanceRef",
+    "model",
+    "brief",
+    "requestedBy",
+    "routing"
+  ],
+  "createAdditiveKeyOrder": [
+    "actor",
+    "role",
+    "hireRef",
+    "routing"
+  ],
+  "vectors": [
+    {
+      "name": "hire-without-a-requester-stays-valid",
+      "valid": true,
+      "why": "The seven-key form every hire signed before this amendment carries. It must decode forever.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate."
+        }
+      }
+    },
+    {
+      "name": "hire-with-a-requester",
+      "valid": true,
+      "why": "The eight-key form: the requesting seat's pubkey rides with the request.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "requestedBy": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+        }
+      }
+    },
+    {
+      "name": "hire-with-a-requester-and-a-routing-request",
+      "valid": true,
+      "why": "The two additive keys are independent axes, so all four hire shapes are valid.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "requestedBy": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f",
+          "routing": {
+            "class": "builder",
+            "risk": {
+              "impact": 3,
+              "uncertainty": 3,
+              "irreversibility": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "hire-with-routing-and-no-requester",
+      "valid": true,
+      "why": "The pre-existing routed form, unchanged.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "routing": {
+            "class": "builder",
+            "risk": {
+              "impact": 3,
+              "uncertainty": 3,
+              "irreversibility": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "hire-with-an-explicit-null-requester",
+      "valid": false,
+      "why": "Absent is not null. A producer with nothing to say omits the key.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "requestedBy": null
+        }
+      }
+    },
+    {
+      "name": "hire-with-an-uppercase-requester",
+      "valid": false,
+      "why": "Pubkeys are compared byte-for-byte against relay-signed authority facts; an uppercase copy is rejected, never coerced.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "requestedBy": "9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F9F"
+        }
+      }
+    },
+    {
+      "name": "hire-with-a-truncated-requester",
+      "valid": false,
+      "why": "63 hex characters is not a pubkey.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "requestedBy": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9"
+        }
+      }
+    },
+    {
+      "name": "hire-carrying-the-creates-hireRef",
+      "valid": false,
+      "why": "A hire cannot answer itself. The key belongs to the create.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "hire-1",
+        "action": {
+          "type": "session.hire",
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "role": "builder",
+          "providerInstanceRef": "claude-primary",
+          "model": null,
+          "brief": "Rebase the lane and run the gate.",
+          "hireRef": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+        }
+      }
+    },
+    {
+      "name": "create-without-a-hireRef-stays-valid",
+      "valid": true,
+      "why": "Every seated create signed before this amendment. It must decode forever.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "create-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+          "model": null,
+          "title": null,
+          "initialTurn": "[From the lead] Rebase the lane and run the gate.",
+          "actor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "role": "builder"
+        }
+      }
+    },
+    {
+      "name": "create-naming-the-hire-it-answers",
+      "valid": true,
+      "why": "The host's create points back at the 44221 that asked for the seat.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "create-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+          "model": null,
+          "title": null,
+          "initialTurn": "[From the lead] Rebase the lane and run the gate.",
+          "actor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "role": "builder",
+          "hireRef": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+        }
+      }
+    },
+    {
+      "name": "create-with-an-explicit-null-hireRef",
+      "valid": false,
+      "why": "Absent is not null.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "create-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+          "model": null,
+          "title": null,
+          "initialTurn": "[From the lead] Rebase the lane and run the gate.",
+          "actor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "role": "builder",
+          "hireRef": null
+        }
+      }
+    },
+    {
+      "name": "create-with-a-malformed-hireRef",
+      "valid": false,
+      "why": "A hire reference is a lowercase 64-hex event id.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "create-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+          "model": null,
+          "title": null,
+          "initialTurn": "[From the lead] Rebase the lane and run the gate.",
+          "actor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "role": "builder",
+          "hireRef": "not-an-event-id"
+        }
+      }
+    },
+    {
+      "name": "create-carrying-the-hires-requestedBy",
+      "valid": false,
+      "why": "The create's requester is the founder's host; the requesting seat is named by the hire it answers.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "create-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+          "genesisRef": "1212121212121212121212121212121212121212121212121212121212121212",
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+          "model": null,
+          "title": null,
+          "initialTurn": "[From the lead] Rebase the lane and run the gate.",
+          "actor": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "role": "builder",
+          "requestedBy": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+        }
+      }
+    }
+  ]
+}

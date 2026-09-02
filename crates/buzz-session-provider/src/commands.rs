@@ -450,6 +450,7 @@ pub fn decide_lifecycle(
         initial_turn,
         actor,
         role,
+        hire_ref: _,
         routing,
     } = &payload.action
     else {

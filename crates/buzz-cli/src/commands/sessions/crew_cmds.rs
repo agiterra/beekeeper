@@ -624,6 +624,7 @@ pub async fn cmd_create(
             initial_turn,
             actor: None,
             role: None,
+            hire_ref: None,
             // `bee sessions create` names its own model, so there is no
             // routing decision to record. A record here would claim a choice
             // nobody made.

@@ -2656,6 +2656,7 @@ mod tests {
                 initial_turn: None,
                 actor: seat.map(|(actor, _)| actor.to_owned()),
                 role: seat.map(|(_, role)| role.to_owned()),
+                hire_ref: None,
                 routing: None,
             },
         };
