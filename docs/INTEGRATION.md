@@ -157,6 +157,48 @@ a 403, and following it would have made the seat drop the owner attestation its
 push depends on. A denial with an attestation present says to ask the operator to
 confirm the seat's *owner* is a relay member, and to keep the attestation.
 
+#### Landing a batch: the push, step by step
+
+Written 2026-09-01 after the third time a landing stalled on the same two
+facts. Both are recorded elsewhere in this file and in the ledger; this is
+the sequence, in order, so nobody re-derives it.
+
+1. **Prove the SHA first.** `just ci` (and `just test` if relay/db/auth
+   changed) on the exact commit you will push, in a worktree. Note the SHA.
+2. **Confirm the remotes and the base.** `git remote -v`; `git fetch origin
+   main`; your branch must sit on top of `origin/main` (rebase with
+   `--signoff` if not — the pre-push branch-skew guard blocks a topic branch
+   that is behind main and touches the same files).
+3. **Push with the hooks skipped, on that same SHA.**
+
+   ```sh
+   GIT_TERMINAL_PROMPT=0 git push --no-verify origin <branch>:main
+   ```
+
+   Why `--no-verify`: git mints the NIP-98 credential at ref discovery,
+   *before* the pre-push hooks run. The hooks (clippy, typecheck, unit tests)
+   take longer than the relay's timestamp window, so the upload arrives with
+   an expired token and fails `HTTP 401` with every hook green — or, from a
+   tool with a short timeout, simply looks hung. The hooks add nothing here:
+   `just ci` already ran on this SHA. Never use `--no-verify` on a SHA `just
+   ci` did not pass. `GIT_TERMINAL_PROMPT=0` makes a credential problem fail
+   in a second instead of waiting on a prompt nobody can answer.
+4. **Verify both heads.** `git fetch origin main && git rev-parse origin/main`
+   must be your SHA; a minute later `git fetch upstream main` shows the
+   GitHub mirror following.
+5. **Expect the relay to redeploy.** The autodeploy timer on agincus builds
+   the newest CI-green `main` and restarts the relay whenever the commit
+   differs from the running image — it has no path filter, so any push that
+   passes CI flips the relay, even one that touches no relay crate. Budget
+   CI time plus a five-minute timer plus the build; do not start a live
+   run that must survive a WebSocket drop inside that window. Docs-only
+   pushes skip both the gate and the deploy.
+6. **Then land the checkout you run from.** With the dev app stopped,
+   `git merge --ff-only origin/main` in the main checkout, rebuild
+   `bee` (`cargo build -p buzz-cli`), and relaunch with the keyring enabled
+   (`env -u BUZZ_DESKTOP_NOKEYRING just desktop-standalone`). Never merge,
+   rebase, or switch in that checkout while the app runs.
+
 #### Seats push on their owner's grant
 
 A hired seat signs git as **itself**, never as its operator — the ACP harness
