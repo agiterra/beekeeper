@@ -624,6 +624,18 @@ export async function assertMissionRestartRecovery(
   // (`assertMissionTransactionFlow`), not a chain list inside a rail card.
 
   await page.reload();
+  // `reload()` resolves on `load`, but the fold hook is installed by a
+  // *dynamic* import inside `bootstrap()` (`src/main.tsx`), so it lands in a
+  // separately fetched chunk strictly after `load`. The evaluate below wins
+  // whenever that chunk is warm in the HTTP cache and loses when it is not —
+  // a cold cache, the first reload after a rebuild, a loaded CI box — and the
+  // loss reads as `Mission fold hook missing`, which looks like a product
+  // defect rather than a race. Wait on the hook itself, not on a duration:
+  // this is the suite's own idiom for a bridge global (see
+  // `mock-bridge-global-config-shape.spec.ts`, `persona-sync.spec.ts`).
+  await page.waitForFunction(() =>
+    Boolean(window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__),
+  );
   await page.evaluate((response) => {
     const setResponse = window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__;
     if (!setResponse) throw new Error("Mission fold hook missing");
