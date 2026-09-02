@@ -7,6 +7,13 @@ Status: CONTRACT — frozen for batch 2 lane B1. Implemented in
 yet** — this document names each field's future consumer so that the record and
 the thing that reads it cannot drift apart before the reader is written.
 
+The **wire contract** is `docs/nips/NIP-CSP.md`, written at landing as the
+companion to `NIP-CSTX.md`: envelope, exact keys, closed vocabularies, bounds,
+and the four decoding rules. This document is the design note behind it — who
+consumes each field, and why v1 draws each line where it does. Where the two
+describe the same rule they say the same thing; where they differ in scope, the
+NIP is what another implementation reads.
+
 ---
 
 ## 0. What this record is

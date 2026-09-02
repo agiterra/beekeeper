@@ -380,6 +380,18 @@ function governedMissionEvents(): {
       // assertions helper spreads this object, so it is the only place the
       // field has to be declared.
       unseatedReports: [],
+      // Required by the adapter and the TS decoder as of batch 2 B1c, in the
+      // same way and for the same reason: the decoder does `hasExactFields` on
+      // the response's top level, so a mocked response missing any of these
+      // three throws `native coding-session team fold returned a malformed
+      // response` for every team session. `[]`/`null` are real answers — this
+      // fixture's mission carries no note, no ruling, and waits on nobody.
+      // Every other `foldResponse` in this spec and in the assertions helper
+      // spreads this object, so this is the only place they have to be
+      // declared.
+      notes: [],
+      decisions: [],
+      waitingOnDecision: null,
       canonicalTerminal: null,
     },
   };

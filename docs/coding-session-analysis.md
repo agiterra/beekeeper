@@ -28,6 +28,8 @@ The eleven coding-session kinds, plus kind 44240, land in the relay's Postgres
 | 44229 | Name revision | [NIP-CSG](nips/NIP-CSG.md) |
 | 44230 | Closure revision | [NIP-CSG](nips/NIP-CSG.md) |
 | 44240 | Project Pulse entry — **pending the Slice 1 branch split** | `crates/buzz-core/src/pulse.rs` (no published NIP yet) |
+| 44244 | Team transaction | [NIP-CSTX](nips/NIP-CSTX.md) |
+| 44245 | Session policy — **a record, not an enforcement** | [NIP-CSP](nips/NIP-CSP.md) |
 
 44220–44225 are the per-generation, provider-authored kinds the CLI's
 `sessions` subcommand and the SQL below were originally written against.

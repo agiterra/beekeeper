@@ -763,9 +763,10 @@ pub const KIND_CODING_SESSION_TEAM_TRANSACTION: u32 = 44244;
 /// continuity research, 44240 is the shipped Pulse entry with 44241–44243
 /// reserved by the Pulse plan, and 44244 is the team transaction.
 ///
-/// See `docs/design/portable-team-loop/POLICY.md` for each field's consumer
-/// and why v1 rejects unknown fields rather than ignoring them. A
-/// `docs/nips/NIP-CSP.md` companion to `NIP-CSTX.md` is not yet written.
+/// The wire contract is `docs/nips/NIP-CSP.md`, the companion to
+/// `NIP-CSTX.md`. See `docs/design/portable-team-loop/POLICY.md` for each
+/// field's consumer and why v1 rejects unknown fields rather than ignoring
+/// them.
 pub const KIND_CODING_SESSION_POLICY: u32 = 44245;
 
 // Forum / social (45000–45999)
