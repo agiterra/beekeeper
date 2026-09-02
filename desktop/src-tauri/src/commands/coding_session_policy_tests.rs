@@ -201,19 +201,34 @@ fn every_refusal_is_the_core_decoders_own_sentence_naming_the_key() {
     }
 }
 
-/// A closed-vocabulary miss is refused, and — today — names nothing.
+/// A closed-vocabulary miss is refused **and lists the words it would accept**.
 ///
-/// Recorded rather than hidden. `decode_coding_session_policy`
-/// (`crates/buzz-core/src/coding_session_policy.rs:589-590`) discards serde's
-/// own message, which does name the field and list the accepted variants, and
-/// substitutes `malformed coding-session policy payload`. Every *other*
-/// refusal on this path names its key. The launch form is the surface that
-/// meets this one, so it never renders a bare adapter error for a word it
-/// offered — but a `bee sessions policy set --posture sprint` would, and that
-/// is the fix this test exists to hold a place for. Not changed here:
-/// `coding_session_policy.rs` is outside lane B3's row.
+/// Lane B3 wrote this as a placeholder: both `map_err(|_| …)` sites in
+/// `decode_coding_session_policy` threw serde's own message away and
+/// substituted a sentence that named nothing, while every *other* refusal on
+/// that path named its key. The launch form never meets it — it offers only
+/// words the decoder accepts — but `bee sessions policy set --posture sprint`
+/// does, and its author was told nothing at all.
+///
+/// Both sites now keep serde's message
+/// (`crates/buzz-core/src/coding_session_policy.rs:554`, `:596`), so the
+/// refusal reads:
+///
+/// ```text
+/// malformed coding-session policy payload: unknown variant `sprint`,
+/// expected one of `spike`, `ship`, `investigate`, `overnight`
+/// at line 1 column 99
+/// ```
+///
+/// **What it still does not do is name the field.** `serde_json`'s
+/// `unknown variant` message carries the offending word, the legal words and a
+/// byte offset, not the key it was decoding, and this crate has no
+/// `serde_path_to_error` in the path. With one closed vocabulary in the body
+/// the legal words identify the field on sight; with two, the author has the
+/// column offset and nothing else. Asserted as it actually behaves rather than
+/// as it ought to.
 #[test]
-fn an_undefined_vocabulary_word_is_refused_but_the_sentence_names_nothing() {
+fn an_undefined_vocabulary_word_is_refused_and_the_sentence_lists_the_legal_words() {
     let error = build_adapter(build_request(json!({
         "schema": "buzz-coding-session-policy/v1",
         "sessionRef": SESSION,
@@ -221,8 +236,20 @@ fn an_undefined_vocabulary_word_is_refused_but_the_sentence_names_nothing() {
         "posture": "sprint"
     })))
     .expect_err("must refuse");
-    assert_eq!(error, "malformed coding-session policy payload");
-    assert!(!error.contains("posture"));
+    assert!(
+        error.starts_with("malformed coding-session policy payload: "),
+        "{error}"
+    );
+    assert!(error.contains("unknown variant `sprint`"), "{error}");
+    for word in ["spike", "ship", "investigate", "overnight"] {
+        assert!(
+            error.contains(word),
+            "the refusal must list {word}: {error}"
+        );
+    }
+    // The gap that remains, pinned so it cannot be forgotten or quietly
+    // "fixed" by a wording change that does not add the field name.
+    assert!(!error.contains("posture"), "{error}");
 }
 
 #[test]

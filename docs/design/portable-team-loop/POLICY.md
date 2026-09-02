@@ -266,7 +266,14 @@ enforced limit**, and *any surface that displays one must say so* — rather tha
 showing a budget bar that nothing is counting, or a "red first" badge that no
 gate is holding a lane to. The context package's `session_overview` carries
 that sentence beside the record (`policySemantics.notEnforced`); a CLI or UI
-that renders a policy owes its reader the same one.
+that renders a policy owes its reader the same one. `bee sessions policy`
+prints it as `enforcement` on `set`, `get` and `clear`
+(`crates/buzz-cli/src/commands/sessions/policy.rs`
+`POLICY_ENFORCEMENT_DISCLOSURE`), and Desktop renders
+`CODING_SESSION_POLICY_STATED_NOT_ENFORCED`
+(`desktop/src/features/coding-sessions/lib/codingSessionPolicy.ts`), whose
+companion `CODING_SESSION_POLICY_ENFORCED_FIELDS` holds `budget.turns` and
+nothing else — the one list on that side that may claim a field is enforced.
 
 ### 4.3 The CLI writes it and reads it, through the same rule
 

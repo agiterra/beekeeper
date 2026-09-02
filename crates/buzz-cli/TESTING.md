@@ -1722,6 +1722,8 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 74 | `sessions audit` | ☐ | Per-turn rows carry the frozen shape; an unreported number is `null`, never `0`; `costUsd` is the producer's own number off the `result` item; `handedTwice`/`roomDownloads`/`retryLoops` populate on a night with waste; a clipped execution's rows carry `toolCallsTruncated: true`; `--format compact` prints the turn rows **and** the `bounds` rows |
 | 75 | `sessions hire --check` | ☐ | Publishes nothing (`bee sessions list` shows no new seat); prints `published:false`, `briefBytes`, `briefCapBytes`, role and routing; exit 1 on an empty or oversized brief; refused together with `--no-wait` |
 | 76 | `sessions grant-seat` / `revoke-seat` | ☐ | Seat granted by founder / steering operator / lead; a lead cannot grant `lead`; second run is `already_granted` with no write; `revoke-seat` refuses a pubkey with no seat and one holding a different role, and the roster loses the seat after it; `grant --role <slug>` is a parse error naming the two tiers |
+| 77 | `sessions policy set/get/clear` | ☐ | `set` refuses a signer who is neither the founder nor the holder of an accepted operator grant, **before signing**; a sub-object nobody set is omitted, never `{}`; a closed-vocabulary miss carries serde's own sentence, listing the four legal words (it does not name the field — see the ledger residual); `set` with no policy flag names `policy clear`; `get` prints `null` (not `{}`) when nobody set one and lists every record it refused with author, time, code and reason; a stranger's later record never wins; all three print the enforcement disclosure |
+| 78 | pre-publish fold check on every 44244 verb | ☐ | A causal reference that is absent, excluded or present-but-not-included is refused before signing, naming the id and the rule; a `--supersedes` that changes the subject, the author or the type is refused; a record that points at nothing makes zero relay reads; `complete` adopts your own canonical `mission.blocked` and the answer carries `supersedes` (present and `null` when it corrected nothing) plus a `correctedTerminal` sentence |
 
 ---
 
@@ -1786,6 +1788,53 @@ after relay acceptance is proven. `created_ungranted` preserves all seat
 evidence and means the live seat must not be hired again. Legacy
 `sessions grant --role collaborator|viewer` does not repair a missing role-seat
 transition; `sessions grant-seat` writes one.
+
+---
+
+## Session policy (kind 44245)
+
+A session policy is a **stated intention, not an enforced limit**. Exactly one
+field binds anything today — `budget.turns`, at the provider's turn gate — and
+every surface says so in the same sentence.
+
+```bash
+bee sessions policy set --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS" --posture overnight --budget-turns 12 \
+  --required-gate "just ci" --irreversible push
+
+bee sessions policy get --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS" | jq .
+
+# Withdraw it. `set` with no policy flag is refused and names this command.
+bee sessions policy clear --channel "$CHANNEL" --session-ref "$SESSION" \
+  --genesis "$GENESIS"
+```
+
+**Who may set one, and when it is judged.** The founder, or a seat holding an
+operator grant that was accepted *by the moment the record was published*. That
+is one rule, in `crates/buzz-core/src/coding_session_policy_fold.rs`, called by
+both `bee` and the provider — a later revoke does not retroactively invalidate
+a policy signed while the grant stood, and a policy signed before the grant was
+accepted is refused. `set` and `clear` pre-check it before signing; `get` folds
+it, so a stranger's record published later into the same channel prints as an
+`excluded` row with its author, time, code and reason rather than as "the
+newest policy".
+
+`get` prints `null` when nobody with standing set one — never `{}` — and a
+withdrawal prints as a real record with `setsAnyPolicy: false`, because
+"nobody set a policy" and "someone withdrew theirs" are different facts.
+
+The closed vocabularies are parsed by the record's own serde, so
+`--posture sprint` is refused by a sentence that names `posture` and lists the
+four legal words. A sub-object nobody set is omitted rather than published as
+`{}`, which the record refuses.
+
+**What the provider does with it.** `budget.turns` overrides
+`BUZZ_CSP_TURN_BUDGET` for that umbrella, through one predicate serving both
+the 44220 turn gate and a create's first turn; the refusal names the published
+policy rather than the environment variable. The founder is never refused. A
+policy published mid-session does not bind until that umbrella's next create or
+resume. Everything else in the record is read and shown, never counted.
 
 ---
 

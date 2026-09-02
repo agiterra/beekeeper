@@ -135,23 +135,38 @@ test("an empty collection is omitted rather than sent as an empty sub-object", (
   );
 });
 
-test("only fields the record sets become facts, and none of them is enforced yet", () => {
+test("only fields the record sets become facts, and exactly one is enforced", () => {
   const facts = codingSessionPolicyFacts(FIXTURE.build.record);
   const fields = facts.map((fact) => fact.field);
   assert.ok(fields.includes("budget.turns"));
   assert.ok(fields.includes("irreversible"));
-  // POLICY.md §4: nothing in this build refuses anything because of a 44245.
-  // B2.4 gives `budget.turns` its first consumer, and adding that one string
-  // to CODING_SESSION_POLICY_ENFORCED_FIELDS is what flips this row.
-  assert.deepEqual(CODING_SESSION_POLICY_ENFORCED_FIELDS, []);
+  // POLICY.md §4: `budget.turns` and nothing else. Lane B2.4 shipped its
+  // consumer (the provider's turn gate); this list is the only place the
+  // claim is made, so it is asserted exactly rather than by length.
+  assert.deepEqual(CODING_SESSION_POLICY_ENFORCED_FIELDS, ["budget.turns"]);
   assert.equal(
-    facts.every((fact) => fact.enforced === false),
+    facts.find((fact) => fact.field === "budget.turns")?.enforced,
     true,
   );
-  // POLICY.md §4's own words, so the disclosure and the contract cannot
-  // soften independently of each other.
+  assert.equal(
+    facts
+      .filter((fact) => fact.field !== "budget.turns")
+      .every((fact) => fact.enforced === false),
+    true,
+  );
+  // POLICY.md §4.2's own words, so the disclosure and the contract cannot
+  // soften independently of each other — and the one enforced field is named
+  // rather than buried under a blanket "nothing is enforced".
   assert.match(
     CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
-    /a published policy is a stated intention, not an enforced limit/,
+    /read and shown, and nothing checks them/,
+  );
+  assert.match(
+    CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
+    /a stated intention, not an enforced limit/,
+  );
+  assert.match(
+    CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
+    /the provider refuses a turn once a session has spent it/,
   );
 });

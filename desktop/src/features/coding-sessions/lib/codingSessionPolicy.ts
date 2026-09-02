@@ -477,32 +477,44 @@ export async function readCodingSessionPolicyEvent(
 /**
  * The sentence every surface rendering a policy owes its reader.
  *
- * `docs/design/portable-team-loop/POLICY.md` §4: until a consumer exists, a
- * published policy is a stated intention, not an enforced limit — and a
- * surface that shows a budget bar nothing is counting is lying with a
- * progress indicator. Kept as one constant so the launch form, the Inspector
- * and any later surface cannot drift into softer wording.
+ * `docs/design/portable-team-loop/POLICY.md` §4.2 — and it changed under this
+ * constant while both halves of batch 2 were in flight. Lane B3 wrote it when
+ * §4 still said *"until a consumer exists"* and nothing anywhere refused a
+ * turn on a 44245; lane B2 then shipped the first consumer, so that wording
+ * became false in the one way that matters — it told a founder nothing was
+ * counting their turn ceiling while the provider was refusing turns on it.
+ *
+ * The quoted clause is now §4.2's own, verbatim: every field except
+ * `budget.turns` is *"read and shown, and nothing checks them"*, and for each
+ * of them the record remains *"a stated intention, not an enforced limit"*.
+ * The one enforced field is named rather than hidden inside the general
+ * disclaimer, and {@link CODING_SESSION_POLICY_ENFORCED_FIELDS} is what marks
+ * its row. Kept as one constant so no surface can drift into softer wording.
  */
 export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
-  // The first clause is POLICY.md §4, verbatim: "until a consumer exists, a
-  // published policy is a stated intention, not an enforced limit". The
-  // sentence after it is what that means on this screen. An earlier wording
-  // said the same thing in different words and the report claimed it was
-  // "word for word" (REVIEW-B3 F9); now it is.
-  "Until a consumer exists, a published policy is a stated intention, not an " +
-  "enforced limit — nothing in this build refuses a turn, a token or a push " +
-  "because of it.";
+  "Only the turn ceiling binds anything: the provider refuses a turn once a " +
+  "session has spent it. Every other field here is read and shown, and " +
+  "nothing checks them — a published policy is a stated intention, not an " +
+  "enforced limit.";
 
 /**
  * Policy fields a consumer actually enforces today, by dotted name.
  *
- * Empty on purpose, and it is the *only* place that claim is made. B2.4 gives
- * `budget.turns` its first consumer — the provider's turn budget — and adding
- * the string here is what moves the disclosure from "stated, not enforced" to
- * "enforced by the provider" for that one row. Every other row keeps the
- * honest sentence until the same thing is true of it.
+ * The *only* place that claim is made. `budget.turns` is here because lane
+ * B2.4 shipped its consumer: `exhausted_umbrella_budget`
+ * (`crates/buzz-session-provider/src/commands.rs`), reached from the 44220
+ * turn gate and from a create's first turn, which override
+ * `BUZZ_CSP_TURN_BUDGET` for that umbrella. The umbrella's founder is still
+ * never refused, and a policy published while a seat is already running does
+ * not bind until that umbrella's next create or resume — POLICY.md §4.1.
+ *
+ * Every other field stays out until the same thing is true of it. Adding a
+ * name here with no consumer behind it is the exact lie this list exists to
+ * prevent.
  */
-export const CODING_SESSION_POLICY_ENFORCED_FIELDS: readonly string[] = [];
+export const CODING_SESSION_POLICY_ENFORCED_FIELDS: readonly string[] = [
+  "budget.turns",
+];
 
 /** True when nothing in this build consumes any field this record sets. */
 export function codingSessionPolicyIsEnforced(field: string): boolean {

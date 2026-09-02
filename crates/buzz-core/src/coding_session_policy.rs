@@ -551,7 +551,7 @@ pub fn decode_coding_session_policy(content: &str) -> Result<CodingSessionPolicy
         ));
     }
     let value: Value = serde_json::from_str(content)
-        .map_err(|_| "malformed coding-session policy payload".to_owned())?;
+        .map_err(|error| format!("malformed coding-session policy payload: {error}"))?;
     let object = value
         .as_object()
         .ok_or_else(|| "coding-session policy payload must be an object".to_owned())?;
@@ -593,7 +593,7 @@ pub fn decode_coding_session_policy(content: &str) -> Result<CodingSessionPolicy
     validate_nested_keys(object, "stop", &["timeBoxSecs", "onMilestone"])?;
 
     let payload: CodingSessionPolicyPayload = serde_json::from_str(content)
-        .map_err(|_| "malformed coding-session policy payload".to_owned())?;
+        .map_err(|error| format!("malformed coding-session policy payload: {error}"))?;
     payload.validate()?;
     Ok(payload)
 }
