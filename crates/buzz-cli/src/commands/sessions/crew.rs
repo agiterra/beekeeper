@@ -33,7 +33,7 @@ use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use buzz_core::coding_session_identity::{ProviderInstanceAlias, RuntimeWord};
 use buzz_core::coding_session_lease::{decode_coding_session_lease, CodingSessionLeaseState};
 use buzz_core::coding_session_lifecycle_command::{
-    CodingSessionLifecycleAction, MAX_LIFECYCLE_INITIAL_TURN_BYTES,
+    CodingSessionLifecycleAction, MAX_LIFECYCLE_HIRE_BRIEF_BYTES,
 };
 use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionStatus, NO_LIVE_EXECUTION, STALE_GENERATION,
@@ -2498,7 +2498,10 @@ pub struct HireCheckRequest<'a> {
 ///
 /// Every number is measured, never estimated: `briefBytes` is the UTF-8 length
 /// of the exact string that would be signed and `briefCapBytes` is the relay's
-/// own ceiling ([`MAX_LIFECYCLE_INITIAL_TURN_BYTES`]). `published` is present
+/// own ceiling for a *brief* ([`MAX_LIFECYCLE_HIRE_BRIEF_BYTES`]) — the
+/// initial-turn ceiling minus the host's `"[From the lead] "` prefix, which is
+/// what the decoder refuses against, not the wider initial-turn ceiling.
+/// `published` is present
 /// and `false` so a reader — or a grep over a seat's transcript — can tell a
 /// check from a hire without knowing which flags were passed. An acceptance
 /// test that publishes a live 44221 is not an acceptance test; one ran on
@@ -2513,8 +2516,8 @@ pub fn hire_check_report(request: &HireCheckRequest<'_>) -> Value {
         "genesisRef": request.genesis_ref,
         "role": request.role,
         "briefBytes": brief_bytes,
-        "briefCapBytes": MAX_LIFECYCLE_INITIAL_TURN_BYTES,
-        "briefWithinCap": brief_bytes <= MAX_LIFECYCLE_INITIAL_TURN_BYTES,
+        "briefCapBytes": MAX_LIFECYCLE_HIRE_BRIEF_BYTES,
+        "briefWithinCap": brief_bytes <= MAX_LIFECYCLE_HIRE_BRIEF_BYTES,
         "providerInstanceRef": request.provider_instance,
         "model": request.model,
         "routing": request

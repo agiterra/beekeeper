@@ -7958,6 +7958,77 @@ mod tests {
         .to_string()
     }
 
+    fn hire_content_with_brief(session_ref: &str, brief: &str) -> String {
+        serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.hire",
+                "sessionRef": session_ref,
+                "genesisRef": "12".repeat(32),
+                "role": "builder",
+                "providerInstanceRef": null,
+                "model": null,
+                "brief": brief,
+            },
+        })
+        .to_string()
+    }
+
+    /// The relay refuses a brief the founder's host could never seat, and it
+    /// does so by *inheritance* rather than by a second ceiling of its own.
+    ///
+    /// Track 2 item 4: ingest admitted 12,288 bytes while the create the host
+    /// publishes in reply — the brief behind a 16-byte prefix — is validated
+    /// at that same number, so a brief of 12,273..=12,288 bytes signed, was
+    /// stored, and then threw in the host. The envelope validator calls
+    /// `decode_coding_session_lifecycle_command`, so the decoder's ceiling is
+    /// the relay's ceiling with no code here to keep in step.
+    #[test]
+    fn coding_session_hire_inherits_the_decoder_effective_brief_ceiling() {
+        use buzz_core::coding_session_lifecycle_command::{
+            MAX_LIFECYCLE_HIRE_BRIEF_BYTES, MAX_LIFECYCLE_INITIAL_TURN_BYTES,
+        };
+
+        let channel = Uuid::new_v4().to_string();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let hire = |bytes: usize| {
+            lifecycle_event(
+                &hire_content_with_brief(session_ref, &"b".repeat(bytes)),
+                &channel,
+            )
+        };
+
+        assert!(
+            validate_coding_session_lifecycle_command_envelope(&hire(
+                MAX_LIFECYCLE_HIRE_BRIEF_BYTES
+            ))
+            .is_ok(),
+            "a brief at the effective ceiling is accepted at ingest"
+        );
+
+        let error = validate_coding_session_lifecycle_command_envelope(&hire(
+            MAX_LIFECYCLE_HIRE_BRIEF_BYTES + 1,
+        ))
+        .expect_err("one byte past the effective ceiling must be refused at ingest");
+        assert_eq!(
+            error,
+            "coding-session lifecycle command action.brief exceeds 12272 bytes (got 12273): a \
+             hire's brief becomes the seat's first turn behind the host's 16-byte \
+             \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that \
+             prefix"
+        );
+
+        // The old ingest ceiling, in the window that used to be admitted.
+        assert!(
+            validate_coding_session_lifecycle_command_envelope(&hire(
+                MAX_LIFECYCLE_INITIAL_TURN_BYTES
+            ))
+            .is_err(),
+            "the window the host has always thrown on is no longer admitted"
+        );
+    }
+
     /// The gate reads the umbrella out of a hire's own content, and reads
     /// nothing out of any other lifecycle action — a create must keep the
     /// provider-enforced rule it has always had.

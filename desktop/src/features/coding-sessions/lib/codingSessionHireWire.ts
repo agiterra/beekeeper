@@ -9,7 +9,7 @@
  * ```json
  * { "type": "session.hire", "sessionRef": "<uuid>", "genesisRef": "<64hex>",
  *   "role": "<slug>", "providerInstanceRef": null, "model": null,
- *   "brief": "<1..12288 bytes>", "routing": null }
+ *   "brief": "<1..12272 bytes>", "routing": null }
  * ```
  *
  * `routing` is the 2026-08-30 amendment and travels present-or-absent, never
@@ -47,6 +47,7 @@ import {
   readCodingSessionHireRoutingRequest,
   type CodingSessionHireRoutingRequest,
 } from "./codingSessionHireRouting";
+import { CODING_SESSION_HIRE_BRIEF_PREFIX } from "./codingSessionHireSeat";
 import {
   CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
   CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
@@ -54,6 +55,7 @@ import {
   isCodingSessionLifecycleHex64,
   MAX_CODING_SESSION_LIFECYCLE_CONTENT_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_IDENTIFIER_BYTES,
+  MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_REFERENCE_BYTES,
   type CodingSessionLifecycleCommandEventInput,
 } from "./codingSessionLifecycleCommand";
@@ -73,11 +75,20 @@ export const CODING_SESSION_HIRE_ACTION_TYPE = "session.hire" as const;
 /**
  * Longest brief a hire may carry, in UTF-8 bytes.
  *
- * The same ceiling the create's `initialTurn` has, because the brief *becomes*
- * that turn: a hire this host would have to truncate to seat is refused before
- * it is signed rather than seated against a brief nobody wrote.
+ * *Not* the create's `initialTurn` ceiling, but that ceiling minus the host's
+ * {@link CODING_SESSION_HIRE_BRIEF_PREFIX} — because the brief becomes that
+ * turn *behind the prefix* (`codingSessionHireSeat.ts:130`), so a brief that
+ * fills the wider ceiling produces an initial turn 16 bytes over it. Derived
+ * from both constants rather than written down, and mirrored in Rust by
+ * `MAX_LIFECYCLE_HIRE_BRIEF_BYTES`
+ * (`crates/buzz-core/src/coding_session_lifecycle_command.rs:80`), which is
+ * what the decoder — and therefore the relay — actually refuses against. A
+ * hire this host would have to truncate to seat is refused before it is signed
+ * rather than seated against a brief nobody wrote.
  */
-export const MAX_CODING_SESSION_HIRE_BRIEF_BYTES = 12 * 1024;
+export const MAX_CODING_SESSION_HIRE_BRIEF_BYTES =
+  MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES -
+  CODING_SESSION_HIRE_BRIEF_PREFIX.length;
 
 /** The exact key order the action is serialized in. */
 export const CODING_SESSION_HIRE_ACTION_KEYS = [

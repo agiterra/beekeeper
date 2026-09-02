@@ -3909,7 +3909,7 @@ fn a_hire_check_report_measures_the_brief_against_the_relays_own_cap() {
     assert_eq!(report["published"], json!(false));
     assert_eq!(report["check"], json!(true));
     assert_eq!(report["briefBytes"], json!(brief.len()));
-    assert_eq!(report["briefCapBytes"], json!(12 * 1024));
+    assert_eq!(report["briefCapBytes"], json!(12 * 1024 - 16));
     assert_eq!(report["briefWithinCap"], json!(true));
     assert_eq!(report["role"], json!("builder"));
     assert_eq!(report["routed"], json!(false));
@@ -3935,7 +3935,7 @@ fn an_oversized_brief_is_reported_as_over_the_cap() {
         proposal_unavailable: None,
     });
     assert_eq!(report["briefBytes"], json!(brief.len()));
-    assert_eq!(report["briefCapBytes"], json!(12 * 1024));
+    assert_eq!(report["briefCapBytes"], json!(12 * 1024 - 16));
     assert_eq!(report["briefWithinCap"], json!(false));
     assert_eq!(report["published"], json!(false));
 }

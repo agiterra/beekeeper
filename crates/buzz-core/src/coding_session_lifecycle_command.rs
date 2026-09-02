@@ -49,6 +49,36 @@ pub const MAX_LIFECYCLE_COMMAND_ID_BYTES: usize = 256;
 pub const MAX_LIFECYCLE_REFERENCE_BYTES: usize = 2 * 1024;
 /// Maximum UTF-8 byte length for an initial turn.
 pub const MAX_LIFECYCLE_INITIAL_TURN_BYTES: usize = 12 * 1024;
+
+/// The framing the founder's host puts in front of a hired seat's first turn.
+///
+/// Mirrors `CODING_SESSION_HIRE_BRIEF_PREFIX` in
+/// `desktop/src/features/coding-sessions/lib/codingSessionHireSeat.ts:34`,
+/// which is the only place that string is written on the way to the wire. It
+/// is declared here so [`MAX_LIFECYCLE_HIRE_BRIEF_BYTES`] can measure the
+/// prefix rather than restate its length as a number that can drift away from
+/// it.
+pub const CODING_SESSION_HIRE_BRIEF_PREFIX: &str = "[From the lead] ";
+
+/// Maximum UTF-8 byte length for a `session.hire`'s `brief`.
+///
+/// A hire's brief is not stored as a brief: the founder's host publishes the
+/// seat's create with `initialTurn` = [`CODING_SESSION_HIRE_BRIEF_PREFIX`] +
+/// brief (`codingSessionHireSeat.ts:130-133`), and that create is validated at
+/// [`MAX_LIFECYCLE_INITIAL_TURN_BYTES`]. So the brief's real ceiling is the
+/// initial turn's minus the prefix the host adds; anything above it names a
+/// seat no host can create.
+///
+/// **The narrowing has a disclosed consequence.** A hire already signed and
+/// stored with a brief of 12,273..=12,288 bytes stops decoding, so readers
+/// skip it — `find_hired_seat` does `let Ok(payload) = decode… else
+/// { continue }` (`crates/buzz-cli/src/commands/sessions/crew.rs:1642-1648`).
+/// That window is exactly the set of hires the founder's host has always
+/// thrown on when it tried to build the create, so no hire that could ever be
+/// seated is lost — but the events themselves are now unreadable rather than
+/// readable-and-unseatable, and that is a real change, not an invisible one.
+pub const MAX_LIFECYCLE_HIRE_BRIEF_BYTES: usize =
+    MAX_LIFECYCLE_INITIAL_TURN_BYTES - CODING_SESSION_HIRE_BRIEF_PREFIX.len();
 /// Maximum UTF-8 byte length for the complete signed event content.
 pub const MAX_LIFECYCLE_CONTENT_BYTES: usize = 16 * 1024;
 /// Maximum bytes in an agent seat's `role` slug.
@@ -202,7 +232,9 @@ pub enum CodingSessionLifecycleAction {
         model: Option<String>,
         /// The brief. It becomes the seat's first turn verbatim (the host
         /// prefixes it), so it is required and non-empty:
-        /// 1..=[`MAX_LIFECYCLE_INITIAL_TURN_BYTES`] bytes.
+        /// 1..=[`MAX_LIFECYCLE_HIRE_BRIEF_BYTES`] bytes — the initial turn's
+        /// ceiling minus the host's [`CODING_SESSION_HIRE_BRIEF_PREFIX`],
+        /// because the prefixed string is what is validated on the create.
         brief: String,
         /// Lowercase 64-hex pubkey of the seat that ran `bee sessions hire` —
         /// the hire event's own signer today (COMMS-MAP §3).
@@ -490,7 +522,7 @@ impl CodingSessionLifecycleCommandPayload {
                     )?;
                 }
                 validate_optional(model, "action.model", MAX_LIFECYCLE_REFERENCE_BYTES)?;
-                validate_required(brief, "action.brief", MAX_LIFECYCLE_INITIAL_TURN_BYTES)?;
+                validate_hire_brief(brief)?;
                 if let Some(requested_by) = requested_by {
                     validate_pubkey_hex("action.requestedBy", requested_by)?;
                 }
@@ -1252,6 +1284,31 @@ fn validate_required(value: &str, field: &str, max_bytes: usize) -> Result<(), S
     }
     if value.len() > max_bytes {
         return Err(format!("{field} exceeds {max_bytes} bytes"));
+    }
+    Ok(())
+}
+
+/// Validate a `session.hire`'s `brief` against its **effective** ceiling.
+///
+/// Not [`validate_required`] with a different number, because the refusal has
+/// to say why the number is not the one every other free-text field carries: a
+/// lead reading `exceeds 12272 bytes` about a field documented at 12,288 would
+/// reasonably conclude the relay is wrong. See
+/// [`MAX_LIFECYCLE_HIRE_BRIEF_BYTES`].
+fn validate_hire_brief(brief: &str) -> Result<(), String> {
+    if brief.trim().is_empty() {
+        return Err("action.brief must not be empty".into());
+    }
+    if brief.len() > MAX_LIFECYCLE_HIRE_BRIEF_BYTES {
+        return Err(format!(
+            "coding-session lifecycle command action.brief exceeds \
+             {MAX_LIFECYCLE_HIRE_BRIEF_BYTES} bytes (got {got}): a hire's brief becomes the \
+             seat's first turn behind the host's {prefix_bytes}-byte {prefix:?} prefix, so its \
+             ceiling is the initial-turn ceiling minus that prefix",
+            got = brief.len(),
+            prefix_bytes = CODING_SESSION_HIRE_BRIEF_PREFIX.len(),
+            prefix = CODING_SESSION_HIRE_BRIEF_PREFIX,
+        ));
     }
     Ok(())
 }
@@ -2108,30 +2165,103 @@ mod tests {
         }
     }
 
-    /// The brief is the seat's whole first turn, so it takes the same ceiling
-    /// an `initialTurn` does and one byte past it is refused.
-    #[test]
-    fn refuses_a_brief_past_the_initial_turn_ceiling() {
+    /// A brief of `bytes` `b`s, decoded.
+    fn decode_hire_with_brief(brief: &str) -> Result<CodingSessionLifecycleCommandPayload, String> {
         let session = format!("{:?}", session_reference());
         let genesis = format!("{:?}", "12".repeat(32));
-        for (bytes, expected_ok) in [
-            (MAX_LIFECYCLE_INITIAL_TURN_BYTES, true),
-            (MAX_LIFECYCLE_INITIAL_TURN_BYTES + 1, false),
+        decode_coding_session_lifecycle_command(&hire_content(
+            &session,
+            &genesis,
+            "\"builder\"",
+            "null",
+            "null",
+            &serde_json::to_string(brief).expect("a JSON string"),
+        ))
+    }
+
+    /// The brief becomes the seat's first turn *behind the host's prefix*, so
+    /// its ceiling is the initial turn's minus that prefix, and one byte past
+    /// it is refused by a sentence that names both numbers.
+    #[test]
+    fn refuses_a_brief_past_the_effective_hire_ceiling() {
+        assert_eq!(CODING_SESSION_HIRE_BRIEF_PREFIX.len(), 16);
+        assert_eq!(MAX_LIFECYCLE_HIRE_BRIEF_BYTES, 12_272);
+
+        assert!(
+            decode_hire_with_brief(&"b".repeat(MAX_LIFECYCLE_HIRE_BRIEF_BYTES)).is_ok(),
+            "a brief at the ceiling exactly is accepted"
+        );
+
+        let over = MAX_LIFECYCLE_HIRE_BRIEF_BYTES + 1;
+        let error = decode_hire_with_brief(&"b".repeat(over))
+            .expect_err("one byte past the ceiling must be refused");
+        assert_eq!(
+            error,
+            "coding-session lifecycle command action.brief exceeds 12272 bytes (got 12273): a \
+             hire's brief becomes the seat's first turn behind the host's 16-byte \
+             \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that \
+             prefix"
+        );
+
+        // The window the narrowing closes: briefs the host has always thrown
+        // on when it built the create are now refused on the wire.
+        for bytes in [
+            MAX_LIFECYCLE_HIRE_BRIEF_BYTES + 1,
+            MAX_LIFECYCLE_INITIAL_TURN_BYTES,
         ] {
-            let content = hire_content(
-                &session,
-                &genesis,
-                "\"builder\"",
-                "null",
-                "null",
-                &format!("{:?}", "b".repeat(bytes)),
-            );
-            assert_eq!(
-                decode_coding_session_lifecycle_command(&content).is_ok(),
-                expected_ok,
-                "a {bytes}-byte brief"
+            assert!(
+                decode_hire_with_brief(&"b".repeat(bytes)).is_err(),
+                "a {bytes}-byte brief names a seat no host can create"
             );
         }
+    }
+
+    /// The ceiling counts UTF-8 bytes, not characters: a brief of multi-byte
+    /// characters that fits by count and not by length is refused.
+    #[test]
+    fn a_hire_brief_is_measured_in_bytes_not_characters() {
+        // 3,068 four-byte bees = 12,272 bytes exactly.
+        let at_ceiling = "🐝".repeat(MAX_LIFECYCLE_HIRE_BRIEF_BYTES / 4);
+        assert_eq!(at_ceiling.len(), MAX_LIFECYCLE_HIRE_BRIEF_BYTES);
+        assert_eq!(
+            at_ceiling.chars().count(),
+            MAX_LIFECYCLE_HIRE_BRIEF_BYTES / 4
+        );
+        assert!(decode_hire_with_brief(&at_ceiling).is_ok());
+
+        let over = format!("{at_ceiling}🐝");
+        assert_eq!(over.chars().count(), MAX_LIFECYCLE_HIRE_BRIEF_BYTES / 4 + 1);
+        let error = decode_hire_with_brief(&over).expect_err("12,276 bytes is over the ceiling");
+        assert!(
+            error.contains("action.brief exceeds 12272 bytes (got 12276)"),
+            "the refusal must count bytes: {error}"
+        );
+    }
+
+    /// The narrowing is the hire's alone: a create's `initialTurn` keeps the
+    /// full ceiling, which is the number the brief's is derived *from*.
+    #[test]
+    fn the_hire_narrowing_does_not_leak_into_the_create() {
+        let mut payload = valid_payload();
+        let CodingSessionLifecycleAction::SessionCreate { initial_turn, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
+        *initial_turn = Some("t".repeat(MAX_LIFECYCLE_INITIAL_TURN_BYTES));
+        assert!(
+            payload.validate().is_ok(),
+            "an initialTurn at 12288 bytes is still accepted"
+        );
+
+        let CodingSessionLifecycleAction::SessionCreate { initial_turn, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
+        *initial_turn = Some("t".repeat(MAX_LIFECYCLE_INITIAL_TURN_BYTES + 1));
+        assert_eq!(
+            payload.validate(),
+            Err("action.initialTurn exceeds 12288 bytes".to_owned())
+        );
     }
 
     /// A role whose every installed identity is already seated is a different

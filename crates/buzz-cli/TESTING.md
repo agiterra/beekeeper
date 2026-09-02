@@ -1966,7 +1966,7 @@ hire signs, prints the facts the hire would carry, and **publishes nothing**:
 
 ```json
 {"check":true,"published":false,"role":"builder","briefBytes":33,
- "briefCapBytes":12288,"briefWithinCap":true,"routed":false,...}
+ "briefCapBytes":12272,"briefWithinCap":true,"routed":false,...}
 ```
 
 Exit 0 when the payload is one the relay would accept, 1 when it is not (an
