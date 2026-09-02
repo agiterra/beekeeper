@@ -1571,6 +1571,55 @@ points at this command; when a pack-file reader exists, the one call site in
 
 ---
 
+### 6.18 Who this signer is (`sessions whoami`)
+
+No channel, no arguments — one JSON object naming exactly four keys, always
+present, `null` rather than omitted when unknown:
+
+```bash
+bee sessions whoami
+# → {"pubkey":"1ddd35c6…","display_name":"Bob","relay_url":"https://hive.agiterra.org","role":"builder"}
+```
+
+- **`pubkey`** — the signer this process is configured with (`client.keys()`),
+  never a provider key or an unverified env string.
+- **`display_name`** — the relay's kind:0 name for that pubkey, or `null` when
+  the relay holds none. A *failed* kind:0 lookup is not `null`: it exits 2
+  with the CLI's standard error envelope and prints no object at all.
+- **`relay_url`** — `BuzzClient::relay_url()` verbatim, not a second read of
+  `BUZZ_RELAY_URL`. The two can disagree: a live run with
+  `BUZZ_RELAY_URL=wss://hive.agiterra.org` printed
+  `"relay_url":"https://hive.agiterra.org"` (scheme normalized). `whoami`
+  always prints what the client will actually use.
+- **`role`** — the role slug of the active team seat this signer holds, or
+  `null` when it holds none. There is no channel or session ref in a seat's
+  process env, so this is discovered from the identity alone: every channel
+  the pubkey is a NIP-29 member of (kind:39002), every 44226 genesis in each,
+  and that genesis's projected, receipt-backed seat roster
+  (`crates/buzz-cli/src/commands/sessions/whoami.rs`). Two active seats with
+  different role slugs is never resolved by picking one — the command exits 4
+  and names every slug found.
+
+`--format compact` and `--format json` print identically: the whole output is
+already the minimal four-key shape `compact` reduces other reads to.
+
+**Unseated key.** hive enforces `relay_membership_required`; a fresh
+`BUZZ_PRIVATE_KEY` with no relay membership is refused before `whoami`'s own
+logic runs:
+
+```bash
+BUZZ_PRIVATE_KEY=$(openssl rand -hex 32) bee sessions whoami
+# → exit 3
+# {"error":"auth_error","message":"relay error 403: relay_membership_required — …","retryable":false}
+```
+
+That refusal is the relay's membership gate, not this command's `role`
+resolution — the "no active seat" and "conflicting active seats" paths are
+covered by this module's unit tests instead
+(`crates/buzz-cli/src/commands/sessions/whoami.rs`, `mod tests`).
+
+---
+
 ## 7. Error Path Testing
 
 Verify the CLI produces correct JSON on stderr and correct exit codes.

@@ -3101,6 +3101,12 @@ pub enum SessionsCmd {
         #[arg(long = "dry-run")]
         dry_run: bool,
     },
+    /// Print this signer's identity as one JSON object: pubkey, relay
+    /// display name, relay URL, and any active team seat role.
+    #[command(
+        after_help = "Examples:\n  bee sessions whoami\n  bee --format compact sessions whoami"
+    )]
+    Whoami,
 }
 
 /// Common envelope and JSON-body input for one typed team transaction.

@@ -84,6 +84,7 @@ pub mod route;
 mod seat_authority;
 #[cfg(test)]
 mod seat_authority_tests;
+pub mod whoami;
 
 /// Item kinds the 44225 contract recognizes. Anything else is counted as
 /// `other` rather than dropped — a provider that learns a new item kind must
@@ -2791,6 +2792,7 @@ pub async fn dispatch(
             )?;
             route::cmd_route(client, &channel, registry.as_deref(), &request, format).await
         }
+        SessionsCmd::Whoami => whoami::cmd_whoami(client, format).await,
     }
 }
 
