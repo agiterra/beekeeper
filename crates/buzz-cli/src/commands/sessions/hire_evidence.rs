@@ -138,11 +138,20 @@ pub(super) fn create_receipt_binding(
     let Some(target) = receipt_payload.session else {
         return Ok(None);
     };
-    if receipt.target_key.as_deref() != Some(coding_session_target_key(&target).as_str())
-        || target.instance_id != seat.provider_instance_ref
-    {
+    // The receipt's `session.instanceId` is the provider's cryptographic
+    // short id (the one every `cs-target` carries); the create's
+    // `providerInstanceRef` is the human-facing alias the host chose
+    // (`claude-primary`). They are different namespaces and never equal on
+    // the wire: on 2026-09-01 the first live `seat-repair` against cleantest
+    // refused the real `created` receipt (`3e53c993…`, instance
+    // `1958c6c448e05eed`) as "unbound" because it compared them, exactly the
+    // defect ledger item 102 removed from the Desktop hire host. The receipt
+    // is already pinned to the exact command, channel, and provider signer
+    // above; the alias is checked against the provider's own metadata in
+    // `verify_hire_evidence`, where both sides speak the alias.
+    if receipt.target_key.as_deref() != Some(coding_session_target_key(&target).as_str()) {
         return Err(CliError::Other(
-            "provider receipt target does not match the observed seat and provider instance".into(),
+            "provider receipt target does not match the observed seat's target key".into(),
         ));
     }
     Ok(Some(target))

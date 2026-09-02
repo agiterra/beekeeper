@@ -616,8 +616,11 @@ async fn forged_mismatched_and_unbacked_evidence_never_grants_a_seat() {
                 receipt_instance: "provider-2",
                 ..WireOptions::default()
             },
-            5,
-            "unbound receipt(s) ignored",
+            // Binds (same signer, command and tags — the alias is not comparable to
+            // the target's cryptographic instance id, see hire_evidence.rs), then
+            // fails verification against the provider's own metadata: refused, exit 1.
+            1,
+            "did not verify",
         ),
         (
             "create naming a genesis this umbrella was not founded on",

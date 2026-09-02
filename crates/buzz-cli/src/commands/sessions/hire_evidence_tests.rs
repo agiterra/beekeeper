@@ -16,7 +16,7 @@ use nostr::Keys;
 use uuid::Uuid;
 
 use super::crew::{HiredSeat, SeatReceipt};
-use super::hire_evidence::{verify_hire_evidence, HireEvidenceRequest};
+use super::hire_evidence::{create_receipt_binding, verify_hire_evidence, HireEvidenceRequest};
 
 fn request<'a>(
     channel: &'a str,
@@ -54,9 +54,12 @@ fn signed_hire() -> (
             .expect("sign genesis");
     let genesis = genesis_event.id.to_hex();
     let command_id = "create-hired";
+    // Live shape (cleantest, 2026-09-01): the receipt's target carries the
+    // provider's cryptographic short id, never the human alias the create and
+    // metadata name (`provider-1` here, `claude-primary` on the wire).
     let target = CodingSessionTarget {
         driver: "acp".into(),
-        instance_id: "provider-1".into(),
+        instance_id: "1958c6c448e05eed".into(),
         session_id: "session-1".into(),
         generation: 1,
     };
@@ -397,4 +400,33 @@ fn provider_instance_must_match_request_create_receipt_and_metadata() {
         &wrong_target,
     )
     .is_err());
+}
+
+/// Regression for the first live `seat-repair` (2026-09-01): the real
+/// `created` receipt `3e53c993…` was refused as "unbound" because the binding
+/// compared the target's cryptographic `instanceId` (`1958c6c448e05eed`) with
+/// the create's human alias (`claude-primary`). They are different namespaces;
+/// the alias is only comparable against the provider's own metadata.
+#[test]
+fn receipt_instance_id_is_the_providers_short_id_not_the_create_alias() {
+    let (events, seat, receipt, channel, genesis, _provider) = signed_hire();
+    assert_ne!(seat.provider_instance_ref, "1958c6c448e05eed");
+    let bound = create_receipt_binding(&channel, &seat, &receipt).expect("receipt binds");
+    assert_eq!(
+        bound.map(|target| target.instance_id),
+        Some("1958c6c448e05eed".to_owned())
+    );
+    verify_hire_evidence(
+        &events,
+        &request(
+            &channel,
+            &seat.session_ref,
+            &genesis,
+            "builder",
+            Some("provider-1"),
+        ),
+        &seat,
+        &receipt,
+    )
+    .expect("live-shape evidence verifies");
 }
