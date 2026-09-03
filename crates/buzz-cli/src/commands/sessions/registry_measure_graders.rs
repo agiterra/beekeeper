@@ -281,9 +281,18 @@ fn diff_applies(scratch: &Path, patch: &str) -> bool {
     if patch.contains("..") {
         return false;
     }
-    std::process::Command::new("git")
+    // Routed through the shared `git_command` helper (same one
+    // `git_config_set` and `bee packs init` use) rather than a bare
+    // `Command::new("git")`. Audited: `--check` alone reads the patch and the
+    // files under `scratch` on disk and never consults the index or `HEAD`,
+    // so an inherited `GIT_DIR` cannot presently misdirect this specific
+    // call — verified by running it under a poisoned `GIT_DIR` pointed at an
+    // unrelated repository and confirming the check result is unchanged.
+    // Cleared anyway: `scratch` holds no `.git` of its own, and the moment a
+    // future change adds `--cached`/`--index` here, an uncleared environment
+    // would silently start reading a stranger's index.
+    crate::commands::sessions::worktree::git_command(scratch)
         .args(["apply", "--check", patch])
-        .current_dir(scratch)
         .status()
         .is_ok_and(|status| status.success())
 }

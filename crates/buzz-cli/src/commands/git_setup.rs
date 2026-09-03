@@ -25,7 +25,6 @@
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use nostr::{Keys, ToBech32};
 
@@ -379,8 +378,16 @@ pub fn write_keyfile(path: &Path, keys: &Keys) -> Result<bool, CliError> {
 /// replaces only a single value and errors on a multi-valued key, so re-running
 /// setup would either fail or silently append a second helper each time.
 fn git_config_set(scope: ConfigScope, key: &str, values: &[String]) -> Result<(), CliError> {
+    // Named explicitly and routed through the shared `git_command` helper
+    // (`sessions::worktree::git_command`) rather than a bare
+    // `Command::new("git")`: an ambient `GIT_DIR` — the shape a git hook
+    // exports to everything it runs — would otherwise silently redirect this
+    // write to whatever repository the hook belongs to instead of the one the
+    // caller is standing in. Same class of bug as Finding 46.
+    let cwd = std::env::current_dir()
+        .map_err(|e| CliError::Usage(format!("cannot read the working directory: {e}")))?;
     // Exit 5 is "nothing to unset", which is the normal first-run state.
-    let unset = Command::new("git")
+    let unset = crate::commands::sessions::worktree::git_command(&cwd)
         .args(["config", scope.flag(), "--unset-all", key])
         .output()
         .map_err(|e| CliError::Usage(format!("cannot run git: {e}")))?;
@@ -392,7 +399,7 @@ fn git_config_set(scope: ConfigScope, key: &str, values: &[String]) -> Result<()
         )));
     }
     for value in values {
-        let output = Command::new("git")
+        let output = crate::commands::sessions::worktree::git_command(&cwd)
             .args(["config", scope.flag(), "--add", key, value])
             .output()
             .map_err(|e| CliError::Usage(format!("cannot run git: {e}")))?;
@@ -409,7 +416,8 @@ fn git_config_set(scope: ConfigScope, key: &str, values: &[String]) -> Result<()
 
 /// Last value of a possibly multi-valued key — the one git resolves to.
 fn git_config_get_last(key: &str) -> Option<String> {
-    let output = Command::new("git")
+    let cwd = std::env::current_dir().ok()?;
+    let output = crate::commands::sessions::worktree::git_command(&cwd)
         .args(["config", "--get-all", key])
         .output()
         .ok()?;
@@ -423,7 +431,8 @@ fn git_config_get_last(key: &str) -> Option<String> {
 }
 
 fn git_config_get(key: &str) -> Option<String> {
-    let output = Command::new("git")
+    let cwd = std::env::current_dir().ok()?;
+    let output = crate::commands::sessions::worktree::git_command(&cwd)
         .args(["config", "--get", key])
         .output()
         .ok()?;
@@ -1020,8 +1029,15 @@ fn parse_remote_target(origin: &str, remotes: &str) -> Option<(String, String)> 
 }
 
 /// `git remote -v` in the current directory, or empty when there is no repo.
+///
+/// Routed through the shared `git_command` helper for the same reason as
+/// `git_config_set`: an inherited `GIT_DIR` must not answer for a repository
+/// other than the one this process is standing in.
 fn git_remotes() -> String {
-    Command::new("git")
+    let Ok(cwd) = std::env::current_dir() else {
+        return String::new();
+    };
+    crate::commands::sessions::worktree::git_command(&cwd)
         .args(["remote", "-v"])
         .output()
         .ok()
@@ -1419,7 +1435,10 @@ fn resolve_sha(sha: Option<&str>) -> Option<String> {
     if let Some(sha) = sha {
         return Some(sha.trim().to_ascii_lowercase());
     }
-    Command::new("git")
+    // Same `git_command` routing as `git_config_set`: a poisoned `GIT_DIR`
+    // must not let this answer with another repository's `HEAD`.
+    let cwd = std::env::current_dir().ok()?;
+    crate::commands::sessions::worktree::git_command(&cwd)
         .args(["rev-parse", "HEAD"])
         .output()
         .ok()
@@ -2196,6 +2215,92 @@ mod tests {
     /// failed only in the full-suite run.
     fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
         async_env_lock().blocking_lock()
+    }
+
+    /// A hermetic `git` invocation for building throwaway fixture repos: no
+    /// global/system config, and the same seven selection variables cleared
+    /// that `git_command` clears in production, so the *test's own* fixture
+    /// setup cannot be redirected by whatever poisoned the outer process.
+    fn fixture_git(cwd: &Path, args: &[&str]) {
+        let output = crate::commands::sessions::worktree::git_command(cwd)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "L25")
+            .env("GIT_AUTHOR_EMAIL", "l25@example.invalid")
+            .env("GIT_COMMITTER_NAME", "L25")
+            .env("GIT_COMMITTER_EMAIL", "l25@example.invalid")
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn read_local_config(repo: &Path, key: &str) -> Option<String> {
+        let output = crate::commands::sessions::worktree::git_command(repo)
+            .args(["config", "--local", "--get", key])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Finding 46's class of bug, reproduced against `bee git setup`'s own
+    /// config writer: a spawn addressed at the repository it was given, not
+    /// at whatever `GIT_DIR` the ambient environment (a git hook, most
+    /// concretely) happens to export.
+    ///
+    /// Both fixture repositories are thrown away directories under the OS
+    /// temp dir — never a worktree of this repository — so a bug here can
+    /// only corrupt its own fixtures, the same discipline `worktree_tests.rs`
+    /// uses for the CLI's other git-spawning module.
+    #[test]
+    fn a_config_write_addresses_the_repository_it_was_given_not_a_poisoned_git_dir() {
+        // Serialised: mutates process cwd and GIT_DIR, both process-global.
+        let _guard = env_lock();
+
+        let poison = tempfile::tempdir().expect("poison tempdir");
+        let target = tempfile::tempdir().expect("target tempdir");
+        fixture_git(poison.path(), &["init", "-q", "--initial-branch=main"]);
+        fixture_git(target.path(), &["init", "-q", "--initial-branch=main"]);
+
+        let original_cwd = std::env::current_dir().expect("read cwd");
+        let original_git_dir = std::env::var_os("GIT_DIR");
+
+        // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
+        std::env::set_current_dir(target.path()).expect("cd into target fixture");
+        // The exact shape a git hook exports: GIT_DIR pointed at a repository
+        // that is not the one this call was told (via cwd) to configure.
+        std::env::set_var("GIT_DIR", poison.path().join(".git"));
+
+        let result = git_config_set(
+            ConfigScope::Local,
+            "buzz.l25marker",
+            &["target-value".to_string()],
+        );
+
+        std::env::set_current_dir(&original_cwd).expect("restore cwd");
+        match original_git_dir {
+            Some(value) => std::env::set_var("GIT_DIR", value),
+            None => std::env::remove_var("GIT_DIR"),
+        }
+
+        result.expect("git config set must succeed");
+        assert_eq!(
+            read_local_config(target.path(), "buzz.l25marker").as_deref(),
+            Some("target-value"),
+            "the repository named by cwd must receive the write"
+        );
+        assert_eq!(
+            read_local_config(poison.path(), "buzz.l25marker"),
+            None,
+            "a poisoned GIT_DIR must not receive a write meant for the target repo"
+        );
     }
 
     #[test]

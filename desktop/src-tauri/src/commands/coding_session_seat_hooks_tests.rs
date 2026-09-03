@@ -838,3 +838,84 @@ fn a_blank_key_file_path_is_treated_as_no_key_file_rather_than_a_refusal() {
         None
     );
 }
+
+/// Serialises this file's poisoned-environment test against any other test
+/// in the same binary that also mutates process environment.
+static GIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A hermetic `git init`, independent of `Fixture` — this test's two
+/// repositories are OS-temp throwaways, never anything under this worktree's
+/// `target/`, so a bug here can only corrupt its own fixtures.
+fn init_bare_local_repo(dir: &Path) {
+    let status = Command::new("git")
+        .args(["init", "-q", "--initial-branch=main"])
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git init");
+    assert!(status.success(), "git init failed in {}", dir.display());
+}
+
+fn read_local_config(dir: &Path, key: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["config", "--local", "--get", key])
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git config --get");
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Finding 46's class of bug, reproduced against the seat-hook installer's
+/// own `git()` — the same one `install()` uses to write every
+/// `buzz.*`/signing config line into a seat's worktree.
+///
+/// `git()` already cleared `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+/// `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES`, but not
+/// `GIT_COMMON_DIR` — and `GIT_COMMON_DIR` alone, with no `GIT_DIR` at all,
+/// is enough for git to resolve `--local` config against a repository other
+/// than the one named by `cwd`. This poisons only `GIT_COMMON_DIR`, exactly
+/// what a leaked-but-partially-cleared environment would leave behind, and
+/// asserts the write still lands in the given worktree and nowhere else.
+#[test]
+fn a_config_write_addresses_the_worktree_it_was_given_not_a_poisoned_git_common_dir() {
+    let _guard = GIT_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
+    let poison = tempfile::tempdir().expect("poison tempdir");
+    let target = tempfile::tempdir().expect("target tempdir");
+    init_bare_local_repo(poison.path());
+    init_bare_local_repo(target.path());
+
+    let original = std::env::var_os("GIT_COMMON_DIR");
+    // SAFETY-EQUIVALENT: single-threaded section guarded by `GIT_ENV_LOCK`.
+    std::env::set_var("GIT_COMMON_DIR", poison.path().join(".git"));
+
+    let result = git(
+        target.path(),
+        &["config", "--local", "buzz.l25marker", "target-value"],
+    );
+
+    match original {
+        Some(value) => std::env::set_var("GIT_COMMON_DIR", value),
+        None => std::env::remove_var("GIT_COMMON_DIR"),
+    }
+
+    result.expect("git config write must succeed");
+    assert_eq!(
+        read_local_config(target.path(), "buzz.l25marker").as_deref(),
+        Some("target-value"),
+        "the worktree named by cwd must receive the write"
+    );
+    assert_eq!(
+        read_local_config(poison.path(), "buzz.l25marker"),
+        None,
+        "a poisoned GIT_COMMON_DIR must not receive a write meant for the target worktree"
+    );
+}

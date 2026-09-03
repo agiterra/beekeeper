@@ -152,6 +152,14 @@ export function CodingSessionWorkspace({
     readyUmbrella?.genesisRef ?? null,
     readyUmbrella?.founderPubkey ?? null,
   );
+  // Same rule: called unconditionally, fed `null` before a session resolves.
+  // LANE-L25: the join dialog's seat field needs the same project coordinate
+  // the header crumb resolves (`ReadyCodingSessionWorkspace` below), so its
+  // pack preview (LANE-L23) can resolve — see `useCodingSessionProject`.
+  const joinProject = useCodingSessionProject(
+    channelId,
+    resolution.kind === "ready" ? resolution.session.projectRef : null,
+  );
   const [peopleOpen, setPeopleOpen] = React.useState(false);
   // Live (non-pending) collaborator grants — the composer's operator set.
   // `null` while the roster is unknown, so authority keeps its founder-only
@@ -343,6 +351,7 @@ export function CodingSessionWorkspace({
           channelName={channel?.name ?? null}
           onOpenChange={setAddProviderOpen}
           open={addProviderOpen}
+          projectRef={joinProject?.address ?? null}
           umbrella={
             sessionName ? { ...umbrella, title: sessionName.content } : umbrella
           }

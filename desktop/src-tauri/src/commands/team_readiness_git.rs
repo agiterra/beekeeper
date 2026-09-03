@@ -4,30 +4,13 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::TeamReadinessSource;
+// The seven variables that override `-C <path>` and can retarget this probe
+// at a hook's repository instead of the one it was given, shared with the
+// seat-hook installer and `run_git` rather than kept as a second copy here —
+// see that const's doc comment for why it must be cleared.
+use crate::commands::project_git_exec::GIT_REPO_SELECTION_VARS;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Environment variables that select which repository `git` acts on,
-/// overriding `-C <path>`.
-///
-/// Git exports `GIT_DIR` (and friends) into every hook it runs, so a probe
-/// spawned anywhere below a hook — the pre-push gate running the desktop test
-/// suite, for one — silently retargets at the hook's repository while still
-/// being handed a `-C` path it now ignores. The probe then reports another
-/// checkout's commit and dirty state as if they were this one's.
-///
-/// Cleared for the same reason `git_run` already disables fsmonitor, hooks and
-/// optional locks: this is a read-only probe of exactly the path it was given,
-/// and nothing in the ambient environment may redirect it.
-const GIT_REPO_SELECTION_VARS: [&str; 7] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-];
 
 pub(super) fn parse_embedded_source(
     commit: Option<&str>,

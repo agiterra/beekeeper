@@ -563,7 +563,7 @@ export function useProjectCodingSessionBuckets(
 export function useCodingSessionProject(
   channelId: string | null,
   projectRef: string | null,
-): { id: string; name: string } | null {
+): { id: string; name: string; address: string } | null {
   const { projects } = useProjectContainers();
   // Transports included: a session hosted in a hidden transport channel must
   // still resolve to its project for the header crumb.
@@ -591,7 +591,9 @@ export function useCodingSessionProject(
     const owner = projectId
       ? projects.find((project) => project.id === projectId)
       : undefined;
-    return owner ? { id: owner.id, name: owner.name } : null;
+    return owner
+      ? { id: owner.id, name: owner.name, address: owner.address }
+      : null;
   }, [channelId, channelsQuery.data, projectRef, projects]);
 }
 

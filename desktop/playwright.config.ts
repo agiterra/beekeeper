@@ -36,6 +36,8 @@ export default defineConfig({
         "**/coding-session-observations.spec.ts",
         "**/coding-session-founder-acts.spec.ts",
         "**/crew-front-door.spec.ts",
+        // LANE-L25 — the join dialog's projectRef wiring.
+        "**/l25-provider-project-ref.spec.ts",
         "**/role-packs-project.spec.ts",
         "**/coding-session-reachability.spec.ts",
         "**/coding-session-model-picker.spec.ts",

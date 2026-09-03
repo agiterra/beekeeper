@@ -77,12 +77,20 @@ export function AddCodingSessionProviderDialog({
   channelName,
   onOpenChange,
   open,
+  projectRef = null,
   umbrella,
 }: {
   channelId: string;
   channelName: string | null;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  /**
+   * The project this session belongs to, when the caller resolved one
+   * (LANE-L25) — passed straight through to the seat field's pack preview
+   * (LANE-L23). `null` (the default) renders the seat field exactly as it
+   * did before that prop existed: no preview.
+   */
+  projectRef?: string | null;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   // Stable: the create hook's settle effect depends on this callback, and a
@@ -112,6 +120,7 @@ export function AddCodingSessionProviderDialog({
             channelId={channelId}
             channelName={channelName}
             onDone={handleDone}
+            projectRef={projectRef}
             umbrella={umbrella}
           />
         ) : null}
@@ -129,11 +138,14 @@ export function AddCodingSessionProviderForm({
   channelId,
   channelName,
   onDone,
+  projectRef = null,
   umbrella,
 }: {
   channelId: string;
   channelName: string | null;
   onDone: () => void;
+  /** See {@link AddCodingSessionProviderDialog}'s `projectRef` (LANE-L25). */
+  projectRef?: string | null;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const sessionRef = umbrella.sessionRef;
@@ -404,6 +416,7 @@ export function AddCodingSessionProviderForm({
         error={seatDraft.error}
         onActorChange={seatDraft.onActorChange}
         onRoleChange={seatDraft.onRoleChange}
+        projectRef={projectRef}
         role={seatDraft.role}
       />
 

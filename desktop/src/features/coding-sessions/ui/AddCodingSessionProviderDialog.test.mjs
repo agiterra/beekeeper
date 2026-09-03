@@ -56,7 +56,7 @@ function umbrella() {
   };
 }
 
-async function mountJoinForm(agents) {
+async function mountJoinForm(agents, { projectRef = null } = {}) {
   const React = (await import("react")).default;
   const { act, cleanup, fireEvent, render, screen } = await import(
     "@testing-library/react"
@@ -80,6 +80,7 @@ async function mountJoinForm(agents) {
           channelId: CHANNEL_ID,
           channelName: "engineering",
           onDone() {},
+          projectRef,
           umbrella: umbrella(),
         }),
       ),
@@ -315,5 +316,58 @@ test("a seat whose worktree is turned off is told it shares the checkout", async
     );
   } finally {
     cleanup();
+  }
+});
+
+test("LANE-L25: a projectRef reaches the join dialog's seat field without disturbing an unseated or projectless form", async () => {
+  // No `projectRef` — every pre-L25 caller's implicit default
+  // (`AddCodingSessionProviderDialog.tsx:404` before this lane always passed
+  // none). The seat field must render exactly as it always has: no pack
+  // preview attempted, nothing crashes.
+  const bare = await mountJoinForm([
+    { pubkey: ADA, name: "Ada", status: "running", homeRole: "builder" },
+  ]);
+  try {
+    assert.ok(bare.screen.getByTestId("new-coding-session-seat"));
+    assert.equal(
+      bare.screen.queryByTestId("new-coding-session-pack-preview"),
+      null,
+    );
+  } finally {
+    bare.cleanup();
+  }
+
+  // With a `projectRef`: the same form, the same seat, the same role — the
+  // only difference is the prop this lane wires through. Nothing in this
+  // harness can answer the real pack-status probe (no Tauri bridge, no
+  // relay), so the preview itself never renders here — that path is proven
+  // by the LANE-L25 e2e case, which drives a real signed project and a real
+  // mocked host answer. What this proves is the plumbing: a form given a
+  // project does not crash, does not lose the seat it already had, and does
+  // not regress the workdir/worktree fields that sit beside it.
+  const withProject = await mountJoinForm(
+    [{ pubkey: ADA, name: "Ada", status: "running", homeRole: "builder" }],
+    { projectRef: `30621:${"a".repeat(64)}:l25-project` },
+  );
+  try {
+    const { act, fireEvent, screen } = withProject;
+    assert.ok(screen.getByTestId("new-coding-session-seat"));
+    await act(async () => {
+      fireEvent.pointerDown(
+        screen.getByTestId("new-coding-session-seat-agent"),
+        { button: 0, pointerType: "mouse" },
+      );
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`new-coding-session-seat-agent-${ADA}`),
+      );
+    });
+    assert.equal(
+      screen.getByTestId("new-coding-session-seat-role").value,
+      "builder",
+    );
+  } finally {
+    withProject.cleanup();
   }
 });

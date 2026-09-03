@@ -17,6 +17,27 @@ use url::Url;
 const LOCAL_GIT_TIMEOUT: Duration = Duration::from_secs(60);
 const REMOTE_GIT_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// The seven variables through which an ambient environment can pick git's
+/// repository for it, overriding an explicit path/`-C`/`current_dir`.
+///
+/// Git exports `GIT_DIR` (and friends) into every hook it runs, so any spawn
+/// reachable from inside one — the pre-push gate running this crate's or
+/// `buzz-cli`'s tests, most concretely — inherits them and can silently
+/// answer for the *hook's* repository instead of the one it was given. The
+/// canonical list, shared by every caller in this crate
+/// (`team_readiness_git.rs`'s checkout probe, `coding_session_seat_hooks.rs`'s
+/// config writer, and `run_git` below) and mirrored by `buzz-cli`'s own
+/// `git_command` (`sessions/worktree.rs`) for the same reason.
+pub(crate) const GIT_REPO_SELECTION_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
 fn git_subcommand<'a>(args: &'a [&str]) -> Option<&'a str> {
     let mut index = 0;
     while let Some(argument) = args.get(index).copied() {
@@ -131,25 +152,12 @@ pub(crate) fn run_git(
 fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credentials: bool) {
     command.env("GIT_TERMINAL_PROMPT", "0");
     command.env("GIT_CONFIG_NOSYSTEM", "1");
-    for key in [
-        // The seven variables through which an ambient environment can pick
-        // git's repository for it — the same list `bee`'s worktree tools clear
-        // (`buzz-cli/src/commands/sessions/worktree.rs`). This host now runs
-        // `git clone`/`checkout` for the packs cache through here, and a
-        // leaked `GIT_DIR` would point those at whatever repository launched
-        // the app.
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        // Two more this host clears for its own reasons: an inherited ssh
-        // command or external diff would run a program we did not choose.
-        "GIT_SSH_COMMAND",
-        "GIT_EXTERNAL_DIFF",
-    ] {
+    for key in GIT_REPO_SELECTION_VARS {
+        command.env_remove(key);
+    }
+    // Two more this host clears for its own reasons: an inherited ssh command
+    // or external diff would run a program we did not choose.
+    for key in ["GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF"] {
         command.env_remove(key);
     }
     // Git for Windows maps `/dev/null` to `NUL` internally, so this value

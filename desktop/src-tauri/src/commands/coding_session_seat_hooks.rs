@@ -50,6 +50,8 @@ use std::process::Command;
 use buzz_core_pkg::seat_git_hooks::{plan_seat_git_hooks, SeatGitHookRequest};
 use serde::{Deserialize, Serialize};
 
+use crate::commands::project_git_exec::GIT_REPO_SELECTION_VARS;
+
 /// What the hire host knows about a seat and the worktree it just cut.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,13 +157,12 @@ fn git(worktree: &Path, args: &[&str]) -> Result<String, String> {
     // Git for Windows maps `/dev/null` to `NUL`, so this disables the global
     // file on every platform git supports.
     command.env("GIT_CONFIG_GLOBAL", "/dev/null");
-    for key in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    ] {
+    // The shared list (`project_git_exec::GIT_REPO_SELECTION_VARS`), not a
+    // second, independently-drifting copy: this used to clear five of the
+    // seven and missed `GIT_COMMON_DIR`, which alone — with no `GIT_DIR` set
+    // at all — is enough for `git config --local` to resolve against another
+    // repository's config file instead of this worktree's.
+    for key in GIT_REPO_SELECTION_VARS {
         command.env_remove(key);
     }
     crate::util::configure_no_window(&mut command);
