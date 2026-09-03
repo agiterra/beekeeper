@@ -34,8 +34,10 @@ import {
   type PulseDigestError,
   type PulseDigestSession,
 } from "../lib/pulseFold.ts";
+import type { PulseDiskRow as PulseDiskRowModel } from "../lib/pulseDiskRow";
 import type { PulseMissionRowsState } from "../lib/pulseQueries";
 import { pulseMissionRowForSession } from "../lib/pulseMissionWire";
+import { PulseDiskRow } from "./PulseDiskRow";
 import { PulseEntryRow } from "./PulseEntryRow";
 import { PulseMissionsSection } from "./PulseMissionRow";
 import { PulseOverlapCard } from "./PulseOverlapCard";
@@ -213,6 +215,13 @@ export function ProjectPulseView({
    * before missions existed.
    */
   missions,
+  /**
+   * This project's disk row, already composed by `pulseDiskRow.ts` from the
+   * host's own worktree records (L11). Optional for the same reason
+   * `missions` is: this component renders a model, it does not fetch one —
+   * absent, the screen is exactly the Pulse it was before the row existed.
+   */
+  diskRow,
 }: {
   state: ProjectPulseViewState;
   nowSeconds: number;
@@ -220,6 +229,7 @@ export function ProjectPulseView({
   projectName?: string | null;
   authorNames?: PulseAuthorNames;
   missions?: PulseMissionRowsState;
+  diskRow?: PulseDiskRowModel;
 }) {
   const [branch, setBranch] = React.useState<string | null | undefined>(
     undefined,
@@ -695,6 +705,8 @@ export function ProjectPulseView({
       {missionRows ? (
         <PulseOverlapCard overlaps={missionRows.overlaps} />
       ) : null}
+
+      {diskRow ? <PulseDiskRow row={diskRow} /> : null}
     </div>
   );
 }

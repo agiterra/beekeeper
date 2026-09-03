@@ -353,6 +353,11 @@ export function mergeTrustedCodingSessionIngress(
       // carries or does not.
       routing: metadata?.routing ?? null,
       capabilities: metadata?.capabilities ?? null,
+      // Which `bee` this exact generation's seat was observed running,
+      // straight off the 44223 the provider signed. Null means this record's
+      // own metadata carried no `beeStamp` — an older host, not an unknown
+      // build (`codingSessionSeatBee.ts`).
+      beeStamp: metadata?.beeStamp ?? null,
     } satisfies CodingSessionCatalogRecord;
   });
 

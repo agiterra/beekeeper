@@ -1379,3 +1379,69 @@ test("no mission read at all leaves the existing Pulse exactly as it was", async
   assert.equal(screen.queryByTestId("pulse-rulings-card"), null);
   assert.equal(screen.queryByTestId("pulse-overlap-card"), null);
 });
+
+// ── L17 gap 2: PulseDiskRow reaches the Pulse screen ────────────────────────
+
+test("L11's disk row renders on the Pulse screen from the model it was given", async () => {
+  const { buildPulseDiskRow } = await import(
+    "@/features/project-pulse/lib/pulseDiskRow"
+  );
+  const sessionRef = "11111111-1111-4111-8111-111111111111";
+  const diskRow = buildPulseDiskRow([
+    {
+      key: `${sessionRef}/builder-1`,
+      sessionRef,
+      seatLabel: "builder-1",
+      path: "/src/proj.worktrees/lane",
+      branch: "lane",
+      repoRoot: "/src/proj",
+      disposition: "prunable",
+      dirtyFiles: 0,
+      reclaimableBytes: 18_400_000_000,
+      reclaimableLabel: "18.4 GB",
+      reclaimableNow: true,
+      graceRemainingSecs: null,
+      exists: true,
+      tipOnRelayKnown: true,
+      detail: "/src/proj.worktrees/lane: clean, will be removed",
+    },
+    {
+      key: `${sessionRef}/refuter-1`,
+      sessionRef,
+      seatLabel: "refuter-1",
+      path: "/src/proj.worktrees/lane-two",
+      branch: "lane-two",
+      repoRoot: "/src/proj",
+      disposition: "held",
+      dirtyFiles: 3,
+      reclaimableBytes: 4_100_000_000,
+      reclaimableLabel: "4.1 GB",
+      reclaimableNow: true,
+      graceRemainingSecs: null,
+      exists: true,
+      tipOnRelayKnown: true,
+      detail: "held: 3 uncommitted files",
+    },
+  ]);
+  assert.equal(diskRow.line, "disk: 2 worktrees, 22.5 GB reclaimable, 1 held");
+
+  const screen = await renderView(
+    { kind: "ready", digest: digest() },
+    { diskRow },
+  );
+  const section = screen.getByTestId("pulse-disk-row");
+  assert.ok(section, "the disk row must reach the Pulse screen");
+  assert.equal(
+    section.querySelector("p").textContent,
+    "disk: 2 worktrees, 22.5 GB reclaimable, 1 held",
+  );
+  assert.equal(
+    screen.getByTestId("pulse-disk-held").textContent,
+    "11111111 refuter-1 · 3 uncommitted files",
+  );
+});
+
+test("no disk row at all leaves the existing Pulse exactly as it was", async () => {
+  const screen = await renderView({ kind: "ready", digest: digest() });
+  assert.equal(screen.queryByTestId("pulse-disk-row"), null);
+});

@@ -13,7 +13,11 @@ import {
 } from "@/features/projects-container/lib/projectContainerModel";
 import type { ProjectContainer } from "@/features/projects-container/lib/projectContainerModel";
 
+import { listCodingSessionSeatWorktrees } from "@/shared/api/tauriCodingSessionWorktrees";
+
 import { projectPulseChannelIds } from "../lib/pulseChannelSet";
+import { buildPulseDiskRow, type PulseDiskRow } from "../lib/pulseDiskRow";
+import type { PulseDigestSession } from "../lib/pulseFold.ts";
 import {
   projectPulseChannelSetUnresolved,
   useProjectPulseDigest,
@@ -24,6 +28,67 @@ import {
   type ProjectPulseViewState,
 } from "./ProjectPulseView";
 import { usePulseAuthorNames } from "./usePulseAuthorNames";
+
+const NO_PULSE_SESSIONS: readonly PulseDigestSession[] = [];
+
+/**
+ * This project's disk row (L11), scoped to the sessions this project's own
+ * digest already named.
+ *
+ * Deliberately **not** `bee sessions worktree status --all`'s machine-wide
+ * scope: the host command answers about whatever session refs it is asked
+ * about (`worktree_prune.rs`'s `list_coding_session_seat_worktrees` — "every
+ * recorded worktree for the sessions the caller named"), so handing it this
+ * project's own sessions gives an honest per-project slice rather than a
+ * global claim from a project screen that never asked a global question. A
+ * result with nothing to show — no sessions, no rows, or the model's own
+ * "no worktrees recorded" branch — renders no row at all, exactly like a
+ * host that cannot answer (`useSeatWorktrees` in
+ * `useCodingSessionClosureDialog.tsx` is the precedent).
+ *
+ * Neither `tipOnRelay` nor `settledForSecs` is knowable from this screen — it
+ * does not independently establish relay ref state or measure settle
+ * duration — so both are `null`, never guessed.
+ */
+function useProjectPulseDiskRow(
+  sessions: readonly PulseDigestSession[],
+): PulseDiskRow | undefined {
+  const [row, setRow] = React.useState<PulseDiskRow | undefined>(undefined);
+
+  React.useEffect(() => {
+    const facts = sessions
+      .filter(
+        (session): session is PulseDigestSession & { sessionRef: string } =>
+          Boolean(session.sessionRef),
+      )
+      .map((session) => ({
+        sessionRef: session.sessionRef,
+        sessionSettled: session.lifecycle === "closed",
+        executionLive: session.coordinationState === "provider_reachable",
+        tipOnRelay: null,
+        settledForSecs: null,
+      }));
+    if (facts.length === 0) {
+      setRow(undefined);
+      return;
+    }
+    let cancelled = false;
+    void listCodingSessionSeatWorktrees(facts)
+      .then((rows) => {
+        if (cancelled) return;
+        const built = buildPulseDiskRow(rows);
+        setRow(built.empty ? undefined : built);
+      })
+      .catch(() => {
+        if (!cancelled) setRow(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessions]);
+
+  return row;
+}
 
 /** A project's channel set, plus whether that set is a settled answer. */
 export type ProjectPulseChannelSet = {
@@ -194,6 +259,12 @@ export function ProjectPulseScreen({
     displayNames: missionNames,
   });
 
+  // This project's disk row (L11 x L9 join, gap closed in L17): scoped to
+  // exactly the sessions this paint's digest named, never the whole machine.
+  const diskRow = useProjectPulseDiskRow(
+    pulse.digest?.sessions ?? NO_PULSE_SESSIONS,
+  );
+
   // One clock for the whole paint, ticking once a minute so ages stay honest
   // without re-rendering on every frame.
   const [nowSeconds, setNowSeconds] = React.useState(() =>
@@ -210,6 +281,7 @@ export function ProjectPulseScreen({
   return (
     <ProjectPulseView
       authorNames={authorNames}
+      diskRow={diskRow}
       nowSeconds={nowSeconds}
       // Named, not implied by a 300px-away sidebar selection: two projects'
       // Pulse screens are otherwise pixel-identical chrome, and "No Pulse yet"

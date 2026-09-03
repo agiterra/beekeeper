@@ -12,6 +12,7 @@ import {
   writeCodingSessionMissionDensity,
 } from "@/features/coding-sessions/lib/codingSessionMissionDensity";
 import { deriveCodingSessionStreamPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
+import { deriveSeatBeeStamps } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionTeamWake } from "@/features/coding-sessions/hooks/useCodingSessionTeamWake";
 import {
@@ -667,6 +668,16 @@ export function UmbrellaCodingSessionWorkspace({
     });
   }, [channelId, generationId]);
 
+  // Which `bee` each seat is actually running (L12), read straight off the
+  // 44223 metadata this umbrella already carries per execution — no new
+  // query. `deriveSeatBeeStamps` prefers the active generation's stamp and
+  // falls back to the newest prior generation's when a fresh resume has not
+  // republished one yet.
+  const seatBeeStamps = React.useMemo(
+    () => deriveSeatBeeStamps(umbrella.executions),
+    [umbrella.executions],
+  );
+
   return (
     <main
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
@@ -703,6 +714,7 @@ export function UmbrellaCodingSessionWorkspace({
         resolveReachability={resolveReachability}
         routedSeats={routedSeats}
         routeRail={routeRail}
+        seatBeeStamps={seatBeeStamps}
         sessionClosed={sessionClosed}
         setRenameOpen={setRenameOpen}
         streamParticipants={streamPresence.participants}

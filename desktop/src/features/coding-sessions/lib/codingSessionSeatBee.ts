@@ -105,6 +105,62 @@ function seatBeeDirectory(path: string): string {
 }
 
 /**
+ * The one generation shape {@link deriveSeatBeeStamps} needs — deliberately
+ * not `CodingSessionCatalogRecord` itself, so this selector stays testable
+ * with plain fixtures and does not import the umbrella model.
+ */
+export type SeatBeeGenerationSource = {
+  beeStamp: SeatBeeStamp | null;
+};
+
+/** The one execution shape {@link deriveSeatBeeStamps} needs. */
+export type SeatBeeExecutionSource = {
+  executionKey: string;
+  activeGeneration: SeatBeeGenerationSource;
+  /** Earlier generations, ascending — same order `CodingSessionExecution` keeps. */
+  priorGenerations: readonly SeatBeeGenerationSource[];
+};
+
+/**
+ * One seat's stamp, keyed by `executionKey` — the map
+ * `CodingSessionParticipantBar`'s `seatBeeStamps` prop takes directly.
+ *
+ * A seat's active generation carries the freshest metadata, but a fresh
+ * resume has not always republished one yet: its `beeStamp` reads `null` on
+ * the active generation even though the same physical seat answered with one
+ * a generation ago. Newest **stamp** wins, not newest generation — the active
+ * generation is checked first and prior generations are checked *newest
+ * first* (their own array order, reversed), so the map holds the most recent
+ * observation this execution has ever published, never a stale one shadowing
+ * a fresher null.
+ *
+ * A seat none of whose generations ever carried a stamp maps to `null` —
+ * `codingSessionSeatBeeLine` already renders nothing for that, which is the
+ * honest default (an older host, not an unknown build).
+ */
+export function deriveSeatBeeStamps(
+  executions: readonly SeatBeeExecutionSource[],
+): Map<string, SeatBeeStamp | null> {
+  const stamps = new Map<string, SeatBeeStamp | null>();
+  for (const execution of executions) {
+    if (execution.activeGeneration.beeStamp !== null) {
+      stamps.set(execution.executionKey, execution.activeGeneration.beeStamp);
+      continue;
+    }
+    let newest: SeatBeeStamp | null = null;
+    for (let i = execution.priorGenerations.length - 1; i >= 0; i -= 1) {
+      const stamp = execution.priorGenerations[i].beeStamp;
+      if (stamp !== null) {
+        newest = stamp;
+        break;
+      }
+    }
+    stamps.set(execution.executionKey, newest);
+  }
+  return stamps;
+}
+
+/**
  * Where the host placed a seat's build relative to `main`.
  *
  * Computed in the Desktop host against the local checkout. `unknown` is a real

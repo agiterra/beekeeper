@@ -9,6 +9,7 @@ import {
   isStrictCodingSessionRoutingRecord,
   type CodingSessionRoutingRecord,
 } from "./codingSessionRouting";
+import { readSeatBeeStamp, type SeatBeeStamp } from "./codingSessionSeatBee";
 import type {
   CodingSessionCapabilities,
   CodingSessionStatus,
@@ -244,6 +245,13 @@ export type BuzzCodingSessionMetadataV1 = {
   relayReachable?: boolean | null;
   verifiedAt?: number | null;
   turnBudget?: CodingSessionTurnBudget;
+  /**
+   * Which `bee` this seat is actually running, as the host observed it (L12).
+   * Additive and omit-when-absent like `routing`: an older host's 44223
+   * carries no key at all, and an explicit `beeStamp: null` is not a shape
+   * either decoder accepts — see `codingSessionSeatBee.ts`.
+   */
+  beeStamp?: Readonly<SeatBeeStamp>;
 };
 
 /** How much of one crew session's turn allowance has been spent (D9). */
@@ -529,6 +537,7 @@ export function parseBuzzCodingSessionMetadata(
     "role",
     "turnBudget",
     "routing",
+    "beeStamp",
     ...factFields,
   ] as const;
   if (
@@ -607,6 +616,18 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // Same omit-when-absent contract as routing (`bee_stamp`'s Rust field carries
+  // the identical `#[serde(skip_serializing_if = "Option::is_none")]`): an
+  // explicit `beeStamp: null` is not a shape the Rust decoder accepts either
+  // (`coding-session metadata beeStamp must not be null`), so this desktop
+  // reader rejects the whole metadata over it or a malformed shape, rather
+  // than accepting a looser dialect Rust would refuse to sign.
+  if (
+    Object.hasOwn(value, "beeStamp") &&
+    readSeatBeeStamp(value.beeStamp) === null
+  ) {
+    return null;
+  }
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
@@ -655,6 +676,9 @@ export function parseBuzzCodingSessionMetadata(
       : {}),
     ...(isStrictCodingSessionRoutingRecord(value.routing)
       ? { routing: value.routing as CodingSessionRoutingRecord }
+      : {}),
+    ...(Object.hasOwn(value, "beeStamp")
+      ? { beeStamp: readSeatBeeStamp(value.beeStamp) as SeatBeeStamp }
       : {}),
     ...(hasFacts
       ? {

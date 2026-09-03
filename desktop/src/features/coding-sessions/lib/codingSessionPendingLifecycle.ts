@@ -336,6 +336,9 @@ function synthesizePendingEntry(
     // the seat's routing arrives with the provider's 44223, not before it.
     routing: null,
     capabilities: null,
+    // Same reasoning as `routing`: a pending create has published no 44223
+    // yet, so nothing is known about which `bee` its seat will run.
+    beeStamp: null,
   };
   return {
     placement: placement.projectId ? "project" : "unassigned",

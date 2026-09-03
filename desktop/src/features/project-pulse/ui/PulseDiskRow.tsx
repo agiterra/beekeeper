@@ -1,14 +1,17 @@
 /**
- * Pulse's disk row: how many worktrees this machine holds, how much of them is
- * rebuildable, and which of them hold work nobody has committed.
+ * Pulse's disk row: how many of this project's sessions' worktrees this
+ * machine holds, how much of them is rebuildable, and which of them hold work
+ * nobody has committed.
  *
  * This component renders strings and re-words nothing. Every sentence it shows
  * was composed by `pulseDiskRow.ts` from rows the host classified in Rust; if
  * a number looks wrong, it is wrong there, which is where the tests are.
  *
- * Mounting is `ProjectPulseView.tsx`, which belongs to Lane L9. Until that
- * mount line lands this component ships with its tests and no caller, and
- * `bee sessions worktree status --all` carries the same truth meanwhile.
+ * Mounted by `ProjectPulseView.tsx`, fed by `ProjectPulseScreen.tsx`'s
+ * `useProjectPulseDiskRow`, which asks the host only about the sessions this
+ * project's own digest already named — never `--all`. `bee sessions worktree
+ * status --all` stays the machine-wide accounting; this row is this
+ * project's slice of it.
  */
 import type { PulseDiskRow as PulseDiskRowModel } from "@/features/project-pulse/lib/pulseDiskRow";
 

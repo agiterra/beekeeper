@@ -4,8 +4,29 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+} from "nostr-tools/pure";
 
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
+import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import {
+  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+  CODING_SESSION_METADATA_TAG_VERSION,
+  codingSessionMetadataSemanticKey,
+  lifecycleReceiptSemanticKey,
+} from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import type { SeatBeeStamp } from "@/features/coding-sessions/lib/codingSessionSeatBee";
+import {
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+  KIND_CODING_SESSION_METADATA,
+} from "@/shared/constants/kinds";
+import type { RelayEvent } from "@/shared/api/types";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
@@ -13,20 +34,30 @@ import { installMockBridge } from "../helpers/bridge";
 /**
  * L12.3 — both surfaces say which `bee` a seat is running, in words.
  *
- * **Why these are harness mounts and not a driven app flow.** The seat chip
- * reads its stamps from a `seatBeeStamps` prop, and the only caller —
- * `CodingSessionUmbrellaWorkspace.tsx` — is not this lane's file, so no signed
- * 44223 can reach the chip through the running app yet. Pulse's card *is*
- * mounted in the real screen, but `CoordinatedGeneration` carries no
+ * **Why the first two tests are harness mounts and not a driven app flow.**
+ * At L12's own cut, the seat chip's `seatBeeStamps` prop had no production
+ * caller — `CodingSessionUmbrellaWorkspace.tsx` was not that lane's file, so
+ * no signed 44223 could reach the chip through the running app. Pulse's card
+ * *is* mounted in the real screen, but `CoordinatedGeneration` carries no
  * `beeStamp` and no host command answers ancestry, so the app can only ever
- * reach its `no seat's build could be compared` state — never a row.
+ * reach its `no seat's build could be compared` state — never a row; that
+ * remains true today and is why the Pulse card is still a harness mount.
  *
  * So each state is mounted here from the same components the app renders,
  * inside a real app page: the built stylesheet, the theme tokens, and the
  * layout are the app's own. These are pure presentational components, so the
- * server markup is byte-for-byte what React paints in the app. What this spec
- * does **not** prove is the wiring from wire to prop — that is stated in the
- * lane report as an open cross-lane request, not papered over here.
+ * server markup is byte-for-byte what React paints in the app.
+ *
+ * **L17 closed the seat-chip half of that gap**: `CodingSessionUmbrellaWorkspace.tsx`
+ * now derives `seatBeeStamps` from the umbrella's own executions
+ * (`codingSessionSeatBee.ts`'s `deriveSeatBeeStamps`) and threads it through
+ * `CodingSessionUmbrellaHeaderRow.tsx` to the participant bar — the exact
+ * production wiring the paragraph above says was missing. The test below
+ * ("a real, decoded kind:44223 beeStamp reaches the chip through the running
+ * app") is the proof: no harness mount, no hand-built `seatBeeStamps` map — a
+ * real signed 44223 is seeded into the mock relay and the chip is read off
+ * the actual app screen. The Pulse-card half (ancestry) is unchanged and
+ * still out of scope, per the finalizer's own accounting.
  *
  * **Why the markup is rendered out-of-process.** `CodingSessionParticipantBar`
  * and `PulseStaleBeeCard` are `.tsx` — Playwright's own TypeScript transform
@@ -243,4 +274,245 @@ test("Pulse owes the reader every seat behind main, and says what it could not c
   );
   await expect(uncompared.getByTestId("pulse-stale-bee-row")).toHaveCount(0);
   await capture(page, uncompared, "05-pulse-stale-bee-uncompared");
+});
+
+// ── L17 gap 1: the real workspace path, not the harness mount ───────────────
+
+/**
+ * A real two-seat crew, seeded with real signed events and driven through the
+ * running app rather than mounted out-of-process. Where the five states above
+ * prove the presentational components render every reading correctly, this
+ * proves the wiring this spec's own module doc named as untested: a real
+ * kind:44223 with `beeStamp` reaches the chip through
+ * `CodingSessionUmbrellaWorkspace.tsx` → `deriveSeatBeeStamps` →
+ * `CodingSessionUmbrellaHeaderRow.tsx` → `CodingSessionParticipantBar`, with
+ * nothing hand-assembled in the spec.
+ */
+
+const FOUNDER_IDENTITY = {
+  privateKey:
+    "3dbaebadb5dfd777ff25149ee230d907a15a9e1294b40b830661e65bb42f6c03",
+  pubkey: "e5ebc6cdb579be112e336cc319b5989b4bb6af11786ea90dbe52b5f08d741b34",
+  username: "tyler",
+};
+const FOUNDER_SECRET = Uint8Array.from(
+  (FOUNDER_IDENTITY.privateKey.match(/.{2}/g) ?? []).map((byte) =>
+    Number.parseInt(byte, 16),
+  ),
+);
+const CHANNEL_NAME = "engineering";
+/** `engineering` in the mock channel fixture. The `h` tag must match exactly. */
+const CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
+const SESSION_REF = "9c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
+const BASE_CREATED_AT = 1_800_100_000;
+
+const BUILDER_SECRET = generateSecretKey();
+const BUILDER_PUBKEY = getPublicKey(BUILDER_SECRET);
+const BUILDER_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "l17-builder",
+  sessionId: "33333333-4444-5555-6666-777777777777",
+  generation: 1,
+};
+
+const REFUTER_SECRET = generateSecretKey();
+const REFUTER_PUBKEY = getPublicKey(REFUTER_SECRET);
+const REFUTER_TARGET = {
+  driver: "codex-acp",
+  instanceId: "l17-refuter",
+  sessionId: "44444444-5555-6666-7777-888888888888",
+  generation: 1,
+};
+
+const CAPABILITIES = {
+  threadTurnStart: true,
+  threadTurnInterrupt: true,
+  threadSteer: true,
+  context: false,
+  diff: false,
+  plan: true,
+};
+
+function seatEvents(input: {
+  target: typeof BUILDER_TARGET;
+  commandId: string;
+  providerSecret: Uint8Array;
+  providerPubkey: string;
+  title: string;
+  beeStamp?: SeatBeeStamp;
+}): RelayEvent[] {
+  const genesis = finalizeEvent(
+    (() => {
+      const built = buildCodingSessionGenesisEvent({
+        channelId: CHANNEL_ID,
+        sessionRef: SESSION_REF,
+      });
+      return {
+        kind: built.kind,
+        created_at: BASE_CREATED_AT - 3,
+        tags: built.tags,
+        content: built.content,
+      };
+    })(),
+    FOUNDER_SECRET,
+  ) as unknown as RelayEvent;
+  const create = finalizeEvent(
+    (() => {
+      const built = buildCodingSessionCreateEvent({
+        channelId: CHANNEL_ID,
+        commandId: input.commandId,
+        projectRef: null,
+        repoRef: null,
+        sessionRef: SESSION_REF,
+        genesisRef: genesis.id,
+        providerInstanceRef: input.commandId,
+        providerAuthorityPubkey: input.providerPubkey,
+        model: "sonnet",
+        title: input.title,
+        initialTurn: null,
+      });
+      return {
+        kind: built.kind,
+        created_at: BASE_CREATED_AT - 2,
+        tags: built.tags,
+        content: built.content,
+      };
+    })(),
+    FOUNDER_SECRET,
+  ) as unknown as RelayEvent;
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: BASE_CREATED_AT - 1,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", input.commandId],
+        ["csl-key", lifecycleReceiptSemanticKey(input.commandId)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: input.commandId,
+        status: "created",
+        session: input.target,
+        error: null,
+      }),
+    },
+    input.providerSecret,
+  ) as unknown as RelayEvent;
+  const metadata = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_METADATA,
+      created_at: BASE_CREATED_AT,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+        ["cs-target", buildCodingSessionTargetKey(input.target)],
+        ["csm-key", codingSessionMetadataSemanticKey(input.target)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        session: input.target,
+        projectRef: null,
+        repoRef: null,
+        title: input.title,
+        agentRef: null,
+        provider: input.target.driver,
+        runtime: input.target.driver,
+        model: "sonnet",
+        status: "running",
+        branch: null,
+        capabilities: CAPABILITIES,
+        sessionRef: SESSION_REF,
+        ...(input.beeStamp ? { beeStamp: input.beeStamp } : {}),
+      }),
+    },
+    input.providerSecret,
+  ) as unknown as RelayEvent;
+  return [genesis, create, receipt, metadata];
+}
+
+test("a real, decoded kind:44223 beeStamp reaches the chip through the running app", async ({
+  page,
+}) => {
+  // Before the bridge installs: it reads this at boot and signs as this key,
+  // so the two seeded seats below are founded by the person driving the app.
+  await page.addInitScript((identity) => {
+    window.localStorage.setItem(
+      "buzz:e2e-identity-override.v1",
+      JSON.stringify(identity),
+    );
+  }, FOUNDER_IDENTITY);
+  await installMockBridge(page, {
+    globalAgentConfig: {
+      env_vars: {},
+      provider: null,
+      model: null,
+      "allowed-bridge-pubkeys": [
+        { pubkey: BUILDER_PUBKEY, label: "builder" },
+        { pubkey: REFUTER_PUBKEY, label: "refuter" },
+      ],
+    },
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toBeVisible();
+  await page.evaluate(
+    ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    {
+      channelName: CHANNEL_NAME,
+      events: [
+        ...seatEvents({
+          target: BUILDER_TARGET,
+          commandId: "l17-seat-builder",
+          providerSecret: BUILDER_SECRET,
+          providerPubkey: BUILDER_PUBKEY,
+          title: "Advance Buzz live sessions",
+          beeStamp: {
+            path: "/Applications/Beekeeper.app/Contents/MacOS/bee",
+            source: "bundled",
+            version: "0.1.0",
+            sha: "23728227b",
+            dirty: false,
+          },
+        }),
+        // No `beeStamp` at all — an older host. The chip must stay silent for
+        // this seat, never read "bee build unknown".
+        ...seatEvents({
+          target: REFUTER_TARGET,
+          commandId: "l17-seat-refuter",
+          providerSecret: REFUTER_SECRET,
+          providerPubkey: REFUTER_PUBKEY,
+          title: "Advance Buzz live sessions",
+        }),
+      ],
+    },
+  );
+
+  await expect(
+    page.getByTestId("channel-coding-sessions-trigger"),
+  ).toHaveAttribute("aria-label", "Coding sessions (1)", { timeout: 15_000 });
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-session-open").first().click();
+  await expect(
+    page.getByTestId("coding-session-umbrella-workspace"),
+  ).toBeVisible({ timeout: 15_000 });
+
+  // Multi-execution sessions default to Conversation; the participant bar
+  // this lane wired is Mission-only.
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  const bar = page.getByTestId("coding-session-participant-bar");
+  await expect(bar).toBeVisible({ timeout: 15_000 });
+
+  const chips = bar.getByTestId("coding-session-seat-bee");
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toHaveText("bee 23728227b (bundled)");
+  await capture(page, bar, "06-seat-bee-real-workspace");
 });

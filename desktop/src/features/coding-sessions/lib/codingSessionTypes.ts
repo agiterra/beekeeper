@@ -1,5 +1,6 @@
 import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionTurnBudget } from "./codingSessionIngressPayloads";
+import type { SeatBeeStamp } from "./codingSessionSeatBee";
 import type { CodingSessionProjectedTranscriptItem } from "./codingSessionTranscriptItems";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import type { CodingSessionLifecycleResolution } from "./codingSessionTrustedIngress";
@@ -92,6 +93,13 @@ export type CodingSessionCatalogRecord = {
    */
   routing: CodingSessionRoutingRecord | null;
   capabilities: CodingSessionCapabilities | null;
+  /**
+   * Which `bee` this generation's seat was observed running (L12), or `null`
+   * when this exact 44223 carried no `beeStamp` — an older host, never an
+   * unknown build. `codingSessionSeatBee.ts`'s `deriveSeatBeeStamps` is the
+   * one place this is read back out across an execution's generations.
+   */
+  beeStamp: SeatBeeStamp | null;
 };
 
 /**

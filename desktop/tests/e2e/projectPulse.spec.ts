@@ -566,6 +566,9 @@ async function boot(
     theme?: string;
     hangKinds?: number[];
     rejectKinds?: number[];
+    /** Passed straight through to `installMockBridge` — e.g. the L11 seat
+     * worktree table `useProjectPulseDiskRow` reads (L17). */
+    mock?: Parameters<typeof installMockBridge>[1];
   } = {},
 ) {
   if (options.theme) {
@@ -594,7 +597,7 @@ async function boot(
       rejectKinds: options.rejectKinds ?? null,
     },
   );
-  await installMockBridge(page);
+  await installMockBridge(page, options.mock);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("project-group-general")).toBeVisible({
     timeout: 10_000,
@@ -1384,4 +1387,82 @@ test("entries lead while restarted generations remain disclosed", async ({
           ?.parentElement,
     ),
   ).toBe(true);
+});
+
+// ── L17 gap 2: PulseDiskRow reaches the real Pulse screen ───────────────────
+
+/**
+ * Exactly the shape `list_coding_session_seat_worktrees` answers with
+ * (mirrors `coding-session-worktree-closure.spec.ts`'s `SEAT_WORKTREES`).
+ * Keyed to two sessions this project's own digest actually names
+ * (`seededSessionFacts()`), so `useProjectPulseDiskRow` has real facts to ask
+ * the host about — not a fixture the screen never reached.
+ */
+function seatWorktreeFixture() {
+  return [
+    {
+      key: `${ACTIVE_SESSION_REF}/builder-1`,
+      sessionRef: ACTIVE_SESSION_REF,
+      seatLabel: "builder-1",
+      path: "/Users/mock/Code/beekeeper.worktrees/pulse-plumbing-builder-1",
+      branch: "pulse-plumbing-builder-1",
+      repoRoot: "/Users/mock/Code/beekeeper",
+      disposition: "within-grace",
+      dirtyFiles: 0,
+      reclaimableBytes: 18_400_000_000,
+      reclaimableLabel: "18.4 GB",
+      reclaimableNow: true,
+      graceRemainingSecs: 7 * 24 * 60 * 60,
+      exists: true,
+      tipOnRelayKnown: true,
+      detail:
+        "/Users/mock/Code/beekeeper.worktrees/pulse-plumbing-builder-1: clean and pushed, kept 7 more days",
+    },
+    {
+      key: `${LAST_SEEN_SESSION_REF}/refuter-1`,
+      sessionRef: LAST_SEEN_SESSION_REF,
+      seatLabel: "refuter-1",
+      path: "/Users/mock/Code/beekeeper.worktrees/conformance-corpus-refuter-1",
+      branch: "conformance-corpus-refuter-1",
+      repoRoot: "/Users/mock/Code/beekeeper",
+      disposition: "held",
+      dirtyFiles: 3,
+      reclaimableBytes: 4_100_000_000,
+      reclaimableLabel: "4.1 GB",
+      reclaimableNow: true,
+      graceRemainingSecs: null,
+      exists: true,
+      tipOnRelayKnown: true,
+      detail: "held: 3 uncommitted files",
+    },
+  ];
+}
+
+test("L11's disk row reaches the real Pulse screen, scoped to this project's own sessions", async ({
+  page,
+}) => {
+  await boot(
+    page,
+    [
+      projectHeadEvent({
+        dtag: SESSIONS_DTAG,
+        name: "Sessions Demo",
+        channelIds: [GENERAL_CHANNEL_ID],
+      }),
+    ],
+    { mock: { codingSessionSeatWorktrees: seatWorktreeFixture() } },
+  );
+  await seedSessionFacts(page, seededSessionFacts());
+  await openPulseFromSidebar(page, SESSIONS_DTAG);
+
+  const screen = page.getByTestId("project-pulse-screen");
+  await expect(screen).toBeVisible({ timeout: 10_000 });
+  const diskRow = page.getByTestId("pulse-disk-row");
+  await expect(diskRow).toBeVisible({ timeout: 10_000 });
+  await expect(diskRow.locator("p").first()).toHaveText(
+    "disk: 2 worktrees, 22.5 GB reclaimable, 1 held",
+  );
+  const held = page.getByTestId("pulse-disk-held");
+  await expect(held).toContainText("refuter-1 · 3 uncommitted files");
+  await captureLocator(page, diskRow, "20-disk-row");
 });
