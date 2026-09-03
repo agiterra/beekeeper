@@ -98,16 +98,24 @@ const STORE_DIRS: &[&str] = &["io.agiterra.beekeeper.app.dev", "io.agiterra.beek
 fn git_command(cwd: &Path) -> Command {
     let mut command = Command::new("git");
     command.current_dir(cwd);
-    for var in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-    ] {
+    for var in GIT_REPO_SELECTION_VARS {
         command.env_remove(var);
     }
     command
 }
+
+/// The variables through which an ambient environment can pick git's
+/// repository for it. The same list the desktop's team-readiness probe clears
+/// (`team_readiness_git.rs`), for the same reason.
+const GIT_REPO_SELECTION_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
 
 pub fn default_store_path() -> Result<PathBuf, CliError> {
     let home = std::env::var("HOME").map_err(|_| {

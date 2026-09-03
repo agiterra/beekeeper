@@ -30,7 +30,8 @@ set -euo pipefail
 # environment. Git exports GIT_DIR (and friends) to hooks, and the pre-push
 # gate runs this script's tests inside one; inherited, every `git` below would
 # answer for the pushing repository instead and find no trunk in it.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE \
+  GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 DRY_RUN=0
 DO_TARGETS=0

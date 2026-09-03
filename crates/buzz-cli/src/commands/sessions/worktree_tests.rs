@@ -23,6 +23,9 @@ fn git(args: &[&str], cwd: &Path) -> String {
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("GIT_AUTHOR_NAME", "L11")
@@ -357,7 +360,10 @@ fn run_prune(layout: &Layout, args: &[&str]) -> (bool, String) {
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_COMMON_DIR");
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
     let output = command.output().expect("run the prune script");
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
