@@ -339,6 +339,7 @@ export function useCodingSessionMissionLand(input: {
           pusherPubkey: current.viewerPubkey as string,
           protectionTags: repository?.protectionTags ?? null,
           includedEventIds: current.landEvidence?.includedEventIds ?? [],
+          activeSeats: current.landEvidence?.activeSeats ?? [],
           events: current.landEvidence?.wireEvents ?? [],
         });
         if (cancelled) return;

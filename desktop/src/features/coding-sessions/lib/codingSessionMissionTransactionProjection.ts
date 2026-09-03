@@ -470,6 +470,8 @@ function projectTransactions(
 export function projectNativeTeamFoldToMissionInspector(input: {
   nativeFold: NativeCodingSessionTeamFold;
   ingressRejections?: readonly string[];
+  /** The mission's active seats — arm (C) of the push rule needs the roles. */
+  activeSeats?: readonly { actorPubkey: string; role: string }[];
 }): CodingSessionMissionInspectorInput {
   const { fold, wireEvents } = requireIssuedNativeCodingSessionTeamFold(
     input.nativeFold,
@@ -626,6 +628,7 @@ export function projectNativeTeamFoldToMissionInspector(input: {
     landEvidence: {
       includedEventIds: [...fold.includedEventIds],
       wireEvents,
+      activeSeats: (input.activeSeats ?? []).map((seat) => ({ ...seat })),
     },
     channelRef: fold.context.channelRef,
     sessionRef: fold.context.sessionRef,

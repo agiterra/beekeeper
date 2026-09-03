@@ -9,6 +9,7 @@ import {
   REPO_REF,
   founderActMission,
   landFounders,
+  landFounderPushResponse,
   landReadyResponse,
   landRefusedResponse,
   openFounderActApp,
@@ -257,6 +258,53 @@ test("L8.2: an admitted commit offers the exact command, and the app never runs 
   await control.scrollIntoViewIfNeeded();
   await waitForAnimations(page);
   await control.screenshot({ path: `${SHOTS}/05-land-ready.png` });
+});
+
+test("L21 arm (A): a founder's push is ready, and the screen claims no ruling", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    landResponse: landFounderPushResponse(mission),
+  });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  await expect(control).toHaveAttribute("data-land-state", "ready");
+  await control.getByTestId("mission-land-open").click();
+
+  const approval = control.getByTestId("mission-land-approval");
+  await expect(approval).toContainText("You are a founder of this repository");
+  await expect(approval).toContainText(
+    "admits your push with no verdict at all",
+  );
+  // The mission's newest ruling is `changes-requested`. The screen must not
+  // borrow the word "approved" from an arm it is not standing on.
+  await expect(approval).toContainText("Nothing here has ruled on this commit");
+  await expect(approval).not.toContainText("Approved by");
+
+  await control.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await control.screenshot({ path: `${SHOTS}/09-land-founder-arm.png` });
+});
+
+test("L21 arm (C): a seat's ready push names the verifier that cleared it", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    landResponse: landReadyResponse(mission),
+  });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  await control.getByTestId("mission-land-open").click();
+  const approval = control.getByTestId("mission-land-approval");
+  // Both records, because one without the other is not what admitted it.
+  await expect(approval).toContainText("Approved by");
+  await expect(approval).toContainText("did not refute it (refutation");
 });
 
 test("L18: the Land control names both founders, and says the viewer is one", async ({

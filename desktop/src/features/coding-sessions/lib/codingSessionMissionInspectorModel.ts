@@ -52,6 +52,16 @@ import { MISSION_INSPECTOR_LIMITS } from "./codingSessionMissionInspectorBounds"
 export type CodingSessionMissionLandEvidenceInput = {
   includedEventIds: readonly string[];
   wireEvents: readonly ImmutableCodingSessionTeamWireEvent[];
+  /**
+   * The mission's active seats, with their roles.
+   *
+   * Arm (C) of the require-verdict rule asks whether a **`verifier`** seat
+   * cleared the report, so the push predicate needs roles, not just event
+   * ids. Empty means the surface could not read them — the native answer then
+   * says `seatsRead: false`, and its refusal is about a check that did not
+   * run rather than a verifier that does not exist.
+   */
+  activeSeats: readonly { actorPubkey: string; role: string }[];
 };
 
 export type CodingSessionMissionGoalInput =

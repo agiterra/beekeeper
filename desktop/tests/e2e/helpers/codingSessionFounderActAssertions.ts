@@ -752,9 +752,14 @@ export function landReadyResponse(mission: FounderActMission) {
     ruleGoverns: true,
     admitted: true,
     evidence: {
+      // Arm (C): the founder's disposition settled it and the verifier seat
+      // independently failed to refute the same report (L21).
+      arm: "verifier-verdict",
       sessionRef: SESSION_REF,
       dispositionEventId: mission.ids.disposition,
       dispositionAuthorPubkey: FOUNDER,
+      refutationEventId: REFUTATION_EVENT_ID,
+      verifierPubkey: VERIFIER,
       reportEventId: mission.ids.report,
       headSha: HEAD_SHA,
     },
@@ -763,6 +768,44 @@ export function landReadyResponse(mission: FounderActMission) {
       eventId: mission.ids.disposition,
       authorPubkey: FOUNDER,
       decision: "approve",
+      reportEventId: mission.ids.report,
+      headSha: HEAD_SHA,
+    },
+    command: `git push origin ${HEAD_SHA}:refs/heads/main`,
+    ...landFounders(true),
+  };
+}
+
+/**
+ * The `coding_session_land` answer for a **founder's** push — arm (A).
+ *
+ * Deliberately over a mission whose newest ruling is `changes-requested`: the
+ * point of the arm is that a founder lands with no verdict at all, and a
+ * screen that printed "approved" over that ruling would be telling a
+ * comfortable lie about a gate (L21).
+ */
+export function landFounderPushResponse(mission: FounderActMission) {
+  return {
+    schema: "buzz-coding-session-land-adapter/v1",
+    implementation: "buzz-core",
+    repositoryKnown: true,
+    ruleGoverns: true,
+    admitted: true,
+    evidence: {
+      arm: "founder",
+      sessionRef: "",
+      dispositionEventId: "",
+      dispositionAuthorPubkey: "",
+      refutationEventId: "",
+      verifierPubkey: "",
+      reportEventId: "",
+      headSha: HEAD_SHA,
+    },
+    refusalReason: null,
+    newestVerdict: {
+      eventId: mission.ids.disposition,
+      authorPubkey: FOUNDER,
+      decision: "changes-requested",
       reportEventId: mission.ids.report,
       headSha: HEAD_SHA,
     },
@@ -803,6 +846,21 @@ export const CO_FOUNDER =
   "3d3b7169a13a8311b480bdfce85b4a0c7ff9b185832cbc6e547db7bbcf96c05e";
 
 /**
+ * The verifier seat whose `not-refuted` refutation clears the report, and that
+ * refutation's event id (L21, arm (C)).
+ *
+ * Fixture values, not derived from this mission's own events: the Land answer
+ * these helpers build is a mock of the **adapter's output**, and the wording
+ * that matters is pinned by the Rust-generated fixture the refusal strings are
+ * read from. What a spec needs here is a well-formed answer whose verifier is
+ * visibly not the report's author.
+ */
+export const VERIFIER =
+  "7c1d5e9b2a4f6083bd15c7e4902a3f8615d0b47ce93a6f28104b5d7e83c9a061";
+export const REFUTATION_EVENT_ID =
+  "441a97330c5e28b6f31d70a94e6c82b5137fa0de95c4813627ab0e9d5f31c8a4";
+
+/**
  * The founder set every mock land answer carries, and the sentence
  * `buzz-core` composes for it.
  *
@@ -820,6 +878,8 @@ export function landFounders(viewerIsFounder: boolean) {
     viewerIsFounder,
     rulesSigner: FOUNDER,
     rosterRead: true,
+    // The mission's seats reached the rule — arm (C) could be evaluated.
+    seatsRead: true,
   };
 }
 

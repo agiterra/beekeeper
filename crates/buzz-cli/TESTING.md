@@ -2197,6 +2197,49 @@ harness) and on the operator's own shell:
 Not runnable from a seat without a relay-known key; say so rather than
 reporting a guess.
 
+### `bee git check --ref` names which arm would admit (batch 3, L21)
+
+The prediction now says *which* of the require-verdict rule's two arms it read,
+because "admitted" over *"you are a founder"* and over *"a verifier cleared
+this commit"* are different facts and a person acting on the answer needs to
+know which one they have.
+
+```bash
+bee git check --ref refs/heads/main
+bee --format compact git check --ref refs/heads/main   # `prediction.arm`
+```
+
+Live checks, on a repository whose `refs/heads/main` carries `require-verdict`:
+
+1. **As a founder.** The human line reads `admitted by arm (A) — you are a
+   founder of this repository, and a founder's push needs no verdict`, and
+   `--format compact` carries `prediction.arm: "founder"`. It must say this
+   **even when the repository is bound to no channel and no mission is
+   readable** — arm (A) reads no mission, and the relay short-circuits before
+   its three queries. A prediction that turned "unreadable" into a refusal for
+   a founder would be refusing over a fact the rule does not consult.
+2. **As a seat, with a verifier's clearance on the wire.** `prediction.arm` is
+   `"verifier-verdict"` and the sentence names both records: the lead's
+   disposition and the verifier's refutation, each by short id.
+3. **As a seat, with only an approval.** Refused, and the sentence is
+   `… and no active verifier seat has cleared the report it approves. The gate
+   wants a `refutation` verdict of `not-refuted` on that report …`. Publish one
+   with `bee sessions verdict refutation --decision not-refuted` from a seat
+   holding the `verifier` role and re-run: the same command must flip to
+   admitted with no other change.
+4. **As the builder, holding the verifier seat too.** Still refused, naming the
+   key: a seat cannot stand as the verifier of its own work. This is a
+   deliberate divergence from `bee sessions complete`, whose verifier check
+   does accept that shape — a completion is a claim about work, a push is the
+   work. Both sentences should be captured in one transcript when this is
+   exercised, since the difference is the kind that reads as a bug until it is
+   read as a rule.
+
+The refusal an **arm (B)** would have answered does not exist: no gate-row
+record on the wire names a commit, so `bee git check --ref` has nothing to
+predict from. See NIP-GS's appendix, "The arm that is specified and not
+implemented".
+
 ## A ruling that names a class, and a completion that needs a verifier (batch 3, L7)
 
 **The relay must carry this core before any client writes a `condition`.** The

@@ -177,6 +177,11 @@ mod live {
         community: buzz_core::CommunityId,
         channel_id: Uuid,
         founder: Keys,
+        /// The seat that wrote the report. Since the 2026-09-03 ruling every
+        /// case about the *rule* has to push as a non-founder: arm (A) admits
+        /// a founder outright, so a founder-pushed case asserts nothing about
+        /// the search it was written for.
+        builder: Keys,
     }
 
     /// A channel, a genesis founded by `founder`, and one assignment → report
@@ -324,6 +329,7 @@ mod live {
             community,
             channel_id,
             founder,
+            builder,
         }
     }
 
@@ -391,13 +397,17 @@ mod live {
             Some("whoami/cli"),
         )
         .await;
+        // Pushed by the mission's own builder: arm (A) admits a
+        // founder with no verdict at all, so a founder-pushed case
+        // would never reach the rule this asserts about.
+        channel_member(&m, &m.builder).await;
         let response = push_response(
             &m.state,
             m.community,
             &m.founder,
             &format!("repo-{}", Uuid::new_v4().simple()),
             guarded_repo(m.channel_id),
-            &m.founder.public_key().to_hex(),
+            &m.builder.public_key().to_hex(),
             fast_forward(HEAD_SHA),
         )
         .await;
@@ -423,13 +433,17 @@ mod live {
             Some("whoami/cli"),
         )
         .await;
+        // Pushed by the mission's own builder: arm (A) admits a
+        // founder with no verdict at all, so a founder-pushed case
+        // would never reach the rule this asserts about.
+        channel_member(&m, &m.builder).await;
         let response = push_response(
             &m.state,
             m.community,
             &m.founder,
             &format!("repo-{}", Uuid::new_v4().simple()),
             guarded_repo(m.channel_id),
-            &m.founder.public_key().to_hex(),
+            &m.builder.public_key().to_hex(),
             fast_forward(HEAD_SHA),
         )
         .await;
@@ -458,13 +472,17 @@ mod live {
             Some("whoami/cli"),
         )
         .await;
+        // Pushed by the mission's own builder: arm (A) admits a
+        // founder with no verdict at all, so a founder-pushed case
+        // would never reach the rule this asserts about.
+        channel_member(&m, &m.builder).await;
         let response = push_response(
             &m.state,
             m.community,
             &m.founder,
             &format!("repo-{}", Uuid::new_v4().simple()),
             guarded_repo(m.channel_id),
-            &m.founder.public_key().to_hex(),
+            &m.builder.public_key().to_hex(),
             fast_forward(HEAD_SHA),
         )
         .await;
@@ -482,13 +500,17 @@ mod live {
     /// searching an empty set and blaming the commit.
     #[tokio::test]
     #[ignore = "requires Postgres"]
-    async fn the_rule_on_an_unbound_repository_says_it_can_read_no_verdict() {
+    async fn an_unbound_repository_refuses_a_seat_at_the_binding_gate_first() {
         let m = mission(
             CodingSessionTeamDispositionDecision::Approve,
             Some(HEAD_SHA),
             None,
         )
         .await;
+        // Pushed by the mission's own builder: arm (A) admits a founder with
+        // no verdict at all, so a founder-pushed case would never reach any
+        // rule this asserts about.
+        channel_member(&m, &m.builder).await;
         let response = push_response(
             &m.state,
             m.community,
@@ -498,17 +520,25 @@ mod live {
                 Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"])
                     .expect("protect"),
             ],
-            &m.founder.public_key().to_hex(),
+            &m.builder.public_key().to_hex(),
             fast_forward(HEAD_SHA),
         )
         .await;
         let (status, body) = body_string(response).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+        // **Not** `VerdictAdmissionRefusal::RepositoryUnbound`. An unbound
+        // repository grants a non-owner no git role at all, so `policy.rs`
+        // denies with the `no_channel_binding` remediation token *before* the
+        // verdict gate runs — and since arm (A) now admits every founder
+        // before the gate's own unbound branch, that branch is **unreachable
+        // on the relay path**. It survives as the honest answer for the
+        // desktop's `coding_session_land` adapter, which has no role gate in
+        // front of it; the sentence is asserted there
+        // (`coding_session_land_tests.rs`), not here, because here it is not
+        // what a person is shown.
         assert_eq!(
             body,
-            "refs/heads/main: require-verdict is set and this repository is bound to no channel, \
-             so no mission verdict can be read here. Remove the rule, or bind the repository to \
-             the mission's channel."
+            "no_channel_binding: repository has no channel binding"
         );
     }
 
@@ -540,6 +570,73 @@ mod live {
             status,
             StatusCode::OK,
             "refs/heads/topic carries no require-verdict rule (body: {body})"
+        );
+    }
+
+    /// **Arm (A), 2026-09-03.** A founder's push is admitted over a mission
+    /// whose only ruling is `changes-requested`. Nothing about the mission is
+    /// consulted, so nothing about it can refuse.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_founder_push_is_admitted_over_a_changes_requested_mission() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::ChangesRequested,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let response = push_response(
+            &m.state,
+            m.community,
+            &m.founder,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            guarded_repo(m.channel_id),
+            &m.founder.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "humans never gate a landing: a founder's push needs no verdict (body: {body})"
+        );
+    }
+
+    /// Arm (A) short-circuits **before** the mission read, so a repository
+    /// bound to no channel still takes a founder's push.
+    ///
+    /// The same repository refuses a seat's push with `RepositoryUnbound`
+    /// (`the_rule_on_an_unbound_repository_says_it_can_read_no_verdict`), and
+    /// the pair is the point: a fact the rule does not consult for founders
+    /// must not be able to refuse them.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn an_unbound_repository_still_takes_a_founder_push() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::ChangesRequested,
+            Some(HEAD_SHA),
+            None,
+        )
+        .await;
+        let response = push_response(
+            &m.state,
+            m.community,
+            &m.founder,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            vec![
+                Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"])
+                    .expect("protect"),
+            ],
+            &m.founder.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "arm (A) reads no mission, so an unbound repository cannot refuse it (body: {body})"
         );
     }
 
@@ -581,13 +678,14 @@ mod live {
         assert_eq!(
             body,
             format!(
-                "refs/heads/main: commit {HEAD_SHA} is approved, but the relay's \
-                 require-verdict rule reserves a gated ref to a founder of this repository (1 \
-                 founder(s): the announcement's signer, its maintainers tag, and the project \
-                 roster's owners). Ask a founder to land it."
+                "refs/heads/main: commit {HEAD_SHA} is approved (1 approving disposition(s)) \
+                 and no active verifier seat has cleared the report it approves. The gate \
+                 wants a `refutation` verdict of `not-refuted` on that report, signed by a \
+                 verifier seat of that mission — a lead's approval is the settlement, not the \
+                 check. A founder may land this commit by pushing it themselves."
             ),
-            "the reservation is attributed to the relay's rule, not to a mission policy \
-             nobody read"
+            "since the 2026-09-03 ruling the missing fact is the verifier's clearance, not a \
+             founder-only reservation"
         );
 
         // WITHOUT the rule — today's behaviour, disclosed rather than implied:
@@ -768,10 +866,11 @@ mod live {
         assert_eq!(
             body,
             format!(
-                "refs/heads/main: commit {HEAD_SHA} is approved, but the relay's require-verdict \
-                 rule reserves a gated ref to a founder of this repository (1 founder(s): the \
-                 announcement's signer, its maintainers tag, and the project roster's owners). \
-                 Ask a founder to land it."
+                "refs/heads/main: commit {HEAD_SHA} is approved (1 approving disposition(s)) \
+                 and no active verifier seat has cleared the report it approves. The gate \
+                 wants a `refutation` verdict of `not-refuted` on that report, signed by a \
+                 verifier seat of that mission — a lead's approval is the settlement, not the \
+                 check. A founder may land this commit by pushing it themselves."
             )
         );
     }

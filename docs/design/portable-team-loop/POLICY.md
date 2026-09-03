@@ -277,6 +277,27 @@ runs, so the record that binds is the record the CLI prints. A caller that has
 not read the policy set passes `false`, which means **this fold enforces
 nothing extra**, never *no verifier is required*; Desktop passes `false` today.
 
+**What it does not gate: the push.** *(Added 2026-09-03, lane L21.)* A
+`require-verdict` ref's admission rule (NIP-GS appendix) reads **no session
+policy at all** — `verdict_admission_fold_context` passes `verifier_required:
+false` and says so in its own comment. Since L21 the push rule needs a
+verifier's `not-refuted` refutation for *every* non-founder push, whatever this
+flag says, and admits *every* founder push, likewise whatever this flag says.
+The flag was specified as the switch between the push rule's arms (B) and (C);
+arm (B) is not implemented, because kind 44246 carries no commit for its gate
+rows to be green *on* (NIP-GS appendix, "The arm that is specified and not
+implemented"). Any surface offering this control must therefore describe the
+completion check and must not promise a landing rule — a control that lies
+about what it enforces is a bug of the same severity as a crash.
+
+**Where a founder sets it.** `bee sessions policy set --verifier-required`, and
+since L21 the Desktop launch form's "Completing this mission" control
+(`NewCodingSessionPolicyField.tsx`). It is three-way — set, cleared, not set —
+because the wire field is a nullable boolean and a checkbox would publish
+`false` for a founder who never touched it, which is a stated policy nobody
+chose. Before L21 the launch form disclosed this field as enforced while
+offering no way to set it (finding 39).
+
 The one true sentence, byte-identical in `POLICY_ENFORCEMENT_DISCLOSURE` (CLI
 and Tauri) and asserted by `crates/buzz-cli/tests/policy_enforcement_sentence.rs`:
 

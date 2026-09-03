@@ -1431,9 +1431,12 @@ pub enum ReposProtectCmd {
         /// Require the NIP-34 patch workflow instead of direct pushes.
         #[arg(long, default_value_t = false)]
         require_patch: bool,
-        /// Admit an update only when an approved mission verdict names the
-        /// pushed commit. Enforced by the relay serving the repository — a
-        /// relay predating the rule parses the token and ignores it.
+        /// Admit a push two ways only: a founder's, with no verdict at all;
+        /// or a seat's, behind a verifier's `not-refuted` refutation of an
+        /// approved report naming the pushed commit. Enforced by the relay
+        /// serving the repository — a relay predating the rule parses the
+        /// token and ignores it. Does not read any session policy:
+        /// `gates.verifierRequired` governs mission completion, not this.
         #[arg(long, default_value_t = false)]
         require_verdict: bool,
     },

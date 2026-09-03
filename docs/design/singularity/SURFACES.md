@@ -2615,6 +2615,26 @@ Copy button. The command names the **commit**, never the branch: a branch name
 is not a commit, and two pushes to one branch are two commits of which one was
 ruled on.
 
+**Land says which arm made it ready.** *(2026-09-03, lane L21.)* Since the rule
+gained two arms, "ready" covers two very different facts and the confirm step
+names which one it is standing on. Under arm **(A)** — the viewer is a founder
+— it says *"You are a founder of this repository, so the require-verdict rule
+on refs/heads/main admits your push with no verdict at all. Nothing here has
+ruled on this commit."* That last sentence is load-bearing: a founder's push is
+offered over a mission whose only ruling may be `changes-requested`, and a
+screen that printed *"approved"* there would be telling a comfortable lie about
+a gate. Under arm **(C)** it names both records — the lead's disposition **and**
+the verifier who did not refute it — because one without the other is not what
+admitted the commit. The refusals name the nearest missing fact in the same
+spirit: an approval nobody checked, a verifier who is the report's own author,
+and a verified commit pushed by a key that holds no seat are three different
+problems and get three different sentences.
+
+The screen also carries whether the mission's **seat roster** reached the rule
+at all (`seatsRead`). Arm (C) is a question about roles, so a surface that sent
+no seats has not learned that no verifier cleared the report — it has learned
+nothing, and must not print the first over the second.
+
 **The Land control names the repository's founders, in every state.** A
 repository has **founders**, not an owner: the kind:30617 announcement's
 signer, every pubkey in its NIP-34 `maintainers` tag, and every Owner on the

@@ -3,11 +3,14 @@
     "admitted": true,
     "command": "git push origin 07c470be07c470be07c470be07c470be07c470be:refs/heads/main",
     "evidence": {
+      "arm": "verifier-verdict",
       "dispositionAuthorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "dispositionEventId": "0932e631e682e3b5470f277fe19521ee544deb7feffcdf141d0a8fee94b96cee",
+      "dispositionEventId": "d07a7df61082958ff108e141ea766ee654c139abbcb09037690fff74502937b9",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "7eb9beee112bc9b7ecdb849705e40117f5b56c5c013ff8b5971386b8527529cf",
-      "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      "refutationEventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9",
+      "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+      "verifierPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"
     },
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
@@ -15,11 +18,11 @@
     "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "implementation": "buzz-core",
     "newestVerdict": {
-      "authorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "decision": "approve",
-      "eventId": "0932e631e682e3b5470f277fe19521ee544deb7feffcdf141d0a8fee94b96cee",
+      "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "decision": "not-refuted",
+      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "7eb9beee112bc9b7ecdb849705e40117f5b56c5c013ff8b5971386b8527529cf"
+      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
     },
     "refusalReason": null,
     "repositoryKnown": true,
@@ -27,7 +30,8 @@
     "ruleGoverns": true,
     "rulesSigner": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     "schema": "buzz-coding-session-land-adapter/v1",
-    "viewerIsFounder": true
+    "seatsRead": true,
+    "viewerIsFounder": false
   },
   "approvedForAnotherRef": {
     "admitted": false,
@@ -39,11 +43,11 @@
     "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "implementation": "buzz-core",
     "newestVerdict": {
-      "authorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "decision": "approve",
-      "eventId": "661c024111d40ba56d287ca3a5226b0604689eb290ac02740315ea2d321f5aaf",
+      "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "decision": "not-refuted",
+      "eventId": "3520ec5a4db3fcd079321a270374e31de36355ed7e39d528466341ace8072950",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "f86aab39aa994144b47a52f1de5cb9a5799ac5efd7348c5aad6c082463b7c389"
+      "reportEventId": "3a575b0c8686e5d4e9fc6807f500cf5dd91209acddfaacc0b3721819c7eb690d"
     },
     "refusalReason": "commit 07c470be07c470be07c470be07c470be07c470be is approved for release, and this is a different ref. A verdict admits a commit to the branch its report named.",
     "repositoryKnown": true,
@@ -51,6 +55,41 @@
     "ruleGoverns": true,
     "rulesSigner": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     "schema": "buzz-coding-session-land-adapter/v1",
+    "seatsRead": true,
+    "viewerIsFounder": false
+  },
+  "founderPush": {
+    "admitted": true,
+    "command": "git push origin 07c470be07c470be07c470be07c470be07c470be:refs/heads/main",
+    "evidence": {
+      "arm": "founder",
+      "dispositionAuthorPubkey": "",
+      "dispositionEventId": "",
+      "headSha": "07c470be07c470be07c470be07c470be07c470be",
+      "refutationEventId": "",
+      "reportEventId": "",
+      "sessionRef": "",
+      "verifierPubkey": ""
+    },
+    "founders": [
+      "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+    ],
+    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "implementation": "buzz-core",
+    "newestVerdict": {
+      "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "decision": "not-refuted",
+      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "headSha": "07c470be07c470be07c470be07c470be07c470be",
+      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+    },
+    "refusalReason": null,
+    "repositoryKnown": true,
+    "rosterRead": true,
+    "ruleGoverns": true,
+    "rulesSigner": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "schema": "buzz-coding-session-land-adapter/v1",
+    "seatsRead": true,
     "viewerIsFounder": true
   },
   "note": "Generated by `the_typescript_decoder_fixture_is_this_adapter_s_real_output` in desktop/src-tauri/src/commands/coding_session_land_tests.rs. Do not hand-edit: a hand-written fixture is what let a decoder stay green while it would have thrown for every real record.",
@@ -64,11 +103,11 @@
     "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "implementation": "buzz-core",
     "newestVerdict": {
-      "authorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "decision": "changes-requested",
-      "eventId": "5f90979679a8a0281d643ed9676a0e2d991d97f34387dfc2f31b70305d978d3a",
+      "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "decision": "not-refuted",
+      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "7eb9beee112bc9b7ecdb849705e40117f5b56c5c013ff8b5971386b8527529cf"
+      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
     },
     "refusalReason": "require-verdict is set and no mission verdict names this commit: no approved report names 07c470be07c470be07c470be07c470be07c470be. Searched 1 mission(s) — the newest 16 on this channel whose founder is a founder of this repository — over one shared page of the newest 512 team transactions on that channel. An older ruling can fall outside both.",
     "repositoryKnown": true,
@@ -76,7 +115,8 @@
     "ruleGoverns": true,
     "rulesSigner": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     "schema": "buzz-coding-session-land-adapter/v1",
-    "viewerIsFounder": true
+    "seatsRead": true,
+    "viewerIsFounder": false
   },
   "ungoverned": {
     "admitted": false,
@@ -88,11 +128,11 @@
     "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "implementation": "buzz-core",
     "newestVerdict": {
-      "authorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "decision": "approve",
-      "eventId": "0932e631e682e3b5470f277fe19521ee544deb7feffcdf141d0a8fee94b96cee",
+      "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "decision": "not-refuted",
+      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "7eb9beee112bc9b7ecdb849705e40117f5b56c5c013ff8b5971386b8527529cf"
+      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
     },
     "refusalReason": null,
     "repositoryKnown": true,
@@ -100,7 +140,8 @@
     "ruleGoverns": false,
     "rulesSigner": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     "schema": "buzz-coding-session-land-adapter/v1",
-    "viewerIsFounder": true
+    "seatsRead": true,
+    "viewerIsFounder": false
   },
   "unknown": {
     "admitted": false,
@@ -110,11 +151,11 @@
     "foundersNote": "No repository record reached this view, so nothing here can name its founders.",
     "implementation": "buzz-core",
     "newestVerdict": {
-      "authorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "decision": "approve",
-      "eventId": "0932e631e682e3b5470f277fe19521ee544deb7feffcdf141d0a8fee94b96cee",
+      "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
+      "decision": "not-refuted",
+      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "7eb9beee112bc9b7ecdb849705e40117f5b56c5c013ff8b5971386b8527529cf"
+      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
     },
     "refusalReason": null,
     "repositoryKnown": false,
@@ -122,6 +163,7 @@
     "ruleGoverns": false,
     "rulesSigner": null,
     "schema": "buzz-coding-session-land-adapter/v1",
+    "seatsRead": true,
     "viewerIsFounder": false
   }
 }

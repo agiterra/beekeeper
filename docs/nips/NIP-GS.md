@@ -884,9 +884,28 @@ A `kind:30617` repository announcement may carry the rule token
 ["buzz-protect", "refs/heads/main", "require-verdict"]
 ```
 
-A relay that implements it admits an update to a matching ref only when **all**
-of the following hold. The rule only ever subtracts: it can refuse a push the
-role check allowed, never admit one the role check refused.
+*Revised 2026-09-03 (lane L21) to two arms. Brian's ruling: **humans never gate
+a landing.** The rule exists to replace review with proof, not to put a person
+in the loop.*
+
+A relay that implements it admits an update to a matching ref when **either**
+arm holds. The rule only ever subtracts: it can refuse a push the role check
+allowed, never admit one the role check refused.
+
+### Arm (A) — the pusher is a founder
+
+A founder of the repository (see *Founders* below) lands a gated ref with **no
+verdict at all**. No mission is read, no report is resolved, and a repository
+whose missions are unreadable — or which is bound to no channel — does not stop
+them. Founders are trusted humans; the gate is not for them. The landing stays
+observable through the relay's push record (`kind:30618`), and revoking or
+blocking remains a founder's power at every moment — after the fact, never as a
+blocking step.
+
+### Arm (C) — a verifier's verdict names the commit
+
+Any other pusher needs a machine-checkable ruling by a key that is not the one
+being ruled on. All of:
 
 1. A `kind:44244` `verdict` of subtype `disposition` whose `decision` is
    `approve` or `approve-with-notes` is **canonical in its session's NIP-CSTX
@@ -897,21 +916,61 @@ role check allowed, never admit one the role check refused.
 2. That session's `kind:44226` genesis is on the channel the repository's
    `buzz-channel` tag binds, and the genesis signer is **a founder of the
    repository** (see *Founders* below).
-3. The pushed ref is the branch the approved report named, when it named one.
+3. A **second, independent record clears the same report**: a canonical
+   `verdict` of subtype **`refutation`** whose `decision` is `not-refuted`,
+   whose `reportRef` is that report, signed by a key holding an active
+   **`verifier`** seat of that mission and **not** the report's own author.
+
+   The verb is `refutation`, not `disposition`, because that is the only
+   verifier-authored verdict the NIP-CSTX fold authorizes — a disposition is a
+   lead's or founder's verb, and a verifier-signed disposition is excluded
+   `Unauthorized` and is evidence of nothing. So the shape is the one the model
+   already has: the lead **settles** the assignment, and the verifier
+   **independently fails to break it**. `confirmed` and `blocked` are rulings
+   too, and both are rulings *against*.
+
+   A report whose own author holds the verifier seat does **not** clear it,
+   even though a `mission.completed`'s own verifier check accepts that shape. A
+   completion is a claim about work; a push is the work.
+4. The pushed ref is the branch the approved report named, when it named one.
    A report naming `whoami/cli` approves that commit **on that branch**; it does
    not admit the same commit onto `main`, nor admit it back over a branch that
    has since moved on. A report naming no branch scopes no ref.
-4. The pusher is **a founder of the repository** — not necessarily the one who
-   founded the mission: co-owners are equal owners of the code, and a ruling by
-   one is landable by the other. **The reservation is the relay's rule, not the
-   mission's** — no session policy is read, and the refusal says so. (A relay
-   MAY admit an active seat of the same umbrella instead; Beekeeper ships that
-   branch **disabled** until a verdict-gated push has been exercised live once.)
-5. The disposition is founder-signed. (A lead's canonical disposition MAY be
-   admitted on the same schedule as 4; Beekeeper ships that disabled too.)
+5. The pusher is an **active seat of that mission**. Any seat may land what a
+   verifier cleared; a stranger holding the same patch may not.
 
-Deleting a gated ref is refused for everyone, the founder included: the zero
-oid is not named by any report.
+### The arm that is specified and not implemented
+
+Brian's ruling also named an arm **(B)**: provider-*observed* gate rows
+(`kind:44246`, `source: "observed"`) green **on the pushed SHA** admit a seat's
+push with no verifier at all, when the mission policy's `gates.verifierRequired`
+is not set. It is the velocity arm — the one that makes a small mission cost
+nothing beyond its own gate run.
+
+**Beekeeper does not implement it, because the wire carries no fact it could be
+computed from.** A NIP-CSOB observation payload has exactly seven keys and its
+gate row exactly five (`gate`, `outcome`, `command`, `summary`, `durationMs`);
+none is a commit, both are closed shapes, and the fold that reads them
+deliberately reads no clock, so "the row is newer than the commit" is not
+available as a substitute either. Binding a mission's gate rows to a push by
+anything weaker — "this mission has green rows *somewhere*" — would let a green
+row from an earlier commit admit a later one.
+
+**The wire fact it needs**: the provider resolves the seat's worktree `HEAD` at
+the moment it pairs a gate `tool_call` with its `tool_result`, and signs it as a
+sixth gate-row key `headSha`. That is a NIP-CSOB amendment with a read-side
+exemption (the payload is `deny_unknown_fields`, so every older reader would
+otherwise refuse such an event outright), plus a new capability in the gate
+observer, which today derives rows from ACP transcript frames alone and resolves
+no git state.
+
+Until that exists, a non-founder push needs arm (C) whatever
+`gates.verifierRequired` says. **The gate does not read the session policy**,
+and no refusal it gives may be read as *"no verifier is required"*.
+
+Deleting a gated ref is refused for everyone under arm (C): the zero oid is not
+named by any report. A founder deletes it under arm (A), as they may push
+anything else.
 
 Two records that look like they should admit never do:
 

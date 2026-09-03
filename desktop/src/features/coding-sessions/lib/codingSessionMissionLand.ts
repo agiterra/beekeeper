@@ -32,11 +32,25 @@ export const CODING_SESSION_LAND_ADAPTER_SCHEMA =
 /** The ref a mission lands on. Frozen in §1l alongside the command. */
 export const CODING_SESSION_LAND_REF = "refs/heads/main";
 
-/** What admitted a commit. */
+/** Which arm of the require-verdict rule admitted a commit. */
+export type CodingSessionLandArm = "founder" | "verifier-verdict";
+
+/**
+ * What admitted a commit.
+ *
+ * Under arm `founder` every field but `arm` and `headSha` is empty: a
+ * founder's push reads no mission, so there is no disposition, no report and
+ * no verifier to name. The screen must say *why* it is ready — "you are a
+ * founder" and "a machine checked it" are different facts, and one sentence
+ * covering both would be the comfortable guess.
+ */
 export type CodingSessionLandEvidence = {
+  readonly arm: CodingSessionLandArm;
   readonly sessionRef: string;
   readonly dispositionEventId: string;
   readonly dispositionAuthorPubkey: string;
+  readonly refutationEventId: string;
+  readonly verifierPubkey: string;
   readonly reportEventId: string;
   readonly headSha: string;
 };
@@ -72,6 +86,14 @@ export type CodingSessionLandResult = {
   readonly rulesSigner: string | null;
   /** Whether the project roster half of the founder set was read. */
   readonly rosterRead: boolean;
+  /**
+   * Whether the mission's seat roster reached the rule.
+   *
+   * `false` means arm (C) could not be evaluated from this surface at all —
+   * never that no verifier cleared the report. The refusal sentence is then
+   * about a check that did not run, and the screen says so.
+   */
+  readonly seatsRead: boolean;
   readonly command: string | null;
 };
 
@@ -80,16 +102,22 @@ function isEvidence(value: unknown): value is CodingSessionLandEvidence | null {
     value === null ||
     (hasExactFields(value, [
       [
+        "arm",
         "sessionRef",
         "dispositionEventId",
         "dispositionAuthorPubkey",
+        "refutationEventId",
+        "verifierPubkey",
         "reportEventId",
         "headSha",
       ],
     ]) &&
+      (value.arm === "founder" || value.arm === "verifier-verdict") &&
       typeof value.sessionRef === "string" &&
       typeof value.dispositionEventId === "string" &&
       typeof value.dispositionAuthorPubkey === "string" &&
+      typeof value.refutationEventId === "string" &&
+      typeof value.verifierPubkey === "string" &&
       typeof value.reportEventId === "string" &&
       typeof value.headSha === "string")
   );
@@ -137,6 +165,7 @@ export function decodeCodingSessionLandResult(
         "viewerIsFounder",
         "rulesSigner",
         "rosterRead",
+        "seatsRead",
         "command",
       ],
     ]) ||
@@ -154,6 +183,7 @@ export function decodeCodingSessionLandResult(
     typeof value.viewerIsFounder !== "boolean" ||
     (value.rulesSigner !== null && typeof value.rulesSigner !== "string") ||
     typeof value.rosterRead !== "boolean" ||
+    typeof value.seatsRead !== "boolean" ||
     (value.command !== null && typeof value.command !== "string")
   ) {
     throw new Error("native land adapter returned a malformed response");
@@ -179,6 +209,12 @@ export async function invokeCodingSessionLand(input: {
   projectOwnerPubkeys: readonly string[] | null;
   pusherPubkey: string;
   protectionTags: readonly (readonly string[])[] | null;
+  /**
+   * The mission's active seats, with their roles — arm (C) asks whether a
+   * `verifier` seat cleared the report, and an empty list is "not read", not
+   * "there are none". The native answer's `seatsRead` says which.
+   */
+  activeSeats: readonly { actorPubkey: string; role: string }[];
   includedEventIds: readonly string[];
   events: readonly ImmutableCodingSessionTeamWireEvent[];
 }): Promise<CodingSessionLandResult> {
@@ -200,6 +236,10 @@ export async function invokeCodingSessionLand(input: {
           input.protectionTags === null
             ? null
             : input.protectionTags.map((tag) => [...tag]),
+        activeSeats: input.activeSeats.map((seat) => ({
+          actorPubkey: seat.actorPubkey,
+          role: seat.role,
+        })),
         includedEventIds: [...input.includedEventIds],
         events: input.events.map((event) => ({
           id: event.id,
@@ -398,7 +438,10 @@ export function codingSessionMissionLandModel(input: {
       buttonLabel: `Land ${evidence.headSha.slice(0, 7)} on main`,
       headSha: evidence.headSha,
       command: result.command,
-      approvalSentence: `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}. The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
+      approvalSentence:
+        evidence.arm === "founder"
+          ? `You are a founder of this repository, so the require-verdict rule on ${CODING_SESSION_LAND_REF} admits your push with no verdict at all. Nothing here has ruled on this commit.`
+          : `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}, and ${input.resolveWho(evidence.verifierPubkey)} did not refute it (refutation ${short(evidence.refutationEventId)}). The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
       notRunSentence: CODING_SESSION_LAND_NOT_RUN_SENTENCE,
       sentence: null,
     };

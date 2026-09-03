@@ -172,6 +172,18 @@ command = "bee --format json sessions operation list --channel <uuid> --session-
 frozen_source = "batch vocabulary, verified completion"
 frozen = "mission.completed requires a verifier's ruling while the policy sets gates.verifierRequired: assignment <assignmentId> settled on report <reportId>, and no active verifier seat has ruled on that report"
 
+# Lane L21 (2026-09-03). `bee git check --ref` prints "admitted by arm (A)"
+# and "admitted by arm (C)", and the relay's refusals name what an arm fell
+# short of, so the word needs a definition a seat can read from the binary.
+[[entry]]
+word = "arm"
+aliases = ["arms", "arm_a", "arm_c", "require-verdict", "require_verdict"]
+meaning = "One of the two ways a require-verdict ref admits a push: (A) the pusher is a founder of the repository, needing no verdict at all; (C) a lead's approving disposition names the pushed commit and an active verifier seat, not the report's own author, published a not-refuted refutation of that same report."
+cause = "Humans never gate a landing (Brian, 2026-09-03): the rule replaces review with proof, so a founder pushes freely and everybody else needs a machine-checkable second opinion. A third arm (B) — provider-observed gate rows green on the pushed SHA — is specified and not implemented, because kind 44246 carries no commit for a gate row to be green on."
+command = "bee git check --ref refs/heads/main   # read .prediction.arm"
+frozen_source = ""
+frozen = ""
+
 # Finding 33 (2026-09-03). The word appears in the relay's own refusal copy
 # ("reserves a gated ref to a founder of this repository"), in `bee repos get`,
 # and on the desktop's Land control, and until this entry nothing defined it.
@@ -181,7 +193,7 @@ frozen = "mission.completed requires a verifier's ruling while the policy sets g
 word = "founder"
 aliases = ["founders", "founder_pubkey", "founderPubkey", "repo_founders", "maintainers"]
 meaning = "A key that speaks for a repository: the kind:30617 announcement's signer, every pubkey in its NIP-34 maintainers tag, and every Owner on the project roster its project back-reference names."
-cause = "The require-verdict gate searches only missions whose founder is one of these keys, and reserves a gated ref to them. Rules are narrower: only the announcement's signer can rewrite a buzz-protect tag in v1, so a co-founder who edits rules creates their own repository instead of editing yours."
+cause = "The require-verdict gate admits a founder's push outright, with no verdict read at all (arm A), and searches only missions whose founder is one of these keys when judging anybody else's (arm C). Rules are narrower: only the announcement's signer can rewrite a buzz-protect tag in v1, so a co-founder who edits rules creates their own repository instead of editing yours."
 command = "bee repos get --id <repo-id> --owner <hex64>   # read .founders and .founders_note"
 frozen_source = ""
 frozen = ""

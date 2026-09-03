@@ -46,8 +46,8 @@ use buzz_core::coding_session_team_transaction::CodingSessionTeamActiveSeat;
 use buzz_core::coding_session_verdict_admission::{
     evaluate_verdict_admission, fold_candidate_records, mission_transactions,
     verdict_admission_fold_context, VerdictAdmission, VerdictAdmissionCandidate,
-    VerdictAdmissionQuery, VerdictAdmissionRefusal, VerdictAdmissionRules,
-    VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
+    VerdictAdmissionQuery, VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_SESSIONS,
+    VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
 use buzz_core::git_perms::{Denial, EffectiveRules, ProtectionRule, RefUpdate};
 use buzz_core::kind::{KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_TEAM_TRANSACTION};
@@ -185,6 +185,20 @@ pub async fn search_verdict_admission(
         new_oid,
         pusher_pubkey,
     } = *request;
+    // Arm (A), before anything is fetched. A founder's push is admitted with
+    // no verdict, so reading missions for one would be three queries for an
+    // answer that cannot change — and worse, a repository bound to no channel
+    // would refuse a founder over a fact arm (A) does not consult. `decide`
+    // reaches the same conclusion; short-circuiting here is what keeps the
+    // unbound and unreadable cases from overtaking it.
+    if founders
+        .pubkeys()
+        .iter()
+        .any(|founder| founder.eq_ignore_ascii_case(pusher_pubkey))
+    {
+        return VerdictSearch::Admitted;
+    }
+
     let Some(channel_id) = channel_id else {
         return VerdictSearch::Refused(VerdictAdmissionRefusal::RepositoryUnbound);
     };
@@ -271,7 +285,7 @@ pub async fn search_verdict_admission(
                 genesis_ref,
                 founder_pubkey,
                 canonical: Vec::new(),
-                active_seat_pubkeys: Vec::new(),
+                active_seats: Vec::new(),
             });
             continue;
         }
@@ -324,7 +338,7 @@ pub async fn search_verdict_admission(
             genesis_ref,
             founder_pubkey,
             canonical,
-            active_seat_pubkeys: seats.into_iter().map(|seat| seat.actor_pubkey).collect(),
+            active_seats: seats,
         });
     }
 
@@ -348,7 +362,7 @@ fn decide(
         pusher_pubkey,
         repo_founders: founders.pubkeys(),
     };
-    match evaluate_verdict_admission(candidates, &query, &VerdictAdmissionRules::FOUNDER_ONLY) {
+    match evaluate_verdict_admission(candidates, &query) {
         VerdictAdmission::Admitted(_) => VerdictSearch::Admitted,
         VerdictAdmission::Refused(refusal) => VerdictSearch::Refused(refusal),
     }

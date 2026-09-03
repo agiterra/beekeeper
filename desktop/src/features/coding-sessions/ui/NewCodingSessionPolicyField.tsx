@@ -229,6 +229,62 @@ export function NewCodingSessionPolicyField({
           </div>
         </div>
 
+        {/* The one gate field the 44244 fold actually counts, and until this
+            lane the only enforced field the form could not set: the
+            disclosure below already named it (finding 39). Three-way, not a
+            checkbox — `verifierRequired` is a nullable boolean on the wire,
+            and a two-state control would publish `false` for a founder who
+            never touched it, which is a stated policy nobody chose. */}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <label
+              className="text-2xs text-muted-foreground"
+              htmlFor="policy-verifier-required"
+            >
+              Completing this mission
+            </label>
+            <select
+              className="h-8 rounded-md border border-input bg-transparent px-2 text-sm disabled:opacity-50"
+              data-testid="new-coding-session-policy-verifier-required"
+              disabled={disabled}
+              id="policy-verifier-required"
+              onChange={(event) =>
+                patch({
+                  verifierRequired:
+                    event.target.value === "unset"
+                      ? null
+                      : event.target.value === "true",
+                })
+              }
+              value={
+                draft.verifierRequired === null
+                  ? "unset"
+                  : String(draft.verifierRequired)
+              }
+            >
+              <option value="unset">Not set</option>
+              <option value="true">
+                A verifier must clear every settled report
+              </option>
+              <option value="false">
+                The lead&rsquo;s approval settles it
+              </option>
+            </select>
+          </div>
+          {/* What this switch decides, in the words of the rule that reads it.
+              It is NOT the push gate: `verdict_admission_fold_context` passes
+              `verifier_required: false` and says no refusal there may be read
+              as "no verifier is required". A label that promised otherwise
+              would be a control lying about what it enforces. */}
+          <p className="text-2xs text-muted-foreground">
+            Set, a <code>mission.completed</code> is refused while any settled
+            report has no verifier&rsquo;s ruling. It does not decide who may
+            push: on a <code>require-verdict</code> ref the repository&rsquo;s
+            own rule admits a founder&rsquo;s push outright, and anyone
+            else&rsquo;s only behind a verifier&rsquo;s verdict.
+          </p>
+        </div>
+
         <div className="flex items-center gap-2">
           <label
             className="text-2xs text-muted-foreground"

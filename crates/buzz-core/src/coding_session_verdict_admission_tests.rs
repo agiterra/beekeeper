@@ -8,8 +8,8 @@ use super::*;
 
 use crate::coding_session_team_transaction::{
     CodingSessionTeamAssignment, CodingSessionTeamDispositionDecision,
-    CodingSessionTeamMissionCompleted, CodingSessionTeamReport,
-    CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+    CodingSessionTeamMissionCompleted, CodingSessionTeamRefutationDecision,
+    CodingSessionTeamReport, CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
 use crate::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
@@ -87,6 +87,24 @@ fn disposition(
     ))
 }
 
+/// A verifier's `not-refuted` refutation — arm (C)'s clearing record.
+fn refutation(
+    assignment_ref: &str,
+    report_ref: &str,
+    decision: CodingSessionTeamRefutationDecision,
+) -> CodingSessionTeamTransactionPayload {
+    payload(CodingSessionTeamTransactionBody::Verdict(
+        CodingSessionTeamVerdict::Refutation {
+            assignment_ref: assignment_ref.into(),
+            report_ref: report_ref.into(),
+            decision,
+            summary: "Could not break it".into(),
+            findings: Vec::new(),
+            required_action: None,
+        },
+    ))
+}
+
 fn completed(assignment_ref: &str, landed: &str) -> CodingSessionTeamTransactionPayload {
     payload(CodingSessionTeamTransactionBody::MissionCompleted(
         CodingSessionTeamMissionCompleted {
@@ -121,6 +139,7 @@ struct Mission {
     founder: Keys,
     lead: Keys,
     builder: Keys,
+    verifier: Keys,
     events: Vec<Event>,
     seats: Vec<CodingSessionTeamActiveSeat>,
 }
@@ -134,6 +153,7 @@ fn mission(
     let founder = Keys::generate();
     let lead = Keys::generate();
     let builder = Keys::generate();
+    let verifier = Keys::generate();
     let seats = vec![
         CodingSessionTeamActiveSeat {
             actor_pubkey: lead.public_key().to_hex(),
@@ -143,6 +163,10 @@ fn mission(
             actor_pubkey: builder.public_key().to_hex(),
             role: "builder".into(),
         },
+        CodingSessionTeamActiveSeat {
+            actor_pubkey: verifier.public_key().to_hex(),
+            role: "verifier".into(),
+        },
     ];
     let assignment = signed(&assignment(&builder), &lead, 100);
     let report = signed(
@@ -150,18 +174,34 @@ fn mission(
         &builder,
         200,
     );
+    // A `disposition` is `may_lead` in the governance fold
+    // (`coding_session_team_transaction_fold.rs:712`), so the ruler is the
+    // lead or the founder — never the verifier, whose disposition the fold
+    // would exclude `Unauthorized`.
     let ruler = if ruled_by_lead { &lead } else { &founder };
     let disposition = signed(
         &disposition(&assignment.id.to_hex(), &report.id.to_hex(), decision),
         ruler,
         300,
     );
+    // Arm (C)'s second record: the verifier independently fails to refute the
+    // same report (`:709` is the rule that authorises this one).
+    let cleared = signed(
+        &refutation(
+            &assignment.id.to_hex(),
+            &report.id.to_hex(),
+            CodingSessionTeamRefutationDecision::NotRefuted,
+        ),
+        &verifier,
+        350,
+    );
     let completion = signed(&completed(&assignment.id.to_hex(), HEAD_SHA), &lead, 400);
     Mission {
         founder,
         lead,
         builder,
-        events: vec![assignment, report, disposition, completion],
+        verifier,
+        events: vec![assignment, report, disposition, cleared, completion],
         seats,
     }
 }
@@ -181,11 +221,7 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         genesis_ref: GENESIS.into(),
         founder_pubkey: mission.founder.public_key().to_hex(),
         canonical,
-        active_seat_pubkeys: mission
-            .seats
-            .iter()
-            .map(|seat| seat.actor_pubkey.clone())
-            .collect(),
+        active_seats: mission.seats.clone(),
     }
 }
 
@@ -216,6 +252,22 @@ fn query_on<'a>(
     }
 }
 
+/// The `(sessionRef, headSha)` an arm-(C) admission stood on.
+///
+/// [`VerdictAdmissionEvidence`] became an enum with the 2026-09-03 ruling —
+/// a founder push stands on no report at all — so a test that wants the
+/// verdict's own facts has to say which arm it expected.
+fn verifier_evidence(outcome: VerdictAdmission) -> (String, String) {
+    match outcome {
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict {
+            session_ref,
+            head_sha,
+            ..
+        }) => (session_ref, head_sha),
+        other => panic!("expected a verifier verdict admission, got {other:?}"),
+    }
+}
+
 // ── the rule ─────────────────────────────────────────────────────────────
 
 #[test]
@@ -227,18 +279,14 @@ fn founder_signed_approval_over_the_pushed_head_sha_admits() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
-    match outcome {
-        VerdictAdmission::Admitted(evidence) => {
-            assert_eq!(evidence.head_sha, HEAD_SHA);
-            assert_eq!(evidence.session_ref, SESSION);
-        }
-        VerdictAdmission::Refused(refusal) => panic!("expected admission, got {refusal:?}"),
-    }
+    let (session_ref, head_sha) = verifier_evidence(outcome);
+    assert_eq!(head_sha, HEAD_SHA);
+    assert_eq!(session_ref, SESSION);
 }
 
 #[test]
@@ -254,10 +302,10 @@ fn approve_with_notes_admits_and_changes_requested_refuses() {
     ] {
         let mission = mission(Some(HEAD_SHA), None, decision, false);
         let owner = mission.founder.public_key().to_hex();
+        let pusher = mission.builder.public_key().to_hex();
         let outcome = evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-            &VerdictAdmissionRules::FOUNDER_ONLY,
+            &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
         );
         assert_eq!(
             outcome.is_admitted(),
@@ -278,10 +326,10 @@ fn the_run_three_fixture_refuses_with_the_frozen_copy() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
         panic!("a changes-requested verdict must not admit its own commit");
@@ -307,10 +355,10 @@ fn a_report_naming_only_a_branch_never_admits() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
         panic!("a branch name is not a commit");
@@ -337,11 +385,11 @@ fn landed_shas_never_admit() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     // The completion in the fixture names HEAD_SHA in `landedShas`.
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     assert!(
         !outcome.is_admitted(),
@@ -359,11 +407,14 @@ fn a_disposition_in_a_stranger_umbrella_never_admits() {
     );
     let stranger = Keys::generate().public_key().to_hex();
     let founder = mission.founder.public_key().to_hex();
+    // Pushed by a **seat** of the mission: the repository's own founder is a
+    // stranger to it, so no candidate survives the founder check. Pushing as
+    // that founder would be admitted by arm (A) and would test nothing.
+    let pusher = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
         // The repository is owned by someone who did not found this mission.
-        &query(&stranger, std::slice::from_ref(&stranger), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&stranger), HEAD_SHA),
     );
     assert!(
         !outcome.is_admitted(),
@@ -393,10 +444,10 @@ fn a_sixty_four_hex_head_sha_does_not_admit_a_forty_hex_push() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     assert!(!outcome.is_admitted(), "a prefix is not a match");
 }
@@ -412,23 +463,25 @@ fn head_sha_matching_is_case_folded() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     let pushed = HEAD_SHA.to_ascii_uppercase();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), &pushed),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), &pushed),
     );
-    assert!(outcome.is_admitted(), "hex case is not identity");
-    let VerdictAdmission::Admitted(evidence) = outcome else {
-        unreachable!("asserted admitted above");
-    };
-    assert_eq!(evidence.head_sha, HEAD_SHA, "the report's own bytes");
+    let (_, head_sha) = verifier_evidence(outcome);
+    assert_eq!(head_sha, HEAD_SHA, "the report's own bytes");
 }
 
 // ── ruling 1: the pusher ─────────────────────────────────────────────────
 
+/// Since the 2026-09-03 ruling a verifier's verdict admits **any active seat**
+/// of that mission — the two `VerdictAdmissionRules` flags this section used
+/// to toggle are gone, because the ruling decided both of the questions they
+/// deferred. What is left is the boundary they were protecting: seats yes,
+/// strangers no.
 #[test]
-fn a_seat_is_refused_the_approved_commit_under_the_shipped_rule() {
+fn any_active_seat_lands_what_a_verifier_cleared_and_a_stranger_does_not() {
     let mission = mission(
         Some(HEAD_SHA),
         None,
@@ -436,119 +489,74 @@ fn a_seat_is_refused_the_approved_commit_under_the_shipped_rule() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
-    let seat = mission.lead.public_key().to_hex();
-    // No session policy is read at any point: the reservation is the relay's
-    // shipped rule, and the sentence says so (fix round 1, F3).
+    for (who, seat) in [
+        ("the builder", mission.builder.public_key().to_hex()),
+        ("the lead", mission.lead.public_key().to_hex()),
+        ("the verifier", mission.verifier.public_key().to_hex()),
+    ] {
+        assert!(
+            evaluate_verdict_admission(
+                &[candidate(&mission)],
+                &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
+            )
+            .is_admitted(),
+            "{who} holds an active seat of the mission whose verifier cleared this commit"
+        );
+    }
+
+    let stranger = Keys::generate().public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&stranger, std::slice::from_ref(&owner), HEAD_SHA),
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
-        panic!("a seat may not land a verdict-gated ref today");
+        panic!("a key holding no seat in this umbrella lands nothing");
     };
     assert_eq!(
         refusal.reason(),
         format!(
-            "commit {HEAD_SHA} is approved, but the relay's require-verdict rule reserves a \
-             gated ref to a founder of this repository (1 founder(s): the announcement's \
-             signer, its maintainers tag, and the project roster's owners). Ask a founder to \
-             land it."
+            "commit {HEAD_SHA} carries a verifier's verdict on mission {SESSION}, and this key \
+             is not an active seat of it (3 seat(s)). A founder of this repository may land it, \
+             or a seat of that mission may."
         )
     );
 }
 
-/// The disabled branch, proven to work so enabling it later is one field.
-///
-/// It turns on `seat_may_push` and nothing else: the reservation is the
-/// relay's rule, and no session policy is consulted at any point. The field
-/// that once pretended otherwise is gone (fix round 1, F3).
+/// An approval with no verifier behind it does not admit a seat's push,
+/// whoever signed the approval. The refusal says which fact is missing.
 #[test]
-fn a_seat_lands_only_when_the_relays_own_flag_allows_it() {
-    let mission = mission(
+fn an_approval_no_verifier_cleared_does_not_admit_a_seat_push() {
+    let mut mission = mission(
         Some(HEAD_SHA),
         None,
         CodingSessionTeamDispositionDecision::Approve,
-        false,
+        true,
     );
+    // Drop the verifier's refutation: the lead approved and nobody checked.
+    mission.events.retain(|event| {
+        !matches!(
+            validate_coding_session_team_transaction_envelope(event)
+                .expect("fixture decodes")
+                .body,
+            CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation { .. })
+        )
+    });
     let owner = mission.founder.public_key().to_hex();
-    let seat = mission.builder.public_key().to_hex();
-    let relaxed = VerdictAdmissionRules {
-        seat_may_push: true,
-        ..VerdictAdmissionRules::FOUNDER_ONLY
+    let pusher = mission.builder.public_key().to_hex();
+    let outcome = evaluate_verdict_admission(
+        &[candidate(&mission)],
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
+    );
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        panic!("only a verifier's verdict admits a seat's push");
     };
     assert!(
-        evaluate_verdict_admission(
-            &[candidate(&mission)],
-            &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
-            &relaxed,
-        )
-        .is_admitted(),
-        "an active seat lands once the relay's flag is on"
+        refusal
+            .reason()
+            .contains("no active verifier seat has cleared the report it approves"),
+        "{}",
+        refusal.reason()
     );
-    assert!(
-        !evaluate_verdict_admission(
-            &[candidate(&mission)],
-            &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
-            &VerdictAdmissionRules::FOUNDER_ONLY,
-        )
-        .is_admitted(),
-        "and does not while it is off"
-    );
-    let stranger = Keys::generate().public_key().to_hex();
-    assert!(
-        !evaluate_verdict_admission(
-            &[candidate(&mission)],
-            &query(&stranger, std::slice::from_ref(&owner), HEAD_SHA),
-            &relaxed,
-        )
-        .is_admitted(),
-        "a key holding no seat in this umbrella lands nothing"
-    );
-}
-
-// ── ruling 2: whose ruling counts ────────────────────────────────────────
-
-#[test]
-fn a_lead_disposition_does_not_admit_under_the_shipped_rule() {
-    let mission = mission(
-        Some(HEAD_SHA),
-        None,
-        CodingSessionTeamDispositionDecision::Approve,
-        true,
-    );
-    let owner = mission.founder.public_key().to_hex();
-    let outcome = evaluate_verdict_admission(
-        &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
-    );
-    assert!(
-        !outcome.is_admitted(),
-        "only a founder-signed ruling admits while the pusher gate is founder-only"
-    );
-}
-
-/// The disabled branch: with the flag on, the lead's canonical disposition is
-/// exactly as good as the founder's.
-#[test]
-fn a_lead_disposition_admits_once_the_flag_is_on() {
-    let mission = mission(
-        Some(HEAD_SHA),
-        None,
-        CodingSessionTeamDispositionDecision::Approve,
-        true,
-    );
-    let owner = mission.founder.public_key().to_hex();
-    let outcome = evaluate_verdict_admission(
-        &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules {
-            lead_disposition_admits: true,
-            ..VerdictAdmissionRules::FOUNDER_ONLY
-        },
-    );
-    assert!(outcome.is_admitted());
 }
 
 // ── copy and bounds ──────────────────────────────────────────────────────
@@ -565,11 +573,11 @@ fn an_unbound_repository_says_so_rather_than_searching() {
 #[test]
 fn no_candidates_discloses_a_zero_search() {
     let owner = Keys::generate().public_key().to_hex();
-    let outcome = evaluate_verdict_admission(
-        &[],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
-    );
+    // Not the founder: arm (A) admits a founder before any search happens,
+    // and this test is about what the search says when it finds nothing.
+    let pusher = Keys::generate().public_key().to_hex();
+    let outcome =
+        evaluate_verdict_admission(&[], &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA));
     let VerdictAdmission::Refused(refusal) = outcome else {
         panic!("nothing to search admits nothing");
     };
@@ -626,19 +634,16 @@ fn an_unauthorized_disposition_is_not_canonical_and_never_admits() {
     let canonical = fold_candidate_records(&[assignment, report, ruling], &context)
         .expect("the fixture folds cleanly");
     let owner = founder.public_key().to_hex();
+    let pusher = builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[VerdictAdmissionCandidate {
             session_ref: SESSION.into(),
             genesis_ref: GENESIS.into(),
             founder_pubkey: owner.clone(),
             canonical,
-            active_seat_pubkeys: Vec::new(),
+            active_seats: Vec::new(),
         }],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules {
-            lead_disposition_admits: true,
-            ..VerdictAdmissionRules::FOUNDER_ONLY
-        },
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     assert!(
         !outcome.is_admitted(),
@@ -663,14 +668,14 @@ fn an_approval_is_scoped_to_the_branch_its_report_named() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
 
     // The branch the report named — admitted, by short ref and by full ref.
     for ref_name in ["refs/heads/whoami/cli", "whoami/cli"] {
         assert!(
             evaluate_verdict_admission(
                 &[candidate(&mission)],
-                &query_on(ref_name, &owner, std::slice::from_ref(&owner), HEAD_SHA),
-                &VerdictAdmissionRules::FOUNDER_ONLY,
+                &query_on(ref_name, &pusher, std::slice::from_ref(&owner), HEAD_SHA),
             )
             .is_admitted(),
             "{ref_name} is the branch the approved report named"
@@ -681,8 +686,7 @@ fn an_approval_is_scoped_to_the_branch_its_report_named() {
     for ref_name in ["refs/heads/main", "refs/heads/release", "refs/tags/v9"] {
         let outcome = evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query_on(ref_name, &owner, std::slice::from_ref(&owner), HEAD_SHA),
-            &VerdictAdmissionRules::FOUNDER_ONLY,
+            &query_on(ref_name, &pusher, std::slice::from_ref(&owner), HEAD_SHA),
         );
         let VerdictAdmission::Refused(refusal) = outcome else {
             panic!("an approval for whoami/cli must not admit {ref_name}");
@@ -715,15 +719,15 @@ fn branch_scoping_matches_whole_names_only() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     assert!(evaluate_verdict_admission(
         &[candidate(&mission)],
         &query_on(
             "refs/heads/main",
-            &owner,
+            &pusher,
             std::slice::from_ref(&owner),
             HEAD_SHA
         ),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
     )
     .is_admitted());
     assert!(
@@ -731,11 +735,10 @@ fn branch_scoping_matches_whole_names_only() {
             &[candidate(&mission)],
             &query_on(
                 "refs/heads/main-2",
-                &owner,
+                &pusher,
                 std::slice::from_ref(&owner),
                 HEAD_SHA
             ),
-            &VerdictAdmissionRules::FOUNDER_ONLY,
         )
         .is_admitted(),
         "`main` does not name `main-2`"
@@ -754,12 +757,12 @@ fn a_report_naming_no_branch_scopes_no_ref() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     for ref_name in ["refs/heads/main", "refs/heads/release"] {
         assert!(
             evaluate_verdict_admission(
                 &[candidate(&mission)],
-                &query_on(ref_name, &owner, std::slice::from_ref(&owner), HEAD_SHA),
-                &VerdictAdmissionRules::FOUNDER_ONLY,
+                &query_on(ref_name, &pusher, std::slice::from_ref(&owner), HEAD_SHA),
             )
             .is_admitted(),
             "a report with no branch constrains no ref"
@@ -824,16 +827,16 @@ fn a_superseded_approval_no_longer_admits() {
     );
 
     let owner = founder.public_key().to_hex();
+    let pusher = builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[VerdictAdmissionCandidate {
             session_ref: SESSION.into(),
             genesis_ref: GENESIS.into(),
             founder_pubkey: owner.clone(),
             canonical,
-            active_seat_pubkeys: Vec::new(),
+            active_seats: Vec::new(),
         }],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     assert!(
         !outcome.is_admitted(),
@@ -855,10 +858,10 @@ fn a_report_naming_the_parent_sha_refuses_the_child() {
         false,
     );
     let owner = mission.founder.public_key().to_hex();
+    let pusher = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
         panic!("an approval of a different commit is not an approval of this one");
@@ -901,10 +904,13 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
             genesis_ref: GENESIS.into(),
             founder_pubkey: owner.clone(),
             canonical,
-            active_seat_pubkeys: Vec::new(),
+            active_seats: Vec::new(),
         }],
-        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(
+            &victim.builder.public_key().to_hex(),
+            std::slice::from_ref(&owner),
+            HEAD_SHA,
+        ),
     );
     assert!(
         !outcome.is_admitted(),

@@ -369,7 +369,13 @@ export async function projectCodingSessionMissionEvidence(input: {
     // has its own sentence for it — it is not this fold's to guess.
     verifierRequired: input.verifierRequired ?? false,
   });
-  const projected = projectNativeTeamFoldToMissionInspector({ nativeFold });
+  const projected = projectNativeTeamFoldToMissionInspector({
+    nativeFold,
+    activeSeats: authority.value.activeSeats.map((seat) => ({
+      actorPubkey: seat.actorPubkey,
+      role: seat.role,
+    })),
+  });
   if (projected.rejectedEventCount === null) {
     throw new Error("Native fold projection did not provide an exact count.");
   }

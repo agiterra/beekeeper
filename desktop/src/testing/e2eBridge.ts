@@ -14086,6 +14086,12 @@ export function maybeInstallE2eTauriMocks() {
             viewerIsFounder: pusherPubkey === repoOwnerPubkey,
             rulesSigner: repoOwnerPubkey,
             rosterRead: true,
+            // Arm (C) is a question about seats; the mock echoes whether the
+            // app actually sent them rather than asserting a roster it never
+            // read (L21).
+            seatsRead: Array.isArray(request?.activeSeats)
+              ? (request.activeSeats as unknown[]).length > 0
+              : false,
             command: null,
           };
         }
@@ -14106,6 +14112,7 @@ export function maybeInstallE2eTauriMocks() {
           viewerIsFounder: false,
           rulesSigner: null,
           rosterRead: false,
+          seatsRead: false,
           command: null,
         };
       }

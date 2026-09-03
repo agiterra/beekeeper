@@ -61,7 +61,7 @@ test("L8.2: an ungoverned repository says the rule does not govern it, and shows
   const html = render("ungoverned");
   assert.match(html, /data-land-state="ungoverned"/);
   assert.match(html, /This repository has no require-verdict rule/);
-  assert.match(html, /newest verdict is approve by the founder/);
+  assert.match(html, /newest verdict is not-refuted by the founder/);
 });
 
 test("L8.2: no repository record reads as unknown, never as no rule", () => {
@@ -161,7 +161,11 @@ test("L8.3: a panel given neither fact renders exactly what it did before this l
 // ── finding 33: the founder line is on the screen in every state ─────────
 
 test("L18: the control names the founders whether it offers the push or refuses", () => {
-  for (const key of ["admitted", "refused", "ungoverned"]) {
+  // `founderPush` rather than `admitted`: since the 2026-09-03 ruling the
+  // admitted fixture is a **seat's** push behind a verifier's verdict, so its
+  // viewer is deliberately not a founder. The founder's own case is its own
+  // fixture, and `data-founder` must tell the two apart.
+  for (const key of ["founderPush", "admitted", "refused", "ungoverned"]) {
     const html = render(key);
     assert.match(
       html,
@@ -170,8 +174,10 @@ test("L18: the control names the founders whether it offers the push or refuses"
     );
     assert.match(
       html,
-      /data-founder="viewer"/,
-      `${key} says the viewer founds it`,
+      new RegExp(
+        `data-founder="${FIXTURE[key].viewerIsFounder ? "viewer" : "other"}"`,
+      ),
+      `${key} states the viewer's real standing`,
     );
     assert.match(html, /Founders: the founder\./, `${key} names them`);
     assert.match(
@@ -306,4 +312,23 @@ test("L20.3: a boundary that threw says the read failed, not silence", () => {
 test("L20.3: land present renders the control, never the unavailable line — even with a stale reason", () => {
   const html = render("admitted");
   assert.ok(!/mission-land-unavailable/.test(html));
+});
+
+test("L21 arm (A): a founder's push says why it is ready, and claims no ruling", () => {
+  assert.match(render("founderPush"), /data-land-state="ready"/);
+  // The confirm step's sentence is where the arm is named. The mission's only
+  // ruling is `changes-requested`, so saying "approved" over it would be the
+  // comfortable guess this project treats as a bug of the same severity as a
+  // crash.
+  const sentence = model("founderPush").approvalSentence;
+  assert.match(sentence, /You are a founder of this repository/);
+  assert.match(sentence, /Nothing here has ruled on this commit/);
+  assert.ok(!/Approved by/.test(sentence));
+});
+
+test("L21 arm (C): a verifier's clearance is named alongside the approval", () => {
+  assert.match(render("admitted"), /data-land-state="ready"/);
+  const sentence = model("admitted").approvalSentence;
+  assert.match(sentence, /Approved by/);
+  assert.match(sentence, /did not refute it \(refutation/);
 });

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { CODING_SESSION_POLICY_STATED_NOT_ENFORCED } from "../../src/features/coding-sessions/lib/codingSessionPolicy";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 
 import { waitForAnimations } from "../helpers/animations";
@@ -384,9 +385,14 @@ test.describe("the one launch form", () => {
       "none set",
     );
     await page.getByTestId("new-coding-session-policy").click();
+    // L21 finding 40: this asserted "a stated intention, not an enforced
+    // limit" — copy that 06a41fff7 replaced when `gates.verifierRequired`
+    // became enforced. The spec has been red on `main` ever since and `just
+    // ci` does not run Playwright, so nothing said so. Asserted against the
+    // constant now, so the two cannot drift again.
     await expect(
       page.getByTestId("new-coding-session-policy-disclosure"),
-    ).toContainText("a stated intention, not an enforced limit");
+    ).toContainText(CODING_SESSION_POLICY_STATED_NOT_ENFORCED);
 
     // The plan names the events pressing the button publishes, with kinds.
     await expect(
@@ -427,6 +433,12 @@ test.describe("the one launch form", () => {
     await page
       .getByTestId("new-coding-session-policy-posture")
       .selectOption("overnight");
+    // L21 finding 39: `gates.verifierRequired` is enforced at the 44244 fold's
+    // completion check and was the one enforced field the launch form could
+    // not set — the disclosure named it while nothing offered it.
+    await page
+      .getByTestId("new-coding-session-policy-verifier-required")
+      .selectOption("true");
     await expect(
       page.getByTestId("new-coding-session-plan-policy"),
     ).toHaveAttribute("data-kind", "44245");
@@ -475,6 +487,7 @@ test.describe("the one launch form", () => {
     expect(policyEvent).toBeTruthy();
     const policy = JSON.parse(policyEvent?.content ?? "{}");
     expect(policy.posture).toBe("overnight");
+    expect(policy.gates.verifierRequired).toBe(true);
     expect(policy.bench.identities).toEqual([ROLES[1].pubkey]);
     expect(policyEvent?.tags?.[0]?.[0]).toBe("h");
 

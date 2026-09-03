@@ -50,7 +50,7 @@ test("L8.2: an admitted commit offers the command, and the command names the com
   assert.ok(!/refs\/heads\/main:refs/.test(model.command));
   assert.equal(
     model.approvalSentence,
-    `Approved by the founder in disposition ${FIXTURE.admitted.evidence.dispositionEventId.slice(0, 8)}, over report ${FIXTURE.admitted.evidence.reportEventId.slice(0, 8)}. The relay's require-verdict rule admits this commit on refs/heads/main.`,
+    `Approved by the founder in disposition ${FIXTURE.admitted.evidence.dispositionEventId.slice(0, 8)}, over report ${FIXTURE.admitted.evidence.reportEventId.slice(0, 8)}, and ${FIXTURE.admitted.evidence.verifierPubkey.slice(0, 8)} did not refute it (refutation ${FIXTURE.admitted.evidence.refutationEventId.slice(0, 8)}). The relay's require-verdict rule admits this commit on refs/heads/main.`,
   );
   assert.equal(model.notRunSentence, CODING_SESSION_LAND_NOT_RUN_SENTENCE);
   assert.match(model.notRunSentence, /irreversible/);
@@ -84,7 +84,7 @@ test("L8.2: an ungoverned repository says so and still shows the verdict it read
   assert.equal(model.command, null);
   assert.equal(
     model.sentence,
-    `This repository has no require-verdict rule, so nothing here gates the push. The mission's newest verdict is approve by the founder over report ${FIXTURE.ungoverned.newestVerdict.reportEventId.slice(0, 8)}.`,
+    `This repository has no require-verdict rule, so nothing here gates the push. The mission's newest verdict is ${FIXTURE.ungoverned.newestVerdict.decision} by ${FIXTURE.ungoverned.newestVerdict.authorPubkey.slice(0, 8)} over report ${FIXTURE.ungoverned.newestVerdict.reportEventId.slice(0, 8)}.`,
   );
 });
 
@@ -149,13 +149,22 @@ test("L8.2: §1j's no-verdict string discloses both caps", () => {
 // ── finding 33: the Land control names the founders ──────────────────────
 
 test("L18: every state carries the founder line, and the viewer's standing", () => {
-  for (const key of ["admitted", "refused", "ungoverned"]) {
+  // Every fixture but `founderPush` is a **seat's** push since the 2026-09-03
+  // ruling, so the viewer is deliberately not a founder in those. The line is
+  // on the screen in every state either way — that is what L18 pinned — and
+  // the standing it states must track the fixture rather than a constant.
+  for (const key of ["founderPush", "admitted", "refused", "ungoverned"]) {
     const model = codingSessionMissionLandModel({
       result: decodeCodingSessionLandResult(FIXTURE[key]),
       resolveWho,
     });
     assert.match(model.foundersSentence, /^Founders: the founder\./);
-    assert.match(model.foundersSentence, /You are one of them\./);
+    assert.match(
+      model.foundersSentence,
+      FIXTURE[key].viewerIsFounder
+        ? /You are one of them\./
+        : /You are not one of them,/,
+    );
     assert.match(
       model.foundersSentence,
       /Rules are set by the founder and only that key can rewrite them\./,
@@ -164,7 +173,7 @@ test("L18: every state carries the founder line, and the viewer's standing", () 
       !model.foundersSentence.includes("was not read here"),
       `a read roster is not disclosed as unread: ${model.foundersSentence}`,
     );
-    assert.equal(model.viewerIsFounder, true);
+    assert.equal(model.viewerIsFounder, FIXTURE[key].viewerIsFounder);
   }
 });
 

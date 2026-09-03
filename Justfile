@@ -466,8 +466,8 @@ test: test-genesis test-git-push-gate
 # database and the same `trap cleanup EXIT`). Either works; this way `just
 # test-git-push-gate` names one thing and can be run alone, and the recipe's
 # own filter is the whole set — the push-gate cases *and* the
-# verdict-admission ones, 17 tests. A filter of `api::git::policy` alone
-# reaches only 10 of them.
+# verdict-admission ones, 25 tests as of lane L21 (which added arm (A)'s two).
+# A filter of `api::git::policy` alone reaches only 10 of them.
 test-git-push-gate: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail

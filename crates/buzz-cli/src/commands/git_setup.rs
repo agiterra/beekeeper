@@ -32,8 +32,8 @@ use nostr::{Keys, ToBech32};
 use buzz_core::coding_session_verdict_admission::{
     active_seats_from_authority_transitions, evaluate_verdict_admission, fold_candidate_records,
     mission_transactions, verdict_admission_fold_context, VerdictAdmission,
-    VerdictAdmissionCandidate, VerdictAdmissionQuery, VerdictAdmissionRefusal,
-    VerdictAdmissionRules, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
+    VerdictAdmissionCandidate, VerdictAdmissionEvidence, VerdictAdmissionQuery,
+    VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
     VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
 use buzz_core::kind::{
@@ -1096,12 +1096,21 @@ pub enum RefPredictionState {
         /// The relay's own words.
         detail: String,
     },
-    /// The same rule the hook runs admits this commit for this key.
-    Admitted {
+    /// The same rule the hook runs admits this commit for this key, by arm
+    /// **(A)**: the pusher is a founder of the repository, and no mission was
+    /// read at all.
+    AdmittedAsFounder,
+    /// Admitted by arm **(C)**: a lead's approving disposition over a report
+    /// naming this commit, cleared by an independent verifier seat.
+    AdmittedByVerdict {
         /// The umbrella whose ruling admits it.
         session_ref: String,
-        /// The approving disposition.
+        /// The approving disposition that settled the assignment.
         disposition_event_id: String,
+        /// The verifier's `not-refuted` refutation of the same report.
+        refutation_event_id: String,
+        /// The verifier seat that signed it.
+        verifier_pubkey: String,
     },
     /// The same rule refuses it, with the sentence the hook would return.
     Refused {
@@ -1520,17 +1529,26 @@ async fn predict_ref(
         pusher_pubkey,
         repo_founders: founders.pubkeys(),
     };
-    prediction.state =
-        match evaluate_verdict_admission(&candidates, &query, &VerdictAdmissionRules::FOUNDER_ONLY)
-        {
-            VerdictAdmission::Admitted(evidence) => RefPredictionState::Admitted {
-                session_ref: evidence.session_ref,
-                disposition_event_id: evidence.disposition_event_id,
-            },
-            VerdictAdmission::Refused(refusal) => RefPredictionState::Refused {
-                reason: refusal.reason(),
-            },
-        };
+    prediction.state = match evaluate_verdict_admission(&candidates, &query) {
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush { .. }) => {
+            RefPredictionState::AdmittedAsFounder
+        }
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict {
+            session_ref,
+            disposition_event_id,
+            refutation_event_id,
+            verifier_pubkey,
+            ..
+        }) => RefPredictionState::AdmittedByVerdict {
+            session_ref,
+            disposition_event_id,
+            refutation_event_id,
+            verifier_pubkey,
+        },
+        VerdictAdmission::Refused(refusal) => RefPredictionState::Refused {
+            reason: refusal.reason(),
+        },
+    };
     prediction
 }
 
@@ -1642,7 +1660,7 @@ async fn fetch_verdict_candidates(
             genesis_ref,
             founder_pubkey,
             canonical,
-            active_seat_pubkeys: seats.into_iter().map(|seat| seat.actor_pubkey).collect(),
+            active_seats: seats,
         });
     }
     Ok(candidates)
@@ -1715,11 +1733,17 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
             "founders": prediction.founders,
             "ref": prediction.ref_name,
             "sha": prediction.sha,
+            "arm": match &prediction.state {
+                RefPredictionState::AdmittedAsFounder => Some("founder"),
+                RefPredictionState::AdmittedByVerdict { .. } => Some("verifier-verdict"),
+                _ => None,
+            },
             "answer": match &prediction.state {
                 RefPredictionState::Ungoverned => "ungoverned",
                 RefPredictionState::NoRepository => "no_repository",
                 RefPredictionState::Unreadable { .. } => "unreadable",
-                RefPredictionState::Admitted { .. } => "admitted",
+                RefPredictionState::AdmittedAsFounder => "admitted",
+                RefPredictionState::AdmittedByVerdict { .. } => "admitted",
                 RefPredictionState::Refused { .. } => "refused",
             },
             "detail": match &prediction.state {
@@ -1729,9 +1753,17 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                     Some("no relay remote in this checkout".to_string()),
                 RefPredictionState::Unreadable { detail } => Some(detail.clone()),
                 RefPredictionState::Refused { reason } => Some(reason.clone()),
-                RefPredictionState::Admitted { session_ref, disposition_event_id } => Some(
-                    format!("mission {session_ref} disposition {disposition_event_id}")
+                RefPredictionState::AdmittedAsFounder => Some(
+                    "you are a founder of this repository; a founder's push needs no verdict"
+                        .to_string()
                 ),
+                RefPredictionState::AdmittedByVerdict {
+                    session_ref, disposition_event_id, refutation_event_id, verifier_pubkey,
+                } => Some(format!(
+                    "mission {session_ref} approved it (disposition {disposition_event_id}) and \
+                     verifier {verifier_pubkey} did not refute it (refutation \
+                     {refutation_event_id})"
+                )),
             },
         })),
         "relay": report.relay,
@@ -1937,12 +1969,22 @@ pub fn render_human(report: &CheckReport) -> String {
                 "  no relay remote in this checkout, so no repository rules to read".to_string()
             }
             RefPredictionState::Unreadable { detail } => format!("  not predicted — {detail}"),
-            RefPredictionState::Admitted {
+            RefPredictionState::AdmittedAsFounder => {
+                "  admitted by arm (A) — you are a founder of this repository, and a founder's \
+                 push needs no verdict"
+                    .to_string()
+            }
+            RefPredictionState::AdmittedByVerdict {
                 session_ref,
                 disposition_event_id,
+                refutation_event_id,
+                verifier_pubkey,
             } => format!(
-                "  admitted — mission {session_ref} approved it (disposition {})",
-                short_hex(disposition_event_id)
+                "  admitted by arm (C) — mission {session_ref} approved it (disposition {}), and \
+                 verifier {} did not refute it (refutation {})",
+                short_hex(disposition_event_id),
+                short_hex(verifier_pubkey),
+                short_hex(refutation_event_id)
             ),
             RefPredictionState::Refused { reason } => format!("  refused — {reason}"),
         };
@@ -2538,7 +2580,6 @@ mod tests {
                 pusher_pubkey: &"cd".repeat(32),
                 repo_founders: &["ab".repeat(32)],
             },
-            &VerdictAdmissionRules::FOUNDER_ONLY,
         );
         let VerdictAdmission::Refused(refusal) = expected else {
             panic!("no candidates admits nothing");

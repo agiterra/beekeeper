@@ -10,9 +10,26 @@
 //!
 //! # The rule
 //!
-//! An update `(ref, old, new)` on a ref carrying the `require-verdict`
-//! protection rule ([`crate::git_perms::ProtectionRule::require_verdict`]) is
-//! admitted when **all** of:
+//! **Revised 2026-09-03 (Brian): humans never gate a landing.** The gate
+//! exists to replace review with proof, not to put a person in the loop. An
+//! update `(ref, old, new)` on a ref carrying the `require-verdict` protection
+//! rule ([`crate::git_perms::ProtectionRule::require_verdict`]) is admitted
+//! when **either** arm holds.
+//!
+//! ## (A) The pusher is a founder
+//!
+//! A founder of the repository ([`crate::repository_founders::RepositoryFounders`]:
+//! the announcement's signer, its NIP-34 `maintainers`, and every
+//! project-roster Owner) lands a gated ref with **no verdict at all** — no
+//! mission is read, no report is resolved, and a repository whose missions are
+//! unreadable does not stop them. Founders are trusted humans; the gate is not
+//! for them. The push record (30618) is what makes the landing observable
+//! afterwards, and revocation stays a founder's power at every moment.
+//!
+//! ## (C) A verifier's verdict names the commit
+//!
+//! Otherwise the push needs a machine-checkable ruling by a key that is not
+//! the one being ruled on. All of:
 //!
 //! 1. some kind 44244 `verdict` of subtype `disposition` whose
 //!    [`CodingSessionTeamDispositionDecision::is_approval`] holds is
@@ -22,24 +39,85 @@
 //!    `new` — compared whole and case-folded, so a report naming a 64-hex id
 //!    names a different object and does not admit;
 //! 2. that session's genesis is on the channel the repository is bound to and
-//!    its founder is **a founder of the repository**
-//!    ([`crate::repository_founders::RepositoryFounders`]: the announcement's
-//!    signer, its NIP-34 `maintainers`, and every project-roster Owner) — the
-//!    caller resolves both and supplies only candidates that pass;
-//! 3. the pusher is a founder of the repository — or, once
-//!    [`VerdictAdmissionRules::seat_may_push`] is enabled, an active seat of
-//!    the umbrella. **The reservation is the relay's rule, not the mission's:**
-//!    no session policy is read, and the refusal says whose rule refused;
+//!    its founder is a founder of the repository — the caller resolves both
+//!    and supplies only candidates that pass;
+//! 3. a **second, independent record clears the same report**: a canonical
+//!    `verdict` of subtype **`refutation`** whose `decision` is `not-refuted`,
+//!    whose `reportRef` is that report, signed by a key holding an active
+//!    **`verifier`** seat of that mission and **not** the report's own author.
+//!
+//!    The verb is `refutation`, not `disposition`, because that is the only
+//!    verifier-authored verdict the governance fold authorises: a disposition
+//!    is `may_lead` (founder, active `lead`, steer grantee) at
+//!    `coding_session_team_transaction_fold.rs:712`, while a refutation is
+//!    `is_active_role(author, "verifier")` at `:709`. A verifier-signed
+//!    *disposition* is excluded `Unauthorized` and is not evidence of
+//!    anything. So the shape arm (C) requires is the one the model already
+//!    has: the lead **settles** the assignment, and the verifier
+//!    **independently fails to break it** — two records, two keys, neither
+//!    prose.
+//!
+//!    Note what this deliberately does **not** accept, though
+//!    [`crate::coding_session_completion_verification`] does (its case (b),
+//!    `coding_session_completion_verification.rs:118`): a report whose own
+//!    author holds the verifier seat. A completion is a claim about work; a
+//!    push is the work. A seat standing as the verifier of its own report
+//!    reproduces exactly the live-run-3 failure this gate exists to prevent;
 //! 3b. the approving report's `branch`, when it names one, is the branch being
 //!    pushed — an approval of a commit *for `main`* does not admit that commit
 //!    onto `release`;
-//! 4. the ruling is founder-signed — or, once
-//!    [`VerdictAdmissionRules::lead_disposition_admits`] is enabled, signed by
-//!    anyone the fold accepted as a disposition author.
+//! 4. the pusher is an **active seat of that mission**. Any seat may land what
+//!    a verifier cleared; a stranger holding the same patch may not.
 //!
 //! **The rule only ever subtracts.** A ref without the protection rule is
 //! evaluated exactly as before; nothing here can admit a push the ordinary
 //! role check already denied.
+//!
+//! # The arm that could not be built
+//!
+//! The ruling named a third arm **(B)**: provider-*observed* gate rows (kind
+//! 44246, `source: observed`) green **on the pushed SHA** admit a seat's push
+//! with no verifier at all, when the mission policy's `gates.verifierRequired`
+//! is not set. It is the velocity arm — the one that makes a small mission
+//! cost nothing beyond its own gate run — and **it is absent, because the wire
+//! carries no fact it could be computed from**:
+//!
+//! * [`crate::coding_session_observation::CodingSessionObservationPayload`]
+//!   has exactly seven keys and is `deny_unknown_fields`; none of them is a
+//!   commit.
+//! * [`crate::coding_session_observation::CodingSessionObservationGateRow`]
+//!   has exactly five — `gate`, `outcome`, `command`, `summary`, `durationMs`
+//!   — and none of them is a commit either.
+//! * The fold that reads them
+//!   ([`crate::coding_session_observation_fold`]) deliberately reads **no
+//!   clock**, so "the row is newer than the commit" is not available as a
+//!   substitute.
+//! * The producer has nothing to put there even if the field existed:
+//!   `buzz_session_provider::gate_observer` derives rows from ACP transcript
+//!   frames and never resolves the seat's worktree HEAD (no `rev-parse`
+//!   anywhere in that crate).
+//!
+//! Binding a mission's gate rows to a push by anything weaker — "this mission
+//! has green rows *somewhere*" — would let a green row from an earlier commit
+//! admit a later one, which is the same class of defect as the `landedShas`
+//! claim finding 27 caught being false. So arm (B) is **not approximated
+//! here**, and no field for it is carried: an earlier draft's
+//! `policy_reserves_push` was removed for exactly that reason (a field nothing
+//! populated, whose refusal blamed a record the relay never fetched), and
+//! adding an unread `observed_gates` would repeat it.
+//!
+//! **The wire fact it needs**, should Brian want arm (B): the provider resolves
+//! `git rev-parse HEAD` in the seat's workdir at the moment it pairs a gate
+//! `tool_call` with its `tool_result`, and signs it as a **sixth** gate-row key
+//! `headSha`. That is a NIP-CSOB amendment, not a code change: the payload's
+//! `deny_unknown_fields` means every reader older than the amendment refuses
+//! such an event outright, so it ships with the read-side exemption `source`
+//! already uses (`#[serde(default)]` plus the six-key exemption), the desktop
+//! wire decoder, and the Pulse's strict gate, or it repeats findings 31/34/35.
+//!
+//! Until then a non-founder push needs arm (C), whatever
+//! `gates.verifierRequired` says. This gate does not read the session policy,
+//! and no refusal here may be read as *"no verifier is required"*.
 //!
 //! Two records that look like they should admit and never do:
 //!
@@ -57,8 +135,8 @@ use crate::coding_session_authority_transition::{
 use crate::coding_session_team_transaction::{
     fold_coding_session_team_transactions, validate_coding_session_team_transaction_envelope,
     CodingSessionTeamActiveSeat, CodingSessionTeamFold, CodingSessionTeamFoldContext,
-    CodingSessionTeamReport, CodingSessionTeamTransactionBody, CodingSessionTeamTransactionPayload,
-    CodingSessionTeamVerdict,
+    CodingSessionTeamRefutationDecision, CodingSessionTeamTransactionBody,
+    CodingSessionTeamTransactionPayload, CodingSessionTeamVerdict,
 };
 use crate::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
 
@@ -83,43 +161,6 @@ pub const VERDICT_ADMISSION_MAX_TRANSACTIONS: usize = 512;
 /// whole thesis is disclosed bounds; past it, a prediction can only get
 /// *fewer* seats and so predict a refusal it might not get.
 pub const VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS: usize = 512;
-
-/// Which relaxations of the founder-only default are switched on.
-///
-/// Both default to `false` — batch 3's ruling: while a verdict-gated push has
-/// never been exercised live, only the founder pushes such a ref and only the
-/// founder's ruling admits one. Both paths are implemented and tested; making
-/// either live is a one-field change here plus the caller that constructs it,
-/// not new code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VerdictAdmissionRules {
-    /// Whether a canonical disposition signed by someone other than the
-    /// founder (an active `lead`, an operator with steering standing) admits.
-    pub lead_disposition_admits: bool,
-    /// Whether an active seat of the umbrella may land a verdict-gated ref.
-    ///
-    /// **This is the relay's rule, not the mission's.** An earlier draft
-    /// carried a `policy_reserves_push` field meant to read the session
-    /// policy's `irreversible` list; nothing ever populated it, so the
-    /// refusal a person saw attributed the reservation to a record the relay
-    /// never fetched. The field is gone. Letting a mission policy decide is a
-    /// change here *and* in the copy, not a field nobody reads.
-    pub seat_may_push: bool,
-}
-
-impl VerdictAdmissionRules {
-    /// The shipped rule: a founder-signed ruling, landed by the founder.
-    pub const FOUNDER_ONLY: Self = Self {
-        lead_disposition_admits: false,
-        seat_may_push: false,
-    };
-}
-
-impl Default for VerdictAdmissionRules {
-    fn default() -> Self {
-        Self::FOUNDER_ONLY
-    }
-}
 
 /// The exact update being judged.
 #[derive(Debug, Clone, Copy)]
@@ -168,22 +209,44 @@ pub struct VerdictAdmissionCandidate {
     /// The fold's canonical records, in included order
     /// ([`canonical_records`]).
     pub canonical: Vec<VerdictAdmissionRecord>,
-    /// Active seat pubkeys of this umbrella. Read only when
-    /// [`VerdictAdmissionRules::seat_may_push`] is on.
-    pub active_seat_pubkeys: Vec<String>,
+    /// Active seats of this umbrella, **with their roles**.
+    ///
+    /// The role is load-bearing since the 2026-09-03 ruling: arm (C) asks not
+    /// only *"is this key seated"* but *"does it hold `verifier`"*, and a
+    /// bare pubkey list — what this field was until then — cannot answer the
+    /// second. The relay and the desktop already hold the role next to the
+    /// pubkey; only this type was throwing it away.
+    pub active_seats: Vec<CodingSessionTeamActiveSeat>,
 }
 
-/// What admitted a commit, for the log line and the CLI's answer.
+/// What admitted a commit — **which arm**, and the facts it stood on.
+///
+/// An enum rather than a struct because the two arms stand on different
+/// evidence and a struct would have to carry empty strings for the half that
+/// does not apply. A founder push has no disposition and no report; saying so
+/// with `None`s would invite a renderer to print "approved by" over nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerdictAdmissionEvidence {
-    /// Umbrella whose fold admitted it.
-    pub session_ref: String,
-    /// The approving disposition.
-    pub disposition_event_id: String,
-    /// The report it governs.
-    pub report_event_id: String,
-    /// That report's `headSha`, as published.
-    pub head_sha: String,
+pub enum VerdictAdmissionEvidence {
+    /// Arm (A): a founder of the repository pushed. No mission was read.
+    FounderPush {
+        /// The founder's hex pubkey, as the push authenticated.
+        pusher_pubkey: String,
+    },
+    /// Arm (C): a verifier seat approved a report naming this commit.
+    VerifierVerdict {
+        /// Umbrella whose fold admitted it.
+        session_ref: String,
+        /// The approving disposition that settled the assignment.
+        disposition_event_id: String,
+        /// The verifier's `not-refuted` refutation of the same report.
+        refutation_event_id: String,
+        /// The report both records govern.
+        report_event_id: String,
+        /// That report's `headSha`, as published.
+        head_sha: String,
+        /// The verifier seat that signed the refutation.
+        verifier_pubkey: String,
+    },
 }
 
 /// Why a verdict-gated update is refused.
@@ -202,14 +265,31 @@ pub enum VerdictAdmissionRefusal {
     },
     /// An approved report exists for this work but names only a branch.
     ApprovedReportNamesBranchOnly,
-    /// The commit is approved and this key may not be the one to land it.
-    ApprovedButPushReserved {
+    /// Someone approved a report naming this commit, but nobody who could
+    /// stand as its verifier did.
+    ApprovedButNotVerified {
         /// The approved object id.
         new_oid: String,
-        /// How many founders this repository has — the set the push is
-        /// reserved to, disclosed so a co-founder reading the refusal can
-        /// tell "you are not the owner" from "this repository has one".
-        founders: usize,
+        /// How many approving dispositions named it — disclosed so a reader
+        /// can tell "nobody ruled" from "the wrong people ruled".
+        approvals: usize,
+    },
+    /// The only approving verifier is the key that wrote the report.
+    VerifierIsTheReportAuthor {
+        /// The approved object id.
+        new_oid: String,
+        /// The key holding both the `verifier` seat and the report.
+        verifier: String,
+    },
+    /// A verifier cleared this commit and the pusher is not of that mission.
+    PushNotSeated {
+        /// The verified object id.
+        new_oid: String,
+        /// The umbrella whose verifier cleared it.
+        session_ref: String,
+        /// How many active seats that mission has — disclosed so a seat whose
+        /// grant was revoked can tell that from "this mission seats nobody".
+        seats: usize,
     },
     /// The commit is approved, but for a different branch than this ref.
     ApprovedForAnotherRef {
@@ -244,11 +324,25 @@ impl VerdictAdmissionRefusal {
                  names this commit: the approved report for this work names a branch and no \
                  headSha, and a branch name is not a commit."
                 .to_string(),
-            Self::ApprovedButPushReserved { new_oid, founders } => format!(
-                "commit {new_oid} is approved, but the relay's require-verdict rule reserves a \
-                 gated ref to a founder of this repository ({founders} founder(s): the \
-                 announcement's signer, its maintainers tag, and the project roster's owners). \
-                 Ask a founder to land it."
+            Self::ApprovedButNotVerified { new_oid, approvals } => format!(
+                "commit {new_oid} is approved ({approvals} approving disposition(s)) and no \
+                 active verifier seat has cleared the report it approves. The gate wants a \
+                 `refutation` verdict of `not-refuted` on that report, signed by a verifier \
+                 seat of that mission — a lead's approval is the settlement, not the check. A \
+                 founder may land this commit by pushing it themselves."
+            ),
+            Self::VerifierIsTheReportAuthor { new_oid, verifier } => format!(
+                "commit {new_oid} is cleared only by {verifier}, which is the key that wrote the \
+                 report being cleared. A seat cannot stand as the verifier of its own work."
+            ),
+            Self::PushNotSeated {
+                new_oid,
+                session_ref,
+                seats,
+            } => format!(
+                "commit {new_oid} carries a verifier's verdict on mission {session_ref}, and \
+                 this key is not an active seat of it ({seats} seat(s)). A founder of this \
+                 repository may land it, or a seat of that mission may."
             ),
             Self::ApprovedForAnotherRef {
                 new_oid,
@@ -449,18 +543,35 @@ pub fn fold_candidate_records(
     Ok(canonical_records(events, &fold))
 }
 
-/// Judge one ref update against every candidate mission, newest first.
+/// Judge one ref update against the two arms of the 2026-09-03 ruling.
 ///
-/// Stops at the first mission that admits. `candidates` is the bounded set the
-/// caller resolved (at most [`VERDICT_ADMISSION_MAX_SESSIONS`]); its length is
-/// what the refusal discloses as searched.
+/// Arm (A) is answered first and reads no mission at all: a founder's push
+/// must not depend on a mission being readable, foldable, or even present.
+/// Only when the pusher is not a founder does arm (C) search the candidates,
+/// newest first, stopping at the first mission that admits. `candidates` is
+/// the bounded set the caller resolved (at most
+/// [`VERDICT_ADMISSION_MAX_SESSIONS`]); its length is what the refusal
+/// discloses as searched.
 pub fn evaluate_verdict_admission(
     candidates: &[VerdictAdmissionCandidate],
     query: &VerdictAdmissionQuery<'_>,
-    rules: &VerdictAdmissionRules,
 ) -> VerdictAdmission {
+    // ── Arm (A) ──────────────────────────────────────────────────────────
+    if is_founder(query.repo_founders, query.pusher_pubkey) {
+        return VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush {
+            pusher_pubkey: query.pusher_pubkey.to_ascii_lowercase(),
+        });
+    }
+
+    // ── Arm (C) ──────────────────────────────────────────────────────────
     let mut approved_branch_only = false;
     let mut approved_for_other_ref: Option<String> = None;
+    // Near-misses, kept so the refusal can name the nearest missing fact
+    // rather than the most generic one. `NoApprovingVerdict` is the answer
+    // only when nothing at all named the commit.
+    let mut approvals_naming_the_commit: usize = 0;
+    let mut self_approving_verifier: Option<String> = None;
+    let mut verified_but_unseated: Option<(String, usize)> = None;
 
     for candidate in candidates {
         // A mission counts only when its founder founded the repository.
@@ -484,31 +595,52 @@ pub fn evaluate_verdict_admission(
             if !decision.is_approval() {
                 continue;
             }
-            if !rules.lead_disposition_admits
-                && !eq_hex(&record.author_pubkey, &candidate.founder_pubkey)
-            {
+            let Some(report_record) = canonical_report_record(candidate, report_ref) else {
                 continue;
-            }
-            let Some(report) = canonical_report(candidate, report_ref) else {
+            };
+            let CodingSessionTeamTransactionBody::Report(report) = &report_record.payload.body
+            else {
                 continue;
             };
             match report.head_sha.as_deref() {
                 Some(head_sha) if eq_hex(head_sha, query.new_oid) => {
+                    approvals_naming_the_commit += 1;
                     // Condition 3b: an approval is scoped to the branch its
                     // report named. Approving a commit *for `main`* is not
                     // approval to put it on `release`, nor to roll `main` back
                     // to it from somewhere else. A report naming no branch
                     // scopes nothing — it says only "this commit is good".
-                    match report.branch.as_deref() {
-                        Some(branch) if !ref_names_branch(query.ref_name, branch) => {
+                    if let Some(branch) = report.branch.as_deref() {
+                        if !ref_names_branch(query.ref_name, branch) {
                             approved_for_other_ref.get_or_insert_with(|| branch.to_string());
-                        }
-                        _ => {
-                            return admit_or_reserve(
-                                candidate, record, report_ref, head_sha, query, rules,
-                            );
+                            continue;
                         }
                     }
+                    // Condition 3: a verifier seat must independently have
+                    // failed to refute this same report.
+                    let cleared = clearing_refutation(candidate, report_ref);
+                    let Some(cleared) = cleared else {
+                        if let Some(author) = self_cleared_by(candidate, report_ref, report_record)
+                        {
+                            self_approving_verifier.get_or_insert(author);
+                        }
+                        continue;
+                    };
+                    // Condition 4: any active seat of that mission may land it.
+                    if !is_active_seat(candidate, query.pusher_pubkey) {
+                        verified_but_unseated.get_or_insert_with(|| {
+                            (candidate.session_ref.clone(), candidate.active_seats.len())
+                        });
+                        continue;
+                    }
+                    return VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict {
+                        session_ref: candidate.session_ref.clone(),
+                        disposition_event_id: record.event_id.clone(),
+                        refutation_event_id: cleared.event_id.clone(),
+                        report_event_id: report_ref.to_string(),
+                        head_sha: head_sha.to_string(),
+                        verifier_pubkey: cleared.author_pubkey.to_ascii_lowercase(),
+                    });
                 }
                 Some(_) => {}
                 // `branch` never admits: a name is not a commit.
@@ -518,10 +650,31 @@ pub fn evaluate_verdict_admission(
         }
     }
 
+    // Nearest missing fact first: a verified commit blocked only on the
+    // pusher's seat is a different problem from one nobody verified.
+    if let Some((session_ref, seats)) = verified_but_unseated {
+        return VerdictAdmission::Refused(VerdictAdmissionRefusal::PushNotSeated {
+            new_oid: query.new_oid.to_ascii_lowercase(),
+            session_ref,
+            seats,
+        });
+    }
+    if let Some(verifier) = self_approving_verifier {
+        return VerdictAdmission::Refused(VerdictAdmissionRefusal::VerifierIsTheReportAuthor {
+            new_oid: query.new_oid.to_ascii_lowercase(),
+            verifier,
+        });
+    }
     if let Some(approved_branch) = approved_for_other_ref {
         return VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedForAnotherRef {
             new_oid: query.new_oid.to_ascii_lowercase(),
             approved_branch,
+        });
+    }
+    if approvals_naming_the_commit > 0 {
+        return VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedButNotVerified {
+            new_oid: query.new_oid.to_ascii_lowercase(),
+            approvals: approvals_naming_the_commit,
         });
     }
     if approved_branch_only {
@@ -533,39 +686,77 @@ pub fn evaluate_verdict_admission(
     })
 }
 
-/// Condition 3: an approved commit still needs a key allowed to land it —
-/// **any** founder of the repository, not only the mission's own founder.
-///
-/// Finding 33's second half: a co-founder who did not found the mission is
-/// still an equal owner of the code, and reserving the landing to the mission's
-/// founder alone would refuse the very push the ruling authorises.
-fn admit_or_reserve(
-    candidate: &VerdictAdmissionCandidate,
-    disposition: &VerdictAdmissionRecord,
+/// The canonical `not-refuted` refutation of `report_ref` signed by an active
+/// verifier seat **other than** the report's own author, if one exists.
+fn clearing_refutation<'a>(
+    candidate: &'a VerdictAdmissionCandidate,
     report_ref: &str,
-    head_sha: &str,
-    query: &VerdictAdmissionQuery<'_>,
-    rules: &VerdictAdmissionRules,
-) -> VerdictAdmission {
-    let pusher_is_founder = is_founder(query.repo_founders, query.pusher_pubkey);
-    let seat_may_land = rules.seat_may_push
-        && candidate
-            .active_seat_pubkeys
-            .iter()
-            .any(|seat| eq_hex(seat, query.pusher_pubkey));
-    if pusher_is_founder || seat_may_land {
-        VerdictAdmission::Admitted(VerdictAdmissionEvidence {
-            session_ref: candidate.session_ref.clone(),
-            disposition_event_id: disposition.event_id.clone(),
-            report_event_id: report_ref.to_string(),
-            head_sha: head_sha.to_string(),
+) -> Option<&'a VerdictAdmissionRecord> {
+    let report_author = candidate
+        .canonical
+        .iter()
+        .find(|record| record.event_id == report_ref)
+        .map(|record| record.author_pubkey.as_str())?;
+    candidate.canonical.iter().find(|record| {
+        is_not_refuted_of(record, report_ref)
+            && holds_verifier_seat(candidate, &record.author_pubkey)
+            && !eq_hex(&record.author_pubkey, report_author)
+    })
+}
+
+/// The verifier who cleared `report_ref` but *is* its author — the near-miss
+/// worth naming, so the refusal says "you cannot verify your own work" rather
+/// than the generic "nobody verified it".
+fn self_cleared_by(
+    candidate: &VerdictAdmissionCandidate,
+    report_ref: &str,
+    report_record: &VerdictAdmissionRecord,
+) -> Option<String> {
+    candidate
+        .canonical
+        .iter()
+        .find(|record| {
+            is_not_refuted_of(record, report_ref)
+                && holds_verifier_seat(candidate, &record.author_pubkey)
+                && eq_hex(&record.author_pubkey, &report_record.author_pubkey)
         })
-    } else {
-        VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedButPushReserved {
-            new_oid: query.new_oid.to_ascii_lowercase(),
-            founders: query.repo_founders.len(),
-        })
-    }
+        .map(|record| record.author_pubkey.to_ascii_lowercase())
+}
+
+/// Whether this record is a `not-refuted` refutation of exactly `report_ref`.
+///
+/// `confirmed` and `blocked` are rulings too, and both are rulings *against*:
+/// a verifier who found the failure, or who could not conclude, has cleared
+/// nothing.
+fn is_not_refuted_of(record: &VerdictAdmissionRecord, report_ref: &str) -> bool {
+    matches!(
+        &record.payload.body,
+        CodingSessionTeamTransactionBody::Verdict(CodingSessionTeamVerdict::Refutation {
+            report_ref: ruled,
+            decision: CodingSessionTeamRefutationDecision::NotRefuted,
+            ..
+        }) if ruled == report_ref
+    )
+}
+
+/// Whether `pubkey` holds an active `verifier` seat of this mission.
+///
+/// The role string is compared exactly, lowercase, as the authority
+/// projection stores it. A seat holding `verifier-2` or `Verifier ` is not
+/// this seat: a role is a closed token in the hire, not a description.
+fn holds_verifier_seat(candidate: &VerdictAdmissionCandidate, pubkey: &str) -> bool {
+    candidate
+        .active_seats
+        .iter()
+        .any(|seat| seat.role == "verifier" && eq_hex(&seat.actor_pubkey, pubkey))
+}
+
+/// Whether `pubkey` holds any active seat of this mission.
+fn is_active_seat(candidate: &VerdictAdmissionCandidate, pubkey: &str) -> bool {
+    candidate
+        .active_seats
+        .iter()
+        .any(|seat| eq_hex(&seat.actor_pubkey, pubkey))
 }
 
 /// Whether `pubkey` is one of the repository's founders. Case-folded, whole.
@@ -573,20 +764,24 @@ fn is_founder(founders: &[String], pubkey: &str) -> bool {
     founders.iter().any(|founder| eq_hex(founder, pubkey))
 }
 
-/// The canonical report a disposition governs, or `None` when the fold did not
-/// keep one under that id.
-fn canonical_report<'a>(
+/// The canonical **record** of the report a disposition governs, or `None`
+/// when the fold did not keep one under that id.
+///
+/// The whole record rather than the body since the 2026-09-03 ruling: arm (C)
+/// compares the verifier's key against the *report author's*, so throwing the
+/// envelope away here would leave the caller unable to tell a verifier from
+/// the seat it is supposed to be checking.
+fn canonical_report_record<'a>(
     candidate: &'a VerdictAdmissionCandidate,
     report_ref: &str,
-) -> Option<&'a CodingSessionTeamReport> {
-    candidate
-        .canonical
-        .iter()
-        .find(|record| record.event_id == report_ref)
-        .and_then(|record| match &record.payload.body {
-            CodingSessionTeamTransactionBody::Report(report) => Some(report),
-            _ => None,
-        })
+) -> Option<&'a VerdictAdmissionRecord> {
+    candidate.canonical.iter().find(|record| {
+        record.event_id == report_ref
+            && matches!(
+                record.payload.body,
+                CodingSessionTeamTransactionBody::Report(_)
+            )
+    })
 }
 
 /// Whether `ref_name` is the ref a report's `branch` names.
@@ -616,3 +811,9 @@ fn eq_hex(left: &str, right: &str) -> bool {
 #[cfg(test)]
 #[path = "coding_session_verdict_admission_tests.rs"]
 mod tests;
+
+/// The two arms of the 2026-09-03 ruling, in their own file: they need a
+/// verifier seat every other fixture here lacks.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_arms_tests.rs"]
+mod arms_tests;

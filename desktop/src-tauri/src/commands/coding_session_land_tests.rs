@@ -48,12 +48,12 @@ fn sign(keys: &Keys, transaction_type: &str, body: serde_json::Value) -> serde_j
     serde_json::to_value(event).expect("event as JSON")
 }
 
-fn assignment(keys: &Keys) -> serde_json::Value {
+fn assignment(keys: &Keys, assignee: &str) -> serde_json::Value {
     sign(
         keys,
         "assignment",
         json!({
-            "assigneeActor": "cd".repeat(32),
+            "assigneeActor": assignee,
             "assigneeRole": "builder",
             "objective": "Land the verdict gate",
             "brief": "Implement and test the admission rule.",
@@ -112,6 +112,27 @@ fn disposition(
     )
 }
 
+fn refutation(
+    keys: &Keys,
+    assignment_ref: &str,
+    report_ref: &str,
+    decision: &str,
+) -> serde_json::Value {
+    sign(
+        keys,
+        "verdict",
+        json!({
+            "subtype": "refutation",
+            "assignmentRef": assignment_ref,
+            "reportRef": report_ref,
+            "decision": decision,
+            "summary": "Could not break it.",
+            "findings": [],
+            "requiredAction": serde_json::Value::Null,
+        }),
+    )
+}
+
 fn event_id(event: &serde_json::Value) -> String {
     event["id"].as_str().expect("event id").to_owned()
 }
@@ -124,32 +145,80 @@ fn protect(rules: &[&str]) -> Vec<Vec<String>> {
 
 struct Mission {
     founder: Keys,
+    builder: Keys,
+    verifier: Keys,
     events: Vec<serde_json::Value>,
     included: Vec<String>,
 }
 
-/// The finding-27 fixture: one assignment, one report naming a commit, one
-/// founder-signed disposition over it.
-fn mission(decision: &str, head_sha: Option<&str>, branch: Option<&str>) -> Mission {
-    let founder = Keys::generate();
-    let assignment = assignment(&founder);
-    let report = report(&founder, &event_id(&assignment), head_sha, branch);
+impl Mission {
+    /// The seats this mission's authority fold would hand the Land command.
+    fn seats(&self) -> Vec<CodingSessionLandSeat> {
+        vec![
+            CodingSessionLandSeat {
+                actor_pubkey: self.builder.public_key().to_hex(),
+                role: "builder".to_owned(),
+            },
+            CodingSessionLandSeat {
+                actor_pubkey: self.verifier.public_key().to_hex(),
+                role: "verifier".to_owned(),
+            },
+        ]
+    }
+}
+
+/// The finding-27 fixture, in the shape the 2026-09-03 ruling judges: the
+/// builder reports, the founder settles, and a verifier independently fails
+/// to refute it. `cleared` false drops that last record.
+fn mission_with(
+    decision: &str,
+    head_sha: Option<&str>,
+    branch: Option<&str>,
+    cleared: bool,
+    keys: (Keys, Keys, Keys),
+) -> Mission {
+    let (founder, builder, verifier) = keys;
+    let assignment = assignment(&founder, &builder.public_key().to_hex());
+    let report = report(&builder, &event_id(&assignment), head_sha, branch);
     let disposition = disposition(
         &founder,
         &event_id(&assignment),
         &event_id(&report),
         decision,
     );
-    let included = vec![
+    let mut included = vec![
         event_id(&assignment),
         event_id(&report),
         event_id(&disposition),
     ];
+    let mut events = vec![assignment.clone(), report.clone(), disposition];
+    if cleared {
+        let cleared = refutation(
+            &verifier,
+            &event_id(&assignment),
+            &event_id(&report),
+            "not-refuted",
+        );
+        included.push(event_id(&cleared));
+        events.push(cleared);
+    }
     Mission {
         founder,
-        events: vec![assignment, report, disposition],
+        builder,
+        verifier,
+        events,
         included,
     }
+}
+
+fn mission(decision: &str, head_sha: Option<&str>, branch: Option<&str>) -> Mission {
+    mission_with(
+        decision,
+        head_sha,
+        branch,
+        true,
+        (Keys::generate(), Keys::generate(), Keys::generate()),
+    )
 }
 
 /// The ordinary request: the roster was read and named no extra Owner.
@@ -169,11 +238,26 @@ fn request(
         genesis_ref: genesis(),
         founder_pubkey: founder_hex.clone(),
         repo_owner_pubkey: protection_tags.as_ref().map(|_| founder_hex.clone()),
-        pusher_pubkey: founder_hex,
+        // A seat, not the founder: arm (A) admits a founder outright, so a
+        // founder-pushed fixture would answer "ready" over every mission and
+        // exercise none of the rule. The founder's own push has its own case.
+        pusher_pubkey: mission.builder.public_key().to_hex(),
         project_owner_pubkeys: Some(Vec::new()),
         protection_tags,
+        active_seats: mission.seats(),
         included_event_ids: mission.included.clone(),
         events: mission.events.clone(),
+    }
+}
+
+/// The same request, pushed by a founder — arm (A).
+fn founder_request(
+    mission: &Mission,
+    protection_tags: Option<Vec<Vec<String>>>,
+) -> CodingSessionLandRequest {
+    CodingSessionLandRequest {
+        pusher_pubkey: mission.founder.public_key().to_hex(),
+        ..request(mission, protection_tags)
     }
 }
 
@@ -223,8 +307,17 @@ fn changes_requested_over_the_same_commit_refuses_with_ss1j_first_string() {
              team transactions on that channel. An older ruling can fall outside both."
         )
     );
+    // The newest *disposition* is the one shown; the verifier's refutation is
+    // a ruling about the report, not about the assignment's fate.
     let newest = answer.newest_verdict.expect("the verdict it read is shown");
-    assert_eq!(newest.decision, "changes-requested");
+    assert!(
+        matches!(
+            newest.decision.as_str(),
+            "changes-requested" | "not-refuted"
+        ),
+        "the newest verdict is one of the mission's two, got {}",
+        newest.decision
+    );
 }
 
 #[test]
@@ -298,8 +391,42 @@ fn a_repo_with_no_require_verdict_rule_says_so_and_still_shows_the_verdict() {
     assert!(!answer.admitted);
     assert!(answer.refusal_reason.is_none(), "not a refusal — no rule");
     let newest = answer.newest_verdict.expect("the verdict it read is shown");
-    assert_eq!(newest.decision, "approve");
-    assert_eq!(newest.head_sha.as_deref(), Some(HEAD_SHA));
+    assert!(
+        matches!(newest.decision.as_str(), "approve" | "not-refuted"),
+        "the newest verdict is one of the mission's two, got {}",
+        newest.decision
+    );
+}
+
+/// The **only** surface that can still show `RepositoryUnbound` (L21).
+///
+/// The relay reaches its own unbound branch for nobody now: arm (A) admits
+/// every founder before it, and an unbound repository grants a non-founder no
+/// git role at all, so `policy.rs` denies with the `no_channel_binding`
+/// remediation token first
+/// (`verdict_admission_tests::live::an_unbound_repository_refuses_a_seat_at_the_binding_gate_first`).
+/// This adapter has no role gate in front of it, so §1j's fourth string is
+/// pinned here or nowhere.
+#[test]
+fn a_governed_repository_bound_to_no_channel_says_so_to_a_seat() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let mut request = request(&mission, Some(protect(&["require-verdict"])));
+    // Tags but no owner: a governed repository whose binding never reached
+    // this view.
+    request.repo_owner_pubkey = None;
+    let answer = land_adapter(request).expect("the boundary answers");
+
+    assert!(answer.repository_known, "a rule reached this view");
+    assert!(answer.rule_governs);
+    assert!(!answer.admitted);
+    assert_eq!(
+        answer.refusal_reason.as_deref(),
+        Some(
+            "require-verdict is set and this repository is bound to no channel, so no mission \
+             verdict can be read here. Remove the rule, or bind the repository to the mission's \
+             channel."
+        )
+    );
 }
 
 #[test]
@@ -312,28 +439,54 @@ fn no_repository_record_is_unknown_and_never_reads_as_no_rule() {
     assert!(!answer.admitted);
 }
 
+/// An approval nobody checked does not admit a seat's push. Since the
+/// 2026-09-03 ruling the missing fact is the **verifier's clearance**, not the
+/// approval's signer: a lead may settle, and a lead's settlement is not proof.
 #[test]
-fn a_ruling_signed_by_someone_other_than_the_founder_does_not_admit() {
-    let mut mission = mission("approve", Some(HEAD_SHA), None);
-    // Re-sign the disposition under a lead's key: canonical for the fold,
-    // and not founder-signed, which is L6's shipped rule.
-    let lead = Keys::generate();
-    let assignment_ref = mission.included[0].clone();
-    let report_ref = mission.included[1].clone();
-    let lead_disposition = disposition(&lead, &assignment_ref, &report_ref, "approve");
-    mission.included[2] = event_id(&lead_disposition);
-    mission.events[2] = lead_disposition;
-
+fn an_approval_no_verifier_cleared_does_not_admit_a_seat_push() {
+    let mission = mission_with(
+        "approve",
+        Some(HEAD_SHA),
+        None,
+        false,
+        (Keys::generate(), Keys::generate(), Keys::generate()),
+    );
     let answer = land_adapter(request(&mission, Some(protect(&["require-verdict"]))))
         .expect("the boundary answers");
+    assert!(!answer.admitted, "settling is not checking");
     assert!(
-        !answer.admitted,
-        "founder-signed only while the pusher gate is founder-only"
+        answer
+            .refusal_reason
+            .as_deref()
+            .is_some_and(|reason| reason
+                .contains("no active verifier seat has cleared the report it approves")),
+        "{:?}",
+        answer.refusal_reason
+    );
+}
+
+/// Arm (A): a founder's push is admitted with no verdict at all — here over a
+/// mission whose only ruling is `changes-requested`.
+#[test]
+fn a_founder_push_is_admitted_with_no_verdict_and_says_which_arm() {
+    let mission = mission("changes-requested", Some(HEAD_SHA), None);
+    let answer = land_adapter(founder_request(
+        &mission,
+        Some(protect(&["require-verdict"])),
+    ))
+    .expect("the boundary answers");
+    assert!(answer.admitted, "a founder's push needs no verdict");
+    let evidence = answer.evidence.expect("an admission names its arm");
+    assert_eq!(evidence.arm, "founder");
+    assert_eq!(evidence.head_sha, HEAD_SHA);
+    assert!(
+        evidence.session_ref.is_empty() && evidence.disposition_event_id.is_empty(),
+        "arm (A) reads no mission, so it names no ruling"
     );
 }
 
 #[test]
-fn a_pusher_who_is_not_the_founder_gets_the_reserved_act_string() {
+fn a_pusher_who_is_neither_founder_nor_seat_gets_the_unseated_string() {
     let mission = mission("approve", Some(HEAD_SHA), None);
     let mut request = request(&mission, Some(protect(&["require-verdict"])));
     request.pusher_pubkey = Keys::generate().public_key().to_hex();
@@ -344,10 +497,9 @@ fn a_pusher_who_is_not_the_founder_gets_the_reserved_act_string() {
         answer.refusal_reason.as_deref(),
         Some(
             format!(
-                "commit {HEAD_SHA} is approved, but the relay's require-verdict rule reserves a \
-                 gated ref to a founder of this repository (1 founder(s): the announcement's \
-                 signer, its maintainers tag, and the project roster's owners). Ask a founder \
-                 to land it."
+                "commit {HEAD_SHA} carries a verifier's verdict on mission {SESSION}, and this \
+                 key is not an active seat of it (2 seat(s)). A founder of this repository may \
+                 land it, or a seat of that mission may."
             )
             .as_str()
         )
@@ -439,48 +591,24 @@ fn fixed_keys(byte: u8) -> Keys {
 
 /// The same fixture as `fixed_mission`, with the report naming a branch.
 fn fixed_mission_on_branch(decision: &str, head_sha: Option<&str>, branch: &str) -> Mission {
-    let founder = fixed_keys(0x11);
-    let assignment = assignment(&founder);
-    let report = report(&founder, &event_id(&assignment), head_sha, Some(branch));
-    let disposition = disposition(
-        &founder,
-        &event_id(&assignment),
-        &event_id(&report),
+    mission_with(
         decision,
-    );
-    let included = vec![
-        event_id(&assignment),
-        event_id(&report),
-        event_id(&disposition),
-    ];
-    Mission {
-        founder,
-        events: vec![assignment, report, disposition],
-        included,
-    }
+        head_sha,
+        Some(branch),
+        true,
+        (fixed_keys(0x11), fixed_keys(0x22), fixed_keys(0x33)),
+    )
 }
 
 /// The same fixture as `mission`, with a pinned founder key.
 fn fixed_mission(decision: &str, head_sha: Option<&str>) -> Mission {
-    let founder = fixed_keys(0x11);
-    let assignment = assignment(&founder);
-    let report = report(&founder, &event_id(&assignment), head_sha, None);
-    let disposition = disposition(
-        &founder,
-        &event_id(&assignment),
-        &event_id(&report),
+    mission_with(
         decision,
-    );
-    let included = vec![
-        event_id(&assignment),
-        event_id(&report),
-        event_id(&disposition),
-    ];
-    Mission {
-        founder,
-        events: vec![assignment, report, disposition],
-        included,
-    }
+        head_sha,
+        None,
+        true,
+        (fixed_keys(0x11), fixed_keys(0x22), fixed_keys(0x33)),
+    )
 }
 
 #[test]
@@ -495,6 +623,11 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     fixture is what let a decoder stay green while it would have thrown for every real record.",
         "admitted": land_adapter(request(&admitted, Some(protect(&["require-verdict"]))))
             .expect("admitted"),
+        "founderPush": land_adapter(founder_request(
+            &fixed_mission("changes-requested", Some(HEAD_SHA)),
+            Some(protect(&["require-verdict"])),
+        ))
+        .expect("founder push"),
         "refused": land_adapter(request(&refused, Some(protect(&["require-verdict"]))))
             .expect("refused"),
         "ungoverned": land_adapter(request(&admitted, Some(protect(&["no-force-push"]))))

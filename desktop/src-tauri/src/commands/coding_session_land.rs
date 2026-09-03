@@ -30,14 +30,16 @@
 //! pre-receive hook read it from there.
 
 use buzz_core_pkg::coding_session_team_transaction::{
-    validate_coding_session_team_transaction_envelope, CodingSessionTeamTransactionBody,
+    validate_coding_session_team_transaction_envelope, CodingSessionTeamActiveSeat,
+    CodingSessionTeamTransactionBody,
 };
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 
 use buzz_core_pkg::coding_session_verdict_admission::{
-    evaluate_verdict_admission, VerdictAdmission, VerdictAdmissionCandidate, VerdictAdmissionQuery,
-    VerdictAdmissionRecord, VerdictAdmissionRefusal, VerdictAdmissionRules,
+    evaluate_verdict_admission, VerdictAdmission, VerdictAdmissionCandidate,
+    VerdictAdmissionEvidence, VerdictAdmissionQuery, VerdictAdmissionRecord,
+    VerdictAdmissionRefusal,
 };
 use buzz_core_pkg::git_perms::{parse_protection_tags, EffectiveRules};
 use buzz_core_pkg::repository_founders::RepositoryFounders;
@@ -80,25 +82,54 @@ pub struct CodingSessionLandRequest {
     /// two are on `protection_tags`; only this one needs a second read, and
     /// null is "not read", never "there are none" — the answer says which.
     pub project_owner_pubkeys: Option<Vec<String>>,
+    /// The mission's active seats, with their roles.
+    ///
+    /// Arm (C) asks whether a **`verifier`** seat cleared the report, so a
+    /// caller that sends no seats gets no arm-(C) answer — the response says
+    /// `seatsRead: false` and the refusal is the honest "nobody verified it",
+    /// never a claim that the mission has no verifier. Defaulted so a caller
+    /// built before the 2026-09-03 ruling still decodes.
+    #[serde(default)]
+    pub active_seats: Vec<CodingSessionLandSeat>,
     /// Event ids the caller's fold marked canonical, in included order.
     pub included_event_ids: Vec<String>,
     /// Raw signed kind-44244 Nostr events. No projected outputs are accepted.
     pub events: Vec<serde_json::Value>,
 }
 
+/// One active seat of the mission, as the caller's authority fold read it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionLandSeat {
+    /// Lowercase-hex pubkey holding the seat.
+    pub actor_pubkey: String,
+    /// The seat's role token, e.g. `builder`, `lead`, `verifier`.
+    pub role: String,
+}
+
 /// What admitted a commit, for the confirm step's first sentence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingSessionLandEvidence {
-    /// Umbrella whose fold admitted it.
+    /// Which arm admitted: `founder` or `verifier-verdict`.
+    ///
+    /// A screen that says only "ready" over two very different facts — *"you
+    /// are trusted"* and *"a machine checked it"* — is the kind of comfortable
+    /// guess this project treats as a bug. The arm is always named.
+    pub arm: String,
+    /// Umbrella whose fold admitted it. Empty under arm (A), which reads none.
     pub session_ref: String,
-    /// The approving disposition.
+    /// The approving disposition. Empty under arm (A).
     pub disposition_event_id: String,
-    /// Who signed that disposition.
+    /// Who signed that disposition. Empty under arm (A).
     pub disposition_author_pubkey: String,
-    /// The report it governs.
+    /// The verifier's `not-refuted` refutation. Empty under arm (A).
+    pub refutation_event_id: String,
+    /// The verifier seat that signed it. Empty under arm (A).
+    pub verifier_pubkey: String,
+    /// The report both records govern. Empty under arm (A).
     pub report_event_id: String,
-    /// That report's `headSha`, as published.
+    /// That report's `headSha`, as published. Empty under arm (A).
     pub head_sha: String,
 }
 
@@ -159,6 +190,13 @@ pub struct CodingSessionLandResponse {
     /// Whether the project roster was read. `false` is "not read", and the
     /// screen must say so rather than present a partial set as whole.
     pub roster_read: bool,
+    /// Whether the caller sent the mission's seat roster.
+    ///
+    /// `false` means arm (C) could not be evaluated at all from here — **not**
+    /// that no verifier cleared the report. The two are different facts, and a
+    /// screen that prints the second over the first is telling a comfortable
+    /// lie about a gate.
+    pub seats_read: bool,
     /// The exact command a person runs, or null when nothing is admitted.
     ///
     /// It names the **commit**, never the branch: a branch name is not a
@@ -324,6 +362,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
             None
         },
         roster_read: founders.roster_owners_read().is_some(),
+        seats_read: !request.active_seats.is_empty(),
         command: None,
     };
     if !rule_governs {
@@ -350,31 +389,64 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         genesis_ref: request.genesis_ref.clone(),
         founder_pubkey: request.founder_pubkey.clone(),
         canonical: records.clone(),
-        active_seat_pubkeys: Vec::new(),
+        active_seats: request
+            .active_seats
+            .iter()
+            .map(|seat| CodingSessionTeamActiveSeat {
+                actor_pubkey: seat.actor_pubkey.clone(),
+                role: seat.role.clone(),
+            })
+            .collect(),
     };
-    // Batch 3's ruling, and L6's own default: founder-signed ruling, landed by
-    // the founder. If Brian relaxes either, L6 flips the field and this screen
-    // follows through the shared predicate with no edit here.
-    let rules = VerdictAdmissionRules::FOUNDER_ONLY;
     let query = VerdictAdmissionQuery {
         ref_name: &request.ref_name,
         new_oid: newest_head_sha(&records).unwrap_or_default(),
         pusher_pubkey: &request.pusher_pubkey,
         repo_founders: founders.pubkeys(),
     };
-    match evaluate_verdict_admission(std::slice::from_ref(&candidate), &query, &rules) {
-        VerdictAdmission::Admitted(evidence) => Ok(CodingSessionLandResponse {
+    match evaluate_verdict_admission(std::slice::from_ref(&candidate), &query) {
+        // Arm (A). The commit named in the command is the mission's newest
+        // reported head, because that is the only commit this screen knows —
+        // and the copy says the push lands because the viewer is a founder,
+        // not because anything ruled on it.
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush { .. }) => {
+            let head_sha = newest_head_sha(&records).unwrap_or_default().to_owned();
+            Ok(CodingSessionLandResponse {
+                admitted: true,
+                command: (!head_sha.is_empty())
+                    .then(|| format!("git push origin {head_sha}:{}", request.ref_name)),
+                evidence: Some(CodingSessionLandEvidence {
+                    arm: "founder".to_owned(),
+                    session_ref: String::new(),
+                    disposition_event_id: String::new(),
+                    disposition_author_pubkey: String::new(),
+                    refutation_event_id: String::new(),
+                    verifier_pubkey: String::new(),
+                    report_event_id: String::new(),
+                    head_sha,
+                }),
+                ..base
+            })
+        }
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict {
+            session_ref,
+            disposition_event_id,
+            refutation_event_id,
+            report_event_id,
+            head_sha,
+            verifier_pubkey,
+        }) => Ok(CodingSessionLandResponse {
             admitted: true,
-            command: Some(format!(
-                "git push origin {}:{}",
-                evidence.head_sha, request.ref_name
-            )),
+            command: Some(format!("git push origin {head_sha}:{}", request.ref_name)),
             evidence: Some(CodingSessionLandEvidence {
-                session_ref: evidence.session_ref,
-                disposition_author_pubkey: disposition_author(&evidence.disposition_event_id),
-                disposition_event_id: evidence.disposition_event_id,
-                report_event_id: evidence.report_event_id,
-                head_sha: evidence.head_sha,
+                arm: "verifier-verdict".to_owned(),
+                session_ref,
+                disposition_author_pubkey: disposition_author(&disposition_event_id),
+                disposition_event_id,
+                refutation_event_id,
+                verifier_pubkey,
+                report_event_id,
+                head_sha,
             }),
             ..base
         }),

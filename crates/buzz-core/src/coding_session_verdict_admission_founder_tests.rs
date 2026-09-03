@@ -9,7 +9,9 @@
 use super::*;
 
 use crate::channel::ProjectRole;
-use crate::coding_session_team_transaction::CodingSessionTeamDispositionDecision;
+use crate::coding_session_team_transaction::{
+    CodingSessionTeamDispositionDecision, CodingSessionTeamRefutationDecision,
+};
 use crate::repository_founders::RepositoryFounders;
 
 /// The repository's kind:30617, signed by `signer`, naming `maintainers`.
@@ -48,10 +50,20 @@ fn approved_mission_founded_by(founder: Keys) -> Mission {
             &report.id.to_hex(),
             CodingSessionTeamDispositionDecision::Approve,
         ),
-        &founder,
+        &mission.lead,
         300,
     );
-    mission.events = vec![assignment, report, disposition];
+    // Arm (C)'s clearing record, from the seat the fold authorises for it.
+    let cleared = signed(
+        &refutation(
+            &assignment.id.to_hex(),
+            &report.id.to_hex(),
+            CodingSessionTeamRefutationDecision::NotRefuted,
+        ),
+        &mission.verifier,
+        350,
+    );
+    mission.events = vec![assignment, report, disposition, cleared];
     mission.founder = founder;
     mission
 }
@@ -71,15 +83,25 @@ fn a_maintainer_founded_mission_admits_the_maintainers_push() {
     ));
     assert_eq!(founders.len(), 2);
 
+    // Pushed by a **seat**, not by Brian: arm (A) would admit a founder before
+    // the candidate loop this case is about ever ran.
+    let seat = mission.builder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&brian_hex, founders.pubkeys(), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
+        &query(&seat, founders.pubkeys(), HEAD_SHA),
     );
-    let VerdictAdmission::Admitted(evidence) = outcome else {
-        panic!("a founder's own ruling admits their own push: {outcome:?}");
+    let VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict { head_sha, .. }) =
+        outcome
+    else {
+        panic!("a maintainer's mission is searched, and its verdict admits: {outcome:?}");
     };
-    assert_eq!(evidence.head_sha, HEAD_SHA);
+    assert_eq!(head_sha, HEAD_SHA);
+    // Brian pushes it himself just as freely, by arm (A).
+    assert!(evaluate_verdict_admission(
+        &[candidate(&mission)],
+        &query(&brian_hex, founders.pubkeys(), HEAD_SHA),
+    )
+    .is_admitted());
 }
 
 /// Without the tag the same mission is refused exactly as it is today: the
@@ -96,7 +118,6 @@ fn without_the_maintainers_tag_the_same_mission_is_refused() {
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
         &query(&brian_hex, founders.pubkeys(), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     let VerdictAdmission::Refused(VerdictAdmissionRefusal::NoApprovingVerdict {
         searched_sessions,
@@ -108,9 +129,8 @@ fn without_the_maintainers_tag_the_same_mission_is_refused() {
     assert_eq!(searched_sessions, 1);
 }
 
-/// The reservation half: the ruling is the signer's, and a *maintainer* who
-/// founded no mission still lands it. Before this lane `admit_or_reserve`
-/// compared the pusher with the mission's own founder alone.
+/// The landing half: a *maintainer* who founded no mission still lands, now by
+/// arm (A) — and a stranger, who is neither founder nor seat, still does not.
 #[test]
 fn a_maintainer_may_land_a_ruling_the_signer_made() {
     let andy = Keys::generate();
@@ -124,7 +144,6 @@ fn a_maintainer_may_land_a_ruling_the_signer_made() {
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
         &query(&brian_hex, founders.pubkeys(), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
         outcome.is_admitted(),
@@ -136,18 +155,14 @@ fn a_maintainer_may_land_a_ruling_the_signer_made() {
     let refused = evaluate_verdict_admission(
         &[candidate(&mission)],
         &query(&stranger, founders.pubkeys(), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
     );
-    let VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedButPushReserved {
-        founders: count,
-        ..
-    }) = refused
+    let VerdictAdmission::Refused(VerdictAdmissionRefusal::PushNotSeated { seats, .. }) = refused
     else {
-        panic!("a stranger's push of an approved commit is reserved: {refused:?}");
+        panic!("a stranger holds neither a founder's key nor a seat: {refused:?}");
     };
     assert_eq!(
-        count, 2,
-        "the refusal discloses how many founders there are"
+        seats, 3,
+        "the refusal discloses how many seats the verifying mission has"
     );
 }
 
@@ -176,7 +191,6 @@ fn a_project_roster_owner_founds_a_mission_that_admits() {
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
         &query(&brian_hex, founders.pubkeys(), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
         outcome.is_admitted(),
@@ -199,7 +213,6 @@ fn a_project_collaborator_is_not_a_founder() {
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
         &query(&collaborator_hex, founders.pubkeys(), HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(!outcome.is_admitted(), "{outcome:?}");
 }
@@ -211,10 +224,7 @@ fn an_empty_founder_set_admits_nothing() {
     let founder = Keys::generate();
     let founder_hex = founder.public_key().to_hex();
     let mission = approved_mission_founded_by(founder);
-    let outcome = evaluate_verdict_admission(
-        &[candidate(&mission)],
-        &query(&founder_hex, &[], HEAD_SHA),
-        &VerdictAdmissionRules::FOUNDER_ONLY,
-    );
+    let outcome =
+        evaluate_verdict_admission(&[candidate(&mission)], &query(&founder_hex, &[], HEAD_SHA));
     assert!(!outcome.is_admitted(), "{outcome:?}");
 }
