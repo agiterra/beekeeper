@@ -548,6 +548,90 @@ Running a daily-driver Beekeeper.app and a dev instance side by side on macOS
 (distinct icons, no repeated keychain prompts):
 [local-desktop-instances.md](local-desktop-instances.md).
 
+## NIP-11
+
+*Added 2026-09-03 (batch 3 lane L24, finding 32).*
+
+Before finding 32, the relay's NIP-11 document advertised only `version:
+0.2.1` — the crate version, which moves once a release, not the build. There
+was no mechanism to answer "did that push actually redeploy hive", short of
+running a command that needs the new code and watching whether it works (see
+§ Deploying and `deploy/autodeploy/README.md` § "A trailing `BUZZ_IMAGE` is
+now sometimes correct" for why a trailing image is not, on its own, evidence
+of anything). Two additive NIP-11 fields fix that:
+
+- **`software_commit`** — the full 40-hex git commit this binary was built
+  from, or the literal `unknown`. `unknown` is a legal, disclosed value, not
+  an error: a relay predating this field, or a build environment that could
+  not determine its own commit, both answer honestly rather than lying with a
+  guess.
+- **`build_time`** — an RFC 3339 UTC timestamp taken when the binary was
+  compiled, second precision (e.g. `2026-09-03T02:51:29Z`), or `unknown`.
+
+Resolution (`crates/buzz-relay/build.rs` / `src/build_provenance.rs`, and see
+`src/build_info.rs` for the two compile-time env vars it produces):
+
+1. `git rev-parse HEAD` in the crate's own checkout, when `.git` is present —
+   a native `cargo build`.
+2. `BUZZ_SOURCE_SHA`, the build-arg `Dockerfile` already declares (`ARG`
+   default `unknown`, then `ENV`) and every image-build path threads through:
+   `.github/workflows/docker.yml` (`github.sha`, for the public
+   `ghcr.io/block/buzz` image) and `deploy/autodeploy/autodeploy` (the full
+   `$sha` it already selects from Woodpecker, for hive/lightyear). This is the
+   case `git` cannot answer on its own: the relay's `.dockerignore` excludes
+   `.git/`, and `deploy/autodeploy/autodeploy` builds from a `git archive`
+   export, which never had one — without the build-arg, every relay built
+   this way would silently disclose `unknown` forever, which is exactly what
+   was happening before this lane added the `--build-arg` to the deployer.
+3. `unknown`.
+
+`build_time` is always the compiling machine's own clock at `cargo build`
+time — it cannot fail the way a git lookup can, so it is only ever `unknown`
+in the pathological case of a clock read failing entirely.
+
+**`GET /health`**'s body carries the same disclosure in the plain-text
+liveness check: `ok <sha8>`, where `<sha8>` is the first 8 hex characters of
+`software_commit` (or `unknown`, unchanged in length by truncation since it's
+already 7 characters). `ok` stays the first token so any existing probe that
+matches/prefixes on it keeps working — this repo's own compose healthcheck
+greps `"200 OK"` on `/_readiness` instead (see § Deploying), but a third party
+could reasonably have grepped `/health`'s body directly. `/_status` (a
+separate, pre-existing endpoint) continues to carry the fuller
+`source_sha`/`id`/`url` build object as JSON.
+
+**Reading it from the CLI:**
+
+```bash
+bee --format compact sessions whoami         # relay_commit beside relay_url
+bee repos protect list --id agiterra-beekeeper   # relay_commit in the listing
+bee repos protect set  --id agiterra-beekeeper --ref refs/heads/main --require-verdict  # relay_commit in the write response
+```
+
+`bee git check --ref <ref>` goes one step further: it answers whether the
+relay actually serving a repository enforces `require-verdict`
+(`42dd921d831c483e6e16111491b39947b4cf1f86` — see § Verdict-gated refs below),
+not just whether *this build* would. It tries two methods, in order, and
+always names which one answered:
+
+1. **Ancestry** — `git merge-base --is-ancestor` against this checkout, when
+   it holds both the require-verdict commit and the relay's disclosed
+   `software_commit`. Exact, when available.
+2. **Date** — the relay's disclosed `build_time` compared against the
+   require-verdict commit's own committer time
+   (`2026-09-03T02:51:29Z`), used only when ancestry could not answer — most
+   commonly because the checkout is a shallow clone (the gate clones at
+   `depth: 1`; see § CI) that does not hold the require-verdict commit even
+   though the relay's own commit is newer.
+
+A relay that predates finding 32 entirely (`software_commit` absent, not just
+`unknown`) makes both methods answer "unknown" — never a guessed yes/no.
+
+**Desktop:** the "Edit Community" dialog shows "Relay build: `<8-hex>`" (or
+`unknown`) beneath the Relay URL field, read via the `get_relay_build_commit`
+Tauri command — for the community being edited, not necessarily the active
+one, so editing an inactive workspace still shows the truth about its own
+relay rather than the currently-connected one's.
+
 ## Verdict-gated refs
 
 *Added 2026-09-02 (batch 3 lane L6).*

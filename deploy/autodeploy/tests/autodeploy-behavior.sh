@@ -172,6 +172,14 @@ grep -q "DEPLOYED" <<<"$out"                || fail "happy path must report DEPL
 grep -q "retention done" <<<"$out"          || fail "retention must run on the success path"
 grep -q "repo_id = 7" "$INCUS_LOG"          || fail "query must pin repo_id; log: $(head -1 "$INCUS_LOG")"
 grep -q "wp-testrelay.sqlite" "$INCUS_LOG"  || fail "scratch sqlite path must be per-target, or concurrent runs race"
+# The Dockerfile compiles this in as the relay's disclosed NIP-11
+# `software_commit` / `GET /health` build identity (finding 32). `git
+# archive` never includes `.git`, so nothing inside the image build can
+# discover the commit on its own — this build-arg is the only place on this
+# path that still knows it, and it must be the full sha (bee git check --ref
+# needs the whole object name), not the short one used for the image tag.
+grep -q "docker build --build-arg BUZZ_SOURCE_SHA=8888888888888888888888888888888888888888 -t test-relay:888888888" "$INCUS_LOG" \
+                                             || fail "docker build must pass --build-arg BUZZ_SOURCE_SHA=<full sha>; log: $(grep 'docker build' "$INCUS_LOG")"
 
 # ── 8. an unhealthy relay rolls back ─────────────────────────────────────────
 run STUB_PIPELINE_ROW="success 9999999999999999999999999999999999999999" STUB_CURRENT=111111111 STUB_HEALTH=unhealthy

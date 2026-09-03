@@ -121,6 +121,25 @@ bug produced: nothing happened, and nothing was wrong-looking. "Nothing
 happened" cannot distinguish *correctly current* from *broken into permanent
 silence*. Check the mechanism directly instead.
 
+**Step 0 — read NIP-11 `software_commit` before anything else.** The steps
+below (repo=, mirror readability, what Woodpecker selected, `BUZZ_IMAGE`) all
+reason about *shas*; this is the one step that asks the running relay what it
+actually is, over the wire, the same way any client would (finding 32,
+`docs/INTEGRATION.md` § NIP-11). It's also the cheapest: no `incus exec`, no
+host access, just an HTTP GET.
+
+```bash
+curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/   | jq '{software_commit, build_time}'
+# or, for the plain-text liveness check (`ok <sha8>`):
+curl -s https://hive.agiterra.org/health
+```
+
+An `unknown` `software_commit` on hive/lightyear (as opposed to a third-party
+build of this image, where it is legitimate) means the deployed image predates
+this lane's `--build-arg BUZZ_SOURCE_SHA=$sha` in step 3 of `autodeploy` below
+— check that the build-arg is actually present in the deployer script running
+on the host, not just in this checkout.
+
 ```bash
 # 1. each unit resolves its own config, and the two REPO_IDs differ.
 #

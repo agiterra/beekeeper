@@ -363,8 +363,21 @@ fn limit_relay_websocket<F>(
         .max_frame_size(max_frame_bytes)
 }
 
+/// `GET /health` — a plain-text liveness check whose body also discloses the
+/// build serving the request: `ok <sha8>`, where `<sha8>` is the first 8 hex
+/// characters of the relay's build commit, or `unknown` when none could be
+/// determined at compile time (`build_info::source_sha`).
+///
+/// `ok` stays the first token so an existing probe matching/prefixing on
+/// `ok` (this repo's own compose healthcheck greps `"200 OK"` on `/_readiness`
+/// instead, but a third party could reasonably have grepped `/health`'s body)
+/// keeps working. Plain text, not JSON, to match the endpoint's existing
+/// shape — `/_status` already carries the full build object
+/// (`source_sha`/`id`/`url`) as JSON for anything that wants more than a
+/// liveness probe. Documented in `docs/INTEGRATION.md` § NIP-11.
 async fn health_handler() -> impl IntoResponse {
-    (StatusCode::OK, "ok")
+    let sha8: String = crate::build_info::source_sha().chars().take(8).collect();
+    (StatusCode::OK, format!("ok {sha8}"))
 }
 
 async fn liveness_handler() -> impl IntoResponse {
@@ -512,6 +525,37 @@ mod tests {
         assert!(should_serve_spa("/", true));
         assert!(should_serve_spa("/repos/example", true));
         assert!(!should_serve_spa("/arbitrary", true));
+    }
+
+    /// `GET /health`'s body is `ok <sha8>`: `ok` must stay the first token
+    /// (an existing prefix-matching probe must keep working), and the second
+    /// token discloses the build serving the request (finding 32).
+    #[tokio::test]
+    async fn health_handler_body_starts_with_ok_and_discloses_build() {
+        let response = health_handler().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let body = String::from_utf8(body.to_vec()).expect("utf8 body");
+
+        assert!(
+            body == "ok" || body.starts_with("ok "),
+            "body must start with the literal token `ok`, got {body:?}"
+        );
+        let sha8 = body.strip_prefix("ok ").expect("ok <sha8> shape");
+        assert!(
+            sha8.len() <= 8 && !sha8.is_empty(),
+            "second token must be at most 8 chars (a short SHA or `unknown`), got {sha8:?}"
+        );
+        assert_eq!(
+            sha8,
+            &crate::build_info::source_sha()
+                .chars()
+                .take(8)
+                .collect::<String>(),
+            "second token must be the first 8 chars of build_info::source_sha()"
+        );
     }
 
     #[test]

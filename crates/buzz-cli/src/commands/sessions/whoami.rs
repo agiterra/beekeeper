@@ -1,8 +1,10 @@
 //! `bee sessions whoami` — who this signer is, per the relay.
 //!
 //! Prints one JSON object: the signer's pubkey, its relay display name (or
-//! `null`), the relay URL, and the role slug of any active team seat it
-//! holds (or `null`). See `crates/buzz-cli/TESTING.md` for the runbook entry.
+//! `null`), the relay URL, the relay's own disclosed build commit (or
+//! `"unknown"` — finding 32, `review-2026-09-01/LIVE-RUN-TeamRolesV1.md`),
+//! and the role slug of any active team seat it holds (or `null`). See
+//! `crates/buzz-cli/TESTING.md` for the runbook entry.
 
 use std::collections::BTreeSet;
 
@@ -16,7 +18,7 @@ use crate::error::CliError;
 
 /// `bee sessions whoami` — print the signer's identity as one JSON object.
 ///
-/// `--format compact` and `--format json` print the same four keys: this
+/// `--format compact` and `--format json` print the same five keys: this
 /// command's whole output is already the minimal shape `compact` reduces
 /// other reads to, so there is nothing left for it to drop.
 pub async fn cmd_whoami(
@@ -26,6 +28,7 @@ pub async fn cmd_whoami(
     let pubkey = client.keys().public_key().to_hex();
     let display_name = fetch_display_name(client, &pubkey).await?;
     let role = resolve_active_role(client, &pubkey).await?;
+    let relay_commit = crate::commands::git_setup::serving_relay_commit(client.relay_url()).await;
 
     println!(
         "{}",
@@ -33,6 +36,7 @@ pub async fn cmd_whoami(
             &pubkey,
             display_name.as_deref(),
             client.relay_url(),
+            &relay_commit,
             role.as_deref(),
         )
     );
@@ -46,12 +50,14 @@ fn whoami_json(
     pubkey: &str,
     display_name: Option<&str>,
     relay_url: &str,
+    relay_commit: &str,
     role: Option<&str>,
 ) -> Value {
     json!({
         "pubkey": pubkey,
         "display_name": display_name,
         "relay_url": relay_url,
+        "relay_commit": relay_commit,
         "role": role,
     })
 }
@@ -178,26 +184,37 @@ mod tests {
     use crate::error::exit_code;
 
     #[test]
-    fn whoami_json_always_has_four_keys_with_null_for_missing() {
-        let value = whoami_json("abc", None, "wss://relay", None);
+    fn whoami_json_always_has_five_keys_with_null_for_missing() {
+        let value = whoami_json("abc", None, "wss://relay", "unknown", None);
         let text = serde_json::to_string(&value).unwrap();
         assert_eq!(
             value.as_object().map(|obj| obj.len()),
-            Some(4),
-            "expected exactly 4 keys, got {text}"
+            Some(5),
+            "expected exactly 5 keys, got {text}"
         );
         assert!(text.contains(r#""display_name":null"#), "{text}");
         assert!(text.contains(r#""role":null"#), "{text}");
         assert!(text.contains(r#""pubkey":"abc""#), "{text}");
         assert!(text.contains(r#""relay_url":"wss://relay""#), "{text}");
+        assert!(text.contains(r#""relay_commit":"unknown""#), "{text}");
     }
 
     #[test]
-    fn whoami_json_carries_display_name_and_role_when_present() {
-        let value = whoami_json("abc", Some("Honey"), "wss://relay", Some("builder"));
+    fn whoami_json_carries_display_name_role_and_relay_commit_when_present() {
+        let value = whoami_json(
+            "abc",
+            Some("Honey"),
+            "wss://relay",
+            "42dd921d831c483e6e16111491b39947b4cf1f86",
+            Some("builder"),
+        );
         let text = serde_json::to_string(&value).unwrap();
         assert!(text.contains(r#""display_name":"Honey""#), "{text}");
         assert!(text.contains(r#""role":"builder""#), "{text}");
+        assert!(
+            text.contains(r#""relay_commit":"42dd921d831c483e6e16111491b39947b4cf1f86""#),
+            "{text}"
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ import {
   expandTilde,
   normalizeRelayUrl,
 } from "@/features/communities/communityStorage";
+import { fetchRelayBuildCommit } from "@/shared/api/communityProfile";
 import { validateReposDir } from "@/shared/api/tauri";
 import { Button } from "@/shared/ui/button";
 import {
@@ -43,6 +44,12 @@ export function EditCommunityDialog({
   const [token, setToken] = React.useState("");
   const [reposDir, setReposDir] = React.useState("");
   const [reposDirError, setReposDirError] = React.useState<string | null>(null);
+  // Finding 32 (review-2026-09-01/LIVE-RUN-TeamRolesV1.md): the relay's own
+  // disclosed build commit, shown beside its URL so a person can confirm a
+  // push actually redeployed hive rather than assuming it. `null` before the
+  // first fetch resolves and after a failed one alike — both render as
+  // "unknown", which is the same disclosure the relay itself would make.
+  const [relayCommit, setRelayCommit] = React.useState<string | null>(null);
   const membershipQuery = useMyRelayMembershipLookupQuery();
   const activeRole = membershipQuery.data?.membership?.role;
   const canEditIcon =
@@ -60,6 +67,30 @@ export function EditCommunityDialog({
       setReposDir(community.reposDir ?? "");
       setReposDirError(null);
     }
+  }, [community, open]);
+
+  // Read the relay's own disclosed build commit for the community being
+  // edited — not necessarily the active one, so this asks the relay named on
+  // the saved community rather than reading any "current" relay state. A
+  // stale response from a closed/reopened-elsewhere dialog is discarded via
+  // the `cancelled` guard, the standard pattern for a fetch racing unmount.
+  React.useEffect(() => {
+    if (!community || !open) {
+      setRelayCommit(null);
+      return;
+    }
+    let cancelled = false;
+    setRelayCommit(null);
+    fetchRelayBuildCommit(community.relayUrl)
+      .then((commit) => {
+        if (!cancelled) setRelayCommit(commit);
+      })
+      .catch(() => {
+        if (!cancelled) setRelayCommit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [community, open]);
 
   const handleClose = React.useCallback(() => {
@@ -176,6 +207,12 @@ export function EditCommunityDialog({
               type="text"
               value={relayUrl}
             />
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="edit-ws-relay-commit"
+            >
+              Relay build: {relayCommit ? relayCommit.slice(0, 8) : "unknown"}
+            </p>
           </div>
           <div className="flex flex-col gap-1.5">
             <label

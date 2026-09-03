@@ -55,6 +55,15 @@ pub struct RelayInfo {
     /// Relay's own signing pubkey (NIP-11 `self` field, NIP-43).
     #[serde(rename = "self", skip_serializing_if = "Option::is_none")]
     pub relay_self: Option<String>,
+    /// Full 40-hex git commit this binary was built from, or `unknown` when
+    /// none could be determined at compile time. Additive field (finding 32,
+    /// `review-2026-09-01/LIVE-RUN-TeamRolesV1.md`): whether a push had
+    /// redeployed hive could not be observed by mechanism before this. See
+    /// `build_info::source_sha` and `docs/INTEGRATION.md` § NIP-11.
+    pub software_commit: String,
+    /// RFC 3339 UTC timestamp this binary was compiled, or `unknown`.
+    /// See `build_info::build_time`.
+    pub build_time: String,
 }
 
 /// Protocol and resource limits advertised in the NIP-11 document.
@@ -169,6 +178,8 @@ impl RelayInfo {
             limitation: Some(relay_limitation(max_message_length)),
             pairing_relay_url: pairing_relay_url.map(str::to_string),
             relay_self: relay_self.map(|s| s.to_string()),
+            software_commit: crate::build_info::source_sha().to_string(),
+            build_time: crate::build_info::build_time().to_string(),
         }
     }
 }
@@ -393,6 +404,53 @@ mod tests {
     fn build_advertises_buzz_repository_url() {
         let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
         assert_eq!(info.software, "https://github.com/agiterra/beekeeper");
+    }
+
+    /// Finding 32: NIP-11 must carry the relay's build identity, not just its
+    /// crate version, so a redeploy can be confirmed by mechanism. Both
+    /// fields are compile-time constants from `build_info` (in turn set by
+    /// `build.rs`), so they are present unconditionally — never `Option`,
+    /// because `unknown` is itself the disclosed answer, not an absence.
+    #[test]
+    fn build_advertises_software_commit_and_build_time() {
+        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        assert_eq!(info.software_commit, crate::build_info::source_sha());
+        assert_eq!(info.build_time, crate::build_info::build_time());
+        // In this dev/test build the checkout's own `.git` is present, so
+        // build.rs resolves a real commit rather than falling back to
+        // `unknown` — pin the *shape* of both fields rather than an exact
+        // value, since the exact commit changes on every commit that touches
+        // this file.
+        assert!(
+            crate::build_provenance::is_full_sha(&info.software_commit)
+                || info.software_commit == "unknown",
+            "software_commit must be a full 40-hex commit or the literal unknown, got {:?}",
+            info.software_commit
+        );
+        assert!(
+            info.build_time.ends_with('Z') && info.build_time.contains('T'),
+            "build_time must be RFC 3339 UTC, got {:?}",
+            info.build_time
+        );
+    }
+
+    #[test]
+    fn software_commit_and_build_time_are_additive_and_always_present_in_json() {
+        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let json = serde_json::to_value(&info).expect("serialize");
+        assert!(
+            json.get("software_commit")
+                .and_then(|v| v.as_str())
+                .is_some(),
+            "software_commit must always serialize, never be omitted"
+        );
+        assert!(
+            json.get("build_time").and_then(|v| v.as_str()).is_some(),
+            "build_time must always serialize, never be omitted"
+        );
+        // Existing fields untouched — additive means additive.
+        assert_eq!(json["software"], "https://github.com/agiterra/beekeeper");
+        assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

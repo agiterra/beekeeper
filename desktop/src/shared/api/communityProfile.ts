@@ -33,6 +33,26 @@ export async function fetchCommunityIcon(
 }
 
 /**
+ * Fetch a relay's own disclosed build commit from its NIP-11 document
+ * (`software_commit`, finding 32 —
+ * `review-2026-09-01/LIVE-RUN-TeamRolesV1.md`). Plain unauthenticated HTTP
+ * via the Tauri backend, same shape as {@link fetchCommunityIcon} — works for
+ * an inactive community too, since `EditCommunityDialog` may be editing one
+ * that is not the currently active workspace.
+ *
+ * Returns the full 40-hex commit, or `null` for every case that discloses as
+ * "unknown": unreachable relay, malformed document, or a relay predating this
+ * field. Callers that display it should truncate for the UI (8 hex, matching
+ * `bee git check --ref`'s own truncation) rather than treat `null` as an
+ * error.
+ */
+export async function fetchRelayBuildCommit(
+  relayUrl: string,
+): Promise<string | null> {
+  return invokeTauri<string | null>("get_relay_build_commit", { relayUrl });
+}
+
+/**
  * Publish a kind:9033 command setting (or clearing, with "") the community
  * icon on the active relay. Requires relay admin/owner role — the relay
  * rejects the command otherwise.

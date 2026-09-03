@@ -248,7 +248,14 @@ mirror_git archive --format=tar "$sha" | instance sh -c "tar -x -C $BASE/build-i
 instance test -f "$BASE/build-incoming/Dockerfile"
 
 log "building $IMAGE_NAME:$short (log: $BASE/build-$short.log in the $INSTANCE instance)"
-if ! instance sh -c "docker build -t $IMAGE_NAME:$short $BASE/build-incoming >$BASE/build-$short.log 2>&1"; then
+# BUZZ_SOURCE_SHA: the Dockerfile compiles this in as the relay's disclosed
+# NIP-11 `software_commit` / `GET /health` build identity (finding 32,
+# review-2026-09-01/LIVE-RUN-TeamRolesV1.md). `git archive` never includes
+# `.git`, so the in-image build.rs cannot discover its own commit — this is
+# the only place on this path that still knows it. Full $sha, not $short: the
+# relay's `bee git check --ref` ancestry comparison needs the whole object
+# name.
+if ! instance sh -c "docker build --build-arg BUZZ_SOURCE_SHA=$sha -t $IMAGE_NAME:$short $BASE/build-incoming >$BASE/build-$short.log 2>&1"; then
   instance touch "$BASE/autodeploy-failed-$short"
   log "BUILD FAILED for $short — see $BASE/build-$short.log; marker left, remove to retry"
   exit 1

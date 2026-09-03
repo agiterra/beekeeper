@@ -296,6 +296,36 @@ async fn submit_repo_update_with(
     Ok(())
 }
 
+/// `bee repos protect set`'s own write response: [`submit_repo_update_with`]
+/// plus `relay_commit` (finding 32), printed beside `relay_url` the same way
+/// `bee repos protect list` and `bee sessions whoami` do. Kept as its own
+/// function rather than a third parameter on `submit_repo_update_with`: that
+/// helper also serves `cmd_update_repo` (maintainers), which the lane spec
+/// does not ask to carry this disclosure, and threading an `Option` through
+/// every caller for one of them would be a worse read than one small
+/// sibling.
+async fn submit_repo_update_with_relay_commit(
+    client: &BuzzClient,
+    builder: EventBuilder,
+    founders: String,
+    relay_commit: String,
+) -> Result<(), CliError> {
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    let response = validate_write_response(&raw)?;
+    let mut value: serde_json::Value = serde_json::from_str(&response)
+        .map_err(|error| CliError::Other(format!("relay response is not JSON: {error}")))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("founders".to_string(), serde_json::Value::String(founders));
+        object.insert(
+            "relay_commit".to_string(),
+            serde_json::Value::String(relay_commit),
+        );
+    }
+    println!("{value}");
+    Ok(())
+}
+
 /// Validate a `30621:<owner-hex>:<dtag>` project coordinate and return it in
 /// the normalized form the relay stores.
 ///
@@ -606,6 +636,15 @@ async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliE
                 crate::commands::git_setup::serving_relay_build(client.relay_url()).await,
             ),
         );
+        // Printed beside `relay_url` (finding 32,
+        // review-2026-09-01/LIVE-RUN-TeamRolesV1.md): "unknown" for a relay
+        // predating NIP-11's software_commit field is itself the disclosure.
+        object.insert(
+            "relay_commit".to_string(),
+            serde_json::Value::String(
+                crate::commands::git_setup::serving_relay_commit(client.relay_url()).await,
+            ),
+        );
         // Rules and founders are two different authorities and the difference
         // bites: the founder set governs which missions rule and who may land,
         // while the rules themselves live on the announcement and only its
@@ -634,9 +673,10 @@ async fn cmd_protect_set(
     let tag = build_protection_tag(ref_pattern, push_role, flags)?;
     let event = current_repo(client, repo_id).await?;
     let founders = repository_founders(client, &event).await.rules_sentence();
+    let relay_commit = crate::commands::git_setup::serving_relay_commit(client.relay_url()).await;
     let builder =
         build_updated_repo_announcement(&event, RepoChange::SetProtection(Box::new(tag)))?;
-    submit_repo_update_with(client, builder, Some(founders)).await
+    submit_repo_update_with_relay_commit(client, builder, founders, relay_commit).await
 }
 
 /// `bee repos update` — change who co-founds one of your repositories.

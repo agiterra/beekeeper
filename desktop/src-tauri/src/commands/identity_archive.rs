@@ -225,6 +225,13 @@ pub struct ArchivedIdentitiesSnapshot {
 struct RelayInformationDocument {
     #[serde(default, rename = "self")]
     self_: Option<String>,
+    /// NIP-11 `software_commit` (finding 32,
+    /// `review-2026-09-01/LIVE-RUN-TeamRolesV1.md`): the relay's own
+    /// disclosed build commit, or the literal `unknown`. Absent entirely on a
+    /// relay predating that field — `#[serde(default)]` reads that the same
+    /// as an explicit `unknown` would.
+    #[serde(default)]
+    software_commit: Option<String>,
 }
 
 pub(crate) async fn fetch_relay_self(state: &AppState) -> Result<Option<String>, String> {
@@ -256,6 +263,59 @@ pub(crate) async fn fetch_relay_self(state: &AppState) -> Result<Option<String>,
     } else {
         Ok(None)
     }
+}
+
+/// Read a relay's own disclosed build commit (NIP-11 `software_commit`,
+/// finding 32 — `review-2026-09-01/LIVE-RUN-TeamRolesV1.md`).
+///
+/// Takes `relay_url` explicitly rather than reading the *active* community
+/// off `state` — same shape as [`crate::commands::workspace::fetch_workspace_icon`]
+/// — because the caller (`EditCommunityDialog.tsx`) can be editing a
+/// community that is not the one currently active, and this must report on
+/// the relay being edited, not whichever one happens to be live.
+///
+/// Returns the full 40-hex commit when the relay advertises a well-formed
+/// one, or `None` for every other case — unreachable relay, malformed
+/// document, a relay predating this field entirely, or a value that is not a
+/// plausible commit. `None` is disclosed by the UI as `unknown`, the same
+/// literal the relay itself would use; this function never invents or
+/// truncates — truncation to 8 hex for display is the caller's job, because a
+/// command's return value should stay the precise fact.
+#[tauri::command]
+pub async fn get_relay_build_commit(
+    relay_url: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let http_url = relay_http_base_url(&relay_url);
+    let Ok(response) = state
+        .http_client
+        .get(&http_url)
+        .header("Accept", "application/nostr+json")
+        .send()
+        .await
+    else {
+        return Ok(None);
+    };
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    let doc =
+        response
+            .json::<RelayInformationDocument>()
+            .await
+            .unwrap_or(RelayInformationDocument {
+                self_: None,
+                software_commit: None,
+            });
+
+    let Some(commit) = doc.software_commit.map(|value| value.to_ascii_lowercase()) else {
+        return Ok(None);
+    };
+    let is_full_sha = commit.len() == 40
+        && commit
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    Ok(is_full_sha.then_some(commit))
 }
 
 fn archived_pubkeys_from_snapshot(snapshot: &nostr::Event) -> Vec<String> {

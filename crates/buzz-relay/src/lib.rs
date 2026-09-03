@@ -4,6 +4,12 @@
 
 mod admission;
 mod build_info;
+/// The build script's own commit/build-time resolution, compiled here only
+/// for its tests — `build.rs` `include!`s the same file, and `cargo test`
+/// never runs a build script. Mirrors `buzz-cli/src/lib.rs`'s identical
+/// `#[cfg(test)]`-gated `build_provenance` module for the same reason.
+#[cfg(test)]
+mod build_provenance;
 mod rejection;
 
 /// REST API route handlers.

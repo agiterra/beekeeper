@@ -1100,6 +1100,79 @@ pub struct RefPrediction {
     /// Empty until an announcement is read; the rule is never predicted
     /// without one.
     pub founders: String,
+    /// Whether the serving relay's own disclosed build enforces
+    /// `require-verdict` (42dd921d8) — finding 32. Distinct from
+    /// `serving_relay`: that is a human sentence, this is the specific
+    /// question `--ref` exists to answer, checked against the relay's own
+    /// commit rather than assumed from this build.
+    pub enforcement: RequireVerdictEnforcement,
+}
+
+/// The commit `require-verdict` enforcement shipped at
+/// (`feat(relay): a protected ref admits only a push a verdict names, and the
+/// refusal says so`).
+pub const REQUIRE_VERDICT_COMMIT: &str = "42dd921d831c483e6e16111491b39947b4cf1f86";
+
+/// `REQUIRE_VERDICT_COMMIT`'s own committer time, UTC, RFC 3339. The
+/// date-fallback comparison uses this when ancestry cannot be checked
+/// locally — e.g. the gate's `depth: 1` clones (`docs/INTEGRATION.md` § CI)
+/// hold no history to walk.
+pub const REQUIRE_VERDICT_COMMIT_TIME: &str = "2026-09-03T02:51:29Z";
+
+/// How `bee git check --ref` decided whether the relay actually serving a
+/// repository enforces `require-verdict` — never printed as a bare yes/no,
+/// because a bare answer would read as firsthand relay confirmation rather
+/// than what it is: this build's inference from NIP-11 metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequireVerdictEnforcement {
+    /// The relay's own disclosed build commit (NIP-11 `software_commit`), or
+    /// the literal `unknown`.
+    pub relay_commit: String,
+    /// `Some(true)`/`Some(false)` when a method could answer; `None` when
+    /// neither could — an unreachable relay, or one predating finding 32's
+    /// NIP-11 fields entirely.
+    pub enforces: Option<bool>,
+    /// Which method produced `enforces`.
+    pub method: EnforcementCheckMethod,
+}
+
+/// Which way [`RequireVerdictEnforcement::enforces`] was determined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnforcementCheckMethod {
+    /// `git merge-base --is-ancestor` against a local clone that holds both
+    /// commits — the precise answer, when it is available.
+    Ancestry,
+    /// The relay's disclosed `build_time` compared against
+    /// `REQUIRE_VERDICT_COMMIT_TIME`, used only when ancestry could not be
+    /// checked (the relay's commit is `unknown`, absent from this checkout,
+    /// or this checkout is a shallow clone that cannot resolve it).
+    Date,
+    /// Neither method could answer.
+    Unknown,
+}
+
+impl EnforcementCheckMethod {
+    /// The word `bee git check --ref` prints for this method — always
+    /// printed alongside the answer, per this type's own contract.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EnforcementCheckMethod::Ancestry => "ancestry",
+            EnforcementCheckMethod::Date => "date",
+            EnforcementCheckMethod::Unknown => "unknown",
+        }
+    }
+}
+
+impl Default for RequireVerdictEnforcement {
+    /// "Nothing has checked yet" and "neither method could answer" are the
+    /// same disclosed state, so both read the identical, honest `unknown`.
+    fn default() -> Self {
+        RequireVerdictEnforcement {
+            relay_commit: UNKNOWN_RELAY_COMMIT.to_string(),
+            enforces: None,
+            method: EnforcementCheckMethod::Unknown,
+        }
+    }
 }
 
 /// The prediction's answer, or why there is none.
@@ -1408,7 +1481,11 @@ pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> 
         Some(ref_name) => {
             let mut prediction =
                 predict_ref(&client, &target, ref_name, request.sha.as_deref(), &pubkey).await;
-            prediction.serving_relay = serving_relay_build(&origin).await;
+            // One fetch feeds both: a human sentence about the relay's
+            // reported build, and the require-verdict enforcement check.
+            let relay_doc = fetch_relay_info_doc(&origin).await;
+            prediction.serving_relay = relay_build_sentence(relay_doc.as_ref());
+            prediction.enforcement = require_verdict_enforcement(relay_doc.as_ref());
             Some(prediction)
         }
         None => None,
@@ -1476,6 +1553,9 @@ async fn predict_ref(
         // Filled in by the caller, which knows the relay origin.
         serving_relay: "serving relay's version unknown".to_string(),
         founders: String::new(),
+        // Filled in by the caller alongside `serving_relay`, from the same
+        // fetched NIP-11 document.
+        enforcement: RequireVerdictEnforcement::default(),
     };
     let ProbeTarget::Remote { owner, repo } = target else {
         return prediction;
@@ -1780,31 +1860,47 @@ pub const ENFORCEMENT_DISCLOSURE: &str =
      repository is what enforces it, and a relay predating require-verdict parses \
      the token and ignores it.";
 
+/// Fetch the serving relay's NIP-11 document, once, for every caller in this
+/// file that reads it ([`serving_relay_build`], [`serving_relay_commit`], the
+/// `--ref` prediction's [`RequireVerdictEnforcement`]) — a relay probe is a
+/// real network round trip, and asking three times for the same document
+/// would triple `bee git check --ref`'s latency for no reason.
+///
+/// `None` covers every failure mode alike (unreachable, non-2xx, malformed
+/// JSON): every caller already treats "no document" and "document without
+/// the field I wanted" as the same disclosed `unknown`.
+async fn fetch_relay_info_doc(origin: &str) -> Option<serde_json::Value> {
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+    let response = http
+        .get(origin)
+        .header("Accept", "application/nostr+json")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response.json::<serde_json::Value>().await.ok()
+}
+
 /// Ask the relay's NIP-11 document what build it is.
 ///
 /// Returns the sentence to print. Never an error: a relay that does not answer
 /// is disclosed as unknown, because "unknown" is the true answer and an empty
 /// line would read as agreement.
 pub async fn serving_relay_build(origin: &str) -> String {
+    relay_build_sentence(fetch_relay_info_doc(origin).await.as_ref())
+}
+
+/// Pure half of [`serving_relay_build`]: renders the sentence from an
+/// already-fetched document (or its absence), so the rendering itself is
+/// unit-testable without a network double.
+fn relay_build_sentence(doc: Option<&serde_json::Value>) -> String {
     let unknown = "serving relay's version unknown".to_string();
-    let Ok(http) = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    else {
-        return unknown;
-    };
-    let Ok(response) = http
-        .get(origin)
-        .header("Accept", "application/nostr+json")
-        .send()
-        .await
-    else {
-        return unknown;
-    };
-    if !response.status().is_success() {
-        return unknown;
-    }
-    let Ok(doc) = response.json::<serde_json::Value>().await else {
+    let Some(doc) = doc else {
         return unknown;
     };
     let software = doc.get("software").and_then(|v| v.as_str());
@@ -1818,6 +1914,163 @@ pub async fn serving_relay_build(origin: &str) -> String {
     }
 }
 
+/// Ask the relay's NIP-11 document for its own disclosed build commit
+/// (`software_commit`, finding 32). Returns the full 40-hex commit, or the
+/// literal `unknown` for every case that is not one — unreachable relay, a
+/// relay predating finding 32's NIP-11 fields, or a malformed value. Printed
+/// beside `relay_url` by `bee sessions whoami` and `bee repos protect
+/// list`/`set`.
+pub async fn serving_relay_commit(origin: &str) -> String {
+    relay_commit_from_doc(fetch_relay_info_doc(origin).await.as_ref()).to_string()
+}
+
+/// Pure half of [`serving_relay_commit`].
+fn relay_commit_from_doc(doc: Option<&serde_json::Value>) -> &str {
+    doc.and_then(|d| d.get("software_commit"))
+        .and_then(|v| v.as_str())
+        .filter(|s| is_full_hex_sha(s))
+        .unwrap_or("unknown")
+}
+
+/// Whether `value` is a full, lowercase-hex commit object name — the same
+/// contract `buzz-relay/src/build_provenance.rs::is_full_sha` advertises
+/// under, checked independently here because a malformed or malicious NIP-11
+/// document must not be trusted just because it parses as JSON.
+fn is_full_hex_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Decide whether the relay actually serving a repository enforces
+/// `require-verdict`, from an already-fetched NIP-11 document.
+///
+/// Tries ancestry first — `git merge-base --is-ancestor` against this
+/// checkout, when it has both commits — because it is exact; falls back to
+/// comparing the relay's disclosed `build_time` against
+/// `REQUIRE_VERDICT_COMMIT_TIME` only when ancestry could not answer. Always
+/// reports which method it used: an unlabelled answer would read as
+/// firsthand relay confirmation, which neither method is.
+fn require_verdict_enforcement(doc: Option<&serde_json::Value>) -> RequireVerdictEnforcement {
+    require_verdict_enforcement_in(Path::new("."), doc)
+}
+
+/// [`require_verdict_enforcement`] with the ancestry check's repository
+/// directory injected, so the decision logic is testable against a fixture
+/// repo rather than whatever checkout `cargo test` happens to run in.
+fn require_verdict_enforcement_in(
+    repo_dir: &Path,
+    doc: Option<&serde_json::Value>,
+) -> RequireVerdictEnforcement {
+    require_verdict_enforcement_against(repo_dir, REQUIRE_VERDICT_COMMIT, doc)
+}
+
+/// [`require_verdict_enforcement_in`] with the target commit also injected —
+/// production always asks about `REQUIRE_VERDICT_COMMIT`, but the ancestry
+/// vs. date precedence is testable with a fixture-controlled target/commit
+/// pair that a throwaway repo can actually contain, rather than depending on
+/// `REQUIRE_VERDICT_COMMIT` being reachable in whatever repo `cargo test`
+/// happens to run in (it may not be — the gate clones at `depth: 1`).
+fn require_verdict_enforcement_against(
+    repo_dir: &Path,
+    target: &str,
+    doc: Option<&serde_json::Value>,
+) -> RequireVerdictEnforcement {
+    let relay_commit = relay_commit_from_doc(doc).to_string();
+    let build_time = doc
+        .and_then(|d| d.get("build_time"))
+        .and_then(|v| v.as_str());
+
+    if relay_commit != UNKNOWN_RELAY_COMMIT {
+        if let Some(is_ancestor) = local_ancestry_check(repo_dir, target, &relay_commit) {
+            return RequireVerdictEnforcement {
+                relay_commit,
+                enforces: Some(is_ancestor),
+                method: EnforcementCheckMethod::Ancestry,
+            };
+        }
+    }
+    if let Some(build_time) = build_time {
+        if let Some(enforces) = enforcement_from_build_time(build_time) {
+            return RequireVerdictEnforcement {
+                relay_commit,
+                enforces: Some(enforces),
+                method: EnforcementCheckMethod::Date,
+            };
+        }
+    }
+    RequireVerdictEnforcement {
+        relay_commit,
+        enforces: None,
+        method: EnforcementCheckMethod::Unknown,
+    }
+}
+
+/// The literal [`relay_commit_from_doc`] falls back to. A named constant so
+/// the comparison above reads as "is this a real commit", not a magic string
+/// match repeated at each call site.
+const UNKNOWN_RELAY_COMMIT: &str = "unknown";
+
+/// Whether `target` is an ancestor of `commit`, checked against the git
+/// repository at `repo_dir`. `None` when the check could not be performed at
+/// all — `commit` is not an object this repository has (the common case: a
+/// shallow gate clone, or simply a different checkout than the relay's own),
+/// or `git` itself is unavailable — never conflated with `Some(false)`
+/// ("checked, and it is not an ancestor").
+fn local_ancestry_check(repo_dir: &Path, target: &str, commit: &str) -> Option<bool> {
+    // Routed through the shared `git_command` helper, like every other git
+    // spawn in this module: an ambient `GIT_DIR` (git exports one into every
+    // hook it runs) would otherwise answer this question about the *hook's*
+    // repository, and a wrong ancestry answer here is a wrong statement about
+    // whether the relay enforces `require-verdict`.
+    let known = crate::commands::sessions::worktree::git_command(repo_dir)
+        .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+        .status()
+        .ok()?
+        .success();
+    if !known {
+        return None;
+    }
+    let status = crate::commands::sessions::worktree::git_command(repo_dir)
+        .args(["merge-base", "--is-ancestor", target, commit])
+        .status()
+        .ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether `build_time` (RFC 3339, the relay's own NIP-11 field) names an
+/// instant at or after `REQUIRE_VERDICT_COMMIT_TIME`. `None` when
+/// `build_time` does not parse as RFC 3339 — never trust-but-guess a
+/// malformed value.
+fn enforcement_from_build_time(build_time: &str) -> Option<bool> {
+    let observed = chrono::DateTime::parse_from_rfc3339(build_time).ok()?;
+    let target = chrono::DateTime::parse_from_rfc3339(REQUIRE_VERDICT_COMMIT_TIME).ok()?;
+    Some(observed >= target)
+}
+
+/// The text line `bee git check --ref` prints for a
+/// [`RequireVerdictEnforcement`]. A short relay commit (8 hex, matching the
+/// desktop's own truncation — `desktop/src-tauri/src/commands/identity_archive.rs`)
+/// so the line stays scannable; the method is always named, per this type's
+/// own contract that an answer is never mistaken for firsthand confirmation.
+fn enforcement_line(enforcement: &RequireVerdictEnforcement) -> String {
+    let commit8: String = enforcement.relay_commit.chars().take(8).collect();
+    let verdict = match enforcement.enforces {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unknown",
+    };
+    format!(
+        "relay commit {commit8} — enforces require-verdict: {verdict} (checked by {})",
+        enforcement.method.as_str()
+    )
+}
+
 /// The compact (`--format compact`) form of a report.
 pub fn render_json(report: &CheckReport) -> serde_json::Value {
     serde_json::json!({
@@ -1826,6 +2079,11 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
             "evaluated_by": ENFORCEMENT_DISCLOSURE,
             "serving_relay": prediction.serving_relay,
             "founders": prediction.founders,
+            "require_verdict_enforcement": {
+                "relay_commit": prediction.enforcement.relay_commit,
+                "enforces": prediction.enforcement.enforces,
+                "method": prediction.enforcement.method.as_str(),
+            },
             "ref": prediction.ref_name,
             "sha": prediction.sha,
             "arm": match &prediction.state {
@@ -2100,6 +2358,7 @@ pub fn render_human(report: &CheckReport) -> String {
         let _ = writeln!(out, "{line}");
         let _ = writeln!(out, "  {ENFORCEMENT_DISCLOSURE}");
         let _ = writeln!(out, "  {}", prediction.serving_relay);
+        let _ = writeln!(out, "  {}", enforcement_line(&prediction.enforcement));
         if !prediction.founders.is_empty() {
             let _ = writeln!(out, "  {}", prediction.founders);
         }
@@ -2760,6 +3019,243 @@ mod tests {
         }
     }
 
+    // ── finding 32: relay build disclosure + require-verdict enforcement ────
+
+    #[test]
+    fn is_full_hex_sha_accepts_only_lowercase_40_hex() {
+        assert!(is_full_hex_sha("42dd921d831c483e6e16111491b39947b4cf1f86"));
+        assert!(!is_full_hex_sha("42dd921d8"), "a short sha is not accepted");
+        assert!(
+            !is_full_hex_sha("42DD921D831C483E6E16111491B39947B4CF1F86"),
+            "uppercase is not our form"
+        );
+        assert!(!is_full_hex_sha("not-hex-at-all-not-hex-at-all-not-hex-a"));
+        assert!(!is_full_hex_sha(""));
+    }
+
+    #[test]
+    fn relay_build_sentence_names_software_and_version() {
+        let doc = serde_json::json!({"software": "beekeeper", "version": "0.2.1"});
+        assert_eq!(
+            relay_build_sentence(Some(&doc)),
+            "serving relay reports beekeeper 0.2.1"
+        );
+    }
+
+    #[test]
+    fn relay_build_sentence_falls_back_to_version_alone_then_to_unknown() {
+        let version_only = serde_json::json!({"version": "0.2.1"});
+        assert_eq!(
+            relay_build_sentence(Some(&version_only)),
+            "serving relay reports version 0.2.1"
+        );
+        assert_eq!(
+            relay_build_sentence(Some(&serde_json::json!({}))),
+            "serving relay's version unknown"
+        );
+        assert_eq!(
+            relay_build_sentence(None),
+            "serving relay's version unknown",
+            "an unreachable relay must read as unknown, never as agreement"
+        );
+    }
+
+    #[test]
+    fn relay_commit_from_doc_requires_a_full_sha_never_echoes_junk() {
+        let good =
+            serde_json::json!({"software_commit": "42dd921d831c483e6e16111491b39947b4cf1f86"});
+        assert_eq!(
+            relay_commit_from_doc(Some(&good)),
+            "42dd921d831c483e6e16111491b39947b4cf1f86"
+        );
+        let short = serde_json::json!({"software_commit": "42dd921d8"});
+        assert_eq!(
+            relay_commit_from_doc(Some(&short)),
+            "unknown",
+            "a short/malformed value must not be echoed back"
+        );
+        let absent = serde_json::json!({"version": "0.2.1"});
+        assert_eq!(
+            relay_commit_from_doc(Some(&absent)),
+            "unknown",
+            "a relay predating finding 32 has no software_commit field at all"
+        );
+        assert_eq!(relay_commit_from_doc(None), "unknown");
+    }
+
+    #[test]
+    fn enforcement_from_build_time_compares_against_the_require_verdict_commit_time() {
+        assert_eq!(
+            enforcement_from_build_time("2026-09-03T02:51:29Z"),
+            Some(true),
+            "the exact commit instant counts as enforcing"
+        );
+        assert_eq!(
+            enforcement_from_build_time("2026-09-03T03:00:00Z"),
+            Some(true)
+        );
+        assert_eq!(
+            enforcement_from_build_time("2026-09-01T00:00:00Z"),
+            Some(false)
+        );
+        assert_eq!(
+            enforcement_from_build_time("not a timestamp"),
+            None,
+            "a malformed build_time must never be guessed at"
+        );
+    }
+
+    /// A throwaway repo with two commits, so the ancestry check has real git
+    /// objects to walk — never the real checkout's own history, which the
+    /// gate's `depth: 1` clone would make an unreliable fixture anyway.
+    struct AncestryFixture {
+        dir: tempfile::TempDir,
+        root: String,
+        tip: String,
+    }
+
+    impl AncestryFixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path();
+            // `git_command` rather than a bare `git -C`: the pre-push gate runs
+            // this crate's tests from inside a git hook, which exports
+            // `GIT_DIR` — and `git init` obeys `GIT_DIR` over `-C`, so a bare
+            // spawn here would initialise the *pushing* repository instead of
+            // this temp dir. The identity is set as env rather than
+            // `git config user.*` so the fixture never depends on a global one.
+            let git = |args: &[&str]| {
+                let output = crate::commands::sessions::worktree::git_command(path)
+                    .env("GIT_AUTHOR_NAME", "Ancestry Fixture")
+                    .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+                    .env("GIT_COMMITTER_NAME", "Ancestry Fixture")
+                    .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+                    .args(args)
+                    .output()
+                    .expect("git available for this test");
+                assert!(
+                    output.status.success(),
+                    "git {args:?} failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            };
+            git(&["init", "--quiet", "-b", "main"]);
+            std::fs::write(path.join("f"), "one").expect("write f");
+            git(&["add", "f"]);
+            git(&["commit", "--quiet", "-m", "root"]);
+            let root = git(&["rev-parse", "HEAD"]);
+            std::fs::write(path.join("f"), "two").expect("rewrite f");
+            git(&["add", "f"]);
+            git(&["commit", "--quiet", "-m", "tip"]);
+            let tip = git(&["rev-parse", "HEAD"]);
+            Self { dir, root, tip }
+        }
+
+        fn path(&self) -> &Path {
+            self.dir.path()
+        }
+    }
+
+    #[test]
+    fn local_ancestry_check_finds_a_real_ancestor() {
+        let fixture = AncestryFixture::new();
+        assert_eq!(
+            local_ancestry_check(fixture.path(), &fixture.root, &fixture.tip),
+            Some(true),
+            "root is an ancestor of tip"
+        );
+    }
+
+    #[test]
+    fn local_ancestry_check_reports_a_non_ancestor_as_false_not_unknown() {
+        let fixture = AncestryFixture::new();
+        assert_eq!(
+            local_ancestry_check(fixture.path(), &fixture.tip, &fixture.root),
+            Some(false),
+            "tip is not an ancestor of root — a real, checked negative"
+        );
+    }
+
+    #[test]
+    fn local_ancestry_check_is_none_when_the_commit_is_not_present() {
+        let fixture = AncestryFixture::new();
+        let absent = "a".repeat(40);
+        assert_eq!(
+            local_ancestry_check(fixture.path(), &fixture.root, &absent),
+            None,
+            "an object this repo does not have must never be conflated with a checked negative"
+        );
+    }
+
+    #[test]
+    fn enforcement_prefers_ancestry_over_date_when_both_are_available() {
+        let fixture = AncestryFixture::new();
+        // A build_time that would say "no" by the date method — proves
+        // ancestry is consulted first and wins, not merely available.
+        let doc = serde_json::json!({
+            "software_commit": fixture.tip,
+            "build_time": "2020-01-01T00:00:00Z",
+        });
+        let result = require_verdict_enforcement_against(fixture.path(), &fixture.root, Some(&doc));
+        assert_eq!(result.method, EnforcementCheckMethod::Ancestry);
+        assert_eq!(
+            result.enforces,
+            Some(true),
+            "root really is an ancestor of tip — ancestry must win over the date method,              which this build_time would answer false"
+        );
+        assert_eq!(result.relay_commit, fixture.tip);
+    }
+
+    #[test]
+    fn enforcement_falls_back_to_date_when_ancestry_cannot_answer() {
+        // No local git repo has this commit (it's the real
+        // REQUIRE_VERDICT_COMMIT, and CARGO_MANIFEST_DIR's own checkout is not
+        // passed as repo_dir here), so ancestry must decline and date must
+        // answer instead.
+        let empty_dir = tempfile::tempdir().expect("temp dir");
+        let doc = serde_json::json!({
+            "software_commit": REQUIRE_VERDICT_COMMIT,
+            "build_time": "2026-09-03T02:51:29Z",
+        });
+        let result = require_verdict_enforcement_in(empty_dir.path(), Some(&doc));
+        assert_eq!(result.method, EnforcementCheckMethod::Date);
+        assert_eq!(result.enforces, Some(true));
+        assert_eq!(result.relay_commit, REQUIRE_VERDICT_COMMIT);
+    }
+
+    #[test]
+    fn enforcement_is_unknown_when_neither_method_can_answer() {
+        let empty_dir = tempfile::tempdir().expect("temp dir");
+        let result = require_verdict_enforcement_in(empty_dir.path(), Some(&serde_json::json!({})));
+        assert_eq!(result.method, EnforcementCheckMethod::Unknown);
+        assert_eq!(result.enforces, None);
+        assert_eq!(result.relay_commit, "unknown");
+
+        let unreachable = require_verdict_enforcement_in(empty_dir.path(), None);
+        assert_eq!(unreachable.method, EnforcementCheckMethod::Unknown);
+        assert_eq!(unreachable.relay_commit, "unknown");
+    }
+
+    #[test]
+    fn enforcement_line_always_names_the_method_never_a_bare_yesno() {
+        let known = RequireVerdictEnforcement {
+            relay_commit: "42dd921d831c483e6e16111491b39947b4cf1f86".to_string(),
+            enforces: Some(true),
+            method: EnforcementCheckMethod::Ancestry,
+        };
+        let line = enforcement_line(&known);
+        assert!(line.contains("relay commit 42dd921d"), "{line}");
+        assert!(line.contains("enforces require-verdict: yes"), "{line}");
+        assert!(line.contains("checked by ancestry"), "{line}");
+
+        let unknown = RequireVerdictEnforcement::default();
+        let line = enforcement_line(&unknown);
+        assert!(line.contains("relay commit unknown"), "{line}");
+        assert!(line.contains("enforces require-verdict: unknown"), "{line}");
+        assert!(line.contains("checked by unknown"), "{line}");
+    }
+
     /// The prediction is printed as a prediction, and the refusal it prints is
     /// the relay's own sentence — produced by the same
     /// `buzz_core::coding_session_verdict_admission` rule, not a second copy of
@@ -2787,6 +3283,7 @@ mod tests {
             },
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
             founders: String::new(),
+            enforcement: RequireVerdictEnforcement::default(),
         }));
         assert!(
             rendered.contains(PREDICTION_HEADING),
@@ -2817,6 +3314,7 @@ mod tests {
             state: RefPredictionState::Ungoverned,
             serving_relay: "serving relay's version unknown".to_string(),
             founders: String::new(),
+            enforcement: RequireVerdictEnforcement::default(),
         }));
         assert!(
             rendered.contains("the rule as THIS build evaluates it"),
@@ -2842,6 +3340,7 @@ mod tests {
             state: RefPredictionState::Ungoverned,
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
             founders: String::new(),
+            enforcement: RequireVerdictEnforcement::default(),
         }));
         assert!(
             rendered.contains("no require-verdict rule governs this ref"),
@@ -2865,6 +3364,7 @@ mod tests {
             },
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
             founders: String::new(),
+            enforcement: RequireVerdictEnforcement::default(),
         }));
         assert!(
             rendered.contains("not predicted — the relay refused the query"),

@@ -544,6 +544,11 @@ type E2eConfig = {
     // equals this is treated as a moderation DM (composer disabled). Absent →
     // fail open (no mod-DM detection), matching the Rust command's contract.
     relaySelf?: string | null;
+    // Finding 32: relay's own disclosed NIP-11 `software_commit` for
+    // `get_relay_build_commit` (`EditCommunityDialog.tsx`'s "Relay build:"
+    // line). Absent/undefined -> null, which the UI discloses as "unknown" —
+    // the same fail-open shape `get_relay_self` uses.
+    relayBuildCommit?: string | null;
     oaOwnerIsMe?: boolean;
     /** Whether the mock relay advertises NIP-43 membership support. Defaults to false. */
     relayRequiresMembership?: boolean;
@@ -14064,6 +14069,8 @@ export function maybeInstallE2eTauriMocks() {
           );
         }
         return activeConfig?.mock?.relaySelf ?? null;
+      case "get_relay_build_commit":
+        return activeConfig?.mock?.relayBuildCommit ?? null;
       // L8: the founder's 44244 build boundary. Only the capability probe is
       // mocked, and it reports what this base's real `buzz-core` reports —
       // `condition` is not on the wire until lane L7 lands, so the form does
