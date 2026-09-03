@@ -87,6 +87,28 @@ pub struct RecordedWorktreeStore {
 const STORE_DIRS: &[&str] = &["io.agiterra.beekeeper.app.dev", "io.agiterra.beekeeper.app"];
 
 /// Resolve the host record's path, or say where it looked.
+/// A `git` invocation addressed at `cwd` and nothing else.
+///
+/// Every caller here names the repository by path, so the process environment
+/// must not redirect it. Git exports `GIT_DIR` (and friends) to hooks, and the
+/// pre-push gate runs this crate's tests inside one: with those inherited, a
+/// `git init` in a temp dir wrote to the *pushing* repository's config and
+/// raced its lock — "could not lock config file …/.git/config: File exists" —
+/// and every worktree test failed for anyone pushing from a bare clone.
+fn git_command(cwd: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(cwd);
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(var);
+    }
+    command
+}
+
 pub fn default_store_path() -> Result<PathBuf, CliError> {
     let home = std::env::var("HOME").map_err(|_| {
         CliError::Usage("HOME is not set, so the host record cannot be found".into())
@@ -131,11 +153,7 @@ pub fn load_store(path: &Path) -> Result<RecordedWorktreeStore, CliError> {
 
 /// Run a git command in `cwd`, answering `None` when git itself failed.
 fn git(args: &[&str], cwd: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
+    let output = git_command(cwd).args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -274,9 +292,8 @@ pub fn tip_on_relay(path: &Path, oids: &BTreeSet<String>) -> Option<bool> {
         return Some(true);
     }
     Some(oids.iter().any(|oid| {
-        Command::new("git")
+        git_command(path)
             .args(["merge-base", "--is-ancestor", &tip, oid])
-            .current_dir(path)
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -628,10 +645,9 @@ pub async fn cmd_prune(
 
 /// Remove one worktree directory. Never `--force`.
 pub fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), CliError> {
-    let output = Command::new("git")
+    let output = git_command(repo_root)
         .args(["worktree", "remove"])
         .arg(path)
-        .current_dir(repo_root)
         .output()
         .map_err(|error| CliError::Other(format!("failed to run git worktree remove: {error}")))?;
     if !output.status.success() {
@@ -641,10 +657,7 @@ pub fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), CliError> {
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let _ = Command::new("git")
-        .args(["worktree", "prune"])
-        .current_dir(repo_root)
-        .output();
+    let _ = git_command(repo_root).args(["worktree", "prune"]).output();
     Ok(())
 }
 

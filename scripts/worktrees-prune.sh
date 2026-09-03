@@ -26,6 +26,12 @@
 
 set -euo pipefail
 
+# The repository is `--repo` or the current directory, never the caller's
+# environment. Git exports GIT_DIR (and friends) to hooks, and the pre-push
+# gate runs this script's tests inside one; inherited, every `git` below would
+# answer for the pushing repository instead and find no trunk in it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+
 DRY_RUN=0
 DO_TARGETS=0
 REPO=""

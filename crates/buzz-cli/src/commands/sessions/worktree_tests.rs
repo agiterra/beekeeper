@@ -17,6 +17,12 @@ fn git(args: &[&str], cwd: &Path) -> String {
     let output = Command::new("git")
         .args(args)
         .current_dir(cwd)
+        // The pre-push gate runs these tests inside a git hook, which exports
+        // GIT_DIR; inherited, it points `git init` at the pushing repository.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("GIT_AUTHOR_NAME", "L11")
@@ -347,7 +353,11 @@ fn run_prune(layout: &Layout, args: &[&str]) -> (bool, String) {
         // The script measures "merged" against a real trunk, and the tests
         // build a repository with no remote, so a local `main` is the trunk.
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR");
     let output = command.output().expect("run the prune script");
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
