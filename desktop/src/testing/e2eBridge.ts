@@ -14053,29 +14053,61 @@ export function maybeInstallE2eTauriMocks() {
       // L8: the verdict-gated land rule. The real command runs buzz-core's own
       // predicate; a spec pins the answer so the four states it produces can
       // each be seen. With nothing configured the mock answers what a surface
-      // holding no repository record gets — which is this build's real case.
+      // holding no repository record gets — which is this build's real case —
+      // unless the *request* itself carries a `repoOwnerPubkey` (LANE-L20:
+      // `useCodingSessionMissionLand` only sets one once its own relay read of
+      // the create's `repoRef` resolved a real kind:30617 announcement). That
+      // default names the resolved owner as the sole founder rather than
+      // reimplementing `buzz-core`'s own founder-resolution rule (I6) — it
+      // exists only to prove the write→read plumbing reaches this boundary,
+      // never to stand in for the rule's own tests.
       case "coding_session_land": {
-        return (
-          mockCodingSessionLandResponse ?? {
+        if (mockCodingSessionLandResponse) return mockCodingSessionLandResponse;
+        const request = (payload as { request?: Record<string, unknown> })
+          ?.request;
+        const repoOwnerPubkey =
+          (request?.repoOwnerPubkey as string | null | undefined) ?? null;
+        if (repoOwnerPubkey) {
+          const pusherPubkey =
+            (request?.pusherPubkey as string | undefined) ?? null;
+          return {
             schema: "buzz-coding-session-land-adapter/v1",
             implementation: "buzz-core",
-            repositoryKnown: false,
+            repositoryKnown: true,
             ruleGoverns: false,
             admitted: false,
             evidence: null,
             refusalReason: null,
             newestVerdict: null,
-            // Finding 33: no repository record reached the rule, so it names
-            // no founders — and says that is a fact about the read.
-            founders: [],
+            founders: [repoOwnerPubkey],
             foundersNote:
-              "No repository record reached this view, so nothing here can name its founders.",
-            viewerIsFounder: false,
-            rulesSigner: null,
-            rosterRead: false,
+              `rules are set by the announcement's signer ${repoOwnerPubkey} and only that key can rewrite ` +
+              `them; founders of this repository are ${repoOwnerPubkey} (1).`,
+            viewerIsFounder: pusherPubkey === repoOwnerPubkey,
+            rulesSigner: repoOwnerPubkey,
+            rosterRead: true,
             command: null,
-          }
-        );
+          };
+        }
+        return {
+          schema: "buzz-coding-session-land-adapter/v1",
+          implementation: "buzz-core",
+          repositoryKnown: false,
+          ruleGoverns: false,
+          admitted: false,
+          evidence: null,
+          refusalReason: null,
+          newestVerdict: null,
+          // Finding 33: no repository record reached the rule, so it names
+          // no founders — and says that is a fact about the read.
+          founders: [],
+          foundersNote:
+            "No repository record reached this view, so nothing here can name its founders.",
+          viewerIsFounder: false,
+          rulesSigner: null,
+          rosterRead: false,
+          command: null,
+        };
       }
       case "fold_coding_session_team_transactions": {
         const response = mockCodingSessionTeamFoldResponse;

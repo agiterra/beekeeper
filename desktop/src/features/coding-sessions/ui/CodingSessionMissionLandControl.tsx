@@ -54,6 +54,7 @@ export function CodingSessionMissionLandControl({
         >
           {land.sentence}
         </p>
+        <RepositorySourceLine land={land} />
         <FoundersLine land={land} />
       </div>
     );
@@ -134,10 +135,33 @@ export function CodingSessionMissionLandControl({
           >
             {land.buttonLabel}
           </button>
+          <RepositorySourceLine land={land} />
           <FoundersLine land={land} />
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Discloses when the repository the rule ran against was inferred from the
+ * session's project rather than named by the session's own create —
+ * LANE-L20 item 2. A session's `repoRef` is signed once; this is the read
+ * side's own honesty about the substitution it just made.
+ */
+function RepositorySourceLine({
+  land,
+}: {
+  land: CodingSessionMissionLandModel;
+}) {
+  if (land.repositorySourceNote === null) return null;
+  return (
+    <p
+      className={cn(missionRowMetaClass(), "mt-1")}
+      data-testid="mission-land-repository-source"
+    >
+      {land.repositorySourceNote}
+    </p>
   );
 }
 

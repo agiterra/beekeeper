@@ -30,6 +30,7 @@ import {
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
   KIND_CODING_SESSION_TRANSCRIPT,
+  KIND_REPO_ANNOUNCEMENT,
 } from "@/shared/constants/kinds";
 import { installMockBridge } from "../../helpers/bridge";
 
@@ -106,6 +107,50 @@ const VERIFIER_TARGET: CodingSessionCommandTarget = {
 /** The commit the mission's report names, and what §1l shortens it to. */
 export const HEAD_SHA = "07c470be07c470be07c470be07c470be07c470be";
 
+/**
+ * LANE-L20 (finding 38): the repository a mission's creates can name.
+ *
+ * `FOUNDER` is both the umbrella's founder and this announcement's signer, so
+ * a create that names it exercises the real write→read path end to end: the
+ * seeded create's `repoRef` is read by `readCodingSessionRepository` against
+ * this very announcement (via `__BUZZ_E2E_EXTRA_PROJECT_EVENTS__`), and the
+ * resolved owner pubkey reaches the (mocked) `coding_session_land` request.
+ */
+export const REPO_DTAG = "beekeeper";
+export const REPO_REF = `${KIND_REPO_ANNOUNCEMENT}:${FOUNDER}:${REPO_DTAG}`;
+
+/** The kind:30617 announcement `REPO_REF` names, seeded via extra events. */
+export function repoAnnouncementEvent(): {
+  id: string;
+  kind: number;
+  pubkey: string;
+  created_at: number;
+  content: string;
+  tags: string[][];
+} {
+  const event = finalizeEvent(
+    {
+      kind: KIND_REPO_ANNOUNCEMENT,
+      created_at: stepAt(-1),
+      tags: [
+        ["d", REPO_DTAG],
+        ["clone", `https://relay.test/git/${FOUNDER}/${REPO_DTAG}`],
+        ["name", "Beekeeper"],
+      ],
+      content: "",
+    },
+    FOUNDER_SECRET,
+  );
+  return {
+    id: event.id,
+    kind: event.kind,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    content: event.content,
+    tags: event.tags,
+  };
+}
+
 const ANCHOR = Math.floor(Date.now() / 1_000) - 60;
 const stepAt = (offset: number) => ANCHOR + offset;
 
@@ -151,6 +196,12 @@ function signedMetadata(input: {
   runtime: string;
   model: string;
   status: string;
+  /**
+   * LANE-L20: the runtime's own 44223 echo of the create's `repoRef`
+   * (`useCodingSessionCatalog.ts`'s `activeGeneration.repoRef` reads this
+   * event, never the create directly) — null reproduces the pre-fix wire.
+   */
+  repoRef?: string | null;
 }): RelayEvent {
   return finalizeEvent(
     {
@@ -166,7 +217,7 @@ function signedMetadata(input: {
         schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
         session: input.target,
         projectRef: null,
-        repoRef: null,
+        repoRef: input.repoRef ?? null,
         title: "The founder's two acts",
         agentRef: input.actor,
         provider: input.runtime,
@@ -271,7 +322,15 @@ export type FounderActMission = {
  * single seeded session drives all six screenshots.
  */
 export function founderActMission(
-  options: { withRefusedCompletion?: boolean } = {},
+  options: {
+    withRefusedCompletion?: boolean;
+    /**
+     * LANE-L20 (finding 38): the `repoRef` every seat's create signs. Null
+     * (the default) reproduces the pre-fix wire — every app-created session
+     * named no repository at all.
+     */
+    repoRef?: string | null;
+  } = {},
 ): FounderActMission {
   const genesisInput = buildCodingSessionGenesisEvent({
     channelId: CHANNEL_ID,
@@ -315,7 +374,7 @@ export function founderActMission(
       channelId: CHANNEL_ID,
       commandId: seat.commandId,
       projectRef: null,
-      repoRef: null,
+      repoRef: options.repoRef ?? null,
       sessionRef: SESSION_REF,
       genesisRef: genesis.id,
       actor: seat.actor,
@@ -577,6 +636,7 @@ export function founderActMission(
         runtime: "claude-agent-acp",
         model: "sonnet",
         status: "running",
+        repoRef: options.repoRef ?? null,
       }),
       signedMetadata({
         createdAt: stepAt(13),
@@ -587,6 +647,7 @@ export function founderActMission(
         runtime: "codex-acp",
         model: "gpt-5.6-sol",
         status: "completed",
+        repoRef: options.repoRef ?? null,
       }),
       signedLiveLease(stepAt(14)),
       signedTranscript({

@@ -28,6 +28,15 @@ export type NewCodingSessionProjectContext = {
   projectName: string;
   /** Coordinate signed into the create as the session's placement authority. */
   projectRef: string | null;
+  /**
+   * The repository coordinate (`30617:<owner>:<d>`) this launch's create
+   * should name, or null when none is known.
+   *
+   * LANE-L20 (finding 38): resolved from the checkout the launch found — the
+   * project repo whose registered/scanned checkout matched, or the project's
+   * only repository — never guessed among two or more with no checkout match.
+   */
+  repoRef: string | null;
   /** The project's sessions channel, or null until this create publishes one. */
   channelId: string | null;
   /**

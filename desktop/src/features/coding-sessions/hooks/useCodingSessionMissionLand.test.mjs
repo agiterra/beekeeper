@@ -128,3 +128,41 @@ test("L18: the repo address parser is unchanged by the roster read", () => {
   );
   assert.equal(codingSessionRepoAddress("nonsense"), null);
 });
+
+test("L20.2: a project's repository addresses are read through its own project back-reference, deduplicated", async () => {
+  const { readProjectRepositoryAddresses } = await import(
+    "./useCodingSessionMissionLand.ts"
+  );
+  const addresses = await readProjectRepositoryAddresses(
+    COORDINATE,
+    fetcher({
+      30617: [
+        announcement([
+          ["d", "agiterra-beekeeper"],
+          ["project", COORDINATE],
+        ]),
+        // A stale copy of the same address — created_at is older, and must
+        // not double-count against the newest.
+        {
+          ...announcement([
+            ["d", "agiterra-beekeeper"],
+            ["project", COORDINATE],
+          ]),
+          created_at: 1,
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(addresses, [`30617:${OWNER}:agiterra-beekeeper`]);
+});
+
+test("L20.2: a project with no repositories at all reads an empty set, not an error", async () => {
+  const { readProjectRepositoryAddresses } = await import(
+    "./useCodingSessionMissionLand.ts"
+  );
+  const addresses = await readProjectRepositoryAddresses(
+    COORDINATE,
+    fetcher({ 30617: [] }),
+  );
+  assert.deepEqual(addresses, []);
+});

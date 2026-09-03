@@ -216,21 +216,36 @@ export function useCodingSessionMissionSurface(input: {
     );
     return named.size === 1 ? [...named][0] : null;
   }, [input.umbrella.executions]);
+  // LANE-L20 item 2: the project this session's creates named, one address or
+  // none — the same one-or-none rule `repoRef` above already uses, since
+  // executions that disagree name no single project either.
+  const projectRef = React.useMemo(() => {
+    const named = new Set(
+      input.umbrella.executions
+        .map((execution) => execution.activeGeneration.projectRef?.trim() ?? "")
+        .filter((ref) => ref.length > 0),
+    );
+    return named.size === 1 ? [...named][0] : null;
+  }, [input.umbrella.executions]);
   // L8.2: the push path's own rule, asked once per fold, over the repository's
   // own kind:30617 when one is named and readable.
-  const land = useCodingSessionMissionLand({
-    founderPubkey: input.umbrella.founderPubkey,
-    genesisRef: input.umbrella.genesisRef,
-    landEvidence: evidence.inspectorInput.landEvidence,
-    repoRef,
-    resolveWho: (pubkey) =>
-      pubkey.trim().toLowerCase() ===
-      (input.umbrella.founderPubkey ?? "").trim().toLowerCase()
-        ? "the founder"
-        : (input.resolveActorName(pubkey) ?? truncatePubkey(pubkey)),
-    sessionRef: input.umbrella.sessionRef,
-    viewerPubkey,
-  });
+  const { land, unavailableReason: landUnavailableReason } =
+    useCodingSessionMissionLand({
+      founderPubkey: input.umbrella.founderPubkey,
+      genesisRef: input.umbrella.genesisRef,
+      landEvidence: evidence.inspectorInput.landEvidence,
+      repoRef,
+      // LANE-L20 item 2: the read fallback that infers a repository from the
+      // session's project when its own creates named none.
+      projectRef,
+      resolveWho: (pubkey) =>
+        pubkey.trim().toLowerCase() ===
+        (input.umbrella.founderPubkey ?? "").trim().toLowerCase()
+          ? "the founder"
+          : (input.resolveActorName(pubkey) ?? truncatePubkey(pubkey)),
+      sessionRef: input.umbrella.sessionRef,
+      viewerPubkey,
+    });
   // The same case-folded selection the workspace made, applied again here so
   // this surface trusts a goal for the reasons it can check rather than on
   // three exact-equality comparisons that finding 23 showed can each miss.
@@ -327,6 +342,8 @@ export function useCodingSessionMissionSurface(input: {
       currentUserPubkey: viewerPubkey,
       founderPubkey: input.umbrella.founderPubkey,
       land,
+      // LANE-L20 item 3 (finding 37): why `land` is null, when it is.
+      landUnavailableReason,
       leadHasOpenTurn,
       policyRecordKnown,
       resolveActorLabel: input.resolveActorName,
@@ -334,6 +351,7 @@ export function useCodingSessionMissionSurface(input: {
     [
       evidence.inspectorInput,
       land,
+      landUnavailableReason,
       policyRecordKnown,
       viewerPubkey,
       contextLoads,

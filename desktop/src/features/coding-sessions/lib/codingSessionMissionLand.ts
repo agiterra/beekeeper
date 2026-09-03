@@ -221,6 +221,21 @@ function short(eventId: string): string {
 }
 
 /**
+ * Why {@link useCodingSessionMissionLand} answers `land: null` — finding 37.
+ *
+ * `"no-identity"` is not a failure: the surface has not yet resolved who is
+ * asking (viewer/founder pubkey, session/genesis ref) or holds no fold
+ * evidence yet, so there is nothing to land *yet*. `"boundary-failed"` is a
+ * real fault: the native `coding_session_land` call threw, so the rule's
+ * answer never reached this view at all. The panel's sentence must say which
+ * — "nothing to land yet" and "the read failed" are different facts, and an
+ * absent control that says neither is a comfortable silence.
+ */
+export type CodingSessionMissionLandUnavailableReason =
+  | "no-identity"
+  | "boundary-failed";
+
+/**
  * What the Land control says, in §1l's own words.
  *
  * Four states, and the control is **present in every one of them**: a missing
@@ -252,6 +267,13 @@ export type CodingSessionMissionLandModel = {
   readonly foundersSentence: string;
   /** Whether the viewer's own key is one of them. */
   readonly viewerIsFounder: boolean;
+  /**
+   * Set, in every state, when the repository this rule ran against was not
+   * the session's own `repoRef` but inferred from its project (LANE-L20 item
+   * 2) — null when the repository (or its absence) is the session's own
+   * signed fact.
+   */
+  readonly repositorySourceNote: string | null;
 };
 
 /**
@@ -305,14 +327,30 @@ export function codingSessionMissionLandModel(input: {
   /**
    * Why no repository record reached the rule, when none did.
    *
-   * Two different facts, and the sentence says which: the session's creates
-   * named no repository at all, or they named one whose kind:30617 this view
-   * did not read. "Not read" is the honest word for the second — it is not
-   * "there is no rule".
+   * Three different facts, and the sentence says which: the session's
+   * creates named no repository at all (and its project, if any, names none
+   * or more than one so nothing could be inferred either); they named one
+   * whose kind:30617 this view did not read ("not read" is the honest word —
+   * it is not "there is no rule"); or the session's project has two or more
+   * repositories, so LANE-L20's read fallback could not pick one either.
    */
-  repositoryUnknownReason?: "no-repo-ref" | "not-read";
+  repositoryUnknownReason?: "no-repo-ref" | "not-read" | "multiple-repos";
+  /**
+   * How many repositories the session's project has, when
+   * `repositoryUnknownReason` is `"multiple-repos"`.
+   */
+  projectRepoCount?: number;
+  /**
+   * Whether the repository the native rule ran against was inferred from the
+   * session's project (its only repository) rather than named by the
+   * session's own `repoRef` — LANE-L20 item 2.
+   */
+  repositoryInferred?: boolean;
 }): CodingSessionMissionLandModel {
   const { result } = input;
+  const repositorySourceNote = input.repositoryInferred
+    ? "This repository was inferred from the project's only repository."
+    : null;
   const base = {
     buttonLabel: null,
     headSha: null,
@@ -322,6 +360,7 @@ export function codingSessionMissionLandModel(input: {
     sentence: null,
     foundersSentence: foundersSentence(result, input.resolveWho),
     viewerIsFounder: result.viewerIsFounder,
+    repositorySourceNote,
   } as const;
 
   if (!result.repositoryKnown) {
@@ -331,7 +370,9 @@ export function codingSessionMissionLandModel(input: {
       sentence:
         input.repositoryUnknownReason === "no-repo-ref"
           ? "This session's creates name no repository, so nothing here can say what gates a push."
-          : "The repository this session names was not read here, so nothing can say what gates a push.",
+          : input.repositoryUnknownReason === "multiple-repos"
+            ? `This session's creates name no repository, and its project has ${input.projectRepoCount ?? 0} repositories, so nothing here can say which one gates a push.`
+            : "The repository this session names was not read here, so nothing can say what gates a push.",
     };
   }
 
@@ -352,6 +393,7 @@ export function codingSessionMissionLandModel(input: {
     return {
       foundersSentence: base.foundersSentence,
       viewerIsFounder: base.viewerIsFounder,
+      repositorySourceNote: base.repositorySourceNote,
       state: "ready",
       buttonLabel: `Land ${evidence.headSha.slice(0, 7)} on main`,
       headSha: evidence.headSha,

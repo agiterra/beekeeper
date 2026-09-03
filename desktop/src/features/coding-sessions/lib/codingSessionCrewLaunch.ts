@@ -169,6 +169,12 @@ export type CodingSessionCrewLaunchDeps = {
      */
     projectRef: string | null;
     /**
+     * The repository coordinate signed into this seat's create, or null.
+     * Same rule as `projectRef` — a real answer, disclosed rather than
+     * guessed (LANE-L20, finding 38).
+     */
+    repoRef: string | null;
+    /**
      * Where the lead runs on this computer: the worktree this launch created,
      * else the checkout it was given, else null. Never published.
      */
@@ -257,6 +263,17 @@ export type CodingSessionCrewLaunchInput = {
    * instead of in a channel nobody was looking at (item 87).
    */
   projectRef?: string | null;
+  /**
+   * The repository coordinate (`30617:<owner>:<d>`) this session's creates
+   * should name, or null when none is known.
+   *
+   * LANE-L20 (finding 38): signed into the lead's create exactly as
+   * `projectRef` is — every seat this launch creates carried `repoRef: null`
+   * unconditionally before this, so the push path's own rule
+   * (`useCodingSessionMissionLand.ts`) could never resolve a repository for a
+   * team-launched session no matter how clearly the checkout named one.
+   */
+  repoRef?: string | null;
   /**
    * The checkout the lead is launched against on this computer, or null when
    * the person named none. Host-local; never on the wire.
@@ -776,6 +793,7 @@ export async function launchCodingSessionCrew(
         sessionRef,
         genesisRef,
         projectRef: input.projectRef ?? null,
+        repoRef: input.repoRef ?? null,
         workdir: leadWorkdir,
       });
       if (packStaged === false) seatsWithoutRolePack.push(seat.actorLabel);

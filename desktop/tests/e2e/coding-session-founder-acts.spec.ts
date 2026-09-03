@@ -6,12 +6,14 @@ import {
   CO_FOUNDER,
   HEAD_SHA,
   LAND_REFUSAL_NO_VERDICT,
+  REPO_REF,
   founderActMission,
   landFounders,
   landReadyResponse,
   landRefusedResponse,
   openFounderActApp,
   openMissionLens,
+  repoAnnouncementEvent,
 } from "./helpers/codingSessionFounderActAssertions";
 
 /**
@@ -310,6 +312,47 @@ test("L18: a viewer who founds nothing is told so on the refused control", async
   await control.scrollIntoViewIfNeeded();
   await waitForAnimations(page);
   await control.screenshot({ path: `${SHOTS}/09-land-not-a-founder.png` });
+});
+
+test("L20: a create that names a repository resolves it, and the founders line names the resolved owner", async ({
+  page,
+}) => {
+  // Finding 38: every app-created session used to sign `repoRef: null`
+  // unconditionally, so Land could never resolve a repository no matter how
+  // clearly the checkout named one. This mission's creates name REPO_REF —
+  // exercising the real write path (`buildCodingSessionCreateEvent`'s own
+  // `repoRef` field) and the real read path
+  // (`useCodingSessionMissionLand`'s `readCodingSessionRepository`, which
+  // fetches the announcement below through the mock relay, not a stub).
+  const mission = founderActMission({ repoRef: REPO_REF });
+  await page.addInitScript((event) => {
+    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [event];
+  }, repoAnnouncementEvent());
+  // No `landResponse` override: the mock's own default derives its answer
+  // from the request's `repoOwnerPubkey`, which is only set when the relay
+  // read above actually resolved — proving the whole chain, not just the
+  // rendering.
+  await openFounderActApp(page, { foldResponse: mission.foldResponse });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  await expect(control).toHaveAttribute("data-land-state", "ungoverned");
+  await expect(control.getByTestId("mission-land-sentence")).toContainText(
+    "This repository has no require-verdict rule",
+  );
+
+  const founders = control.getByTestId("mission-land-founders");
+  await expect(founders).toHaveAttribute("data-founder", "viewer");
+  // `FOUNDER` is both this announcement's signer and the umbrella's founder,
+  // so this surface's own resolver renders it as "the founder" — the same
+  // shorthand the L18 tests above assert, and proof the owner pubkey the
+  // relay read resolved is the one actually reaching the screen.
+  await expect(founders).toContainText("Founders: the founder.");
+  await expect(founders).toContainText("You are one of them.");
+
+  await control.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await control.screenshot({ path: `${SHOTS}/10-land-repo-resolved.png` });
 });
 
 test("L8.3: an unverified completion and an unread policy each say so in the state panel", async ({

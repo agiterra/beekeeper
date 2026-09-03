@@ -14,7 +14,10 @@ import {
   deriveFiles,
 } from "./codingSessionMissionInspectorBounds";
 import type { CodingSessionGoalDisagreement } from "./codingSessionMissionGoal";
-import type { CodingSessionMissionLandModel } from "./codingSessionMissionLand";
+import type {
+  CodingSessionMissionLandModel,
+  CodingSessionMissionLandUnavailableReason,
+} from "./codingSessionMissionLand";
 import type { ImmutableCodingSessionTeamWireEvent } from "./invokeCodingSessionTeamFold";
 import {
   deriveDecisions,
@@ -257,6 +260,13 @@ export type CodingSessionMissionInspectorInput = {
    */
   land?: CodingSessionMissionLandModel | null;
   /**
+   * Why `land` is null, when it is — finding 37. Undefined only for a caller
+   * that never asked `useCodingSessionMissionLand` at all (a test double, or
+   * a surface with no Mission open); once the hook ran, it is always one of
+   * the two named reasons.
+   */
+  landUnavailableReason?: CodingSessionMissionLandUnavailableReason | null;
+  /**
    * Whether a kind:44245 record reached this view at all.
    *
    * Absent or false is disclosed rather than folded into "no requirement":
@@ -387,6 +397,8 @@ export type CodingSessionMissionInspectorModel = {
   waiting: CodingSessionMissionWaitingModel | null;
   /** What the push path's rule said about landing this mission, or null. */
   land: CodingSessionMissionLandModel | null;
+  /** Why `land` is null, when it is — finding 37. */
+  landUnavailableReason: CodingSessionMissionLandUnavailableReason | null;
   /**
    * Whether the Rust fold excluded a `mission.completed` with L7's
    * `completion_not_verified`.
@@ -517,6 +529,7 @@ export function deriveCodingSessionMissionInspectorModel(
     missionState: deriveMissionState(input.missionState, truncations),
     ...deriveDecisions(input),
     land: input.land ?? null,
+    landUnavailableReason: input.landUnavailableReason ?? null,
     // L8.3: the fold's own exclusion code, read verbatim. This layer never
     // decides whether a completion was verified — L7's rule does, in Rust (I6).
     completionNotVerified: input.rejectedReasons.some(

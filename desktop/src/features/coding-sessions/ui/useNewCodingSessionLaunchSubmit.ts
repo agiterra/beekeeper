@@ -158,6 +158,9 @@ export function useNewCodingSessionLaunchSubmit(input: {
           workdir: effectiveWorkdir.length > 0 ? effectiveWorkdir : null,
           rememberWorkdir: checkout.length > 0 ? checkout : null,
           projectRef: projectContext?.projectRef ?? null,
+          // LANE-L20 (finding 38): named whenever the launch resolved one —
+          // the checkout's own repo, or the project's only repository.
+          repoRef: projectContext?.repoRef ?? null,
           seat: null,
           seatLabel: null,
         });
@@ -198,6 +201,8 @@ export function useNewCodingSessionLaunchSubmit(input: {
             ],
             primaryPersonaId: lead.actor,
             projectRef: projectContext?.projectRef ?? null,
+            // LANE-L20 (finding 38): named whenever the launch resolved one.
+            repoRef: projectContext?.repoRef ?? null,
             provider: {
               allowedModels: fresh.provider.allowedModels,
               instanceRef: fresh.provider.providerInstanceRef,

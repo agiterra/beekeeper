@@ -7,7 +7,10 @@ import {
   type CodingSessionMissionWaitingModel,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { CODING_SESSION_COMPLETION_REFUSED_STATE_LINE } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
-import type { CodingSessionMissionLandModel } from "@/features/coding-sessions/lib/codingSessionMissionLand";
+import type {
+  CodingSessionMissionLandModel,
+  CodingSessionMissionLandUnavailableReason,
+} from "@/features/coding-sessions/lib/codingSessionMissionLand";
 import {
   missionRowBodyClass,
   missionRowClass,
@@ -90,9 +93,21 @@ export const CODING_SESSION_COMPLETION_NOT_VERIFIED_SENTENCE =
 export const CODING_SESSION_NO_POLICY_RECORD_SENTENCE =
   "No policy record reached this view, so the fold read no verifier requirement.";
 
+/**
+ * Finding 37: the Land control was absent, with no sentence, whenever the
+ * fold carried no land evidence or the identity resolving it was incomplete.
+ * A founder could not tell that apart from a boundary that had thrown. These
+ * two are the whole answer — `useCodingSessionMissionLand`'s
+ * `unavailableReason` says which, and this panel prints exactly that word.
+ */
+export const CODING_SESSION_LAND_NOTHING_YET_SENTENCE = "Nothing to land yet.";
+export const CODING_SESSION_LAND_COULD_NOT_BE_READ_SENTENCE =
+  "Land could not be read.";
+
 export function CodingSessionMissionStatePanel({
   completionNotVerified = false,
   land = null,
+  landUnavailableReason = null,
   nowMs = Date.now(),
   policyRecordKnown = true,
   state,
@@ -110,6 +125,13 @@ export function CodingSessionMissionStatePanel({
    * null when this surface did not ask.
    */
   land?: CodingSessionMissionLandModel | null;
+  /**
+   * Why `land` is null, when it is — finding 37. An absent control used to
+   * say nothing; the hook now says which of "nothing to land yet" (no
+   * identity resolved) and "the read failed" (the native boundary threw) is
+   * true, and this panel prints exactly that word rather than guessing.
+   */
+  landUnavailableReason?: CodingSessionMissionLandUnavailableReason | null;
   /**
    * Whether a kind:44245 record reached this view at all.
    *
@@ -276,7 +298,19 @@ export function CodingSessionMissionStatePanel({
           {CODING_SESSION_NO_POLICY_RECORD_SENTENCE}
         </p>
       )}
-      {land === null ? null : <CodingSessionMissionLandControl land={land} />}
+      {land !== null ? (
+        <CodingSessionMissionLandControl land={land} />
+      ) : landUnavailableReason !== null ? (
+        <p
+          className={cn(missionRowMetaClass(), "mt-1")}
+          data-land-unavailable-reason={landUnavailableReason}
+          data-testid="mission-land-unavailable"
+        >
+          {landUnavailableReason === "boundary-failed"
+            ? CODING_SESSION_LAND_COULD_NOT_BE_READ_SENTENCE
+            : CODING_SESSION_LAND_NOTHING_YET_SENTENCE}
+        </p>
+      ) : null}
     </div>
   );
 }

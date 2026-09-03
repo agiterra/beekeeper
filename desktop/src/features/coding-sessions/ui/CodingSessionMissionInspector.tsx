@@ -207,6 +207,7 @@ export function CodingSessionMissionInspector({
             )}
             completionNotVerified={model.completionNotVerified}
             land={model.land}
+            landUnavailableReason={model.landUnavailableReason}
             policyRecordKnown={model.policyRecordKnown}
             state={model.missionState}
             waiting={model.waiting}

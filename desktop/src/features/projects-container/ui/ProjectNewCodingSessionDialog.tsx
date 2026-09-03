@@ -10,7 +10,9 @@ import {
   NewCodingSessionDialog,
   type NewCodingSessionProjectContext,
 } from "@/features/coding-sessions/ui/NewCodingSessionDialog";
-import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
+import { matchProjectCwdRepo } from "@/features/builtin-shell/lib/projectShellCwd";
+import { selectLaunchRepoRef } from "@/features/coding-sessions/lib/codingSessionLaunchRepoRef";
+import { listProjectLocalRepositories } from "@/shared/api/projectGit";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import {
@@ -98,13 +100,30 @@ export function ProjectNewCodingSessionDialog({
     [project, reposByProject, unclaimedRepos],
   );
   const [repoCheckout, setRepoCheckout] = React.useState<string | null>(null);
+  // LANE-L20 (finding 38): the repository this launch's create should name —
+  // the checkout's own repo when one matched, else the project's only
+  // repository. `selectLaunchRepoRef` is the one place that decision is
+  // made; this effect only supplies it the same local-checkout read the
+  // workdir prefill already needed.
+  const [repoRef, setRepoRef] = React.useState<string | null>(null);
   React.useEffect(() => {
     let cancelled = false;
     setRepoCheckout(null);
+    setRepoRef(projectRepos.length === 1 ? projectRepos[0].repoAddress : null);
     if (projectRepos.length === 0) return;
-    void projectDefaultCwd(projectRepos).then((path) => {
-      if (!cancelled && path) setRepoCheckout(path);
-    });
+    void listProjectLocalRepositories({})
+      .then((localRepos) => {
+        if (cancelled) return;
+        const matched = matchProjectCwdRepo(projectRepos, localRepos);
+        if (matched) setRepoCheckout(matched.path);
+        setRepoRef(selectLaunchRepoRef({ repos: projectRepos, localRepos }));
+      })
+      .catch(() => {
+        // Non-Tauri preview or command unavailable — same best-effort
+        // fallback `projectDefaultCwd` used for the workdir: the checkout
+        // stays unresolved, and the repoRef guess falls back to the
+        // synchronous single-repo case set above.
+      });
     return () => {
       cancelled = true;
     };
@@ -210,11 +229,19 @@ export function ProjectNewCodingSessionDialog({
               project.id === LOCAL_GENERAL_ID ? null : project.address,
             channelId: resolvedChannel?.channelId ?? null,
             defaultWorkdir: repoCheckout,
+            repoRef,
             defaultSeat,
             ensureChannelId,
           }
         : null,
-    [defaultSeat, ensureChannelId, project, repoCheckout, resolvedChannel],
+    [
+      defaultSeat,
+      ensureChannelId,
+      project,
+      repoCheckout,
+      repoRef,
+      resolvedChannel,
+    ],
   );
 
   if (!projectContext) {

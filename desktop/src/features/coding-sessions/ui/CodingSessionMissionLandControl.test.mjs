@@ -201,3 +201,109 @@ test("L18: a viewer who founds nothing is marked as such, not merely refused", (
   assert.match(html, /data-founder="other"/);
   assert.match(html, /You are not one of them/);
 });
+
+test("L20.2: a repository inferred from the project's only repository discloses it, even ready", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionLandControl, {
+      land: codingSessionMissionLandModel({
+        result: decodeCodingSessionLandResult(FIXTURE.admitted),
+        repositoryInferred: true,
+        resolveWho: () => "the founder",
+      }),
+    }),
+  );
+  assert.match(html, /data-land-state="ready"/);
+  assert.match(
+    html,
+    /data-testid="mission-land-repository-source"/,
+    "the inferred disclosure renders even in the ready state",
+  );
+  assert.match(
+    html,
+    /inferred from the project.{1,6}s only repository/,
+    "L20 spec's own words",
+  );
+});
+
+test("L20.2: no repoRef and no inference discloses nothing extra", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionLandControl, {
+      land: codingSessionMissionLandModel({
+        result: decodeCodingSessionLandResult(FIXTURE.unknown),
+        repositoryUnknownReason: "no-repo-ref",
+        resolveWho: () => "the founder",
+      }),
+    }),
+  );
+  assert.ok(
+    !/data-testid="mission-land-repository-source"/.test(html),
+    "an explicit no-repository state carries no inference disclosure",
+  );
+});
+
+test("L20.2: a project with two or more repositories names none, and says how many", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionLandControl, {
+      land: codingSessionMissionLandModel({
+        result: decodeCodingSessionLandResult(FIXTURE.unknown),
+        repositoryUnknownReason: "multiple-repos",
+        projectRepoCount: 3,
+        resolveWho: () => "the founder",
+      }),
+    }),
+  );
+  assert.match(html, /data-land-state="unknown"/);
+  assert.match(
+    html,
+    /its project has 3 repositories, so nothing here can say which one gates a push/,
+  );
+});
+
+// ── finding 37: an absent Land control says why ───────────────────────────
+
+test("L20.3: no identity resolved yet says nothing to land yet, not silence", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionStatePanel, {
+      nowMs: 1_788_400_000_000,
+      land: null,
+      landUnavailableReason: "no-identity",
+      state: {
+        kind: "running",
+        sourceEventId: "aa".repeat(32),
+        phase: "assigned",
+        detail: "Assigned.",
+        canonicalChain: [],
+      },
+    }),
+  );
+  assert.match(html, /data-testid="mission-land-unavailable"/);
+  assert.match(html, /data-land-unavailable-reason="no-identity"/);
+  assert.match(html, /Nothing to land yet\./);
+  assert.ok(!/Land could not be read/.test(html));
+});
+
+test("L20.3: a boundary that threw says the read failed, not silence", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionStatePanel, {
+      nowMs: 1_788_400_000_000,
+      land: null,
+      landUnavailableReason: "boundary-failed",
+      state: {
+        kind: "running",
+        sourceEventId: "aa".repeat(32),
+        phase: "assigned",
+        detail: "Assigned.",
+        canonicalChain: [],
+      },
+    }),
+  );
+  assert.match(html, /data-testid="mission-land-unavailable"/);
+  assert.match(html, /data-land-unavailable-reason="boundary-failed"/);
+  assert.match(html, /Land could not be read\./);
+  assert.ok(!/Nothing to land yet/.test(html));
+});
+
+test("L20.3: land present renders the control, never the unavailable line — even with a stale reason", () => {
+  const html = render("admitted");
+  assert.ok(!/mission-land-unavailable/.test(html));
+});

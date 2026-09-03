@@ -11,7 +11,9 @@ import {
   codingSessionMissionLandModel,
   invokeCodingSessionLand,
   type CodingSessionMissionLandModel,
+  type CodingSessionMissionLandUnavailableReason,
 } from "@/features/coding-sessions/lib/codingSessionMissionLand";
+import { inferCodingSessionMissionLandRepo } from "@/features/coding-sessions/lib/codingSessionMissionLandRepoInference";
 
 /** The repository a mission would land on, once its announcement is read. */
 export type CodingSessionMissionLandRepository = {
@@ -137,6 +139,41 @@ export async function readCodingSessionRepository(
 }
 
 /**
+ * The repository addresses (`30617:<owner>:<d>`, deduplicated) a project's
+ * own repo announcements name — the read half of LANE-L20 item 2.
+ *
+ * Every repository that back-references the project through its own
+ * `project` tag, the same tag `readCodingSessionRepository` reads to find a
+ * repository's project. Newest-per-address only: kind:30617 is addressable,
+ * so a stale copy alongside the live one must not double-count.
+ */
+export async function readProjectRepositoryAddresses(
+  projectRef: string,
+  fetchEvents: typeof relayClient.fetchEvents = (filter) =>
+    relayClient.fetchEvents(filter),
+): Promise<readonly string[]> {
+  const events = await fetchEvents({
+    kinds: [KIND_REPO_ANNOUNCEMENT],
+    "#project": [projectRef],
+    // A generous cap, not a real pagination boundary: the inference only
+    // needs to tell "exactly one" from "more than one", and no project this
+    // surface reads is expected to announce anywhere near this many repos.
+    limit: 200,
+  });
+  const newestByAddress = new Map<string, number>();
+  for (const event of events) {
+    const dtag = event.tags.find((tag) => tag[0] === "d")?.[1];
+    if (!dtag) continue;
+    const address = `${KIND_REPO_ANNOUNCEMENT}:${event.pubkey.toLowerCase()}:${dtag}`;
+    const seenAt = newestByAddress.get(address);
+    if (seenAt === undefined || event.created_at > seenAt) {
+      newestByAddress.set(address, event.created_at);
+    }
+  }
+  return [...newestByAddress.keys()];
+}
+
+/**
  * Ask the push path's own rule whether this mission's commit may land.
  *
  * Two one-shot reads keyed on identity, never a poll and never a timer (I1):
@@ -159,25 +196,50 @@ export function useCodingSessionMissionLand(input: {
   landEvidence: CodingSessionMissionLandEvidenceInput | undefined;
   /** The `repoRef` this session's creates named, or null when none did. */
   repoRef: string | null;
+  /**
+   * The `projectRef` this session's creates named, or null when none did.
+   *
+   * LANE-L20 item 2: read only when `repoRef` is null, to infer a repository
+   * from the project's own repositories rather than leave every session a
+   * pre-finding-38 create ever signed permanently unable to land.
+   */
+  projectRef: string | null;
   resolveWho: (pubkey: string) => string;
   /** Injected so a test drives the real model without the Tauri boundary. */
   invoke?: typeof invokeCodingSessionLand;
   /** Injected so a test drives the real read without a relay. */
   readRepository?: typeof readCodingSessionRepository;
-}): CodingSessionMissionLandModel | null {
+  /** Injected so a test drives the real read without a relay. */
+  readProjectRepos?: typeof readProjectRepositoryAddresses;
+}): {
+  land: CodingSessionMissionLandModel | null;
+  /**
+   * Why `land` is null, when it is — finding 37. An absent control used to
+   * say nothing, leaving a founder unable to tell "nothing to land yet" from
+   * "the read failed"; this is the fact the panel needs to say which.
+   */
+  unavailableReason: CodingSessionMissionLandUnavailableReason | null;
+} {
   const {
     founderPubkey,
     genesisRef,
     landEvidence,
+    projectRef,
     repoRef,
     sessionRef,
     viewerPubkey,
   } = input;
   const invoke = input.invoke ?? invokeCodingSessionLand;
   const readRepository = input.readRepository ?? readCodingSessionRepository;
+  const readProjectRepos =
+    input.readProjectRepos ?? readProjectRepositoryAddresses;
   const [land, setLand] = React.useState<CodingSessionMissionLandModel | null>(
     null,
   );
+  const [unavailableReason, setUnavailableReason] =
+    React.useState<CodingSessionMissionLandUnavailableReason | null>(
+      "no-identity",
+    );
   // The identity of the *question*, not of the objects: the fold hands fresh
   // arrays on every projection, and an effect keyed on those would re-ask the
   // rule on every render.
@@ -194,6 +256,7 @@ export function useCodingSessionMissionLand(input: {
           founderPubkey,
           viewerPubkey,
           repoRef ?? "no-repo-ref",
+          projectRef ?? "no-project-ref",
           landEvidence.includedEventIds.join(","),
         ].join(" ");
   const resolveRef = React.useRef(input.resolveWho);
@@ -202,6 +265,7 @@ export function useCodingSessionMissionLand(input: {
     founderPubkey,
     genesisRef,
     landEvidence,
+    projectRef,
     repoRef,
     sessionRef,
     viewerPubkey,
@@ -210,6 +274,7 @@ export function useCodingSessionMissionLand(input: {
     founderPubkey,
     genesisRef,
     landEvidence,
+    projectRef,
     repoRef,
     sessionRef,
     viewerPubkey,
@@ -218,6 +283,7 @@ export function useCodingSessionMissionLand(input: {
   React.useEffect(() => {
     if (identity === null) {
       setLand(null);
+      setUnavailableReason("no-identity");
       return;
     }
     let cancelled = false;
@@ -227,11 +293,39 @@ export function useCodingSessionMissionLand(input: {
       // with no repository and the sentence says the announcement did not
       // reach this view.
       let repository: CodingSessionMissionLandRepository | null = null;
+      let unknownReason: "no-repo-ref" | "not-read" | "multiple-repos" =
+        current.repoRef === null ? "no-repo-ref" : "not-read";
+      let projectRepoCount: number | undefined;
+      let repositoryInferred = false;
       if (current.repoRef !== null) {
         try {
           repository = await readRepository(current.repoRef);
         } catch {
           repository = null;
+        }
+      } else if (current.projectRef !== null) {
+        // Item 2's read fallback: the session's own creates named nothing,
+        // but its project might name exactly one repository.
+        try {
+          const addresses = await readProjectRepos(current.projectRef);
+          const inference = inferCodingSessionMissionLandRepo(addresses);
+          if (inference.kind === "inferred") {
+            repositoryInferred = true;
+            try {
+              repository = await readRepository(inference.repoRef);
+              if (repository === null) unknownReason = "not-read";
+            } catch {
+              repository = null;
+              unknownReason = "not-read";
+            }
+          } else if (inference.kind === "multiple") {
+            unknownReason = "multiple-repos";
+            projectRepoCount = inference.count;
+          }
+        } catch {
+          // Unread project repositories reads the same as naming none: there
+          // was nothing here to infer from, so the plain "no repository"
+          // sentence stands rather than a second, different "not read".
         }
       }
       if (cancelled) return;
@@ -251,21 +345,27 @@ export function useCodingSessionMissionLand(input: {
         setLand(
           codingSessionMissionLandModel({
             result,
-            repositoryUnknownReason:
-              current.repoRef === null ? "no-repo-ref" : "not-read",
+            repositoryUnknownReason: unknownReason,
+            projectRepoCount,
+            repositoryInferred: repositoryInferred && repository !== null,
             resolveWho: (pubkey) => resolveRef.current(pubkey),
           }),
         );
+        setUnavailableReason(null);
       } catch {
         // A boundary that failed answers nothing rather than guessing: the
-        // control is absent, not "refused" and not "ready".
-        if (!cancelled) setLand(null);
+        // control is absent, not "refused" and not "ready" — and finding 37's
+        // reason says so rather than leaving the panel to guess.
+        if (!cancelled) {
+          setLand(null);
+          setUnavailableReason("boundary-failed");
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [identity, invoke, readRepository]);
+  }, [identity, invoke, readRepository, readProjectRepos]);
 
-  return land;
+  return { land, unavailableReason };
 }

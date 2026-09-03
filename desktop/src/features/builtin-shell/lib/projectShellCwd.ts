@@ -16,16 +16,31 @@ export type ShellCwdRepo = Pick<
   "dtag" | "name"
 >;
 
+/**
+ * The project repo (not just its path) whose registered/scanned checkout
+ * matches, in the project's own repo order — first hit wins.
+ *
+ * Split out of `matchProjectCwd` so a caller that needs to know *which*
+ * repository a checkout belongs to (LANE-L20: the launch path naming a
+ * `repoRef`) is not left re-deriving the same match from the path alone.
+ */
+export function matchProjectCwdRepo<T extends ShellCwdRepo>(
+  repos: readonly T[],
+  localRepos: readonly { name: string; path: string }[],
+): { repo: T; path: string } | undefined {
+  const byName = new Map(localRepos.map((repo) => [repo.name, repo.path]));
+  for (const repo of repos) {
+    const path = byName.get(repo.dtag) ?? byName.get(repo.name);
+    if (path) return { repo, path };
+  }
+  return undefined;
+}
+
 export function matchProjectCwd(
   repos: readonly ShellCwdRepo[],
   localRepos: readonly { name: string; path: string }[],
 ): string | undefined {
-  const byName = new Map(localRepos.map((repo) => [repo.name, repo.path]));
-  for (const repo of repos) {
-    const path = byName.get(repo.dtag) ?? byName.get(repo.name);
-    if (path) return path;
-  }
-  return undefined;
+  return matchProjectCwdRepo(repos, localRepos)?.path;
 }
 
 /** Best-effort local-checkout lookup; `undefined` means "use the default". */

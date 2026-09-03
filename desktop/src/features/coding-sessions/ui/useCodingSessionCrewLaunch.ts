@@ -326,6 +326,7 @@ export function useCodingSessionCrewLaunch(input: {
             sessionRef,
             genesisRef,
             projectRef,
+            repoRef,
             workdir,
           }) => {
             const commandId = deps.newSeatCommandId();
@@ -374,7 +375,11 @@ export function useCodingSessionCrewLaunch(input: {
                     // life. A team launched from inside a project used to sign
                     // null here and land where nobody was looking (item 87a).
                     projectRef,
-                    repoRef: null,
+                    // LANE-L20 (finding 38): every seat this launch created
+                    // used to sign `repoRef: null` unconditionally, so Land
+                    // could never resolve a repository for a team-launched
+                    // session. Named whenever the launch resolved one.
+                    repoRef,
                     sessionRef,
                     genesisRef,
                     actor: seat.actor,
