@@ -204,16 +204,26 @@ fn build_updated_repo_announcement(
         ))
     })?;
 
-    // Advance only the observed head. Using wall-clock time here would let a
-    // delayed writer leapfrog an intervening update and silently erase metadata.
-    let next_created_at = existing
-        .created_at
-        .as_secs()
-        .checked_add(1)
-        .ok_or_else(|| CliError::Other("repository timestamp cannot be advanced".into()))?;
+    let next_created_at =
+        next_replaceable_created_at(existing.created_at.as_secs(), Timestamp::now().as_secs())
+            .ok_or_else(|| CliError::Other("repository timestamp cannot be advanced".into()))?;
     buzz_sdk::build_repo_announcement_with_tags(repo_id, &existing.content, tags)
         .map_err(|error| CliError::Other(format!("failed to build repository update: {error}")))
         .map(|builder| builder.custom_created_at(Timestamp::from(next_created_at)))
+}
+
+/// The `created_at` for a rewrite of an addressable event whose observed head
+/// was stamped `head_secs`.
+///
+/// The rewrite must sort after the head, or NIP-33 last-write-wins keeps the
+/// old copy, so it is never below `head_secs + 1`. It must also sit inside the
+/// relay's ±15-minute ingest window, or the relay refuses it as "event
+/// timestamp too far from server time" — which a bare `head + 1` fails for
+/// every head older than fifteen minutes. So the answer is the later of the
+/// two. A head stamped in the future (a delayed writer racing an intervening
+/// update) is still advanced past, never leapfrogged.
+pub(crate) fn next_replaceable_created_at(head_secs: u64, now_secs: u64) -> Option<u64> {
+    head_secs.checked_add(1).map(|bumped| bumped.max(now_secs))
 }
 
 fn protection_rules_json(event: &Event) -> Result<serde_json::Value, CliError> {
@@ -831,9 +841,9 @@ mod tests {
 
     use super::{
         build_create_announcement, build_delete_addressable, build_protection_tag,
-        build_updated_repo_announcement, protection_rules_json, validate_write_response, CliError,
-        ProtectionFlags, RepoChange, RepositoryFounders, KIND_GIT_REPO_ANNOUNCEMENT,
-        MAINTAINERS_TAG,
+        build_updated_repo_announcement, next_replaceable_created_at, protection_rules_json,
+        validate_write_response, CliError, ProtectionFlags, RepoChange, RepositoryFounders,
+        KIND_GIT_REPO_ANNOUNCEMENT, MAINTAINERS_TAG,
     };
 
     const OWNER_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -886,6 +896,27 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_timestamp_is_the_later_of_head_plus_one_and_now() {
+        // A stale head (the common case: the announcement is days old) is
+        // stamped now, inside the relay's ingest window.
+        assert_eq!(
+            next_replaceable_created_at(100, 1_700_000_000),
+            Some(1_700_000_000)
+        );
+        // A head at or ahead of the clock is still advanced past, never
+        // leapfrogged, so last-write-wins keeps this rewrite.
+        assert_eq!(
+            next_replaceable_created_at(1_700_000_000, 1_700_000_000),
+            Some(1_700_000_001)
+        );
+        assert_eq!(
+            next_replaceable_created_at(1_700_000_500, 1_700_000_000),
+            Some(1_700_000_501)
+        );
+        assert_eq!(next_replaceable_created_at(u64::MAX, 1_700_000_000), None);
+    }
+
+    #[test]
     fn protection_update_preserves_metadata_and_replaces_only_matching_pattern() {
         let existing = signed_repo(
             vec![
@@ -911,6 +942,7 @@ mod tests {
         )
         .expect("valid replacement");
 
+        let before = Timestamp::now().as_secs();
         let updated = build_updated_repo_announcement(
             &existing,
             RepoChange::SetProtection(Box::new(replacement)),
@@ -920,7 +952,10 @@ mod tests {
         .expect("sign update");
 
         assert_eq!(updated.content, "repository content");
-        assert_eq!(updated.created_at.as_secs(), 101);
+        assert!(
+            updated.created_at.as_secs() >= before,
+            "rewrite must be stamped now"
+        );
         assert!(!updated
             .tags
             .iter()
@@ -1110,6 +1145,7 @@ mod tests {
             100,
         );
 
+        let before = Timestamp::now().as_secs();
         let updated =
             build_updated_repo_announcement(&existing, RepoChange::BindChannel(channel.clone()))
                 .expect("build bind update")
@@ -1117,7 +1153,10 @@ mod tests {
                 .expect("sign bind update");
 
         assert_eq!(updated.content, "repository content");
-        assert_eq!(updated.created_at.as_secs(), 101);
+        assert!(
+            updated.created_at.as_secs() >= before,
+            "rewrite must be stamped now"
+        );
         // Exactly one binding remains, and it is the requested one.
         let bindings: Vec<_> = updated
             .tags

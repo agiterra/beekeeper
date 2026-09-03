@@ -22,6 +22,7 @@ use crate::client::BuzzClient;
 use buzz_sdk::build_delete_addressable;
 
 use crate::commands::parse_write_response;
+use crate::commands::repos::next_replaceable_created_at;
 use crate::error::CliError;
 use crate::validate::validate_lower_hex64;
 
@@ -207,12 +208,10 @@ fn rebuild_announce(head: &Event, tags: Vec<Tag>) -> Result<EventBuilder, CliErr
         .into_iter()
         .filter(|t| tag_name(t) != Some("auth"))
         .collect();
-    let next_ts = head
-        .created_at
-        .as_secs()
-        .checked_add(1)
-        .map(Timestamp::from)
-        .ok_or_else(|| CliError::Other("announce timestamp cannot be advanced".into()))?;
+    let next_ts =
+        next_replaceable_created_at(head.created_at.as_secs(), Timestamp::now().as_secs())
+            .map(Timestamp::from)
+            .ok_or_else(|| CliError::Other("announce timestamp cannot be advanced".into()))?;
     Ok(
         EventBuilder::new(Kind::Custom(KIND_SHELL_SESSION as u16), &head.content)
             .tags(clean_tags)
@@ -638,11 +637,15 @@ mod tests {
         tags.push(Tag::parse(["auth", &"a".repeat(64), "kind=30623", &"b".repeat(128)]).unwrap());
         let head = signed_announce(&keys, tags.clone(), 1_700_000_000);
 
+        let before = Timestamp::now().as_secs();
         let rebuilt = rebuild_announce(&head, tags)
             .unwrap()
             .sign_with_keys(&keys)
             .expect("sign");
-        assert_eq!(rebuilt.created_at.as_secs(), 1_700_000_001);
+        // Stamped now, not head + 1: a head older than the relay's ±15-minute
+        // ingest window would otherwise be refused, and it always is.
+        assert!(rebuilt.created_at.as_secs() >= before);
+        assert!(rebuilt.created_at.as_secs() > head.created_at.as_secs());
         assert!(!rebuilt.tags.iter().any(|t| tag_name(t) == Some("auth")));
         // Non-roster tags survive verbatim.
         assert!(rebuilt.tags.iter().any(|t| tag_name(t) == Some("status")));
