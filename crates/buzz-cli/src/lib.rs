@@ -3651,6 +3651,108 @@ pub enum RegistryCmd {
         #[arg(long)]
         registry: Option<String>,
     },
+    /// Run a role's bench and leave a signed row for every task.
+    ///
+    /// Every score in `team/model-registry.yaml` today is an opinion: ten 1-5
+    /// priors under `rating: { status: operational_opinion, confidence: low }`.
+    /// Live run 3 is what that cost — the router disclosed that an incumbent
+    /// "cleared the verifier gates (reasoning>=4.5, judgment>=4.5,
+    /// verification>=4.7) ... nothing else cleared them" while a benched model
+    /// sat there uncompared, and every number in that sentence was a guess.
+    ///
+    /// This runs `team/registry-bench/<role>` through the real runtime and
+    /// publishes, per task per run: one 44246 gate row carrying the argv it
+    /// spawned, one finding per failed criterion, and one checkpoint carrying
+    /// the bench manifest. Scoring is mechanical — a closed set of checks read
+    /// off the run's artifacts, no model judging anything — which is the only
+    /// reason two runs of it agree.
+    ///
+    /// It writes NOTHING to the registry. `propose` does that, from the rows
+    /// this leaves on the relay.
+    #[command(
+        after_help = "Examples:\n  bee sessions registry measure --role verifier --runtime claude-primary --model 'opus[1m]' --channel <uuid> --session-ref <uuid> --repeat 3\n  bee sessions registry measure --role verifier --runtime claude-primary --model 'opus[1m]' --channel <uuid> --session-ref <uuid> --dry-run\n\n--dry-run resolves and prints the real spawn argv, runs the bench, scores it,\nand publishes nothing."
+    )]
+    Measure {
+        /// Registry class to measure, e.g. `verifier`
+        #[arg(long)]
+        role: String,
+        /// `providerInstanceRef` from BUZZ_CSP_RUNTIMES
+        #[arg(long)]
+        runtime: String,
+        /// Model id the runtime offers
+        #[arg(long)]
+        model: String,
+        /// Channel UUID containing the coding session
+        #[arg(long)]
+        channel: String,
+        /// Canonical umbrella session UUID the rows are published into
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Runs per task. Minimum and default 3 — fewer cannot produce a
+        /// median that means anything.
+        #[arg(long, default_value_t = 3)]
+        repeat: u32,
+        /// Path to the model registry; the bench is its sibling
+        #[arg(long)]
+        registry: Option<String>,
+        /// Wall-clock budget per task, in seconds. Past it, the task fails
+        /// every criterion.
+        #[arg(long = "task-timeout", default_value_t = 900)]
+        task_timeout: u64,
+        /// Run and score, publish nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
+    /// Turn the rows a measurement left on the relay into one registry row.
+    ///
+    /// Reads the 44246 rows BACK OFF THE RELAY — never the measuring run's own
+    /// memory — and refuses, exit 4, naming which check failed: fewer than
+    /// `--repeat` runs for any task, rows from more than one signing key, a
+    /// benchHash differing from the tree's, any trait the role's gate reads
+    /// that the bench does not evidence, or an unstable set (a spread of 1.0
+    /// or more on any trait).
+    ///
+    /// Traits the bench did not evidence stay OPINIONS, and the disclosure
+    /// says which are which per trait. A half-measured row reading as measured
+    /// is the same lie as a badge with no event behind it.
+    ///
+    /// Brian's ruling of 2026-09-01: a seat may `measure`; only the founder's
+    /// key may `propose`. One proposal, one signer.
+    ///
+    /// The founder is the author of the session's own genesis event — a fact on
+    /// the wire, not a flag — and it is checked against the key THIS command is
+    /// invoked with. The proposal is signed by that key (and published
+    /// nowhere), so `proposedBy` is provable rather than asserted.
+    #[command(
+        after_help = "Examples:\n  bee sessions registry propose --role verifier --runtime claude-primary --model 'opus[1m]' --channel <uuid> --session-ref <uuid>\n  bee sessions registry propose ... --write\n\nWithout --write it prints a YAML fragment and changes nothing. Run it with the\nfounder's key: a seat may measure, the founder proposes."
+    )]
+    Propose {
+        /// Registry class the rows measured
+        #[arg(long)]
+        role: String,
+        /// `providerInstanceRef` of the row to amend
+        #[arg(long)]
+        runtime: String,
+        /// Model id of the row to amend
+        #[arg(long)]
+        model: String,
+        /// Channel UUID holding the measuring session
+        #[arg(long)]
+        channel: String,
+        /// Umbrella session UUID the rows were published into
+        #[arg(long = "session-ref")]
+        session_ref: String,
+        /// Runs the proposal requires per task
+        #[arg(long, default_value_t = 3)]
+        repeat: u32,
+        /// Path to the model registry
+        #[arg(long)]
+        registry: Option<String>,
+        /// Apply the fragment in place, refusing if the row already carries a
+        /// measurement.
+        #[arg(long)]
+        write: bool,
+    },
 }
 
 /// Delivery class for `bee sessions send`.
@@ -3991,6 +4093,39 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             .and_then(|k| Keys::parse(k).ok())
             .map(|keys| keys.public_key().to_hex());
         return commands::session::dispatch(sub, caller).await;
+    }
+
+    // `sessions registry measure --dry-run` scores a bench and publishes
+    // nothing, so it must not demand an identity (F16). It is dispatched here,
+    // ahead of the key gate, with no client at all — which is also how the
+    // command proves it signs nothing on this path: there is nothing to sign
+    // with.
+    if let Cmd::Sessions(SessionsCmd::Registry(RegistryCmd::Measure {
+        ref role,
+        ref runtime,
+        ref model,
+        ref channel,
+        ref session_ref,
+        repeat,
+        ref registry,
+        task_timeout,
+        dry_run: true,
+    })) = cli.command
+    {
+        return commands::sessions::registry_measure::cmd_registry_measure(
+            None,
+            role,
+            runtime,
+            model,
+            channel,
+            session_ref,
+            repeat,
+            registry.as_deref(),
+            task_timeout,
+            true,
+            &cli.format,
+        )
+        .await;
     }
 
     // Auth: private key is required for all relay operations.
@@ -4929,6 +5064,42 @@ mod tests {
                 "unban",
                 "untimeout"
             ]
+        );
+    }
+
+    /// The `registry` group's own inventory.
+    ///
+    /// Deliberately its **own** test rather than another arm inside
+    /// `subcommand_names_are_stable`: item 108's trap is two lanes appending
+    /// to one exact-count assertion in `subcommand_names_are_stable` /
+    /// `subcommand_counts_are_stable` and taking main red between them. These
+    /// three names are nested one level below `sessions`, so they move neither
+    /// of those numbers, and this assertion collides with nothing.
+    #[test]
+    fn registry_subcommand_names_are_stable() {
+        let cmd = Cli::command();
+        let sessions = cmd
+            .get_subcommands()
+            .find(|group| group.get_name() == "sessions")
+            .expect("sessions group");
+        let registry = sessions
+            .get_subcommands()
+            .find(|group| group.get_name() == "registry")
+            .expect("registry group");
+        let mut names: Vec<String> = registry
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .filter(|name| name != "help")
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "check".to_owned(),
+                "measure".to_owned(),
+                "propose".to_owned()
+            ],
+            "one noun, one home: measure and propose live under `registry`, not at top level"
         );
     }
 

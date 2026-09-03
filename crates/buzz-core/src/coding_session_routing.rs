@@ -57,6 +57,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::registry_bench::{MeasuredBlock, LEGACY_ROW_GRACE_DAYS};
+
 /// The `default` alias every provider publishes for "whatever this host is set
 /// to". It is a pointer, not a model, so it is never a registry row and never
 /// a routable target.
@@ -164,6 +166,15 @@ pub struct ClassGate {
     /// Set when the class is not one Brian ruled on, naming who drafted it.
     #[serde(default)]
     pub drafted_by: Option<String>,
+    /// The day a bench first existed for this class, `YYYY-MM-DD`.
+    ///
+    /// Brian's addendum of 2026-09-01: an unmeasured row keeps routing until a
+    /// bench exists for its class; from that day it has
+    /// [`LEGACY_ROW_GRACE_DAYS`] days, disclosed in every routing record, and
+    /// then [`route`] refuses it with the word `unmeasured`. Absent means no
+    /// bench exists yet and the clock has not started.
+    #[serde(default)]
+    pub bench_available_since: Option<String>,
 }
 
 /// A class's non-scored requirements.
@@ -197,6 +208,20 @@ pub struct RegistryTarget {
     pub status: BTreeMap<String, String>,
     /// Who holds this opinion, how confident, and when.
     pub rating: Rating,
+    /// What a bench actually measured about this target, when one has.
+    ///
+    /// Absent on every row this repository has ever shipped, and a row without
+    /// it **routes exactly as it did before this key existed** — same
+    /// candidates, same order, same choice. The only thing that changes is
+    /// that the routing record now says the word `legacy` out loud instead of
+    /// letting ten priors read as numbers somebody sampled.
+    ///
+    /// Traits the bench did not evidence are absent from
+    /// [`MeasuredBlock::traits`] and stay opinions in [`Self::scores`]; the
+    /// disclosure says which are which, because a half-measured row reading as
+    /// measured is the same lie as a badge with no event behind it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measured: Option<MeasuredBlock>,
 }
 
 impl RegistryTarget {
@@ -211,6 +236,14 @@ impl RegistryTarget {
     /// and neither is ever read as zero.
     pub fn score(&self, trait_name: &str) -> Option<f64> {
         self.scores.get(trait_name).copied().flatten()
+    }
+
+    /// `true` when a bench has measured this row.
+    ///
+    /// The one word that separates a number from an opinion, and the only
+    /// thing `registry check`'s `unmeasured` list counts.
+    pub fn is_measured(&self) -> bool {
+        self.measured.is_some()
     }
 }
 
@@ -625,6 +658,14 @@ pub struct RouteRequest {
     pub challenger_sample: bool,
     /// For a cross-provider class: the provider the compared class chose.
     pub counterpart_provider: Option<String>,
+    /// Today, `YYYY-MM-DD`, for the legacy-row grace clock only.
+    ///
+    /// `None` — the default, and every call site that existed before this
+    /// field — means no clock: a legacy row routes and is disclosed as legacy,
+    /// exactly as before. A caller that passes a date opts the class's
+    /// thirty-day deadline in, and a date the router cannot parse is treated
+    /// as no date rather than as an expiry.
+    pub today: Option<String>,
 }
 
 impl RouteRequest {
@@ -650,6 +691,7 @@ impl RouteRequest {
             review_flags: request.review_flag_set()?,
             challenger_sample: request.challenger_sample,
             counterpart_provider: None,
+            today: None,
         })
     }
 }
@@ -712,6 +754,16 @@ pub enum CandidateState {
     Dormant,
     /// A gate refused it; the string names which and why.
     Rejected(String),
+    /// The catalog offers it and the registry has **no row** for it at all.
+    ///
+    /// Live run 3, finding 25: a Codex target sat on the bench while the
+    /// router disclosed that *"nothing else cleared"* the verifier gates. It
+    /// was not rejected — it was never a candidate, because
+    /// [`check_coverage`] had one word for this (`stale`) and [`route`] built
+    /// nothing at all. Three words where there was one: `dormant` is a row
+    /// nothing offers, `no row` is an offer nothing has decided about, and
+    /// `rejected` is a gate that said no. They never overlap.
+    NoRow,
 }
 
 /// The standing a target holds for the requested class and tier.
@@ -756,8 +808,12 @@ pub struct Candidate {
     pub effort_on_the_wire: bool,
     /// Standing for the requested class and tier.
     pub standing: Standing,
-    /// Eligible, dormant, or rejected with a reason.
+    /// Eligible, dormant, no row, or rejected with a reason.
     pub state: CandidateState,
+    /// `measured` or `legacy` — where this row's ten numbers came from.
+    /// `legacy` on a [`CandidateState::NoRow`] candidate too: there is nothing
+    /// there to have measured.
+    pub scores: &'static str,
     /// `6 − costEfficiency`; `None` when nobody scored cost efficiency.
     pub cost_prior: Option<f64>,
     /// `6 − velocity`; `None` when nobody scored velocity.
@@ -848,6 +904,18 @@ pub enum RouteError {
         best_available: Option<(String, f64)>,
         /// One line per rejected row, in label order.
         rejections: Vec<String>,
+        /// How many candidates were refused **only** because their legacy row's
+        /// grace is spent, and the day that grace started.
+        ///
+        /// F6: with every eligible row expired, the headline blamed a gate the
+        /// named target clears (`needs judgment>=4.5; best available … scores
+        /// 5`) because `binding_trait` compares scores to minimums and knows
+        /// nothing about this refusal class. The true reason reached a reader
+        /// only through the CLI's `rejections`; any consumer rendering
+        /// `error.to_string()` — Desktop included — saw the false sentence.
+        /// `Some` here means the expiry is the whole story and
+        /// [`std::fmt::Display`] says so instead.
+        unmeasured_expiry: Option<(usize, String)>,
     },
 }
 
@@ -869,9 +937,20 @@ impl std::fmt::Display for RouteError {
                 tier,
                 binding_trait,
                 best_available,
+                unmeasured_expiry,
                 ..
             } => {
                 write!(formatter, "no eligible model: {class}/{tier}")?;
+                // The true reason, on every path a reader can reach — not only
+                // through `rejections`.
+                if let Some((count, since)) = unmeasured_expiry {
+                    return write!(
+                        formatter,
+                        "; {count} row(s) cleared every gate and are unmeasured, and the \
+                         {LEGACY_ROW_GRACE_DAYS}-day grace that began {since} is spent — run bee \
+                         sessions registry measure --role {class}"
+                    );
+                }
                 let mut minimum_wanted = None;
                 if let Some((trait_name, minimum)) = binding_trait {
                     write!(formatter, " needs {trait_name}>={minimum}")?;
@@ -1407,6 +1486,24 @@ pub fn route(
         }
     };
 
+    // Where every row's numbers came from, computed once: the chosen row's
+    // clause is appended to the decision sentence, and every row's word rides
+    // in the candidate table.
+    let provenance: BTreeMap<String, ScoreProvenance> = registry
+        .targets
+        .iter()
+        .map(|target| {
+            (
+                target.label(),
+                score_provenance(target, class, &minimums, request.today.as_deref()),
+            )
+        })
+        .collect();
+    let provenance_words: BTreeMap<String, &'static str> = provenance
+        .iter()
+        .map(|(label, value)| (label.clone(), value.word))
+        .collect();
+
     let mut candidates: Vec<Candidate> = Vec::with_capacity(registry.targets.len());
     for target in &registry.targets {
         let mut candidate = Candidate {
@@ -1416,6 +1513,13 @@ pub fn route(
             effort_on_the_wire: false,
             standing: standing_for(target, registry, &request.class, tier_name),
             state: CandidateState::Eligible,
+            // F17 — `.get(...)` rather than an index. Safe by construction
+            // (both maps are built from this same iteration), but a panicking
+            // index is the class §0.4 bans for `unwrap`.
+            scores: provenance_words
+                .get(&target.label())
+                .copied()
+                .unwrap_or("legacy"),
             cost_prior: target.score("costEfficiency").map(|value| 6.0 - value),
             latency_prior: target.score("velocity").map(|value| 6.0 - value),
             retry_prior: DEFAULT_RETRY_PRIOR,
@@ -1463,7 +1567,50 @@ pub fn route(
             continue;
         }
 
+        // 3b — the legacy row's grace, when a bench exists for this class and
+        // the caller supplied a date. With no bench and no date this is inert,
+        // which is why a row with no `measured` block routes exactly as it did
+        // before this key existed.
+        if provenance
+            .get(&target.label())
+            .is_some_and(|value| value.expired)
+        {
+            candidate.state = CandidateState::Rejected(unmeasured_refusal(
+                &request.class,
+                class.bench_available_since.as_deref().unwrap_or("?"),
+            ));
+            candidates.push(candidate);
+            continue;
+        }
+
         candidates.push(candidate);
+    }
+
+    // 3c — finding 25's missing candidate. An offered execution target with no
+    // registry row was not rejected and was not dormant: it was never built,
+    // so a disclosure could say "nothing else cleared them" with a benched
+    // model sitting right there. It is a candidate now, and it says why it is
+    // not one.
+    for label in &check_coverage(registry, offered).stale {
+        let Some((provider, model)) = label.split_once('/') else {
+            continue;
+        };
+        candidates.push(Candidate {
+            provider: provider.to_owned(),
+            registry_model: model.to_owned(),
+            catalog_model: Some(model.to_owned()),
+            effort_on_the_wire: false,
+            standing: Standing::Unranked,
+            state: CandidateState::NoRow,
+            scores: "legacy",
+            cost_prior: None,
+            latency_prior: None,
+            retry_prior: DEFAULT_RETRY_PRIOR,
+            expected_cost: None,
+            rank_score: f64::MAX,
+            quota_class: None,
+            price: None,
+        });
     }
 
     // 4 — standing. A challenger holds no route; it is sampled by rule.
@@ -1543,6 +1690,7 @@ pub fn route(
 
     let Some(chosen) = ranked.first().copied().cloned() else {
         return Err(Box::new(no_eligible(
+            class.bench_available_since.as_deref(),
             &request.class,
             tier_name,
             &minimums,
@@ -1569,6 +1717,9 @@ pub fn route(
         cross_provider_applied,
         class.note.as_deref(),
         &uncomparable,
+        provenance
+            .get(&format!("{}/{}", chosen.provider, chosen.registry_model))
+            .map_or("", |value| value.clause.as_str()),
     );
 
     let record = RoutingRecord {
@@ -1636,6 +1787,143 @@ pub fn route(
     })
 }
 
+/// How a row's scores came to exist — the one thing a routing record says that
+/// finding 25 could not.
+///
+/// Live run 3 disclosed *"cleared the verifier gates (reasoning≥4.5,
+/// judgment≥4.5, verification≥4.7) … incumbent, nothing else cleared them"*.
+/// Every one of those numbers was an opinion, and the sentence gave a reader
+/// no way to know it. This type is the fix: exactly one clause, in exactly one
+/// place ([`RoutingRecord::reason`]), saying `measured` or `legacy` out loud.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoreProvenance {
+    /// `measured` or `legacy` — the word `route`'s candidate table prints.
+    pub word: &'static str,
+    /// The clause appended to the decision sentence, beginning with `"; "`.
+    pub clause: String,
+    /// `true` when this legacy row is past its class's thirty-day grace and
+    /// must be refused with the word `unmeasured`.
+    pub expired: bool,
+    /// Days left on the grace clock, when a bench exists for this class and a
+    /// date was supplied. `None` means no clock is running.
+    pub days_left: Option<i64>,
+}
+
+/// Days between two `YYYY-MM-DD` dates, or `None` when either will not parse.
+///
+/// A date the router cannot read is treated as no date rather than as an
+/// expiry: a typo in the registry must never silently retire a row.
+fn days_between(from: &str, to: &str) -> Option<i64> {
+    let from = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d").ok()?;
+    let to = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d").ok()?;
+    Some((to - from).num_days())
+}
+
+/// The trait with the least room above its class minimum — the one the gate
+/// actually turns on, and therefore the one whose spread a reader needs.
+fn binding_trait(
+    measured: &MeasuredBlock,
+    minimums: &BTreeMap<String, f64>,
+) -> Option<(String, crate::registry_bench::MeasuredTrait)> {
+    let mut best: Option<(String, crate::registry_bench::MeasuredTrait, f64)> = None;
+    for (name, minimum) in minimums {
+        let Some(trait_value) = measured.traits.get(name) else {
+            continue;
+        };
+        let margin = trait_value.score - minimum;
+        if best.as_ref().is_none_or(|(_, _, seen)| margin < *seen) {
+            best = Some((name.clone(), *trait_value, margin));
+        }
+    }
+    best.map(|(name, value, _)| (name, value))
+}
+
+/// Build the one clause a routing record appends about where its scores came
+/// from.
+///
+/// **Exactly two shapes**, plus the grace sentence Brian's addendum of
+/// 2026-09-01 added to the legacy one. Nothing else is ever appended, and the
+/// provenance rides here and **nowhere else**: [`RoutingRecord`] is a
+/// thirteen-key `deny_unknown_fields` shape carried on hires, and a fourteenth
+/// key is priced elsewhere.
+pub fn score_provenance(
+    target: &RegistryTarget,
+    class: &ClassGate,
+    minimums: &BTreeMap<String, f64>,
+    today: Option<&str>,
+) -> ScoreProvenance {
+    if let Some(measured) = &target.measured {
+        let binding = binding_trait(measured, minimums);
+        let detail = binding.map_or_else(
+            || format!("n={}, no gated trait was measured", measured.samples()),
+            |(name, value)| {
+                format!(
+                    "n={}, spread {}–{} on the binding trait {name}",
+                    value.n, value.min, value.max
+                )
+            },
+        );
+        return ScoreProvenance {
+            word: "measured",
+            clause: format!(
+                "; scores measured by {}/{} v{} on {} ({detail})",
+                crate::registry_bench::REGISTRY_BENCH_RELATIVE_PATH
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("registry-bench"),
+                measured.role,
+                measured.bench_version,
+                measured.measured_at
+            ),
+            expired: false,
+            days_left: None,
+        };
+    }
+
+    let mut clause = format!(
+        "; scores are operational priors, not measurements (rating: {}, confidence {}, {} {}) — this row is legacy",
+        target.rating.status, target.rating.confidence, target.rating.author, target.rating.date
+    );
+    // Brian's addendum, ruling 2: a legacy row routes until a bench exists for
+    // its class; from that day it has thirty days, disclosed on every record,
+    // and then it is refused with the word `unmeasured`.
+    let mut expired = false;
+    let mut days_left = None;
+    if let (Some(since), Some(today)) = (class.bench_available_since.as_deref(), today) {
+        if let Some(elapsed) = days_between(since, today) {
+            let left = LEGACY_ROW_GRACE_DAYS - elapsed;
+            days_left = Some(left);
+            expired = left <= 0;
+            clause = format!(
+                "; scores are operational priors, not measurements (rating: {}, confidence {}, {} {}) — legacy row · bench available · {left} days left",
+                target.rating.status,
+                target.rating.confidence,
+                target.rating.author,
+                target.rating.date
+            );
+        }
+    }
+    ScoreProvenance {
+        word: "legacy",
+        clause,
+        expired,
+        days_left,
+    }
+}
+
+/// The refusal an expired legacy row gets. Carries the word `unmeasured`,
+/// which is the word `registry check` prints and the word the Desktop hire
+/// host shows.
+/// The prefix every grace-expiry refusal carries, so [`no_eligible`] can tell
+/// this refusal class from a gate refusal without matching on prose.
+pub const UNMEASURED_REFUSAL_PREFIX: &str = "unmeasured:";
+
+fn unmeasured_refusal(class: &str, since: &str) -> String {
+    format!(
+        "unmeasured: a bench has existed for {class} since {since} and this row still carries no measured scores, so its {LEGACY_ROW_GRACE_DAYS}-day grace is spent — run bee sessions registry measure --role {class}"
+    )
+}
+
 /// Sort key: standing band, then whether a cost prior exists, then the
 /// expected cost.
 fn rank_key(candidate: &Candidate) -> (u8, u8, u8, f64) {
@@ -1643,6 +1931,8 @@ fn rank_key(candidate: &Candidate) -> (u8, u8, u8, f64) {
         CandidateState::Eligible => 0,
         CandidateState::Rejected(_) => 1,
         CandidateState::Dormant => 2,
+        // Last, and never chosen: nothing has decided about it.
+        CandidateState::NoRow => 3,
     };
     let band = match candidate.standing {
         Standing::IncumbentAtTier => 0,
@@ -1891,6 +2181,7 @@ fn decision_sentence(
     cross_provider: bool,
     class_note: Option<&str>,
     uncomparable: &[String],
+    provenance_clause: &str,
 ) -> String {
     use std::fmt::Write as _;
 
@@ -2008,12 +2299,16 @@ fn decision_sentence(
     if let Some(note) = class_note {
         let _ = write!(sentence, "; {note}");
     }
+    // Last, and always: where the numbers in the gate above came from. One of
+    // exactly two clauses, and the only place provenance ever rides.
+    sentence.push_str(provenance_clause);
     sentence
 }
 
 /// Build the honest empty result: which trait bound it, and what the best
 /// available score for that trait actually is.
 fn no_eligible(
+    bench_available_since: Option<&str>,
     class: &str,
     tier: &str,
     minimums: &BTreeMap<String, f64>,
@@ -2070,16 +2365,37 @@ fn no_eligible(
                 "{}: not offered by today's catalog (dormant registry row, which is not staleness)",
                 candidate.label()
             )),
+            CandidateState::NoRow => Some(format!(
+                "{}: offered by the catalog, no registry row: it was never considered — write \
+                 one with bee sessions registry measure",
+                candidate.label()
+            )),
             CandidateState::Eligible => None,
         })
         .collect();
     rejections.sort();
+    // F6 — the expiry refusal runs AFTER every gate, so a row refused for it
+    // is a row that cleared everything and would have routed. One such row is
+    // therefore the whole answer, however many other rows failed a minimum:
+    // those would have been refused anyway, and naming one of their traits
+    // sends a reader hunting for a model that is sitting right there. A `NoRow`
+    // candidate never had a row to expire and is not counted.
+    let expired = candidates
+        .iter()
+        .filter(|candidate| match &candidate.state {
+            CandidateState::Rejected(reason) => reason.starts_with(UNMEASURED_REFUSAL_PREFIX),
+            _ => false,
+        })
+        .count();
+    let unmeasured_expiry =
+        (expired > 0).then(|| (expired, bench_available_since.unwrap_or("?").to_owned()));
     RouteError::NoEligibleTarget {
         class: class.to_owned(),
         tier: tier.to_owned(),
         binding_trait: binding,
         best_available,
         rejections,
+        unmeasured_expiry,
     }
 }
 
@@ -2106,6 +2422,14 @@ pub struct RegistryCoverage {
     /// Informational: a variant is a setting of a model already decided about,
     /// so this never makes the registry stale.
     pub variants: Vec<String>,
+    /// Offered targets that *have* a row and whose row carries no `measured`
+    /// block — the rows deciding routes on priors nobody sampled.
+    ///
+    /// Reported as its own word, and — like [`Self::dormant`] — it **never**
+    /// fails the check: the team would stop. It is the count that makes the
+    /// gap visible instead of leaving eleven opinions reading as eleven
+    /// measurements.
+    pub unmeasured: Vec<String>,
 }
 
 impl RegistryCoverage {
@@ -2131,13 +2455,22 @@ pub fn check_coverage(registry: &Registry, offered: &[OfferedTarget]) -> Registr
 
     let mut uncovered: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
     let mut variants: BTreeSet<String> = BTreeSet::new();
+    // Offered, covered by a row, and that row has never been measured. Its own
+    // word, because "covered" and "decided on evidence" are different claims.
+    let mut unmeasured: BTreeSet<String> = BTreeSet::new();
     for offer in offered {
         if offer.model.eq_ignore_ascii_case(DEFAULT_ALIAS) {
             continue;
         }
-        let covered = registry.targets.iter().any(|target| {
+        let row = registry.targets.iter().find(|target| {
             target.provider == offer.provider && base_id(&target.model) == base_id(&offer.model)
         });
+        if let Some(row) = row {
+            if !row.is_measured() {
+                unmeasured.insert(row.label());
+            }
+        }
+        let covered = row.is_some();
         if !covered {
             uncovered
                 .entry((offer.provider.clone(), base_id(&offer.model).to_owned()))
@@ -2173,6 +2506,7 @@ pub fn check_coverage(registry: &Registry, offered: &[OfferedTarget]) -> Registr
         dormant: dormant.into_iter().collect(),
         stale: stale.into_iter().collect(),
         variants: variants.into_iter().collect(),
+        unmeasured: unmeasured.into_iter().collect(),
     }
 }
 
@@ -3552,5 +3886,325 @@ mod tests {
         let proposed = record.as_proposed().expect("a proposal");
         assert_eq!(proposed.chosen.model, "sonnet");
         assert_eq!(proposed.registry_version, 1);
+    }
+    // ── L10.4 — three words where the router had one ─────────────────────────
+
+    use crate::registry_bench::{MeasuredBlock, MeasuredTrait};
+
+    fn measured_block(role: &str) -> MeasuredBlock {
+        MeasuredBlock {
+            role: role.to_owned(),
+            bench_version: 2,
+            bench_hash: "0123456789abcdef".to_owned(),
+            measured_at: "2026-09-02".to_owned(),
+            measured_by: "a".repeat(64),
+            runs: vec!["e1".to_owned(), "e2".to_owned(), "e3".to_owned()],
+            traits: BTreeMap::from([
+                (
+                    "reasoning".to_owned(),
+                    MeasuredTrait {
+                        score: 4.6,
+                        n: 3,
+                        min: 4.4,
+                        max: 4.8,
+                    },
+                ),
+                (
+                    "judgment".to_owned(),
+                    MeasuredTrait {
+                        score: 4.8,
+                        n: 3,
+                        min: 4.7,
+                        max: 4.9,
+                    },
+                ),
+                (
+                    "verification".to_owned(),
+                    MeasuredTrait {
+                        score: 4.9,
+                        n: 3,
+                        min: 4.8,
+                        max: 5.0,
+                    },
+                ),
+            ]),
+        }
+    }
+
+    /// Every class at every tier decides **identically** with and without the
+    /// new key. Back-compat is not a claim about one route; it is a claim
+    /// about the whole table, so the whole table is what is asserted.
+    #[test]
+    fn the_measured_key_changes_no_decision_for_any_class_at_any_tier() {
+        let plain = shipped();
+        let mut annotated = plain.clone();
+        for target in &mut annotated.targets {
+            target.measured = Some(measured_block("verifier"));
+        }
+        let offer = live_offer();
+
+        let mut compared = 0;
+        for class in plain.classes.keys() {
+            for risk in [(1_u8, 1_u8, 1_u8), (3, 3, 3), (5, 5, 5)] {
+                let before = route(&plain, &offer, &request(class, risk), Some(7));
+                let after = route(&annotated, &offer, &request(class, risk), Some(7));
+                compared += 1;
+                match (before, after) {
+                    (Ok(before), Ok(after)) => {
+                        assert_eq!(
+                            before.record.chosen, after.record.chosen,
+                            "{class} at {risk:?} chose differently"
+                        );
+                        assert_eq!(before.record.runner_up, after.record.runner_up);
+                        assert_eq!(
+                            before
+                                .candidates
+                                .iter()
+                                .map(Candidate::label)
+                                .collect::<Vec<String>>(),
+                            after
+                                .candidates
+                                .iter()
+                                .map(Candidate::label)
+                                .collect::<Vec<String>>(),
+                            "{class} at {risk:?} ordered candidates differently"
+                        );
+                        // The only difference is the appended clause.
+                        let before_reason = before.record.reason.clone().unwrap_or_default();
+                        let after_reason = after.record.reason.clone().unwrap_or_default();
+                        let before_head = before_reason
+                            .split_once("; scores ")
+                            .map(|(head, _)| head.to_owned())
+                            .unwrap_or(before_reason);
+                        let after_head = after_reason
+                            .split_once("; scores ")
+                            .map(|(head, _)| head.to_owned())
+                            .unwrap_or(after_reason);
+                        assert_eq!(before_head, after_head, "{class} at {risk:?}");
+                    }
+                    (Err(before), Err(after)) => {
+                        assert_eq!(
+                            before.to_string(),
+                            after.to_string(),
+                            "{class} at {risk:?} refused differently"
+                        );
+                    }
+                    (before, after) => {
+                        panic!("{class} at {risk:?} disagreed: {before:?} vs {after:?}")
+                    }
+                }
+            }
+        }
+        assert_eq!(compared, plain.classes.len() * 3);
+    }
+
+    /// The shipped registry is eleven opinions, and `check` says so in its own
+    /// word without failing: refusing here would stop the team.
+    #[test]
+    fn the_shipped_registry_is_eleven_unmeasured_rows_and_that_is_not_staleness() {
+        let coverage = check_coverage(&shipped(), &live_offer());
+        assert_eq!(coverage.unmeasured.len(), 11, "{:?}", coverage.unmeasured);
+        assert!(coverage.stale.is_empty());
+        assert!(
+            coverage.is_fresh(),
+            "unmeasured rows are reported, never counted against freshness"
+        );
+    }
+
+    /// Finding 25, as a test: an offered target with no row is a candidate now,
+    /// and it says it was never considered.
+    #[test]
+    fn an_offered_target_with_no_row_is_a_candidate_that_says_it_was_never_considered() {
+        let registry = shipped();
+        let mut offer = live_offer();
+        offer.push(OfferedTarget::new("codex-primary", "gpt-6-nova[high]"));
+        let decision =
+            route(&registry, &offer, &request("verifier", (3, 3, 3)), None).expect("a route");
+        let missing = decision
+            .candidates
+            .iter()
+            .find(|candidate| candidate.registry_model == "gpt-6-nova[high]")
+            .expect("the offered target with no row is a candidate");
+        assert_eq!(missing.state, CandidateState::NoRow);
+        assert_eq!(missing.scores, "legacy");
+        // The three words never overlap.
+        assert!(decision.candidates.iter().all(|candidate| !matches!(
+            candidate.state,
+            CandidateState::Rejected(_)
+        ) || candidate.state
+            != CandidateState::NoRow));
+    }
+
+    /// The disclosure names the bench version, the date and the binding trait's
+    /// spread — the sentence finding 25 could not produce.
+    #[test]
+    fn a_measured_row_names_its_bench_in_the_routing_record() {
+        let mut registry = shipped();
+        for target in &mut registry.targets {
+            // The verifier/deep route lands on gpt-5.6-sol; the disclosure is
+            // about the row that was CHOSEN, so that is the row measured here.
+            if target.model == "gpt-5.6-sol" {
+                target.measured = Some(measured_block("verifier"));
+            }
+        }
+        let decision = route(
+            &registry,
+            &live_offer(),
+            &request("verifier", (5, 5, 5)),
+            None,
+        )
+        .expect("a route");
+        let reason = decision.record.reason.clone().expect("a reason");
+        assert!(
+            reason.contains("scores measured by registry-bench/verifier v2 on 2026-09-02"),
+            "unexpected: {reason}"
+        );
+        assert!(
+            reason.contains("spread 4.4–4.8 on the binding trait reasoning"),
+            "the binding trait is the one with the least room above its minimum: {reason}"
+        );
+        let chosen = decision
+            .candidates
+            .iter()
+            .find(|candidate| candidate.registry_model == "gpt-5.6-sol")
+            .expect("the measured row");
+        assert_eq!(chosen.scores, "measured");
+    }
+
+    /// A legacy row's disclosure names it legacy, and quotes the rating block
+    /// that makes it one.
+    #[test]
+    fn a_legacy_row_says_the_word_legacy_and_names_its_rating() {
+        let decision = route(
+            &shipped(),
+            &live_offer(),
+            &request("verifier", (5, 5, 5)),
+            None,
+        )
+        .expect("a route");
+        let reason = decision.record.reason.expect("a reason");
+        assert!(
+            reason.ends_with(
+                "; scores are operational priors, not measurements (rating: operational_opinion, \
+                 confidence low, brian 2026-08-30) — this row is legacy"
+            ),
+            "unexpected: {reason}"
+        );
+    }
+
+    /// Brian's addendum, ruling 2: the grace runs, is disclosed with the days
+    /// left, and then the row is refused with the word `unmeasured`.
+    #[test]
+    fn a_legacy_row_routes_during_its_grace_and_is_refused_with_the_word_unmeasured_after_it() {
+        let mut registry = shipped();
+        registry
+            .classes
+            .get_mut("verifier")
+            .expect("verifier")
+            .bench_available_since = Some("2026-09-02".to_owned());
+
+        let mut during = request("verifier", (5, 5, 5));
+        during.today = Some("2026-09-20".to_owned());
+        let decision =
+            route(&registry, &live_offer(), &during, None).expect("routes during the grace");
+        let reason = decision.record.reason.expect("a reason");
+        assert!(
+            reason.ends_with("— legacy row · bench available · 12 days left"),
+            "unexpected: {reason}"
+        );
+
+        let mut after = request("verifier", (5, 5, 5));
+        after.today = Some("2026-10-03".to_owned());
+        let error = route(&registry, &live_offer(), &after, None).expect_err("the grace is spent");
+        // F6 — the HEADLINE names the true reason. It used to blame a gate the
+        // named target clears ("needs judgment>=4.5; best available …
+        // scores 5"), and the real reason reached a reader only through
+        // `rejections`, which `Display` never carries.
+        let headline = error.to_string();
+        assert!(
+            headline.contains("row(s) cleared every gate and are unmeasured"),
+            "unexpected: {headline}"
+        );
+        assert!(
+            headline.contains("grace that began 2026-09-02 is spent"),
+            "{headline}"
+        );
+        assert!(
+            !headline.contains("needs judgment>="),
+            "must not blame a gate the target clears: {headline}"
+        );
+        let RouteError::NoEligibleTarget { rejections, .. } = error.as_ref() else {
+            panic!("expected no eligible target, got {error:?}");
+        };
+        // A row that failed the class gate is refused for THAT reason; only a
+        // row that cleared it and still has no measurement is refused with the
+        // word. The three words never overlap.
+        let unmeasured: Vec<&String> = rejections
+            .iter()
+            .filter(|refusal| refusal.contains("unmeasured:"))
+            .collect();
+        assert_eq!(unmeasured.len(), 4, "{rejections:?}");
+        assert!(
+            unmeasured
+                .iter()
+                .any(|refusal| refusal.starts_with("claude-primary/opus[1m]:")),
+            "the incumbent is refused too — the bar is the bar: {unmeasured:?}"
+        );
+        assert!(
+            rejections
+                .iter()
+                .any(|refusal| refusal.contains("judgment 4.4 is below")),
+            "a gate refusal is still a gate refusal: {rejections:?}"
+        );
+        assert!(
+            rejections
+                .iter()
+                .any(|refusal| refusal.contains("registry measure --role verifier")),
+            "{rejections:?}"
+        );
+    }
+
+    /// A gate refusal is still a gate refusal: the honest expiry headline fires
+    /// only when the expiry is the WHOLE story, never when something also
+    /// failed a minimum.
+    #[test]
+    fn a_mixed_refusal_keeps_the_binding_trait_headline() {
+        let mut registry = shipped();
+        registry
+            .classes
+            .get_mut("verifier")
+            .expect("verifier")
+            .bench_available_since = Some("2026-09-02".to_owned());
+        // Ask for something no row clears, so gate refusals sit beside the
+        // expiry ones.
+        let mut when = request("verifier", (5, 5, 5));
+        when.today = Some("2026-10-03".to_owned());
+        when.profile = BTreeMap::from([("taste".to_owned(), 4.95)]);
+        let error = route(&registry, &live_offer(), &when, None).expect_err("nothing clears");
+        let headline = error.to_string();
+        assert!(
+            !headline.contains("cleared every gate and are unmeasured"),
+            "the expiry is not the whole story here: {headline}"
+        );
+        assert!(headline.contains("needs taste>=4.95"), "{headline}");
+    }
+
+    /// A date the router cannot read retires nothing.
+    #[test]
+    fn an_unreadable_bench_date_is_no_date_rather_than_an_expiry() {
+        let mut registry = shipped();
+        registry
+            .classes
+            .get_mut("verifier")
+            .expect("verifier")
+            .bench_available_since = Some("last tuesday".to_owned());
+        let mut when = request("verifier", (5, 5, 5));
+        when.today = Some("2030-01-01".to_owned());
+        let decision = route(&registry, &live_offer(), &when, None).expect("routes");
+        assert!(decision
+            .record
+            .reason
+            .expect("a reason")
+            .ends_with("this row is legacy"));
     }
 }

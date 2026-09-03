@@ -27,7 +27,8 @@ import { cn } from "@/shared/lib/cn";
  *   three 44244's `report.tests[].outcome` uses. Colour never carries it
  *   alone (§8 I9), so the word and an icon glyph go with every tint.
  * * **Provenance is shown, and never merged.** `observed` says a mechanism
- *   watched the command run; `declared` says its author reported it. Both
+ *   watched the command run; `measured` says a bench run produced it;
+ *   `declared` says its author reported it. All
  *   appear; neither replaces the other.
  */
 export function CodingSessionGateRows({
@@ -185,11 +186,21 @@ function GateSource({
 }: {
   source: CodingSessionObservationGateView["source"];
 }) {
-  return source === "observed" ? (
-    <span title="Written by the mechanism that watched the command run, not by its subject.">
-      observed
-    </span>
-  ) : (
+  if (source === "observed") {
+    return (
+      <span title="Written by the mechanism that watched the command run, not by its subject.">
+        observed
+      </span>
+    );
+  }
+  if (source === "measured") {
+    return (
+      <span title="Produced by a bench run: a scorer executing a fixed task set. Nothing checks who signed it.">
+        measured
+      </span>
+    );
+  }
+  return (
     <span title="Reported by its own author. A claim, not a measurement.">
       declared
     </span>

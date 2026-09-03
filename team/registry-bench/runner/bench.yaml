@@ -1,0 +1,9 @@
+role: runner
+benchVersion: 2
+note: >-
+  One bounded extraction. `velocity` is scored from the harness's own
+  `.bench/duration-ms`, not from a claim — and because a wall clock is not
+  deterministic, an unstable velocity shows up as spread and refuses the
+  proposal rather than being averaged away.
+tasks:
+  - bounded-extraction

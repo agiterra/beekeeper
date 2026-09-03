@@ -90,6 +90,9 @@ pub mod pulse_fold;
 pub mod pulse_mission;
 /// Two umbrellas touching the same file, computed rather than reported.
 pub mod pulse_overlap;
+/// The registry bench — the mechanical scorer that turns a routing prior into
+/// a measurement, and the rules a proposed row must clear.
+pub mod registry_bench;
 /// Canonical relay runtime identities.
 pub mod relay;
 /// The git hooks a seat's checkout gets so its local commits reach Pulse

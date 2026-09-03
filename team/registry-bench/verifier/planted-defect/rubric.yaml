@@ -1,0 +1,40 @@
+criteria:
+  - id: names-the-defect
+    traits: [reasoning, verification]
+    weight: 8
+    # The planted defect is in `last_page`: `(total + per_page - 1)/per_page - 1`
+    # became `total / per_page`, which is one too many pages at an exact
+    # multiple. A bare substring match passed on any mention of the symbol,
+    # including a sentence clearing it — this grader requires the indictment.
+    check: !command
+      script: fixture/names-the-defect.sh
+
+  - id: reports-no-absent-defect
+    traits: [judgment, discipline]
+    weight: 6
+    # A verifier that flags everything is not a verifier.
+    check: !command
+      script: fixture/no-false-positives.sh
+
+  - id: verdict-is-changes-requested
+    traits: [judgment, verification]
+    weight: 4
+    check: !jsonPathEquals
+      path: verdict.json
+      pointer: /verdict
+      equals: changes-requested
+
+  - id: wrote-nothing-else
+    traits: [discipline]
+    weight: 2
+    # "Write two files and nothing else" is an instruction, and following it is
+    # evidence about discipline. A single hardcoded filename let every other
+    # stray file through.
+    check: !command
+      script: fixture/only-expected-files.sh
+
+  - id: exited-clean
+    traits: [discipline]
+    weight: 2
+    check: !exitCode
+      equals: 0

@@ -136,11 +136,13 @@ export type CodingSessionObservationSeatBlock = {
   /** Resolved display name, `You`, or the first 8 hex of the author. */
   readonly label: string;
   /**
-   * True when every row in this block is `observed`.
+   * True when no row in this block is `declared` — every one is `observed` or
+   * `measured`.
    *
    * The block is then a **watcher's**, not a seat's: kind 44246 names the
    * mechanism that signed a row and has no field for the seat it watched, so
-   * this surface says "watched by" rather than attributing the work.
+   * this surface says "watched by" rather than attributing the work. A
+   * `measured` row is likewise not its subject's account of itself.
    */
   readonly watcherOnly: boolean;
   readonly checkpoints: readonly CodingSessionObservationCheckpointView[];
@@ -279,12 +281,12 @@ export function deriveCodingSessionObservationView(input: {
       }))
       .sort((left, right) => phaseRank(left.phase) - phaseRank(right.phase));
     allGates.push(...gates);
-    const everyRowObserved = [
+    const noRowDeclared = [
       ...checkpoints,
       ...gates,
       ...findings,
       ...phases,
-    ].every((row) => row.source === "observed");
+    ].every((row) => row.source !== "declared");
     return Object.freeze({
       key: authorPubkey,
       authorPubkey,
@@ -295,7 +297,7 @@ export function deriveCodingSessionObservationView(input: {
       // identity display, whatever the wake line's copy table says about a
       // sentence.
       label: input.resolveLabel(authorPubkey) ?? truncatePubkey(authorPubkey),
-      watcherOnly: everyRowObserved,
+      watcherOnly: noRowDeclared,
       checkpoints: bound(checkpoints),
       gates: bound(gates),
       findings: bound(findings),
@@ -354,7 +356,12 @@ function observedFirst(
 }
 
 function rankSource(source: CodingSessionObservationSource): number {
-  return source === "observed" ? 0 : 1;
+  // Neither `observed` nor `measured` is the subject's own account, so both
+  // sort above `declared`; between them the fold's own first-seen order stands,
+  // because ranking a bench run against a watched command would be a claim this
+  // surface has no basis for.
+  if (source === "declared") return 1;
+  return 0;
 }
 
 /**

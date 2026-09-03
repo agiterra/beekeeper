@@ -1,0 +1,9 @@
+role: builder
+benchVersion: 2
+note: >-
+  One red test made green without editing the test. Finding 26 is why the
+  second half matters: a seat's "tests pass" means whatever it chose to run,
+  and a builder that edits the test to make it pass has done the opposite of
+  the job.
+tasks:
+  - red-test

@@ -75,6 +75,14 @@ export type RegistryClass = {
   crossProviderOf?: string;
   /** True for a class this repo drafted rather than one Brian ruled on. */
   laneDrafted?: boolean;
+  /**
+   * The day a bench first existed for this class, `YYYY-MM-DD`.
+   *
+   * From that day a legacy row has `LEGACY_ROW_GRACE_DAYS` days, disclosed on
+   * every routing line, and then it is refused with the word `unmeasured` —
+   * the same rule the Rust router applies, so the two cannot disagree.
+   */
+  benchAvailableSince?: string;
 };
 
 /** Hard constraints a single target carries, beyond its class's. */
@@ -103,6 +111,40 @@ export type RegistryRating = {
   date: string;
 };
 
+/** One trait a bench actually measured, with the spread behind it. */
+export type RegistryMeasuredTrait = {
+  score: number;
+  n: number;
+  min: number;
+  max: number;
+};
+
+/**
+ * What a bench measured about one row, when one has.
+ *
+ * Absent on every row this repository has ever shipped, and a row without it
+ * routes exactly as it did before this key existed. The only thing that
+ * changes is that the app now says the word `legacy` out loud instead of
+ * letting ten priors read as numbers somebody sampled — live run 3, finding
+ * 25.
+ *
+ * Traits the bench did not evidence are **absent** from `traits` and stay
+ * opinions in `scores`. A half-measured row reading as measured is the same
+ * lie as a badge with no event behind it.
+ */
+export type RegistryMeasured = {
+  role: string;
+  benchVersion: number;
+  benchHash: string;
+  measuredAt: string;
+  measuredBy: string;
+  runs: readonly string[];
+  traits: Readonly<Record<string, RegistryMeasuredTrait>>;
+};
+
+/** The two words a row's numbers may be described by, and no third. */
+export type RegistryScoreProvenance = "measured" | "legacy";
+
 /** One registry row: an execution target minus its effort. */
 export type RegistryTarget = {
   provider: string;
@@ -117,7 +159,140 @@ export type RegistryTarget = {
    */
   status: Readonly<Record<string, string>>;
   rating: RegistryRating;
+  /** Present only once a bench has measured this row. */
+  measured?: RegistryMeasured;
 };
+
+/**
+ * `measured` or `legacy` — where a row's ten numbers came from.
+ *
+ * The same two words the Rust router prints, deliberately: a reader who sees
+ * `legacy` in the app and something else in `bee sessions route` is reading
+ * two different claims about one row.
+ */
+export function codingSessionScoreProvenance(
+  target: Pick<RegistryTarget, "measured">,
+): RegistryScoreProvenance {
+  return target.measured === undefined ? "legacy" : "measured";
+}
+
+/** Days a legacy row keeps routing after a bench exists for its class. */
+export const LEGACY_ROW_GRACE_DAYS = 30;
+
+/** Whole days between two `YYYY-MM-DD` dates, or null if either will not parse. */
+export function codingSessionDaysBetween(
+  from: string,
+  to: string,
+): number | null {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.round((end - start) / 86_400_000);
+}
+
+/**
+ * Days left on a legacy row's grace, or null when no clock is running.
+ *
+ * A date this reader cannot parse is treated as no date rather than as an
+ * expiry: a typo in the registry must never silently retire a row.
+ */
+export function codingSessionGraceDaysLeft(
+  classGate: RegistryClass,
+  today: string | null,
+): number | null {
+  const since = classGate.benchAvailableSince;
+  if (since === undefined || today === null) return null;
+  const elapsed = codingSessionDaysBetween(since, today);
+  return elapsed === null ? null : LEGACY_ROW_GRACE_DAYS - elapsed;
+}
+
+/**
+ * The trait with the least room above its class minimum — the one the gate
+ * actually turns on, and therefore the one whose spread a reader needs.
+ */
+function bindingMeasuredTrait(
+  measured: RegistryMeasured,
+  minimums: Partial<Record<RoutingTrait, number>>,
+): { name: string; value: RegistryMeasuredTrait } | null {
+  let best: {
+    name: string;
+    value: RegistryMeasuredTrait;
+    margin: number;
+  } | null = null;
+  for (const [name, minimum] of Object.entries(minimums)) {
+    const value = measured.traits[name];
+    if (value === undefined || minimum === undefined) continue;
+    const margin = value.score - minimum;
+    if (best === null || margin < best.margin) best = { name, value, margin };
+  }
+  return best === null ? null : { name: best.name, value: best.value };
+}
+
+/**
+ * The clause the hire host appends to its routing line, in the router's own
+ * words — including its numbers.
+ *
+ * The words used to match the Rust router and the *clauses* did not: this
+ * dropped `n`, the spread and the binding trait, and knew nothing of the
+ * thirty-day grace, so once any class carried `benchAvailableSince` the app
+ * and the CLI gave opposite answers about the same row.
+ */
+export function codingSessionProvenanceClause(
+  target: RegistryTarget,
+  classGate?: RegistryClass,
+  today?: string | null,
+): string {
+  const measured = target.measured;
+  if (measured === undefined) {
+    const head =
+      `scores are operational priors, not measurements (rating: ` +
+      `${target.rating.status}, confidence ${target.rating.confidence}, ` +
+      `${target.rating.author} ${target.rating.date})`;
+    const left =
+      classGate === undefined
+        ? null
+        : codingSessionGraceDaysLeft(classGate, today ?? null);
+    return left === null
+      ? `${head} — this row is legacy`
+      : `${head} — legacy row · bench available · ${String(left)} days left`;
+  }
+  const binding =
+    classGate === undefined
+      ? null
+      : bindingMeasuredTrait(measured, classGate.minimums);
+  const detail =
+    binding === null
+      ? `n=${String(measuredSamples(measured))}`
+      : `n=${String(binding.value.n)}, spread ${String(binding.value.min)}–` +
+        `${String(binding.value.max)} on the binding trait ${binding.name}`;
+  return (
+    `scores measured by registry-bench/${measured.role} ` +
+    `v${String(measured.benchVersion)} on ${measured.measuredAt} (${detail})`
+  );
+}
+
+/** A block is only as measured as its thinnest trait. */
+export function measuredSamples(measured: RegistryMeasured): number {
+  const counts = Object.values(measured.traits).map((trait) => trait.n);
+  return counts.length === 0 ? 0 : Math.min(...counts);
+}
+
+/**
+ * The traits on this row that are still opinions, in the registry's own trait
+ * order.
+ *
+ * Never elided: a row measured on three of ten traits is three measurements
+ * and seven guesses, and both halves get said.
+ */
+export function codingSessionOpinionTraits(
+  target: RegistryTarget,
+): readonly RoutingTrait[] {
+  const measured = target.measured;
+  if (measured === undefined) return ROUTING_TRAITS;
+  return ROUTING_TRAITS.filter(
+    (trait) => !Object.hasOwn(measured.traits, trait),
+  );
+}
 
 /** The whole registry file. */
 export type ModelRegistry = {
@@ -269,6 +444,9 @@ function readClasses(value: unknown): ModelRegistry["classes"] | null {
         ? { crossProviderOf: row.crossProviderOf }
         : {}),
       ...(row.laneDrafted === true ? { laneDrafted: true } : {}),
+      ...(isNonEmptyString(row.benchAvailableSince)
+        ? { benchAvailableSince: row.benchAvailableSince }
+        : {}),
     };
   }
   return Object.keys(classes).length > 0 ? classes : null;
@@ -314,9 +492,63 @@ function readTargets(value: unknown): RegistryTarget[] | null {
         author: String(row.rating.author ?? ""),
         date: String(row.rating.date ?? ""),
       },
+      ...readMeasured(row.measured),
     });
   }
   return targets;
+}
+
+/**
+ * Read a row's `measured` block, or read nothing.
+ *
+ * Strict on purpose: a block missing any of its six required fields, or whose
+ * `traits` is not a mapping of four-number rows, is read as **absent** rather
+ * than as a partial measurement. `measured` is a claim that a number came out
+ * of a run, and a half-read block would let a row make that claim on the
+ * strength of a typo.
+ */
+function readMeasured(
+  value: unknown,
+): { measured: RegistryMeasured } | Record<string, never> {
+  if (!isRecord(value)) return {};
+  if (
+    !isNonEmptyString(value.role) ||
+    typeof value.benchVersion !== "number" ||
+    !isNonEmptyString(value.benchHash) ||
+    !isNonEmptyString(value.measuredAt) ||
+    !isNonEmptyString(value.measuredBy) ||
+    !Array.isArray(value.runs) ||
+    !isRecord(value.traits)
+  ) {
+    return {};
+  }
+  const traits: Record<string, RegistryMeasuredTrait> = {};
+  for (const [name, row] of Object.entries(value.traits)) {
+    if (
+      !isRecord(row) ||
+      typeof row.score !== "number" ||
+      typeof row.n !== "number" ||
+      typeof row.min !== "number" ||
+      typeof row.max !== "number"
+    ) {
+      // One malformed trait does not become a zero and does not become an
+      // absent trait with the rest still claiming to be measured.
+      return {};
+    }
+    traits[name] = { score: row.score, n: row.n, min: row.min, max: row.max };
+  }
+  if (Object.keys(traits).length === 0) return {};
+  return {
+    measured: {
+      role: value.role,
+      benchVersion: value.benchVersion,
+      benchHash: value.benchHash,
+      measuredAt: value.measuredAt,
+      measuredBy: value.measuredBy,
+      runs: value.runs.filter(isNonEmptyString),
+      traits,
+    },
+  };
 }
 
 function readFacts(value: unknown): RegistryTargetFacts {

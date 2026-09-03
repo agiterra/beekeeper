@@ -2297,3 +2297,81 @@ Deleting a ref is a push, and the push belongs to whoever holds the credential.
 `hive.agiterra.org` by the lane that wrote it: the reads above are safe to run,
 and the two producers (the seat hook and the provider's observed rows) need a
 live team run to confirm. Treat the table as the expectation, not as evidence.
+## The registry bench (`bee sessions registry measure` / `propose`)
+
+Every score in `team/model-registry.yaml` is an opinion — the file's own head
+comment says so. Live run 3 (finding 25) is what that cost: the router
+disclosed that an incumbent *"cleared the verifier gates (reasoning≥4.5,
+judgment≥4.5, verification≥4.7) … nothing else cleared them"* while a Codex
+target sat on the same bench uncompared, and **every number in that sentence
+was a guess**.
+
+**The rule: a row carries MEASURED scores or none. No lane invents a number.**
+
+### What has and has not been exercised live
+
+| | run? |
+|---|---|
+| the scorer, every check kind, on fixtures | **yes** — `cargo test -p buzz-core registry_bench` |
+| the harness end to end on a **stub runtime** | **yes** — `cargo test -p buzz-cli registry_measure` |
+| one **dry run through the real spawn path** against a local fixture | **yes** — see below |
+| `measure` against a **real relay and a real model** | **NO. Not once.** |
+| `propose` against a real relay | **NO** — its refusals are proven against hand-built events (a fake relay) |
+| a `measured:` block in the shipped registry | **NO** — all eleven rows are still opinions |
+
+Nothing below has produced a measured registry row on this machine. Read the
+`measured:` block in `team/model-registry.yaml` as absent, because it is.
+
+### The dry run (no relay, no model)
+
+```bash
+export BUZZ_CSP_RUNTIMES='[{"instanceRef":"claude-primary","driver":"claude",
+  "runtime":"claude","agentCommand":"/path/to/stub-adapter.sh",
+  "agentArgs":["--acp"],"allowedModels":["opus[1m]"]}]'
+bee sessions registry measure --role verifier --runtime claude-primary \
+  --model 'opus[1m]' --channel <uuid> --session-ref <uuid> \
+  --repeat 3 --task-timeout 60 --dry-run
+```
+
+`--dry-run` resolves the runtime, spawns the descriptor's **own argv** with the
+prompt on stdin and the scratch dir as cwd, runs the probes, scores, and
+**publishes nothing**. The `command` in the report is the argv that ran — that
+is the string a real run's gate row carries verbatim, and it is why a gate row
+is evidence where prose is not (finding 26).
+
+### The live run, when somebody does it
+
+```bash
+bee sessions registry measure --role verifier --runtime claude-primary \
+  --model 'opus[1m]' --channel <uuid> --session-ref <umbrella-uuid> --repeat 3
+bee sessions registry propose --role verifier --runtime claude-primary \
+  --model 'opus[1m]' --channel <uuid> --session-ref <umbrella-uuid> \
+  --founder <64-hex>          # add --write to apply
+```
+
+| expectation | why |
+|---|---|
+| `measure` publishes 3 gate rows, 3 checkpoints, and one finding per failed criterion | one signed row per task-run, before any score is written down |
+| every gate row's `command` equals the spawn argv | a row whose command is a paraphrase proves nothing |
+| `summary` reads `"<passed>/<total> · failed: <ids>"` | `propose` parses the failed set out of it, per run |
+| `--repeat 2` is refused at parse time | fewer than three cannot produce a median |
+| `--role lead` is refused: *"the bench for lead has no tasks"* | five roles ship as zero-task stubs |
+| `propose` with a mid-run edit to `team/registry-bench/verifier/**` is refused | the `benchHash` moved under the measurement |
+| `propose --role runner` may refuse on `velocity` | it is scored from `.bench/duration-ms`, and a wall clock is not stable |
+| `registry check` prints `unmeasured` and **exits 0** | eleven opinions; refusing would stop the team |
+
+### Reading the disclosure
+
+`route`'s candidate table carries `"scores": "measured" | "legacy"` and, for an
+offered target the registry has never decided about, `"state": "no-row"` with
+*"offered by the catalog, no registry row: it was never considered"*. The
+routing record's `reason` ends in one of exactly two clauses:
+
+```
+; scores measured by registry-bench/verifier v1 on 2026-09-02 (n=3, spread 4.4–4.8 on the binding trait reasoning)
+; scores are operational priors, not measurements (rating: operational_opinion, confidence low, brian 2026-08-30) — this row is legacy
+```
+
+Once a class carries `benchAvailableSince`, the second becomes
+`— legacy row · bench available · N days left`, and after thirty days `route`
+refuses the row with the word `unmeasured`.

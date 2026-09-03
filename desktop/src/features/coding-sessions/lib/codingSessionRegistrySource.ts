@@ -101,10 +101,19 @@ export async function readModelRegistry(
   }
 }
 
-/** One registry row reduced to the pair the coverage badge compares. */
+/** One registry row reduced to what the coverage badge compares. */
 export type ModelRegistryCoverageRow = {
   provider: string;
   model: string;
+  /**
+   * `true` when this row carries a `measured` block.
+   *
+   * Without it the badge's `unmeasured` count is a constant: every row reads
+   * unmeasured forever, including after one is genuinely measured. A badge
+   * that is right today by accident is the same class of defect as one
+   * pointing at a message you cannot find.
+   */
+  measured: boolean;
 };
 
 /** The registry as the badge needs it, or why there is none. */
@@ -143,6 +152,7 @@ export async function readModelRegistryRows(
     rows: parsed.registry.targets.map((target) => ({
       provider: target.provider,
       model: target.model,
+      measured: target.measured !== undefined,
     })),
     version: parsed.registry.version,
     path: source.label,

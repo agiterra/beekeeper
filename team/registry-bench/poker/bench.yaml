@@ -1,0 +1,7 @@
+role: poker
+benchVersion: 1
+note: >-
+  Stub. No task set exists for this class yet, so `bee sessions registry
+  propose --role poker` refuses: a row measured by nothing is not a measured row.
+  That refusal is the honest state, not an oversight.
+tasks: []

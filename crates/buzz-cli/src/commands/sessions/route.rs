@@ -209,6 +209,17 @@ fn candidate_row(candidate: &Candidate) -> Value {
             json!("the registry knows this target; today's catalog does not offer it"),
         ),
         CandidateState::Rejected(reason) => ("rejected", json!(reason)),
+        // Finding 25: an offered target the registry has never decided about.
+        // It was not rejected and it is not dormant — it was never a candidate
+        // at all, which is how a disclosure could say "nothing else cleared
+        // them" with a benched model sitting right there.
+        CandidateState::NoRow => (
+            "no-row",
+            json!(
+                "offered by the catalog, no registry row: it was never considered — write one \
+                 with bee sessions registry measure"
+            ),
+        ),
     };
     json!({
         "target": candidate.label(),
@@ -220,6 +231,9 @@ fn candidate_row(candidate: &Candidate) -> Value {
         "effortOnTheWire": candidate.effort_on_the_wire,
         "standing": candidate.standing.as_str(),
         "state": state,
+        // `measured` or `legacy` — where this row's ten numbers came from. The
+        // one fact a reader of finding 25's disclosure could not get.
+        "scores": candidate.scores,
         "detail": detail,
         "costPrior": candidate.cost_prior.map(round_three),
         "latencyPrior": candidate.latency_prior.map(round_three),
@@ -418,6 +432,50 @@ mod tests {
         assert!(!flags.lead_requests);
         let error = parse_review_flags("looksHard").expect_err("must refuse");
         assert!(error.to_string().contains("securityBoundary"), "{error}");
+    }
+
+    /// Every candidate row says where its numbers came from, and an offered
+    /// target the registry never decided about is a row in the table rather
+    /// than an absence — live run 3, finding 25.
+    #[test]
+    fn the_candidate_table_says_measured_or_legacy_and_shows_the_missing_target() {
+        let request = build_request("builder", "3,3,2", None, None, false, None, None, None)
+            .expect("request");
+        let mut offered = live_offer();
+        offered.push(OfferedTarget::new("codex-primary", "gpt-6-nova[high]"));
+        let decision = route(&shipped(), &offered, &request, Some(7)).expect("route");
+        let report = decision_report(&decision, "team/model-registry.yaml");
+        let rows = report["candidates"].as_array().expect("candidates").clone();
+
+        // Today every shipped row is an opinion, and every row says so.
+        for row in &rows {
+            if row["state"] == "no-row" {
+                continue;
+            }
+            assert_eq!(row["scores"], "legacy", "{row}");
+        }
+
+        let missing = rows
+            .iter()
+            .find(|row| row["registryModel"] == "gpt-6-nova[high]")
+            .expect("the offered target with no row is a candidate");
+        assert_eq!(missing["state"], "no-row");
+        assert!(
+            missing["detail"]
+                .as_str()
+                .expect("detail")
+                .contains("it was never considered"),
+            "{missing}"
+        );
+        // And the sentence itself now names the provenance.
+        assert!(
+            report["routing"]["reason"]
+                .as_str()
+                .expect("reason")
+                .ends_with("this row is legacy"),
+            "{}",
+            report["routing"]["reason"]
+        );
     }
 
     /// The report carries the numbers behind the comparison, not just the

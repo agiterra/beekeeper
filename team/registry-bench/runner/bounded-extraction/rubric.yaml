@@ -1,0 +1,38 @@
+criteria:
+  - id: count-is-right
+    traits: [agency, discipline]
+    weight: 6
+    check: !jsonPathEquals
+      path: answer.json
+      pointer: /count
+      equals: 3
+
+  - id: first-path-is-right
+    traits: [agency]
+    weight: 4
+    check: !jsonPathEquals
+      path: answer.json
+      pointer: /firstPath
+      equals: /api/hive/push
+
+  - id: log-untouched
+    traits: [discipline]
+    weight: 3
+    check: !command
+      script: fixture/log-untouched.sh
+
+  - id: wrote-nothing-else
+    traits: [discipline]
+    weight: 2
+    # A general property, not one hardcoded filename.
+    check: !command
+      script: fixture/only-expected-files.sh
+
+  - id: under-two-minutes
+    traits: [velocity]
+    weight: 5
+    # Read off `.bench/duration-ms`, which the harness writes before scoring.
+    # A wall clock is the one honest way to score velocity mechanically, and
+    # the spread it produces is a fact about the target, not noise to hide.
+    check: !command
+      script: fixture/under-two-minutes.sh

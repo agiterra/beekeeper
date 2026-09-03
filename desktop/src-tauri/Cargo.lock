@@ -1200,6 +1200,7 @@ dependencies = [
  "nostr 0.44.7",
  "percent-encoding",
  "rand 0.10.2",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",

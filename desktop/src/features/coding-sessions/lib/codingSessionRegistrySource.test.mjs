@@ -95,9 +95,11 @@ test("rows for the badge come from the real file, with its version", async () =>
   });
   assert.equal(rows.kind, "read");
   assert.equal(rows.version, 1);
+  // `measured` rides on every row so the coverage badge can ever say a row
+  // was measured; both of these are opinions, and say so.
   assert.deepEqual(rows.rows, [
-    { provider: "codex-primary", model: "gpt-5.6-luna" },
-    { provider: "claude-primary", model: "sonnet" },
+    { provider: "codex-primary", model: "gpt-5.6-luna", measured: false },
+    { provider: "claude-primary", model: "sonnet", measured: false },
   ]);
 });
 
@@ -131,4 +133,51 @@ test("the reader answers in the shape the router consumes", async () => {
     }),
   });
   assert.deepEqual(Object.keys(source).sort(), ["kind", "label", "text"]);
+});
+
+test("F4: every mapped row carries a measured flag, and it follows the block", async () => {
+  // The producer used to map { provider, model } and nothing else, so the
+  // coverage badge's `unmeasured` count was a constant: every row read
+  // unmeasured forever, including after one was genuinely measured. Right
+  // today by accident is the same class of defect as a badge pointing at a
+  // message you cannot find.
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const text = readFileSync(
+    fileURLToPath(
+      new URL("../../../../../team/model-registry.yaml", import.meta.url),
+    ),
+    "utf8",
+  );
+
+  const rowsOf = async (source) =>
+    readModelRegistryRows("proj", {
+      read: async () => ({ text: source, path: "team/model-registry.yaml" }),
+    });
+
+  const shipped = await rowsOf(text);
+  assert.equal(shipped.kind, "read");
+  assert.equal(shipped.rows.length, 11);
+  assert.ok(
+    shipped.rows.every((row) => row.measured === false),
+    "every shipped row is still an opinion",
+  );
+
+  const anchor = "  - provider: claude-primary\n    model: opus[1m]\n";
+  const block = [
+    "    measured:",
+    "      role: verifier",
+    "      benchVersion: 2",
+    '      benchHash: "abc"',
+    '      measuredAt: "2026-09-02"',
+    '      measuredBy: "aa"',
+    '      runs: ["e1"]',
+    "      traits:",
+    "        reasoning: { score: 4.6, n: 3, min: 4.4, max: 4.8 }",
+    "",
+  ].join("\n");
+  const after = await rowsOf(text.replace(anchor, `${anchor}${block}`));
+  const row = after.rows.find((entry) => entry.model === "opus[1m]");
+  assert.equal(row.measured, true, "the flag must follow the block");
+  assert.equal(after.rows.filter((entry) => entry.measured).length, 1);
 });

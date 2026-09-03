@@ -456,9 +456,11 @@ fn a_body_signed_before_source_existed_still_decodes_and_reads_declared() {
     let error = decode(&nulled).expect_err("an explicit null source is refused");
     assert!(error.contains("source"), "{error}");
 
-    // An unknown token is refused rather than read as `declared`.
+    // An unknown token is refused rather than read as `declared`. (`measured`
+    // is a real token since the registry bench landed, so this uses one that
+    // is not.)
     let mut unknown = payload_json("gate", gate_body());
-    unknown.as_object_mut().expect("object")["source"] = json!("measured");
+    unknown.as_object_mut().expect("object")["source"] = json!("inferred");
     let error = decode(&unknown).expect_err("an unknown source token is refused");
     assert!(error.contains("source"), "{error}");
 }

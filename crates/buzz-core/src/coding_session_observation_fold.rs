@@ -363,6 +363,15 @@ pub fn fold_coding_session_observations(
         // REVIEW-L5 F2. `observed` is honoured only when the signer is one of
         // this session's provider instances; anything else is the subject
         // speaking about itself, which is exactly what `declared` means.
+        //
+        // `measured` is deliberately NOT under this check: a bench row is
+        // signed by whoever ran the bench, and its subject is a routing target
+        // rather than the signer's own work, so "the provider signed it" is not
+        // the question to ask of it. The consequence is disclosed rather than
+        // hidden: nothing here stops a seat signing `measured` about itself,
+        // and a surface that ranks `measured` above `declared` is trusting the
+        // signer. That is the same two-axes-one-key residual the widening was
+        // named with, and it is owed a second key rather than a stricter fold.
         let source = match (payload.source, &context.provider_pubkeys) {
             (CodingSessionObservationSource::Observed, Some(providers))
                 if !providers.contains(&author) =>

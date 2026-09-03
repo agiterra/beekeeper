@@ -33,6 +33,7 @@
 //! The `default` alias is never a row and never a gap — it is a provider's
 //! pointer at whatever the host is set to, not a model.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -40,6 +41,7 @@ use serde_json::{json, Value};
 use buzz_core::coding_session_routing::{
     check_coverage, parse_registry, Registry, DEFAULT_REGISTRY_RELATIVE_PATH,
 };
+use buzz_core::kind::KIND_CODING_SESSION_OBSERVATION;
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
@@ -110,6 +112,58 @@ pub fn catalog_revision(snapshot: &CatalogSnapshot) -> Option<u64> {
     }
 }
 
+/// The word each measured row has earned, and the confidence it may claim.
+///
+/// A `measured` block names the 44246 gate rows behind it. Until somebody
+/// resolves those ids the block is a claim about evidence nobody has looked
+/// for, so this asks the relay for them by id and reports what came back.
+/// Never fails the check — a relay that cannot be reached is not a stale
+/// registry — but a row whose runs do not resolve says so, and never reads
+/// `confidence: high`.
+pub async fn resolve_measured_runs(client: &BuzzClient, registry: &Registry) -> Vec<Value> {
+    let mut rows = Vec::new();
+    for target in &registry.targets {
+        let Some(measured) = &target.measured else {
+            continue;
+        };
+        let found: BTreeSet<String> = if measured.runs.is_empty() {
+            BTreeSet::new()
+        } else {
+            client
+                .query_all(json!({
+                    "kinds": [KIND_CODING_SESSION_OBSERVATION],
+                    "ids": measured.runs,
+                }))
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|event| event.get("id").and_then(Value::as_str).map(str::to_owned))
+                .collect()
+        };
+        let missing: Vec<String> = measured
+            .runs
+            .iter()
+            .filter(|id| !found.contains(*id))
+            .cloned()
+            .collect();
+        let resolved = !measured.runs.is_empty() && missing.is_empty();
+        rows.push(json!({
+            "target": target.label(),
+            "role": measured.role,
+            "benchVersion": measured.bench_version,
+            // The word a reader sees. Two words, and the second is not a
+            // softening of the first — it says the evidence was looked for.
+            "scores": if resolved { "measured" } else { "measured (unresolved runs)" },
+            "runs": measured.runs.len(),
+            "runsResolved": found.len(),
+            "runsMissing": missing,
+            "claimedConfidence": measured.confidence(),
+            "confidence": measured.resolved_confidence(resolved),
+        }));
+    }
+    rows
+}
+
 /// `bee sessions registry check --channel <uuid> [--registry <path>]`.
 ///
 /// # Errors
@@ -126,6 +180,7 @@ pub async fn cmd_registry_check(
     let snapshot = load_catalogs(client, channel_id).await?;
     let offered = super::route::offers(&snapshot);
     let coverage = check_coverage(&registry, &offered);
+    let measured_rows = resolve_measured_runs(client, &registry).await;
 
     let catalogs: Vec<Value> = snapshot
         .records
@@ -166,6 +221,18 @@ pub async fn cmd_registry_check(
         // The one list that fails this command.
         "stale": coverage.stale,
         "variants": coverage.variants,
+        // Its own word: offered, covered by a row, and that row has never been
+        // measured. Like `dormant` it NEVER fails the check — refusing here
+        // would stop the team — but eleven opinions must not read as eleven
+        // measurements just because nothing complained.
+        "unmeasured": coverage.unmeasured,
+        "unmeasuredCount": coverage.unmeasured.len(),
+        // F4b: `runs` is a list of event ids and nothing used to resolve them,
+        // so a hand-edited block with a fabricated id and `n: 99` read as
+        // `confidence: high`. Each row's word is `measured` only when its runs
+        // are on the relay; otherwise `measured (unresolved runs)`, and its
+        // confidence is capped at `medium` however large its `n`.
+        "measuredRows": measured_rows,
         "isStale": !coverage.is_fresh(),
         "malformedCatalogs": snapshot
             .malformed
@@ -183,6 +250,8 @@ pub async fn cmd_registry_check(
                 "dormant": coverage.dormant,
                 "stale": coverage.stale,
                 "variants": coverage.variants,
+                "unmeasured": coverage.unmeasured,
+                "measuredRows": measured_rows,
                 "isStale": !coverage.is_fresh(),
             })
         ),
@@ -190,14 +259,39 @@ pub async fn cmd_registry_check(
     }
 
     if coverage.is_fresh() {
+        if !coverage.unmeasured.is_empty() {
+            // Printed, not failed, and printed even on the clean path: a
+            // reader who only ever sees "exit 0" learns nothing about how many
+            // of these rows are somebody's guess.
+            eprintln!(
+                "{} offered target(s) route on unmeasured rows ({}). Not staleness, and not a \
+                 failure — run bee sessions registry measure to replace an opinion with a \
+                 number.",
+                coverage.unmeasured.len(),
+                coverage.unmeasured.join(", ")
+            );
+        }
+        let unresolved: Vec<&Value> = measured_rows
+            .iter()
+            .filter(|row| row["scores"] != "measured")
+            .collect();
+        if !unresolved.is_empty() {
+            eprintln!(
+                "{} measured row(s) name gate events this relay does not have; they read \
+                 `measured (unresolved runs)` and are capped at confidence medium.",
+                unresolved.len()
+            );
+        }
         return Ok(());
     }
     Err(CliError::Other(format!(
         "registry is stale: {} offered target(s) no row covers ({}). {} dormant row(s) are not \
-         staleness and did not affect this result.",
+         staleness and did not affect this result. {} covered target(s) are unmeasured, which is \
+         also not staleness and also did not affect this result.",
         coverage.stale.len(),
         coverage.stale.join(", "),
-        coverage.dormant.len()
+        coverage.dormant.len(),
+        coverage.unmeasured.len()
     )))
 }
 
@@ -287,6 +381,39 @@ mod tests {
         assert!(live_offer()
             .iter()
             .any(|offer| offer.provider == "claude-primary" && offer.model == "haiku"));
+    }
+
+    /// Eleven rows, eleven opinions, and `check` says the word and exits 0.
+    /// Refusing here would stop the team; saying nothing would let eleven
+    /// guesses read as eleven measurements.
+    #[test]
+    fn check_lists_eleven_unmeasured_rows_and_still_exits_zero() {
+        let coverage = check_coverage(&shipped_registry(), &live_offer());
+        assert_eq!(coverage.unmeasured.len(), 11, "{:?}", coverage.unmeasured);
+        assert!(coverage.is_fresh());
+        assert!(coverage
+            .unmeasured
+            .contains(&"claude-primary/opus[1m]".to_owned()));
+    }
+
+    /// The three words never overlap: a target with no row is `stale`, a row
+    /// nothing offers is `dormant`, and a row that routes on priors is
+    /// `unmeasured`.
+    #[test]
+    fn the_three_words_name_three_different_things() {
+        let mut registry = shipped_registry();
+        registry.targets.retain(|target| target.model != "haiku");
+        let mut offered = live_offer();
+        offered.retain(|offer| offer.provider != "codex-primary");
+        let coverage = check_coverage(&registry, &offered);
+        assert_eq!(coverage.stale, vec!["claude-primary/haiku"]);
+        assert_eq!(coverage.dormant.len(), 7);
+        // Four claude rows minus the removed haiku row.
+        assert_eq!(coverage.unmeasured.len(), 3, "{:?}", coverage.unmeasured);
+        for label in &coverage.unmeasured {
+            assert!(!coverage.stale.contains(label));
+            assert!(!coverage.dormant.contains(label));
+        }
     }
 
     #[test]

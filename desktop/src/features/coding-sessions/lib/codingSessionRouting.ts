@@ -49,12 +49,17 @@
 import {
   MODEL_REGISTRY_VERSION,
   ROUTING_EFFORT_FOR_TIER,
+  LEGACY_ROW_GRACE_DAYS,
   ROUTING_TRAITS,
+  codingSessionGraceDaysLeft,
+  codingSessionProvenanceClause,
   codingSessionRiskScore,
   codingSessionRiskTier,
+  codingSessionScoreProvenance,
   parseModelRegistry,
   type ModelRegistry,
   type RegistryClass,
+  type RegistryScoreProvenance,
   type RegistryTarget,
   type RoutingEffort,
   type RoutingRisk,
@@ -152,6 +157,15 @@ export type RouteCodingSessionInput = {
   /** A human naming a target by hand. Validated, never trusted blindly. */
   override?: RoutingOverride | null;
   review?: RoutingReviewFlags;
+  /**
+   * Today, `YYYY-MM-DD`, for the legacy-row grace clock only.
+   *
+   * Absent means no clock — a legacy row routes and is disclosed as legacy,
+   * exactly as before. Supplying it opts the class's thirty-day deadline in,
+   * matching `RouteRequest.today` in the Rust router so the app and the CLI
+   * cannot give opposite answers about the same row.
+   */
+  today?: string | null;
 };
 
 /** Why one registry row is not a candidate. */
@@ -194,6 +208,18 @@ export type RoutingCandidate = {
   priced: boolean;
   /** Expected cost of an accepted completion. Lower is chosen. */
   expectedCost: number | null;
+  /**
+   * `measured` or `legacy` — where this row's ten numbers came from.
+   *
+   * Live run 3, finding 25: this host disclosed that a target "cleared the
+   * verifier gates (reasoning≥4.5, judgment≥4.5, verification≥4.7) …
+   * incumbent, nothing else cleared them" while every number in that sentence
+   * was an operational prior nobody had sampled. The word goes on the
+   * candidate and into the sentence, in the Rust router's own vocabulary.
+   */
+  scores: RegistryScoreProvenance;
+  /** The clause the sentence appends. One of exactly two. */
+  provenanceClause: string;
 };
 
 export type RouteCodingSessionDecision =
@@ -278,6 +304,23 @@ export function routeCodingSession(
       });
       continue;
     }
+    const graceLeft = codingSessionGraceDaysLeft(
+      classGate,
+      input.today ?? null,
+    );
+    if (target.measured === undefined && graceLeft !== null && graceLeft <= 0) {
+      excluded.push({
+        provider: target.provider,
+        model,
+        why:
+          `unmeasured: a bench has existed for ${className} since ` +
+          `${classGate.benchAvailableSince ?? "?"} and this row still carries ` +
+          `no measured scores, so its ${String(LEGACY_ROW_GRACE_DAYS)}-day ` +
+          "grace is spent — run bee sessions registry measure --role " +
+          className,
+      });
+      continue;
+    }
     const standing = standingOf(registry, target, className, tier);
     candidates.push({
       target: { provider: target.provider, model, effort },
@@ -285,6 +328,12 @@ export function routeCodingSession(
       incumbent: standing === "incumbent-at-tier" || standing === "incumbent",
       priced: hasCostPrior(target),
       expectedCost: expectedCostOf(target),
+      scores: codingSessionScoreProvenance(target),
+      provenanceClause: codingSessionProvenanceClause(
+        target,
+        classGate,
+        input.today ?? null,
+      ),
     });
   }
 
@@ -773,10 +822,12 @@ function describeChoice(input: {
     input.runnerUp === null
       ? "nothing else cleared them"
       : `cheaper than ${input.runnerUp.target.provider}/${input.runnerUp.target.model}`;
+  // Last, and always: where the numbers in the gate above came from. Finding
+  // 25 is a sentence exactly like this one that could not say it.
   return (
     `cleared the ${input.className} gates (${gates || "none"}) and the ` +
     `${input.tier} tier's ${input.chosen.target.effort} effort; ${standing}, ` +
-    `${against}.`
+    `${against}; ${input.chosen.provenanceClause}.`
   );
 }
 

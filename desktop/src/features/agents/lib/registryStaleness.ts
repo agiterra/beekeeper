@@ -406,6 +406,15 @@ export function resolveRubricStaleness(input: {
 export type RegistryCoverageRow = {
   provider: string;
   model: string;
+  /**
+   * `true` when this row carries a `measured` block.
+   *
+   * Absent or `false` means the row's ten numbers are somebody's operational
+   * priors. That is not staleness and it never fails the badge — the team
+   * would stop — but it is a fact the badge must say rather than let eleven
+   * opinions read as eleven measurements (live run 3, finding 25).
+   */
+  measured?: boolean;
 };
 
 /** Why the registry badge could say nothing. */
@@ -429,6 +438,8 @@ export type RegistryStaleness =
       /** Offered ids with a row, and rows with no live offer. */
       covered: number;
       dormant: string[];
+      /** Offered ids whose row has never been measured. Never fails. */
+      unmeasured: string[];
       label: string;
       detail: string;
     }
@@ -437,6 +448,8 @@ export type RegistryStaleness =
       /** `provider/model` the catalog offers and no registry row covers. */
       unregistered: string[];
       dormant: string[];
+      /** Offered ids whose row has never been measured. Never fails. */
+      unmeasured: string[];
       label: string;
       detail: string;
     };
@@ -459,18 +472,29 @@ export type RegistryStaleness =
 export function compareRegistryToCatalog(
   rows: readonly RegistryCoverageRow[],
   offered: readonly RubricOfferedPair[],
-): { unregistered: string[]; dormant: string[]; covered: number } {
+): {
+  unregistered: string[];
+  dormant: string[];
+  unmeasured: string[];
+  covered: number;
+} {
   const unregistered = new Set<string>();
+  const unmeasured = new Set<string>();
   let covered = 0;
   for (const pair of offered) {
     if (pair.model.toLowerCase() === DEFAULT_ALIAS) continue;
-    const hit = rows.some(
+    const hit = rows.find(
       (row) =>
         providerMatches(row.provider, pair.providerInstanceRef) &&
         baseId(row.model) === baseId(pair.model),
     );
-    if (hit) {
+    if (hit !== undefined) {
       covered += 1;
+      // Its own word. Covered says a row exists; measured says the row's
+      // numbers came out of a run. They are different claims.
+      if (hit.measured !== true) {
+        unmeasured.add(pairLabel(hit.provider, hit.model));
+      }
       continue;
     }
     unregistered.add(pairLabel(pair.providerInstanceRef, baseId(pair.model)));
@@ -487,6 +511,7 @@ export function compareRegistryToCatalog(
   return {
     unregistered: [...unregistered].sort(),
     dormant: [...dormant].sort(),
+    unmeasured: [...unmeasured].sort(),
     covered,
   };
 }
@@ -548,32 +573,44 @@ export function resolveRegistryStaleness(input: {
       detail: `${input.rows.length} registry rows were read here, but no provider has published a kind:44222 catalog yet, so there is nothing to check them against.`,
     };
   }
-  const { unregistered, dormant, covered } = compareRegistryToCatalog(
-    input.rows,
-    input.offered,
-  );
+  const { unregistered, dormant, unmeasured, covered } =
+    compareRegistryToCatalog(input.rows, input.offered);
+  // Said in both states, and never as a failure: a reader who only ever sees
+  // "covers the catalog" learns nothing about how many of these rows are
+  // somebody's guess.
+  const unmeasuredSentence =
+    unmeasured.length > 0
+      ? ` ${unmeasured.length} of those rows are unmeasured — they route on operational priors nobody sampled, which is not staleness: ${unmeasured.join(", ")}.`
+      : "";
   if (unregistered.length === 0) {
     return {
       state: "fresh",
       covered,
       dormant,
-      label: `${read} \u00b7 covers the catalog`,
+      unmeasured,
+      label:
+        unmeasured.length > 0
+          ? `${read} \u00b7 covers the catalog \u00b7 ${unmeasured.length} unmeasured`
+          : `${read} \u00b7 covers the catalog`,
       detail:
         `Every offered execution target has a registry row (${covered} ids).` +
         (dormant.length > 0
           ? ` ${dormant.length} rows are dormant — the registry knows them and this host does not offer them today, which is not staleness: ${dormant.join(", ")}.`
-          : ""),
+          : "") +
+        unmeasuredSentence,
     };
   }
   return {
     state: "stale",
     unregistered,
     dormant,
+    unmeasured,
     label: `${read} \u00b7 ${unregistered.length} offered with no row`,
     detail:
       `Offered here and in no registry row: ${unregistered.join(", ")}.` +
       (dormant.length > 0
         ? ` ${dormant.length} rows are dormant and do not count: ${dormant.join(", ")}.`
-        : ""),
+        : "") +
+      unmeasuredSentence,
   };
 }

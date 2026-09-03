@@ -48,6 +48,34 @@ pub const OBSERVATION_DISCLOSURE: &str =
 
 /// Dispatch `bee sessions observe`.
 pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<(), CliError> {
+    cmd_observe_as(client, cmd, CodingSessionObservationSource::Declared).await
+}
+
+/// `bee sessions observe`, with the caller naming the record's `source`.
+///
+/// Crate-internal and deliberately narrow. The only caller that may name
+/// anything but `Declared` is the registry bench (`registry_measure`), whose
+/// rows are produced by a mechanical scorer running a fixed task set — not by
+/// a subject describing its own work. `observed` is never reachable from here:
+/// a row nobody watched cannot become one by asking.
+pub(super) async fn cmd_observe_as(
+    client: &BuzzClient,
+    cmd: SessionObserveCmd,
+    source: CodingSessionObservationSource,
+) -> Result<(), CliError> {
+    if source == CodingSessionObservationSource::Observed {
+        return Err(CliError::Usage(
+            "`observed` is published by the mechanism that watched, never by this command".into(),
+        ));
+    }
+    cmd_observe_inner(client, cmd, source).await
+}
+
+async fn cmd_observe_inner(
+    client: &BuzzClient,
+    cmd: SessionObserveCmd,
+    source: CodingSessionObservationSource,
+) -> Result<(), CliError> {
     match cmd {
         SessionObserveCmd::Checkpoint(args) => {
             let body =
@@ -71,6 +99,7 @@ pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<
                 args.genesis.as_deref(),
                 args.assignment.as_deref(),
                 body,
+                source,
             )
             .await
         }
@@ -85,6 +114,7 @@ pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<
                 args.genesis.as_deref(),
                 args.assignment.as_deref(),
                 body,
+                source,
             )
             .await
         }
@@ -114,6 +144,7 @@ pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<
                 args.genesis.as_deref(),
                 args.assignment.as_deref(),
                 body,
+                source,
             )
             .await
         }
@@ -131,6 +162,7 @@ pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<
                 args.genesis.as_deref(),
                 args.assignment.as_deref(),
                 body,
+                source,
             )
             .await
         }
@@ -219,6 +251,7 @@ async fn publish(
     genesis: Option<&str>,
     assignment: Option<&str>,
     body: CodingSessionObservationBody,
+    source: CodingSessionObservationSource,
 ) -> Result<(), CliError> {
     validate_uuid(channel)?;
     validate_uuid(session_ref)?;
@@ -232,12 +265,14 @@ async fn publish(
         genesis_ref,
         observation_type: body.observation_type(),
         // `bee sessions observe` is a seat speaking about its own work, so
-        // every row it publishes is a **claim**. There is deliberately no flag
-        // to say otherwise: a subject that could label itself `observed` would
-        // erase the only distinction the field carries. Observed rows are
-        // published by the mechanism that watched — today the session provider,
-        // from the seat's own tool calls.
-        source: CodingSessionObservationSource::Declared,
+        // every row it publishes is a **claim** — `cmd_observe` passes
+        // `Declared` and there is deliberately no flag to say otherwise: a
+        // subject that could label itself `observed` would erase the only
+        // distinction the field carries. Observed rows are published by the
+        // mechanism that watched — today the session provider, from the seat's
+        // own tool calls. The registry bench is the one caller that names
+        // anything else, and it names `measured`.
+        source,
         assignment_ref: assignment.map(str::to_owned),
         body,
     };
@@ -253,7 +288,7 @@ async fn publish(
             "eventId": event_id,
             "accepted": true,
             "type": observation_type,
-            "source": CodingSessionObservationSource::Declared.as_str(),
+            "source": source.as_str(),
             "disclosure": OBSERVATION_DISCLOSURE,
         })
     );

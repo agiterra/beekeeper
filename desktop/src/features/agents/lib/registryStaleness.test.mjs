@@ -469,7 +469,12 @@ test("the badge says how many rows it read, in every state that read any", () =>
     version: 1,
     offered: [{ providerInstanceRef: "claude-primary", model: "sonnet" }],
   });
-  assert.equal(fresh.label, "Registry v1 · 5 rows · covers the catalog");
+  // Five rows, none of them measured, so the badge says so. Covering the
+  // catalog and being decided on evidence are different claims.
+  assert.equal(
+    fresh.label,
+    "Registry v1 · 5 rows · covers the catalog · 1 unmeasured",
+  );
 
   const noCatalog = resolveRegistryStaleness({
     rows: ROWS,
@@ -481,4 +486,101 @@ test("the badge says how many rows it read, in every state that read any", () =>
     "Registry v1 · 5 rows · no provider catalog yet",
   );
   assert.match(noCatalog.detail, /5 registry rows/);
+});
+
+test("unmeasured is its own word, and it never fails the badge", () => {
+  const offered = [
+    { providerInstanceRef: "claude-primary", model: "sonnet" },
+    { providerInstanceRef: "claude-primary", model: "opus[1m]" },
+  ];
+
+  // Every row an opinion — the shipped state today.
+  const legacy = resolveRegistryStaleness({ rows: ROWS, version: 1, offered });
+  assert.equal(legacy.state, "fresh", "unmeasured is not staleness");
+  assert.deepEqual(legacy.unmeasured, [
+    "claude-primary/opus[1m]",
+    "claude-primary/sonnet",
+  ]);
+  assert.match(legacy.detail, /route on operational priors nobody sampled/);
+
+  // One row measured: it drops out of the list, the other stays.
+  const measuredRows = ROWS.map((row) =>
+    row.model === "opus[1m]" ? { ...row, measured: true } : row,
+  );
+  const partly = resolveRegistryStaleness({
+    rows: measuredRows,
+    version: 1,
+    offered,
+  });
+  assert.equal(partly.state, "fresh");
+  assert.deepEqual(partly.unmeasured, ["claude-primary/sonnet"]);
+
+  // All measured: the word disappears rather than reading "0 unmeasured".
+  const allMeasured = resolveRegistryStaleness({
+    rows: ROWS.map((row) => ({ ...row, measured: true })),
+    version: 1,
+    offered,
+  });
+  assert.deepEqual(allMeasured.unmeasured, []);
+  assert.equal(allMeasured.label, "Registry v1 · 5 rows · covers the catalog");
+  assert.doesNotMatch(allMeasured.detail, /unmeasured/);
+});
+
+test("the three words name three different things and never overlap", () => {
+  const { unregistered, dormant, unmeasured } = compareRegistryToCatalog(
+    [
+      { provider: "claude-primary", model: "sonnet" },
+      { provider: "claude-primary", model: "opus[1m]", measured: true },
+      { provider: "codex-primary", model: "gpt-5.6-sol" },
+    ],
+    [
+      { providerInstanceRef: "claude-primary", model: "sonnet" },
+      { providerInstanceRef: "claude-primary", model: "opus[1m]" },
+      { providerInstanceRef: "claude-primary", model: "gpt-6-nova[high]" },
+    ],
+  );
+  assert.deepEqual(unregistered, ["claude-primary/gpt-6-nova"]);
+  assert.deepEqual(dormant, ["codex-primary/gpt-5.6-sol"]);
+  assert.deepEqual(unmeasured, ["claude-primary/sonnet"]);
+  for (const label of unmeasured) {
+    assert.ok(!unregistered.includes(label));
+    assert.ok(!dormant.includes(label));
+  }
+});
+
+test("a stale registry still reports its unmeasured rows", () => {
+  const state = resolveRegistryStaleness({
+    rows: ROWS,
+    version: 1,
+    offered: [
+      { providerInstanceRef: "claude-primary", model: "sonnet" },
+      { providerInstanceRef: "claude-primary", model: "gpt-6-nova[high]" },
+    ],
+  });
+  assert.equal(state.state, "stale");
+  assert.deepEqual(state.unmeasured, ["claude-primary/sonnet"]);
+  assert.match(state.detail, /Offered here and in no registry row/);
+  assert.match(state.detail, /unmeasured/);
+});
+
+test("F4: the badge's measured flag comes from the row, so it can ever change", () => {
+  // The producer used to map { provider, model } and nothing else, so the
+  // badge said "11 unmeasured" forever — right today by accident, and wrong
+  // the moment a row is genuinely measured.
+  const measuredRows = ROWS.map((row) =>
+    row.model === "sonnet" ? { ...row, measured: true } : row,
+  );
+  const state = resolveRegistryStaleness({
+    rows: measuredRows,
+    version: 1,
+    offered: [
+      { providerInstanceRef: "claude-primary", model: "sonnet" },
+      { providerInstanceRef: "claude-primary", model: "opus[1m]" },
+    ],
+  });
+  assert.deepEqual(state.unmeasured, ["claude-primary/opus[1m]"]);
+  assert.equal(
+    state.label,
+    "Registry v1 · 5 rows · covers the catalog · 1 unmeasured",
+  );
 });

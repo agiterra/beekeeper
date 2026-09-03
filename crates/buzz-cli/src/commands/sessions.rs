@@ -82,6 +82,8 @@ pub(crate) mod operations_reads;
 mod operations_verifier_gate;
 pub mod policy;
 pub mod registry;
+pub mod registry_measure;
+pub mod registry_propose;
 pub mod route;
 mod seat_authority;
 #[cfg(test)]
@@ -2760,6 +2762,56 @@ pub async fn dispatch(
         SessionsCmd::Registry(cmd) => match cmd {
             crate::RegistryCmd::Check { channel, registry } => {
                 registry::cmd_registry_check(client, &channel, registry.as_deref(), format).await
+            }
+            crate::RegistryCmd::Measure {
+                role,
+                runtime,
+                model,
+                channel,
+                session_ref,
+                repeat,
+                registry,
+                task_timeout,
+                dry_run,
+            } => {
+                registry_measure::cmd_registry_measure(
+                    Some(client),
+                    &role,
+                    &runtime,
+                    &model,
+                    &channel,
+                    &session_ref,
+                    repeat,
+                    registry.as_deref(),
+                    task_timeout,
+                    dry_run,
+                    format,
+                )
+                .await
+            }
+            crate::RegistryCmd::Propose {
+                role,
+                runtime,
+                model,
+                channel,
+                session_ref,
+                repeat,
+                registry,
+                write,
+            } => {
+                registry_propose::cmd_registry_propose(
+                    client,
+                    &role,
+                    &runtime,
+                    &model,
+                    &channel,
+                    &session_ref,
+                    repeat,
+                    registry.as_deref(),
+                    write,
+                    format,
+                )
+                .await
             }
         },
         SessionsCmd::Route {

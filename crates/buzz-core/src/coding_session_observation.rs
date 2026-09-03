@@ -136,6 +136,16 @@ pub enum CodingSessionObservationSource {
     Observed,
     /// Written by the subject about itself. A claim, and rendered as one.
     Declared,
+    /// Produced by a bench run: a mechanical scorer executing a fixed task set
+    /// and recording what it got.
+    ///
+    /// Widened here (2026-09-02) for the registry bench. It is honestly a
+    /// *second axis* squeezed into one key — `observed`/`declared` says who saw
+    /// it, `measured` says why it ran — and that is a named residual, not a
+    /// design. A reader that only cares whether the subject vouched for itself
+    /// should treat `measured` the way it treats `observed`: nobody's word for
+    /// their own work.
+    Measured,
 }
 
 impl Default for CodingSessionObservationSource {
@@ -154,6 +164,7 @@ impl CodingSessionObservationSource {
         match self {
             Self::Observed => "observed",
             Self::Declared => "declared",
+            Self::Measured => "measured",
         }
     }
 }
@@ -561,7 +572,7 @@ const GATE_OUTCOMES: &[&str] = &["passed", "failed", "not-run"];
 /// The closed finding disposition tokens.
 const FINDING_DISPOSITIONS: &[&str] = &["found", "fixed", "cross-lane", "needs-ruling", "wont-fix"];
 /// The closed provenance tokens.
-const OBSERVATION_SOURCES: &[&str] = &["observed", "declared"];
+const OBSERVATION_SOURCES: &[&str] = &["observed", "declared", "measured"];
 
 /// The exact keys of one gate row, and which of them may be `null`.
 const GATE_ROW_KEYS: &[&str] = &["gate", "outcome", "command", "summary", "durationMs"];

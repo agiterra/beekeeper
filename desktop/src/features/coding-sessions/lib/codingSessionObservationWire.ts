@@ -24,8 +24,18 @@ export const CODING_SESSION_OBSERVATION_FOLD_RESPONSE_SCHEMA =
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
-/** How a record came to exist: a mechanism watched it, or its subject said it. */
-export type CodingSessionObservationSource = "observed" | "declared";
+/**
+ * How a record came to exist: a mechanism watched it, its subject said it, or
+ * a bench measured it.
+ *
+ * `measured` was widened onto the closed enum for the registry bench. It is
+ * honestly a second axis in one key — `observed`/`declared` says who saw it,
+ * `measured` says why it ran — and that is a named residual, not a design.
+ */
+export type CodingSessionObservationSource =
+  | "observed"
+  | "declared"
+  | "measured";
 /** The three words a 44244 `report.tests[].outcome` also uses. */
 export type CodingSessionObservationGateOutcome =
   | "passed"
@@ -56,7 +66,7 @@ export type CodingSessionObservationDisposition =
 export const CODING_SESSION_OBSERVATION_PHASE_ORDER: readonly CodingSessionObservationPhaseWord[] =
   Object.freeze(["planning", "red", "green", "gates", "reporting"]);
 
-const SOURCES: readonly string[] = ["observed", "declared"];
+const SOURCES: readonly string[] = ["observed", "declared", "measured"];
 const OUTCOMES: readonly string[] = ["passed", "failed", "not-run"];
 const DISPOSITIONS: readonly string[] = [
   "found",

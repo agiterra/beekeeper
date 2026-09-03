@@ -1,0 +1,9 @@
+200 GET /
+200 GET /api/hive/status
+500 POST /api/hive/push
+404 GET /favicon.ico
+200 GET /api/hive/status
+500 POST /api/hive/push
+200 GET /
+500 GET /api/hive/pull
+200 GET /api/hive/status

@@ -1,0 +1,8 @@
+role: verifier
+benchVersion: 2
+note: >-
+  One diff with exactly one planted defect. It scores naming that defect AND
+  not reporting defects that are not there — a verifier that flags everything
+  is not a verifier, and finding 25's incumbent was never asked either question.
+tasks:
+  - planted-defect

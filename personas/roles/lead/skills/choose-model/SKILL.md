@@ -169,6 +169,47 @@ bee sessions registry check --channel <uuid>
 - **exit 4 — stale.** A *live offered* target has **no row**. A row for a model
   the catalog does not offer today is **dormant, not stale** — the registry is
   allowed to know a model that is not live.
+- **`unmeasured: <ids>` — its own word, and it never fails.** An offered target
+  whose row exists and has never been through a bench. It routes; it is not
+  staleness; and it is printed so eleven opinions do not read as eleven
+  measurements. Today **every** shipped row is unmeasured.
+
+### Three words, and they never overlap
+
+| word | what it means | fails the check? |
+|---|---|---|
+| `stale` | offered, and **no row** decided about it | **yes, exit 4** |
+| `dormant` | a row nothing offers today | no |
+| `unmeasured` | a row that exists and whose numbers nobody sampled | no |
+
+A routing record now says which of the last two it is routing on, in one
+appended clause:
+
+```
+; scores measured by registry-bench/verifier v1 on 2026-09-02 (n=3, spread 4.4–4.8 on the binding trait reasoning)
+; scores are operational priors, not measurements (rating: operational_opinion, confidence low, brian 2026-08-30) — this row is legacy
+```
+
+**Read that clause before you quote a route.** Live run 3, finding 25: this
+router disclosed that a target *"cleared the verifier gates (reasoning≥4.5,
+judgment≥4.5, verification≥4.7) … incumbent, nothing else cleared them"* while
+a Codex target sat on the same bench — the Codex target was not rejected, it
+was never *considered*, and every number in that sentence was a guess.
+`route`'s candidate table now carries `"state": "no-row"` for exactly that
+case, and `"scores": "measured" | "legacy"` on every row.
+
+**Brian's ruling of 2026-09-01 (defaults, overturnable):**
+
+1. The class minimums are **ratified as they stand**. A measured row clears the
+   bar or it does not — possibly leaving a class with nothing eligible.
+   `measure` prints each incumbent's measured score beside its minimum so the
+   bar can be re-derived later with numbers in hand.
+2. A legacy row keeps routing **until a bench exists for its class**. From that
+   day it has **30 days**, disclosed on every routing record (`legacy row ·
+   bench available · N days left`), and then `route` refuses it with the word
+   `unmeasured`.
+3. **A seat may `measure`; only the founder's key may `propose`.** One
+   proposal, one signer.
 
 Stale is never a licence to guess. In the same turn, publish and ask:
 
@@ -181,6 +222,46 @@ Then carry on with any class the check confirmed is still satisfiable; a batch
 is blocked only when the class you need is the stale one. A docs lane lands the
 row — you do not edit the registry mid-batch, because a registry that changes
 under a running batch cannot explain why any seat in it was hired.
+
+### 7a. Turning an opinion into a number
+
+**A row carries MEASURED scores or none. No lane invents a number.** The way a
+row earns one:
+
+```
+bee sessions registry measure --role verifier --runtime claude-primary \
+  --model 'opus[1m]' --channel <uuid> --session-ref <umbrella-uuid> --repeat 3
+bee sessions registry propose --role verifier --runtime claude-primary \
+  --model 'opus[1m]' --channel <uuid> --session-ref <umbrella-uuid> \
+  --founder <64-hex> [--write]
+```
+
+`measure` runs `team/registry-bench/<role>` through the **real runtime** and
+publishes, per task per run, a 44246 gate row carrying the argv it spawned, one
+finding per failed criterion, and a checkpoint carrying the bench manifest. It
+writes nothing to the registry.
+
+Scoring is **mechanical** — a closed set of checks read off the run's artifacts,
+and no model judges anything. That is the whole reason two runs agree:
+
+```
+raw   = Σ(weight of passed criteria tagged with the trait) / Σ(weight of all of them)
+score = round1(1.0 + 4.0 × raw)          # half-up, 1–5
+row   = median over --repeat runs, with n, min and max
+```
+
+A trait no criterion tags gets **no score**, never a zero. A spread of **1.0 or
+more** on any trait marks the set UNSTABLE and `propose` refuses it.
+
+`propose` reads the rows **back off the relay**, never the measuring run's
+memory, and refuses (exit 4) naming which check failed: too few runs, more than
+one signing key, a `benchHash` that moved, a trait the class gate reads that the
+bench does not evidence, or an unstable set. Traits the bench did not evidence
+**stay opinions**, and the disclosure says which are which — a half-measured row
+reading as measured is the same lie as a badge with no event behind it.
+
+`lead`, `architect`, `ui_designer`, `researcher` and `poker` ship as zero-task
+stubs, so `propose` refuses them by design until somebody writes their tasks.
 
 ## 8. Hire, then read the decision
 
