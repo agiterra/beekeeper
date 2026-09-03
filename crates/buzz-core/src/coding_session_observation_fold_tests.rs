@@ -10,10 +10,18 @@ const CHANNEL: &str = "d3e440ea-89f8-4aee-8a02-17edc3e7272e";
 const GENESIS: &str = "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b";
 
 fn context(assignments: Vec<String>) -> CodingSessionObservationFoldContext {
+    context_with_providers(assignments, None)
+}
+
+fn context_with_providers(
+    assignments: Vec<String>,
+    provider_pubkeys: Option<Vec<String>>,
+) -> CodingSessionObservationFoldContext {
     CodingSessionObservationFoldContext {
         session_ref: SESSION.to_owned(),
         genesis_ref: GENESIS.to_owned(),
         known_assignment_refs: assignments,
+        provider_pubkeys,
     }
 }
 
@@ -46,11 +54,33 @@ fn signed_for(
     assignment_ref: Option<&str>,
     body: Value,
 ) -> Event {
+    signed_with_source(
+        keys,
+        observation_type,
+        session,
+        genesis,
+        "declared",
+        assignment_ref,
+        body,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn signed_with_source(
+    keys: &Keys,
+    observation_type: &str,
+    session: &str,
+    genesis: &str,
+    source: &str,
+    assignment_ref: Option<&str>,
+    body: Value,
+) -> Event {
     let content = json!({
         "schema": CODING_SESSION_OBSERVATION_SCHEMA,
         "sessionRef": session,
         "genesisRef": genesis,
         "type": observation_type,
+        "source": source,
         "assignmentRef": assignment_ref.map_or(Value::Null, |value| json!(value)),
         "body": body,
     })
@@ -488,4 +518,343 @@ fn a_finding_inside_the_bound_reports_zero_dropped() {
     assert_eq!(fold.findings[0].event_ids.len(), 2);
     assert_eq!(fold.findings[0].dropped_event_ids, 0);
     assert_eq!(fold.truncated.entry_event_ids, 0);
+}
+
+#[test]
+fn an_observed_gate_row_and_a_declared_one_never_merge() {
+    // Brian's 2026-09-02 ruling, in the fold: the mechanism's measurement and
+    // the subject's claim about the same gate are two rows, and neither is
+    // allowed to become the other. Same author on purpose — the realistic case
+    // is two different keys, so keying on the author alone would pass this for
+    // a reason that is only a coincidence.
+    let author = Keys::generate();
+    let declared = signed_with_source(
+        &author,
+        "gate",
+        SESSION,
+        GENESIS,
+        "declared",
+        None,
+        json!({ "rows": [gate_row("cargo test -p buzz-cli", "passed")] }),
+    );
+    let observed = signed_with_source(
+        &author,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test -p buzz-cli", "failed")] }),
+    );
+
+    let fold = fold_coding_session_observations(&[declared, observed], &context(Vec::new()));
+    assert_eq!(fold.gates.len(), 2, "{:?}", fold.gates);
+    let observed_row = fold
+        .gates
+        .iter()
+        .find(|entry| entry.source == CodingSessionObservationSource::Observed)
+        .expect("the observed row survives");
+    let declared_row = fold
+        .gates
+        .iter()
+        .find(|entry| entry.source == CodingSessionObservationSource::Declared)
+        .expect("the declared row survives");
+    assert_eq!(
+        observed_row.row.outcome,
+        CodingSessionObservationGateOutcome::Failed
+    );
+    assert_eq!(
+        declared_row.row.outcome,
+        CodingSessionObservationGateOutcome::Passed
+    );
+}
+
+#[test]
+fn a_finding_keeps_its_provenance_apart_the_same_way() {
+    let author = Keys::generate();
+    let declared = signed_with_source(
+        &author,
+        "finding",
+        SESSION,
+        GENESIS,
+        "declared",
+        None,
+        finding("F1", "wont-fix"),
+    );
+    let observed = signed_with_source(
+        &author,
+        "finding",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        finding("F1", "found"),
+    );
+    let fold = fold_coding_session_observations(&[declared, observed], &context(Vec::new()));
+    assert_eq!(fold.findings.len(), 2, "{:?}", fold.findings);
+}
+
+#[test]
+fn the_provenance_word_is_a_closed_set_refused_by_name() {
+    let author = Keys::generate();
+    let invented = signed_with_source(
+        &author,
+        "gate",
+        SESSION,
+        GENESIS,
+        "inferred",
+        None,
+        json!({ "rows": [gate_row("just ci", "passed")] }),
+    );
+    let event_id = invented.id.to_hex();
+    let fold = fold_coding_session_observations(&[invented], &context(Vec::new()));
+    assert!(fold.gates.is_empty());
+    let ignored = fold
+        .ignored
+        .iter()
+        .find(|entry| entry.event_id == event_id)
+        .expect("an unknown provenance word is listed, never guessed at");
+    assert!(ignored.reason.contains("\"source\""), "{}", ignored.reason);
+    assert!(
+        ignored.reason.contains("\"observed\""),
+        "{}",
+        ignored.reason
+    );
+    assert!(
+        ignored.reason.contains("\"declared\""),
+        "{}",
+        ignored.reason
+    );
+}
+
+/// REVIEW-L5 **F1**, second half: a newer statement wins, but never silently.
+///
+/// The key is `(author, source, gate)` and newest-wins, which is right — a seat
+/// that re-runs a gate should show the newer result. What was wrong is that the
+/// displaced statement left no trace but an event id in a list: a `failed` row
+/// replaced by a `passed` row read exactly like a gate that had only ever
+/// passed. The count is now in `truncated`, and every surface says it.
+#[test]
+fn a_replaced_gate_row_is_counted_rather_than_silently_dropped() {
+    let author = Keys::generate();
+    let failed = signed_with_source(
+        &author,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test", "failed")] }),
+    );
+    let passed = signed_with_source(
+        &author,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test", "passed")] }),
+    );
+
+    let fold = fold_coding_session_observations(&[failed, passed], &context(Vec::new()));
+    assert_eq!(fold.gates.len(), 1, "newest still wins");
+    assert_eq!(
+        fold.gates[0].row.outcome,
+        CodingSessionObservationGateOutcome::Passed
+    );
+    assert_eq!(
+        fold.truncated.displaced_gates, 1,
+        "the statement it replaced is counted, not hidden"
+    );
+    assert!(fold.truncated.any());
+}
+
+/// The same rule for findings: a disposition that replaced another says so.
+#[test]
+fn a_replaced_finding_is_counted_too() {
+    let author = Keys::generate();
+    let found = signed_with_source(
+        &author,
+        "finding",
+        SESSION,
+        GENESIS,
+        "declared",
+        None,
+        finding("F1", "found"),
+    );
+    let wont_fix = signed_with_source(
+        &author,
+        "finding",
+        SESSION,
+        GENESIS,
+        "declared",
+        None,
+        finding("F1", "wont-fix"),
+    );
+    let fold = fold_coding_session_observations(&[found, wont_fix], &context(Vec::new()));
+    assert_eq!(fold.findings.len(), 1);
+    assert_eq!(fold.truncated.displaced_findings, 1);
+}
+
+/// A first statement displaces nothing, and says zero rather than nothing.
+#[test]
+fn a_single_statement_displaces_nothing() {
+    let author = Keys::generate();
+    let only = signed_with_source(
+        &author,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test", "failed")] }),
+    );
+    let fold = fold_coding_session_observations(&[only], &context(Vec::new()));
+    assert_eq!(fold.truncated.displaced_gates, 0);
+    assert_eq!(fold.truncated.displaced_findings, 0);
+    assert!(!fold.truncated.any());
+}
+
+// -- REVIEW-L5 F2: `observed` is a claim until the signer is checked ---------
+
+/// A seat that signs its own row `observed` is folded as **declared**.
+///
+/// The CLI refuses to mint one (`observations.rs`, deliberately no flag), but
+/// the wire does not, and the reader ranked observed rows first and printed
+/// "the record names the watcher" over them. Provenance a reader trusts has to
+/// be *verified*, not self-asserted.
+#[test]
+fn an_observed_row_signed_by_a_non_provider_is_folded_as_declared_and_disclosed() {
+    let provider = Keys::generate();
+    let seat = Keys::generate();
+    let forged = signed_with_source(
+        &seat,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test", "passed")] }),
+    );
+    let forged_id = forged.id.to_hex();
+    let genuine = signed_with_source(
+        &provider,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo clippy", "failed")] }),
+    );
+
+    let fold = fold_coding_session_observations(
+        &[forged, genuine],
+        &context_with_providers(Vec::new(), Some(vec![provider.public_key().to_hex()])),
+    );
+
+    let seat_row = fold
+        .gates
+        .iter()
+        .find(|entry| entry.row.gate == "cargo test")
+        .expect("the row is still folded — a bad claim costs only its claim");
+    assert_eq!(
+        seat_row.source,
+        CodingSessionObservationSource::Declared,
+        "a claim nobody can verify is a claim"
+    );
+    let provider_row = fold
+        .gates
+        .iter()
+        .find(|entry| entry.row.gate == "cargo clippy")
+        .expect("the provider's row");
+    assert_eq!(
+        provider_row.source,
+        CodingSessionObservationSource::Observed
+    );
+
+    assert_eq!(fold.misclaimed_observed.len(), 1);
+    assert_eq!(fold.misclaimed_observed[0].event_id, forged_id);
+    assert_eq!(
+        fold.misclaimed_observed[0].author_pubkey,
+        seat.public_key().to_hex()
+    );
+    assert!(fold.provenance_checked);
+}
+
+/// A caller that supplied no provider set has not verified anything, and the
+/// fold says so rather than downgrading every row (unknown is not false).
+#[test]
+fn no_provider_set_leaves_the_claim_standing_and_says_it_was_not_checked() {
+    let seat = Keys::generate();
+    let claimed = signed_with_source(
+        &seat,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test", "passed")] }),
+    );
+    let fold = fold_coding_session_observations(&[claimed], &context(Vec::new()));
+    assert_eq!(
+        fold.gates[0].source,
+        CodingSessionObservationSource::Observed,
+        "nothing was checked, so nothing is contradicted"
+    );
+    assert!(fold.misclaimed_observed.is_empty());
+    assert!(
+        !fold.provenance_checked,
+        "and the surface must be able to say the check did not run"
+    );
+}
+
+/// An empty provider set is a real answer — this session has no provider whose
+/// word counts — so every `observed` claim in it is unverified.
+#[test]
+fn an_empty_provider_set_verifies_nobody() {
+    let seat = Keys::generate();
+    let claimed = signed_with_source(
+        &seat,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [gate_row("cargo test", "passed")] }),
+    );
+    let fold = fold_coding_session_observations(
+        &[claimed],
+        &context_with_providers(Vec::new(), Some(Vec::new())),
+    );
+    assert_eq!(
+        fold.gates[0].source,
+        CodingSessionObservationSource::Declared
+    );
+    assert_eq!(fold.misclaimed_observed.len(), 1);
+    assert!(fold.provenance_checked);
+}
+
+/// A *declared* row from the provider stays declared — the check only ever
+/// removes an unearned claim, never adds one.
+#[test]
+fn the_check_never_promotes_a_declared_row() {
+    let provider = Keys::generate();
+    let declared = signed_with_source(
+        &provider,
+        "gate",
+        SESSION,
+        GENESIS,
+        "declared",
+        None,
+        json!({ "rows": [gate_row("cargo test", "passed")] }),
+    );
+    let fold = fold_coding_session_observations(
+        &[declared],
+        &context_with_providers(Vec::new(), Some(vec![provider.public_key().to_hex()])),
+    );
+    assert_eq!(
+        fold.gates[0].source,
+        CodingSessionObservationSource::Declared
+    );
+    assert!(fold.misclaimed_observed.is_empty());
 }

@@ -51,6 +51,11 @@ function fold(overrides = {}) {
       record: record(),
     },
     excluded: [],
+    // REVIEW-L2 F15 (L5.5): the claimed grants the native boundary refused
+    // because no verified kind-44228 supported them. Present and empty is the
+    // ordinary case — an adapter that stopped disclosing it would read exactly
+    // like one where nothing was refused.
+    refusedGrants: [],
     enforcement: ENFORCEMENT,
     ...overrides,
   };
@@ -149,6 +154,7 @@ test("L2.3: the refused list is bounded and says what it dropped", () => {
 test("L2.3: an adapter that stops disclosing a key is a loud failure", () => {
   for (const broken of [
     { ...fold(), excluded: undefined },
+    { ...fold(), refusedGrants: undefined },
     { ...fold(), enforcement: undefined },
     { ...fold(), schema: "buzz-coding-session-policy-adapter/v1" },
     { ...fold(), implementation: "desktop" },

@@ -37,6 +37,7 @@ import type { CodingSessionParticipantAccent } from "./codingSessionParticipantA
 export * from "./codingSessionRouteTypes";
 import type {
   CodingSessionRoute,
+  CodingSessionRouteGateRow,
   CodingSessionRouteHere,
   CodingSessionRouteHire,
   CodingSessionRouteParticipant,
@@ -143,6 +144,16 @@ export function deriveCodingSessionRoute(input: {
   deliveries?: readonly CodingSessionTeamWakeDelivery[];
   seatAuthorities?: readonly CodingSessionSeatAuthority[];
   hires?: readonly CodingSessionRouteHire[];
+  /**
+   * Folded kind-44246 gate rows (L5.6).
+   *
+   * A gate row is a signed event the stream itself renders — the Audit tab's
+   * `Gate rows` section and the Inspector's `Structured tests` card — so it
+   * earns a sign under R1. Checkpoints, findings and phase timings do not:
+   * they would flood the gutter, and none of them is a fact worth interrupting
+   * a reader for.
+   */
+  gateRows?: readonly CodingSessionRouteGateRow[];
   /**
    * Unix seconds of the rows currently inside the stream's viewport. Local,
    * not wire — this is the one input that is about the reader rather than the
@@ -319,6 +330,34 @@ export function deriveCodingSessionRoute(input: {
         sourceEventId: row.meta.sourceEventId,
       });
     }
+  }
+
+  // L5.6 — one sign per folded gate row, on its author's road, in the row's
+  // own word. A **failed** gate is an attention sign: it is the one thing a
+  // person watching a team most needs to be interrupted for, and live-run
+  // finding 26 is what happens when nobody is. No bridge: a gate row names no
+  // counterparty, and an arrow to nowhere is a mark with nothing behind it.
+  for (const gateRow of input.gateRows ?? []) {
+    if (gateRow.at === null) continue;
+    const road = roadForActor(gateRow.authorPubkey);
+    signs.push({
+      key: `route-gate:${gateRow.key}`,
+      road,
+      at: gateRow.at,
+      kind: "gate",
+      // The row's own outcome, never a second vocabulary for the same fact.
+      word: gateRow.outcome,
+      title: `${gateRow.gate} · ${gateRow.outcome} · ${routeTimeLabel(gateRow.at)}`,
+      sourceEventId: gateRow.sourceEventId,
+      weight: gateRow.outcome === "failed" ? "attention" : "standard",
+      tone: gateRow.outcome === "failed" ? "critical" : null,
+      timeSource: "signed",
+      requiresDecision: false,
+      // The Audit tab renders these, not the stream, so there is no stream row
+      // to reveal. `null` is the honest answer, and it is what the delivery and
+      // seat-authority signs already say for the same reason.
+      revealKey: null,
+    });
   }
 
   // R4 delivery signs, and R5/§9.4.3's measured queued stretch. Only a delivery

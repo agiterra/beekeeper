@@ -2384,3 +2384,170 @@ still governs a map taller than the rail.
 > sentence obsolete. Kept out of L4 because it is the one item that adds a wire
 > consumer, and a lane that ships half of one ships a surface that reads some
 > observations and silently drops the rest.
+
+---
+
+## 24. 2026-09-02 (batch 3, lane L5) — the Audit tab becomes the observer's screen
+
+Kind 44246 landed in L1 with no Desktop consumer, by design. This is that
+consumer, plus the ruling that changed what the kind carries: **no observability
+path may depend on asking an agent to report** (Brian, 2026-09-02). Live-run
+finding 26 is the case — a seat reported `cargo test -p buzz-cli` green after
+running one test *file*, a verifier reproduced red on the same patch, and
+nothing on any screen could say which was right.
+
+### 24.1 One Rust fold, one exact-field decoder, one adapter-generated fixture
+
+TypeScript never folds 44246. `fold_coding_session_observations_command`
+(`desktop/src-tauri/src/commands/coding_session_observation_fold.rs`) calls
+`buzz_core::fold_coding_session_observations` and flattens its answer
+unchanged; `codingSessionObservationWire.ts` checks shape only, refusing one
+extra key, one missing key and one `null`-where-a-value-is-required **by name**.
+Its test reads `codingSessionObservationFoldAdapterResponse.fixture.json`, which
+the **Rust test generates** — the B1c/B3 pattern — so a field the adapter renames
+and the decoder does not is a failing Rust test, not a silently empty card.
+A `truncated` count renders as truncation, an `ignored` entry is surfaced with
+its reason, and neither is ever a silence.
+
+### 24.2 `source: "observed" | "declared"` — provenance, and it never merges
+
+Added to the 44246 body (seven top-level keys now, not six; NIP-CSOB updated).
+It is a **required content key**, so this was a breaking schema change: an event
+signed by a build that predates it omits `source` and folds to `ignored` with
+that reason. Nothing had published a 44246 anywhere at the time, so the cost was
+zero -- but the wire doc says so plainly rather than claiming a compatibility it
+does not have (REVIEW-L5 F5).
+`observed` means a mechanism that was **not the subject** wrote the record;
+`declared` means the subject said it about itself. The fold's dedupe keys carry
+it — `(author, source, gate)` and `(author, source, findingId)` — so a claim can
+never take the place of a measurement.
+
+The session provider publishes `observed` gate rows from the seat's own tool
+calls (`crates/buzz-session-provider/src/gate_observer.rs`): it pairs a
+recognised gate command with its own result, signs the row with the **provider
+instance's** key, and publishes it. The seat is not consulted.
+`bee sessions observe gate` stays `declared`, and has deliberately no flag to
+say otherwise.
+
+**The matcher reads argv, never the text of the line (REVIEW-L5 F1).** The
+command is shell-split; anything it cannot read as plain words plus at most one
+`cd ... &&` -- a pipe, a redirect, a `;`, a backtick, a `$(`, an unbalanced
+quote -- is refused rather than labelled, because the observer cannot say which
+segment of a composed line produced the exit it is about to read. `nice [-n N]`
+and `env [VAR=VALUE ...]` are stripped; then the head must match a closed table
+of `(program, subcommand)` pairs: `cargo fmt|clippy|test`,
+`pnpm test|typecheck|lint`, `just check|test|ci`. `grep -rn 'cargo test' docs/`,
+`echo "cargo test"`, `git commit -m 'cargo test green'` and `pnpm add ...` match
+nothing. The first version matched the gate words *anywhere in the line*, so
+each of those minted a provider-signed `observed` **passed** row -- and because
+newest-wins keys on `(author, source, gate)`, that false green displaced a
+genuine `failed` row as the one both surfaces showed. A seat could bury the
+exact failure the record exists to expose.
+
+**`observed` is honoured only when the signer is verified (REVIEW-L5 F2).** The
+word is self-asserted on the wire. The fold takes the session's
+provider-instance pubkeys -- Desktop supplies each execution's `signerPubkey` --
+and a row claiming `observed` from a signer outside that set is folded as
+`declared` and listed under `misclaimedObserved`, with the Audit tab naming it:
+*"signed by {who}, which is not a provider instance for this session. Shown as
+declared."* A caller that resolved no provider set has verified nothing, and the
+fold says `provenanceChecked: false` rather than letting the claim pass as a
+measurement; `bee sessions observations` is such a caller today, and prints it.
+
+**Newest-wins is never silent (REVIEW-L5 F1).** A later statement replacing an
+earlier one for the same key is counted in `truncated.displacedGates` /
+`displacedFindings`, and the Audit tab prints *"1 earlier gate statement was
+replaced by a later one from the same author."* A `failed` row replaced by a
+`passed` one must never read like a gate that had only ever passed.
+
+**Known limit, disclosed on the surface.** A 44246 names the key that *signed*
+it and has no field for the subject it watched, so an observed row cannot be
+attributed to a seat. The Audit tab groups by author and labels such a block
+*"the record names the watcher, not the seat whose work it watched"* rather than
+guessing. The remedy is a `subjectPubkey` on the body for observed rows; it is a
+named follow-on, not shipped here.
+
+### 24.3 The Audit tab, per seat and per phase
+
+`CodingSessionObservationSections.tsx` renders four sections — checkpoints, gate
+rows, findings, phase timing — inside each author's block, above the five
+transcript-derived sections the tab already had. Everything carrying a phase
+word is in §1e's **declared** order (`planning`, `red`, `green`, `gates`,
+`reporting`), never arrival order and never author time; a phase timing whose
+name is not a declared word sorts after those that are and keeps its own word.
+
+Every row prints its provenance word -- checkpoints, gate rows, findings **and
+phase timings** (REVIEW-L5 F7): the block-level "watched and signed by this key"
+line appears only when every row in a block is observed, so in a mixed block a
+row without its own word would show no provenance at all.
+
+Gate rows carry `gate`, the outcome word, the **command verbatim**, and the
+summary as a monospaced tail folded at eight lines behind `Show all` (the fold
+opens; the 200-line ceiling still says what it dropped). `durationMs` is
+labelled *the author's own measurement*; a `null` reads `not reported`, never
+`0s`. Findings show `findingId`, title, disposition and the count of `refs`,
+with a `decisionRef` resolved through the fold this surface holds and otherwise
+marked unresolved. Phase timing is a duration list labelled *reported by {Who}*,
+with **no bar** — nothing here sets a scale. Every section states its own
+emptiness (`No checkpoint yet` / `No gate row yet` / `No finding recorded` /
+`No phase timing`), every collection is bounded at 50 rows per seat per section
+with the count in words, and no state word is carried by colour alone.
+
+A dangling `assignmentRef` renders in `unresolved` and **excludes nothing** — an
+observation cannot deny anything. A seat with observations and no assignment
+still gets a block.
+
+### 24.4 `Structured tests` reads gate rows
+
+The card said `Nothing on the wire reports tests` — true when written, false the
+day L1 landed (critique A3). It now renders the session's gate rows through the
+same component the Audit tab uses, **one shared source**, and with none reads
+`No gate row yet` beside the count of 44244 `report.tests[]` entries it holds.
+Those entries are labelled *claimed in a report by {Who}* and are never merged
+into the gate rows: a claim inside a report and a signed gate row are different
+facts.
+
+### 24.5 Conversation resolves a wake pointer from cache, and never fetches
+
+REPORT-L2 §6c left Conversation's §1f line unresolved because that lens
+subscribes to no fold, and REVIEW-L2 advised against giving it one. **Ruling:
+resolve from cache, never fetch.** Mission remembers the operation index it
+folded, keyed by channel + umbrella + genesis + founder, one entry; Conversation
+reads that key or nothing. Warm → the resolved §1f line. Cold → §1f's
+`this lens holds no session records; open Mission to read it.` No invoke, no
+fetch and no subscription in either case. Both sentences are true about what the
+lens holds, which is the test.
+
+### 24.6 The policy command stops trusting a TypeScript authority projection
+
+REVIEW-L2 F15, as corrected by REVIEW-L5 F3.
+`fold_coding_session_policies_command` receives the signed kind-44228 events
+beside the `policyGrants` a TypeScript projection derived, and **refuses any
+claimed grant no verified transition supports** — wrong id, wrong grantee,
+wrong verb, or **a transition belonging to another umbrella** — listing each
+refusal by transition id and reason.
+
+Stated exactly, because the first version of this paragraph overclaimed: the
+boundary **cannot invent a grant**. It can still be handed a chain that *omits*
+one, and `fold_coding_session_policies` turns standing **off** on a revoke, so
+an omitted revoke would have left its grantee steering. It therefore **fails
+closed**: any refusal at all drops the whole projection, leaving only the
+founder, who needs no grant. `acceptedAt` remains the caller's unverified word,
+because acceptance is a fact about a relay receipt this boundary is not given.
+
+It does **not** re-derive the chain: a second implementation beside
+`crates/buzz-session-provider/src/authority.rs` would be the same drift with
+more code. **The real fix — lifting that file into `buzz-core` so provider,
+CLI and Desktop share one chain — is a named follow-on. This is a narrowing,
+not a closure.**
+
+### 24.7 The Route rail signs for gate rows
+
+A sign exists only for a row the stream itself renders, and a 44246 gate row is
+a signed event two surfaces render, so it qualifies. One sign per gate row on
+its author's road, its word the row's **own** outcome, and a `failed` row is an
+attention sign that survives the fold to the scrubber's 40 px track. Checkpoints,
+findings and phase timings get **no** signs: they would flood the gutter L4
+made legible. A row with no signed `created_at` draws nothing — the rail never
+invents a moment — and a row signed by nobody on the map is off-road, never the
+founder's. Per-road limits and truncation are unchanged.

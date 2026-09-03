@@ -1967,6 +1967,12 @@ function policyFoldResponse(): Record<string, unknown> {
           "signed by an identity that could not steer this umbrella when it was published",
       },
     ],
+    // L5.5 / REVIEW-L2 F15: the native fold now also discloses the claimed
+    // authority grants it refused because no verified kind-44228 supported
+    // them. Required, not optional — an adapter that stopped disclosing it
+    // would read exactly like one where nothing was refused — so this fixture
+    // learns the key. **The only line L5 changed in this file.**
+    refusedGrants: [],
     enforcement:
       "a published policy is a stated intention, not an enforced limit: only budget.turns is enforced (at the provider's turn gate); every other field is read and shown, never counted",
   };

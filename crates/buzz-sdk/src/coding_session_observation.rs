@@ -78,7 +78,7 @@ mod tests {
     use buzz_core::coding_session_observation::{
         CodingSessionObservationBody, CodingSessionObservationGate,
         CodingSessionObservationGateOutcome, CodingSessionObservationGateRow,
-        CodingSessionObservationType,
+        CodingSessionObservationSource, CodingSessionObservationType,
     };
     use nostr::Keys;
 
@@ -93,6 +93,7 @@ mod tests {
             session_ref: SESSION.to_owned(),
             genesis_ref: "12".repeat(32),
             observation_type: CodingSessionObservationType::Gate,
+            source: CodingSessionObservationSource::Declared,
             assignment_ref: None,
             body: CodingSessionObservationBody::Gate(CodingSessionObservationGate {
                 rows: vec![CodingSessionObservationGateRow {
@@ -132,6 +133,12 @@ mod tests {
         // Absent is not null: an unset optional is on the wire as JSON null.
         assert!(
             event.content.contains("\"assignmentRef\":null"),
+            "{}",
+            event.content
+        );
+        // Provenance is on the wire in words, never inferred from the signer.
+        assert!(
+            event.content.contains("\"source\":\"declared\""),
             "{}",
             event.content
         );

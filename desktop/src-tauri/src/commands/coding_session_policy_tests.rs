@@ -427,11 +427,60 @@ fn fold_request(
         genesis_ref: genesis(),
         founder_pubkey: founder.public_key().to_hex(),
         grants,
+        transitions: Vec::new(),
         events: events
             .iter()
             .map(|event| serde_json::to_value(event).expect("serialize event"))
             .collect(),
     }
+}
+
+/// One signed kind-44228, and the grant a projection would read off it.
+///
+/// The pair is what REVIEW-L2 F15 is about: the projection's claim, and the
+/// signature that either supports it or does not.
+fn signed_grant(
+    signer: &Keys,
+    grantee: &Keys,
+    transition: &str,
+    accepted_at: u64,
+) -> (nostr::Event, CodingSessionPolicyFoldGrant) {
+    let content = serde_json::json!({
+        "genesisRef": genesis(),
+        "prevAccepted": serde_json::Value::Null,
+        "seq": 1,
+        "type": transition,
+        "granteePubkey": grantee.public_key().to_hex(),
+    })
+    .to_string();
+    let event = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        content,
+    )
+    .sign_with_keys(signer)
+    .expect("sign transition");
+    let grant = CodingSessionPolicyFoldGrant {
+        transition_event_id: event.id.to_hex(),
+        grantee: grantee.public_key().to_hex(),
+        accepted_at,
+        transition_type: transition.to_owned(),
+    };
+    (event, grant)
+}
+
+/// A fold request carrying both halves: the projection and its signatures.
+fn fold_request_with_transitions(
+    founder: &Keys,
+    events: Vec<nostr::Event>,
+    grants: Vec<CodingSessionPolicyFoldGrant>,
+    transitions: Vec<nostr::Event>,
+) -> CodingSessionPolicyFoldRequest {
+    let mut request = fold_request(founder, events, grants);
+    request.transitions = transitions
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("serialize transition"))
+        .collect();
+    request
 }
 
 #[test]
@@ -473,12 +522,9 @@ fn an_operator_granted_before_the_record_may_set_policy() {
     // of carrying the receipt stamps across the boundary.
     let founder = fixed_keys(0x11);
     let operator = fixed_keys(0x33);
-    let grants = vec![CodingSessionPolicyFoldGrant {
-        grantee: operator.public_key().to_hex(),
-        accepted_at: 1_800_000_050,
-        transition_type: "grant-operator".to_owned(),
-    }];
-    let after = fold_adapter(fold_request(
+    let (transition, grant) = signed_grant(&founder, &operator, "grant-operator", 1_800_000_050);
+    let grants = vec![grant];
+    let after = fold_adapter(fold_request_with_transitions(
         &founder,
         vec![signed_policy_at(
             &operator,
@@ -486,6 +532,7 @@ fn an_operator_granted_before_the_record_may_set_policy() {
             1_800_000_100,
         )],
         grants.clone(),
+        vec![transition],
     ))
     .expect("fold");
     assert_eq!(
@@ -555,6 +602,7 @@ fn a_forged_policy_never_reaches_the_fold_and_is_listed_as_undecodable() {
         genesis_ref: genesis(),
         founder_pubkey: founder.public_key().to_hex(),
         grants: vec![],
+        transitions: vec![],
         events: vec![wire],
     })
     .expect("fold");
@@ -573,6 +621,7 @@ fn a_record_for_another_umbrella_is_refused_by_name() {
         genesis_ref: genesis(),
         founder_pubkey: founder.public_key().to_hex(),
         grants: vec![],
+        transitions: vec![],
         events: vec![serde_json::to_value(signed_policy_at(
             &founder,
             minimal_policy(40),
@@ -601,6 +650,7 @@ fn an_unknown_transition_word_is_refused_by_name_rather_than_ignored() {
         &founder,
         vec![],
         vec![CodingSessionPolicyFoldGrant {
+            transition_event_id: "ef".repeat(32),
             grantee: "ab".repeat(32),
             accepted_at: 1,
             transition_type: "grant-everything".to_owned(),
@@ -622,4 +672,264 @@ fn the_enforcement_sentence_names_the_one_enforced_field_and_nothing_else() {
     assert!(POLICY_ENFORCEMENT_DISCLOSURE
         .contains("Every other field is read and shown, never counted"));
     assert!(!POLICY_ENFORCEMENT_DISCLOSURE.contains("until a consumer exists"));
+}
+
+// -- REVIEW-L2 F15 -----------------------------------------------------------
+
+#[test]
+fn a_claimed_grant_no_signed_transition_supports_is_refused_by_id() {
+    // The defect: the standing rule runs in Rust but was handed a grant list a
+    // TypeScript projection derived, so a drift there made Desktop disagree
+    // with the provider about whose ceiling is real. A projection may now only
+    // fail to see a grant; it can never invent one.
+    let founder = fixed_keys(0x11);
+    let stranger = fixed_keys(0x44);
+    let invented = CodingSessionPolicyFoldGrant {
+        transition_event_id: "ab".repeat(32),
+        grantee: stranger.public_key().to_hex(),
+        accepted_at: 1_800_000_050,
+        transition_type: "grant-operator".to_owned(),
+    };
+    let response = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &stranger,
+            minimal_policy(99),
+            1_800_000_100,
+        )],
+        vec![invented],
+        Vec::new(),
+    ))
+    .expect("fold");
+
+    assert_eq!(response.refused_grants.len(), 1);
+    assert_eq!(
+        response.refused_grants[0].transition_event_id,
+        "ab".repeat(32)
+    );
+    assert!(
+        response.refused_grants[0].reason.contains("no verified"),
+        "{}",
+        response.refused_grants[0].reason
+    );
+    // The fold proceeded without it, so the stranger's ceiling is refused
+    // exactly as it would be with no claimed grant at all.
+    assert!(response.selected.is_none(), "{:?}", response.selected);
+}
+
+#[test]
+fn a_verified_grant_applies_exactly_as_it_did_before() {
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let (transition, grant) = signed_grant(&founder, &operator, "grant-operator", 1_800_000_050);
+    let response = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(12),
+            1_800_000_100,
+        )],
+        vec![grant],
+        vec![transition],
+    ))
+    .expect("fold");
+
+    assert!(response.refused_grants.is_empty());
+    assert_eq!(
+        response
+            .selected
+            .expect("the operator's ceiling stands")
+            .record
+            .budget
+            .expect("budget")
+            .turns,
+        Some(12)
+    );
+}
+
+#[test]
+fn a_grant_whose_signed_transition_names_someone_else_is_refused() {
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let stranger = fixed_keys(0x44);
+    let (transition, mut grant) =
+        signed_grant(&founder, &operator, "grant-operator", 1_800_000_050);
+    // The projection claims the *stranger* was granted, citing a transition
+    // that granted the operator.
+    grant.grantee = stranger.public_key().to_hex();
+    let response = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &stranger,
+            minimal_policy(99),
+            1_800_000_100,
+        )],
+        vec![grant],
+        vec![transition],
+    ))
+    .expect("fold");
+
+    assert_eq!(response.refused_grants.len(), 1);
+    assert!(
+        response.refused_grants[0].reason.contains("grants"),
+        "{}",
+        response.refused_grants[0].reason
+    );
+    assert!(response.selected.is_none());
+}
+
+#[test]
+fn a_grant_whose_signed_transition_is_a_different_verb_is_refused() {
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let (transition, mut grant) = signed_grant(&founder, &operator, "grant-viewer", 1_800_000_050);
+    // The projection upgrades a viewer grant into an operator grant.
+    grant.transition_type = "grant-operator".to_owned();
+    let response = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(12),
+            1_800_000_100,
+        )],
+        vec![grant],
+        vec![transition],
+    ))
+    .expect("fold");
+
+    assert_eq!(response.refused_grants.len(), 1);
+    assert!(
+        response.refused_grants[0].reason.contains("is a"),
+        "{}",
+        response.refused_grants[0].reason
+    );
+    assert!(response.selected.is_none());
+}
+
+#[test]
+fn a_forged_transition_supports_nothing() {
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let (transition, grant) = signed_grant(&founder, &operator, "grant-operator", 1_800_000_050);
+    let mut forged = serde_json::to_value(&transition).expect("serialize");
+    forged["sig"] = json!("00".repeat(64));
+    let mut request = fold_request(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(12),
+            1_800_000_100,
+        )],
+        vec![grant],
+    );
+    request.transitions = vec![forged];
+    let response = fold_adapter(request).expect("fold");
+
+    assert_eq!(response.refused_grants.len(), 1);
+    assert!(response.selected.is_none());
+}
+
+// -- REVIEW-L5 F3 -----------------------------------------------------------
+
+/// A signed 44228 from **another umbrella** supports nothing here.
+///
+/// `verified_transitions` checked kind, signature and decodability and never
+/// compared the transition's own `genesisRef` to the request's — and both the
+/// projection and the transition list come from the same TypeScript caller,
+/// which is precisely the trust boundary F15 is about.
+#[test]
+fn a_transition_from_another_umbrella_supports_no_grant_here() {
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let content = serde_json::json!({
+        "genesisRef": "ab".repeat(32),
+        "prevAccepted": serde_json::Value::Null,
+        "seq": 1,
+        "type": "grant-operator",
+        "granteePubkey": operator.public_key().to_hex(),
+    })
+    .to_string();
+    let foreign = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        content,
+    )
+    .sign_with_keys(&founder)
+    .expect("sign");
+    let grant = CodingSessionPolicyFoldGrant {
+        transition_event_id: foreign.id.to_hex(),
+        grantee: operator.public_key().to_hex(),
+        accepted_at: 1_800_000_050,
+        transition_type: "grant-operator".to_owned(),
+    };
+
+    let response = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(99),
+            1_800_000_100,
+        )],
+        vec![grant],
+        vec![foreign],
+    ))
+    .expect("fold");
+
+    assert_eq!(response.refused_grants.len(), 1);
+    assert!(
+        response.refused_grants[0]
+            .reason
+            .contains("another umbrella"),
+        "{}",
+        response.refused_grants[0].reason
+    );
+    assert!(
+        response.selected.is_none(),
+        "the operator never had standing here"
+    );
+}
+
+/// Standing needs the **whole** chain the request claims, so an omitted revoke
+/// fails closed rather than leaving the grantee steering.
+#[test]
+fn a_chain_missing_one_of_its_transitions_grants_nothing() {
+    let founder = fixed_keys(0x11);
+    let operator = fixed_keys(0x33);
+    let (granted, grant) = signed_grant(&founder, &operator, "grant-operator", 1_800_000_050);
+    let (revoked, revoke) = signed_grant(&founder, &operator, "revoke", 1_800_000_060);
+
+    // The honest chain: granted, then revoked. The operator may not steer.
+    let whole = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(99),
+            1_800_000_100,
+        )],
+        vec![grant.clone(), revoke.clone()],
+        vec![granted.clone(), revoked.clone()],
+    ))
+    .expect("fold");
+    assert!(
+        whole.selected.is_none(),
+        "a revoked operator has no standing"
+    );
+
+    // The same chain with the revoke's *signed event* withheld: the claim is
+    // refused rather than silently applied, so the ceiling still does not land.
+    let missing = fold_adapter(fold_request_with_transitions(
+        &founder,
+        vec![signed_policy_at(
+            &operator,
+            minimal_policy(99),
+            1_800_000_100,
+        )],
+        vec![grant, revoke],
+        vec![granted],
+    ))
+    .expect("fold");
+    assert_eq!(missing.refused_grants.len(), 1);
+    assert!(
+        missing.selected.is_none(),
+        "an omitted revoke must not restore standing"
+    );
 }

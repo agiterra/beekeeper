@@ -384,3 +384,106 @@ function clampSubject(value: string | null): string | null {
     ? collapsed
     : `${collapsed.slice(0, MAX_CODING_SESSION_WAKE_READING_SUBJECT_CHARS - 1)}…`;
 }
+
+// -- L5.4: Conversation resolves from cache, and never fetches --------------
+
+/**
+ * The newest Mission operation index, keyed by the exact scope it was folded
+ * for.
+ *
+ * **A cache, not a subscription.** REPORT-L2 6c left Conversation's wake line
+ * unresolved because that lens subscribes to no fold, and REVIEW-L2 advised
+ * against giving it one - a per-session live relay subscription in the
+ * one-seat view is a real cost, and a per-pointer resolve is worse: the answer
+ * is a property of the *whole* 44244 set the fold takes, so it is either N
+ * folds or a cache that is the subscription renamed.
+ *
+ * What this is instead costs nothing. When Mission has already folded this
+ * session, Conversation reads that fold's index and prints the resolved line.
+ * When it has not, the amended line `this lens holds no session records; open
+ * Mission to read it.` stands. Both sentences are true about what the lens
+ * holds, which is the test.
+ *
+ * **One entry.** Not a map that grows: the reader is looking at one session,
+ * and a second entry would only ever be a session nobody is looking at. The
+ * key carries the channel UUID, the umbrella, the genesis and the founder, so
+ * a hit is the same session by construction and a community switch cannot
+ * produce one.
+ */
+let cachedWakeOperations: {
+  key: string;
+  operations: CodingSessionWakeOperationIndex;
+} | null = null;
+
+const EMPTY_WAKE_OPERATIONS: CodingSessionWakeOperationIndex = new Map();
+
+/** The exact scope a cached index belongs to. */
+export type CodingSessionWakeOperationScope = {
+  channelRef: string;
+  sessionRef: string | null;
+  genesisRef: string | null;
+  founderPubkey: string | null;
+};
+
+/**
+ * The cache key, or `null` for a scope that is not fully known.
+ *
+ * A partial scope never reads and never writes: an index stored under half a
+ * key could be handed to a different session that happens to share the half.
+ */
+export function codingSessionWakeOperationScopeKey(
+  scope: CodingSessionWakeOperationScope,
+): string | null {
+  if (
+    scope.sessionRef === null ||
+    scope.genesisRef === null ||
+    scope.founderPubkey === null
+  ) {
+    return null;
+  }
+  return [
+    scope.channelRef,
+    scope.sessionRef,
+    scope.genesisRef,
+    scope.founderPubkey,
+  ].join(" ");
+}
+
+/** Remember the index Mission just folded, for the lens that folds nothing. */
+export function rememberCodingSessionWakeOperations(
+  scope: CodingSessionWakeOperationScope,
+  operations: CodingSessionWakeOperationIndex,
+): void {
+  const key = codingSessionWakeOperationScopeKey(scope);
+  if (key === null || operations.size === 0) return;
+  cachedWakeOperations = { key, operations };
+}
+
+/**
+ * The cached index for this exact scope, or an empty one.
+ *
+ * Empty is the honest answer for a cold cache, and it is what makes the
+ * no-fold line fire. Nothing here fetches, invokes or subscribes.
+ */
+export function readCachedCodingSessionWakeOperations(
+  scope: CodingSessionWakeOperationScope,
+): CodingSessionWakeOperationIndex {
+  const key = codingSessionWakeOperationScopeKey(scope);
+  if (key === null || cachedWakeOperations?.key !== key) {
+    return EMPTY_WAKE_OPERATIONS;
+  }
+  return cachedWakeOperations.operations;
+}
+
+/**
+ * Forget the cached index.
+ *
+ * Community-scoped module state has to be resettable or it leaks across a
+ * community switch (AGENTS.md section "Community Switching"). The
+ * single-entry, fully-keyed design means a stale entry can never be *read* by
+ * another community; this exists so the memory is released and so
+ * `resetCommunityState()` has something to call.
+ */
+export function resetCodingSessionWakeOperations(): void {
+  cachedWakeOperations = null;
+}

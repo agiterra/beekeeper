@@ -33,6 +33,7 @@ export default defineConfig({
         "**/coding-sessions.spec.ts",
         "**/coding-session-mission-lens.spec.ts",
         "**/coding-session-mission-density.spec.ts",
+        "**/coding-session-observations.spec.ts",
         "**/crew-front-door.spec.ts",
         "**/role-packs-project.spec.ts",
         "**/coding-session-reachability.spec.ts",

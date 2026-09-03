@@ -28,7 +28,8 @@ use buzz_core::coding_session_observation::{
     CodingSessionObservationCheckpoint, CodingSessionObservationFinding,
     CodingSessionObservationFold, CodingSessionObservationFoldContext,
     CodingSessionObservationGate, CodingSessionObservationGateRow, CodingSessionObservationPayload,
-    CodingSessionObservationPhaseTiming, CODING_SESSION_OBSERVATION_SCHEMA,
+    CodingSessionObservationPhaseTiming, CodingSessionObservationSource,
+    CODING_SESSION_OBSERVATION_SCHEMA,
 };
 use buzz_core::kind::{KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_TEAM_TRANSACTION};
 use buzz_sdk::coding_session_observation::build_coding_session_observation;
@@ -230,6 +231,13 @@ async fn publish(
         session_ref: session_ref.to_owned(),
         genesis_ref,
         observation_type: body.observation_type(),
+        // `bee sessions observe` is a seat speaking about its own work, so
+        // every row it publishes is a **claim**. There is deliberately no flag
+        // to say otherwise: a subject that could label itself `observed` would
+        // erase the only distinction the field carries. Observed rows are
+        // published by the mechanism that watched — today the session provider,
+        // from the seat's own tool calls.
+        source: CodingSessionObservationSource::Declared,
         assignment_ref: assignment.map(str::to_owned),
         body,
     };
@@ -245,6 +253,7 @@ async fn publish(
             "eventId": event_id,
             "accepted": true,
             "type": observation_type,
+            "source": CodingSessionObservationSource::Declared.as_str(),
             "disclosure": OBSERVATION_DISCLOSURE,
         })
     );
@@ -297,6 +306,13 @@ pub async fn cmd_observations(
             session_ref: session_ref.to_owned(),
             genesis_ref,
             known_assignment_refs,
+            // REVIEW-L5 F2. This reader does not resolve the umbrella's
+            // provider instances, so it verifies no `observed` claim and says
+            // so (`provenanceChecked: false`) rather than either trusting a
+            // claim or downgrading an honest one. Resolving them here is one
+            // more query against the 44221 creates — a named follow-on, not a
+            // silence.
+            provider_pubkeys: None,
         },
     );
     match format {
@@ -318,8 +334,9 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
             // Each count labelled. The row used to print `tests_written`
             // twice, so `5/5 red 3 green 2` read as a ratio that was always
             // 100% (REVIEW-L1 F5).
-            "checkpoint {} phase {} written {} red {} green {}",
+            "checkpoint {} {} phase {} written {} red {} green {}",
             short(&entry.author_pubkey),
+            entry.source.as_str(),
             phase_word(entry.body.phase),
             entry.body.tests_written,
             entry.body.tests_red,
@@ -328,8 +345,9 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
     }
     for entry in &fold.gates {
         rows.push(format!(
-            "gate {} {} {}{}",
+            "gate {} {} {} {}{}",
             short(&entry.author_pubkey),
+            entry.source.as_str(),
             entry.row.gate,
             outcome_word(entry.row.outcome),
             dropped_suffix(entry.dropped_event_ids)
@@ -337,8 +355,9 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
     }
     for entry in &fold.findings {
         rows.push(format!(
-            "finding {} {} {} {}{}",
+            "finding {} {} {} {} {}{}",
             short(&entry.author_pubkey),
+            entry.source.as_str(),
             entry.body.finding_id,
             disposition_word(entry.body.disposition),
             entry.body.title,
@@ -347,8 +366,9 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
     }
     for entry in &fold.phases {
         rows.push(format!(
-            "phase {} {} started {} (author's own measurement)",
+            "phase {} {} {} started {} (author's own measurement)",
             short(&entry.author_pubkey),
+            entry.source.as_str(),
             entry.body.phase,
             entry.body.started_at_ms
         ));
@@ -370,14 +390,17 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
     if fold.truncated.any() {
         rows.push(format!(
             "truncated checkpoints {} gates {} findings {} phases {} unresolved {} ignored {} \
-             entryEventIds {}",
+             entryEventIds {} displacedGates {} displacedFindings {} misclaimedObserved {}",
             fold.truncated.checkpoints,
             fold.truncated.gates,
             fold.truncated.findings,
             fold.truncated.phases,
             fold.truncated.unresolved,
             fold.truncated.ignored,
-            fold.truncated.entry_event_ids
+            fold.truncated.entry_event_ids,
+            fold.truncated.displaced_gates,
+            fold.truncated.displaced_findings,
+            fold.truncated.misclaimed_observed
         ));
     }
     rows
@@ -444,6 +467,7 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
         "checkpoints": fold.checkpoints.iter().map(|entry| json!({
             "eventId": entry.event_id,
             "author": entry.author_pubkey,
+            "source": entry.source.as_str(),
             "assignmentRef": entry.assignment_ref,
             "phase": phase_word(entry.body.phase),
             "testsWritten": entry.body.tests_written,
@@ -456,6 +480,7 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
         "gates": fold.gates.iter().map(|entry| json!({
             "author": entry.author_pubkey,
             "eventIds": entry.event_ids,
+            "source": entry.source.as_str(),
             "droppedEventIds": entry.dropped_event_ids,
             "assignmentRef": entry.assignment_ref,
             "gate": entry.row.gate,
@@ -467,6 +492,7 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
         "findings": fold.findings.iter().map(|entry| json!({
             "author": entry.author_pubkey,
             "eventIds": entry.event_ids,
+            "source": entry.source.as_str(),
             "droppedEventIds": entry.dropped_event_ids,
             "assignmentRef": entry.assignment_ref,
             "findingId": entry.body.finding_id,
@@ -479,6 +505,7 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
         "phases": fold.phases.iter().map(|entry| json!({
             "eventId": entry.event_id,
             "author": entry.author_pubkey,
+            "source": entry.source.as_str(),
             "assignmentRef": entry.assignment_ref,
             "phase": entry.body.phase,
             "startedAtMs": entry.body.started_at_ms,
@@ -494,6 +521,9 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
             "reason": entry.reason,
         })).collect::<Vec<_>>(),
         "truncated": {
+            "displacedGates": fold.truncated.displaced_gates,
+            "displacedFindings": fold.truncated.displaced_findings,
+            "misclaimedObserved": fold.truncated.misclaimed_observed,
             "checkpoints": fold.truncated.checkpoints,
             "gates": fold.truncated.gates,
             "findings": fold.truncated.findings,
@@ -502,6 +532,11 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
             "ignored": fold.truncated.ignored,
             "entryEventIds": fold.truncated.entry_event_ids,
         },
+        "misclaimedObserved": fold.misclaimed_observed.iter().map(|entry| json!({
+            "eventId": entry.event_id,
+            "author": entry.author_pubkey,
+        })).collect::<Vec<_>>(),
+        "provenanceChecked": fold.provenance_checked,
         "disclosure": OBSERVATION_DISCLOSURE,
     })
 }

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check, Flag, Minus, X } from "lucide-react";
+import { Flag } from "lucide-react";
 
 import {
   codingSessionSeatAuthorityCopy,
@@ -41,6 +41,14 @@ import {
   codingSessionPrivateContextLine,
   isCodingSessionPrivateContextMarker,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import {
+  CODING_SESSION_OBSERVATION_EMPTY,
+  type CodingSessionObservationGateView,
+} from "@/features/coding-sessions/lib/codingSessionObservationView";
+import {
+  CodingSessionGateRows,
+  CodingSessionTestIcon as TestIcon,
+} from "./CodingSessionGateRows";
 import { CodingSessionMissionDecisionQueue } from "./CodingSessionMissionDecisionQueue";
 import { Integrity } from "./CodingSessionMissionInspectorIntegrity";
 import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
@@ -61,6 +69,13 @@ export type CodingSessionMissionInspectorProps = {
   seatAuthorities?: readonly CodingSessionSeatAuthority[];
   /** Report event ids the Rust fold listed under `unseatedReports`. */
   unseatedReportEventIds?: readonly string[];
+  /**
+   * This session's folded kind-44246 gate rows, observed first.
+   *
+   * `undefined` is not `[]`: it means no observation fold reached this view,
+   * which is unknown rather than "no gate ran". The card says so.
+   */
+  gateRows?: readonly CodingSessionObservationGateView[];
   /** The founder's goal edit control, rendered under Current goal. */
   goalEditor?: ReactNode;
   /**
@@ -98,6 +113,7 @@ export type CodingSessionMissionInspectorProps = {
 export function CodingSessionMissionInspector({
   deliveries,
   errorMessage = null,
+  gateRows = [],
   goalEditor,
   goalReader = { kind: "resolved" },
   openHolds,
@@ -404,27 +420,36 @@ export function CodingSessionMissionInspector({
           title="Structured tests"
           truncations={truncationsFor(model, "tests")}
         >
-          {model.tests.length === 0 ? (
-            // SURFACES D5: the refusal names what it is refusing. No wire kind
-            // reports tests today, and a seat writing "3/3 passing" in its turn
-            // is prose — this panel will not count it.
-            // A3: the old sentence — "Nothing on the wire reports tests" —
-            // was the best line on this surface right up until L1 shipped kind
-            // 44246, at which point it became a claim about the wire derived
-            // from what this client happens to read. The replacement names
-            // what would carry the fact and says plainly that this surface
-            // does not read it yet; it is true before L1 and after it.
-            // Rendering 44246 is L5's lane, and it is the only thing that
-            // makes this sentence obsolete.
-            <EmptyCopy>
-              <span className="block">No test report on this session</span>
-              <span className="block">
-                Kind 44246 carries checkpoint, gate, finding and phase records.
-                This surface does not read them yet.
-              </span>
-            </EmptyCopy>
-          ) : (
-            <ul aria-label="Structured test results" className="space-y-2">
+          {/* A3, closed. This card used to say "Nothing on the wire reports
+              tests" — true when written, false since kind 44246 landed. It now
+              renders the session's own signed **gate rows**, the same component
+              the Audit tab uses over the same fold, so the two surfaces cannot
+              disagree about whether a gate passed (live-run finding 26). The
+              44244 `report.tests[]` entries it also holds are counted beside
+              them, never merged into them: a claim inside a report and a signed
+              gate row are different facts. */}
+          <CodingSessionGateRows
+            emptyCopy={
+              <>
+                <span className="block">
+                  {CODING_SESSION_OBSERVATION_EMPTY.gates}
+                </span>
+                <span className="block text-2xs">
+                  {model.tests.length === 0
+                    ? "Kind 44246 carries a gate’s name, its outcome and the command that produced it. None has been published for this session."
+                    : `Kind 44246 carries a gate’s name, its outcome and the command that produced it. None has been published for this session; ${model.tests.length} test result${model.tests.length === 1 ? " is" : "s are"} claimed inside signed reports below.`}
+                </span>
+              </>
+            }
+            rows={gateRows}
+            testId="coding-session-inspector-gates"
+          />
+          {model.tests.length > 0 ? (
+            <ul
+              aria-label="Structured test results"
+              className="mt-2 space-y-2"
+              data-testid="coding-session-inspector-report-tests"
+            >
               {model.tests.map((result) => (
                 <li
                   className="rounded-lg border border-border/60 bg-muted/15 p-2.5"
@@ -438,7 +463,8 @@ export function CodingSessionMissionInspector({
                         {result.command}
                       </code>
                       <p className="mt-1 text-2xs text-muted-foreground">
-                        {result.outcome} · reported by {result.authorLabel}
+                        {result.outcome} · claimed in a report by{" "}
+                        {result.authorLabel}
                       </p>
                       {result.evidence ? (
                         <p className="mt-1 text-xs">{result.evidence}</p>
@@ -453,7 +479,7 @@ export function CodingSessionMissionInspector({
                 </li>
               ))}
             </ul>
-          )}
+          ) : null}
         </InspectorSection>
 
         <InspectorSection
@@ -821,21 +847,6 @@ function OpenHolds({
         );
       })}
     </>
-  );
-}
-
-function TestIcon({ outcome }: { outcome: "passed" | "failed" | "not-run" }) {
-  const Icon = outcome === "passed" ? Check : outcome === "failed" ? X : Minus;
-  return (
-    <Icon
-      aria-label={outcome}
-      className={cn(
-        "mt-0.5 size-3.5 shrink-0",
-        outcome === "passed" && "text-emerald-600 dark:text-emerald-400",
-        outcome === "failed" && "text-destructive",
-        outcome === "not-run" && "text-muted-foreground",
-      )}
-    />
   );
 }
 

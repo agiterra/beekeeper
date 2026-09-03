@@ -39,6 +39,7 @@ pub mod config;
 pub mod context_projector;
 mod context_store;
 mod context_window;
+mod gate_observer;
 mod git_probe;
 mod lease;
 mod model_catalog;
@@ -71,13 +72,19 @@ use buzz_core::coding_session_genesis::{
 };
 use buzz_core::coding_session_identity::{ProviderInstanceAlias, RuntimeWord};
 use buzz_core::coding_session_lease::CodingSessionLeaseState;
+use buzz_core::coding_session_observation::{
+    CodingSessionObservationBody, CodingSessionObservationGate, CodingSessionObservationPayload,
+    CodingSessionObservationSource, CodingSessionObservationType,
+    CODING_SESSION_OBSERVATION_SCHEMA,
+};
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
-    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
@@ -89,6 +96,7 @@ use buzz_sdk::coding_session::{
     coding_session_provider_catalog_semantic_key, coding_session_transcript_semantic_key,
     MAX_TRANSCRIPT_CONTENT_BYTES,
 };
+use buzz_sdk::coding_session_observation::build_coding_session_observation;
 
 use commands::{
     decide_lifecycle, CommandContext, CreatePlan, Ignored, LifecycleDecision, ProjectsFile,
@@ -611,6 +619,17 @@ pub struct Provider {
     /// In-memory on purpose. After a restart there is no mailbox, so every
     /// entry in it would be a lie about custody this process no longer has.
     in_flight: HashMap<String, InFlightTurn>,
+    /// Per-session pairing of gate tool calls with their results.
+    ///
+    /// Brian's 2026-09-02 ruling: no observability path may depend on asking
+    /// an agent to report. A seat runs `cargo test`; this watches the two
+    /// frames the run already puts on the wire and publishes the gate row
+    /// itself, signed by this provider instance and marked `observed`.
+    ///
+    /// In-memory on purpose, like [`Provider::in_flight`]: a call whose result
+    /// this process never saw is not a gate anybody ran to completion here,
+    /// and a durable half-pair would become a row about a run nobody watched.
+    gate_observers: HashMap<String, gate_observer::GateObserver>,
     /// `commandId`s of cancels this process has already handed to an actor's
     /// mailbox but has not yet answered durably.
     ///
@@ -792,6 +811,7 @@ impl Provider {
             established_leases: HashSet::new(),
             first_lease_prerequisites: HashMap::new(),
             in_flight: HashMap::new(),
+            gate_observers: HashMap::new(),
             delivered_cancels: VecDeque::new(),
             steering: HashMap::new(),
             prompt_image: HashMap::new(),
@@ -5300,6 +5320,17 @@ impl Provider {
                     return Ok(());
                 };
                 for item in items {
+                    // The observed half of kind 44246 (§ addendum): the gate
+                    // row is derived from the seat's own tool calls, published
+                    // under this provider's key, and never asked for.
+                    if let Some(observed) = self
+                        .gate_observers
+                        .entry(session_id.clone())
+                        .or_default()
+                        .on_item(&item, now_ms())
+                    {
+                        self.publish_observed_gate_row(&session_id, channel_id, observed)?;
+                    }
                     self.enqueue_transcript(
                         channel_id,
                         &target,
@@ -5356,6 +5387,10 @@ impl Provider {
                 self.report_lost_mailbox(&session_id)?;
                 self.steering.remove(&session_id);
                 self.prompt_image.remove(&session_id);
+                // A half-paired gate call whose result this process will now
+                // never see is not a gate anybody ran: forgotten, never
+                // resolved into a row.
+                self.gate_observers.remove(&session_id);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     self.sessions.forget(&session_id);
                     return Ok(());
@@ -5469,6 +5504,78 @@ impl Provider {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Publish one gate row this provider **watched**, as kind 44246.
+    ///
+    /// Signed with this provider instance's own key and marked
+    /// `source: "observed"`: the record's author is the mechanism that saw the
+    /// command run, never the seat that ran it, which is the whole difference
+    /// between evidence and a claim (Brian's 2026-09-02 ruling; LIVE-RUN
+    /// finding 26).
+    ///
+    /// An umbrella-less session publishes nothing. A 44246 is scoped to a
+    /// `sessionRef` and a `genesisRef`, and a solo session that belongs to no
+    /// umbrella has neither — inventing one would file the row under a mission
+    /// it is not part of. The gate still ran; nothing here says otherwise.
+    fn publish_observed_gate_row(
+        &mut self,
+        session_id: &str,
+        channel_id: Uuid,
+        observed: gate_observer::ObservedGateRow,
+    ) -> anyhow::Result<()> {
+        let Some((session_ref, genesis_ref)) = self
+            .state
+            .session(session_id)
+            .and_then(|record| Some((record.session_ref.clone()?, record.genesis_ref.clone()?)))
+        else {
+            return Ok(());
+        };
+        let payload = CodingSessionObservationPayload {
+            schema: CODING_SESSION_OBSERVATION_SCHEMA.to_owned(),
+            session_ref,
+            genesis_ref,
+            observation_type: CodingSessionObservationType::Gate,
+            source: CodingSessionObservationSource::Observed,
+            // Deliberately null. The provider watched a command run; it has no
+            // signed evidence of which assignment the seat believed it was
+            // answering, and a pointer nobody supplied is a guess dressed as a
+            // reference.
+            assignment_ref: None,
+            body: CodingSessionObservationBody::Gate(CodingSessionObservationGate {
+                rows: vec![observed.row.clone()],
+            }),
+        };
+        // The builder re-runs the strict decoder, so an over-long command or a
+        // token this crate spelled wrong never reaches a signer. A refusal is
+        // logged and dropped: a gate row is a disclosure, and failing a seat's
+        // turn because one could not be built would be the tail wagging the dog.
+        let builder = match build_coding_session_observation(&channel_id.to_string(), payload) {
+            Ok(builder) => builder,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    "observed gate row refused before signing: {error}"
+                );
+                return Ok(());
+            }
+        };
+        let event = builder.sign_with_keys(&self.config.keys)?;
+        self.outbox.enqueue(
+            KIND_CODING_SESSION_OBSERVATION,
+            &format!(
+                "coding-session-observation:{session_id}:{}:{}",
+                observed.row.gate,
+                event.id.to_hex()
+            ),
+            // Not `High`: a gate row is a disclosure about work that already
+            // happened, and it must never sit ahead of the receipt a consumer
+            // is blocking on.
+            Priority::Normal,
+            event,
+        )?;
         Ok(())
     }
 
@@ -6180,6 +6287,8 @@ mod tests {
     mod founder_wake_framing_tests;
     #[path = "hire_requester_tests.rs"]
     mod hire_requester_tests;
+    #[path = "observed_gate_row_tests.rs"]
+    mod observed_gate_row_tests;
     #[path = "operation_fence_tests.rs"]
     mod operation_fence_tests;
     #[path = "session_policy_budget_tests.rs"]

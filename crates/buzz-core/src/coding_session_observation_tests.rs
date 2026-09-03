@@ -22,6 +22,7 @@ fn payload_json(observation_type: &str, body: Value) -> Value {
         "sessionRef": SESSION,
         "genesisRef": GENESIS,
         "type": observation_type,
+        "source": "declared",
         "assignmentRef": Value::Null,
         "body": body,
     })
@@ -434,12 +435,13 @@ fn a_payload_round_trips_through_serde_with_every_key_present() {
         );
         let object: Value = serde_json::from_str(&written).expect("json");
         let object = object.as_object().expect("object");
-        assert_eq!(object.len(), 6, "exactly six top-level keys: {written}");
+        assert_eq!(object.len(), 7, "exactly seven top-level keys: {written}");
         for key in [
             "schema",
             "sessionRef",
             "genesisRef",
             "type",
+            "source",
             "assignmentRef",
             "body",
         ] {

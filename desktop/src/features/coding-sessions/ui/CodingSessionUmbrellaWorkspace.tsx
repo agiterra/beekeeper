@@ -545,6 +545,7 @@ export function UmbrellaCodingSessionWorkspace({
     deliveries: teamWake.deliveries,
     density: missionDensity,
     founderPubkey: umbrella.founderPubkey,
+    gateRows: missionSurfaceResult.observationGates,
     participants: streamPresence.participants,
     resolveMissionActor,
     seatAuthorities: teamWake.seatAuthorities,

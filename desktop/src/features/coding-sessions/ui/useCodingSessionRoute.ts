@@ -16,6 +16,7 @@ import {
   deriveCodingSessionRoute,
   codingSessionRouteFits,
   type CodingSessionRoute,
+  type CodingSessionRouteGateRow,
   type CodingSessionRouteHire,
   type CodingSessionRouteParticipant,
 } from "@/features/coding-sessions/lib/codingSessionRouteModel";
@@ -104,6 +105,8 @@ export function useCodingSessionRoute(input: {
    * hold there is: a seat filed a report and the founder owes the verdict.
    */
   founderLabel?: string;
+  /** Folded kind-44246 gate rows; each earns one sign on its author's road. */
+  gateRows?: readonly CodingSessionRouteGateRow[];
   density: CodingSessionMissionDensity;
   founderPubkey: string | null;
   participants: readonly CodingSessionParticipantPresence[];
@@ -231,6 +234,9 @@ export function useCodingSessionRoute(input: {
         transactions: rows,
         deliveries: input.deliveries,
         seatAuthorities: input.seatAuthorities,
+        // L5.6. Empty while Mission holds no observation fold, which draws no
+        // sign — the rail never invents a fact it has not been handed.
+        gateRows: input.gateRows,
         hires,
         visibleAt,
         expandedRoads,
@@ -241,6 +247,7 @@ export function useCodingSessionRoute(input: {
       hires,
       input.deliveries,
       input.founderPubkey,
+      input.gateRows,
       input.seatAuthorities,
       participants,
       rows,

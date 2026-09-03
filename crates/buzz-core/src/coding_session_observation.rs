@@ -47,6 +47,13 @@
 //!   and the older one stays on the wire where a reader can find it.
 //! - Every duration and `startedAtMs` is the **author's own measurement**. It
 //!   is disclosed as such and never used for ordering, discovery or dedupe.
+//! - Every observation says **how it was produced**. `source` is `observed`
+//!   when a mechanism that was not the subject wrote the record — the provider
+//!   deriving a gate row from a seat's own tool calls, a git hook writing a
+//!   checkpoint — and `declared` when the subject said it about itself. The
+//!   two are never merged: a reader prefers the observed row and shows the
+//!   word, because "the tests passed" is a different fact depending on who
+//!   counted.
 
 use nostr::Event;
 use serde::{Deserialize, Serialize};
@@ -109,6 +116,34 @@ impl CodingSessionObservationType {
             Self::Gate => "gate",
             Self::Finding => "finding",
             Self::Phase => "phase",
+        }
+    }
+}
+
+/// How an observation came to exist.
+///
+/// The distinction Brian's 2026-09-02 ruling turns on: an agent's account of
+/// its own work is a claim, and a record produced without the subject's
+/// cooperation is evidence. Live runs 2 and 3 produced both halves of the
+/// proof — a seat's prose "cargo test -p buzz-cli green" against a verifier's
+/// reproduced red on the same patch (LIVE-RUN finding 26).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CodingSessionObservationSource {
+    /// Written by a mechanism watching the subject — the session provider
+    /// reading the seat's own tool calls, or a hire host's git hook. The
+    /// signer is that mechanism, never the subject.
+    Observed,
+    /// Written by the subject about itself. A claim, and rendered as one.
+    Declared,
+}
+
+impl CodingSessionObservationSource {
+    /// The exact wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Observed => "observed",
+            Self::Declared => "declared",
         }
     }
 }
@@ -271,7 +306,8 @@ impl CodingSessionObservationBody {
 
 /// Strict public JSON carried by a kind 44246 event.
 ///
-/// Exactly six top-level keys, every one always present.
+/// Exactly seven top-level keys, every one always present. (Six until
+/// 2026-09-02, when `source` was added.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingSessionObservationPayload {
@@ -284,6 +320,13 @@ pub struct CodingSessionObservationPayload {
     /// Closed observation token, repeated in `csob-type`.
     #[serde(rename = "type")]
     pub observation_type: CodingSessionObservationType,
+    /// How this record was produced: watched, or claimed by its subject.
+    ///
+    /// Not carried in a tag. The five-tag envelope is NIP-CSOB's frozen shape
+    /// and a sixth tag would refuse every event a build that predates this
+    /// field signed; a reader that wants only observed rows filters the folded
+    /// collection rather than the relay query.
+    pub source: CodingSessionObservationSource,
     /// The assignment this observation is about, when it is about one.
     ///
     /// A **pointer**, never a causal reference: an observation that names an
@@ -428,12 +471,13 @@ impl CodingSessionObservationPhaseTiming {
     }
 }
 
-/// The exact six top-level keys of an observation payload.
+/// The exact seven top-level keys of an observation payload.
 const OBSERVATION_KEYS: &[&str] = &[
     "schema",
     "sessionRef",
     "genesisRef",
     "type",
+    "source",
     "assignmentRef",
     "body",
 ];
@@ -484,6 +528,8 @@ const CHECKPOINT_PHASES: &[&str] = &["planning", "red", "green", "gates", "repor
 const GATE_OUTCOMES: &[&str] = &["passed", "failed", "not-run"];
 /// The closed finding disposition tokens.
 const FINDING_DISPOSITIONS: &[&str] = &["found", "fixed", "cross-lane", "needs-ruling", "wont-fix"];
+/// The closed provenance tokens.
+const OBSERVATION_SOURCES: &[&str] = &["observed", "declared"];
 
 /// The exact keys of one gate row, and which of them may be `null`.
 const GATE_ROW_KEYS: &[&str] = &["gate", "outcome", "command", "summary", "durationMs"];
@@ -516,6 +562,7 @@ pub fn decode_coding_session_observation(
         OBSERVATION_NULLABLE_KEYS,
         "observation payload",
     )?;
+    validate_closed_token(object, "source", OBSERVATION_SOURCES, "observation payload")?;
 
     let observation_type: CodingSessionObservationType = serde_json::from_value(
         object

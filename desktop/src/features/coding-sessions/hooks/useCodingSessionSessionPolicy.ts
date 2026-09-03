@@ -122,10 +122,15 @@ export async function readCodingSessionSessionPolicy(input: {
         genesisRef: input.scope.genesisRef,
         founderPubkey: input.scope.founderPubkey,
         grants: authority.value.policyGrants.map((grant) => ({
+          transitionEventId: grant.transitionEventId,
           grantee: grant.grantee,
           acceptedAt: grant.acceptedAt,
           transitionType: grant.transitionType,
         })),
+        // REVIEW-L2 F15: the signed transitions themselves go with the
+        // projection, so Rust can refuse any grant no signature supports
+        // rather than taking this file's word for the chain.
+        transitions,
         events: records,
       },
     }),

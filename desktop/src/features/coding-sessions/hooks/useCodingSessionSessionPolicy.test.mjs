@@ -77,6 +77,7 @@ test("L2.3: the read hands the native fold the records and the accepted chain", 
         implementation: "buzz-core",
         selected: null,
         excluded: [],
+        refusedGrants: [],
         enforcement: ENFORCEMENT,
       };
     },
@@ -94,6 +95,11 @@ test("L2.3: the read hands the native fold the records and the accepted chain", 
   // An umbrella with no accepted transitions has an empty chain, not a missing
   // one — the founder can always set policy without any grant at all.
   assert.deepEqual(args.request.grants, []);
+  // L5.5 / REVIEW-L2 F15: the signed 44228s ride along with the projection, so
+  // Rust can refuse a claimed grant no signature supports instead of taking
+  // this file's word for the chain. Empty here because this umbrella has no
+  // accepted transitions — an empty chain, not a missing one.
+  assert.deepEqual(args.request.transitions, []);
   assert.equal(args.request.events.length, 1);
   assert.equal(result.enforcement, ENFORCEMENT);
   assert.equal(result.selected, null);

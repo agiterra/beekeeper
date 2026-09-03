@@ -70,6 +70,14 @@ export type CodingSessionMissionAuthorityProjection = {
    * REVIEW-B2 F1 named.
    */
   policyGrants: Array<{
+    /**
+     * Event id of the signed kind-44228 this entry was read from.
+     *
+     * REVIEW-L2 F15: the native policy fold holds each claimed grant against
+     * the signed transition it names, so this projection can only ever fail to
+     * see a grant — never invent one.
+     */
+    transitionEventId: string;
     grantee: string;
     acceptedAt: number;
     transitionType: CodingSessionAuthorityTransitionType;
@@ -418,6 +426,7 @@ export function projectCodingSessionMissionAuthority(input: {
     }
     acceptedEventIds.push(link.eventId);
     policyGrants.push({
+      transitionEventId: link.eventId,
       grantee: link.payload.granteePubkey,
       acceptedAt: link.acceptedAt,
       transitionType: link.payload.type,

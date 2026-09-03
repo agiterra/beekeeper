@@ -7,8 +7,10 @@ import {
   type CodingSessionMissionAuditTotals,
   type CodingSessionMissionAuditTurn,
 } from "@/features/coding-sessions/lib/codingSessionMissionAuditModel";
+import type { CodingSessionObservationView } from "@/features/coding-sessions/lib/codingSessionObservationView";
 import { cn } from "@/shared/lib/cn";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
+import { CodingSessionObservationSections } from "./CodingSessionObservationSections";
 
 export type CodingSessionMissionAuditProps = {
   /**
@@ -21,6 +23,16 @@ export type CodingSessionMissionAuditProps = {
   loading?: boolean;
   errorMessage?: string | null;
   onRefresh?: () => void;
+  /**
+   * This session's folded kind-44246 observations — the **signed** half of
+   * this rail. Everything below it is derived from transcript items the client
+   * happens to hold; these four sections are records their authors signed.
+   */
+  observations: CodingSessionObservationView;
+  /** True while the observation read is in flight. Unknown, never empty. */
+  observationsLoading?: boolean;
+  /** Why the observation read failed, or null. */
+  observationsError?: string | null;
 };
 
 /**
@@ -39,6 +51,9 @@ export type CodingSessionMissionAuditProps = {
 export function CodingSessionMissionAudit({
   errorMessage = null,
   loading = false,
+  observations,
+  observationsError = null,
+  observationsLoading = false,
   onRefresh,
   seats,
   variant,
@@ -86,6 +101,16 @@ export function CodingSessionMissionAudit({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8">
+        {/* The signed half first. Everything below it is this client's own
+            arithmetic over transcript items; these are records with authors. */}
+        <AuditSection title="Signed observations">
+          <CodingSessionObservationSections
+            errorMessage={observationsError}
+            loading={observationsLoading}
+            view={observations}
+          />
+        </AuditSection>
+
         <AuditSection
           title="Per turn"
           truncations={audit.truncations.filter(

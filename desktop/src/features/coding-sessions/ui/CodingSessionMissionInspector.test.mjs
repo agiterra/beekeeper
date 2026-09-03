@@ -479,16 +479,18 @@ test("empty and unknown states disclose absence rather than rendering zeros", as
     assert.ok(view.getByText("No accepted plan published"));
     assert.ok(view.getByText("No seat has published a signed plan."));
     assert.ok(view.getByText("No signed edit activity observed."));
-    // DESIGN-SPEC §8 / SURFACES D5: the frozen unknown copy, headline plus the
-    // sentence that says why nothing is counted.
-    // A3: the old refusal — "Nothing on the wire reports tests" — became a
-    // false claim about the wire the day L1 shipped kind 44246. The
-    // replacement names what would carry the fact and says this surface does
-    // not read it yet; it is true on both sides of that landing.
-    assert.ok(view.getByText("No test report on this session"));
+    // L5.3 / critique A3. The frozen unknown copy is now the *gate row's*: the
+    // old sentence ("Nothing on the wire reports tests") was true when written
+    // and false the day kind 44246 landed, which is the same lie in a slower
+    // form. The refusal now names what would carry the fact.
+    assert.ok(view.getByText("No gate row yet"));
     assert.match(
       view.container.textContent,
-      /Kind 44246 carries checkpoint, gate, finding and phase records\. This surface does not read them yet\./,
+      /Kind 44246 carries a gate’s name, its outcome and the command that produced it\./,
+    );
+    assert.doesNotMatch(
+      view.container.textContent,
+      /Nothing on the wire reports tests/,
     );
     assert.doesNotMatch(view.container.textContent, /Nothing on the wire/);
     assert.doesNotMatch(view.container.textContent, /will not count/);
@@ -1554,4 +1556,124 @@ test("who waits on whom sits on the roster that survives every width", async () 
   assert.equal(none.queryAllByTestId("mission-open-hold").length, 0);
   assert.equal(none.queryByTestId("mission-open-holds-truncated"), null);
   none.cleanup();
+});
+
+// ── L5.3: Structured tests reads gate rows, and stops describing the wire ───
+
+function gateRow(overrides = {}) {
+  return {
+    key: `${"11".repeat(32)}:declared:cargo test`,
+    authorPubkey: "11".repeat(32),
+    source: "declared",
+    gate: "cargo test",
+    outcome: "passed",
+    command: "cargo test -p buzz-cli",
+    summaryLines: ["test result: ok. 847 passed; 0 failed"],
+    hiddenSummaryLines: 0,
+    duration: "41s",
+    sourceEventId: "ab".repeat(32),
+    droppedEventIds: 0,
+    assignmentUnresolved: false,
+    ...overrides,
+  };
+}
+
+test("with one gate row the card names neither Nothing nor will not count", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+    focusedExecutionKey: null,
+    gateRows: [gateRow()],
+  });
+  try {
+    const card = view.getByTestId("coding-session-inspector-gates");
+    assert.match(card.textContent, /cargo test -p buzz-cli/);
+    assert.doesNotMatch(view.container.textContent, /Nothing/);
+    assert.doesNotMatch(view.container.textContent, /will not count/);
+    assert.equal(view.queryByText("No gate row yet"), null);
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("with no gate row the card reads No gate row yet, beside the count it holds", async () => {
+  const view = await renderInspector({
+    model: richModel(),
+    variant: "panel",
+    focusedExecutionKey: null,
+    gateRows: [],
+  });
+  try {
+    assert.ok(view.getByText("No gate row yet"));
+    // Finding 26: a test result claimed inside a report is a different fact
+    // from a signed gate row, and the card counts it as one rather than
+    // merging the two.
+    assert.match(
+      view.container.textContent,
+      /test results? (is|are) claimed inside signed reports below/,
+    );
+    assert.match(view.container.textContent, /claimed in a report by/);
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("a not-run row is never rendered as a pass", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+    focusedExecutionKey: null,
+    gateRows: [
+      gateRow({ outcome: "not-run", duration: null, summaryLines: [] }),
+    ],
+  });
+  try {
+    const row = view.getByTestId("coding-session-gate-row");
+    assert.equal(row.getAttribute("data-outcome"), "not-run");
+    assert.match(
+      view.getByTestId("coding-session-gate-outcome").textContent,
+      /not-run/,
+    );
+    assert.doesNotMatch(
+      view.getByTestId("coding-session-gate-outcome").textContent,
+      /passed/,
+    );
+    assert.match(row.textContent, /No summary published\./);
+    // Unknown ≠ zero, here too.
+    assert.match(row.textContent, /not reported/);
+  } finally {
+    view.cleanup();
+  }
+});
+
+test("an observed row and a declared one both appear, each naming its source", async () => {
+  const view = await renderInspector({
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+    focusedExecutionKey: null,
+    gateRows: [
+      gateRow({
+        key: `${"22".repeat(32)}:observed:cargo test`,
+        authorPubkey: "22".repeat(32),
+        source: "observed",
+        outcome: "failed",
+        summaryLines: ["test result: FAILED. 0 passed; 2 failed"],
+      }),
+      gateRow(),
+    ],
+  });
+  try {
+    const rows = view.getAllByTestId("coding-session-gate-row");
+    assert.equal(rows.length, 2);
+    assert.deepEqual(
+      rows.map((row) => row.getAttribute("data-source")),
+      ["observed", "declared"],
+    );
+    assert.deepEqual(
+      rows.map((row) => row.getAttribute("data-outcome")),
+      ["failed", "passed"],
+    );
+  } finally {
+    view.cleanup();
+  }
 });

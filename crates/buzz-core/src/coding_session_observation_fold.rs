@@ -20,6 +20,15 @@
 //! is the author's own measurement, disclosed as such, and using one for
 //! ordering, discovery or dedupe would let an author reorder somebody else's
 //! record by writing a number.
+//!
+//! # Provenance never merges
+//!
+//! Dedupe keys carry `source`, so an **observed** gate row and a **declared**
+//! one about the same gate are two entries and neither supersedes the other.
+//! In practice their authors already differ — the provider signs what it
+//! watched, the seat signs what it says — but the rule is written into the key
+//! rather than left to that coincidence, because the one thing this field
+//! exists to prevent is a claim quietly taking the place of a measurement.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +67,21 @@ pub struct CodingSessionObservationFoldContext {
     /// caller supplied no assignments, which makes every `assignmentRef`
     /// unresolved — the honest answer, and never an exclusion.
     pub known_assignment_refs: Vec<String>,
+    /// Pubkeys whose `observed` claim this session honours: the provider
+    /// instances running its executions.
+    ///
+    /// **`None` is not an empty set.** `None` means the caller could not
+    /// resolve them, so nothing is checked and every claim stands as written,
+    /// with [`CodingSessionObservationFold::provenance_checked`] `false` so a
+    /// surface can say the check did not run. `Some(set)` means the caller
+    /// knows, and a signer outside the set has its `observed` claim folded down
+    /// to `declared` and listed in
+    /// [`CodingSessionObservationFold::misclaimed_observed`] (REVIEW-L5 F2):
+    /// the CLI refuses to mint such a row, but the wire does not, and a reader
+    /// that ranked a self-asserted `observed` above a declared one — and
+    /// printed "the record names the watcher" over it — would be repeating a
+    /// claim as a measurement.
+    pub provider_pubkeys: Option<Vec<String>>,
 }
 
 /// One folded checkpoint.
@@ -67,6 +91,8 @@ pub struct CodingSessionObservationCheckpointEntry {
     pub event_id: String,
     /// Canonical lowercase-hex pubkey that signed it.
     pub author_pubkey: String,
+    /// Whether a mechanism watched this, or its subject claimed it.
+    pub source: CodingSessionObservationSource,
     /// The assignment it points at, as the author wrote it.
     pub assignment_ref: Option<String>,
     /// The checkpoint body, reproduced.
@@ -78,6 +104,8 @@ pub struct CodingSessionObservationCheckpointEntry {
 pub struct CodingSessionObservationGateEntry {
     /// Canonical lowercase-hex pubkey that signed it.
     pub author_pubkey: String,
+    /// Whether a mechanism watched this row, or its subject claimed it.
+    pub source: CodingSessionObservationSource,
     /// The row itself, from the newest observation naming this gate.
     pub row: CodingSessionObservationGateRow,
     /// The newest [`MAX_OBSERVATION_ENTRY_EVENT_IDS`] observations this author
@@ -95,6 +123,8 @@ pub struct CodingSessionObservationGateEntry {
 pub struct CodingSessionObservationFindingEntry {
     /// Canonical lowercase-hex pubkey that signed it.
     pub author_pubkey: String,
+    /// Whether a mechanism watched this, or its subject claimed it.
+    pub source: CodingSessionObservationSource,
     /// The finding body from the newest observation carrying this id.
     pub body: CodingSessionObservationFinding,
     /// The newest [`MAX_OBSERVATION_ENTRY_EVENT_IDS`] observations this author
@@ -113,6 +143,8 @@ pub struct CodingSessionObservationPhaseEntry {
     pub event_id: String,
     /// Canonical lowercase-hex pubkey that signed it.
     pub author_pubkey: String,
+    /// Whether a mechanism watched this, or its subject claimed it.
+    pub source: CodingSessionObservationSource,
     /// The assignment it points at, as the author wrote it.
     pub assignment_ref: Option<String>,
     /// The timing body, reproduced. Every number in it is the author's claim.
@@ -129,6 +161,19 @@ pub struct CodingSessionObservationUnresolvedRef {
     pub event_id: String,
     /// The `assignmentRef` that resolved to nothing, as the author wrote it.
     pub assignment_ref: String,
+}
+
+/// One row that claimed `observed` from a signer the caller does not know as a
+/// provider instance.
+///
+/// A disclosure, never an exclusion: the row is folded exactly as a `declared`
+/// one, because a bad claim about provenance costs only the claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingSessionObservationMisclaimedProvenance {
+    /// Event id of the observation.
+    pub event_id: String,
+    /// The signer that claimed to be watching.
+    pub author_pubkey: String,
 }
 
 /// One event this fold could not read, and why.
@@ -161,8 +206,20 @@ pub struct CodingSessionObservationTruncation {
     pub unresolved: usize,
     /// Ignored events not listed.
     pub ignored: usize,
+    /// Misclaimed-provenance rows not listed.
+    pub misclaimed_observed: usize,
     /// Event ids dropped from the front of gate and finding entries, summed.
     pub entry_event_ids: usize,
+    /// Gate rows a later statement by the same author and provenance replaced.
+    ///
+    /// Newest-wins is right — a seat that re-runs a gate should show the newer
+    /// result — but the displaced statement used to leave no trace except an
+    /// id in a list, so a `failed` row replaced by a `passed` one read exactly
+    /// like a gate that had only ever passed (REVIEW-L5 F1). The count makes
+    /// the replacement a fact a surface can state.
+    pub displaced_gates: usize,
+    /// Findings a later disposition by the same author and provenance replaced.
+    pub displaced_findings: usize,
 }
 
 impl CodingSessionObservationTruncation {
@@ -174,7 +231,10 @@ impl CodingSessionObservationTruncation {
             || self.phases > 0
             || self.unresolved > 0
             || self.ignored > 0
+            || self.misclaimed_observed > 0
             || self.entry_event_ids > 0
+            || self.displaced_gates > 0
+            || self.displaced_findings > 0
     }
 }
 
@@ -193,6 +253,16 @@ pub struct CodingSessionObservationFold {
     pub unresolved: Vec<CodingSessionObservationUnresolvedRef>,
     /// Events this fold could not read at all.
     pub ignored: Vec<CodingSessionObservationIgnored>,
+    /// Rows that claimed `observed` from a signer no provider instance backs.
+    ///
+    /// Each is folded as `declared`. Empty when nothing claimed falsely — or
+    /// when nothing was checked, which `provenance_checked` distinguishes.
+    pub misclaimed_observed: Vec<CodingSessionObservationMisclaimedProvenance>,
+    /// Whether the caller supplied the provider set at all.
+    ///
+    /// `false` means no `observed` claim in this fold has been verified, which
+    /// is a different fact from every claim checking out (§8 I9).
+    pub provenance_checked: bool,
     /// What each bounded collection dropped.
     pub truncated: CodingSessionObservationTruncation,
 }
@@ -220,12 +290,20 @@ pub fn fold_coding_session_observations(
     events: &[Event],
     context: &CodingSessionObservationFoldContext,
 ) -> CodingSessionObservationFold {
-    let mut fold = CodingSessionObservationFold::default();
-    let mut gates: BTreeMap<(String, String), CodingSessionObservationGateEntry> = BTreeMap::new();
-    let mut gate_order: Vec<(String, String)> = Vec::new();
-    let mut findings: BTreeMap<(String, String), CodingSessionObservationFindingEntry> =
+    let mut fold = CodingSessionObservationFold {
+        provenance_checked: context.provider_pubkeys.is_some(),
+        ..CodingSessionObservationFold::default()
+    };
+    // Key: (author, source token, gate | findingId). `source` is in the key so
+    // a declared row can never supersede an observed one, or the reverse.
+    let mut gates: BTreeMap<(String, &'static str, String), CodingSessionObservationGateEntry> =
         BTreeMap::new();
-    let mut finding_order: Vec<(String, String)> = Vec::new();
+    let mut gate_order: Vec<(String, &'static str, String)> = Vec::new();
+    let mut findings: BTreeMap<
+        (String, &'static str, String),
+        CodingSessionObservationFindingEntry,
+    > = BTreeMap::new();
+    let mut finding_order: Vec<(String, &'static str, String)> = Vec::new();
 
     for event in events {
         let event_id = event.id.to_hex();
@@ -282,6 +360,25 @@ pub fn fold_coding_session_observations(
                 );
             }
         }
+        // REVIEW-L5 F2. `observed` is honoured only when the signer is one of
+        // this session's provider instances; anything else is the subject
+        // speaking about itself, which is exactly what `declared` means.
+        let source = match (payload.source, &context.provider_pubkeys) {
+            (CodingSessionObservationSource::Observed, Some(providers))
+                if !providers.contains(&author) =>
+            {
+                push_bounded(
+                    &mut fold.misclaimed_observed,
+                    &mut fold.truncated.misclaimed_observed,
+                    CodingSessionObservationMisclaimedProvenance {
+                        event_id: event_id.clone(),
+                        author_pubkey: author.clone(),
+                    },
+                );
+                CodingSessionObservationSource::Declared
+            }
+            (source, _) => source,
+        };
         match payload.body {
             CodingSessionObservationBody::Checkpoint(body) => push_bounded(
                 &mut fold.checkpoints,
@@ -289,6 +386,7 @@ pub fn fold_coding_session_observations(
                 CodingSessionObservationCheckpointEntry {
                     event_id,
                     author_pubkey: author,
+                    source,
                     assignment_ref: payload.assignment_ref,
                     body,
                 },
@@ -299,15 +397,19 @@ pub fn fold_coding_session_observations(
                 CodingSessionObservationPhaseEntry {
                     event_id,
                     author_pubkey: author,
+                    source,
                     assignment_ref: payload.assignment_ref,
                     body,
                 },
             ),
             CodingSessionObservationBody::Gate(body) => {
                 for row in body.rows {
-                    let key = (author.clone(), row.gate.clone());
+                    let key = (author.clone(), source.as_str(), row.gate.clone());
                     match gates.get_mut(&key) {
                         Some(entry) => {
+                            // The newer statement wins and the older one is
+                            // counted: replacement is a fact, not a silence.
+                            fold.truncated.displaced_gates += 1;
                             entry.row = row;
                             entry.assignment_ref = payload.assignment_ref.clone();
                             push_newest_event_id(
@@ -322,6 +424,7 @@ pub fn fold_coding_session_observations(
                                 key,
                                 CodingSessionObservationGateEntry {
                                     author_pubkey: author.clone(),
+                                    source,
                                     row,
                                     event_ids: vec![event_id.clone()],
                                     dropped_event_ids: 0,
@@ -333,9 +436,10 @@ pub fn fold_coding_session_observations(
                 }
             }
             CodingSessionObservationBody::Finding(body) => {
-                let key = (author.clone(), body.finding_id.clone());
+                let key = (author.clone(), source.as_str(), body.finding_id.clone());
                 match findings.get_mut(&key) {
                     Some(entry) => {
+                        fold.truncated.displaced_findings += 1;
                         entry.body = body;
                         entry.assignment_ref = payload.assignment_ref.clone();
                         push_newest_event_id(
@@ -350,6 +454,7 @@ pub fn fold_coding_session_observations(
                             key,
                             CodingSessionObservationFindingEntry {
                                 author_pubkey: author.clone(),
+                                source,
                                 body,
                                 event_ids: vec![event_id.clone()],
                                 dropped_event_ids: 0,

@@ -65,7 +65,37 @@ export type CodingSessionRouteSignKind =
   | CodingSessionMissionTransactionType
   | "hire"
   | "delivery"
-  | "seat-ungranted";
+  | "seat-ungranted"
+  | "gate";
+
+/**
+ * One folded kind-44246 gate row, as the route needs it.
+ *
+ * The rail's first rule is that a sign exists only for a row the stream itself
+ * renders — and a gate row **is** a signed event, rendered by the Audit tab
+ * and by the Inspector's Structured tests card, so it qualifies. Checkpoints,
+ * findings and phase timings deliberately get no sign: they would flood the
+ * gutter, and none of them is the fact a person watching needs interrupting
+ * for.
+ */
+export type CodingSessionRouteGateRow = {
+  /** Stable per row; the sign key is derived from it. */
+  key: string;
+  /** Author of the newest observation naming this gate. */
+  authorPubkey: string;
+  /** The gate's own name, for the sign's title. */
+  gate: string;
+  /** The row's own word. The sign never invents a second vocabulary. */
+  outcome: "passed" | "failed" | "not-run";
+  /**
+   * Signed `created_at` of the newest observation naming this gate, in unix
+   * seconds, or null when this surface holds no signed time for it. A row with
+   * no time draws no sign — the rail never invents a moment (R2's rule).
+   */
+  at: number | null;
+  /** The event a reader can go and find. */
+  sourceEventId: string | null;
+};
 
 /**
  * The founder's own lane.
@@ -388,6 +418,10 @@ export function codingSessionRouteAttentionSigns(
       sign.kind === "mission.blocked" ||
       sign.kind === "seat-ungranted" ||
       sign.requiresDecision ||
-      (sign.kind === "delivery" && sign.tone === "critical"),
+      (sign.kind === "delivery" && sign.tone === "critical") ||
+      // L5.6: a failed gate survives the fold to the 40 px track. A gate that
+      // passed does not — the track carries what needs acting on, and a green
+      // gate needs nothing.
+      (sign.kind === "gate" && sign.word === "failed"),
   );
 }

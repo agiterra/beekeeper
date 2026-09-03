@@ -50,12 +50,25 @@ export type CodingSessionPolicyFoldExclusion = {
   readonly reason: string;
 };
 
+/**
+ * One claimed authority grant the native boundary refused (REVIEW-L2 F15).
+ *
+ * Required rather than optional: an adapter that stopped disclosing these
+ * would read exactly like one where nothing was refused, which is the fact the
+ * list exists to carry.
+ */
+export type CodingSessionPolicyRefusedGrant = {
+  readonly transitionEventId: string;
+  readonly reason: string;
+};
+
 /** The native fold's whole answer. */
 export type CodingSessionPolicyFoldResult = {
   readonly schema: typeof CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA;
   readonly implementation: "buzz-core";
   readonly selected: CodingSessionPolicyFoldSelected | null;
   readonly excluded: readonly CodingSessionPolicyFoldExclusion[];
+  readonly refusedGrants: readonly CodingSessionPolicyRefusedGrant[];
   readonly enforcement: string;
 };
 
@@ -125,6 +138,16 @@ function isExclusion(
   );
 }
 
+function isRefusedGrant(
+  value: unknown,
+): value is CodingSessionPolicyRefusedGrant {
+  return (
+    hasExactFields(value, [["transitionEventId", "reason"]]) &&
+    typeof value.transitionEventId === "string" &&
+    typeof value.reason === "string"
+  );
+}
+
 /**
  * Decode the fold boundary's response.
  *
@@ -138,13 +161,22 @@ export function decodeCodingSessionPolicyFoldResult(
 ): CodingSessionPolicyFoldResult {
   if (
     !hasExactFields(value, [
-      ["schema", "implementation", "selected", "excluded", "enforcement"],
+      [
+        "schema",
+        "implementation",
+        "selected",
+        "excluded",
+        "refusedGrants",
+        "enforcement",
+      ],
     ]) ||
     value.schema !== CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA ||
     value.implementation !== "buzz-core" ||
     typeof value.enforcement !== "string" ||
     !Array.isArray(value.excluded) ||
-    !value.excluded.every(isExclusion)
+    !value.excluded.every(isExclusion) ||
+    !Array.isArray(value.refusedGrants) ||
+    !value.refusedGrants.every(isRefusedGrant)
   ) {
     throw new Error("native session policy returned a malformed fold response");
   }
@@ -167,6 +199,8 @@ export function decodeCodingSessionPolicyFoldResult(
   return {
     schema: CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA,
     implementation: "buzz-core",
+    refusedGrants:
+      value.refusedGrants as readonly CodingSessionPolicyRefusedGrant[],
     selected:
       selected === null
         ? null

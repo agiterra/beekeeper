@@ -27,8 +27,13 @@ import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { useCodingSessionMissionEvidence } from "@/features/coding-sessions/lib/useCodingSessionMissionEvidence";
 import {
   buildCodingSessionWakeOperationIndex,
+  readCachedCodingSessionWakeOperations,
+  rememberCodingSessionWakeOperations,
   type CodingSessionWakeOperationIndex,
 } from "@/features/coding-sessions/lib/codingSessionWakeReading";
+import { deriveCodingSessionObservationView } from "@/features/coding-sessions/lib/codingSessionObservationView";
+import type { CodingSessionRouteGateRow } from "@/features/coding-sessions/lib/codingSessionRouteModel";
+import { useCodingSessionObservations } from "@/features/coding-sessions/hooks/useCodingSessionObservations";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import { useCodingSessionSessionPolicy } from "@/features/coding-sessions/hooks/useCodingSessionSessionPolicy";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
@@ -55,6 +60,13 @@ export type CodingSessionMissionSurfaceResult = {
    * wake line can never say more than the signed record does.
    */
   wakeOperations: CodingSessionWakeOperationIndex;
+  /**
+   * Folded kind-44246 gate rows, for the Route rail's signs (L5.6).
+   *
+   * Empty while Mission is closed: this surface reads no observations then,
+   * and the rail draws no sign for a fact nothing has folded.
+   */
+  observationGates: readonly CodingSessionRouteGateRow[];
 };
 
 // U-F8: shared frozen empties. Returning fresh `[]` literals made
@@ -133,6 +145,42 @@ export function useCodingSessionMissionSurface(input: {
     ],
   );
   const evidence = useCodingSessionMissionEvidence(scope);
+  // The assignments a 44246 `assignmentRef` may resolve against, taken from
+  // the Mission fold this surface already holds. Not re-fetched: the only
+  // thing the observation fold does with a pointer is disclose the ones that
+  // resolve to nothing, and a second relay read would buy one word of
+  // disclosure at the price of a round trip.
+  const knownAssignmentRefs = useStableArrayShallow(
+    (evidence.inspectorInput.assignments ?? []).map(
+      (assignment) => assignment.sourceEventId,
+    ),
+  );
+  const observationScope = React.useMemo(
+    () =>
+      scope === null
+        ? null
+        : {
+            channelRef: scope.channelRef,
+            sessionRef: scope.sessionRef,
+            genesisRef: scope.genesisRef,
+          },
+    [scope],
+  );
+  // REVIEW-L5 F2. Every execution's `signerPubkey` is "the fact-stream signer
+  // (provider authority) behind this execution" (`codingSessionTypes.ts`), so
+  // this is exactly the set whose `observed` claim this session honours. A
+  // signer outside it is folded down to `declared` and disclosed rather than
+  // rendered as a watched measurement.
+  const providerPubkeys = useStableArrayShallow(
+    input.umbrella.executions
+      .map((execution) => execution.signerPubkey)
+      .filter((pubkey) => pubkey.length > 0),
+  );
+  const observations = useCodingSessionObservations(
+    observationScope,
+    knownAssignmentRefs,
+    providerPubkeys,
+  );
   // Item 107's owed reader. Scoped to the same channel/session/genesis/founder
   // the fold uses, and read only while Mission is open — a one-shot read with
   // a refresh, never a poll (I1).
@@ -257,7 +305,7 @@ export function useCodingSessionMissionSurface(input: {
     () => readCodingSessionMissionStreamEvidence(evidence.inspectorInput),
     [evidence.inspectorInput],
   );
-  const wakeOperations = React.useMemo(
+  const foldedWakeOperations = React.useMemo(
     () =>
       buildCodingSessionWakeOperationIndex({
         assignments: evidence.inspectorInput.assignments ?? [],
@@ -265,6 +313,31 @@ export function useCodingSessionMissionSurface(input: {
       }),
     [evidence.inspectorInput.assignments, pending.transactions],
   );
+  // L5.4. Mission folds and remembers; Conversation — which subscribes to no
+  // fold and must not start — reads what Mission already folded for this exact
+  // session, or nothing. No invoke, no fetch, no subscription either way.
+  const wakeScope = React.useMemo(
+    () => ({
+      channelRef: input.channelId,
+      sessionRef: input.umbrella.sessionRef,
+      genesisRef: input.umbrella.genesisRef,
+      founderPubkey: input.umbrella.founderPubkey,
+    }),
+    [
+      input.channelId,
+      input.umbrella.founderPubkey,
+      input.umbrella.genesisRef,
+      input.umbrella.sessionRef,
+    ],
+  );
+  React.useEffect(() => {
+    if (!input.active) return;
+    rememberCodingSessionWakeOperations(wakeScope, foldedWakeOperations);
+  }, [foldedWakeOperations, input.active, wakeScope]);
+  const cachedWakeOperations = readCachedCodingSessionWakeOperations(wakeScope);
+  const wakeOperations = input.active
+    ? foldedWakeOperations
+    : cachedWakeOperations;
   // The Audit tab reads the umbrella's own signed transcripts — every
   // generation, not just the live one, because a seat that was restarted spent
   // its earlier turns' tokens all the same.
@@ -293,6 +366,38 @@ export function useCodingSessionMissionSurface(input: {
             ),
     }));
   }, [input.participants, input.umbrella.executions]);
+  const observationView = React.useMemo(
+    () =>
+      deriveCodingSessionObservationView({
+        fold: observations.result?.fold ?? null,
+        resolveLabel: (pubkey) => input.resolveActorName(pubkey),
+        knownDecisionRefs: (evidence.inspectorInput.decisions ?? []).map(
+          (decision) => decision.requestId,
+        ),
+      }),
+    [
+      evidence.inspectorInput.decisions,
+      input.resolveActorName,
+      observations.result,
+    ],
+  );
+  // The Route rail places a sign at a signed `created_at`. The fold reads no
+  // clock and returns none, so the time is joined here from the events this
+  // read fetched — transport data, never fold semantics (see the type's doc).
+  const observationGates = React.useMemo<
+    readonly CodingSessionRouteGateRow[]
+  >(() => {
+    const signedAt = observations.result?.signedAt ?? null;
+    if (signedAt === null) return [];
+    return observationView.gates.map((row) => ({
+      key: row.key,
+      authorPubkey: row.authorPubkey,
+      gate: row.gate,
+      outcome: row.outcome,
+      at: signedAt.get(row.sourceEventId) ?? null,
+      sourceEventId: row.sourceEventId.length > 0 ? row.sourceEventId : null,
+    }));
+  }, [observationView.gates, observations.result]);
   const surfaces = React.useMemo(
     () =>
       input.active
@@ -312,6 +417,7 @@ export function useCodingSessionMissionSurface(input: {
                   onFocusParticipant={input.onFocusParticipant}
                   onOpenFileTrace={input.onOpenTrace}
                   onRefresh={evidence.refresh}
+                  gateRows={observationView.gates}
                   seatAuthorities={input.seatAuthorities}
                   unseatedReportEventIds={pending.unseatedReportEventIds}
                   variant={input.isNarrow ? "drawer" : "panel"}
@@ -345,7 +451,13 @@ export function useCodingSessionMissionSurface(input: {
                 <CodingSessionMissionAudit
                   errorMessage={evidence.errorMessage}
                   loading={evidence.isLoading}
-                  onRefresh={evidence.refresh}
+                  observations={observationView}
+                  observationsError={observations.errorMessage}
+                  observationsLoading={observations.isLoading}
+                  onRefresh={() => {
+                    evidence.refresh();
+                    observations.refresh();
+                  }}
                   seats={auditSeats}
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
@@ -370,6 +482,10 @@ export function useCodingSessionMissionSurface(input: {
       input.seatAuthorities,
       input.umbrella.founderPubkey,
       model,
+      observationView,
+      observations.errorMessage,
+      observations.isLoading,
+      observations.refresh,
       pending.unseatedReportEventIds,
       policy.errorMessage,
       policy.fold,
@@ -384,9 +500,11 @@ export function useCodingSessionMissionSurface(input: {
       transactions: pending.transactions,
       unseatedReportEventIds: pending.unseatedReportEventIds,
       wakeOperations,
+      observationGates,
     }),
     [
       model.missionState,
+      observationGates,
       pending.transactions,
       pending.unseatedReportEventIds,
       surfaces,

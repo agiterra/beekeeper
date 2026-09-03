@@ -25,11 +25,14 @@
 //! "unknown ≠ empty" is exactly the distinction the 44245 record exists to
 //! keep.
 
-use buzz_core_pkg::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
+use buzz_core_pkg::coding_session_authority_transition::{
+    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
+};
 use buzz_core_pkg::coding_session_policy::{
     decode_coding_session_policy, fold_coding_session_policies, signer_may_steer_at,
     validate_coding_session_policy_envelope, CodingSessionPolicyGrant, CodingSessionPolicyPayload,
 };
+use buzz_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
 use buzz_sdk_pkg::coding_session_policy::build_coding_session_policy;
 use nostr::Event;
 use serde::{Deserialize, Serialize};
@@ -94,12 +97,28 @@ pub struct CodingSessionPolicyReadRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingSessionPolicyFoldGrant {
+    /// Event id of the signed kind-44228 this projection read the grant from.
+    ///
+    /// Required, and the whole point of REVIEW-L2 F15: it is what lets this
+    /// boundary check a claimed grant against a **signed** transition instead
+    /// of trusting a TypeScript projection's word for it.
+    pub transition_event_id: String,
     /// Pubkey the transition grants or revokes.
     pub grantee: String,
     /// Seconds since the epoch at which the relay accepted it.
     pub accepted_at: u64,
     /// The transition's own wire word.
     pub transition_type: String,
+}
+
+/// One claimed grant this boundary refused, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionPolicyRefusedGrant {
+    /// The kind-44228 the caller's projection named.
+    pub transition_event_id: String,
+    /// One sentence naming the rule it failed.
+    pub reason: String,
 }
 
 /// Every published 44245 for one umbrella, on its way to the fold.
@@ -116,6 +135,22 @@ pub struct CodingSessionPolicyFoldRequest {
     pub founder_pubkey: String,
     /// The accepted authority chain, in accepted order.
     pub grants: Vec<CodingSessionPolicyFoldGrant>,
+    /// The signed kind-44228 events those grants were projected from.
+    ///
+    /// REVIEW-L2 F15, corrected by REVIEW-L5 F3. Every entry in `grants` must
+    /// be supported by one of these — right id, right grantee, right verb,
+    /// **and the right umbrella** — verified here.
+    ///
+    /// What that buys, stated exactly: this boundary **cannot invent a grant**.
+    /// It can still be handed a chain that *omits* one, so any refusal at all
+    /// drops the whole projection rather than applying a partial chain whose
+    /// missing link might have been a revoke. `accepted_at` remains the
+    /// caller's unverified word — acceptance is a fact about a relay receipt
+    /// this boundary is not given. **Lifting
+    /// `crates/buzz-session-provider/src/authority.rs` into `buzz-core`, so
+    /// provider, CLI and Desktop share one chain, is the real fix**; this is a
+    /// narrowing, not a closure.
+    pub transitions: Vec<serde_json::Value>,
     /// Raw signed kind-44245 events, verified here before any is read.
     pub events: Vec<serde_json::Value>,
 }
@@ -164,6 +199,10 @@ pub struct CodingSessionPolicyFoldResponse {
     pub selected: Option<CodingSessionPolicyFoldSelected>,
     /// Every refused record, newest first. Never empty-by-omission.
     pub excluded: Vec<CodingSessionPolicyFoldExclusion>,
+    /// Claimed grants no verified transition supported. Present even when
+    /// empty: a caller must be able to tell "none were refused" from "this
+    /// build does not check".
+    pub refused_grants: Vec<CodingSessionPolicyRefusedGrant>,
     /// The enforcement sentence, byte-identical to the CLI's.
     pub enforcement: String,
 }
@@ -439,6 +478,48 @@ pub async fn build_coding_session_policy_event(
         .map_err(|error| format!("session-policy build task failed: {error}"))?
 }
 
+/// One verified kind-44228, reduced to the two facts a claimed grant asserts.
+struct SignedTransition {
+    grantee: String,
+    transition_type: CodingSessionAuthorityTransitionType,
+    /// The umbrella the transition itself names (REVIEW-L5 F3).
+    genesis_ref: String,
+}
+
+/// Verify every supplied 44228 and index it by event id.
+///
+/// Signature first, then the envelope validator `buzz-core` already owns. A
+/// transition that fails either is simply not in the index, so any grant
+/// claiming it is refused by name rather than quietly believed.
+fn verified_transitions(
+    values: &[serde_json::Value],
+) -> Result<std::collections::HashMap<String, SignedTransition>, String> {
+    let mut index = std::collections::HashMap::new();
+    for value in values {
+        let event: Event = serde_json::from_value(value.clone())
+            .map_err(|error| format!("transitions[] is not a signed Nostr event: {error}"))?;
+        // Wrong kind, bad signature or unreadable content: not in the index,
+        // so a grant claiming it is refused by name rather than believed.
+        if u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            || event.verify().is_err()
+        {
+            continue;
+        }
+        let Ok(payload) = decode_coding_session_authority_transition(&event.content) else {
+            continue;
+        };
+        index.insert(
+            event.id.to_hex(),
+            SignedTransition {
+                grantee: payload.grantee_pubkey.clone(),
+                transition_type: payload.transition_type,
+                genesis_ref: payload.genesis_ref.clone(),
+            },
+        );
+    }
+    Ok(index)
+}
+
 fn transition_type(word: &str) -> Result<CodingSessionAuthorityTransitionType, String> {
     // Through serde, so the words this adapter accepts are exactly the words
     // `buzz-core` signs — a hand-written match here would be a second spelling
@@ -455,17 +536,78 @@ fn fold_adapter(
             "request.schema must be {CODING_SESSION_POLICY_FOLD_REQUEST_SCHEMA}"
         ));
     }
-    let grants = request
-        .grants
-        .iter()
-        .map(|grant| {
-            Ok(CodingSessionPolicyGrant {
-                grantee: grant.grantee.clone(),
-                accepted_at: grant.accepted_at,
-                transition_type: transition_type(&grant.transition_type)?,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    // REVIEW-L2 F15. The standing rule is applied in Rust but was handed a
+    // grant list derived by `lib/codingSessionMissionAuthority.ts`, so a drift
+    // there made Desktop disagree with the provider about whose ceiling counts.
+    // Each claimed grant is now held against the **signed** 44228 it names.
+    let signed = verified_transitions(&request.transitions)?;
+    let mut refused_grants: Vec<CodingSessionPolicyRefusedGrant> = Vec::new();
+    let mut grants: Vec<CodingSessionPolicyGrant> = Vec::new();
+    for grant in &request.grants {
+        let transition = transition_type(&grant.transition_type)?;
+        match signed.get(&grant.transition_event_id) {
+            None => refused_grants.push(CodingSessionPolicyRefusedGrant {
+                transition_event_id: grant.transition_event_id.clone(),
+                reason: "no verified kind-44228 with this id was supplied, so this grant is a \
+                         claim no signature supports"
+                    .to_owned(),
+            }),
+            Some(signed_grant) if signed_grant.genesis_ref != request.genesis_ref => {
+                // REVIEW-L5 F3. Kind, signature and decodability said nothing
+                // about *which umbrella* the transition belongs to, and the
+                // projection and the transition list come from the same caller
+                // — so a real 44228 from another session used to support a
+                // grant here.
+                refused_grants.push(CodingSessionPolicyRefusedGrant {
+                    transition_event_id: grant.transition_event_id.clone(),
+                    reason: format!(
+                        "the signed transition belongs to another umbrella ({}), not this one",
+                        signed_grant.genesis_ref
+                    ),
+                });
+            }
+            Some(signed_grant) => {
+                if signed_grant.grantee != grant.grantee {
+                    refused_grants.push(CodingSessionPolicyRefusedGrant {
+                        transition_event_id: grant.transition_event_id.clone(),
+                        reason: format!(
+                            "the signed transition grants {}, not {}",
+                            signed_grant.grantee, grant.grantee
+                        ),
+                    });
+                } else if signed_grant.transition_type != transition {
+                    refused_grants.push(CodingSessionPolicyRefusedGrant {
+                        transition_event_id: grant.transition_event_id.clone(),
+                        reason: format!(
+                            "the signed transition is a {}, not a {}",
+                            vocabulary_word("transitionType", &signed_grant.transition_type)?,
+                            grant.transition_type
+                        ),
+                    });
+                } else {
+                    grants.push(CodingSessionPolicyGrant {
+                        grantee: grant.grantee.clone(),
+                        // The relay receipt's `created_at` is the caller's:
+                        // acceptance is a fact about a receipt this boundary
+                        // was not given, and re-deriving it here would be the
+                        // second chain implementation F15 forbids.
+                        accepted_at: grant.accepted_at,
+                        transition_type: transition,
+                    });
+                }
+            }
+        }
+    }
+    // REVIEW-L5 F3, second half: **standing needs the whole chain**.
+    // `fold_coding_session_policies` turns standing *off* on a `Revoke`, so a
+    // projection that omits a revoke link would leave its grantee steering.
+    // A chain with a hole in it cannot be evaluated at all, so none of it is
+    // applied: the founder keeps standing (which needs no grant) and everybody
+    // else loses it. Failing closed is the only direction that cannot be used.
+    if !refused_grants.is_empty() {
+        grants.clear();
+    }
+
     // Signature first, and separately from the fold: `fold_coding_session_policies`
     // adjudicates *standing*, not authenticity, so an unverified event reaching
     // it would be a claim about who set a policy made by nobody. A record that
@@ -527,11 +669,13 @@ fn fold_adapter(
             .cmp(&left.created_at)
             .then_with(|| right.event_id.cmp(&left.event_id))
     });
+    refused_grants.sort_by(|left, right| left.transition_event_id.cmp(&right.transition_event_id));
     Ok(CodingSessionPolicyFoldResponse {
         schema: CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA.to_owned(),
         implementation: "buzz-core".to_owned(),
         selected,
         excluded,
+        refused_grants,
         enforcement: POLICY_ENFORCEMENT_DISCLOSURE.to_owned(),
     })
 }

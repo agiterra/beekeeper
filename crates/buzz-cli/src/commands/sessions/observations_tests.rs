@@ -98,11 +98,16 @@ fn an_unset_row_value_is_null_and_never_absent() {
 }
 
 fn observation(keys: &Keys, observation_type: &str, body: Value) -> Event {
+    observation_from(keys, observation_type, "declared", body)
+}
+
+fn observation_from(keys: &Keys, observation_type: &str, source: &str, body: Value) -> Event {
     let content = json!({
         "schema": CODING_SESSION_OBSERVATION_SCHEMA,
         "sessionRef": SESSION,
         "genesisRef": GENESIS,
         "type": observation_type,
+        "source": source,
         "assignmentRef": Value::Null,
         "body": body,
     })
@@ -129,6 +134,9 @@ fn folded(events: &[Event]) -> CodingSessionObservationFold {
             session_ref: SESSION.to_owned(),
             genesis_ref: GENESIS.to_owned(),
             known_assignment_refs: Vec::new(),
+            // This reader verifies no provenance claim, and the fold's own
+            // `provenanceChecked: false` is what says so (REVIEW-L5 F2).
+            provider_pubkeys: None,
         },
     )
 }
@@ -265,6 +273,12 @@ fn compact_prints_one_row_per_fact_and_says_whose_measurement_a_time_is() {
         rows[1].contains("gate ") && rows[1].contains("just ci passed"),
         "{rows:?}"
     );
+    // Every row names how it was produced. A reader must never have to infer
+    // provenance from the author key.
+    assert!(
+        rows.iter().all(|row| row.contains(" declared ")),
+        "{rows:?}"
+    );
     assert!(
         rows[2].contains("(author's own measurement)"),
         "a timestamp on the wire is a claim, and the row says so: {rows:?}"
@@ -357,4 +371,58 @@ fn a_checkpoint_with_no_tests_yet_prints_zeros() {
         "{}",
         rows[0]
     );
+}
+
+/// The provider's watched row and the seat's own claim are two rows, and the
+/// reader is told which is which. Brian's 2026-09-02 ruling, at the CLI.
+#[test]
+fn an_observed_gate_row_and_a_declared_one_are_two_rows_that_name_their_source() {
+    let seat = Keys::generate();
+    let rows_body = |outcome: &str| {
+        json!({ "rows": [{
+            "gate": "cargo test -p buzz-cli",
+            "outcome": outcome,
+            "command": "cargo test -p buzz-cli",
+            "summary": Value::Null,
+            "durationMs": Value::Null,
+        }] })
+    };
+    let declared = observation_from(&seat, "gate", "declared", rows_body("passed"));
+    let observed = observation_from(&seat, "gate", "observed", rows_body("failed"));
+    let wire = fold_json(&folded(&[declared, observed]));
+    let gates = wire["gates"].as_array().expect("gates").clone();
+    assert_eq!(gates.len(), 2, "{wire}");
+    let by_source: Vec<&str> = gates
+        .iter()
+        .map(|row| row["source"].as_str().unwrap_or_default())
+        .collect();
+    assert!(by_source.contains(&"observed"), "{wire}");
+    assert!(by_source.contains(&"declared"), "{wire}");
+    let observed_row = gates
+        .iter()
+        .find(|row| row["source"] == json!("observed"))
+        .expect("observed row");
+    assert_eq!(observed_row["outcome"], json!("failed"), "{wire}");
+}
+
+/// REVIEW-L5 F2: the reader states that it verified nothing, rather than
+/// letting a self-asserted `observed` pass for a watched measurement.
+#[test]
+fn the_reader_says_it_checked_no_provenance() {
+    let seat = Keys::generate();
+    let claimed = observation_from(
+        &seat,
+        "gate",
+        "observed",
+        json!({ "rows": [{
+            "gate": "cargo test",
+            "outcome": "passed",
+            "command": "cargo test -p buzz-cli",
+            "summary": Value::Null,
+            "durationMs": Value::Null,
+        }] }),
+    );
+    let wire = fold_json(&folded(&[claimed]));
+    assert_eq!(wire["provenanceChecked"], json!(false));
+    assert_eq!(wire["misclaimedObserved"], json!([]));
 }

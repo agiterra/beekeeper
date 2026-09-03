@@ -8,6 +8,7 @@ import {
   ClipboardList,
   FileText,
   Flag,
+  FlaskConical,
   Gavel,
   GitBranch,
   PanelLeftClose,
@@ -95,6 +96,10 @@ export const CODING_SESSION_ROUTE_SIGN_ICON: Readonly<
   hire: GitBranch,
   delivery: Clock3,
   "seat-ungranted": Flag,
+  // L5.6. One glyph for a gate row whatever its outcome — the *word* on the
+  // sign says passed, failed or not-run, and a second glyph for the same fact
+  // would be a vocabulary the wire does not have.
+  gate: FlaskConical,
 };
 
 /**

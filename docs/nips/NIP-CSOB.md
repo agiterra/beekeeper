@@ -81,7 +81,7 @@ the wire where a reader can still find it.
 
 ## Content
 
-Content is public JSON with exactly six top-level keys, **every one always
+Content is public JSON with exactly seven top-level keys, **every one always
 present**:
 
 ```json
@@ -90,17 +90,57 @@ present**:
   "sessionRef": "<canonical UUID>",
   "genesisRef": "<genesis event id>",
   "type": "checkpoint" | "gate" | "finding" | "phase",
+  "source": "observed" | "declared",
   "assignmentRef": "<assignment event id>" | null,
   "body": { }
 }
 ```
+
+`source` says **how the record came to exist**. It is a **required content
+key**, so adding it was a breaking change to the schema: an event signed by a
+build that predates it omits `source`, is refused by the decoder with
+`coding-session observation payload is missing "source"`, and lands in the
+fold's `ignored` list with that reason rather than being read. (Harmless in
+practice — nothing had published a kind 44246 anywhere when the key was added
+— but a wire spec should say so plainly.)
+
+It is **not** carried in a tag. The five-tag envelope below is frozen and is
+what relays index on; provenance is a property a reader filters the folded
+collection by, not one it queries the relay for.
+
+* `observed` — written by a mechanism watching the subject: the session
+  provider deriving a gate row from a seat's own tool calls, or a hire host's
+  git hook. The signer is that mechanism, never the subject.
+* `declared` — written by the subject about its own work. A claim.
+
+A reader **prefers observed rows, shows the word, and never merges the two**.
+The fold's dedupe keys carry `source` for the same reason, so a claim can never
+take the place of a measurement.
+
+**`observed` is honoured only when the signer is verified.** The word is
+self-asserted on the wire — anyone may sign it — so a consumer that ranks or
+labels observed rows must check the signer against the session's own provider
+instances. `fold_coding_session_observations` takes that set: given one, a row
+claiming `observed` from a signer outside it is folded as `declared` and listed
+under `misclaimedObserved`; given none, nothing is checked and the fold reports
+`provenanceChecked: false`, because "not verified" and "verified good" are
+different facts.
+
+**Newest-wins is never silent.** A later statement replacing an earlier one for
+the same `(author, source, gate)` is counted in `truncated.displacedGates` (and
+`displacedFindings`), so a `failed` row replaced by a `passed` one cannot read
+like a gate that had only ever passed. (Added 2026-09-02, after a seat's prose
+"`cargo test -p buzz-cli` green" was reproduced red on the same patch by a
+verifier — an agent's account of its own work is a claim, and only a record
+produced without its cooperation is evidence.)
 
 `assignmentRef` is a **pointer**, never a causal reference. An observation that
 names an assignment nobody supplied is still a real statement its author made,
 so a dangling id is disclosed as `unresolved` by the fold and excludes nothing.
 
 There is **no `supersedes` key**. A later observation with the same
-`(author, findingId)` or `(author, gate)` is simply the newer statement.
+`(author, source, findingId)` or `(author, source, gate)` is simply the newer
+statement.
 
 **Absent is not null.** Every key above and every key in every body is always
 present. An unset optional is written as JSON `null`; an omitted key is invalid,
@@ -258,8 +298,8 @@ It returns five collections plus two disclosures:
 | Key | Contents |
 |---|---|
 | `checkpoints` | every checkpoint, in supplied order |
-| `gates` | one row per `(author, gate)`, newest statement shown, the newest 16 event ids listed with `droppedEventIds` counting the rest |
-| `findings` | one row per `(author, findingId)`, newest disposition shown, the newest 16 event ids listed with `droppedEventIds` counting the rest |
+| `gates` | one row per `(author, source, gate)`, newest statement shown, the newest 16 event ids listed with `droppedEventIds` counting the rest |
+| `findings` | one row per `(author, source, findingId)`, newest disposition shown, the newest 16 event ids listed with `droppedEventIds` counting the rest |
 | `phases` | every phase timing, in supplied order |
 | `unresolved` | observations whose `assignmentRef` resolved to nothing supplied |
 | `ignored` | events the fold could not read, each with its reason |

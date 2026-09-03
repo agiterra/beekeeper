@@ -1,0 +1,111 @@
+{
+  "schema": "buzz-coding-session-observation-fold-adapter/v1",
+  "implementation": "buzz-core",
+  "inputEventIds": [
+    "eba2ed8e8642041eed7bc9840345c06ea75438017a4534569019bfacccf0de17",
+    "5061d52924734f5c550aa162c4e6acb625c622141e4419d384512f7d47a65eb9",
+    "32470c5376efacfdfd26abddc0486e92cb9e0f79cbe4509336057e1351be858e",
+    "96413b4e30b36e50ba12d433caabf7d55e334d8dd4ec2021e8af147bf70cbf61",
+    "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29"
+  ],
+  "sessionRef": "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
+  "genesisRef": "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b",
+  "checkpoints": [
+    {
+      "eventId": "eba2ed8e8642041eed7bc9840345c06ea75438017a4534569019bfacccf0de17",
+      "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
+      "source": "declared",
+      "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "phase": "gates",
+      "testsWritten": 6,
+      "testsRed": 6,
+      "testsGreen": 4,
+      "lastCommand": "cargo test -p buzz-core coding_session_observation",
+      "lastSummary": "26 passed; 0 failed",
+      "note": null
+    }
+  ],
+  "gates": [
+    {
+      "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
+      "source": "declared",
+      "eventIds": [
+        "5061d52924734f5c550aa162c4e6acb625c622141e4419d384512f7d47a65eb9"
+      ],
+      "droppedEventIds": 0,
+      "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "gate": "cargo test",
+      "outcome": "passed",
+      "command": "cargo test -p buzz-cli",
+      "summary": "13 passed",
+      "durationMs": 41000
+    },
+    {
+      "authorPubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
+      "source": "observed",
+      "eventIds": [
+        "32470c5376efacfdfd26abddc0486e92cb9e0f79cbe4509336057e1351be858e"
+      ],
+      "droppedEventIds": 0,
+      "assignmentRef": null,
+      "gate": "cargo test",
+      "outcome": "failed",
+      "command": "cargo test -p buzz-cli",
+      "summary": "test result: FAILED. 0 passed; 2 failed; 0 ignored",
+      "durationMs": 41000
+    }
+  ],
+  "findings": [
+    {
+      "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
+      "source": "declared",
+      "eventIds": [
+        "96413b4e30b36e50ba12d433caabf7d55e334d8dd4ec2021e8af147bf70cbf61"
+      ],
+      "droppedEventIds": 0,
+      "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "findingId": "A3",
+      "title": "the Structured tests card described the wire instead of reading it",
+      "disposition": "fixed",
+      "detail": null,
+      "refs": [
+        "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b"
+      ],
+      "decisionRef": null
+    }
+  ],
+  "phases": [
+    {
+      "eventId": "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29",
+      "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
+      "source": "declared",
+      "assignmentRef": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "phase": "green",
+      "startedAtMs": 1756800000000,
+      "endedAtMs": 1756800180000,
+      "durationMs": 180000
+    }
+  ],
+  "unresolved": [
+    {
+      "eventId": "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29",
+      "assignmentRef": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+    }
+  ],
+  "ignored": [],
+  "misclaimedObserved": [],
+  "provenanceChecked": true,
+  "truncated": {
+    "checkpoints": 0,
+    "gates": 0,
+    "findings": 0,
+    "phases": 0,
+    "unresolved": 0,
+    "ignored": 0,
+    "misclaimedObserved": 0,
+    "entryEventIds": 0,
+    "displacedGates": 0,
+    "displacedFindings": 0
+  },
+  "disclosure": "an observation is something its author saw, not a decision: it settles nothing, authorizes nothing and excludes nothing, and every duration in it is the author's own measurement"
+}

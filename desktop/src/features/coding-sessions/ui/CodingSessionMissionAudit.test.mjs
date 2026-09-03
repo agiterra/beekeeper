@@ -137,9 +137,24 @@ async function renderAudit(props) {
   const { CodingSessionMissionAudit } = await import(
     "./CodingSessionMissionAudit.tsx"
   );
+  const { deriveCodingSessionObservationView } = await import(
+    "../lib/codingSessionObservationView.ts"
+  );
   return {
     cleanup,
-    ...render(React.createElement(CodingSessionMissionAudit, props)),
+    ...render(
+      React.createElement(CodingSessionMissionAudit, {
+        // L5: the tab's signed half. These tests are about the five
+        // transcript-derived sections, so every one of them supplies the
+        // no-fold view unless it says otherwise — which is what a session
+        // whose observations have not been read looks like.
+        observations: deriveCodingSessionObservationView({
+          fold: null,
+          resolveLabel: () => null,
+        }),
+        ...props,
+      }),
+    ),
   };
 }
 
