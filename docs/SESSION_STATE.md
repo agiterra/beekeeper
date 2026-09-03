@@ -8132,6 +8132,228 @@ is Brian's call.
        byte-identical before and after (`git diff 23728227b b188f0333` vs
        `git diff 860851206 HEAD`, 14,116 lines, `cmp` clean).
 
+109. **The second wave of batch 3: the push gate learns to read a verdict, a
+     ruling learns to name what it covers, a gate row learns to say who
+     watched it, and the founder can act from the app; landed 2026-09-03
+     (`review-2026-09-01/batch3/`, thirteen commits on
+     `lane/batch3-final-m`, base `17368d12c` = item 108's head).**
+     Twelve lanes (L4–L16) built in parallel against a written spec with
+     strict file ownership, each reviewed, then integrated by one finalizer
+     who alone commits. `crates/buzz-relay` is in the diff, so **`just test`
+     was required and was run**; hive redeploys (§3a). 368 files,
+     +61,489/−2,947.
+
+     Ordered, one commit per lane:
+
+     ```
+     42dd921d8  L6   a protected ref admits only a push a verdict names
+     06a41fff7  L7   a ruling names the class it covers; unverified completions do not fold
+     906db90fd  L4   the Mission view has one reading column
+     9cd266f42  L5   a gate row says who observed it
+     8d30aa0d3  L8   the founder can answer a ruling and ask whether a commit may land
+     4e2ad82c0  L9   Pulse reads the mission from the wire
+     ff69cbc60  L10  the model registry can be measured
+     d7c18242b  L11  a worktree is reclaimed when its work has landed
+     5b6d00987  L12  the host resolves one `bee` and records which one answered
+     54d8a2e26  L13  a seat can learn a verb from its own `--help`
+     7f05d7c64  L14  the pre-push floor is scoped to what you changed
+     e1300c644  L16  a remembered channel is shown only once it is known to exist
+     0315569b8  L15  the six batch-2 flakes are root-caused and pinned
+     ```
+
+     - **Finding 28 happened twice, in two lanes, and the second one was
+       nearly shipped.** L7 measured it first: making `decision.answer`'s new
+       `condition` an exact-key requirement on *read* made every pre-existing
+       signed answer undecodable, and live run 2 flipped to "waiting on the
+       founder" — a wire widening that lost history. The rule was written
+       down: **required on write, optional on read**, `null` still refused.
+       L5 then added `source` as a seventh key to kind 44246's exact-key
+       payload without it. Nothing on the wire before 2026-09-02 decoded any
+       more. It surfaced only because L9's Pulse fixtures folded **zero**
+       gates and zero checkpoints when the two lanes met in the finalizer's
+       tree — five core tests red, none of them owned by either lane. Fixed
+       at the cause in `4e2ad82c0`: `#[serde(default)]` plus
+       `OBSERVATION_READ_OPTIONAL_KEYS`, absent reads `declared` (a row
+       nothing watched is a claim), explicit `null` and unknown tokens still
+       refused, and a regression test that decodes a six-key body of all four
+       observation types
+       (`crates/buzz-core/src/coding_session_observation_tests.rs`,
+       `a_body_signed_before_source_existed_still_decodes_and_reads_declared`).
+       **The lesson is not "remember the rule"** — L5's author knew it, it is
+       written in L7's own field doc one file away. It is that an exact-key
+       payload has no cheap way to say "this key is new", so the next one will
+       do it too. A shared read-optional helper, or a test that decodes every
+       banked historical body, is owed.
+
+     - **Nothing here asks an agent to report.** Brian's rule of 2026-09-02,
+       made structural. A 44246 row is `observed` only when the provider
+       parsed the command out of argv **in command position** and signed it
+       with the instance that ran it; a seat-signed `observed` folds down to
+       `declared` and is counted in `misclaimed_observed`
+       (`coding_session_observation_fold.rs`). A reader that cannot resolve
+       the provider set says so (`provenance_checked: false`) rather than
+       guessing. `bee sessions observe` publishes `declared` and there is no
+       flag to say otherwise.
+
+     - **`gates.verifierRequired` finally has a consequence.** It existed
+       since item 107 and nothing read it: live run 3 ended with a verifier's
+       FAIL on the wire and no structural effect at all (findings 26, 27). The
+       fold now excludes a completion that settles an assignment no active
+       verifier ruled on, as its own code `CompletionNotVerified` — a
+       different fact from `completion_not_approved`, where the chain is
+       closed and the independent ruling is missing. Two fields are enforced
+       now, not one, and one sentence says so at **six** sites with a
+       byte-identity test over them (`crates/buzz-cli/tests/policy_enforcement_sentence.rs`).
+
+     - **Finding 27 stays open, and only Brian can close it.** L6 ships the
+       rule; it does nothing on hive until the founder runs
+       `bee repos protect set --ref refs/heads/main --require-verdict` there,
+       against a redeployed relay. §3 Next lists it as step 1 after the
+       relaunch. Until then a lead can still land `main` over its own
+       verifier's FAIL, which is what finding 27 *is*.
+
+     - **The seventeen push-gate proofs ran for the first time.** L6's
+       acceptance cases are `#[ignore = "requires Postgres"]` and
+       `run-tests.sh` runs the workspace without `--ignored`, so nothing in
+       the repository executed them — the tests that decide who may push to a
+       protected ref. `Justfile` gains `test-git-push-gate` (the
+       `test-genesis` pattern: throwaway database, migrated, serial) and
+       `just test` depends on it. Measured in this batch's own gate run:
+       `==> git push-gate acceptance cases against buzz_push_gate_34709_… ·
+       ok. 17 passed; 0 failed`.
+
+     - **Two lanes independently wrote `("sessions", 35)` at the same two
+       lines** — item 108's exact-count trap, predicted in the brief and hit
+       anyway. Set once to **36** after every lane
+       (`crates/buzz-cli/src/lib.rs`), names list and count re-run green. Five
+       lanes of this wave appended to that inventory.
+
+     - **Three lanes each lifted the same two leaves out of one file.** L4,
+       L7 and L5 all split `CodingSessionMissionInspector.tsx` for the
+       1,000-line gate, and `EmptyCopy`/`SignedSource` ended up defined in
+       three places. They live once, in
+       `CodingSessionMissionInspectorPrimitives.tsx`. Two copies of the leaf
+       that renders an empty state is how two panels drift apart.
+
+     - **L8 carried a verbatim copy of L6's predicate**, written while L6 was
+       unlanded and honestly labelled as such. It is deleted:
+       `coding_session_land.rs` goes 784 → 350 lines and uses
+       `buzz_core::coding_session_verdict_admission` and core's own
+       `parse_protection_tags` + `EffectiveRules::for_ref`. The screen,
+       `bee git check --ref` and the pre-receive hook now read one rule from
+       one place. Its guard test had asserted that core does *not* know the
+       `require-verdict` token — true for exactly as long as L6 was unlanded;
+       it now asserts core parses it into the flag and **not** into
+       `unknown_rules`, which is the property REVIEW-L8 F3 was protecting.
+
+     - **`--no-verify` is no longer in anyone's instructions.** The pre-push
+       gate ran everything on every push — 989–1410 s measured on the desktop
+       surface — so the standing rule told every seat to run its own gate and
+       then skip the hooks. A rule that says "skip the hooks" is a rule that
+       will eventually be followed on a SHA no gate has seen. The floor is now
+       scoped to what changed and prints what it skipped: desktop-only pushes
+       **989–1410 s → 183 s**, of which `tsc --noEmit` is 145 s and is named
+       rather than hidden. REVIEW-L1 F7 had retired the words L14's new
+       sentence reuses; F7's danger was the *pair* (a narrow brief standing in
+       for the gate **plus** `--no-verify`) and the scoped floor removes the
+       second half, so the retirement moves to "push with the hooks skipped"
+       and `git push --no-verify`. The reasoning is in the const, not only
+       here.
+
+     - **Nothing has been measured.** L10 ships the instrument — a bench that
+       runs a role's task set against a real runtime, scores per criterion,
+       refuses a run whose criteria contradict each other, and publishes every
+       row as a signed 44246 before printing a table. Its cheat adapter scores
+       2.6 and fails the judgment gate; that *is* the proof. **Every row in
+       the routing registry today is still an opinion.** `source` gained
+       `measured` as one wire widening (core + CLI + TS decoder + the gate-row
+       renderer, five join sites, one commit).
+
+     - **Frozen copy still owed a ruling from Brian.** §1i–§1l stand
+       provisional, plus three sentences §1l does not freeze:
+       `codingSessionMissionLand.ts:252-253`,
+       `CodingSessionDecisionAnswerForm.tsx:19-20`, and
+       `useCodingSessionDecisionAnswer.ts:41/44/50`. One of them is **half
+       false as written** — L8's "this ruling can only cover the commit it
+       names": an answer names a `requestRef`, not a commit. Brian rules on
+       all three.
+
+     - **Residuals, each with the file that carries it.**
+       (a) A Pulse gate row saying `observed` is the row's own word for
+       itself: `PulseMissionSources` is handed signed events and a fold
+       context, never the provider instances that ran the executions, so
+       L5's provenance check does not run on that path
+       (`crates/buzz-core/src/pulse_mission.rs`, `apply_observation_facts`).
+       (b) `measured` sits outside that check on purpose — a bench row's
+       subject is a routing target, not the signer's own work — so nothing
+       stops a seat signing `measured` about itself
+       (`coding_session_observation_fold.rs`). `observed|declared` says who
+       saw it and `measured` says why it ran: two axes, one key, and the key
+       is owed a sibling.
+       (c) L12's `beeStamp` (kind 44223) has **no live surface**:
+       `CodingSessionSeatBeeLine` is mounted at
+       `CodingSessionParticipantBar.tsx:168` but its `seatBeeStamps` prop
+       (`:60`) has no real caller, so every chip renders nothing. The brief
+       called carrying the stamp onto `CoordinatedGeneration` a one-liner; it
+       is not, and that was **measured**: adding the key in TypeScript alone
+       turns `every banked conformance vector folds byte-identically` red,
+       because that type is the Project Pulse digest's frozen generation
+       member, bound by `crates/buzz-core/src/pulse_fold.rs`, the CONTRACT's
+       key order and a relay-side kind 39011 projection. It was implemented,
+       measured red, reverted, and the reason written into
+       `PulseStaleBeeCard.tsx`.
+       (d) The ancestry host command L12's Pulse card needs does not exist, so
+       every live seat reads *uncompared* — which is what the card says, never
+       "current".
+       (e) L11's `PulseDiskRow.tsx:15` is written and tested but **never
+       mounted**; the disk row the lane promises is not on the screen.
+       (f) The Audit stayed in the Inspector (L4): the 400 px card degrade is
+       honest at the Inspector's default width, but the placement is not
+       L4.6.4.
+       (g) Core's exact-key refusal still names no key ("team-transaction body
+       has missing or unsupported fields").
+       (h) The CLI's `.fold.excluded[].code` is now wire snake_case where it
+       was Rust `Debug` — a read-contract change, noted in
+       `crates/buzz-cli/TESTING.md`; `bee sessions explain` accepts both.
+       (i) A hired seat's commits are now shared on a wip ref but **not
+       signed**: the seat's key is deleted at spawn and lives only in
+       `NOSTR_PRIVATE_KEY`, so `git-sign-nostr` signs only when the seat
+       drives git from its own env. Persisting a seat key file is a security
+       ruling, not a lane's.
+
+     - **Two forwards version cliffs, both the same shape.** An old relay
+       refuses a `decision.answer` carrying `condition`, and refuses a 44246
+       carrying `source: "measured"`. The relay redeploys **before** any app
+       publishes either, and the app relaunches on the new bundled `bee`.
+
+     - **UI parity held for every wire fact but one.** L6's refusal → the
+       CLI's readable 403 body and the Land control's sentence naming the rule
+       (`codingSessionMissionLand.ts:266-278`); `CompletionNotVerified` →
+       `codingSessionMissionContracts.ts:258-263` +
+       `CodingSessionMissionInspector.tsx:206`; `condition` → the queue row
+       (`CodingSessionMissionDecisionQueue.tsx:139-155`), the wake reading
+       (`codingSessionWakeReading.ts:261-264`) and the Answer control
+       (`CodingSessionDecisionAnswerForm.tsx:53/76`); 44246 `source` → the
+       Audit tab, the Inspector's Structured tests and the Route rail sign
+       (`codingSessionRouteModel.ts:156/340`); `measured` →
+       `CodingSessionGateRows.tsx:196-199`; L9's eight mission keys → the
+       Desktop Pulse rows, not CLI-only (`ProjectPulseView.tsx:40-47, 494,
+       688`). The exception is (c) above.
+
+     - **Gates, run once on `0315569b8` after every lane, both exit 0.**
+       `just test` — Postgres and Redis from the repo's own compose, both
+       healthy — 671 s: `genesis + authority-chain proofs`, **`git push-gate
+       acceptance cases 17 passed`**, and `run-tests.sh`'s four sections,
+       `[run-tests] All tests passed!`, `JUST_TEST_EXIT=0`. `just ci` 756 s,
+       `JUST_CI_EXIT=0`. Per-lane before that: workspace
+       `cargo clippy --all-targets -- -D warnings` clean at every step,
+       `cargo fmt --all --check` clean, desktop `pnpm test` **7,904 passed /
+       0 failed**, Tauri `cargo test` 2,955 + 7 + 3, `node --test
+       conformance/**` 47, `check:e2e-registration` 176 entries / 175 specs /
+       no drift, and L16's own
+       `BUZZ_E2E_PORT=4620 playwright --project=smoke community-rail.spec.ts`
+       **24 passed (30.3 s)**. All thirteen commits carry `Signed-off-by`.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -8161,106 +8383,92 @@ point at them still resolve.**
 ### The ordered track
 
 **Batches 2 and 3 are complete.** Their landings are §2 items 104 (A1–A3),
-105 (B1, B1b, B1c), 106 (A4), 107 (B2, B3) and 108 (L1, L2, L3). Nothing in
-them waits on another lane, review or finalizer. What follows is written in
-the order it should be done, and each item says who or what it is blocked by.
+105 (B1, B1b, B1c), 106 (A4), 107 (B2, B3), 108 (L1, L2, L3) and **109 (L4–L16,
+the second wave)**. Every lane the previous version of this list was waiting on
+has landed; what is left is the two acts only Brian can perform, the live run
+they unblock, and the work item 109 measured but did not do.
 
 1. **Rebuild and relaunch the dev app, with Brian — before any further live
-   run.** It has now been the first item for two batches and it has grown a
-   third reason. Seats run the app-bundled `bee`
+   run.** It has now been the first item for three batches and item 109 adds
+   the sharpest reason yet. Seats run the app-bundled `bee`
    (`desktop/src-tauri/tauri.conf.json:61`), so every CLI change in items 104,
-   105, 107 and **108** reaches a seat only through a rebuild — and item 108's
-   CLI half is not cosmetic: a seat's `decide request` does not wake the actor
-   it is held on until the bundle moves, and `bee sessions observe` does not
-   exist to a seat at all, which makes item 108's gate rows unreachable from
-   the very seats that are supposed to write them. Item 107 makes the context
-   package v4 and the provider stamps it unconditionally, so a sidecar
-   compiled at v3 refuses *every* context read from an updated provider
-   (POLICY.md §4.6) — provider and bundle must move together. And items 106,
-   107 and 108's Desktop surfaces — the Route rail, the one launch form, the
-   decision queue, the policy in the Inspector — are simply not on the screen
-   until it is rebuilt.
+   105, 107, 108 and 109 reaches a seat only through a rebuild: a seat's
+   `decide request` does not wake the actor it is held on, `bee sessions
+   observe` does not exist to a seat at all, and `bee sessions explain` — the
+   thing that stops a seat reading source to decode its own tool's output —
+   is not on its PATH. Item 107 makes the context package v4 and the provider
+   stamps it unconditionally, so a sidecar compiled at v3 refuses *every*
+   context read from an updated provider (POLICY.md §4.6) — provider and
+   bundle must move together.
+
+   **Item 109 makes the order load-bearing, not merely tidy.** Two forwards
+   cliffs landed: an old relay refuses a `decision.answer` carrying
+   `condition`, and refuses a kind 44246 carrying `source: "measured"`. So:
+   **relay first, then the bundle** — never an app that can publish a record
+   the relay will reject.
 
    With the app stopped: `git merge --ff-only origin/main` in the main
    checkout, `cargo build -p buzz-cli`, then `env -u BUZZ_DESKTOP_NOKEYRING
    just desktop-standalone`.
 
-2. **L4 — Mission-view honesty and density** (`review-2026-09-01/batch3/LANE-L4.md`,
-   spec ready, cuts after item 108 lands). Rail handle and collapse, the
-   stretching stream, the goal reader's states, the elision marker refused
-   upstream in `deriveCodingSessionObservedChanges`, one liveness word, and
-   seat rows that say who waits on whom and since when. It rebases onto L2's
-   rewritten `CodingSessionWorkspace.tsx:182-196`, and when it adds
-   `goalReader` it should **remove L2's `rejected` route through
-   `inspectorInput`** — one fact must not have two routes. `Set goal` stays
-   offered under a `rejected` sentence until this lands (item 108 residual 3).
+2. **Brian runs `bee repos protect set --ref refs/heads/main
+   --require-verdict` on hive.** A live write, on the founder's key, after the
+   relay redeploys. **Finding 27 is open until this is done** — item 109 ships
+   the rule and nothing else can turn it on. Until then a lead can still land
+   `main` over its own verifier's FAIL, which is what finding 27 is. Verify
+   with `bee repos protect list` and `bee git check --ref refs/heads/main`,
+   both of which now say which build evaluated the rule.
 
-3. **G — the fold refuses an unverified completion.** Core, small, and it
-   belongs before the Desktop controls in H depend on it: when the umbrella's
-   policy says `verifierRequired` and no verifier disposition is canonical,
-   `mission.completed` is refused with `CompletionNotVerified`, beside the
-   existing `CompletionNotApproved`. Finding 27 is the argument: a lead
-   completed a mission by landing the branch itself, and the fold had no
-   word for "no verifier ever said anything".
+3. **Brian rules on the frozen copy.** §1i–§1l stand provisional, plus L8's
+   three unfrozen sentences (`codingSessionMissionLand.ts:252-253`,
+   `CodingSessionDecisionAnswerForm.tsx:19-20`,
+   `useCodingSessionDecisionAnswer.ts:41/44/50`). One is half false as
+   written — "this ruling can only cover the commit it names", when an answer
+   names a `requestRef`, not a commit — so this is a correction, not only an
+   approval.
 
-4. **H — the founder can act from the app.** On top of L2's decision queue:
-   an **Answer** control that publishes `decision.answer` from Desktop, so a
-   founder act leaves a terminal on the wire rather than a sentence in a
-   turn; and a **Land** control that appears only when L6's rule would admit
-   the push, and says why when it would not. Blocked by G and L6.
+4. **Live run 4, on the rebuilt app.** A lead, a builder and a verifier; gate
+   rows on the wire for the first time; the **founder** lands the branch after
+   the verdict, through the app's own Land control rather than a terminal; a
+   ruling that names a condition, and a second asker who reads it instead of
+   asking again. This is the live acceptance for items 104–109 at once. Watch
+   in particular whether `CompletionNotVerified` ever fires — item 109 built
+   the consequence finding 26 asked for and **it has never been observed on a
+   live mission**.
 
-5. **I — a ruling may name a condition.** `decision.answer` gains an optional
-   `condition` (text, ≤ 512 B) so one ruling covers a class of SHAs, and the
-   lead pack asks for conditional rulings. Finding 21: run 2 spent two
-   requests and two answers on the same blocker because a per-SHA
-   authorization is the wrong grain.
+5. **The two surfaces item 109 measured as missing.** Neither is a bug in a
+   lane; both are work the wave could not finish. (a) `beeStamp` reaches no
+   chip: `seatBeeStamps` (`CodingSessionParticipantBar.tsx:60`) has no real
+   caller, and the obvious fix — carrying the stamp on
+   `CoordinatedGeneration` — was implemented, measured red against
+   `conformance/project-pulse-fold`, and reverted. It needs both folds, the
+   CONTRACT's key order and regenerated vectors. (b) L11's
+   `PulseDiskRow.tsx:15` is written and tested but never mounted.
 
-6. **J — three lead-pack lines the runs earned.** Assign before you hire
-   (finding 22). Answer a `decision.request` with the **verb**, not with prose
-   in a turn — Keystone's prose answer left `95901be7` open on the wire
-   (finding 21). And, once 44246 renders, a report without a gate row is not
-   accepted (findings 26 and its refinement: a seat's "tests pass" means
-   whatever it chose to run).
+6. **Close the two provenance holes item 109 disclosed.** Thread the
+   executions' signer pubkeys into `PulseMissionSources` so a Pulse row saying
+   `observed` has been checked (`crates/buzz-core/src/pulse_mission.rs`), and
+   give `measured` its own key rather than a third value on the one that
+   answers "who saw it" — nothing today stops a seat signing `measured` about
+   itself.
 
-7. **L5 — the observer's screen** (`review-2026-09-01/batch3/LANE-L5.md`,
-   three rulings pending Brian). Render 44246 checkpoints and gate rows in the
-   Audit tab, which is what turns it from usage into the observer's screen;
-   resolve the wake in the one-seat Conversation lens, which has no evidence
-   subscription today (item 108 residual 1); and have the Tauri command read
-   the 44228 chain itself so TypeScript stops projecting the authority that
-   feeds the Rust policy fold (residual 2).
+7. **A read-optional helper for exact-key payloads.** Finding 28's rule was
+   written down after L7 measured it and broken by L5 in the same wave, in a
+   different payload, and caught only because a third lane's fixtures went
+   silent. Knowing the rule is demonstrably not enough. Either a shared helper
+   that spells "new key: write-required, read-optional" once, or a test that
+   decodes every banked historical body — pick one and make the next widening
+   fail loudly instead of quietly.
 
-8. **L6 — the gate finding 27 is standing in for**
-   (`review-2026-09-01/batch3/LANE-L6.md`, relay-touching, **three rulings
-   pending Brian**, defaults in the spec). A `ProtectionRule` variant on
-   kind:30617 that gates `refs/heads/main` on a fold-read verdict, enforced in
-   `hook_policy_check` (`policy.rs:539`); the relay **logs the pusher pubkey
-   on every ref update** (`transport.rs:1210`) instead of leaving the kind:30618
-   `p` tag as the only record; `bee git check --push` stops claiming what only
-   the pre-receive hook decides (`git_setup.rs:1157`); and a seat inherits at
-   most Member unless the policy's `irreversible` names it. Until this lands,
-   the lead pack's sentence is the only thing between a lead and `main`.
+8. **The provider publishes tool-call paths** (L13 F2). Read/Grep/Glob **paths
+   only**, never content, so "a lead's first turn reads nothing under
+   `crates/`" becomes measurable. Today `.item.tool.input` is `{}` by design.
 
-   Brian's three rulings, with the orchestrator's recommendation: (1) may a
-   seat push `main` when `irreversible` omits push? — spec default yes,
-   **recommend no** until a verdict-gated push has been exercised live once;
-   (2) whose disposition admits a push? — spec default any canonical one,
-   **recommend founder-signed only** while the pusher gate is founder-only,
-   and relax both together; (3) the §1j refusal strings are frozen copy and
-   need Brian's word.
-
-9. **The model registry: measured rows, or none.** Finding 25 — Codex was
-   benched in run 3 and the router disclosed honestly that nothing else
-   cleared the verifier gates, because `team/model-registry.yaml` has no row
-   that does, for Codex or for `claude-fable-5-1[1m]`. **The rule: a row
-   carries measured scores or no row exists. No lane invents a number to make
-   a router route.** Owed: who runs the measurement, and the two rows.
-
-10. **Live run 4, on the rebuilt app.** A lead, a builder and a verifier;
-    gate rows on the wire for the first time; the **founder** lands the branch
-    after the verdict; and watch whether the Audit tab replaces the
-    transcript. This is the live acceptance for items 104–108 at once, and the
-    list below says what each still owes.
+9. **Worktree and seat lifecycle, the half item 109 did not build.** L11 gives
+   `just worktrees-prune` and `bee sessions worktree`, which refuse anything
+   not merged-and-clean. The hire host still does not prune a seat's worktree
+   when its session closes and its branch is on the relay — the thing that put
+   the disk at 100% during this batch.
 
 ### Process rules from the 2026-09-02 runs (keep)
 
@@ -8346,6 +8554,40 @@ Everything struck through in the previous §3 lives in §2 by item number and is
 removed from here.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
+
+- **pnpm 11's answer to a stale workspace state is to DELETE `node_modules`,
+  and lane worktrees share one store.** Found 2026-09-03 by finalizer M. A
+  worktree whose `node_modules` was symlinked to another worktree's carries
+  that worktree's absolute paths in `node_modules/.pnpm-workspace-state-v1.json`,
+  so **every** `pnpm <script>` decides the install is stale and runs
+  `pnpm install`, whose first act is to purge the modules directory — the
+  shared `.pnpm` store every concurrently-building lane resolves through. It
+  stopped only because there was no TTY
+  (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). Neither an `.npmrc` nor
+  `NPM_CONFIG_VERIFY_DEPS_BEFORE_RUN` suppresses it in pnpm 11 — the setting
+  moved into `pnpm-workspace.yaml`, which is tracked and must not be edited
+  for one worktree's convenience. What works: build the worktree's own
+  `node_modules` as a **directory of symlinks** to a donor's entries
+  (`.pnpm`, `.bin`, `.modules.yaml`, each scope) plus its **own**
+  `.pnpm-workspace-state-v1.json` with the donor's absolute paths rewritten to
+  this worktree's. `pnpm` then runs scripts and never proposes an install. The
+  standing rule stands — per-lane installs, never a symlinked store — and this
+  is what to do when you have inherited one anyway.
+
+- **The root `.gitignore` does not hide a `node_modules` symlink.** It matches
+  `node_modules/` with a trailing slash, which is a directory pattern; `web/`
+  and `desktop/` have their own bare `node_modules` entries and are fine, but a
+  root or `admin-web/` symlink shows as untracked. Never `git add -A` from the
+  repo root in a worktree wired that way — stage explicit paths.
+
+- **`BUZZ_UPDATE_FIXTURES=1` regenerates fixtures whose tests were passing.**
+  The Tauri adapters' fixture tests compare parsed JSON, so a fixture that
+  differs only in formatting is green; the generator writes serde_json pretty
+  and biome writes compact arrays. Regenerating rewrote
+  `codingSessionPolicyAdapterResponse.fixture.json` for no semantic reason and
+  would have failed `pnpm check`. After any `BUZZ_UPDATE_FIXTURES=1` run,
+  `git diff` the fixtures, revert the ones whose test was already green, and
+  `biome format --write` the ones you kept.
 
 - **A worktree is created by a machine and, until L11, deleted by nobody — 70
   trees and 331 GB.** Measured 2026-09-02 ~19:40 from this checkout: `git
