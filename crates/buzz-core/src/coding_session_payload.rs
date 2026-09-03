@@ -987,6 +987,144 @@ pub struct SessionMetadata {
     /// mis-state it by omission or by prose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bee_stamp: Option<BeeStamp>,
+    /// Which persona pack this seat was staged from, as the host resolved it.
+    ///
+    /// The seventh independent additive key, emitted only when the host staged
+    /// a pack named by a kind:30624 project pack source
+    /// ([`crate::project_pack_source`]), never as an explicit `null`. A seat
+    /// running the checkout's own `personas/roles/<role>/` — today's
+    /// behaviour, and what happens when a project has published no pack
+    /// source — omits the key, and the surfaces read *no pack staged* rather
+    /// than inventing one.
+    ///
+    /// Read-optional, per finding 31: every decoder accepts its absence, and
+    /// `decode_metadata_reads_a_44223_signed_before_pack_ref_existed` is the
+    /// regression that keeps it so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_ref: Option<PackRef>,
+}
+
+/// The persona pack a seat was staged from, named exactly.
+///
+/// Four fields, all required and all non-null: this record exists so that
+/// "which prompt did that agent actually run" has one answer a person can
+/// check out. A partial answer — a repository with no commit, a commit with
+/// no path — would be a worse lie than an absent key, which is why the shape
+/// is exact and the whole object is omitted when the host staged nothing.
+///
+/// `sha` is always the **resolved** commit, even when the pack source pinned
+/// a ref: the host records what it fetched, not what it asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackRef {
+    /// The packs repository coordinate `30617:<owner-hex>:<id>`, or
+    /// [`crate::project_pack_source::PACK_REF_SHIPPED_REPO`] (`app:shipped`)
+    /// when the host staged the packs its own build bundles.
+    pub repo: String,
+    /// The 40-hex commit the host actually staged from — or, for
+    /// `app:shipped`, the **app version** that bundled the packs.
+    pub sha: String,
+    /// The role slug whose pack was staged — the **seat's** role, never the
+    /// actor's home role.
+    pub role: String,
+    /// The directory inside that commit the pack was read from, e.g.
+    /// `personas/roles/builder`.
+    pub path: String,
+}
+
+/// Where a seat's staged packs came from, as a reader must name it.
+///
+/// Two arms because the wire has two `repo` forms, and a surface that showed a
+/// build's bundled packs as though they were a repository would be telling a
+/// person to go look for something that does not exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackRefSource {
+    /// A git repository named by the project's kind:30624 pack source.
+    Repository,
+    /// The packs the running app's own build bundles.
+    ShippedDefaults,
+}
+
+impl PackRefSource {
+    /// The word a surface prints for this source.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Repository => crate::project_pack_source::PACK_SOURCE_WORD_REPOSITORY,
+            Self::ShippedDefaults => crate::project_pack_source::PACK_SOURCE_WORD_SHIPPED,
+        }
+    }
+}
+
+impl PackRef {
+    /// Which rung of the staging ladder this reference names.
+    pub fn source(&self) -> PackRefSource {
+        if self.repo == crate::project_pack_source::PACK_REF_SHIPPED_REPO {
+            PackRefSource::ShippedDefaults
+        } else {
+            PackRefSource::Repository
+        }
+    }
+
+    /// Validate the four fields as the wire requires them.
+    ///
+    /// # Errors
+    /// A sentence naming the field that is wrong.
+    pub fn validate(&self) -> Result<(), String> {
+        match self.source() {
+            PackRefSource::ShippedDefaults => {
+                // `sha` is an app version here, not a commit. It is bounded and
+                // printable and nothing more: inventing a hex shape for a
+                // version string would make a reader believe it could be
+                // checked out.
+                if self.sha.trim().is_empty()
+                    || self.sha.len() > MAX_METADATA_REFERENCE_BYTES
+                    || self.sha.chars().any(char::is_control)
+                {
+                    return Err(format!(
+                        "metadata packRef.sha must be the app version that bundled the \
+                         shipped packs, nonempty and bounded (got {:?})",
+                        self.sha
+                    ));
+                }
+            }
+            PackRefSource::Repository => {
+                if crate::project_pack_source::normalize_repository_coordinate(&self.repo)
+                    .as_deref()
+                    != Some(self.repo.as_str())
+                {
+                    return Err(format!(
+                        "metadata packRef.repo must be a canonical repository coordinate \
+                         30617:<64-hex>:<id>, or {:?} for the app's shipped packs (got {:?})",
+                        crate::project_pack_source::PACK_REF_SHIPPED_REPO,
+                        self.repo
+                    ));
+                }
+                if self.sha.len() != 40
+                    || !self
+                        .sha
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    return Err(format!(
+                        "metadata packRef.sha must be 40 lowercase hex characters (got {:?})",
+                        self.sha
+                    ));
+                }
+            }
+        }
+        crate::coding_session_lifecycle_command::validate_role_slug(&self.role)
+            .map_err(|error| error.replace("action.role", "metadata packRef.role"))?;
+        if self.path.trim().is_empty() || self.path.len() > MAX_METADATA_REFERENCE_BYTES {
+            return Err("metadata packRef.path must be nonempty and bounded".to_string());
+        }
+        if !self.path.ends_with(&format!("/{}", self.role)) {
+            return Err(format!(
+                "metadata packRef.path must end in the role it staged (path {:?}, role {:?})",
+                self.path, self.role
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// How the host came to run this particular `bee`.
@@ -1114,18 +1252,19 @@ pub struct TurnBudget {
 
 /// Expected JSON key sets for [`SessionMetadata`], oldest first.
 ///
-/// Four independent additive amendments have landed on this struct at
+/// Seven independent additive amendments have landed on this struct at
 /// different times — the `sessionRef` echo, B1's four coordinate-fact keys,
-/// the agent seat's `role`, D9's `turnBudget`, the `routing` echo, then the
-/// `beeStamp` observation — and each one is present or absent on its own, so
-/// the base key set has **sixty-four** valid shapes, not four: base, and base
+/// the agent seat's `role`, D9's `turnBudget`, the `routing` echo, the
+/// `beeStamp` observation, then L23's `packRef` — and each one is present or
+/// absent on its own, so the base key set has **one hundred and twenty-eight**
+/// valid shapes, not four: base, and base
 /// plus any combination of `sessionRef`, `role`, `turnBudget`, `routing`,
-/// `beeStamp`, and the four fact keys taken together. Mirrors the
+/// `beeStamp`, `packRef`, and the four fact keys taken together. Mirrors the
 /// exact-fields discipline in `coding_session_lifecycle_command.rs`
-/// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape
-/// in between or beyond those sixty-four — a partial subset of the four fact
-/// keys, or any field this struct does not know — is rejected, not
-/// tolerated.
+/// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape in
+/// between or beyond those one hundred and twenty-eight — a partial subset of
+/// the four fact keys, or any field this struct does not know — is rejected,
+/// not tolerated.
 const METADATA_BASE_FIELDS: &[&str] = &[
     "schema",
     "session",
@@ -1158,10 +1297,15 @@ const METADATA_ROUTING_FIELD: &str = "routing";
 /// consumer that sees `"beeStamp": null` is reading a producer that made up a
 /// shape, not a host that had nothing to say.
 const METADATA_BEE_STAMP_FIELD: &str = "beeStamp";
+/// The pack-source amendment's one additive key. Independent of the other
+/// six, so it doubles the accepted shape count from sixty-four to
+/// one hundred and twenty-eight. Like `routing` and `beeStamp`, an explicit
+/// null is refused **naming the key**: a host with nothing to stage omits it.
+const METADATA_PACK_REF_FIELD: &str = "packRef";
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
-/// Accepts exactly the thirty-two field-set shapes documented above
+/// Accepts exactly the field-set shapes documented above
 /// `METADATA_BASE_FIELDS`; anything else — an unknown key, or a B1 fact
 /// key present without its three siblings — is a hard rejection. A second
 /// pass through `serde_json` (after the shape check) picks up serde's own
@@ -1198,6 +1342,14 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     {
         return Err("coding-session metadata beeStamp must not be null".to_string());
     }
+    let has_pack_ref = object.contains_key(METADATA_PACK_REF_FIELD);
+    if has_pack_ref
+        && object
+            .get(METADATA_PACK_REF_FIELD)
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err("coding-session metadata packRef must not be null".to_string());
+    }
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -1226,6 +1378,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_bee_stamp {
         expected.push(METADATA_BEE_STAMP_FIELD);
+    }
+    if has_pack_ref {
+        expected.push(METADATA_PACK_REF_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -1328,6 +1483,23 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
         .is_some_and(|value| value.unsigned_abs() > MAX_SAFE_GENERATION)
     {
         return Err("metadata verifiedAt must be a safe integer".to_owned());
+    }
+    if let Some(pack_ref) = &metadata.pack_ref {
+        // The seat's role decides the pack, so a `packRef` naming a role the
+        // metadata does not claim is a staging bug published as a fact. Refuse
+        // it here rather than let a surface print a pack for the wrong role.
+        pack_ref.validate()?;
+        if metadata
+            .role
+            .as_deref()
+            .is_some_and(|role| role != pack_ref.role)
+        {
+            return Err(format!(
+                "metadata packRef.role must be this seat's role (role {:?}, packRef.role {:?})",
+                metadata.role.as_deref().unwrap_or_default(),
+                pack_ref.role
+            ));
+        }
     }
     Ok(())
 }
@@ -2099,6 +2271,7 @@ mod tests {
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -2171,6 +2344,7 @@ mod tests {
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -2375,6 +2549,236 @@ mod tests {
             error.contains("beeStamp"),
             "the refusal must name the key it refused: {error}"
         );
+    }
+
+    /// The `packRef` amendment, held to exactly the rules `beeStamp` set.
+    ///
+    /// Round-trip, byte-identity with the pre-amendment form, an explicit null
+    /// refused by name, and every part of the object validated.
+    #[test]
+    fn decode_metadata_accepts_the_pack_ref_shape_and_refuses_a_null() {
+        let without = pack_ref_base();
+        let decoded_without =
+            decode_coding_session_metadata(&without.to_string()).expect("pre-amendment form");
+        assert!(decoded_without.pack_ref.is_none());
+        let encoded_without = serde_json::to_value(&decoded_without).expect("re-encode");
+        assert!(
+            !encoded_without
+                .as_object()
+                .expect("an object")
+                .contains_key("packRef"),
+            "an absent packRef must not become a null on the way back out"
+        );
+
+        let mut with = without.clone();
+        with["packRef"] = valid_pack_ref();
+        let decoded = decode_coding_session_metadata(&with.to_string()).expect("staged form");
+        let pack = decoded.pack_ref.clone().expect("a packRef");
+        assert_eq!(pack.role, "builder");
+        assert_eq!(pack.path, "personas/roles/builder");
+        assert_eq!(pack.sha, "a".repeat(40));
+        let mut encoded = serde_json::to_value(&decoded).expect("re-encode");
+        assert_eq!(
+            encoded.get("packRef"),
+            with.get("packRef"),
+            "the packRef must round-trip byte-identically"
+        );
+        encoded
+            .as_object_mut()
+            .expect("an object")
+            .remove("packRef");
+        assert_eq!(
+            encoded, encoded_without,
+            "publishing a packRef must change nothing else on the event"
+        );
+
+        let mut null_pack = without;
+        null_pack["packRef"] = serde_json::Value::Null;
+        let error = decode_coding_session_metadata(&null_pack.to_string())
+            .expect_err("an explicit null is refused");
+        assert!(
+            error.contains("packRef"),
+            "the refusal must name the key it refused: {error}"
+        );
+    }
+
+    /// Finding 31, stated as a test: a 44223 signed before `packRef` existed
+    /// must keep decoding, and every other pre-amendment shape with it.
+    #[test]
+    fn decode_metadata_reads_a_44223_signed_before_pack_ref_existed() {
+        // Byte-for-byte what a producer wrote on 2026-09-02, before this key.
+        let signed_before = r#"{"schema":"buzz-coding-session-metadata/v1","session":{"driver":"claude-agent-acp","instanceId":"instance-1","sessionId":"11111111-2222-3333-4444-555555555555","generation":1},"projectRef":null,"repoRef":null,"title":null,"agentRef":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","provider":"claude-primary","runtime":"claude","model":"sonnet","status":"idle","branch":null,"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true,"promptImage":false},"role":"builder"}"#;
+        let decoded =
+            decode_coding_session_metadata(signed_before).expect("a pre-packRef 44223 still reads");
+        assert!(
+            decoded.pack_ref.is_none(),
+            "absence must read as absence, never as a default pack"
+        );
+    }
+
+    /// Every part of a `packRef` is checked, and a partial object is refused
+    /// outright: a repository with no commit names no bytes.
+    #[test]
+    fn a_pack_ref_is_exact_and_every_field_is_validated() {
+        let base = pack_ref_base();
+        let mut cases: Vec<(serde_json::Value, &str)> = Vec::new();
+
+        let mut short_sha = valid_pack_ref();
+        short_sha["sha"] = serde_json::json!("a".repeat(39));
+        cases.push((short_sha, "packRef.sha"));
+
+        let mut upper_sha = valid_pack_ref();
+        upper_sha["sha"] = serde_json::json!("A".repeat(40));
+        cases.push((upper_sha, "packRef.sha"));
+
+        let mut bad_repo = valid_pack_ref();
+        bad_repo["repo"] = serde_json::json!(format!("30621:{}:agiterra", "ab".repeat(32)));
+        cases.push((bad_repo, "packRef.repo"));
+
+        let mut bad_role = valid_pack_ref();
+        bad_role["role"] = serde_json::json!("Builder");
+        cases.push((bad_role, "packRef.role"));
+
+        let mut wrong_path = valid_pack_ref();
+        wrong_path["path"] = serde_json::json!("personas/roles/lead");
+        cases.push((wrong_path, "must end in the role"));
+
+        for (pack, needle) in cases {
+            let mut event = base.clone();
+            event["packRef"] = pack;
+            let error = decode_coding_session_metadata(&event.to_string())
+                .expect_err("an invalid packRef is refused");
+            assert!(
+                error.contains(needle),
+                "expected {needle:?} in the refusal, got {error:?}"
+            );
+        }
+
+        // Missing and unknown keys inside the object are both hard rejections.
+        let mut missing = base.clone();
+        let mut partial = valid_pack_ref();
+        partial.as_object_mut().expect("an object").remove("path");
+        missing["packRef"] = partial;
+        assert!(decode_coding_session_metadata(&missing.to_string()).is_err());
+
+        let mut extra = base.clone();
+        let mut widened = valid_pack_ref();
+        widened["branch"] = serde_json::json!("main");
+        extra["packRef"] = widened;
+        assert!(decode_coding_session_metadata(&extra.to_string()).is_err());
+
+        // The staging rule: the seat's role picks the pack, so a packRef for a
+        // different role than the seat holds is a published staging bug.
+        let mut mismatched = base;
+        let mut other_role = valid_pack_ref();
+        other_role["role"] = serde_json::json!("lead");
+        other_role["path"] = serde_json::json!("personas/roles/lead");
+        mismatched["packRef"] = other_role;
+        let error = decode_coding_session_metadata(&mismatched.to_string())
+            .expect_err("a packRef for another role is refused");
+        assert!(error.contains("this seat's role"), "{error}");
+    }
+
+    /// The addendum's third rung: a seat staged from the app's own bundled
+    /// packs names them, and is never dressed up as a repository.
+    #[test]
+    fn a_shipped_defaults_pack_ref_carries_the_app_version_and_says_so() {
+        let mut event = pack_ref_base();
+        event["packRef"] = serde_json::json!({
+            "repo": buzz_shipped_repo(),
+            "sha": "0.5.16",
+            "role": "builder",
+            "path": "personas/roles/builder"
+        });
+        let decoded = decode_coding_session_metadata(&event.to_string()).expect("shipped form");
+        let pack = decoded.pack_ref.clone().expect("a packRef");
+        assert_eq!(pack.source(), PackRefSource::ShippedDefaults);
+        assert_eq!(pack.source().word(), "shipped defaults");
+        assert_eq!(
+            pack.sha, "0.5.16",
+            "the app version is the sha here, not a commit"
+        );
+
+        // A blank version is refused: "shipped, from a build that will not say
+        // which" is exactly the unknown-as-empty this key exists to prevent.
+        let mut blank = pack_ref_base();
+        blank["packRef"] = serde_json::json!({
+            "repo": buzz_shipped_repo(),
+            "sha": "   ",
+            "role": "builder",
+            "path": "personas/roles/builder"
+        });
+        let error = decode_coding_session_metadata(&blank.to_string()).expect_err("refused");
+        assert!(error.contains("app version"), "{error}");
+
+        // And a repository-shaped reference still needs a real commit, so the
+        // shipped arm cannot be used to smuggle a short sha past the check.
+        let mut repo_form = pack_ref_base();
+        repo_form["packRef"] = serde_json::json!({
+            "repo": format!("30617:{}:agiterra-packs", "6c".repeat(32)),
+            "sha": "0.5.16",
+            "role": "builder",
+            "path": "personas/roles/builder"
+        });
+        let error = decode_coding_session_metadata(&repo_form.to_string()).expect_err("refused");
+        assert!(error.contains("40 lowercase hex"), "{error}");
+    }
+
+    /// The one place the shipped sentinel is spelled, read back.
+    fn buzz_shipped_repo() -> &'static str {
+        crate::project_pack_source::PACK_REF_SHIPPED_REPO
+    }
+
+    /// The shared conformance vectors' 44223 half, decoded by this crate.
+    #[test]
+    fn shared_pack_source_conformance_metadata_vectors_match_this_decoder() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../conformance/project-pack-source/fixtures/pack-source-vectors.json"
+        ))
+        .expect("fixture parses");
+        let vectors = fixture["metadataVectors"]
+            .as_array()
+            .expect("metadataVectors is an array");
+        assert!(vectors.len() >= 5);
+        for vector in vectors {
+            let name = vector["name"].as_str().expect("a name");
+            let expected_valid = vector["valid"].as_bool().expect("a verdict");
+            let decoded = decode_coding_session_metadata(&vector["content"].to_string());
+            assert_eq!(
+                decoded.is_ok(),
+                expected_valid,
+                "vector {name:?} disagreed with this decoder: {decoded:?}"
+            );
+        }
+    }
+
+    /// The pre-amendment 44223 every `packRef` case starts from.
+    fn pack_ref_base() -> serde_json::Value {
+        serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": "cd".repeat(32),
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": "sonnet",
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+            "role": "builder"
+        })
+    }
+
+    /// A `packRef` every field of which is what the wire requires.
+    fn valid_pack_ref() -> serde_json::Value {
+        serde_json::json!({
+            "repo": format!("30617:{}:agiterra-packs", "6c".repeat(32)),
+            "sha": "a".repeat(40),
+            "role": "builder",
+            "path": "personas/roles/builder"
+        })
     }
 
     /// The two current B1 forms — facts alone, and facts plus `sessionRef` —
@@ -2658,6 +3062,7 @@ mod tests {
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(

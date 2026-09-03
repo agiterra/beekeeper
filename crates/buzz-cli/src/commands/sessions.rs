@@ -3086,6 +3086,7 @@ mod tests {
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         }
     }
 

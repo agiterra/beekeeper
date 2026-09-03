@@ -4653,6 +4653,11 @@ impl Provider {
                 .and_then(|record| record.actor.as_deref())
                 .and_then(|_| crate::seat_bee::host_seat_bee())
                 .map(|(_, stamp)| stamp.clone()),
+            // LANE-L23 join point: Lane B fills this from the host's packs
+            // cache once staging resolves a kind:30624 source. `None` is the
+            // honest value until then — no pack staged, and the surfaces say
+            // so rather than naming one.
+            pack_ref: None,
         }
     }
 

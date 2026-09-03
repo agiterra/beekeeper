@@ -109,6 +109,7 @@ the unknown copy, never a number.**
 | W14 | **Tests** | **none today** | `No test report yet` |
 | W15 | **Accepted plan** (the lead's acceptance steps) | **none today** — the brief's `Acceptance:` line is prose | `No accepted plan published` |
 | W16 | Mission brief | the 44220 turn command the seat was opened with, echoed as its first 44225 item | `no brief on the wire` |
+| W17 | **Pack** — which persona files this seat was staged from | 44223 `packRef` (`repo`, resolved `sha`, `role`, `path`), pointing at the project's kind:30624 pack source (`docs/nips/NIP-PK.md`), or `repo: "app:shipped"` with the app version as `sha` for the build's bundled packs. The **seat's** role picks the pack; the actor's home role is never consulted | key absent → **`no pack staged`** — the seat ran the session checkout's own `personas/roles/<role>/`. Never a default pack name, and never blank. The three sources are named `packs repository` · `session checkout` · `shipped defaults`, spelled once in `buzz_core::project_pack_source` |
 
 **W12 corrects my brief.** The brief lists tokens and tool calls under "requires
 new wire artifact". They landed in ledger item 89(b) and are on `main` at
@@ -285,6 +286,12 @@ participant status bar → [● Running] [K Keystone · Lead] [B Builder · Work
   - line 3, only while `live` and only when a plan snapshot exists: the
     in-progress task text, quoted from the seat, ≤ 48 chars, e.g.
     `reviewing the dispatch change`. Absent → no third line (never `working…`)
+  - line 4, the pack line (**W17**, L23): `pack <role>@<sha8>` when the seat's
+    44223 names a packs repository, `pack <role> · shipped defaults <version>`
+    when it names `app:shipped`, and `no pack staged` when the key is absent —
+    because "which prompt did that agent actually run" is a question a person
+    must be able to answer from the chip, and a build's bundled packs are an
+    answer, not a blank
   - hover/`title`: `last turn 4m ago`, or `no turn observed`
 - walk: surface-host spec → the two chips read `Claude Code · sonnet / live` and
   `Codex · gpt-5.6-sol / idle`. Then seed a seated create (`agentRef` + `role`)

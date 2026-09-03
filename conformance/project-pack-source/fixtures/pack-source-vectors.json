@@ -1,0 +1,521 @@
+{
+  "schema": "buzz-project-pack-source-conformance/v1",
+  "note": "Shared vectors for NIP-PK: kind 30624 (packSourceVectors, decoded from tags+content) and the kind 44223 packRef amendment (metadataVectors, decoded from content alone). Rust reads this file in crates/buzz-core/src/project_pack_source_tests.rs and crates/buzz-core/src/coding_session_payload.rs; the desktop wire decoder reads the same file.",
+  "packSourceVectors": [
+    {
+      "name": "valid-pinned-sha",
+      "valid": true,
+      "why": "the ordinary record: one repository, one commit, the default path",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "sha",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1",
+        "note": "pinned for run 5"
+      }
+    },
+    {
+      "name": "valid-ref-with-path",
+      "valid": true,
+      "why": "a moving ref and an explicit path",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "ref",
+          "refs/heads/main"
+        ],
+        [
+          "path",
+          "packs/roles"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1"
+      }
+    },
+    {
+      "name": "invalid-both-pins",
+      "valid": false,
+      "why": "two pins would let two honest hosts stage two different trees",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "ref",
+          "refs/heads/main"
+        ],
+        [
+          "sha",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1"
+      }
+    },
+    {
+      "name": "invalid-no-pin",
+      "valid": false,
+      "why": "a record with no pin points at nothing",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1"
+      }
+    },
+    {
+      "name": "invalid-escaping-path",
+      "valid": false,
+      "why": "a path that leaves the checkout reads the operator's disk",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "sha",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ],
+        [
+          "path",
+          "../../etc"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1"
+      }
+    },
+    {
+      "name": "invalid-unknown-tag",
+      "valid": false,
+      "why": "a silently ignored tag would stage a ref tip its author thought was pinned",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "sha",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ],
+        [
+          "packs",
+          "yes"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1"
+      }
+    },
+    {
+      "name": "invalid-project-coordinate-in-repo-tag",
+      "valid": false,
+      "why": "a 30621 coordinate is not a repository",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "sha",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1"
+      }
+    },
+    {
+      "name": "invalid-schema",
+      "valid": false,
+      "why": "an unknown schema is refused, not guessed at",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "sha",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v0"
+      }
+    },
+    {
+      "name": "invalid-null-note",
+      "valid": false,
+      "why": "a null means the producer invented a shape",
+      "tags": [
+        [
+          "d",
+          "30621:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra"
+        ],
+        [
+          "repo",
+          "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs"
+        ],
+        [
+          "sha",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ]
+      ],
+      "content": {
+        "schema": "buzz-project-pack-source/v1",
+        "note": null
+      }
+    }
+  ],
+  "metadataVectors": [
+    {
+      "name": "valid-metadata-signed-before-packRef-existed",
+      "valid": true,
+      "why": "finding 31: a 44223 signed before the key existed must keep decoding",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder"
+      }
+    },
+    {
+      "name": "valid-metadata-with-packRef",
+      "valid": true,
+      "why": "the seat says which pack it ran",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": {
+          "repo": "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        }
+      }
+    },
+    {
+      "name": "invalid-metadata-null-packRef",
+      "valid": false,
+      "why": "an explicit null is a producer that invented a shape",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": null
+      }
+    },
+    {
+      "name": "invalid-metadata-partial-packRef",
+      "valid": false,
+      "why": "all four keys or none \u2014 a path-less packRef names no directory",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": {
+          "repo": "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "role": "builder"
+        }
+      }
+    },
+    {
+      "name": "invalid-metadata-unknown-packRef-key",
+      "valid": false,
+      "why": "an unknown key inside the object is refused on both sides",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": {
+          "repo": "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "role": "builder",
+          "path": "personas/roles/builder",
+          "branch": "main"
+        }
+      }
+    },
+    {
+      "name": "invalid-metadata-short-sha",
+      "valid": false,
+      "why": "a staged tree is named by a full commit id, never a prefix",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": {
+          "repo": "30617:6cbdf4451d3989c10c20d13240c665a9e11e3959a95488382193481692b68df2:agiterra-packs",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        }
+      }
+    },
+    {
+      "name": "valid-metadata-shipped-defaults",
+      "valid": true,
+      "why": "the app's own bundled packs are named app:shipped with the app version as the sha, never dressed as a repository",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": {
+          "repo": "app:shipped",
+          "sha": "0.5.16",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        }
+      }
+    },
+    {
+      "name": "invalid-metadata-shipped-defaults-without-a-version",
+      "valid": false,
+      "why": "shipped from a build that will not say which is the unknown-as-empty this key exists to prevent",
+      "content": {
+        "schema": "buzz-coding-session-metadata/v1",
+        "session": {
+          "driver": "claude-agent-acp",
+          "instanceId": "instance-1",
+          "sessionId": "11111111-2222-3333-4444-555555555555",
+          "generation": 1
+        },
+        "projectRef": null,
+        "repoRef": null,
+        "title": null,
+        "agentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "provider": "claude-primary",
+        "runtime": "claude",
+        "model": "sonnet",
+        "status": "idle",
+        "branch": null,
+        "capabilities": {
+          "threadTurnStart": true,
+          "threadTurnInterrupt": true,
+          "threadSteer": false,
+          "context": false,
+          "diff": false,
+          "plan": true,
+          "promptImage": false
+        },
+        "role": "builder",
+        "packRef": {
+          "repo": "app:shipped",
+          "sha": "",
+          "role": "builder",
+          "path": "personas/roles/builder"
+        }
+      }
+    }
+  ]
+}

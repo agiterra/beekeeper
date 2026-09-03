@@ -2609,3 +2609,108 @@ The wire shape it reads, for reference:
 observed tool calls, under its own key, with no cooperation from the seat. Until
 it exists, this lane's acceptance has **no honest measurement**, and inventing
 one that runs today would be a control that lies about what it enforces.
+
+## Project packs (`bee packs`, kind 30624 — lane L23)
+
+Where a project's persona packs live, and what this machine would stage. Read
+`docs/nips/NIP-PK.md` first; the rules below are that spec exercised.
+
+**Publish (founder or project Owner only).** The relay's gate is closed by
+default — a pack source decides which prompt bytes every seat on the project
+runs.
+
+```bash
+bee packs set-source --project 30621:<owner-hex>:<slug> \
+                     --repo    30617:<owner-hex>:<packs-repo-id> \
+                     --ref     refs/heads/main
+# or pin exactly:
+bee packs set-source --project … --repo … --sha <40-hex> --path packs/roles \
+                     --note "pinned for run 5"
+```
+
+Expect `{"event_id":…,"accepted":true,"project":"30621:…"}`.
+
+Refusals to check, each at a different layer:
+
+| Attempt | Layer | Expected |
+|---|---|---|
+| both `--ref` and `--sha` | clap | parse error, exit 1, before any key is loaded |
+| neither | `PackSourcePin::resolve` | exit 1, "pass exactly one of --ref …" |
+| `--project 30617:…` | `normalize_project` | exit 1, names `30621:<64-hex>:<slug>` |
+| `--sha` of 39 hex, or `--ref main` | `build_project_pack_source` | exit 1, naming the field |
+| `--path ../../etc` or `/etc/passwd` | `build_project_pack_source` | exit 1, "must be relative" |
+| a key that is neither a founder of one of the project's repositories nor an Owner of it | relay | HTTP 403 → **exit 3**, sentence naming how many repositories were searched |
+
+The last row is the one worth doing live: run it under a second identity and
+read the sentence. It must say what was checked, not merely "restricted".
+
+**Set a project up from nothing (`init`).** The same three steps the app's
+*Create packs repository* performs. Needs the git credential helper
+(`just install-git-credentials`).
+
+```bash
+bee packs init --project 30621:<owner-hex>:<slug> --dry-run   # plan only
+bee packs init --project 30621:<owner-hex>:<slug>
+bee packs init --project … --repo-id my-packs --from ./personas/roles --path packs/roles
+```
+
+Expect on success one JSON object naming every wire fact produced:
+`repo`, `clone_url`, `announce_event_id`, `commit` (40 hex), `pushed_ref`,
+`pack_source_event_id`, `roles`.
+
+Order is the safety property, so check the failure paths:
+
+| Attempt | Expected |
+|---|---|
+| a project that already has a pack source | exit 1 naming the existing repo and pin, nothing published — replacing one is a deliberate `set-source` |
+| no `personas/roles` at or above cwd, no `--from` | exit 1 before anything is published |
+| `--from` a directory with no role subdirectories | exit 1, "nothing to seed" |
+| push fails (helper not installed) | the announce is reported on stderr with the note that **no** pack source was published; the project still stages shipped defaults |
+
+The last row is the one to force deliberately (unset the helper): the invariant
+is that a 30624 never points at a repository with no packs in it.
+
+**Read.**
+
+```bash
+bee packs get-source --project 30621:<owner-hex>:<slug>
+bee packs status     --project 30621:<owner-hex>:<slug> --role builder
+bee packs status     --project … --role builder --packs-dir /tmp/packs-probe
+```
+
+`get-source` prints an array; an empty array is a real state (no pack source
+published) and exit 0, not an error.
+
+`status` separates the wire from the disk, and the separation is the point:
+
+* `source`, `repo`, `pin`, `path`, `would_stage.path` come from the signed
+  record;
+* `cache_dir`, `cache_present`, `roles_found`, `would_stage.present_in_cache`
+  describe **this machine**. `cache_present: false` means this machine has
+  never fetched these packs — read it as *unknown*, never as "the repository
+  has no such role".
+
+With no pack source, `status` prints `source: null` and the sentence saying a
+seat is staged from the session checkout's own `personas/roles/<role>/` and
+carries no `packRef`. That absence is the correct answer; nothing should
+invent a default pack.
+
+**The word.**
+
+```bash
+bee sessions explain pack     # also: packs, packRef, packSource, 30624
+```
+
+**Shipped defaults.** With no 30624, `status` reports
+`source_kind: "shipped defaults"` and the `fallback_order`
+(`packs repository` → `session checkout` → `shipped defaults`). A seat staged
+from the app's own bundled packs publishes
+`packRef {"repo":"app:shipped","sha":"<app version>",…}` — not a coordinate,
+because those packs are not a repository anyone can fetch. A blank version is
+refused by the decoder.
+
+**On a seat.** A staged seat's kind:44223 carries
+`packRef {repo, sha, role, path}` — `sha` is the commit the host *resolved*,
+even when the source pinned a ref, and `role` is the **seat's** role. A seat
+metadata event signed before this key existed still decodes; absence reads as
+*no pack staged*.

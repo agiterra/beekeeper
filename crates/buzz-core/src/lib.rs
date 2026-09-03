@@ -83,6 +83,7 @@ pub mod presence;
 /// NIP-PMA owner-encrypted private managed-agent wire codec.
 pub mod private_managed_agent;
 /// Project Pulse entries (44240): the explicit coordination claim contract.
+pub mod project_pack_source;
 pub mod pulse;
 /// Pure Project Pulse v2 digest model and fold shared by every adapter.
 pub mod pulse_fold;

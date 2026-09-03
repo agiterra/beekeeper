@@ -112,6 +112,7 @@ fn metadata_event(
         turn_budget: None,
         routing: None,
         bee_stamp: None,
+        pack_ref: None,
     };
     json!({
         "id": id,
@@ -4071,6 +4072,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
         turn_budget: None,
         routing: None,
         bee_stamp: None,
+        pack_ref: None,
     };
     let metadata = build_coding_session_metadata(
         channel,
@@ -4220,6 +4222,7 @@ fn rival_seated_create(
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         };
         let metadata = build_coding_session_metadata(
             channel,

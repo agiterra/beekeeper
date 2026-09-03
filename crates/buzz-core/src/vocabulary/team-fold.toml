@@ -197,3 +197,19 @@ cause = "The require-verdict gate admits a founder's push outright, with no verd
 command = "bee repos get --id <repo-id> --owner <hex64>   # read .founders and .founders_note"
 frozen_source = ""
 frozen = ""
+
+# Lane L23 (2026-09-03). Brian's direction: "I should be able to log into
+# beekeeper from any machine and have my agents and their packs. If a role
+# evolves it should change on Andy's machine and any other team member's."
+# The word now appears on a seat's own 44223 (`packRef`), in `bee packs
+# status`, and on the seat chip, so it needs a definition a seat can read from
+# the binary. The batch specification freezes no sentence about it, so `frozen`
+# is empty rather than invented.
+[[entry]]
+word = "pack"
+aliases = ["packs", "packRef", "pack_ref", "packSource", "pack_source", "30624"]
+meaning = "The persona files a seat was actually staged from: a directory of role text inside a git repository, named on the wire by a kind:30624 project pack source and, once staged, by the seat's own packRef (repo, resolved sha, role, path)."
+cause = "The seat's role picks the pack, never the actor's home role. Three rungs, in order: the packs repository the project's kind:30624 names, the session checkout's own personas/roles/<role>/ overlaid on it, and the app's shipped defaults (packRef repo 'app:shipped', sha = the app version). No packRef at all means no pack staged — read that absence as absence, never as a default. A pack that cannot be fetched refuses the hire; it never becomes a silent bare persona."
+command = "bee packs status --project 30621:<owner-hex>:<slug> --role <slug>   # read .source_kind and .would_stage"
+frozen_source = ""
+frozen = ""

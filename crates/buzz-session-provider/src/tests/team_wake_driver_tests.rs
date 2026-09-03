@@ -179,6 +179,7 @@ fn execution_events(
         turn_budget: None,
         routing: Some(routing),
         bee_stamp: None,
+        pack_ref: None,
     };
     let metadata_event = build_coding_session_metadata(
         channel,
@@ -250,6 +251,7 @@ fn resume_execution_events(
         turn_budget: None,
         routing: None,
         bee_stamp: None,
+        pack_ref: None,
     };
     let metadata_event = build_coding_session_metadata(
         channel,

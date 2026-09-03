@@ -903,6 +903,24 @@ pub const KIND_PROJECT: u32 = 30621;
 /// carries no cwd or shell path. See `docs/nips/NIP-ST.md`.
 pub const KIND_SHELL_SESSION: u32 = 30623;
 
+/// NIP-PK: project pack source — where a project's persona packs live
+/// (parameterized replaceable, `d` = the project coordinate
+/// `30621:<owner-hex>:<slug>`).
+///
+/// Packs are trees of text, so they live in a git repository and this record
+/// carries the pointer: `["repo", "30617:<owner-hex>:<id>"]`, exactly one of
+/// `["ref", "refs/heads/main"]` or `["sha", "<40-hex>"]`, and an optional
+/// `["path", "personas/roles"]`. Content is
+/// `{"schema":"buzz-project-pack-source/v1","note":"…"}`.
+///
+/// The relay admits a write only from a founder of one of the project's
+/// repositories (`crate::repository_founders`) or an Owner of the project —
+/// a record that decides which code a seat runs is not community-writable.
+/// Newest per `d` wins; removal is the kind-5 tombstone addressables already
+/// honour. See `docs/nips/NIP-PK.md` and
+/// [`crate::project_pack_source`].
+pub const KIND_PROJECT_PACK_SOURCE: u32 = 30624;
+
 /// Tag carrying a project's access level (Buzz container extension).
 ///
 /// `["buzz-access", "private"]` restricts the project container to its author
@@ -1644,6 +1662,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 303
 const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 30622 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_SHELL_SESSION)); // 30623 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT_PACK_SOURCE)); // 30624 ∈ 30000–39999
 const _: () = assert!(is_ephemeral(KIND_SHELL_WATCH)); // 24310 ∈ 20000–29999, never stored
 const _: () = assert!(is_ephemeral(KIND_SHELL_FRAME)); // 24311 ∈ 20000–29999, never stored
 const _: () = assert!(!is_ephemeral(KIND_SHELL_SESSION));

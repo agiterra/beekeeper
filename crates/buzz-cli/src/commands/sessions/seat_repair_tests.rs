@@ -394,6 +394,7 @@ fn wire(options: WireOptions) -> Wire {
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         };
         let metadata = build_coding_session_metadata(
             channel,
@@ -954,6 +955,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
             turn_budget: None,
             routing: None,
             bee_stamp: None,
+            pack_ref: None,
         };
         let metadata = build_coding_session_metadata(
             channel,

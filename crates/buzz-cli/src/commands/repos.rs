@@ -364,6 +364,35 @@ fn build_create_announcement(
     Ok(builder)
 }
 
+/// The announcement `bee packs init` (and the app's *Create packs repository*)
+/// publishes for a project's packs repository.
+///
+/// Written here rather than in `packs.rs` so a packs repository is announced by
+/// the *same* builder as every other repository — a second builder would be a
+/// second place for the `project` back-reference to be spelled, and that tag is
+/// what puts the repository inside the project's ACL and founder set.
+///
+/// # Errors
+/// [`CliError::Usage`] for an invalid repository id or project coordinate.
+pub fn build_packs_repo_announcement(
+    repo_id: &str,
+    name: &str,
+    clone_url: &str,
+    project: &str,
+) -> Result<EventBuilder, CliError> {
+    build_create_announcement(
+        repo_id,
+        Some(name),
+        Some("Role packs for this project (NIP-PK, kind 30624)"),
+        &[clone_url.to_string()],
+        None,
+        &[],
+        None,
+        Some(project),
+        &[],
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_create_repo(
     client: &BuzzClient,

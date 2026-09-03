@@ -474,6 +474,11 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         buzz_core::kind::KIND_PROJECT_PUT_MEMBER | buzz_core::kind::KIND_PROJECT_REMOVE_MEMBER => {
             Ok(Scope::ReposWrite)
         }
+        // NIP-PK: a pack source names a repository for a project, so it rides
+        // the same scope as announcing one. Authority — founder or project
+        // Owner — is a separate, closed gate at ingest
+        // (`pack_source_write_admitted`); this scope alone admits nothing.
+        buzz_core::kind::KIND_PROJECT_PACK_SOURCE => Ok(Scope::ReposWrite),
         // NIP-ST: a shared-terminal session announce is ordinary member
         // content, not repository metadata.
         buzz_core::kind::KIND_SHELL_SESSION => Ok(Scope::MessagesWrite),
@@ -662,6 +667,10 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // `buzz-channel` tag is a metadata reference, not a routing directive,
             // so a project's state is never channel-scoped.
             | KIND_PROJECT
+            // NIP-PK: a pack source is addressed by (pubkey, kind, d_tag) where
+            // the d_tag is the project coordinate. It belongs to a project, not
+            // to a room, so a stray `h` tag must never channel-scope it.
+            | buzz_core::kind::KIND_PROJECT_PACK_SOURCE
             // Community moderation commands (9040–9044): community-global
             // direct commands, same model as the NIP-43 9030-series. A stray
             // `h` tag must never channel-scope them (pinned contract —
@@ -4082,6 +4091,34 @@ async fn ingest_event_inner(
     if kind_u32 == KIND_PROJECT {
         validate_project_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
+    // NIP-PK (kind 30624): where a project's persona packs live. Shape first,
+    // then a **closed** authority gate — this record decides which prompt bytes
+    // every seat on the project runs, so unlike the soft `project`
+    // back-references elsewhere in this function an unrecognized author is
+    // refused rather than tolerated. See `handlers/pack_source.rs`.
+    if kind_u32 == buzz_core::kind::KIND_PROJECT_PACK_SOURCE {
+        buzz_core::project_pack_source::decode_project_pack_source(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        // Raised as an *auth* failure for the same reason the Pulse gate is:
+        // §5.4's exit-code table requires a refused project write to surface as
+        // HTTP 403 (→ CLI exit 3), and `bridge.rs` maps every `Rejected` to 400.
+        match super::pack_source::pack_source_write_admitted(state, tenant.community(), &event)
+            .await
+        {
+            Ok(Ok(_admission)) => {}
+            Ok(Err(refusal)) => {
+                return Err(IngestError::AuthFailed(refusal.sentence()));
+            }
+            // Fail closed: a storage blip must not narrow the founder set and
+            // hand one key silent control of the team's packs.
+            Err(()) => {
+                return Err(IngestError::Internal(
+                    "error: pack source authority lookup failed".into(),
+                ));
+            }
+        }
     }
 
     if kind_u32 == buzz_core::kind::KIND_SHELL_SESSION {
