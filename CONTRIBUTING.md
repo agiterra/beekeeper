@@ -248,6 +248,56 @@ just ci
 This is the same check that runs in CI. PRs that fail `just ci` will not be
 merged. If `just ci` fails on formatting, `just fix-all` fixes it in one shot (`rustfmt` + Tauri fmt + desktop, web, and mobile formatters).
 
+### What pre-push runs, and what it does not
+
+`pre-push` runs a **floor**, not the gate. It is scoped to what your push
+actually changed, measured against the merge base with `main`:
+
+- Rust `fmt --check` and unit tests for the crates whose own sources moved.
+- `clippy --all-targets -- -D warnings` for those crates **and their
+  dependents** — an API break shows in the crates that depend on you, not in
+  the one you edited. The dependent set comes from `cargo metadata`, across
+  both workspaces, so a `buzz-core` change reaches `beekeeper-desktop` too.
+- `pnpm check`, `pnpm typecheck` and `pnpm test` when `desktop/` outside
+  `src-tauri` moved; `just web-test` for `web/`; `just mobile-test` for
+  `mobile/`.
+- The repository-wide file-size ratchet, always and unfiltered — its own
+  merge-base diff is its path filter.
+
+A path that maps to no scope selects the **full floor**, never nothing, and
+the run says which path did it. Three things are guards rather than tests, so
+they are unconditional and unbudgeted: the push-destination tripwire, the
+branch-skew check, and the `commit-msg` DCO trailer.
+
+**`cargo test --workspace`, every e2e project, `just ci` and `just check` are
+CI-only.** They do not run on your machine at push time. That is a deliberate
+trade: a class of failure — a change that compiles and passes its own crate's
+tests but breaks a crate downstream of it, or an e2e path — now reaches CI
+instead of the pushing machine. It buys a push that finishes in about two
+minutes instead of one that times out, which is what stopped everyone from
+passing `--no-verify` and running no gate at all. Run `just ci` yourself before
+you open a PR; the floor does not replace it.
+
+Every push prints one line saying what ran, what it skipped and why, and what
+it cost against a 120-second budget:
+
+```
+pre-push floor: buzz-cli (file-size, fmt, clippy, 847 tests) 71s / budget 120s · skipped: desktop — no desktop/ change, web — no web/ change, mobile — no mobile/ change, workspace tests — CI, e2e — CI — run in CI
+```
+
+The budget is **disclosed, not enforced**: going over prints `over budget by
+Ns` and still reports the real result. A floor that killed a nearly-finished
+clippy run would teach everyone to pass `--no-verify` again.
+
+Push normally — `git push origin <branch>`. Do not pass `--no-verify` to skip
+the floor. The one place it is still correct is landing a batch, where `just
+ci` has already passed on the exact SHA and the hooks would outlive the
+relay's NIP-98 timestamp window; see `docs/INTEGRATION.md` § "Landing a batch".
+
+The floor's own proofs: `bash scripts/test-pre-push-floor.sh` (end to end,
+stubbed toolchain) and `node --test scripts/pre-push-floor-scope.test.mjs`
+(the path → scope mapping).
+
 ---
 
 ## Code Style

@@ -20,19 +20,26 @@ use buzz_persona::pack;
 /// Byte-for-byte from `review-2026-09-01/batch3/LANE-L1.md` §L1.4. It is
 /// asserted rather than merely documented because four packs drifting apart by
 /// one word is exactly how "the rule is in the pack" becomes untrue.
-const PUSH_RULE: &str = "Run the floor first, on the exact SHA you are about to push: cargo fmt --check, cargo clippy --all-targets -- -D warnings and the unit tests for every crate you touched, plus pnpm typecheck && pnpm test if you touched desktop, plus anything else your brief names. Only then push with the hooks skipped, on that identical SHA: git push --no-verify origin <branch>. Never --no-verify on a SHA no gate has run against, and never push to GitHub directly: origin is the relay and the bridge mirrors it.";
+const PUSH_RULE: &str = "Run your own gate first — the one your brief names. Then push normally: git push origin <branch>. The pre-push floor is scoped to what you changed and prints what it skipped; do not pass --no-verify, and never push to GitHub directly: origin is the relay and the bridge mirrors it.";
 
 /// Phrasings the rule must NOT carry any more.
 ///
-/// REVIEW-L1 F7: "the one your brief names" let a brief that named
-/// `cargo test -p buzz-core` stand in for the whole pre-push gate, so a seat
-/// could push, with `--no-verify`, a SHA no clippy, typecheck or file-size
-/// gate had ever seen. The floor is now the repo's fast gate; a brief adds to
-/// it and can never shrink it.
+/// REVIEW-L1 F7 retired "run your own gate first — the one your brief names",
+/// because a brief that named `cargo test -p buzz-core` could stand in for the
+/// whole pre-push gate: the seat then pushed **with `--no-verify`** a SHA no
+/// clippy, typecheck or file-size gate had ever seen. The danger was the pair,
+/// and batch 3's scoped floor removes the second half — the hooks now run on
+/// every push, scoped to what changed, and print what they skipped. A brief can
+/// only add to that; it cannot shrink it, because it no longer stands in for
+/// it. So the phrasing is allowed again and the thing that actually made it
+/// unsafe is what is retired instead: telling a seat to skip the hooks.
+///
+/// Retire a phrasing here rather than deleting it, so the words that once
+/// caused a defect cannot quietly come back.
 const RETIRED_PHRASINGS: &[&str] = &[
-    "Run your own gate first",
-    "the one your brief names",
-    "the tests and gates your brief names",
+    "push with the hooks skipped",
+    "git push --no-verify",
+    "Only then push with the hooks skipped",
 ];
 
 /// The roles that take a brief, do work, and push a lane branch.

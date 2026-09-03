@@ -1,21 +1,39 @@
-# Glob patterns below mirror the `changes` job's dorny/paths-filter groups in
-# .github/workflows/ci.yml — keep the two in sync. Deliberate deviations:
+# Glob patterns in `pre-commit` mirror the `changes` job's dorny/paths-filter
+# groups in .github/workflows/ci.yml — keep the two in sync. Deliberate
+# deviations:
 # - The `.github/workflows/ci.yml` path CI adds to its `rust`/`mobile` filters
 #   is omitted; a CI-workflow-only edit doesn't need a local test run.
-# - `desktop-check`/`desktop-typecheck`/`desktop-test` don't trigger on `rust`
-#   changes, though CI's Desktop Core job does. Those commands are pure TS
-#   (biome + tsc + node:test) with no Rust dependency, so the extra trigger
-#   would be spurious locally.
-# - The repository-wide `file-size-check` is deliberately unfiltered. Its own
-#   merge-base diff is the path filter; duplicating its governed roots here is
-#   the coverage drift this gate is intended to prevent.
-# - Deletion-only surface changes do not trigger local hooks: lefthook 2.1.x
-#   drops deleted paths from push-file discovery (`extractFiles` existence
-#   check, repository.go). CI's dorny/paths-filter catches deletions.
-#   Deliberate — accepted, not worked around.
+# - Deletion-only surface changes do not trigger local `pre-commit` hooks:
+#   lefthook 2.1.x drops deleted paths from file discovery (`extractFiles`
+#   existence check, repository.go). CI's dorny/paths-filter catches deletions.
+#   Deliberate — accepted, not worked around. `pre-push` is unaffected: the
+#   floor reads `git diff --name-only` itself, so deletions are in its set.
 # - `commit-msg` has no glob: it rewrites the commit message, not files. Note
 #   Git only runs it for `git commit` and `git merge` — other flows need their own
 #   flag: `git rebase --signoff`, `git cherry-pick -s`.
+#
+# `pre-push` carries no globs at all any more. It runs three unconditional
+# guards and one scoped floor:
+#
+#   - `push-destination.sh` and `branch-skew` are guards, not tests. They are
+#     unbudgeted and never skipped, and `push-destination.sh` stays a `script`
+#     rather than a `command` because commands are file-filtered and a guard
+#     that only runs when lefthook sees changed files is not a guard.
+#   - `floor` derives its own scope from the merge-base diff
+#     (`scripts/pre-push-floor.sh` + `scripts/pre-push-floor-scope.mjs`) and
+#     prints one line saying what ran, what it skipped, why, and what it cost.
+#     Path filtering lives there, in a tested pure function, rather than in
+#     globs here — which is also why the repository-wide file-size ratchet is
+#     still unfiltered: its own merge-base diff is its path filter.
+#
+# This block used to run `just test-unit` (`cargo test --workspace`) for any
+# `crates/**` change plus the Tauri clippy+test pair on the same glob. That is
+# a gate sized for a human with a coffee: on 2026-09-02 a seat pushing a
+# one-line CLI fix hit its 60 s tool timeout on `git push`, and the answer that
+# night was `--no-verify`. A gate everyone skips is not a gate. `cargo test
+# --workspace`, every e2e project, `just ci` and `just check` are CI-only from
+# here — see CONTRIBUTING.md § "What pre-push runs, and what it does not" for
+# the failure class that trade moves to CI on purpose.
 pre-commit:
   parallel: true
   commands:
@@ -73,34 +91,9 @@ pre-push:
   commands:
     branch-skew:
       run: ./scripts/check-branch-skew.sh
-    file-size-check:
-      # The ratchet computes its own merge-base diff, so path filtering here
-      # would only duplicate policy and create another place for coverage drift.
-      run: just file-size-check
-    rust-tests:
-      glob: ["crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "justfile"]
-      run: just test-unit
-    web-test:
-      glob: ["web/**", "pnpm-lock.yaml"]
-      run: just web-test
-    desktop-check:
-      glob: ["desktop/**", "pnpm-lock.yaml"]
-      exclude: ["desktop/src-tauri/**"]
-      run: just desktop-check
-    desktop-typecheck:
-      glob: ["desktop/**", "pnpm-lock.yaml"]
-      exclude: ["desktop/src-tauri/**"]
-      run: just desktop-typecheck
-    desktop-test:
-      glob: ["desktop/**", "pnpm-lock.yaml"]
-      exclude: ["desktop/src-tauri/**"]
-      run: just desktop-test
-    desktop-tauri-checks:
-      # Keep local lint parity with Desktop Core CI for every path that can
-      # affect the Tauri crate or its path dependencies. Run clippy and tests
-      # serially so parallel pre-push hooks do not contend for Cargo's lock.
-      glob: ["desktop/src-tauri/**", "crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "justfile"]
-      run: just desktop-tauri-clippy && just desktop-tauri-test
-    mobile-test:
-      glob: ["mobile/**"]
-      run: just mobile-test
+    floor:
+      # Scoped to the merge-base diff, budget disclosed rather than enforced by
+      # a kill. Runs fmt + unit tests for the crates that changed, clippy for
+      # those plus their `cargo metadata`-derived dependents, the JS surface's
+      # fast checks when that surface moved, and the file-size ratchet.
+      run: ./scripts/pre-push-floor.sh
