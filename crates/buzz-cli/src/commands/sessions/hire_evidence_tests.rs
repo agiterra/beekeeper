@@ -124,6 +124,7 @@ fn signed_hire() -> (
         verified_at: None,
         turn_budget: None,
         routing: None,
+        bee_stamp: None,
     };
     let metadata = build_coding_session_metadata(
         channel,
@@ -356,6 +357,7 @@ fn provider_instance_must_match_request_create_receipt_and_metadata() {
         verified_at: None,
         turn_budget: None,
         routing: None,
+        bee_stamp: None,
     };
     let wrong_metadata = build_coding_session_metadata(
         Uuid::parse_str(&channel).expect("channel UUID"),

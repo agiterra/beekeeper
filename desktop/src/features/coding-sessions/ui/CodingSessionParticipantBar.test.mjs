@@ -344,3 +344,115 @@ test("U-F2: the chip is status-only — the activity phrase lives in the live st
   // The phrase does not: LiveActivityBar is its one home.
   assert.doesNotMatch(markup, /Verify the signed live activity/);
 });
+
+const BUNDLED_STAMP = {
+  path: "/Applications/Beekeeper.app/Contents/MacOS/bee",
+  source: "bundled",
+  version: "0.1.0",
+  sha: "23728227b",
+  dirty: false,
+};
+
+const PATH_STAMP = {
+  path: "/Users/brian/Projects/beekeeper/beekeeper/target/debug/bee",
+  source: "path",
+  version: "0.1.0",
+  sha: "07c470be0",
+  dirty: true,
+};
+
+test("L12: each seat's chip names the bee that seat is actually running", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatBeeStamps: new Map([
+        ["lead", BUNDLED_STAMP],
+        ["builder", PATH_STAMP],
+      ]),
+    }),
+  );
+  assert.match(markup, /bee 23728227b \(bundled\)/);
+  assert.match(
+    markup,
+    /bee 07c470be0-dirty \(found on PATH: \/Users\/brian\/Projects\/beekeeper\/beekeeper\/target\/debug\)/,
+  );
+  assert.equal(
+    (markup.match(/data-testid="coding-session-seat-bee"/g) ?? []).length,
+    2,
+    "one bee line per seat that has a stamp",
+  );
+});
+
+test("L12: an unparsed --version reads unknown on the chip, never blank", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatBeeStamps: new Map([
+        [
+          "builder",
+          { ...BUNDLED_STAMP, version: null, sha: null, dirty: null },
+        ],
+      ]),
+    }),
+  );
+  assert.match(markup, /bee build unknown/);
+  assert.equal(
+    (markup.match(/data-testid="coding-session-seat-bee"/g) ?? []).length,
+    1,
+  );
+});
+
+test("L12: a seat whose host published no stamp keeps the chip it had", () => {
+  const withoutStamps = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+    }),
+  );
+  const withNullStamps = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatBeeStamps: new Map([
+        ["lead", null],
+        ["builder", null],
+      ]),
+    }),
+  );
+  assert.doesNotMatch(withoutStamps, /coding-session-seat-bee/);
+  assert.equal(
+    withNullStamps,
+    withoutStamps,
+    "a stampless seat's chip is byte-identical to before",
+  );
+});
+
+test("L12: the bee line shares the badge row rather than adding one of its own", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatAuthorities: [
+        authority("granted", "lead", OTHER_ACTOR),
+        authority("created-ungranted", "builder", SEAT_ACTOR),
+      ],
+      seatBeeStamps: new Map([["builder", BUNDLED_STAMP]]),
+    }),
+  );
+  const chips = markup.match(/<button[\s\S]*?<\/button>/g) ?? [];
+  const builderChip = chips.find((chip) => chip.includes("Bob · Builder"));
+  assert.ok(builderChip.includes("coding-session-seat-authority-badge"));
+  assert.ok(builderChip.includes("coding-session-seat-bee"));
+  // One badge row on the chip, carrying both facts.
+  assert.equal(
+    (builderChip.match(/class="mt-1 flex min-w-0 flex-wrap/g) ?? []).length,
+    1,
+  );
+});

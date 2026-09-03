@@ -2844,6 +2844,7 @@ mod tests {
             verified_at: None,
             turn_budget: None,
             routing: None,
+            bee_stamp: None,
         };
         let metadata_content = serde_json::to_string(&metadata).unwrap();
         let metadata_event = build_coding_session_metadata(channel_id, &target, &metadata_content)

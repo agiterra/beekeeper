@@ -224,6 +224,39 @@ impl ActorSeat {
         }
         env
     }
+
+    /// [`Self::post_fence_env_in_project`] plus the `bee` this host chose for
+    /// its seats: `BEE` naming it absolutely, and its own directory prepended
+    /// once to `PATH` ([`crate::seat_bee::seat_bee_env`]).
+    ///
+    /// Ledger item 103 finding 1: a seat ran whichever `bee` its harness put
+    /// on `PATH` — on 2026-09-01 the app's bundled sidecar, three fixes
+    /// behind — and a path handed to it in prose was honoured only sometimes,
+    /// because prose is a request and `PATH` is a fact. The host resolves one
+    /// binary and states it twice, so `$BEE` and a bare `bee` are the same
+    /// binary and neither depends on the seat reading its instructions.
+    ///
+    /// It rides the **post-fence** list for a reason the fence itself makes
+    /// necessary: `BEE` sits outside the `BUZZ_` prefix
+    /// (`crate::agent_fence`), so an operator's ambient `BEE` survives the
+    /// fence untouched. Post-fence injection overwrites it; an exemption
+    /// would merely have widened the fence.
+    ///
+    /// `bee` of `None` — a host holding no `bee` at all — adds nothing, and
+    /// the seat keeps exactly the environment it has today.
+    pub fn post_fence_env_with_bee(
+        &self,
+        role: Option<&str>,
+        project_ref: Option<&str>,
+        bee: Option<&crate::seat_bee::SeatBee>,
+        inherited_path: Option<&std::ffi::OsString>,
+    ) -> Vec<(String, String)> {
+        let mut env = self.post_fence_env_in_project(role, project_ref);
+        if let Some(bee) = bee {
+            env.extend(crate::seat_bee::seat_bee_env(bee, inherited_path));
+        }
+        env
+    }
 }
 
 /// The sibling of [`crate::commands::ProjectsFile`] that carries seat custody.

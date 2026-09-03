@@ -3081,6 +3081,7 @@ mod tests {
             verified_at: None,
             turn_budget: None,
             routing: None,
+            bee_stamp: None,
         }
     }
 

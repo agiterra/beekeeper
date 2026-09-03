@@ -41,6 +41,10 @@ import { PulseMissionsSection } from "./PulseMissionRow";
 import { PulseOverlapCard } from "./PulseOverlapCard";
 import { PulseRulingsWaitingCard } from "./PulseRulingsWaitingCard";
 import { PulseSessionCard } from "./PulseSessionCard";
+import {
+  PulseStaleBeeCard,
+  pulseStaleBeeReadingFromSessions,
+} from "./PulseStaleBeeCard";
 import { PulseWriteHint } from "./PulseWriteHint";
 
 /** The Pulse header sentence. Fixed: it is what this screen actually shows. */
@@ -488,6 +492,16 @@ export function ProjectPulseView({
       ) : null}
 
       {missionRows ? <PulseRulingsWaitingCard rows={missionRows} /> : null}
+      {/* Which `bee` each live seat is running. Not wired to the wire yet:
+          `CoordinatedGeneration` (shared/coordination/sessionCoordinationTypes.ts)
+          carries no `beeStamp` — adding it is a two-fold contract change, not a
+          field, because that type is the Pulse digest's frozen generation
+          member — and no host command answers ancestry against the local
+          checkout. See `pulseStaleBeeReadingFromSessions`. Until both land
+          every live seat reads as uncompared, never as current. */}
+      <PulseStaleBeeCard
+        reading={pulseStaleBeeReadingFromSessions(readable.sessions)}
+      />
 
       {branches.length > 0 ? (
         <div

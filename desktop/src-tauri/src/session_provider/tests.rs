@@ -21,8 +21,8 @@ use crate::session_provider::commands::{
     provider_command_relay_for_active,
 };
 use crate::session_provider::env::{
-    build_provider_env, resolve_app_checkout, ProviderEnvInputs, DEFAULT_RUST_LOG,
-    PROJECTS_FILE_NAME, SHARED_WORKDIRS_VAR,
+    build_provider_env, resolve_app_checkout, ProviderEnvInputs, BEE_VAR, DEFAULT_RUST_LOG,
+    INHERITED_KEYS_TO_CLEAR, PROJECTS_FILE_NAME, SHARED_WORKDIRS_VAR,
 };
 use crate::session_provider::store::{
     CodingSessionProviderRecord, CodingSessionProviderStore, STORE_VERSION,
@@ -955,4 +955,42 @@ fn an_app_checkout_is_the_repository_the_process_is_running_inside() {
     let home = tmp.path().join("home");
     std::fs::create_dir_all(home.join(".git")).expect("home repo");
     assert_eq!(resolve_app_checkout(&home, Some(&home)), None);
+}
+
+/// An operator's ambient `BEE` must not survive into the provider child.
+///
+/// `BEE` names the `bee` a seat runs. It sits outside the `BUZZ_` prefix, so
+/// the provider's own agent fence (`buzz_session_provider::agent_fence`) does
+/// not cover it and an inherited value would pass straight through to every
+/// seat this host starts — which is exactly the 2026-09-01 failure with the
+/// variable's name on it: a binary nobody chose, answering as though somebody
+/// had. The provider resolves its own (the sidecar beside its executable, else
+/// `PATH`); the desktop's only job is to stop a stale one arriving.
+///
+/// Asserted against the list the spawn path actually iterates
+/// (`supervisor.rs`, `for key in INHERITED_KEYS_TO_CLEAR`), not against a
+/// literal, so a key removed from the list fails this test rather than
+/// silently stopping being cleared.
+#[test]
+fn an_ambient_bee_is_cleared_before_the_provider_child_starts() {
+    assert!(
+        INHERITED_KEYS_TO_CLEAR.contains(&BEE_VAR),
+        "BEE must be cleared from the inherited environment: {INHERITED_KEYS_TO_CLEAR:?}"
+    );
+    assert_eq!(
+        BEE_VAR, "BEE",
+        "this name is kept byte-for-byte in step with buzz_session_provider::seat_bee::BEE_ENV"
+    );
+}
+
+/// The desktop never *sets* `BEE`. Only the provider knows which directory its
+/// own executable sits in, so only the provider can name the sidecar beside
+/// it; a value invented here would be a guess wearing the host's authority.
+#[test]
+fn the_desktop_names_no_bee_of_its_own() {
+    let env = env_for(&sample_record());
+    assert!(
+        !env.contains_key(BEE_VAR),
+        "the choice of bee belongs to the provider, not to this host: {env:?}"
+    );
 }

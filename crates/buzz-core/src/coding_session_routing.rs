@@ -3448,6 +3448,7 @@ mod tests {
             verified_at: None,
             turn_budget: None,
             routing: None,
+            bee_stamp: None,
         };
         let json = serde_json::to_string(&metadata).expect("json");
         assert!(

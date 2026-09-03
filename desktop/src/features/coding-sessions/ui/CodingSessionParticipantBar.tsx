@@ -6,11 +6,14 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import type { CodingSessionParticipantPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
 import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/codingSessionParticipantAccent";
+import { codingSessionSeatBeeLine } from "@/features/coding-sessions/lib/codingSessionSeatBee";
+import type { SeatBeeStamp } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import { cn } from "@/shared/lib/cn";
 import {
   CodingSessionMissionDeliveryBadge,
   CodingSessionSeatAuthorityBadge,
 } from "./CodingSessionMissionDeliveryBadge";
+import { CodingSessionSeatBeeLine } from "./CodingSessionSeatBeeLine";
 
 /**
  * Singularity's always-readable roster: identity first, provider details second.
@@ -20,6 +23,10 @@ import {
  * Two exceptions earn their place here because they are the facts a reader
  * would otherwise never learn without opening a rail: a seat that was created
  * but never granted, and a wake for this seat's own report that has not started.
+ *
+ * A third joined them in L12: which `bee` this seat is actually running. Two
+ * seats in one session can answer from two different binaries, and until the
+ * host stamped it nothing on either surface said so.
  */
 export function CodingSessionParticipantBar({
   className,
@@ -29,6 +36,7 @@ export function CodingSessionParticipantBar({
   leading,
   onFocus,
   seatAuthorities,
+  seatBeeStamps,
 }: {
   /** Merged last — the finalizer owns the strip's border and background. */
   className?: string;
@@ -41,6 +49,15 @@ export function CodingSessionParticipantBar({
   onFocus: (executionKey: string | null) => void;
   /** Seat authority per execution; absent means the projection is not loaded. */
   seatAuthorities?: readonly CodingSessionSeatAuthority[];
+  /**
+   * The `bee` each seat is running, keyed by `executionKey`.
+   *
+   * A missing entry — and a `null` one — mean the seat's 44223 carried no
+   * `beeStamp`, so the chip says nothing about its build rather than inventing
+   * an unknown. An observed-but-unparsed `--version` arrives as a stamp with a
+   * null `sha` and reads `bee build unknown`.
+   */
+  seatBeeStamps?: ReadonlyMap<string, SeatBeeStamp | null>;
 }) {
   if (items.length === 0) return null;
   const authorityByExecution = new Map(
@@ -79,6 +96,10 @@ export function CodingSessionParticipantBar({
         const shownAuthority =
           authority !== null && authority.kind !== "granted" ? authority : null;
         const delivery = newestSeatDelivery(deliveries, authority);
+        // A seat with no stamp on the wire adds no line, so its chip keeps the
+        // exact height it had before this lane.
+        const beeStamp = seatBeeStamps?.get(item.executionKey) ?? null;
+        const hasBeeLine = codingSessionSeatBeeLine(beeStamp) !== null;
         return (
           <button
             aria-label={`${selected ? "Show all participants" : `Focus ${item.label}`} — ${item.disposition}`}
@@ -134,7 +155,7 @@ export function CodingSessionParticipantBar({
                 The chip carries identity, the W1 word, and the two facts a
                 reader could not otherwise learn (seat authority, delivery).
               */}
-              {shownAuthority !== null || delivery !== null ? (
+              {shownAuthority !== null || delivery !== null || hasBeeLine ? (
                 <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
                   {shownAuthority !== null ? (
                     <CodingSessionSeatAuthorityBadge
@@ -144,6 +165,7 @@ export function CodingSessionParticipantBar({
                   {delivery !== null ? (
                     <CodingSessionMissionDeliveryBadge delivery={delivery} />
                   ) : null}
+                  <CodingSessionSeatBeeLine stamp={beeStamp} />
                 </span>
               ) : null}
             </span>

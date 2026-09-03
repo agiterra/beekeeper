@@ -96,6 +96,15 @@ pub(crate) struct ProviderEnvInputs<'a> {
     pub app_checkout: Option<PathBuf>,
 }
 
+/// The variable naming the `bee` a seat runs.
+///
+/// Kept byte-for-byte in step with `BEE_ENV` in
+/// `crates/buzz-session-provider/src/seat_bee.rs`. The desktop never sets it —
+/// the provider chooses the binary, because only the provider knows which
+/// directory its own executable sits in — but the desktop does have to stop
+/// an ambient one reaching the child.
+pub(crate) const BEE_VAR: &str = "BEE";
+
 /// The variable the provider reads its host-named shared directories from.
 ///
 /// Kept byte-for-byte in step with `SHARED_WORKDIRS_VAR` in
@@ -252,8 +261,17 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
 /// `BUZZ_AUTH_TAG` is the important case: when the record carries no
 /// attestation the child must present none, not whatever the developer had
 /// exported in their shell.
+///
+/// `BEE` is the second: it names the `bee` a seat runs
+/// (`buzz_session_provider::seat_bee`), it sits outside the `BUZZ_` prefix so
+/// the provider's own agent fence does not cover it, and a developer who
+/// exported one in the shell that launched the desktop would otherwise have
+/// the provider inherit it and hand it on. The provider resolves its own —
+/// the sidecar beside it, else `PATH` — and an inherited value could only
+/// make that choice unreadable.
 pub(crate) const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BUZZ_AUTH_TAG",
+    BEE_VAR,
     SHARED_WORKDIRS_VAR,
     "BUZZ_ACP_PRIVATE_KEY",
     "BUZZ_API_TOKEN",

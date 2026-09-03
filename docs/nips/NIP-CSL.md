@@ -298,6 +298,43 @@ a sibling execution, or any other reader of the signed record sees only
 `actor` (a pubkey) and `role` (a slug); it never sees, stores, or transmits
 the key material or the local record that resolved it.
 
+### Fork amendment: `beeStamp` — which `bee` the seat actually ran
+
+A seat runs whatever `bee` its harness puts on `PATH`. On 2026-09-01 that was
+the desktop app's bundled sidecar, three fixes behind the checkout, and the
+run produced two binaries answering about one channel with neither of them
+saying so (item 103 finding 1). The host therefore resolves exactly one `bee`
+before a seat starts — the sidecar beside its own executable, failing that the
+first on the inherited `PATH` — injects it as `BEE` with that binary's own
+directory prepended once to the seat's `PATH`, and **itself** runs
+`$BEE --version` and records the answer. Nothing is asked of the agent: an
+agent's account of which binary it ran is a claim, and this has to be a
+record. The provider echoes it into `kind:44223` metadata as a **new optional
+key**, `beeStamp`, present only for a seated execution:
+
+```json
+"beeStamp": {
+  "path": "/Applications/Beekeeper.app/Contents/MacOS/bee",
+  "source": "bundled",
+  "version": "0.1.0",
+  "sha": "23728227b",
+  "dirty": false
+}
+```
+
+`source` is exactly `bundled` or `path` — the two outcomes the resolution has;
+a third would be a guess. `sha` is the abbreviated commit the binary was built
+from, lowercase hex, and never carries the `-dirty` suffix `bee --version`
+prints: that is the separate `dirty` flag, so no reader has to string-strip a
+commit name before comparing it. All five keys are always present when the key
+is, with `version`, `sha` and `dirty` all JSON `null` together when
+`--version` was unparseable or exited non-zero — the surfaces then read
+**unknown**, never blank. The key is omitted entirely, never emitted as an
+explicit `null`, for an unseated execution and for every pre-amendment
+generation; a metadata event that never claims a stamp keeps today's shape
+byte-for-byte, mirroring `sessionRef`, `role`, `turnBudget` and `routing`
+above. A reader MUST reject `"beeStamp": null` rather than read it as absence.
+
 ### Fork amendment: umbrella turn budget (`turnBudget`) and `BUDGET_EXHAUSTED`
 
 A crew's umbrella (plan D9) carries a turn budget: a ceiling on how many

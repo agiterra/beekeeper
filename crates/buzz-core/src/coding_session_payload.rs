@@ -973,6 +973,75 @@ pub struct SessionMetadata {
     /// quietly assumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<crate::coding_session_routing::RoutingRecord>,
+    /// Which `bee` binary this seat was started with, as the host observed it.
+    ///
+    /// The sixth independent additive key, emitted only when the host
+    /// resolved one, never as an explicit `null`. On 2026-09-01 a seat ran
+    /// the desktop app's bundled sidecar — three fixes behind — while the
+    /// orchestrator ran the checkout's own debug build, and neither said so
+    /// (`docs/SESSION_STATE.md` item 103, finding 1). This key is how a run
+    /// says which binary answered.
+    ///
+    /// It is an **observed** fact: the host runs `$BEE --version` itself and
+    /// parses the answer. Nothing is asked of the agent, so no seat can
+    /// mis-state it by omission or by prose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bee_stamp: Option<BeeStamp>,
+}
+
+/// How the host came to run this particular `bee`.
+///
+/// Two words, because the resolution has exactly two outcomes and a third
+/// would be a guess. `Bundled` is the sidecar shipped beside the running host
+/// executable — what this build produced. `Path` is the first `bee` on the
+/// inherited `PATH`, which is whatever the machine happened to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BeeStampSource {
+    /// The sidecar beside the running host executable.
+    Bundled,
+    /// The first `bee` found on the inherited `PATH`.
+    Path,
+}
+
+impl BeeStampSource {
+    /// The wire word, so a renderer and a producer cannot drift.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Bundled => "bundled",
+            Self::Path => "path",
+        }
+    }
+}
+
+/// What `bee --version` said about the binary a seat was started with.
+///
+/// Exact fields, all five always present: an optional value is JSON `null`,
+/// never absent, so a reader can tell "the host looked and could not parse an
+/// answer" from "this key predates the amendment" (§0.8 — unknown is not
+/// empty). `version`, `sha` and `dirty` are all `null` together when
+/// `--version` was unparseable or exited non-zero; the surfaces then read
+/// **unknown** rather than blank.
+///
+/// `sha` never carries the `-dirty` suffix `bee --version` prints; the suffix
+/// is the separate `dirty` field, so a consumer never has to string-strip a
+/// commit name to compare it with one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BeeStamp {
+    /// Absolute path to the binary the host chose.
+    pub path: String,
+    /// How the host came to choose it.
+    pub source: BeeStampSource,
+    /// The crate version `bee --version` printed, or `null` when unparsed.
+    pub version: Option<String>,
+    /// The short commit the binary was built from, lowercase hex, or `null`
+    /// when the build could not name one (`unknown`) or the output did not
+    /// parse.
+    pub sha: Option<String>,
+    /// Whether that build carried uncommitted changes to tracked files, or
+    /// `null` when there is no commit for the flag to qualify.
+    pub dirty: Option<bool>,
 }
 
 impl SessionMetadata {
@@ -1047,13 +1116,14 @@ pub struct TurnBudget {
 ///
 /// Four independent additive amendments have landed on this struct at
 /// different times — the `sessionRef` echo, B1's four coordinate-fact keys,
-/// the agent seat's `role`, then D9's `turnBudget` — and each one is present
-/// or absent on its own, so the base key set has **thirty-two** valid shapes,
-/// not four: base, and base plus any combination of `sessionRef`, `role`,
-/// `turnBudget`, `routing`, and the four fact keys taken together. Mirrors the
+/// the agent seat's `role`, D9's `turnBudget`, the `routing` echo, then the
+/// `beeStamp` observation — and each one is present or absent on its own, so
+/// the base key set has **sixty-four** valid shapes, not four: base, and base
+/// plus any combination of `sessionRef`, `role`, `turnBudget`, `routing`,
+/// `beeStamp`, and the four fact keys taken together. Mirrors the
 /// exact-fields discipline in `coding_session_lifecycle_command.rs`
 /// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape
-/// in between or beyond those thirty-two — a partial subset of the four fact
+/// in between or beyond those sixty-four — a partial subset of the four fact
 /// keys, or any field this struct does not know — is rejected, not
 /// tolerated.
 const METADATA_BASE_FIELDS: &[&str] = &[
@@ -1081,6 +1151,13 @@ const METADATA_TURN_BUDGET_FIELD: &str = "turnBudget";
 /// The routing amendment's one additive key. The producer omits an absent
 /// record, so an explicit null is not one of the accepted wire shapes.
 const METADATA_ROUTING_FIELD: &str = "routing";
+/// The bee-stamp amendment's one additive key. Independent of the other five,
+/// so it doubles the accepted shape count from thirty-two to sixty-four.
+/// Exactly like `routing`, the producer omits an absent stamp rather than
+/// writing a null, so an explicit null is refused **naming the key** — a
+/// consumer that sees `"beeStamp": null` is reading a producer that made up a
+/// shape, not a host that had nothing to say.
+const METADATA_BEE_STAMP_FIELD: &str = "beeStamp";
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
@@ -1113,6 +1190,14 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     {
         return Err("coding-session metadata routing must not be null".to_string());
     }
+    let has_bee_stamp = object.contains_key(METADATA_BEE_STAMP_FIELD);
+    if has_bee_stamp
+        && object
+            .get(METADATA_BEE_STAMP_FIELD)
+            .is_some_and(serde_json::Value::is_null)
+    {
+        return Err("coding-session metadata beeStamp must not be null".to_string());
+    }
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -1138,6 +1223,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_routing {
         expected.push(METADATA_ROUTING_FIELD);
+    }
+    if has_bee_stamp {
+        expected.push(METADATA_BEE_STAMP_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -2010,6 +2098,7 @@ mod tests {
             verified_at: None,
             turn_budget: None,
             routing: None,
+            bee_stamp: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -2081,6 +2170,7 @@ mod tests {
             verified_at: None,
             turn_budget: None,
             routing: None,
+            bee_stamp: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -2187,6 +2277,104 @@ mod tests {
 
         metadata["routing"] = serde_json::Value::Null;
         assert!(decode_coding_session_metadata(&metadata.to_string()).is_err());
+    }
+
+    /// The `beeStamp` amendment, held to exactly the rules `routing` set.
+    ///
+    /// Four assertions, one per rule: the key decodes and round-trips, an
+    /// explicit `null` is refused **naming the key**, a 44223 without the key
+    /// is byte-identical to what a pre-amendment producer wrote, and every
+    /// optional value survives as `null` rather than being dropped.
+    #[test]
+    fn decode_metadata_accepts_the_bee_stamp_shape_and_refuses_a_null() {
+        let without = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": "ab".repeat(32),
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": "sonnet",
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+            "role": "builder"
+        });
+        let decoded_without =
+            decode_coding_session_metadata(&without.to_string()).expect("pre-amendment form");
+        assert!(decoded_without.bee_stamp.is_none());
+        let encoded_without = serde_json::to_value(&decoded_without).expect("re-encode");
+        assert!(
+            !encoded_without
+                .as_object()
+                .expect("an object")
+                .contains_key("beeStamp"),
+            "an absent beeStamp must not become a null on the way back out"
+        );
+
+        let mut with = without.clone();
+        with["beeStamp"] = serde_json::json!({
+            "path": "/Applications/Beekeeper.app/Contents/MacOS/bee",
+            "source": "bundled",
+            "version": "0.1.0",
+            "sha": "23728227b",
+            "dirty": false
+        });
+        let decoded = decode_coding_session_metadata(&with.to_string()).expect("stamped form");
+        let stamp = decoded.bee_stamp.clone().expect("a stamp");
+        assert_eq!(stamp.source, BeeStampSource::Bundled);
+        assert_eq!(stamp.sha.as_deref(), Some("23728227b"));
+        assert_eq!(stamp.dirty, Some(false));
+        let mut encoded = serde_json::to_value(&decoded).expect("re-encode");
+        assert_eq!(
+            encoded.get("beeStamp"),
+            with.get("beeStamp"),
+            "the stamp must round-trip byte-identically"
+        );
+        // The byte-identity assertion the spec asks for, stated as an
+        // assertion rather than a sentence: strip the one new key and the
+        // remaining 44223 is byte-for-byte what a pre-amendment producer
+        // wrote. Nothing else about the shape moved.
+        encoded
+            .as_object_mut()
+            .expect("an object")
+            .remove("beeStamp");
+        assert_eq!(
+            encoded, encoded_without,
+            "publishing a beeStamp must change nothing else on the event"
+        );
+
+        let mut unknown = without.clone();
+        unknown["beeStamp"] = serde_json::json!({
+            "path": "/usr/local/bin/bee",
+            "source": "path",
+            "version": null,
+            "sha": null,
+            "dirty": null
+        });
+        let decoded_unknown =
+            decode_coding_session_metadata(&unknown.to_string()).expect("unknown-build form");
+        let stamp = decoded_unknown.bee_stamp.clone().expect("a stamp");
+        assert_eq!(stamp.source, BeeStampSource::Path);
+        assert!(stamp.sha.is_none() && stamp.dirty.is_none() && stamp.version.is_none());
+        assert_eq!(
+            serde_json::to_value(&decoded_unknown)
+                .expect("re-encode")
+                .get("beeStamp"),
+            unknown.get("beeStamp"),
+            "an unparsed stamp keeps its three explicit nulls"
+        );
+
+        let mut null_stamp = without;
+        null_stamp["beeStamp"] = serde_json::Value::Null;
+        let error = decode_coding_session_metadata(&null_stamp.to_string())
+            .expect_err("an explicit null is refused");
+        assert!(
+            error.contains("beeStamp"),
+            "the refusal must name the key it refused: {error}"
+        );
     }
 
     /// The two current B1 forms — facts alone, and facts plus `sessionRef` —
@@ -2469,6 +2657,7 @@ mod tests {
             verified_at: None,
             turn_budget: None,
             routing: None,
+            bee_stamp: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(

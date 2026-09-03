@@ -44,6 +44,7 @@ export default defineConfig({
         "**/coding-session-launch-form.spec.ts",
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
         "**/coding-session-elision-screenshots.spec.ts",
+        "**/coding-session-seat-bee.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",
         "**/coding-session-connect.spec.ts",
         "**/coding-session-width.spec.ts",

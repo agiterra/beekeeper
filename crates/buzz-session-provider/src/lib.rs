@@ -47,6 +47,7 @@ pub mod payload;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
+pub mod seat_bee;
 pub mod session;
 pub mod state;
 mod team_wake;
@@ -2329,10 +2330,15 @@ impl Provider {
                             Some(identity),
                             // The umbrella's project, so `bee pulse update`
                             // writes where the operator is looking rather than
-                            // minting a project of its own (ledger 80 d).
-                            seat.post_fence_env_in_project(
+                            // minting a project of its own (ledger 80 d) —
+                            // plus the one `bee` this host chose, named
+                            // absolutely and put first on the seat's PATH
+                            // (item 103 finding 1).
+                            seat.post_fence_env_with_bee(
                                 plan.role.as_deref(),
                                 plan.project_ref.as_deref(),
+                                crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
+                                std::env::var_os("PATH").as_ref(),
                             ),
                             skills,
                         )
@@ -3204,10 +3210,14 @@ impl Provider {
                         (
                             Some(identity),
                             // Same coordinate the create carried: a resumed
-                            // generation writes the same project's pulse.
-                            seat.post_fence_env_in_project(
+                            // generation writes the same project's pulse — and
+                            // the same host-chosen `bee`, so a reconnect does
+                            // not quietly change which binary the seat runs.
+                            seat.post_fence_env_with_bee(
                                 record.role.as_deref(),
                                 record.project_ref.as_deref(),
+                                crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
+                                std::env::var_os("PATH").as_ref(),
                             ),
                             skills,
                         )
@@ -4630,6 +4640,19 @@ impl Provider {
                     limit: self.config.turn_budget,
                 }),
             routing: record.and_then(|record| record.routing.clone()),
+            // Item 103 finding 1, disclosed: which `bee` this seat was started
+            // with, as **this host** observed it — the path, how it was
+            // chosen, and what `$BEE --version` answered. Nothing is asked of
+            // the agent.
+            //
+            // Published only for a seated execution, for the same reason
+            // `agentRef` is: a human-supervised execution is given no `BEE`
+            // and no prepended entry, so a stamp on its metadata would be a
+            // claim about a binary nothing in that session runs.
+            bee_stamp: record
+                .and_then(|record| record.actor.as_deref())
+                .and_then(|_| crate::seat_bee::host_seat_bee())
+                .map(|(_, stamp)| stamp.clone()),
         }
     }
 

@@ -287,6 +287,7 @@ fn the_accessors_type_the_reads_on_every_carrier() {
         verified_at: None,
         turn_budget: None,
         routing: None,
+        bee_stamp: None,
     };
     let alias = metadata
         .provider_alias()

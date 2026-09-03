@@ -2737,3 +2737,46 @@ kind 44240's event body does not change at all. Mission rows travel as a
 (`buzz-pulse-mission-rows/v1`), `missionScope`, `missions`, `missionErrors`,
 `openRulings`, `rulingsWaitingOnViewer`, `overlaps`, `viewerPubkey` — so an
 older digest reader ignores eight unknown keys.
+
+## 27. 2026-09-02 (batch 3, lane L12) — which `bee` answered
+
+The 2026-09-01 run ended twice on a founder nudge, and both times the cause
+was the same: the runner's transcript read `OPERATION FETCH FAILED … a
+correction must preserve its logical subject` — a defect already fixed in the
+checkout — because the seat ran the app's bundled `bee`, three fixes behind,
+while the orchestrator's own shell ran `…/beekeeper/target/debug/bee`. One
+run, two binaries, one channel, and no surface anywhere said so. A path handed
+to a seat in prose was honoured only sometimes, because prose is a request and
+`PATH` is a fact.
+
+**The host chooses, and says which.** The provider resolves one binary before a
+seat starts — the sidecar beside its own executable, failing that the first
+`bee` on the inherited `PATH` — sets `BEE` to its absolute path, and prepends
+that binary's directory to the seat's `PATH` **once**. Two entries would
+restore the ambiguity; one directory is the whole point. Every other entry
+keeps its order behind it, including a stale `…/target/debug` that holds a
+`bee` of its own: it stops answering `bee` and goes on answering everything
+else. We choose which binary answers; we do not confiscate the machine.
+
+**The stamp is observed, never asked for.** The host runs `$BEE --version`
+itself, once, and parses it. Nothing in this feature depends on an agent
+reporting anything, because every reporting failure in the live runs was an
+agent skipping or mis-stating exactly that kind of step. An unparseable or
+non-zero answer records the path and the source with the build `unknown` —
+and never fails the seat, because refusing a seat over a version string would
+be a new way to lose a run.
+
+**Both surfaces say it in words.** The seat card carries one line, never a
+colour: `bee 23728227b (bundled)`, `bee 07c470be0-dirty (found on PATH:
+/Users/…/target/debug)`, or `bee build unknown` when it did not parse. Project
+Pulse's *what is owed* gains **seats running an older bee** — one row per live
+seat whose build is not an ancestor of `main`, with its sha7 and how far
+behind — and the honest empty state `no seat's build could be compared`, which
+is a different sentence from "every seat is current". Ancestry is computed
+against a real checkout by the host; TypeScript renders the verdict and never
+compares two shas as strings.
+
+**What this does not reach.** `beeStamp` describes the binary the *publishing
+host* chose. A seat launched by some other host still gets that host's `PATH`,
+and this key would then be describing a choice it did not make — so it is
+published only by the host that made it, for the seats it started.
