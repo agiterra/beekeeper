@@ -53,6 +53,42 @@ const SEAT_ROLES: &[&str] = &["builder", "runner", "verifier", "designer"];
 /// rule is.
 const LEAD_MAIN_RULE: &str = "You never push `main`. A branch is landed by the founder, or by a seat the founder names in the policy's `irreversible` list, after a verifier's report and your verdict are on the wire.";
 
+/// The four sentences the lead pack must carry, byte-for-byte (§1k).
+///
+/// Each is a live failure, not a preference. Asserted rather than merely
+/// written because a rule that lives only in prose is a rule that drifts by a
+/// word at a time until it is a different rule.
+///
+/// Every entry is `(skill directory, sentence, why)`. A skill named twice
+/// carries both sentences.
+const LEAD_PACK_SENTENCES: &[(&str, &str, &str)] = &[
+    (
+        "hire",
+        "Publish the assignment before you hire the seat that answers it: bee sessions assign first, its event id in the brief, bee sessions hire second. A hire that arrives with no assignment to cite leaves the seat two bad options — invent a reference, or report nothing — and the live runs produced both.",
+        "finding 22: the rule was in write-brief and triage-report, and live run 3 still hired at 12:32:50 and assigned at 12:33:37 — because the skill a lead loads *while hiring* is `hire` and it said nothing",
+    ),
+    (
+        "triage-report",
+        "Answer a request with bee sessions decide answer, never in a turn. Prose to the asker leaves the request open on the wire, the mission waiting on you, and the ruling somewhere no fold can read.",
+        "finding 21: the lead answered a builder in prose, the request stayed open on the wire, and the founder was asked the same question twice",
+    ),
+    (
+        "ask-for-a-ruling",
+        "Answer a request with bee sessions decide answer, never in a turn. Prose to the asker leaves the request open on the wire, the mission waiting on you, and the ruling somewhere no fold can read.",
+        "the same rule, in the skill a lead loads while it is holding a ruling",
+    ),
+    (
+        "triage-report",
+        "A report whose gate claims are prose is not accepted. Ask for the signed row — bee sessions observe gate — and rule on that. This rule applies to any session where kind 44246 rows are on the wire; where none are, say in the disposition that the claim is unverified rather than accepting it.",
+        "finding 26: a report claimed `cargo test -p buzz-cli` green; a verifier reproduced two failures on the same SHA, and the claim turned out to be one test file",
+    ),
+    (
+        "ask-for-a-ruling",
+        "If the honest answer would have to be given again for the next commit, ask for a condition rather than a commit: state the class the ruling covers and pass it back with bee sessions decide answer --condition. A per-SHA ruling is a question you have agreed to ask again.",
+        "finding 21 again, from the other end: the ruling was given about one SHA, so the next SHA needed the same ruling",
+    ),
+];
+
 /// Repository root, derived from this crate's manifest directory.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -115,6 +151,50 @@ fn the_lead_pack_says_it_never_pushes_main() {
         "the lead pack does not carry the main-landing rule byte-for-byte. Nothing below the \
          pack stops a lead landing main: it inherits the operator's repo role, no buzz-protect \
          rule covers the ref, and the push path reads no verdict (finding 27)."
+    );
+}
+
+#[test]
+fn the_lead_pack_carries_every_sentence_the_live_runs_wrote() {
+    let skills = repo_root()
+        .join("personas")
+        .join("roles")
+        .join("lead")
+        .join("skills");
+    for (skill, sentence, why) in LEAD_PACK_SENTENCES {
+        let path = skills.join(skill).join("SKILL.md");
+        assert!(
+            path.is_file(),
+            "the lead pack carries no {skill} skill at {}: {why}",
+            path.display()
+        );
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        assert!(
+            body.contains(sentence),
+            "the lead pack's {skill} skill does not carry this sentence byte-for-byte:\n\
+             {sentence}\n\
+             why it is asserted: {why}"
+        );
+    }
+}
+
+/// The new skill has to be *loaded*, not merely present on disk: a lead reads
+/// the skills its persona lists and nothing else.
+#[test]
+fn the_lead_persona_loads_the_ruling_skill() {
+    let persona = repo_root()
+        .join("personas")
+        .join("roles")
+        .join("lead")
+        .join("personas")
+        .join("lead.persona.md");
+    let body = std::fs::read_to_string(&persona)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", persona.display()));
+    assert!(
+        body.contains("./skills/ask-for-a-ruling/"),
+        "the lead persona does not list ask-for-a-ruling, so a lead never loads it \
+         however carefully the file is written"
     );
 }
 

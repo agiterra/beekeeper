@@ -47,33 +47,49 @@ pub fn decode_coding_session_team_transaction(
         .get("body")
         .and_then(Value::as_object)
         .ok_or_else(|| "team-transaction body must be an object".to_owned())?;
-    let expected_keys = if transaction_type == CodingSessionTeamTransactionType::Verdict {
-        match body.get("subtype").and_then(Value::as_str) {
-            Some("refutation") => &[
-                "subtype",
-                "assignmentRef",
-                "reportRef",
-                "decision",
-                "summary",
-                "findings",
-                "requiredAction",
-            ][..],
-            Some("disposition") => &[
-                "subtype",
-                "assignmentRef",
-                "reportRef",
-                "refutationRef",
-                "decision",
-                "summary",
-                "findings",
-                "requiredAction",
-            ][..],
-            _ => return Err("unsupported team-transaction verdict subtype".to_owned()),
-        }
+    // `decision.answer` is the vocabulary's one **required on write, optional
+    // on read** body, so it is checked here rather than against an exact row.
+    // Every writer in this repository emits `condition`; every reader accepts
+    // a body that omits it, because records were signed before the key existed
+    // — live run 2's three, measured — and a reader must never lose history.
+    // `null` remains the canonical "this ruling named no class", and blank or
+    // over-bound text is refused by the validator exactly as it always was.
+    if transaction_type == CodingSessionTeamTransactionType::DecisionAnswer {
+        validate_keys_required_and_optional(
+            body,
+            &["requestRef", "choice", "note"],
+            &["condition"],
+            "team-transaction body",
+        )?;
     } else {
-        expected_body_keys(transaction_type)
-    };
-    validate_exact_keys(body, expected_keys, "team-transaction body")?;
+        let expected_keys = if transaction_type == CodingSessionTeamTransactionType::Verdict {
+            match body.get("subtype").and_then(Value::as_str) {
+                Some("refutation") => &[
+                    "subtype",
+                    "assignmentRef",
+                    "reportRef",
+                    "decision",
+                    "summary",
+                    "findings",
+                    "requiredAction",
+                ][..],
+                Some("disposition") => &[
+                    "subtype",
+                    "assignmentRef",
+                    "reportRef",
+                    "refutationRef",
+                    "decision",
+                    "summary",
+                    "findings",
+                    "requiredAction",
+                ][..],
+                _ => return Err("unsupported team-transaction verdict subtype".to_owned()),
+            }
+        } else {
+            expected_body_keys(transaction_type)
+        };
+        validate_exact_keys(body, expected_keys, "team-transaction body")?;
+    }
     if transaction_type == CodingSessionTeamTransactionType::Report {
         let tests = body
             .get("tests")
@@ -294,6 +310,11 @@ fn expected_body_keys(
         CodingSessionTeamTransactionType::DecisionRequest => {
             &["question", "options", "heldOn", "blocks", "recommendation"]
         }
-        CodingSessionTeamTransactionType::DecisionAnswer => &["requestRef", "choice", "note"],
+        // Unreachable: `decision.answer` is the vocabulary's one **required on
+        // write, optional on read** body, so the caller routes it to
+        // `validate_keys_required_and_optional` before asking for an exact
+        // row. An empty set keeps this fail-closed rather than permissive if a
+        // future caller ever reaches this arm.
+        CodingSessionTeamTransactionType::DecisionAnswer => &[],
     }
 }

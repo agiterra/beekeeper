@@ -74,6 +74,18 @@ export type CodingSessionWakeOperationFact = {
   role: string | null;
   /** The signed words this sentence quotes: an objective, question or choice. */
   subject: string | null;
+  /**
+   * A `decision.answer`'s signed `condition`, when it carried one.
+   *
+   * Text, never a predicate: this surface quotes it and nothing more. It is
+   * appended to the answer's reading because the reason it exists — so the
+   * same question is not asked once per commit (finding 21) — only works if
+   * the next reader can see it where the answer is read.
+   *
+   * Absent (`null`) for every other operation type, and for an answer that
+   * named no class.
+   */
+  condition?: string | null;
 };
 
 /** Fold-resolved operations, keyed by their own event id. */
@@ -242,9 +254,14 @@ export function codingSessionWakeReading(input: {
       // request is what a reader is holding in their head; the answer's id is
       // a fact for the Inspector.
       if (named === null) return notInRecords;
-      return subject === null
-        ? `${who} answered decision ${named}`
-        : `${who} answered decision ${named}: ${subject}`;
+      const answered =
+        subject === null
+          ? `${who} answered decision ${named}`
+          : `${who} answered decision ${named}: ${subject}`;
+      const condition = clampSubject(fact.condition ?? null);
+      return condition === null
+        ? answered
+        : `${answered} — condition: ${condition}`;
     }
     default:
       return notInRecords;
@@ -311,6 +328,13 @@ export function buildCodingSessionWakeOperationIndex(input: {
     authorPubkey: string;
     parentEventId: string | null;
     summary: string;
+    /**
+     * A `decision.answer` row's signed `condition`, when the projection
+     * carries one. Optional so a caller that has not been widened yet is
+     * unchanged: an absent field reads as "no condition", exactly as an
+     * answer that named none does.
+     */
+    condition?: string | null;
   }[];
   assignments: readonly {
     sourceEventId: string;
@@ -335,6 +359,7 @@ export function buildCodingSessionWakeOperationIndex(input: {
       subject: assignment
         ? nonEmpty(assignment.objective)
         : nonEmpty(row.summary),
+      condition: row.condition ?? null,
     });
   }
   // An assignment with no stream row is deliberately **not** added. It used to

@@ -484,18 +484,19 @@ export async function readCodingSessionPolicyEvent(
  * became false in the one way that matters — it told a founder nothing was
  * counting their turn ceiling while the provider was refusing turns on it.
  *
- * The quoted clause is now §4.2's own, verbatim: every field except
- * `budget.turns` is *"read and shown, and nothing checks them"*, and for each
- * of them the record remains *"a stated intention, not an enforced limit"*.
- * The one enforced field is named rather than hidden inside the general
- * disclaimer, and {@link CODING_SESSION_POLICY_ENFORCED_FIELDS} is what marks
- * its row. Kept as one constant so no surface can drift into softer wording.
+ * The sentence is POLICY.md §4.2's own, byte-for-byte, and is the same string
+ * `bee sessions policy get` and the Tauri adapter return: **every** enforced
+ * field is named, and every other field is *"read and shown, never counted"*.
+ * {@link CODING_SESSION_POLICY_ENFORCED_FIELDS} marks those rows. Kept as one
+ * constant so no surface can drift into softer wording — and held to the
+ * others by `crates/buzz-cli/tests/policy_enforcement_sentence.rs`, after
+ * REVIEW-L7 F1 found six copies claiming one enforced field when there were
+ * two.
  */
 export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
-  "Only the turn ceiling binds anything: the provider refuses a turn once a " +
-  "session has spent it. Every other field here is read and shown, and " +
-  "nothing checks them — a published policy is a stated intention, not an " +
-  "enforced limit.";
+  "Enforced: budget.turns at the provider's turn gate, and " +
+  "gates.verifierRequired at the fold's completion check. Every other field " +
+  "is read and shown, never counted.";
 
 /**
  * Policy fields a consumer actually enforces today, by dotted name.
@@ -508,12 +509,22 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
  * never refused, and a policy published while a seat is already running does
  * not bind until that umbrella's next create or resume — POLICY.md §4.1.
  *
+ * `gates.verifierRequired` joined it on 2026-09-02 (batch 3, item G): its
+ * consumer is the 44244 fold's completion check
+ * (`crates/buzz-core/src/coding_session_completion_verification.rs`), which
+ * excludes a `mission.completed` whose settled assignments carry no active
+ * verifier's ruling, and which `bee sessions complete` refuses to sign past.
+ * Desktop's own fold passes `verifierRequired: false` until the policy hook
+ * reaches it, so this name says the *repository* counts the field, not that
+ * every surface does.
+ *
  * Every other field stays out until the same thing is true of it. Adding a
  * name here with no consumer behind it is the exact lie this list exists to
  * prevent.
  */
 export const CODING_SESSION_POLICY_ENFORCED_FIELDS: readonly string[] = [
   "budget.turns",
+  "gates.verifierRequired",
 ];
 
 /** True when nothing in this build consumes any field this record sets. */

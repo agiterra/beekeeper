@@ -208,6 +208,16 @@ export type CodingSessionMissionTransactionInput = {
   testCount: number | null;
   /** True when the Rust fold lists this report under `unseatedReports`. */
   unseated: boolean;
+  /**
+   * A `decision.answer` row's signed `condition` — the class the ruling
+   * covers — verbatim, or null when the ruling named none.
+   *
+   * Text, never a predicate: nothing evaluates it and no surface derives state
+   * from it. Optional because the projection that fills it lands with the lane
+   * that owns it; absent reads as "no condition", exactly as an answer that
+   * named none does.
+   */
+  condition?: string | null;
 };
 
 /** Wire shape of one Rust-fold `unseatedReports` row. */
@@ -222,3 +232,48 @@ export type CodingSessionNativeUnseatedReport = {
 export const CODING_SESSION_MISSION_DELIVERY_ROW_LIMIT = 32;
 /** Bound for rendered transaction rows per stream (older rows collapse with a count). */
 export const CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT = 200;
+
+/**
+ * Frozen copy for fold exclusion codes that a person, not a protocol reader,
+ * has to act on (§1k, batch 3 lane L7).
+ *
+ * The Integrity list otherwise renders the adapter's raw wire token beside the
+ * fold's own reason. That is honest but unreadable: `completion_not_verified`
+ * says nothing to the founder who has to decide what to do about it. A code
+ * with an entry here renders as `{word} · {detail}`; a code without one keeps
+ * the raw token, because inventing copy for a code nobody wrote copy for would
+ * be worse than showing the token.
+ *
+ * The fold's `reason` is never replaced — it stays as the row's evidence,
+ * naming the exact assignment and report ids.
+ */
+/**
+ * The adapter's wire token for a completion the fold refused for want of a
+ * verifier's ruling.
+ *
+ * Named once so the copy table and the state line key off the same string; it
+ * is `CodingSessionTeamFoldExclusionCode::CompletionNotVerified` as the Tauri
+ * adapter serialises it.
+ */
+export const COMPLETION_NOT_VERIFIED_CODE = "completion_not_verified";
+
+export const codingSessionFoldExclusionCopy: Readonly<
+  Record<string, { readonly word: string; readonly detail: string }>
+> = Object.freeze({
+  [COMPLETION_NOT_VERIFIED_CODE]: Object.freeze({
+    word: "Completion not verified",
+    detail: "the policy requires a verifier's ruling",
+  }),
+});
+
+/**
+ * The Mission state line when the canonical terminal is missing because the
+ * completion was excluded `completion_not_verified`.
+ *
+ * Rendered instead of `Running`: a mission whose completion the fold refused
+ * is not running, and saying so is the difference between a status and a
+ * guess. The state panel's longer sentence is §1l's and belongs to the lane
+ * that owns that panel; this is the one-line form.
+ */
+export const CODING_SESSION_COMPLETION_REFUSED_STATE_LINE =
+  "Completion refused · no verifier ruling";

@@ -119,7 +119,11 @@ pub(super) async fn precheck_operation(
         request.genesis,
     )
     .await?;
-    let context = super::operations_reads::fetch_founder_context(
+    // The policy-gated context, not the bare one: a `mission.completed` this
+    // CLI is about to sign is re-folded against it in
+    // `verify_completion_before_submit`, and the writer must refuse exactly
+    // what the reader would exclude — including `CompletionNotVerified`.
+    let context = super::operations_verifier_gate::fetch_context_with_verifier_gate(
         client,
         request.channel,
         request.session_ref,

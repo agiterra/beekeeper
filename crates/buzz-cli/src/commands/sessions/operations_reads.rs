@@ -156,6 +156,10 @@ pub(super) async fn fetch_session_authority(
             founder_pubkey: event.pubkey.to_hex(),
             active_seats: authority.seats,
             active_grants: authority.grants,
+            // Not a claim about the session: this reader does not read kind
+            // 44245 at all. `super::operations_verifier_gate` folds the policy
+            // and overwrites it before the fold that enforces it runs.
+            verifier_required: false,
         },
         policy_grants: authority.policy_grants,
     })

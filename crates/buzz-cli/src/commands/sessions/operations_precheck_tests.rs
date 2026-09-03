@@ -45,6 +45,9 @@ fn context(founder: &Keys, seats: Vec<(&Keys, &str)>) -> CodingSessionTeamFoldCo
             })
             .collect(),
         active_grants: Vec::new(),
+        // These fixtures pre-date `gates.verifierRequired`; `false` is what a
+        // session with no policy folds under.
+        verifier_required: false,
     }
 }
 

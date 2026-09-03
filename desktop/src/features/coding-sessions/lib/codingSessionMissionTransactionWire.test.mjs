@@ -321,7 +321,7 @@ test("decision.request decodes with exact keys, heldOn vocabulary and bounds", (
 });
 
 test("decision.answer takes an option index or bounded text, never both shapes wrong", () => {
-  const good = { requestRef: REQUEST, choice: 0, note: null };
+  const good = { requestRef: REQUEST, choice: 0, note: null, condition: null };
   assert.equal(decode("decision.answer", good).ok, true);
   assert.equal(decode("decision.answer", { ...good, choice: 7 }).ok, true);
   assert.equal(
@@ -345,6 +345,10 @@ test("decision.answer takes an option index or bounded text, never both shapes w
     { ...good, requestRef: "nothex" },
     { ...good, extra: 1 },
     { requestRef: REQUEST, choice: 0 },
+    { ...good, condition: "" },
+    { ...good, condition: "   " },
+    { ...good, condition: "x".repeat(513) },
+    { ...good, condition: 1 },
   ]) {
     assert.equal(
       decode("decision.answer", body).ok,
@@ -397,7 +401,10 @@ test("the new verbs verify through the exact five-tag envelope", () => {
         recommendation: null,
       },
     ],
-    ["decision.answer", { requestRef: REQUEST, choice: 0, note: null }],
+    [
+      "decision.answer",
+      { requestRef: REQUEST, choice: 0, note: null, condition: null },
+    ],
   ]) {
     const event = transaction(envelope(type, body));
     const decoded = decodeVerifiedCodingSessionTeamTransaction({
@@ -418,6 +425,7 @@ test("the new verbs verify through the exact five-tag envelope", () => {
       requestRef: REQUEST,
       choice: 0,
       note: null,
+      condition: null,
     }),
   );
   const selfAnswer = transaction(
@@ -425,6 +433,7 @@ test("the new verbs verify through the exact five-tag envelope", () => {
       requestRef: answer.id,
       choice: 0,
       note: null,
+      condition: null,
     }),
   );
   assert.equal(
@@ -471,13 +480,19 @@ test("a request may point at its own event id, because blocks is not causal", ()
   );
   // An answer's requestRef IS causal, so naming its own id is still refused.
   const answer = transaction(
-    envelope("decision.answer", { requestRef: REQUEST, choice: 0, note: null }),
+    envelope("decision.answer", {
+      requestRef: REQUEST,
+      choice: 0,
+      note: null,
+      condition: null,
+    }),
   );
   const selfAnswer = transaction(
     envelope("decision.answer", {
       requestRef: answer.id,
       choice: 0,
       note: null,
+      condition: null,
     }),
   );
   assert.equal(
@@ -489,4 +504,58 @@ test("a request may point at its own event id, because blocks is not causal", ()
     }).ok,
     true,
   );
+});
+
+test("a decision.answer may carry the class its ruling covers", () => {
+  // Finding 21: the same ruling was asked for twice because the first answer
+  // was about one SHA. `condition` names the class instead — text a reader
+  // reads, never a predicate this surface evaluates.
+  const condition = "any SHA whose buzz-acp diff against origin/main is empty";
+  const decoded = decode("decision.answer", {
+    requestRef: REQUEST,
+    choice: 0,
+    note: null,
+    condition,
+  });
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.value.body.condition, condition);
+});
+
+test("a decision.answer signed before `condition` existed still decodes", () => {
+  // Live run 2's own body, byte-for-byte off hive: `4847ff06…` in channel
+  // d3e440ea…, the founder's answer to 2099cdb3…, published before the key
+  // existed. `condition` is required on WRITE and optional on READ, because a
+  // reader must never lose history.
+  const live = {
+    requestRef: REQUEST,
+    choice: 2,
+    note: "C. Role always present, null outside a session.",
+  };
+  const decoded = decode("decision.answer", live);
+  assert.equal(decoded.ok, true, "the six-key body must decode");
+  // Absent and null are the same answer, and nothing downstream can tell them
+  // apart.
+  assert.equal(decoded.value.body.condition ?? null, null);
+  assert.equal(
+    decode("decision.answer", { ...live, condition: null }).value.body
+      .condition,
+    null,
+  );
+
+  // Optional does not mean lax: an unknown key is still refused on both
+  // shapes, and a required key is still required.
+  for (const bad of [
+    { ...live, extra: 1 },
+    { ...live, condition: null, extra: 1 },
+    { choice: 2, note: null, condition: null },
+    { requestRef: REQUEST, choice: 2, condition: null },
+    { ...live, condition: "" },
+    { ...live, condition: "x".repeat(513) },
+  ]) {
+    assert.equal(
+      decode("decision.answer", bad).ok,
+      false,
+      `decision.answer body must be refused: ${JSON.stringify(bad)}`,
+    );
+  }
 });

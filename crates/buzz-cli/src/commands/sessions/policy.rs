@@ -8,12 +8,15 @@
 //!
 //! # What this command may and may not claim
 //!
-//! Exactly one field is enforced anywhere in this repository: `budget.turns`,
-//! at the provider's turn gate. Everything else is **read and shown, not
-//! enforced**, and `get` says so in its own output rather than leaving a reader
-//! to assume a budget bar is being counted. Printing an unenforced ceiling as
+//! Two fields are enforced anywhere in this repository: `budget.turns`, at the
+//! provider's turn gate, and `gates.verifierRequired`, at the 44244 fold's
+//! completion check. Everything else is **read and shown, not enforced**, and
+//! `get` says exactly that in its own output rather than leaving a reader to
+//! assume a budget bar is being counted. Printing an unenforced ceiling as
 //! though something were counting it is the same defect as a status that reads
-//! Idle over a disconnected provider.
+//! Idle over a disconnected provider — and so is the reverse, which is what
+//! REVIEW-L7 F1 found: telling a founder nothing counts a field the next
+//! command is about to refuse them for.
 //!
 //! # Standing — one rule, and this command does not invent a second
 //!
@@ -52,12 +55,25 @@ use crate::{SessionPolicyCmd, SessionPolicySetArgs};
 
 /// The one sentence every surface that renders a policy owes its reader.
 ///
-/// Repeated verbatim by `get` and by `set`'s answer, because a policy is a
-/// **stated intention**, not an enforced limit, for every field but one
+/// Repeated verbatim by `get` and by `set`'s answer. It names **every** field
+/// something actually counts and says plainly that nothing counts the rest;
+/// a surface that softens it, or that lists a field this sentence does not,
+/// is lying to the person who set the policy
 /// (`docs/design/portable-team-loop/POLICY.md` §4).
+///
+/// `gates.verifierRequired` joined it on 2026-09-02 (batch 3, item G): the
+/// 44244 fold now excludes a `mission.completed` that settled on a report no
+/// active verifier ruled on, and `bee sessions complete` refuses to sign one.
+/// Before that landing this sentence said only `budget.turns` was enforced,
+/// which would have told a founder who set `--verifier-required true` that
+/// nothing counted it, immediately before refusing their completion.
+///
+/// Byte-identical copies live in the Tauri adapter and in POLICY.md §4.2;
+/// `crates/buzz-cli/tests/policy_enforcement_sentence.rs` holds all three
+/// together.
 pub const POLICY_ENFORCEMENT_DISCLOSURE: &str =
-    "a published policy is a stated intention, not an enforced limit: only budget.turns is \
-     enforced (at the provider's turn gate); every other field is read and shown, never counted";
+    "Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the \
+     fold's completion check. Every other field is read and shown, never counted.";
 
 /// Dispatch `bee sessions policy`.
 pub async fn cmd_policy(client: &BuzzClient, cmd: SessionPolicyCmd) -> Result<(), CliError> {

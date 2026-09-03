@@ -7,6 +7,7 @@ skills:
   - "./skills/write-brief/"
   - "./skills/hire/"
   - "./skills/triage-report/"
+  - "./skills/ask-for-a-ruling/"
   - "./skills/choose-model/"
   - "./skills/beekeeper-project/"
 ---

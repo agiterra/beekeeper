@@ -64,6 +64,14 @@ pub struct CodingSessionTeamFoldAdapterContext {
     pub active_seats: Vec<CodingSessionTeamActiveSeatInput>,
     /// Active receipt-backed operator grants at that authority head.
     pub active_grants: Vec<CodingSessionTeamActiveGrantInput>,
+    /// Whether this umbrella's newest accepted kind-44245 policy sets
+    /// `gates.verifierRequired: true`.
+    ///
+    /// **Required**, never defaulted: a caller that has not read the policy
+    /// set has to say `false` on purpose. The field is the caller's answer
+    /// about what the *policy* says, and `false` makes this fold behave
+    /// exactly as it did before the field existed.
+    pub verifier_required: bool,
 }
 
 impl CodingSessionTeamFoldAdapterContext {
@@ -115,6 +123,7 @@ impl CodingSessionTeamFoldAdapterContext {
                     may_steer: grant.may_steer,
                 })
                 .collect(),
+            verifier_required: self.verifier_required,
         }
     }
 }
@@ -194,6 +203,9 @@ pub enum CodingSessionTeamFoldAdapterExclusionCode {
     CompletionNotApproved,
     /// Mission completion named an assignment an unanswered decision blocks.
     CompletionBlockedByOpenDecision,
+    /// Mission completion settled on a report no active verifier ruled on,
+    /// while the policy set `gates.verifierRequired`.
+    CompletionNotVerified,
     /// Another authorized terminal event won deterministic ordering.
     TerminalConflict,
 }
@@ -394,6 +406,9 @@ fn exclusion_code(
         }
         CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision => {
             CodingSessionTeamFoldAdapterExclusionCode::CompletionBlockedByOpenDecision
+        }
+        CodingSessionTeamFoldExclusionCode::CompletionNotVerified => {
+            CodingSessionTeamFoldAdapterExclusionCode::CompletionNotVerified
         }
         CodingSessionTeamFoldExclusionCode::TerminalConflict => {
             CodingSessionTeamFoldAdapterExclusionCode::TerminalConflict

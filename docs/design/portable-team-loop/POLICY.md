@@ -209,12 +209,20 @@ Tags for that record, in order:
 
 ---
 
-## 4. Exactly one field is enforced; everything else is a stated intention
+## 4. Two fields are enforced; everything else is a stated intention
 
-Batch 2 lane B2 wrote the first consumer, so the older sentence here — "nothing
-in this repository refuses a turn because of a budget in a 44245" — is now
-false, for one field and no others. This section says which, and repeats the
-disclosure the rest of the record still owes its reader.
+Batch 2 lane B2 wrote the first consumer and batch 3 item G wrote the second,
+so the older sentence here — "nothing in this repository refuses a turn because
+of a budget in a 44245" — is now false, for `budget.turns` and
+`gates.verifierRequired` and no others. This section says which, and repeats
+the disclosure the rest of the record still owes its reader.
+
+**Adding a third is a change to this section and to every surface that prints
+the sentence in §4.2, in the same landing.** REVIEW-L7 F1 is what happens
+otherwise: item G shipped the enforcement and left six places saying only
+`budget.turns` counted, so a founder setting `--verifier-required true` was
+told nothing counted it and then refused by `bee sessions complete`.
+`crates/buzz-cli/tests/policy_enforcement_sentence.rs` now fails if they drift.
 
 ### 4.1 Enforced: `budget.turns`, at the provider's turn gate
 
@@ -251,11 +259,34 @@ answer is the more specific one.
   that umbrella until its next create or resume.** That is a real gap, stated
   rather than hidden.
 
-### 4.2 Not enforced: every other field
+### 4.2 Enforced: `gates.verifierRequired`, at the fold's completion check
+
+Since 2026-09-02 (batch 3, item G). When the umbrella's newest **accepted**
+kind-44245 sets `gates.verifierRequired: true`, the 44244 fold excludes a
+`mission.completed` as `CompletionNotVerified` unless every assignment it names
+**that the fold settled** carries a verifier's ruling on the report that
+settlement governs — a canonical `not-refuted` refutation by an active
+`verifier` seat, or that report's own author holding one
+(`crates/buzz-core/src/coding_session_completion_verification.rs`).
+`bee sessions complete` re-folds the signed candidate and refuses to publish
+one the fold would exclude.
+
+The flag reaches the fold as one caller-supplied boolean, computed from
+`fold_coding_session_policies` — the same policy fold `bee sessions policy get`
+runs, so the record that binds is the record the CLI prints. A caller that has
+not read the policy set passes `false`, which means **this fold enforces
+nothing extra**, never *no verifier is required*; Desktop passes `false` today.
+
+The one true sentence, byte-identical in `POLICY_ENFORCEMENT_DISCLOSURE` (CLI
+and Tauri) and asserted by `crates/buzz-cli/tests/policy_enforcement_sentence.rs`:
+
+> Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.
+
+### 4.3 Not enforced: every other field
 
 `posture`, `budget.tokensPerSeat`, `budget.tokensPerSession`,
 `budget.costUsdPerSession`, `budget.contextTier`, `attention`, `gates.redFirst`,
-`gates.reviewEveryLane`, `gates.requiredGates`, `gates.verifierRequired`,
+`gates.reviewEveryLane`, `gates.requiredGates`,
 `bench.identities`, `bench.providers`, `bench.challengerSampleRate`,
 `irreversible`, `stop.timeBoxSecs` and `stop.onMilestone` are **read and shown,
 and nothing checks them**. Publishing one changes no behaviour anywhere in this
@@ -275,7 +306,7 @@ prints it as `enforcement` on `set`, `get` and `clear`
 companion `CODING_SESSION_POLICY_ENFORCED_FIELDS` holds `budget.turns` and
 nothing else — the one list on that side that may claim a field is enforced.
 
-### 4.3 The CLI writes it and reads it, through the same rule
+### 4.4 The CLI writes it and reads it, through the same rule
 
 `bee sessions policy set|get|clear`
 (`crates/buzz-cli/src/commands/sessions/policy.rs`) is the writer and the
@@ -304,13 +335,13 @@ authority at all, so a stranger who published `budget.turns: 9999` into the
 channel had it printed back, with an author and an event id, as "the newest
 accepted policy", while the provider correctly ignored it (REVIEW-B2 F1, F2).
 
-### 4.4 Still absent from v1
+### 4.5 Still absent from v1
 
 - **No UI.** The launch form is later work.
 - **No mid-session binding.** §4.1's last bullet: a policy published while a
   seat is running does not bind until that umbrella's next create or resume.
 
-### 4.5 Reading a policy requires the app bundle and the provider to move together
+### 4.6 Reading a policy requires the app bundle and the provider to move together
 
 Carrying the policy into the context package bumped
 `CODING_SESSION_CONTEXT_PACKAGE_VERSION` to **4**

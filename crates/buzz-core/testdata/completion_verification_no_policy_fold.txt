@@ -1,0 +1,36 @@
+CodingSessionTeamFold {
+    included_event_ids: [
+        "cbb941ea64a86a335272e90abf2b132bcd8124088aaa7e29ef9c96c6479e8dba",
+        "359d5aef323b1476e0bff88bef4e70170b9b046634d19fc95f2c2d7ef4fdf339",
+        "761aec6fc70815116c48bdf83c7d38e1c12f9198b5022239871b3b616fac1198",
+        "f165ece08e26b1c035101e1f2bdac034195275045268594532902f350978bed6",
+        "09d3b95f3f3611b9a57a10d73d48452b535cc5bc7d6038b772203c3b8b0322d0",
+    ],
+    excluded: [],
+    conflicts: [],
+    assignments: [
+        CodingSessionTeamAssignmentSettlement {
+            assignment_event_id: "cbb941ea64a86a335272e90abf2b132bcd8124088aaa7e29ef9c96c6479e8dba",
+            governed_report_event_id: Some(
+                "359d5aef323b1476e0bff88bef4e70170b9b046634d19fc95f2c2d7ef4fdf339",
+            ),
+            disposition_event_id: Some(
+                "761aec6fc70815116c48bdf83c7d38e1c12f9198b5022239871b3b616fac1198",
+            ),
+            acknowledgement_event_id: Some(
+                "f165ece08e26b1c035101e1f2bdac034195275045268594532902f350978bed6",
+            ),
+            settled: true,
+        },
+    ],
+    unseated_reports: [],
+    notes: [],
+    decisions: [],
+    waiting_on_decision: None,
+    canonical_terminal: Some(
+        CodingSessionTeamCanonicalTerminal {
+            event_id: "09d3b95f3f3611b9a57a10d73d48452b535cc5bc7d6038b772203c3b8b0322d0",
+            transaction_type: MissionCompleted,
+        },
+    ),
+}

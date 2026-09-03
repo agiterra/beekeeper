@@ -422,3 +422,59 @@ observation carries no authority, no supersession and no causal reference, so
 this kind's correction validator and twelve exclusion codes buy it nothing while
 letting its defects become governance disclosures. Kind 44246 therefore has no
 exclusion codes at all and a fold that cannot fail. See `docs/nips/NIP-CSOB.md`.
+
+## A ruling may name a condition instead of a commit (2026-09-02)
+
+`decision.answer` carries a seventh key, `condition`: non-blank text of at most
+512 bytes, or JSON `null`, always present. It is **text, not a predicate**.
+Nothing evaluates it, the fold neither reads nor enforces it, and no surface
+may parse it into state. It exists so a ruling can state the class of case it
+covers, in the place a reader and a seat both look. Live run 2, 11:33: a
+builder asked the founder the same question twice because the first answer had
+been given about one commit and a second commit needed the identical ruling.
+
+**Required on write, optional on read.** Every writer in this repository — the
+CLI, the SDK builder, the Tauri adapter, the Desktop publisher — always emits
+the key, `null` when the ruling named no class. Every reader accepts a body
+that **omits** it and reads absent exactly as `null`. The two shapes are
+indistinguishable after decoding, so nothing downstream can branch on which was
+written. Optional does not mean lax: an unknown key is still refused, a
+required key is still required, and a present `condition` is still non-blank
+and at most 512 bytes.
+
+The asymmetry is deliberate and was paid for. This key was first specified
+exact on both sides, and on 2026-09-02 that was measured against the live
+relay: the three `decision.answer` records live run 2 had already signed
+(`429e8545`, `4847ff06`, `690c561a`) became undecodable, were dropped silently
+from every read, and that session's `mission.completed f85635ad` was excluded
+`CompletionBlockedByOpenDecision` — a finished mission re-read as waiting on a
+person. **A reader must never lose history.** Any future key added to a
+vocabulary that already has signed events on a relay follows the same rule.
+
+A relay or a bundled `bee` predating this change still **refuses** an answer
+that carries `condition`, so the ordering stands: core, the relay's decode
+path, the CLI's `bee sessions decide answer --condition`, the Tauri adapter and
+the TypeScript decoder land in **one** change, the relay is redeployed on that
+landing before any client writes such an answer, and the app is relaunched on
+the new bundled `bee` before the next live run.
+
+## A completion cannot outrun the verifier the policy required (2026-09-02)
+
+When the umbrella's newest accepted kind-44245 policy sets
+`gates.verifierRequired: true`, a `mission.completed` is excluded
+`CompletionNotVerified` unless every assignment in its `assignmentRefs` that
+the fold **settled** carries a verifier's ruling on the report that settlement
+governs — `CodingSessionTeamAssignmentSettlement.governedReportEventId`, never
+`landedShas`, never a report the completion merely mentions, never a branch. A
+verifier's ruling is either a canonical `refutation` verdict over that report
+whose `decision` is `not-refuted` and whose author holds an active `verifier`
+seat, or that report's own author holding one. Neither is prose.
+
+The flag reaches the fold as one caller-supplied boolean on the fold context,
+computed from `fold_coding_session_policies`: no 44245 event enters the 44244
+fold, and there is one policy fold rather than two. With no policy, the flag
+absent, or the flag `false`, the projection is byte-identical to what it was
+before this rule existed. Like `CompletionNotApproved` and
+`CompletionBlockedByOpenDecision`, the rule only ever **subtracts**: it never
+admits a completion the other rules refuse, and it is an exclusion of one
+record, never an error over the set.

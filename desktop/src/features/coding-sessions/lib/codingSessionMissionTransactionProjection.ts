@@ -12,9 +12,23 @@ import type {
 import { requireIssuedNativeCodingSessionTeamFold } from "./invokeCodingSessionTeamFold";
 import type {
   CodingSessionTeamTest,
+  CodingSessionTeamTransactionBody,
   VerifiedCodingSessionTeamTransaction,
 } from "./codingSessionTeamTransactionWire";
 import { decodeVerifiedCodingSessionTeamTransaction } from "./codingSessionTeamTransactionWire";
+
+/**
+ * The wire union's own `decision.answer` arm — **not** a second declaration of
+ * it.
+ *
+ * REVIEW-L7 F4: this file used to hand-write a `DecisionAnswerBody` and cast to
+ * it, so the wire type and the projection could drift silently. Extracting the
+ * arm keeps one source of truth; `condition` arrives with it.
+ */
+type DecisionAnswerBody = Extract<
+  CodingSessionTeamTransactionBody,
+  { requestRef: string; choice: number | string }
+>;
 
 type ReportBody = {
   assignmentRef: string;
@@ -70,12 +84,6 @@ type DecisionRequestBody = {
   question: string;
   options: string[];
   heldOn: string;
-};
-
-type DecisionAnswerBody = {
-  requestRef: string;
-  choice: number | string;
-  note: string | null;
 };
 
 /** A 64-hex actor key — the one `heldOn` spelling that names a person. */
@@ -386,6 +394,7 @@ function projectTransactions(
         event.payload.type === "decision.request"
           ? (body as DecisionRequestBody)
           : null;
+      // The wire union's own arm, `condition` included (REVIEW-L7 F4).
       const decisionAnswer =
         event.payload.type === "decision.answer"
           ? (body as DecisionAnswerBody)
@@ -442,6 +451,10 @@ function projectTransactions(
         fileCount: report ? report.files.length : null,
         testCount: report ? report.tests.length : null,
         unseated: unseatedReportEventIds.has(event.eventId),
+        // Carried verbatim off the signed answer, and only off an answer: the
+        // decision queue reads the class a ruling covers from here (finding
+        // 21). Never parsed — nothing derives state from it.
+        condition: decisionAnswer ? decisionAnswer.condition : null,
       } satisfies CodingSessionMissionTransactionInput;
     });
   return { rows, truncated };

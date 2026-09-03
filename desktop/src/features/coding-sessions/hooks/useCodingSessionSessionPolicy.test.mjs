@@ -21,7 +21,7 @@ const SCOPE = {
 };
 
 const ENFORCEMENT =
-  "a published policy is a stated intention, not an enforced limit: only budget.turns is enforced (at the provider's turn gate); every other field is read and shown, never counted";
+  "Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.";
 
 function policyEvent() {
   return {

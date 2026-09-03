@@ -56,6 +56,26 @@ export type CodingSessionMissionDecisionModel = {
   blocks: readonly string[];
   /** Signed `created_at` of the request in ms, or null when it is not folded. */
   askedAtMs: number | null;
+  /**
+   * The class this ruling covers, from the answer's signed `condition`.
+   *
+   * Three values, and they are three different facts (I9, REVIEW-L7 F10):
+   *
+   * - a **string** — the ruling named this class;
+   * - `null` — nothing named a class: the row is open, or the answer named
+   *   none;
+   * - `"unknown"` — the answer exists but its row fell outside
+   *   {@link CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT}, so this surface
+   *   has not read it. It is **not** "named no class", and a renderer must
+   *   not print it as one.
+   *
+   * Live run 2, 11:33 (finding 21): the same question was asked twice because
+   * the first answer had been given about one commit. A queue row that shows
+   * the class is where the second asker finds out they need not ask.
+   *
+   * Quoted, never parsed: no state on this surface is derived from it.
+   */
+  condition: string | null | "unknown";
 };
 
 /**
@@ -147,6 +167,39 @@ function clampQuestion(value: string): string {
     : `${collapsed.slice(0, MAX_CODING_SESSION_DECISION_QUESTION_CHARS - 1)}…`;
 }
 
+/**
+ * How much of a signed condition one queue row prints.
+ *
+ * The same 200-character bound a question gets, and for the same reason: a
+ * rail row is scanned. The whole text is one row away in the Mission stream,
+ * which renders the signed record itself.
+ */
+function clampCondition(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const collapsed = value.trim().replace(/\s+/g, " ");
+  if (collapsed.length === 0) return null;
+  return collapsed.length <= MAX_CODING_SESSION_DECISION_QUESTION_CHARS
+    ? collapsed
+    : `${collapsed.slice(0, MAX_CODING_SESSION_DECISION_QUESTION_CHARS - 1)}…`;
+}
+
+/**
+ * The class an answered row's ruling covered, or why this surface cannot say.
+ *
+ * `"unknown"` exactly when the answer's own row is not in the bounded window
+ * this model was given. Collapsing that to `null` would tell a reader the
+ * founder named no class when the truth is that nobody here looked — the
+ * unknown-≠-empty rule, in the one place this lane could break it.
+ */
+function answerCondition(
+  answers: ReadonlyMap<string, string | null>,
+  answerId: string | null,
+): string | null | "unknown" {
+  if (answerId === null) return "unknown";
+  if (!answers.has(answerId)) return "unknown";
+  return clampCondition(answers.get(answerId) ?? null);
+}
+
 /** Terminal and conflict states the waiting line may never overwrite (F4). */
 function isSettledMissionState(kind: string): boolean {
   return kind === "completed" || kind === "blocked" || kind === "conflict";
@@ -171,6 +224,14 @@ export function deriveDecisions(input: CodingSessionMissionInspectorInput): {
     (input.transactions ?? [])
       .filter((row) => row.type === "decision.request")
       .map((row) => [row.sourceEventId, row] as const),
+  );
+  // Only the answers this surface actually holds. `transactions` is bounded
+  // at CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT with older rows collapsed,
+  // so an id absent from this map means "not read", never "named no class".
+  const answers = new Map(
+    (input.transactions ?? [])
+      .filter((row) => row.type === "decision.answer")
+      .map((row) => [row.sourceEventId, row.condition ?? null] as const),
   );
   const source = input.decisions;
   const rows = (source ?? []).map((decision) => {
@@ -199,6 +260,11 @@ export function deriveDecisions(input: CodingSessionMissionInspectorInput): {
             }: ${blocks.join(", ")}`,
       blocks,
       askedAtMs: request ? request.createdAt * 1000 : null,
+      // Read off the answer's own signed row, never off the request: a
+      // condition is something the *ruling* said. Null while the row is open;
+      // `unknown` when the answer's row aged out of the bounded window, which
+      // is a different fact from "named no class" (REVIEW-L7 F10).
+      condition: answered ? answerCondition(answers, decision.answerId) : null,
     };
   });
   rows.sort((left, right) => {

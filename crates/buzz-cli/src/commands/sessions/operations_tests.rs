@@ -667,3 +667,83 @@ async fn an_omission_is_reported_under_the_same_delivery_key_as_a_wake() {
     );
     assert_eq!(output["delivery"]["published"], false);
 }
+
+// ── Finding 21: a ruling may name a condition instead of a commit ───────────
+
+/// **Live run 2, 11:33.** A builder asked the same question twice because the
+/// founder's first answer had been given about one SHA and a second SHA needed
+/// the identical ruling. `--condition` is where the class goes.
+///
+/// Asserted on the **built event**, not on the struct: the point is that the
+/// text the caller typed reaches the signed content byte-for-byte, through the
+/// SDK's builder and its strict decoder, with nothing normalising it on the
+/// way.
+#[test]
+fn a_condition_reaches_the_signed_content_verbatim() {
+    let condition = "any SHA whose buzz-acp diff against origin/main is empty";
+    let payload = coding_session_team_transaction_payload(
+        "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned(),
+        GENESIS.to_owned(),
+        None,
+        None,
+        CodingSessionTeamTransactionBody::DecisionAnswer(CodingSessionTeamDecisionAnswer {
+            request_ref: "cd".repeat(32),
+            choice: CodingSessionTeamDecisionChoice::Index(0),
+            note: None,
+            condition: Some(condition.to_owned()),
+        }),
+    );
+    let event = build_coding_session_team_transaction(CHANNEL, payload)
+        .expect("the answer builds")
+        .sign_with_keys(&Keys::generate())
+        .expect("the answer signs");
+
+    let content: Value = serde_json::from_str(&event.content).expect("signed content is JSON");
+    assert_eq!(content["body"]["condition"], json!(condition));
+    // And the wire body still carries exactly seven keys, in the one shape the
+    // relay's decoder accepts.
+    let mut keys: Vec<&String> = content["body"]
+        .as_object()
+        .expect("a body object")
+        .keys()
+        .collect();
+    keys.sort();
+    assert_eq!(keys, vec!["choice", "condition", "note", "requestRef"]);
+
+    // Omitted, the key is still present as JSON null — absent is not null.
+    let without = coding_session_team_transaction_payload(
+        "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned(),
+        GENESIS.to_owned(),
+        None,
+        None,
+        CodingSessionTeamTransactionBody::DecisionAnswer(CodingSessionTeamDecisionAnswer {
+            request_ref: "cd".repeat(32),
+            choice: CodingSessionTeamDecisionChoice::Index(0),
+            note: None,
+            condition: None,
+        }),
+    );
+    let event = build_coding_session_team_transaction(CHANNEL, without)
+        .expect("the answer builds")
+        .sign_with_keys(&Keys::generate())
+        .expect("the answer signs");
+    let content: Value = serde_json::from_str(&event.content).expect("signed content is JSON");
+    assert_eq!(content["body"]["condition"], Value::Null);
+}
+
+/// **REVIEW-L7 F3.** The fallback refusal is printed to a person, so its shape
+/// is a fact worth pinning: no run of spaces, no newline, and it names the
+/// three things a completion actually needs.
+#[test]
+fn the_completion_refusal_fallback_reads_as_one_sentence() {
+    assert!(
+        !COMPLETION_REFUSED_FALLBACK.contains("  "),
+        "the refusal carries a run of spaces: {COMPLETION_REFUSED_FALLBACK:?}"
+    );
+    assert!(!COMPLETION_REFUSED_FALLBACK.contains('\n'));
+    assert_eq!(
+        COMPLETION_REFUSED_FALLBACK,
+        "every referenced assignment must have an active report, an approving disposition, \
+         and the assigned actor's acknowledgement"
+    );
+}

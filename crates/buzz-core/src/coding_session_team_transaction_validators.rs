@@ -193,3 +193,33 @@ pub(super) fn validate_unique(field: &str, values: &[String]) -> Result<(), Stri
     }
     Ok(())
 }
+
+/// Validate a body whose newest key is **required on write, optional on read**.
+///
+/// Every key in `required` must be present, every key present must be in
+/// `required` or `optional`, and nothing else is admitted — so an unknown key
+/// is refused exactly as [`validate_exact_keys`] refuses it.
+///
+/// This exists for one situation and should not be reached for casually: a key
+/// added to a vocabulary that already has signed events on a relay. Making the
+/// new key *exact* would render every record written before it undecodable,
+/// which is not a compatibility inconvenience but the loss of signed history —
+/// live run 2's three `decision.answer` records, and with them that session's
+/// terminal, disappeared from the fold the moment `condition` became exact
+/// (measured 2026-09-02, REPORT-L7 fix round 1). A reader must never lose
+/// history; a writer must never write the old shape.
+pub(super) fn validate_keys_required_and_optional(
+    object: &serde_json::Map<String, Value>,
+    required: &[&str],
+    optional: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    if !required.iter().all(|key| object.contains_key(*key))
+        || !object
+            .keys()
+            .all(|key| required.contains(&key.as_str()) || optional.contains(&key.as_str()))
+    {
+        return Err(format!("{label} has missing or unsupported fields"));
+    }
+    Ok(())
+}

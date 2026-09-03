@@ -19,7 +19,9 @@
           "branch": null,
           "baseSha": null,
           "fileOwnership": [],
-          "acceptanceSteps": ["run the conformance fixture"]
+          "acceptanceSteps": [
+            "run the conformance fixture"
+          ]
         }
       }
     },
@@ -105,6 +107,119 @@
           "summary": "Refutation cannot approve",
           "findings": [],
           "requiredAction": null
+        }
+      }
+    },
+    {
+      "name": "valid-decision-answer-with-condition",
+      "note": "The writer's shape from 2026-09-02: `condition` is required on WRITE, so every client emits the key. Text a person reads; nothing evaluates it.",
+      "valid": true,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "decision.answer",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "requestRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "choice": 0,
+          "note": null,
+          "condition": "any SHA whose buzz-acp diff against origin/main is empty"
+        }
+      }
+    },
+    {
+      "name": "valid-decision-answer-condition-null",
+      "note": "A ruling that named no class still carries the key, as JSON null.",
+      "valid": true,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "decision.answer",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "requestRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "choice": 1,
+          "note": "the sidecar is stale",
+          "condition": null
+        }
+      }
+    },
+    {
+      "name": "valid-decision-answer-without-condition-legacy",
+      "note": "The reader's shape: live run 2's own `4847ff06` body, signed before `condition` existed. `condition` is optional on READ because a reader must never lose history \u2014 an exact seven-key row made this record undecodable and erased its session's terminal (REPORT-L7 fix round 1).",
+      "valid": true,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "decision.answer",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "requestRef": "2099cdb3e076ccb9c51cb4526710c4d3d7a551ad6c4fda6e61176f4d47b601cb",
+          "choice": 2,
+          "note": "C. Role always present, null outside a session."
+        }
+      }
+    },
+    {
+      "name": "invalid-decision-answer-blank-condition",
+      "note": "Optional on read does not mean lax: a present `condition` is non-blank.",
+      "valid": false,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "decision.answer",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "requestRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "choice": 0,
+          "note": null,
+          "condition": "   "
+        }
+      }
+    },
+    {
+      "name": "invalid-decision-answer-unknown-key",
+      "note": "An unknown key is refused on either shape.",
+      "valid": false,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "decision.answer",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "requestRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "choice": 0,
+          "note": null,
+          "condition": null,
+          "extra": 1
+        }
+      }
+    },
+    {
+      "name": "invalid-decision-answer-missing-required-key",
+      "note": "`note` is required on both shapes; only `condition` is optional.",
+      "valid": false,
+      "content": {
+        "schema": "buzz-coding-session-team-transaction/v1",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "abababababababababababababababababababababababababababababababab",
+        "type": "decision.answer",
+        "supersedes": null,
+        "deliveryCommandId": null,
+        "body": {
+          "requestRef": "2222222222222222222222222222222222222222222222222222222222222222",
+          "choice": 0,
+          "condition": null
         }
       }
     }

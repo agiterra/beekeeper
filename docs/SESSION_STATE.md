@@ -7500,7 +7500,7 @@ is Brian's call.
        can never disagree about who is exempt; the umbrella's **founder is
        still never refused**, and the refusal names the *published policy*
        rather than the environment variable. Everything else — sixteen fields,
-       enumerated by name in POLICY.md §4.2 — is read and shown and nothing
+       enumerated by name in POLICY.md §4.3 — is read and shown and nothing
        checks it. **A policy published mid-session does not bind that umbrella
        until its next create or resume** (`lib.rs:589`, POLICY.md §4.1): a real
        gap, stated rather than hidden.
@@ -7656,7 +7656,7 @@ is Brian's call.
        token or a push because of it" on the launch form of a build whose
        provider refuses turns on `budget.turns` — a founder told their ceiling
        is decorative while it is being enforced, which is item 0.8's class of
-       defect, not a wording nit. The constant now quotes POLICY.md §4.2 word
+       defect, not a wording nit. The constant now quotes POLICY.md §4.3 word
        for word and names the one field that binds;
        `CODING_SESSION_POLICY_ENFORCED_FIELDS` gains `budget.turns` (B3's own
        cross-lane request) so the row's `enforced` flag follows the code.
@@ -8176,7 +8176,7 @@ the order it should be done, and each item says who or what it is blocked by.
    the very seats that are supposed to write them. Item 107 makes the context
    package v4 and the provider stamps it unconditionally, so a sidecar
    compiled at v3 refuses *every* context read from an updated provider
-   (POLICY.md §4.5) — provider and bundle must move together. And items 106,
+   (POLICY.md §4.6) — provider and bundle must move together. And items 106,
    107 and 108's Desktop surfaces — the Route rail, the one launch form, the
    decision queue, the policy in the Inspector — are simply not on the screen
    until it is rebuilt.

@@ -79,6 +79,7 @@ pub mod operations;
 mod operations_authority;
 mod operations_precheck;
 mod operations_reads;
+mod operations_verifier_gate;
 pub mod policy;
 pub mod registry;
 pub mod route;

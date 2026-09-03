@@ -51,6 +51,22 @@ pub struct CodingSessionTeamFoldContext {
     /// Current signed grant projection. Only grants with `may_steer=true`
     /// qualify an operator for founder/lead operations.
     pub active_grants: Vec<CodingSessionTeamActiveGrant>,
+    /// Whether the umbrella's newest accepted kind-44245 policy sets
+    /// `gates.verifierRequired: true`.
+    ///
+    /// Computed by the **caller** from
+    /// [`crate::coding_session_policy::fold_coding_session_policies`] — one
+    /// policy fold, not two, and no 44245 event ever enters this 44244 fold.
+    /// `false` is the answer for "no policy", "the flag is absent" and "the
+    /// flag is false" alike, and in all three the fold behaves exactly as it
+    /// did before this field existed: no extra pass, no extra exclusion.
+    ///
+    /// A caller that has not read the policy set must pass `false`, which is
+    /// honest about what this fold enforces (nothing extra) rather than about
+    /// what the session requires — the requirement is the policy's fact, and
+    /// a surface that has not read it must say so in its own words rather than
+    /// render this `false` as "no verifier is required".
+    pub verifier_required: bool,
 }
 
 impl CodingSessionTeamFoldContext {
@@ -151,6 +167,22 @@ pub enum CodingSessionTeamFoldExclusionCode {
     /// thing: work that cannot finish until a person rules. Answer the request
     /// (or publish one that blocks nothing) and the completion folds.
     CompletionBlockedByOpenDecision,
+    /// A completion settled an assignment on a report no active verifier seat
+    /// has ruled on, while the policy sets `gates.verifierRequired`.
+    ///
+    /// `gates.verifierRequired` had existed since item 107 and nothing had
+    /// ever read it: live run 3 ended with a verifier's FAIL on the wire and
+    /// no structural consequence at all (findings 26, 27). This code is that
+    /// consequence, and it is deliberately narrow. It fires only when
+    /// [`CodingSessionTeamFoldContext::verifier_required`] is true, and it
+    /// only ever **subtracts**: with no policy, the flag absent, or the flag
+    /// false, the fold's output is byte-identical to what it was before this
+    /// code existed, and no completion today's rules refuse is admitted by it.
+    ///
+    /// What counts as a verifier's ruling is
+    /// `completion_verifier_rulings_are_present`, in
+    /// `coding_session_completion_verification.rs`.
+    CompletionNotVerified,
     /// Another authorized terminal event is newer.
     TerminalConflict,
 }
@@ -438,6 +470,9 @@ pub fn fold_coding_session_team_transactions(
         .collect();
 
     let open_blocks = open_request_blocks(&records, &active);
+    // The included set as the stages left it, i.e. before any terminal is
+    // projected. A verifier's ruling has to be canonical to clear anything.
+    let active_set_for_terminal: HashSet<usize> = active.iter().copied().collect();
     let mut terminal_authorized = authorized.clone();
     for &index in &authorized {
         let CodingSessionTeamTransactionBody::MissionCompleted(body) = &records[index].payload.body
@@ -468,6 +503,29 @@ pub fn fold_coding_session_team_transactions(
             excluded.push(CodingSessionTeamFoldExclusion {
                 event_id: records[index].id.clone(),
                 code: CodingSessionTeamFoldExclusionCode::CompletionBlockedByOpenDecision,
+                reason,
+            });
+            continue;
+        }
+        // The third and last of the completion checks, and like the two above
+        // it only ever subtracts. `verifier_required` is false for every
+        // session that has no policy, so this whole pass costs nothing and
+        // changes nothing there — the guard, not the loop body, is what makes
+        // "the fold behaves exactly as today" true.
+        if !context.verifier_required {
+            continue;
+        }
+        if let Some(reason) = completion_not_verified(
+            body,
+            &assignments,
+            &records,
+            &active_set_for_terminal,
+            context,
+        ) {
+            terminal_authorized.remove(&index);
+            excluded.push(CodingSessionTeamFoldExclusion {
+                event_id: records[index].id.clone(),
+                code: CodingSessionTeamFoldExclusionCode::CompletionNotVerified,
                 reason,
             });
         }
@@ -569,6 +627,13 @@ pub use decisions::{
     CodingSessionTeamFoldDecision, CodingSessionTeamFoldNote,
     CodingSessionTeamFoldWaitingOnDecision,
 };
+
+// The one rule that reads `gates.verifierRequired` lives in a sibling file for
+// the same reason, and is a child of this module for the same access.
+#[path = "coding_session_completion_verification.rs"]
+mod completion_verification;
+
+use completion_verification::completion_not_verified;
 
 // Stage projection and correction-group resolution live in a sibling file for
 // the same reason (FINAL-B §7 asked B2 to split this file).

@@ -57,6 +57,13 @@ pub const MAX_TEAM_TRANSACTION_DECISION_OPTIONS: usize = 8;
 pub const MAX_TEAM_TRANSACTION_DECISION_OPTION_BYTES: usize = 512;
 /// Maximum number of assignments one `decision.request` may block.
 pub const MAX_TEAM_TRANSACTION_DECISION_BLOCKS: usize = 16;
+/// Maximum byte length of a `decision.answer` `condition`.
+///
+/// The same bound one `decision.request` option carries, because a condition
+/// is written in the same breath as the options it generalises. It is a
+/// sentence a person reads, not a program: see
+/// [`CodingSessionTeamDecisionAnswer::condition`].
+pub const MAX_TEAM_TRANSACTION_DECISION_CONDITION_BYTES: usize = 512;
 /// Exact wire token naming the founder as the party holding a decision.
 pub const CODING_SESSION_TEAM_DECISION_FOUNDER: &str = "founder";
 /// Exact refusal for a `mission.blocked` correction that names no blocker.
@@ -402,6 +409,31 @@ pub struct CodingSessionTeamDecisionAnswer {
     pub choice: CodingSessionTeamDecisionChoice,
     /// Optional bounded reasoning; the key is still present as JSON null.
     pub note: Option<String>,
+    /// Optional bounded statement of the **class** this ruling covers; the key
+    /// is still present as JSON null.
+    ///
+    /// **Text, not a predicate.** Nothing evaluates it, the fold neither reads
+    /// nor enforces it, and no surface may parse it into state. It exists so a
+    /// ruling can say what it covers in one place a reader and a seat both
+    /// find, instead of the same question being asked once per commit.
+    ///
+    /// Live run 2, 11:33 (finding 21): a builder asked the founder the same
+    /// question twice because the first answer had been given about one SHA
+    /// and a second SHA needed the identical ruling. The honest fix is not a
+    /// machine-checked condition — the fold cannot evaluate "any SHA whose
+    /// buzz-acp diff against main is empty" and must never pretend to — but a
+    /// place to write it down where the next asker reads it first.
+    ///
+    /// **Required on write, optional on read.** Serialization always emits the
+    /// key (`null` when unset), so every record this repository writes carries
+    /// it; `serde(default)` means a body signed before 2026-09-02 still
+    /// decodes, with an absent key reading as `None` exactly as `null` does.
+    /// The alternative — an exact seven-key row — was implemented first and
+    /// measured: it made live run 2's three signed answers undecodable and
+    /// erased that session's terminal from the fold. A reader must never lose
+    /// history.
+    #[serde(default)]
+    pub condition: Option<String>,
 }
 
 /// Operation-specific transaction body.
@@ -610,6 +642,13 @@ impl CodingSessionTeamDecisionAnswer {
             "note",
             self.note.as_deref(),
             MAX_TEAM_TRANSACTION_TEXT_BYTES,
+        )?;
+        // Bounded and non-blank exactly like `note`, and for the same reason:
+        // a blank condition claims a class and names none.
+        validate_optional_text(
+            "condition",
+            self.condition.as_deref(),
+            MAX_TEAM_TRANSACTION_DECISION_CONDITION_BYTES,
         )
     }
 }

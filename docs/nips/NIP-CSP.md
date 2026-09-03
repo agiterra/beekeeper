@@ -13,11 +13,11 @@ nothing at all. Budgets lived in a launch dialog, "red first" lived in
 said it once.
 
 This kind is additive. Clients that do not implement NIP-CSP continue to run
-coding sessions exactly as they do today and may ignore kind 44245. **Exactly
-one field is enforced anywhere in this repository — `budget.turns`, at the
-provider's turn gate; every other field is read and shown, never counted** —
-see "Validation boundary" and "What v1 deliberately does not have" below, which
-together are the one thing a surface rendering a 44245 must not get wrong.
+coding sessions exactly as they do today and may ignore kind 44245. **Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.**
+Two fields, named, and nothing else counted — see "Validation boundary" and
+"What v1 deliberately does not have" below, which together are the one thing a
+surface rendering a 44245 must not get wrong. `gates.verifierRequired` joined
+the enforced list on 2026-09-02 (batch 3, item G).
 
 ## Allocation
 
@@ -237,12 +237,21 @@ be the defect this rule exists to prevent.
   A policy published mid-session does not bind until that umbrella's next
   create or resume.
 
+- **`gates.verifierRequired` is enforced** at the 44244 fold's completion check
+  (`crates/buzz-core/src/coding_session_completion_verification.rs`): with it
+  set, a `mission.completed` whose settled assignments carry no active
+  verifier's ruling is excluded `CompletionNotVerified`, and
+  `bee sessions complete` refuses to sign one. A surface that has not read the
+  policy set folds with the flag `false`, which means *this fold enforces
+  nothing extra* — never *no verifier is required*.
+
   **Every other field is read and shown, never counted** — `posture`,
   `budget.tokensPerSeat`, `budget.tokensPerSession`, `budget.costUsdPerSession`,
-  `budget.contextTier`, `attention`, all four `gates.*`, all three `bench.*`,
-  `irreversible`, and both `stop.*`. For those, **a published policy is a
-  stated intention, not an enforced limit** — and any surface that displays one
-  MUST say so rather than showing a budget bar nothing is counting.
+  `budget.contextTier`, `attention`, `gates.redFirst`, `gates.reviewEveryLane`,
+  `gates.requiredGates`, all three `bench.*`, `irreversible`, and both
+  `stop.*`. For those, **a published policy is a stated intention, not an
+  enforced limit** — and any surface that displays one MUST say so rather than
+  showing a budget bar nothing is counting.
 - **No UI.** The launch form is later work. `bee sessions policy set|get|clear`
   writes and reads the record (batch 2 lane B2). `get` folds the signer rule
   above: it prints the newest record whose signer held standing, `null` when
@@ -261,7 +270,8 @@ be the defect this rule exists to prevent.
 | Relay structural validation | `crates/buzz-relay/src/handlers/ingest.rs` |
 | Writer and reader (`bee sessions policy set\|get\|clear`) | `crates/buzz-cli/src/commands/sessions/policy.rs` |
 | Newest-accepted fold, in the context package | `crates/buzz-session-provider/src/context_projector.rs` |
-| The one enforced field, at the turn gate | `crates/buzz-session-provider/src/commands.rs` |
+| `budget.turns`, enforced at the turn gate | `crates/buzz-session-provider/src/commands.rs` |
+| `gates.verifierRequired`, enforced at the fold's completion check | `crates/buzz-core/src/coding_session_completion_verification.rs` |
 | Field-by-field consumer map | `docs/design/portable-team-loop/POLICY.md` |
 
 `docs/design/portable-team-loop/POLICY.md` is the companion design note: it

@@ -511,10 +511,15 @@ fn decision_request_body() -> Value {
 }
 
 fn decision_answer_body(choice: Value) -> Value {
+    decision_answer_body_with_condition(choice, Value::Null)
+}
+
+fn decision_answer_body_with_condition(choice: Value, condition: Value) -> Value {
     serde_json::json!({
         "requestRef": id("22"),
         "choice": choice,
         "note": null,
+        "condition": condition,
     })
 }
 
@@ -678,6 +683,156 @@ fn decision_request_accepts_the_exact_body_and_bounds_every_collection() {
     .is_ok());
 }
 
+/// **The body live run 2 actually signed, byte-for-byte off hive.**
+///
+/// `4847ff06…` in channel `d3e440ea…`, the founder's answer to `2099cdb3…`,
+/// published 2026-09-02 before `condition` existed. Three keys, no
+/// `condition`. Written out here rather than fetched so the guarantee is
+/// pinned by a test that needs no relay: **a reader must never lose history.**
+///
+/// The seven-key exact row this lane shipped first made this record — and the
+/// two beside it — undecodable, which erased that session's `mission.completed`
+/// from the fold. This test is the fence against that ever being true again.
+#[test]
+fn the_answer_live_run_2_signed_still_decodes_and_folds() {
+    let live = serde_json::json!({
+        "requestRef": "2099cdb3e076ccb9c51cb4526710c4d3d7a551ad6c4fda6e61176f4d47b601cb",
+        "choice": 2,
+        "note": "C. Role always present, null outside a session."
+    });
+    let decoded =
+        decode_coding_session_team_transaction(&envelope("decision.answer", Value::Null, live))
+            .expect("a decision.answer signed before `condition` existed still decodes");
+    let CodingSessionTeamTransactionBody::DecisionAnswer(body) = &decoded.body else {
+        panic!("decoded body is a decision.answer");
+    };
+    // Absent reads as None, exactly as `null` does: a record written before
+    // the key existed named no class, and says so the same way.
+    assert_eq!(body.condition, None);
+    assert_eq!(body.choice, CodingSessionTeamDecisionChoice::Index(2));
+    assert_eq!(
+        decoded.causal_references(),
+        vec!["2099cdb3e076ccb9c51cb4526710c4d3d7a551ad6c4fda6e61176f4d47b601cb"]
+    );
+
+    // And the two shapes are indistinguishable downstream: absent and explicit
+    // null decode to the same value, so nothing can branch on which was
+    // written.
+    let mut explicit = live_answer_body();
+    explicit.insert("condition".into(), Value::Null);
+    let with_null = decode_coding_session_team_transaction(&envelope(
+        "decision.answer",
+        Value::Null,
+        Value::Object(explicit),
+    ))
+    .expect("the null form decodes");
+    assert_eq!(with_null.body, decoded.body);
+}
+
+fn live_answer_body() -> serde_json::Map<String, Value> {
+    let Value::Object(map) = serde_json::json!({
+        "requestRef": "2099cdb3e076ccb9c51cb4526710c4d3d7a551ad6c4fda6e61176f4d47b601cb",
+        "choice": 2,
+        "note": "C. Role always present, null outside a session."
+    }) else {
+        panic!("the fixture is an object");
+    };
+    map
+}
+
+/// Optional on **read**; still refused on the shapes that were always refused.
+#[test]
+fn an_optional_condition_does_not_open_the_body_to_anything_else() {
+    for bad in [
+        // An unknown key is still refused — optional does not mean lax.
+        serde_json::json!({"requestRef": id("22"), "choice": 0, "note": null, "extra": 1}),
+        serde_json::json!({"requestRef": id("22"), "choice": 0, "note": null, "condition": null, "extra": 1}),
+        // A required key is still required.
+        serde_json::json!({"requestRef": id("22"), "choice": 0, "condition": null}),
+        serde_json::json!({"choice": 0, "note": null, "condition": null}),
+        // And a present `condition` is still bounded and non-blank.
+        serde_json::json!({"requestRef": id("22"), "choice": 0, "note": null, "condition": ""}),
+        serde_json::json!({"requestRef": id("22"), "choice": 0, "note": null, "condition": "   "}),
+        serde_json::json!({
+            "requestRef": id("22"), "choice": 0, "note": null,
+            "condition": "x".repeat(MAX_TEAM_TRANSACTION_DECISION_CONDITION_BYTES + 1)
+        }),
+    ] {
+        assert!(
+            decode_coding_session_team_transaction(&envelope(
+                "decision.answer",
+                Value::Null,
+                bad.clone()
+            ))
+            .is_err(),
+            "decision.answer body must be refused: {bad}"
+        );
+    }
+}
+
+/// Every writer emits the key, whatever the value.
+#[test]
+fn a_written_answer_always_carries_the_key() {
+    for condition in [None, Some("only the empty-diff SHAs".to_owned())] {
+        let body =
+            CodingSessionTeamTransactionBody::DecisionAnswer(CodingSessionTeamDecisionAnswer {
+                request_ref: id("22"),
+                choice: CodingSessionTeamDecisionChoice::Index(0),
+                note: None,
+                condition: condition.clone(),
+            });
+        let encoded = serde_json::to_value(&body).expect("the body serialises");
+        assert!(
+            encoded.get("condition").is_some(),
+            "a written answer must always carry `condition`, got {encoded}"
+        );
+        assert_eq!(
+            encoded["condition"],
+            match &condition {
+                None => Value::Null,
+                Some(text) => Value::String(text.clone()),
+            }
+        );
+    }
+}
+
+#[test]
+fn decision_answer_carries_a_bounded_condition_or_null() {
+    // Finding 21: the same ruling was asked for twice because the first answer
+    // was given about one SHA. A condition states the class instead.
+    let condition = "any SHA whose buzz-acp diff against origin/main is empty";
+    let decoded = decode_coding_session_team_transaction(&envelope(
+        "decision.answer",
+        Value::Null,
+        decision_answer_body_with_condition(serde_json::json!(0), serde_json::json!(condition)),
+    ))
+    .expect("an answer may carry a condition");
+    let CodingSessionTeamTransactionBody::DecisionAnswer(body) = &decoded.body else {
+        panic!("decoded body is a decision.answer");
+    };
+    assert_eq!(body.condition.as_deref(), Some(condition));
+    // Round-trips verbatim: nothing normalises, trims or parses it.
+    let reencoded = serde_json::to_value(&decoded).expect("the payload re-encodes");
+    assert_eq!(reencoded["body"]["condition"], serde_json::json!(condition));
+
+    for bad in [
+        serde_json::json!("x".repeat(MAX_TEAM_TRANSACTION_DECISION_CONDITION_BYTES + 1)),
+        serde_json::json!("   "),
+        serde_json::json!(""),
+    ] {
+        let error = decode_coding_session_team_transaction(&envelope(
+            "decision.answer",
+            Value::Null,
+            decision_answer_body_with_condition(serde_json::json!(0), bad.clone()),
+        ))
+        .expect_err("a blank or oversize condition is refused");
+        assert!(
+            error.contains("condition"),
+            "the refusal must name the key, got {error:?} for {bad}"
+        );
+    }
+}
+
 #[test]
 fn decision_answer_takes_an_option_index_or_bounded_text_and_nothing_else() {
     let indexed = decode_coding_session_team_transaction(&envelope(
@@ -718,7 +873,7 @@ fn decision_answer_takes_an_option_index_or_bounded_text_and_nothing_else() {
     for bad in [
         serde_json::json!({"requestRef": id("22"), "choice": 0}),
         serde_json::json!({"requestRef": id("22"), "choice": 0, "note": null, "extra": 1}),
-        serde_json::json!({"requestRef": "nothex", "choice": 0, "note": null}),
+        serde_json::json!({"requestRef": "nothex", "choice": 0, "note": null, "condition": null}),
     ] {
         assert!(
             decode_coding_session_team_transaction(&envelope(

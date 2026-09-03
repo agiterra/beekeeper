@@ -434,6 +434,7 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
             choice_index,
             choice,
             note,
+            condition,
             supersedes,
             wake_to,
         } => {
@@ -480,6 +481,10 @@ pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(),
                             request_ref: request,
                             choice,
                             note,
+                            // Verbatim into the signed content. Nothing here
+                            // trims, normalises or parses it: it is the class
+                            // the ruling covers, in the answerer's own words.
+                            condition,
                         },
                     ),
                 },
@@ -654,7 +659,13 @@ pub async fn cmd_read(client: &BuzzClient, cmd: TeamOperationCmd) -> Result<(), 
     validate_coordinates(&channel, &session_ref, &genesis)?;
 
     let events = fetch_transactions(client, &channel, &session_ref, &genesis).await?;
-    let context = fetch_founder_context(client, &channel, &session_ref, &genesis).await?;
+    let context = super::operations_verifier_gate::fetch_context_with_verifier_gate(
+        client,
+        &channel,
+        &session_ref,
+        &genesis,
+    )
+    .await?;
     let fold = fold_coding_session_team_transactions(&events, &context)
         .map_err(|error| CliError::Other(format!("team-operation fold failed: {error}")))?;
     let rows: Vec<Value> = events
@@ -848,6 +859,19 @@ fn decode_body(
     })
 }
 
+/// What a refused completion says when the fold attached no reason to this
+/// event id.
+///
+/// The reachable path quotes the fold's own reason, which names the exact
+/// assignment and report. This is the fallback for a completion the fold
+/// simply did not make terminal without excluding it — and it is printed to a
+/// person, so it is a constant with a test on it rather than a literal buried
+/// in an `unwrap_or_else` (REVIEW-L7 F3, which found eighteen spaces in the
+/// middle of this sentence).
+pub(super) const COMPLETION_REFUSED_FALLBACK: &str =
+    "every referenced assignment must have an active report, an approving disposition, and \
+     the assigned actor's acknowledgement";
+
 /// Refuse a completion that the fold would not make this session's terminal.
 ///
 /// Re-folds the session **with** the signed candidate. It reuses the set and
@@ -877,10 +901,17 @@ fn verify_completion_before_submit(
         .as_ref()
         .is_some_and(|terminal| terminal.event_id == candidate_id);
     if !is_terminal {
-        return Err(CliError::Usage(
-            "completion refused: every referenced assignment must have an active report, an approving disposition, and the assigned actor's acknowledgement"
-                .into(),
-        ));
+        // The fold's own reason when it gave one — since 2026-09-02 a
+        // completion can also be refused `CompletionNotVerified`, and telling
+        // the author about the approval chain when what is missing is the
+        // verifier would send it to fix the wrong thing.
+        let reason = fold
+            .excluded
+            .iter()
+            .find(|item| item.event_id == candidate_id)
+            .map(|item| item.reason.clone())
+            .unwrap_or_else(|| COMPLETION_REFUSED_FALLBACK.to_owned());
+        return Err(CliError::Usage(format!("completion refused: {reason}")));
     }
     Ok(())
 }
@@ -906,63 +937,11 @@ fn operation_json(event: &Event, fold: &CodingSessionTeamFold) -> Result<Value, 
     }))
 }
 
-fn fold_json(fold: &CodingSessionTeamFold) -> Value {
-    json!({
-        "includedEventIds": fold.included_event_ids,
-        "excluded": fold.excluded.iter().map(|item| json!({
-            "eventId": item.event_id,
-            "code": format!("{:?}", item.code),
-            "reason": item.reason,
-        })).collect::<Vec<_>>(),
-        "conflicts": fold.conflicts.iter().map(|item| json!({
-            "subject": item.subject,
-            "winnerEventId": item.winner_event_id,
-            "contenderEventIds": item.contender_event_ids,
-        })).collect::<Vec<_>>(),
-        "assignments": fold.assignments.iter().map(|item| json!({
-            "assignmentEventId": item.assignment_event_id,
-            "governedReportEventId": item.governed_report_event_id,
-            "dispositionEventId": item.disposition_event_id,
-            "acknowledgementEventId": item.acknowledgement_event_id,
-            "settled": item.settled,
-        })).collect::<Vec<_>>(),
-        // Disclosure, not exclusion: these reports ARE canonical. The seat is
-        // the separate fact — see `bee sessions seat-repair`.
-        "unseatedReports": fold.unseated_reports.iter().map(|item| json!({
-            "eventId": item.event_id,
-            "authorPubkey": item.author_pubkey,
-            "assignmentRef": item.assignment_ref,
-            "assigneeRole": item.assignee_role,
-        })).collect::<Vec<_>>(),
-        // Listed, never folded into state: a note changes nothing, and the
-        // rail must be able to show what was said without reading it as a
-        // phase change.
-        "notes": fold.notes.iter().map(|item| json!({
-            "eventId": item.event_id,
-            "authorPubkey": item.author_pubkey,
-            "refs": item.refs,
-        })).collect::<Vec<_>>(),
-        "decisions": fold.decisions.iter().map(|item| json!({
-            "requestId": item.request_event_id,
-            "heldOn": item.held_on,
-            "blocks": item.blocks,
-            // Present and null while the question stands open — never absent,
-            // so "unanswered" and "not disclosed" stay different answers.
-            "answeredBy": item.answered_by,
-            "answerId": item.answer_event_id,
-        })).collect::<Vec<_>>(),
-        // The mission is waiting on a person. That is not a terminal, and it
-        // is exactly the state `mission.blocked` was being used to fake.
-        "waitingOnDecision": fold.waiting_on_decision.as_ref().map(|item| json!({
-            "requestId": item.request_event_id,
-            "heldOn": item.held_on,
-        })),
-        "canonicalTerminal": fold.canonical_terminal.as_ref().map(|item| json!({
-            "eventId": item.event_id,
-            "type": item.transaction_type.as_str(),
-        })),
-    })
-}
+// The fold's JSON rendering lives in a sibling file so this one stays under
+// the repository's 1,000-line ceiling (split, never bump).
+#[path = "operations_fold_json.rs"]
+mod fold_render;
+use fold_render::fold_json;
 
 #[cfg(test)]
 #[path = "operations_tests.rs"]

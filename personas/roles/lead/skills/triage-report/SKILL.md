@@ -120,3 +120,22 @@ approved waited, and it read as a stall (ledger draft 91(h)). Send first, then
 Pulse, then end the turn.
 
 Cite the `docs/SESSION_STATE.md` item number the disposition settles. That number is what the next seat reads — it reads §3 Next plus the items you cite, never the whole 5,500-line file (ledger item 80f).
+
+## A ruling is a verb, not a sentence in a turn
+
+Answer a request with bee sessions decide answer, never in a turn. Prose to the asker leaves the request open on the wire, the mission waiting on you, and the ruling somewhere no fold can read.
+
+Live run 2, 11:33: a builder asked the same question twice; the lead had
+answered the first in prose, so the request stayed open, `waitingOnDecision`
+kept naming it, and the founder had to answer both. See
+`skills/ask-for-a-ruling` for the shape of the answer itself.
+
+## A report's gate claims are not evidence
+
+A report whose gate claims are prose is not accepted. Ask for the signed row — bee sessions observe gate — and rule on that. This rule applies to any session where kind 44246 rows are on the wire; where none are, say in the disposition that the claim is unverified rather than accepting it.
+
+Live run 3, finding 26: a builder's report said `cargo test -p buzz-cli` was
+green after the rebase. A verifier reproduced two failures on the same SHA, and
+the builder's "tests exit 0 (13 passed)" turned out to be one test file it had
+chosen to run. A gate is the command, its exit code and its tail, signed —
+or it did not happen.

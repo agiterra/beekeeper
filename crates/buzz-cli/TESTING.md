@@ -2196,3 +2196,64 @@ harness) and on the operator's own shell:
 
 Not runnable from a seat without a relay-known key; say so rather than
 reporting a guess.
+
+## A ruling that names a class, and a completion that needs a verifier (batch 3, L7)
+
+**The relay must carry this core before any client writes a `condition`.** The
+relay decodes the whole 44244 body at ingest, so an answer carrying `condition`
+is *refused* by a relay predating this landing. The reverse is **not** true: a
+body that **omits** `condition` decodes here exactly as it always did, because
+the key is **required on write, optional on read** — a reader must never lose
+history, and live run 2's three signed answers are the proof (NIP-CSTX, and
+REPORT-L7 fix round 1). So: redeploy the relay first, then relaunch the app so
+seats run the new bundled `bee`, before the next live run. Records already on
+the wire need nothing.
+
+`--condition` is text a person reads. Nothing evaluates it, and no test should
+assert that anything does.
+
+```bash
+# The class a ruling covers, instead of one commit (live run 2, finding 21).
+bee sessions decide answer --channel <uuid> --session-ref <uuid> \
+  --genesis <hex64> --request <hex64> --choice-index 0 \
+  --condition 'any SHA whose buzz-acp diff against origin/main is empty'
+
+# Read it back: the signed body carries it verbatim under `condition`.
+bee --format compact sessions operation get --id <answer-id>
+```
+
+Blank, whitespace-only and over-512-byte conditions are refused before signing,
+naming the key. Omitting `--condition` writes JSON `null`, which is a different
+answer from a missing key and is what every reader expects to see.
+
+`gates.verifierRequired` is read from the umbrella's newest **accepted** 44245
+by `bee sessions operation list|get` and by every 44244 write's pre-publish
+check. To exercise it live:
+
+```bash
+# 1. Set the gate (founder, or a seat holding an operator grant).
+bee sessions policy set --channel <uuid> --session-ref <uuid> \
+  --genesis <hex64> --verifier-required true
+
+# 2. Settle an assignment with no verifier ruling, then try to complete.
+#    The CLI refuses before signing, quoting the fold's own reason and naming
+#    the assignment and the report it settled on.
+bee sessions complete --channel <uuid> --session-ref <uuid> \
+  --genesis <hex64> --assignment <hex64> --summary 'Done'
+
+# 3. Publish the verifier's ruling from the verifier seat, then complete.
+bee sessions verdict refutation --channel <uuid> --session-ref <uuid> \
+  --genesis <hex64> --assignment <hex64> --report <hex64> \
+  --decision not-refuted --summary 'Reproduced the lane gate'
+```
+
+A `confirmed` or `blocked` refutation does **not** clear the completion: those
+are rulings against it. A ruling signed by a seat that is not an active
+`verifier` clears nothing. A report signed by an active `verifier` seat is
+itself the ruling — live run 3's shape, where the verification was the
+assignment.
+
+**With no policy, or with the flag absent or false, every one of these commands
+behaves exactly as it did before.** That is the case to check first when a fold
+looks different from yesterday: read `bee sessions policy get` before
+suspecting the 44244 fold.

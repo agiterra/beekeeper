@@ -615,7 +615,11 @@ fn the_enforcement_sentence_names_the_one_enforced_field_and_nothing_else() {
     // The sentence Desktop prints is the CLI's own (`policy.rs`). It is copied
     // rather than imported because Desktop does not depend on buzz-cli; this
     // holds the copy honest.
-    assert!(POLICY_ENFORCEMENT_DISCLOSURE.contains("only budget.turns is enforced"));
-    assert!(POLICY_ENFORCEMENT_DISCLOSURE.contains("stated intention, not an enforced limit"));
+    // Every enforced field is named, and nothing else is claimed.
+    assert!(POLICY_ENFORCEMENT_DISCLOSURE.contains("budget.turns at the provider's turn gate"));
+    assert!(POLICY_ENFORCEMENT_DISCLOSURE
+        .contains("gates.verifierRequired at the fold's completion check"));
+    assert!(POLICY_ENFORCEMENT_DISCLOSURE
+        .contains("Every other field is read and shown, never counted"));
     assert!(!POLICY_ENFORCEMENT_DISCLOSURE.contains("until a consumer exists"));
 }

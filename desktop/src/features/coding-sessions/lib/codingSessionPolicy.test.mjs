@@ -135,38 +135,56 @@ test("an empty collection is omitted rather than sent as an empty sub-object", (
   );
 });
 
-test("only fields the record sets become facts, and exactly one is enforced", () => {
+test("only fields the record sets become facts, and exactly two are enforced", () => {
   const facts = codingSessionPolicyFacts(FIXTURE.build.record);
   const fields = facts.map((fact) => fact.field);
   assert.ok(fields.includes("budget.turns"));
   assert.ok(fields.includes("irreversible"));
-  // POLICY.md §4: `budget.turns` and nothing else. Lane B2.4 shipped its
-  // consumer (the provider's turn gate); this list is the only place the
-  // claim is made, so it is asserted exactly rather than by length.
-  assert.deepEqual(CODING_SESSION_POLICY_ENFORCED_FIELDS, ["budget.turns"]);
+  // POLICY.md §4: two names, because two consumers exist — lane B2.4's
+  // provider turn gate (`budget.turns`) and batch 3 item G's 44244 fold
+  // completion check (`gates.verifierRequired`). This list is the only place
+  // the claim is made, so it is asserted exactly rather than by length, and a
+  // third name may only be added when a third consumer is on the wire.
+  assert.deepEqual(CODING_SESSION_POLICY_ENFORCED_FIELDS, [
+    "budget.turns",
+    "gates.verifierRequired",
+  ]);
   assert.equal(
     facts.find((fact) => fact.field === "budget.turns")?.enforced,
     true,
   );
+  // A fact row is marked enforced exactly when the list names it — no row is
+  // marked on a hunch, and no named field renders unmarked.
+  assert.deepEqual(
+    facts.filter((fact) => fact.enforced).map((fact) => fact.field),
+    facts
+      .filter((fact) =>
+        CODING_SESSION_POLICY_ENFORCED_FIELDS.includes(fact.field),
+      )
+      .map((fact) => fact.field),
+  );
   assert.equal(
     facts
-      .filter((fact) => fact.field !== "budget.turns")
+      .filter(
+        (fact) => !CODING_SESSION_POLICY_ENFORCED_FIELDS.includes(fact.field),
+      )
       .every((fact) => fact.enforced === false),
     true,
   );
-  // POLICY.md §4.2's own words, so the disclosure and the contract cannot
-  // soften independently of each other — and the one enforced field is named
-  // rather than buried under a blanket "nothing is enforced".
-  assert.match(
+  // POLICY.md §4.2's own sentence, so the disclosure and the contract cannot
+  // soften independently of each other. Every enforced field is named in it,
+  // rather than one being named and another buried under a blanket claim —
+  // which is the defect REVIEW-L7 F1 found.
+  assert.equal(
     CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
-    /read and shown, and nothing checks them/,
+    "Enforced: budget.turns at the provider's turn gate, and " +
+      "gates.verifierRequired at the fold's completion check. Every other " +
+      "field is read and shown, never counted.",
   );
-  assert.match(
-    CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
-    /a stated intention, not an enforced limit/,
-  );
-  assert.match(
-    CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
-    /the provider refuses a turn once a session has spent it/,
-  );
+  for (const field of CODING_SESSION_POLICY_ENFORCED_FIELDS) {
+    assert.ok(
+      CODING_SESSION_POLICY_STATED_NOT_ENFORCED.includes(field),
+      `the disclosure does not name the enforced field ${field}`,
+    );
+  }
 });

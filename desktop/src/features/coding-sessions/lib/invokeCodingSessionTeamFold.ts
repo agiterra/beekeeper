@@ -527,6 +527,17 @@ export async function invokeCodingSessionTeamFold(input: {
   genesisRef: string;
   authority: CodingSessionMissionAuthorityProjection;
   verifiedTransactions: readonly VerifiedCodingSessionTeamTransaction[];
+  /**
+   * Whether this umbrella's newest accepted kind-44245 policy sets
+   * `gates.verifierRequired`.
+   *
+   * Optional at this boundary and `false` when omitted, which is what every
+   * caller passes until the policy hook is wired through: with `false` the
+   * native fold behaves exactly as it did before the field existed. `false`
+   * is **not** a claim that no verifier is required — a surface that has not
+   * read the policy says so in its own words rather than rendering this.
+   */
+  verifierRequired?: boolean;
 }): Promise<NativeCodingSessionTeamFold> {
   if (
     input.authority.channelRef !== input.channelRef ||
@@ -570,6 +581,7 @@ export async function invokeCodingSessionTeamFold(input: {
       founderPubkey: input.authority.founderPubkey,
       authorityHeadEventId: input.authority.headEventId,
       authorityHeadSeq: input.authority.headSeq,
+      verifierRequired: input.verifierRequired ?? false,
       activeSeats: Object.freeze(
         input.authority.activeSeats.map((seat) => Object.freeze({ ...seat })),
       ),

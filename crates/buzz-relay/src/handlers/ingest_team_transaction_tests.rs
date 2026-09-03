@@ -117,7 +117,22 @@ fn the_state_free_verbs_are_structurally_validated_at_ingest() {
         ),
         (
             "decision.answer",
+            // The shape signed before `condition` existed. Untouched by this
+            // lane: it decodes exactly as it always did, which is the point of
+            // "optional on read" (NIP-CSTX, item I).
             serde_json::json!({"requestRef": "22".repeat(32), "choice": 1, "note": null}),
+        ),
+        (
+            // And a writer's shape, which every client emits from 2026-09-02.
+            // Ingest must admit both, or the relay refuses either the records
+            // it already stores or the ones it is about to be sent.
+            "decision.answer",
+            serde_json::json!({
+                "requestRef": "22".repeat(32),
+                "choice": 1,
+                "note": null,
+                "condition": "any SHA whose buzz-acp diff against origin/main is empty",
+            }),
         ),
     ];
     for (transaction_type, body) in &accepted {
@@ -161,7 +176,12 @@ fn the_state_free_verbs_are_structurally_validated_at_ingest() {
         (
             "decision.answer",
             serde_json::Value::Null,
-            serde_json::json!({"requestRef": "22".repeat(32), "choice": 99, "note": null}),
+            serde_json::json!({
+                "requestRef": "22".repeat(32),
+                "choice": 99,
+                "note": null,
+                "condition": null,
+            }),
         ),
         // Keystone's shape: a terminal correcting itself to empty.
         (

@@ -34,6 +34,10 @@ fn context(founder: &Keys, seats: Vec<(&Keys, &str)>) -> CodingSessionTeamFoldCo
             })
             .collect(),
         active_grants: Vec::new(),
+        // Every fixture in this file predates `gates.verifierRequired`, and
+        // `false` is what a session with no policy folds under: these tests
+        // are the proof the new pass changes nothing there.
+        verifier_required: false,
     }
 }
 
@@ -973,6 +977,7 @@ fn decision_answer(request_ref: &str, index: u32) -> CodingSessionTeamTransactio
             request_ref: request_ref.into(),
             choice: CodingSessionTeamDecisionChoice::Index(index),
             note: None,
+            condition: None,
         },
     ))
 }

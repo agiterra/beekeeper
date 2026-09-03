@@ -311,6 +311,14 @@ pub fn verdict_admission_fold_context(
         founder_pubkey: founder_pubkey.into(),
         active_seats,
         active_grants: Vec::new(),
+        // This caller has not read the session's policy set, and
+        // `CodingSessionTeamFoldContext::verifier_required` says such a caller
+        // must pass `false`: the fold then behaves exactly as it did before the
+        // flag existed. It is honest about what this fold enforces — nothing
+        // extra — not about what the session requires. The push gate does not
+        // read `gates.verifierRequired`, and no refusal here may be read as
+        // "no verifier is required".
+        verifier_required: false,
     }
 }
 

@@ -2679,9 +2679,11 @@ pub enum SessionsCmd {
     /// work counts, who may be benched, which acts stay the founder's, and
     /// when to stop.
     ///
-    /// **Only `budget.turns` is enforced anywhere** — at the provider's turn
-    /// gate. Every other field is read and shown, never counted, and both
-    /// `set` and `get` say so in their own output.
+    /// **Two fields are enforced**: `budget.turns`, at the provider's turn
+    /// gate, and `gates.verifierRequired`, at the 44244 fold's completion
+    /// check (so `bee sessions complete` refuses a completion no verifier has
+    /// ruled on). Every other field is read and shown, never counted, and both
+    /// `set` and `get` say exactly that in their own output.
     #[command(subcommand)]
     Policy(SessionPolicyCmd),
     /// Send a turn to a coding-session execution (kind 44220).
@@ -3260,7 +3262,7 @@ pub enum TeamDecisionCmd {
     /// Only the party the request named — or the founder, always — can answer.
     /// An answer from anyone else is excluded `Unauthorized` by the fold.
     #[command(
-        after_help = "Examples:\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice 'neither; hold until the rebuild' --note 'the sidecar is stale'"
+        after_help = "Examples:\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice 'neither; hold until the rebuild' --note 'the sidecar is stale'\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0 --condition 'any SHA whose buzz-acp diff against origin/main is empty'"
     )]
     Answer {
         /// Channel UUID containing the session.
@@ -3284,6 +3286,15 @@ pub enum TeamDecisionCmd {
         /// Optional bounded reasoning recorded with the answer.
         #[arg(long)]
         note: Option<String>,
+        /// The class of case this ruling covers, at most 512 bytes.
+        ///
+        /// Text a person reads, never a predicate: nothing evaluates it and
+        /// the fold neither reads nor enforces it. Use it when the honest
+        /// answer would have to be given again for the next commit — a per-SHA
+        /// ruling is a question you have agreed to ask again (live run 2,
+        /// finding 21).
+        #[arg(long)]
+        condition: Option<String>,
         /// Same-author correction event id for an earlier answer.
         #[arg(long)]
         supersedes: Option<String>,
@@ -3505,7 +3516,8 @@ pub struct SessionPolicySetArgs {
     /// How this mission is being run: spike, ship, investigate, overnight.
     #[arg(long)]
     pub posture: Option<String>,
-    /// Ceiling on turns across the umbrella. **The one enforced field.**
+    /// Ceiling on turns across the umbrella. **Enforced**, at the provider's
+    /// turn gate.
     #[arg(long = "budget-turns")]
     pub budget_turns: Option<u32>,
     /// Ceiling on tokens any one seat may spend (read and shown only).
@@ -3533,6 +3545,11 @@ pub struct SessionPolicySetArgs {
     #[arg(long = "required-gate")]
     pub required_gate: Vec<String>,
     /// Whether a verifier must rule before the mission may settle.
+    ///
+    /// **Enforced**, at the 44244 fold's completion check: with this set, a
+    /// `mission.completed` whose settled assignments carry no active
+    /// verifier's ruling is excluded `CompletionNotVerified`, and
+    /// `bee sessions complete` refuses to sign one.
     #[arg(long = "verifier-required")]
     pub verifier_required: Option<bool>,
     /// Pubkey eligible for the bench (64-hex); repeatable, at most 64.

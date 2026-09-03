@@ -56,8 +56,8 @@ pub const CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA: &str =
 /// than imported because Desktop does not depend on the CLI crate; the test
 /// `the_enforcement_sentence_is_the_clis_own` holds the two together.
 pub const POLICY_ENFORCEMENT_DISCLOSURE: &str =
-    "a published policy is a stated intention, not an enforced limit: only budget.turns is \
-     enforced (at the provider's turn gate); every other field is read and shown, never counted";
+    "Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the \
+     fold's completion check. Every other field is read and shown, never counted.";
 
 /// A draft policy on its way to a signer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

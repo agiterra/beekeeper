@@ -29,6 +29,10 @@ fn context(founder: &Keys) -> CodingSessionTeamFoldAdapterContext {
         authority_head_seq: 4,
         active_seats: Vec::new(),
         active_grants: Vec::new(),
+        // The Desktop default until L8 supplies the real value from the
+        // policy hook: with `false` this adapter folds exactly as it did
+        // before the field existed.
+        verifier_required: false,
     }
 }
 
@@ -841,4 +845,67 @@ fn a_completion_blocked_by_an_open_decision_crosses_as_its_own_code() {
         .clone();
     assert_eq!(code, "completion_blocked_by_open_decision");
     assert!(wire["waitingOnDecision"].is_object());
+}
+
+/// **Item G, live run 3.** A verifier reported FAIL on the wire and the
+/// completion was structurally unaffected. With `verifierRequired` set, a
+/// completion that settled on a report no active verifier ruled on crosses the
+/// adapter boundary as its own code — not as `completion_not_approved`, which
+/// would send a reader to fix the approval chain that is already complete.
+#[test]
+fn a_completion_missing_its_verifier_crosses_as_its_own_code() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let assignment_id = assignment.id.to_hex();
+    let report = signed(&report(&assignment_id), &actor, 2);
+    let report_id = report.id.to_hex();
+    let disposition = signed(&disposition(&assignment_id, &report_id), &founder, 3);
+    let acknowledgement = signed(&acknowledgement(&disposition.id.to_hex()), &actor, 4);
+    let completed = signed(
+        &payload(CodingSessionTeamTransactionBody::MissionCompleted(
+            CodingSessionTeamMissionCompleted {
+                assignment_refs: vec![assignment_id.clone()],
+                landed_shas: Vec::new(),
+                summary: "Complete".into(),
+                follow_ups: Vec::new(),
+            },
+        )),
+        &founder,
+        5,
+    );
+    let completed_id = completed.id.to_hex();
+    let events = vec![assignment, report, disposition, acknowledgement, completed];
+
+    // Without the flag — every Desktop fold until L8 lands — it folds as today.
+    let today = fold_adapter(request(&founder, &events)).expect("canonical fold");
+    assert_eq!(
+        today
+            .canonical_terminal
+            .as_ref()
+            .map(|terminal| terminal.event_id.as_str()),
+        Some(completed_id.as_str())
+    );
+
+    let mut gated = request(&founder, &events);
+    gated.context.verifier_required = true;
+    let response = fold_adapter(gated).expect("canonical fold");
+    assert!(response.canonical_terminal.is_none());
+    assert_eq!(
+        response
+            .excluded
+            .iter()
+            .find(|item| item.event_id == completed_id)
+            .map(|item| item.code),
+        Some(CodingSessionTeamFoldAdapterExclusionCode::CompletionNotVerified)
+    );
+    let wire = serde_json::to_value(&response).expect("serialize response");
+    let code = wire["excluded"]
+        .as_array()
+        .expect("excluded")
+        .iter()
+        .find(|item| item["eventId"] == completed_id)
+        .expect("excluded row")["code"]
+        .clone();
+    assert_eq!(code, "completion_not_verified");
 }

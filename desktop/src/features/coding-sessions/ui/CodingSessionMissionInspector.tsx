@@ -6,18 +6,17 @@ import {
   CircleDot,
   Flag,
   Minus,
-  OctagonAlert,
   TriangleAlert,
   X,
 } from "lucide-react";
 
 import {
   codingSessionSeatAuthorityCopy,
+  COMPLETION_NOT_VERIFIED_CODE,
   type CodingSessionSeatAuthority,
   type CodingSessionTeamWakeDelivery,
 } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import type {
-  CodingSessionMissionDisclosureInput,
   CodingSessionMissionGoalModel,
   CodingSessionMissionInspectorModel,
   CodingSessionMissionInspectorSection,
@@ -33,6 +32,11 @@ import {
   isCodingSessionPrivateContextMarker,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { CodingSessionMissionDecisionQueue } from "./CodingSessionMissionDecisionQueue";
+import {
+  EmptyCopy,
+  Integrity,
+  SignedSource,
+} from "./CodingSessionMissionInspectorIntegrity";
 import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
 
 export type CodingSessionMissionInspectorProps = {
@@ -137,6 +141,9 @@ export function CodingSessionMissionInspector({
         >
           <MissionStateAndLiveness model={model} />
           <CodingSessionMissionStatePanel
+            completionRefusedNoVerifier={model.integrity.rejectedReasons.some(
+              (reason) => reason.code === COMPLETION_NOT_VERIFIED_CODE,
+            )}
             state={model.missionState}
             waiting={model.waiting}
           />
@@ -572,10 +579,6 @@ function truncationsFor(
   return model.truncations.filter((item) => item.section === section);
 }
 
-function EmptyCopy({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs text-muted-foreground">{children}</p>;
-}
-
 function Goal({ goal }: { goal: CodingSessionMissionGoalModel }) {
   if (goal.kind === "absent") {
     return <EmptyCopy>No accepted mission goal published.</EmptyCopy>;
@@ -864,114 +867,6 @@ function unknownSeatAuthority(
     detail: codingSessionSeatAuthorityCopy.unknown.detail,
     remedy: null,
   };
-}
-
-function Integrity({ model }: { model: CodingSessionMissionInspectorModel }) {
-  const { integrity } = model;
-  const clean =
-    integrity.rejectedEventCount === 0 &&
-    !integrity.rejectionsTruncated &&
-    integrity.rejectedReasons.length === 0 &&
-    integrity.conflicts.length === 0;
-  if (clean) {
-    return (
-      <EmptyCopy>No rejected or conflicting transaction records.</EmptyCopy>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      {integrity.rejectedEventCount === null ||
-      integrity.rejectedEventCount > 0 ||
-      integrity.rejectedReasons.length > 0 ? (
-        <div className="rounded-lg border border-amber-500/45 bg-amber-500/10 p-2.5">
-          <p className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-            <OctagonAlert aria-hidden className="size-3.5" />
-            {integrity.rejectedEventCount === null
-              ? "Rejected event total unavailable after the safety bound"
-              : `${integrity.rejectedEventCount} rejected ${integrity.rejectedEventCount === 1 ? "event" : "events"}`}
-          </p>
-          {integrity.rejectionsTruncated ? (
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Showing {integrity.rejectedReasons.length} rejected events;
-              additional unique count unavailable after the safety bound.
-            </p>
-          ) : null}
-          {integrity.rejectedReasons.length > 0 ? (
-            <DisclosureList items={integrity.rejectedReasons} />
-          ) : (
-            <p className="mt-1 text-2xs text-muted-foreground">
-              The trusted decoder reported no bounded reason detail.
-            </p>
-          )}
-        </div>
-      ) : null}
-      {integrity.conflicts.length > 0 ? (
-        <div className="rounded-lg border border-amber-500/45 bg-amber-500/10 p-2.5">
-          <p className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-            <TriangleAlert aria-hidden className="size-3.5" />
-            Conflicting signed records
-          </p>
-          <DisclosureList items={integrity.conflicts} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function DisclosureList({
-  items,
-}: {
-  items: readonly CodingSessionMissionDisclosureInput[];
-}) {
-  return (
-    <ul className="mt-2 space-y-2">
-      {items.map((item) => (
-        <li
-          className="text-xs"
-          key={`${item.code}:${item.summary}:${item.eventIds.join(":")}`}
-        >
-          <p>
-            <code className="text-2xs">{item.code}</code> · {item.summary}
-          </p>
-          {item.eventIds.map((eventId) => (
-            <SignedSource eventId={eventId} key={eventId} />
-          ))}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function SignedSource({
-  authorLabel,
-  eventId,
-}: {
-  authorLabel?: string;
-  eventId: string;
-}) {
-  return (
-    <details className="mt-1 text-2xs text-muted-foreground">
-      <summary className="w-fit cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        Signed source
-      </summary>
-      <dl className="mt-1 space-y-1">
-        {authorLabel ? (
-          <div>
-            <dt className="font-medium">Author</dt>
-            <dd>
-              <code className="block break-all">{authorLabel}</code>
-            </dd>
-          </div>
-        ) : null}
-        <div>
-          <dt className="font-medium">Event</dt>
-          <dd>
-            <code className="block break-all">{eventId}</code>
-          </dd>
-        </div>
-      </dl>
-    </details>
-  );
 }
 
 function visibleSourceAuthor(authorLabel: string): string {

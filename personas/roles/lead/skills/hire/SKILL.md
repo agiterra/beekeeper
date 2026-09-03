@@ -196,3 +196,14 @@ provider** meanwhile. Never read it as "the role is unavailable".
   and an active operator may hire any role; an active `lead` seat may hire only
   non-lead roles. A revoked, stale, wrong-session, or wrong-genesis seat grants
   nothing.
+
+## Assign first, then hire — in that order, on the wire
+
+Publish the assignment before you hire the seat that answers it: bee sessions assign first, its event id in the brief, bee sessions hire second. A hire that arrives with no assignment to cite leaves the seat two bad options — invent a reference, or report nothing — and the live runs produced both.
+
+This rule is written in `skills/write-brief` and in `skills/triage-report`, and
+live run 3 still hired at 12:32:50 and assigned at 12:33:37 — because the skill
+a lead loads *while hiring* is this one, and this one used to say nothing about
+it. The order is visible on the wire forever: the Route rail draws
+hire → assignment, and the seat's first turn cites an id that did not exist
+when it was written.

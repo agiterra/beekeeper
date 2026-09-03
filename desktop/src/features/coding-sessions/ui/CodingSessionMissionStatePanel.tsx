@@ -6,6 +6,7 @@ import {
   type CodingSessionMissionStateInput,
   type CodingSessionMissionWaitingModel,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import { CODING_SESSION_COMPLETION_REFUSED_STATE_LINE } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import {
   missionRowBodyClass,
   missionRowClass,
@@ -75,6 +76,7 @@ export function CodingSessionMissionStatePanel({
   nowMs = Date.now(),
   state,
   waiting = null,
+  completionRefusedNoVerifier = false,
 }: {
   /** The clock, read once at render — never a timer (I1). */
   nowMs?: number;
@@ -85,8 +87,22 @@ export function CodingSessionMissionStatePanel({
    * byte-identical to what it rendered before the queue existed.
    */
   waiting?: CodingSessionMissionWaitingModel | null;
+  /**
+   * Whether this mission's `mission.completed` was excluded
+   * `completion_not_verified` by the fold.
+   *
+   * A mission whose completion the fold refused is **not running**, and until
+   * this prop existed the panel said `Mission running` over exactly that
+   * (§1k, REVIEW-L7 F5). `false` — the default — leaves every other mission's
+   * line byte-identical.
+   */
+  completionRefusedNoVerifier?: boolean;
 }) {
-  const label = STATE_LABEL[state.kind];
+  // §1k's line, and it takes the state line outright: the fold has refused
+  // this mission's only terminal, so no other word for the state is true.
+  const label = completionRefusedNoVerifier
+    ? CODING_SESSION_COMPLETION_REFUSED_STATE_LINE
+    : STATE_LABEL[state.kind];
   const phase = codingSessionMissionPhase(state);
   const phaseWord = phase ?? "phase not established";
   const asked =

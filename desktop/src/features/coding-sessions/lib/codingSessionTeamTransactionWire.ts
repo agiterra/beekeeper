@@ -55,6 +55,13 @@ const DECISION_FOUNDER = "founder";
 const MAX_NOTE_REFS = 16;
 const MAX_DECISION_OPTIONS = 8;
 const MAX_DECISION_OPTION_BYTES = 512;
+/**
+ * `decision.answer.condition` — the class a ruling covers, in bytes.
+ *
+ * Text a reader reads, never a predicate: nothing on this surface evaluates,
+ * parses or derives state from it.
+ */
+const MAX_DECISION_CONDITION_BYTES = 512;
 const MAX_DECISION_BLOCKS = 16;
 const MAX_SHORT_TEXT_BYTES = 2 * 1024;
 
@@ -154,6 +161,18 @@ export type CodingSessionTeamTransactionBody =
       /** An index into the request's options, or bounded free text. */
       choice: number | string;
       note: string | null;
+      /**
+       * The class this ruling covers, or null when it named none.
+       *
+       * Optional here because it is **required on write, optional on read**:
+       * an answer signed before 2026-09-02 carries no such key, and a reader
+       * must never lose history. A **writer** must always emit it — that is
+       * what this field being declared at all makes possible (REVIEW-L7 F4:
+       * the union used to omit it, so a Desktop writer could not name the key
+       * without an excess-property error, and the one reader that needed it
+       * declared a second body type and cast to it).
+       */
+      condition?: string | null;
     };
 
 export type CodingSessionTeamTransactionPayload = {
@@ -423,11 +442,22 @@ function validateDecisionAnswer(body: Record<string, unknown>): boolean {
     body.choice >= 0 &&
     body.choice < MAX_DECISION_OPTIONS;
   return (
-    hasExactFields(body, [["requestRef", "choice", "note"]]) &&
+    // `condition` is **required on write, optional on read** (item I, fix
+    // round 1). Both shapes are accepted because live run 2's three signed
+    // answers carry the six-key form and a reader must never lose history;
+    // every writer in this repository emits the key, `null` when unset. An
+    // unknown key is still refused — optional does not mean lax.
+    hasExactFields(body, [
+      ["requestRef", "choice", "note", "condition"],
+      ["requestRef", "choice", "note"],
+    ]) &&
     typeof body.requestRef === "string" &&
     HEX64.test(body.requestRef) &&
     (choiceIsIndex || isText(body.choice, MAX_SHORT_TEXT_BYTES)) &&
-    isNullableText(body.note)
+    isNullableText(body.note) &&
+    // Absent and `null` are the same answer: this ruling named no class.
+    (body.condition === undefined ||
+      isNullableText(body.condition, MAX_DECISION_CONDITION_BYTES))
   );
 }
 

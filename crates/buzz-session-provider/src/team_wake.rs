@@ -134,6 +134,11 @@ pub fn fold_context(
         session_ref: scope.session_ref.clone(),
         genesis_ref: scope.genesis_ref.clone(),
         founder_pubkey: founder_pubkey.to_owned(),
+        // This projection reads kind 44228 and 44244, never 44245, so it makes
+        // no claim about `gates.verifierRequired`. `false` keeps the wake fold
+        // behaving exactly as it did before the field existed; a wake is a
+        // delivery decision, not a governance verdict.
+        verifier_required: false,
         active_seats: authority
             .seats
             .iter()
