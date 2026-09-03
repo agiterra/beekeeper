@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { waitForScrollableConversationTimeline } from "./helpers/conversationTimeline";
 
 async function dispatchWheelPrevented(
   page: import("@playwright/test").Page,
@@ -36,7 +37,10 @@ test("locks viewport rubber-band outside conversation scrollers", async ({
 }) => {
   await page.goto("/");
   await page.getByTestId("channel-general").click();
-  await expect(page.getByTestId("message-timeline")).toBeVisible();
+  // Not `toBeVisible()`: the timeline id changes hands as the channel loads and
+  // the pre-list surface it first lands on has nothing to scroll. See the
+  // helper.
+  await waitForScrollableConversationTimeline(page);
 
   await expect(
     dispatchWheelPrevented(page, '[data-testid="app-top-chrome"]', {
@@ -84,7 +88,10 @@ test("locks viewport rubber-band outside conversation scrollers", async ({
 test("locks horizontal viewport pan everywhere", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("channel-general").click();
-  await expect(page.getByTestId("message-timeline")).toBeVisible();
+  // Not `toBeVisible()`: the timeline id changes hands as the channel loads and
+  // the pre-list surface it first lands on has nothing to scroll. See the
+  // helper.
+  await waitForScrollableConversationTimeline(page);
 
   for (const deltaX of [-120, 120]) {
     await expect(

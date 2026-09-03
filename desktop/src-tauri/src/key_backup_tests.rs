@@ -227,6 +227,13 @@ fn cleanup_stale_backup_removes_only_on_identity_change() {
     );
 }
 
+/// Draws per (count, separator) pair. One draw hides the `yo-yo` collision:
+/// a 4-word hyphen-joined phrase hits it with p ≈ 4/1296, so a single draw
+/// passed ~997 times in 1000 and failed the rest — the flake this test used to
+/// be. At 5,000 draws the collision is certain (p of missing it ≈ 1e-7) and
+/// the assertion is a real gate rather than a coin toss.
+const PASSPHRASE_DRAWS: usize = 5_000;
+
 #[test]
 fn generated_passphrase_respects_word_count_and_separator() {
     let words: std::collections::HashSet<&str> =
@@ -234,18 +241,100 @@ fn generated_passphrase_respects_word_count_and_separator() {
     assert_eq!(words.len(), 1296, "EFF short wordlist 2.0 has 1296 words");
 
     for (count, separator) in [(3, "-"), (4, "-"), (6, " "), (5, "."), (10, "")] {
-        let phrase = generate_passphrase(count, separator).unwrap();
-        if separator.is_empty() {
-            // No separator to split on; length gate below still applies.
-        } else {
-            let parts: Vec<&str> = phrase.split(separator).collect();
-            assert_eq!(parts.len(), count);
-            for w in &parts {
-                assert!(words.contains(w), "unknown word {w:?}");
+        for _ in 0..PASSPHRASE_DRAWS {
+            let phrase = generate_passphrase(count, separator).unwrap();
+            if separator.is_empty() {
+                // No separator to split on; length gate below still applies.
+            } else {
+                let parts: Vec<&str> = phrase.split(separator).collect();
+                assert_eq!(
+                    parts.len(),
+                    count,
+                    "phrase {phrase:?} joined by {separator:?} does not split \
+                     back into {count} words"
+                );
+                for w in &parts {
+                    assert!(words.contains(w), "unknown word {w:?}");
+                }
             }
+            assert!(phrase.chars().count() >= MIN_PASSPHRASE_LEN);
         }
-        assert!(phrase.chars().count() >= MIN_PASSPHRASE_LEN);
     }
+}
+
+/// The whole wordlist, against every separator the generator's UI offers
+/// (`EncryptedBackupCreator.tsx`'s `SEPARATOR_OPTIONS`). A list swap that
+/// reintroduces a hyphenated entry — or adds one containing `.` or `,` —
+/// fails here, by name, instead of surfacing as a one-in-three-hundred
+/// passphrase that will not split.
+#[test]
+fn no_shipped_separator_is_drawable_inside_a_wordlist_entry() {
+    let words: Vec<&str> = WORDLIST.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(words.len(), 1296, "EFF short wordlist 2.0 has 1296 words");
+
+    // The one entry this guard exists for, named so a swap that removes it is
+    // a visible change rather than a silent one.
+    let hyphenated: Vec<&str> = words.iter().copied().filter(|w| w.contains('-')).collect();
+    assert_eq!(
+        hyphenated,
+        ["yo-yo"],
+        "the EFF short list's only hyphenated entry is `yo-yo`"
+    );
+
+    for separator in [" ", "-", ".", ","] {
+        let pool = drawable_words(&words, separator);
+        for word in &pool {
+            assert!(
+                !word.contains(separator),
+                "word {word:?} contains the separator {separator:?} and must not be drawable"
+            );
+        }
+        assert!(
+            pool.len() >= words.len() - 1,
+            "separator {separator:?} excluded {} of {} words — a wordlist that \
+             loses more than the known `yo-yo` collision needs a look, not a \
+             silently narrower draw",
+            words.len() - pool.len(),
+            words.len()
+        );
+    }
+
+    // The empty separator has no split contract, so nothing is excluded.
+    assert_eq!(drawable_words(&words, "").len(), words.len());
+}
+
+/// The collision, forced rather than waited for: a word set in which half the
+/// entries contain the separator. Every draw is checked, so this cannot pass
+/// by luck the way the 1-in-1296 real-wordlist collision used to hide.
+#[test]
+fn a_word_set_containing_the_separator_still_splits_into_the_asked_count() {
+    const POOL: [&str; 2] = ["yo-yo", "abacus"];
+
+    for _ in 0..200 {
+        let phrase = generate_passphrase_from(&POOL, 4, "-").expect("generate from forced pool");
+        assert_eq!(
+            phrase.split('-').count(),
+            4,
+            "phrase {phrase:?} does not split back into 4 words"
+        );
+        assert!(
+            !phrase.contains("yo"),
+            "phrase {phrase:?} drew the entry that collides with its own separator"
+        );
+    }
+}
+
+/// A separator that collides with *every* entry leaves nothing to draw, and
+/// the generator says so instead of returning a phrase whose word count is a
+/// fiction.
+#[test]
+fn a_separator_inside_every_word_is_refused() {
+    let error = generate_passphrase_from(&["yo-yo", "co-op"], 4, "-")
+        .expect_err("a fully colliding separator must be refused");
+    assert!(
+        error.contains("every wordlist entry"),
+        "refusal must say why: {error}"
+    );
 }
 
 #[test]

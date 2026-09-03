@@ -242,6 +242,30 @@ pub fn cleanup_stale_backup(
     Ok(())
 }
 
+/// The wordlist entries that may be drawn for a phrase joined by `separator`.
+///
+/// A wordlist entry that *contains* the separator makes the phrase's own word
+/// count unrecoverable: the EFF short list's `yo-yo` joined with `-` turns a
+/// three-word phrase into `luridness-yo-yo-movie`, which reads — and splits —
+/// as four. The generator's contract is that `split(separator)` yields exactly
+/// `word_count` wordlist entries, so colliding entries are not drawn.
+///
+/// An empty separator has no split contract at all (every string contains
+/// `""`), so the whole list stays drawable.
+///
+/// The shipped list has exactly one such entry, and only for `-`; the cost of
+/// excluding it is 1296 → 1295 words, ~0.001 bits per word.
+fn drawable_words<'a>(words: &[&'a str], separator: &str) -> Vec<&'a str> {
+    if separator.is_empty() {
+        return words.to_vec();
+    }
+    words
+        .iter()
+        .copied()
+        .filter(|word| !word.contains(separator))
+        .collect()
+}
+
 /// Generate a passphrase of `word_count` EFF short-wordlist words joined by
 /// `separator`, using OS entropy.
 ///
@@ -250,9 +274,12 @@ pub fn cleanup_stale_backup(
 /// (e.g. three 3-char words), whole phrases below the minimum are rejected
 /// and re-drawn — the result always passes the same length gate applied to
 /// user-chosen passphrases. Uses rejection sampling for a uniform
-/// distribution over the 1296 words.
+/// distribution over the drawable words.
+///
+/// The returned phrase always splits back into exactly `word_count` wordlist
+/// entries on `separator`: entries containing the separator are excluded from
+/// the draw (see [`drawable_words`]).
 pub fn generate_passphrase(word_count: usize, separator: &str) -> Result<String, String> {
-    let word_count = word_count.clamp(MIN_PASSPHRASE_WORDS, MAX_PASSPHRASE_WORDS);
     let words: Vec<&str> = WORDLIST.lines().filter(|l| !l.is_empty()).collect();
     if words.len() != 1296 {
         return Err(format!(
@@ -260,6 +287,27 @@ pub fn generate_passphrase(word_count: usize, separator: &str) -> Result<String,
             words.len()
         ));
     }
+    generate_passphrase_from(&words, word_count, separator)
+}
+
+/// [`generate_passphrase`] over an explicit word set, so tests can force a set
+/// in which the separator collides.
+fn generate_passphrase_from(
+    words: &[&str],
+    word_count: usize,
+    separator: &str,
+) -> Result<String, String> {
+    let word_count = word_count.clamp(MIN_PASSPHRASE_WORDS, MAX_PASSPHRASE_WORDS);
+    let pool = drawable_words(words, separator);
+    if pool.is_empty() {
+        return Err(format!(
+            "separator {separator:?} occurs in every wordlist entry: no phrase \
+             joined by it could be split back into words"
+        ));
+    }
+    // Rejection sampling keeps the draw uniform over `pool`: accept only
+    // values below the largest multiple of `pool.len()` that fits in u16.
+    let ceiling = (u32::from(u16::MAX) + 1) - ((u32::from(u16::MAX) + 1) % pool.len() as u32);
 
     // At 3 words the under-length probability per draw is small, so a few
     // attempts always suffice; the cap only guards against a logic bug
@@ -269,11 +317,9 @@ pub fn generate_passphrase(word_count: usize, separator: &str) -> Result<String,
         while chosen.len() < word_count {
             let mut buf = [0u8; 2];
             getrandom::getrandom(&mut buf).map_err(|e| format!("entropy source: {e}"))?;
-            let value = u16::from_le_bytes(buf);
-            // Rejection sampling: accept only values below the largest
-            // multiple of 1296 that fits in u16 (65536 - 65536 % 1296 = 64800).
-            if value < 64800 {
-                chosen.push(words[(value as usize) % 1296]);
+            let value = u32::from(u16::from_le_bytes(buf));
+            if value < ceiling {
+                chosen.push(pool[(value as usize) % pool.len()]);
             }
         }
         let phrase = chosen.join(separator);

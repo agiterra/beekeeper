@@ -172,6 +172,15 @@ test.describe("welcome and channel agent entry points", () => {
       path: `${SHOTS}/05-agent-channel-attachment-failed.png`,
     });
 
+    // Longer than sonner's four-second default, on purpose. Everything between
+    // the failure toast appearing and the retry click — waitForAnimations, a
+    // toast screenshot, a command-log read — costs wall time, and on a loaded
+    // box it used to cost more than the toast's own lifetime: the "Try again"
+    // button withdrew itself and the click found nothing. The remedy now waits
+    // for the person (`useCreatedAgentChannelAttachment.ts`), and this delay is
+    // what keeps that true — remove the `duration` there and this fails every
+    // run, not one in fifty.
+    await page.waitForTimeout(5000);
     const commandsBeforeRetry = await readCommandLog(page);
     const createCount = commandCount(
       commandsBeforeRetry,

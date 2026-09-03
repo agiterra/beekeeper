@@ -1480,6 +1480,83 @@ async fn steer_rejected_on_empty_prompt() {
     h.shutdown().await;
 }
 
+/// The steer's rejection and the prompt's response are written by independent
+/// tasks (`steer_session` runs inline on the dispatch task, the turn runs in
+/// the task `spawn_prompt` started), so **either order is legal on the wire**.
+/// This pins the adverse one: the prompt's reply is replayed first, and the
+/// scan must still find the steer's own `-32602`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn steer_rejection_survives_a_prompt_response_arriving_first() {
+    let (url, _captures) = spawn_capturing_fake_llm(vec![
+        openai_tool_call("call_x", "fake__noop", json!({})),
+        openai_text("done"),
+    ])
+    .await;
+    let mut h = Harness::spawn(&url).await;
+    let sid = init_session(&mut h).await;
+    let p_id = h
+        .send(
+            "session/prompt",
+            json!({"sessionId": sid, "prompt": [{"type":"text","text":"go"}]}),
+        )
+        .await;
+    let run_id = recv_active_run_id(&mut h).await;
+    let s_id = h
+        .send(
+            "_goose/unstable/session/steer",
+            json!({"sessionId": sid, "expectedRunId": run_id, "prompt": []}),
+        )
+        .await;
+
+    // Force the order. Read ahead until the prompt's own response has arrived,
+    // buffering every frame, then replay with that response first. Whichever
+    // order the two tasks actually raced into, the scan below sees the prompt's
+    // reply before the steer's.
+    let replay = read_ahead_with_prompt_response_first(&mut h, p_id).await;
+
+    // Only the steer's own terminal message ends the scan. The prompt's reply
+    // is just another frame: it carries no information about the steer, and
+    // stopping on it is what made `steer_rejected_on_empty_prompt` flaky.
+    let mut replay = replay.into_iter();
+    let mut saw_reject = false;
+    for _ in 0..40 {
+        let v = match replay.next() {
+            Some(v) => v,
+            None => h.recv().await,
+        };
+        if v["id"] == json!(s_id) {
+            assert_eq!(v["error"]["code"], -32602, "empty prompt must be rejected");
+            saw_reject = true;
+            break;
+        }
+    }
+    assert!(saw_reject, "empty steer prompt was not rejected");
+    h.shutdown().await;
+}
+
+/// Read frames until the response to `prompt_id` has arrived, then return them
+/// with that response moved to the front — the adverse order for any scan that
+/// treats the prompt's reply as its own terminal message.
+async fn read_ahead_with_prompt_response_first(h: &mut Harness, prompt_id: i64) -> Vec<Value> {
+    let mut frames = Vec::new();
+    loop {
+        assert!(
+            frames.len() < 40,
+            "no response to session/prompt {prompt_id} in 40 frames"
+        );
+        let v = h.recv().await;
+        let is_prompt_response = v["id"] == json!(prompt_id);
+        frames.push(v);
+        if is_prompt_response {
+            break;
+        }
+    }
+    let at = frames.len() - 1;
+    let prompt_response = frames.remove(at);
+    frames.insert(0, prompt_response);
+    frames
+}
+
 // ─── Session-boundary total accumulation ────────────────────────────────────
 
 /// Once a usage-bearing turn lacks a provider total, the session cumulative

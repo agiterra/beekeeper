@@ -460,6 +460,14 @@ test: test-genesis test-git-push-gate
 # A throwaway database for the same reason `test-genesis` needs one: these
 # tests share the schema of the invoking worktree, and pointing them at the dev
 # database would let a feature branch's migrations downgrade it.
+#
+# A recipe of its own rather than a second `cargo test` line inside
+# `test-genesis` (which is how another lane proposed it, against the same
+# database and the same `trap cleanup EXIT`). Either works; this way `just
+# test-git-push-gate` names one thing and can be run alone, and the recipe's
+# own filter is the whole set — the push-gate cases *and* the
+# verdict-admission ones, 17 tests. A filter of `api::git::policy` alone
+# reaches only 10 of them.
 test-git-push-gate: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail

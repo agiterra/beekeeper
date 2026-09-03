@@ -27,6 +27,12 @@ function showAttachmentFailure(
   const id = toast.warning("Agent created", {
     description: `${created.agent.name} couldn’t be added to #${targetChannel.name}. ${error}`,
     id: toastId,
+    // The retry is the only remedy offered for an agent that did not join its
+    // channel, and on sonner's default four-second timer it withdrew itself
+    // whether or not anyone had read it — so whether the user could act on
+    // their own failure depended on how busy the machine was. A toast carrying
+    // an action waits for the person; the plain success toast still does not.
+    duration: Number.POSITIVE_INFINITY,
     action: {
       label: "Try again",
       onClick: (event) => {
@@ -37,9 +43,13 @@ function showAttachmentFailure(
         });
         void attach(created, targetChannel).then(
           () => {
+            // Replaced rather than updated in place: updating would carry the
+            // withheld `Try again` action and its unbounded duration onto a
+            // toast that has nothing left to retry, offering a remedy for a
+            // problem that is over.
+            toast.dismiss(id);
             toast.success("Agent created", {
               description: `Added ${created.agent.name} to #${targetChannel.name}`,
-              id,
             });
           },
           (retryCause: unknown) => {
