@@ -1400,6 +1400,11 @@ pub enum ReposProtectCmd {
         /// Require the NIP-34 patch workflow instead of direct pushes.
         #[arg(long, default_value_t = false)]
         require_patch: bool,
+        /// Admit an update only when an approved mission verdict names the
+        /// pushed commit. Enforced by the relay serving the repository — a
+        /// relay predating the rule parses the token and ignores it.
+        #[arg(long, default_value_t = false)]
+        require_verdict: bool,
     },
     /// Remove every protection rule for an exact ref pattern.
     Remove {
@@ -2248,6 +2253,16 @@ pub enum GitCmd {
         /// Also probe `git-receive-pack` — the request `git push` makes first.
         #[arg(long)]
         push: bool,
+        /// Predict what the pre-receive hook would decide for this ref.
+        ///
+        /// A prediction, never a promise: the hook decides at push time, on
+        /// the commit actually sent.
+        #[arg(long = "ref")]
+        ref_name: Option<String>,
+        /// The commit the prediction is about. Defaults to `HEAD` in this
+        /// checkout.
+        #[arg(long)]
+        sha: Option<String>,
     },
 }
 
@@ -3899,11 +3914,18 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             GitCmd::Status { keyfile } => {
                 commands::git_setup::cmd_status(&relay_url, keyfile.clone())
             }
-            GitCmd::Check { keyfile, push } => {
+            GitCmd::Check {
+                keyfile,
+                push,
+                ref_name,
+                sha,
+            } => {
                 commands::git_setup::cmd_check(
                     &relay_url,
                     keyfile.clone(),
                     *push,
+                    ref_name.clone(),
+                    sha.clone(),
                     matches!(cli.format, OutputFormat::Compact),
                 )
                 .await

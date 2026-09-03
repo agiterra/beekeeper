@@ -29,6 +29,18 @@ use std::process::Command;
 
 use nostr::{Keys, ToBech32};
 
+use buzz_core::coding_session_verdict_admission::{
+    active_seats_from_authority_transitions, evaluate_verdict_admission, fold_candidate_records,
+    mission_transactions, verdict_admission_fold_context, VerdictAdmission,
+    VerdictAdmissionCandidate, VerdictAdmissionQuery, VerdictAdmissionRefusal,
+    VerdictAdmissionRules, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
+    VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
+};
+use buzz_core::kind::{
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_TEAM_TRANSACTION,
+};
+
 use crate::error::CliError;
 
 /// Git config scope to write into.
@@ -860,6 +872,29 @@ const GATE_PROBE_REPO: &str = "membership-probe-does-not-exist";
 /// repository cannot exist, the same 404 proves the opposite: the request got
 /// past the membership gate and died at repository resolution.
 fn transport_verdict(status: u16, real_repo: bool) -> (TransportVerdict, String) {
+    transport_verdict_for("git-upload-pack", status, real_repo)
+}
+
+/// The exact sentence a push probe earns.
+///
+/// `git-receive-pack`'s advertisement is the READ gate and nothing else: the
+/// pre-receive hook has not run, no ref update has been named, and no
+/// protection rule has been consulted. Reporting a bare `Accepted` there read
+/// as "your push will work", which is not what was tested — and, since batch 3,
+/// is not even the last word on whether the relay will take the commit.
+fn transport_verdict_for(
+    service: &str,
+    status: u16,
+    real_repo: bool,
+) -> (TransportVerdict, String) {
+    if service == "git-receive-pack" && status == 200 {
+        return (
+            TransportVerdict::Accepted,
+            "the relay advertised refs to a push client; this is the read gate only — the \
+             pre-receive hook decides the push itself"
+                .to_string(),
+        );
+    }
     match status {
         200 => (
             TransportVerdict::Accepted,
@@ -1017,6 +1052,58 @@ pub struct CheckReport {
     pub http_membership: HttpMembership,
     /// Per-repository git probes, when the announcements were readable.
     pub repos: Vec<RepoProbe>,
+    /// What `--ref` predicted, when it was asked for.
+    pub prediction: Option<RefPrediction>,
+}
+
+/// The heading every prediction is printed under.
+///
+/// One sentence, and it says the only two things that matter: this is not the
+/// decision, and the decision is made about the commit actually pushed.
+pub const PREDICTION_HEADING: &str =
+    "Prediction, not a promise. The relay's pre-receive hook decides at push time, on the \
+     commit you actually send:";
+
+/// What `bee git check --ref` worked out.
+#[derive(Debug, Clone)]
+pub struct RefPrediction {
+    /// The ref asked about.
+    pub ref_name: String,
+    /// The commit the answer is about.
+    pub sha: String,
+    /// The answer.
+    pub state: RefPredictionState,
+    /// What the serving relay reports being ([`serving_relay_build`]). The
+    /// prediction is the *local* build's rule; this says whose relay will
+    /// actually decide.
+    pub serving_relay: String,
+}
+
+/// The prediction's answer, or why there is none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefPredictionState {
+    /// No `require-verdict` rule matches this ref.
+    Ungoverned,
+    /// This checkout has no remote on the relay, so there is no repository to
+    /// read rules from.
+    NoRepository,
+    /// Something the prediction needs could not be read. Never an answer.
+    Unreadable {
+        /// The relay's own words.
+        detail: String,
+    },
+    /// The same rule the hook runs admits this commit for this key.
+    Admitted {
+        /// The umbrella whose ruling admits it.
+        session_ref: String,
+        /// The approving disposition.
+        disposition_event_id: String,
+    },
+    /// The same rule refuses it, with the sentence the hook would return.
+    Refused {
+        /// Verbatim §1j copy, shared with the relay.
+        reason: String,
+    },
 }
 
 impl CheckReport {
@@ -1061,6 +1148,10 @@ pub struct CheckRequest {
     pub keyfile: Option<PathBuf>,
     /// Also probe `git-receive-pack` — the request `git push` makes first.
     pub push: bool,
+    /// Predict the pre-receive hook's answer for this ref, if given.
+    pub ref_name: Option<String>,
+    /// The commit the prediction is about; `HEAD` in this checkout by default.
+    pub sha: Option<String>,
 }
 
 /// Ask the relay the same question git asks, and report what it answered.
@@ -1130,6 +1221,9 @@ pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> 
                     .to_string(),
             },
             repos: Vec::new(),
+            // Nothing was asked of the relay, so nothing is predicted. An
+            // empty prediction would read as "ungoverned", which is a claim.
+            prediction: None,
         });
     }
 
@@ -1164,7 +1258,7 @@ pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> 
         );
         let (status, _body) =
             probe(url.clone(), keys.clone(), http.clone(), auth_tag.clone()).await?;
-        let (verdict, detail) = transport_verdict(status, target.is_real_repo());
+        let (verdict, detail) = transport_verdict_for(service, status, target.is_real_repo());
         transport.push(TransportProbe {
             service,
             url,
@@ -1269,6 +1363,16 @@ pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> 
         }
     }
 
+    let prediction = match &request.ref_name {
+        Some(ref_name) => {
+            let mut prediction =
+                predict_ref(&client, &target, ref_name, request.sha.as_deref(), &pubkey).await;
+            prediction.serving_relay = serving_relay_build(&origin).await;
+            Some(prediction)
+        }
+        None => None,
+    };
+
     Ok(CheckReport {
         relay: origin,
         pubkey,
@@ -1280,12 +1384,340 @@ pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> 
         gate,
         http_membership,
         repos,
+        prediction,
     })
+}
+
+/// Resolve the commit a prediction is about: `--sha`, else this checkout's
+/// `HEAD`.
+fn resolve_sha(sha: Option<&str>) -> Option<String> {
+    if let Some(sha) = sha {
+        return Some(sha.trim().to_ascii_lowercase());
+    }
+    Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .to_ascii_lowercase()
+        })
+        .filter(|sha| !sha.is_empty())
+}
+
+/// Run the relay's own admission rule against the fold this key can read.
+///
+/// Deliberately the **same** `buzz_core::coding_session_verdict_admission`
+/// function the pre-receive hook runs, over candidates assembled by the same
+/// shared helpers — one rule, so the two answers cannot drift into disagreeing
+/// about the same commit. What differs is the *inputs*: this side reads the
+/// authority chain off the wire (prediction-grade; see
+/// `active_seats_from_authority_transitions`) where the relay reads its own
+/// accepted projection. That, and the commit actually pushed, are why the
+/// answer is printed as a prediction.
+async fn predict_ref(
+    client: &crate::client::BuzzClient,
+    target: &ProbeTarget,
+    ref_name: &str,
+    sha: Option<&str>,
+    pusher_pubkey: &str,
+) -> RefPrediction {
+    let sha_value = resolve_sha(sha).unwrap_or_default();
+    let mut prediction = RefPrediction {
+        ref_name: ref_name.to_string(),
+        sha: sha_value.clone(),
+        state: RefPredictionState::NoRepository,
+        // Filled in by the caller, which knows the relay origin.
+        serving_relay: "serving relay's version unknown".to_string(),
+    };
+    let ProbeTarget::Remote { owner, repo } = target else {
+        return prediction;
+    };
+    if sha_value.is_empty() {
+        prediction.state = RefPredictionState::Unreadable {
+            detail: "no --sha was given and `git rev-parse HEAD` answered nothing here".to_string(),
+        };
+        return prediction;
+    }
+
+    let announcement = match fetch_repo_announcement(client, owner, repo).await {
+        Ok(Some(event)) => event,
+        Ok(None) => {
+            prediction.state = RefPredictionState::Unreadable {
+                detail: format!("the relay returned no kind:30617 announcement for {repo}"),
+            };
+            return prediction;
+        }
+        Err(error) => {
+            prediction.state = RefPredictionState::Unreadable {
+                detail: strip_auth_tag_hint(&error.to_string()),
+            };
+            return prediction;
+        }
+    };
+
+    let tags: Vec<Vec<String>> = announcement
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice().to_vec())
+        .collect();
+    let rules = match buzz_core::git_perms::parse_protection_tags(&tags) {
+        Ok(parsed) => parsed.rules,
+        Err(error) => {
+            prediction.state = RefPredictionState::Unreadable {
+                detail: format!("the repository's protection rules do not parse: {error}"),
+            };
+            return prediction;
+        }
+    };
+    if !buzz_core::git_perms::EffectiveRules::for_ref(ref_name, &rules).require_verdict {
+        prediction.state = RefPredictionState::Ungoverned;
+        return prediction;
+    }
+
+    // First `buzz-channel` tag wins, and a malformed one is not a binding —
+    // the same fail-closed reading the relay's resolver applies.
+    let channel = announcement
+        .tags
+        .iter()
+        .find_map(|tag| match tag.as_slice() {
+            [name, value] if name == "buzz-channel" => Some(value.clone()),
+            _ => None,
+        });
+    let Some(channel) = channel.filter(|value| uuid::Uuid::parse_str(value).is_ok()) else {
+        prediction.state = RefPredictionState::Refused {
+            reason: VerdictAdmissionRefusal::RepositoryUnbound.reason(),
+        };
+        return prediction;
+    };
+
+    let candidates = match fetch_verdict_candidates(client, &channel, owner).await {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            prediction.state = RefPredictionState::Unreadable {
+                detail: strip_auth_tag_hint(&error.to_string()),
+            };
+            return prediction;
+        }
+    };
+
+    let query = VerdictAdmissionQuery {
+        ref_name,
+        new_oid: &sha_value,
+        pusher_pubkey,
+        repo_owner_pubkey: owner,
+    };
+    prediction.state =
+        match evaluate_verdict_admission(&candidates, &query, &VerdictAdmissionRules::FOUNDER_ONLY)
+        {
+            VerdictAdmission::Admitted(evidence) => RefPredictionState::Admitted {
+                session_ref: evidence.session_ref,
+                disposition_event_id: evidence.disposition_event_id,
+            },
+            VerdictAdmission::Refused(refusal) => RefPredictionState::Refused {
+                reason: refusal.reason(),
+            },
+        };
+    prediction
+}
+
+/// The repository's current kind:30617 announcement, as its owner published it.
+async fn fetch_repo_announcement(
+    client: &crate::client::BuzzClient,
+    owner: &str,
+    repo: &str,
+) -> Result<Option<nostr::Event>, CliError> {
+    let rows = client
+        .query_all(serde_json::json!({
+            "kinds": [30617],
+            "authors": [owner],
+            "#d": [repo],
+            "limit": 1,
+        }))
+        .await?;
+    let Some(row) = rows.into_iter().next() else {
+        return Ok(None);
+    };
+    let event: nostr::Event = serde_json::from_value(row)
+        .map_err(|error| CliError::Other(format!("relay returned a malformed 30617: {error}")))?;
+    Ok(Some(event))
+}
+
+/// Assemble the missions on `channel` whose founder is `owner`, folded.
+async fn fetch_verdict_candidates(
+    client: &crate::client::BuzzClient,
+    channel: &str,
+    owner: &str,
+) -> Result<Vec<VerdictAdmissionCandidate>, CliError> {
+    let decode = |rows: Vec<serde_json::Value>| -> Result<Vec<nostr::Event>, CliError> {
+        rows.into_iter()
+            .map(|row| {
+                serde_json::from_value(row).map_err(|error| {
+                    CliError::Other(format!("relay returned a malformed event: {error}"))
+                })
+            })
+            .collect()
+    };
+    let geneses = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_GENESIS],
+                    "#h": [channel],
+                    "authors": [owner],
+                }),
+                VERDICT_ADMISSION_MAX_SESSIONS as u32,
+            )
+            .await?,
+    )?;
+    let transactions = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION],
+                    "#h": [channel],
+                }),
+                VERDICT_ADMISSION_MAX_TRANSACTIONS as u32,
+            )
+            .await?,
+    )?;
+    // Bounded like the two reads either side of it. Reading fewer transitions
+    // than exist can only shrink the seat list, which can only turn an
+    // admission into a refusal — never the other way round.
+    let authority = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
+                    "#h": [channel],
+                }),
+                VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS as u32,
+            )
+            .await?,
+    )?;
+
+    let mut candidates = Vec::new();
+    for genesis in &geneses {
+        let genesis_ref = genesis.id.to_hex();
+        let Ok(payload) =
+            buzz_core::coding_session_genesis::decode_coding_session_genesis(&genesis.content)
+        else {
+            continue;
+        };
+        let events: Vec<nostr::Event> =
+            mission_transactions(&payload.session_ref, &genesis_ref, &transactions)
+                .into_iter()
+                .cloned()
+                .collect();
+        let seats = active_seats_from_authority_transitions(&authority, &genesis_ref);
+        let context = verdict_admission_fold_context(
+            channel,
+            payload.session_ref.clone(),
+            genesis_ref.clone(),
+            owner,
+            seats.clone(),
+        );
+        // A mission that does not fold admits nothing; it must not make the
+        // whole prediction unavailable.
+        let canonical = fold_candidate_records(&events, &context).unwrap_or_default();
+        candidates.push(VerdictAdmissionCandidate {
+            session_ref: payload.session_ref,
+            genesis_ref,
+            founder_pubkey: owner.to_string(),
+            canonical,
+            active_seat_pubkeys: seats.into_iter().map(|seat| seat.actor_pubkey).collect(),
+        });
+    }
+    Ok(candidates)
+}
+
+/// What the serving relay says about itself, for the enforcement disclosure.
+///
+/// **Why this exists.** `bee repos protect list` and `bee git check --ref` both
+/// answer from the *local* build's rule table: the local build knows
+/// `require-verdict`, so `unknown_rules` comes back empty and the prediction
+/// comes back confident — whatever the relay actually serving the repository
+/// does. A relay predating the rule parses the token into its own unknown list
+/// and ignores it, and a person reading either command would never learn that.
+/// Neither command can fix it; both can stop hiding it.
+///
+/// NIP-11 carries `software` and `version` but advertises no capability for
+/// this rule, so the honest line is "the local build evaluated this; here is
+/// what the relay reports being". A capability advertisement is the real
+/// answer and is a separate lane.
+pub const ENFORCEMENT_DISCLOSURE: &str =
+    "This answer is the rule as THIS build evaluates it. The relay serving the \
+     repository is what enforces it, and a relay predating require-verdict parses \
+     the token and ignores it.";
+
+/// Ask the relay's NIP-11 document what build it is.
+///
+/// Returns the sentence to print. Never an error: a relay that does not answer
+/// is disclosed as unknown, because "unknown" is the true answer and an empty
+/// line would read as agreement.
+pub async fn serving_relay_build(origin: &str) -> String {
+    let unknown = "serving relay's version unknown".to_string();
+    let Ok(http) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    else {
+        return unknown;
+    };
+    let Ok(response) = http
+        .get(origin)
+        .header("Accept", "application/nostr+json")
+        .send()
+        .await
+    else {
+        return unknown;
+    };
+    if !response.status().is_success() {
+        return unknown;
+    }
+    let Ok(doc) = response.json::<serde_json::Value>().await else {
+        return unknown;
+    };
+    let software = doc.get("software").and_then(|v| v.as_str());
+    let version = doc.get("version").and_then(|v| v.as_str());
+    match (software, version) {
+        (Some(software), Some(version)) => {
+            format!("serving relay reports {software} {version}")
+        }
+        (None, Some(version)) => format!("serving relay reports version {version}"),
+        _ => unknown,
+    }
 }
 
 /// The compact (`--format compact`) form of a report.
 pub fn render_json(report: &CheckReport) -> serde_json::Value {
     serde_json::json!({
+        "prediction": report.prediction.as_ref().map(|prediction| serde_json::json!({
+            "heading": PREDICTION_HEADING,
+            "evaluated_by": ENFORCEMENT_DISCLOSURE,
+            "serving_relay": prediction.serving_relay,
+            "ref": prediction.ref_name,
+            "sha": prediction.sha,
+            "answer": match &prediction.state {
+                RefPredictionState::Ungoverned => "ungoverned",
+                RefPredictionState::NoRepository => "no_repository",
+                RefPredictionState::Unreadable { .. } => "unreadable",
+                RefPredictionState::Admitted { .. } => "admitted",
+                RefPredictionState::Refused { .. } => "refused",
+            },
+            "detail": match &prediction.state {
+                RefPredictionState::Ungoverned =>
+                    Some("no require-verdict rule governs this ref".to_string()),
+                RefPredictionState::NoRepository =>
+                    Some("no relay remote in this checkout".to_string()),
+                RefPredictionState::Unreadable { detail } => Some(detail.clone()),
+                RefPredictionState::Refused { reason } => Some(reason.clone()),
+                RefPredictionState::Admitted { session_ref, disposition_event_id } => Some(
+                    format!("mission {session_ref} disposition {disposition_event_id}")
+                ),
+            },
+        })),
         "relay": report.relay,
         "pubkey": report.pubkey,
         "key_source": report.key_source,
@@ -1471,6 +1903,38 @@ pub fn render_human(report: &CheckReport) -> String {
         let _ = writeln!(out, "{remedy}");
     }
 
+    if let Some(prediction) = &report.prediction {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "{PREDICTION_HEADING}");
+        let _ = writeln!(
+            out,
+            "  {} @ {}",
+            prediction.ref_name,
+            short_hex(&prediction.sha)
+        );
+        let line = match &prediction.state {
+            RefPredictionState::Ungoverned => {
+                "  no require-verdict rule governs this ref; nothing here reads a mission verdict"
+                    .to_string()
+            }
+            RefPredictionState::NoRepository => {
+                "  no relay remote in this checkout, so no repository rules to read".to_string()
+            }
+            RefPredictionState::Unreadable { detail } => format!("  not predicted — {detail}"),
+            RefPredictionState::Admitted {
+                session_ref,
+                disposition_event_id,
+            } => format!(
+                "  admitted — mission {session_ref} approved it (disposition {})",
+                short_hex(disposition_event_id)
+            ),
+            RefPredictionState::Refused { reason } => format!("  refused — {reason}"),
+        };
+        let _ = writeln!(out, "{line}");
+        let _ = writeln!(out, "  {ENFORCEMENT_DISCLOSURE}");
+        let _ = writeln!(out, "  {}", prediction.serving_relay);
+    }
+
     if !report.repos.is_empty() {
         let _ = writeln!(out);
         let _ = writeln!(out, "{:<34} {:<20} OWNER", "REPO", "ACCESS");
@@ -1505,12 +1969,16 @@ pub async fn cmd_check(
     relay_url: &str,
     keyfile: Option<PathBuf>,
     push: bool,
+    ref_name: Option<String>,
+    sha: Option<String>,
     compact: bool,
 ) -> Result<(), CliError> {
     let report = run_check(&CheckRequest {
         relay_url: relay_url.to_string(),
         keyfile,
         push,
+        ref_name,
+        sha,
     })
     .await?;
 
@@ -1952,6 +2420,8 @@ mod tests {
             relay_url: relay.to_string(),
             keyfile: None,
             push,
+            ref_name: None,
+            sha: None,
         })
         .await;
         std::env::remove_var("NOSTR_PRIVATE_KEY");
@@ -1984,6 +2454,162 @@ mod tests {
         assert_eq!(
             transport_verdict(503, true).0,
             TransportVerdict::Unavailable
+        );
+    }
+
+    /// `--push` probes `git-receive-pack`'s advertisement — the READ gate. A
+    /// bare "Accepted" there read as "your push will work", which was never
+    /// what the probe tested and, since the verdict gate, is not even the last
+    /// word on whether the relay takes the commit.
+    #[test]
+    fn the_push_probe_says_it_is_the_read_gate_only() {
+        let (verdict, detail) = transport_verdict_for("git-receive-pack", 200, true);
+        assert_eq!(verdict, TransportVerdict::Accepted);
+        assert_eq!(
+            detail,
+            "the relay advertised refs to a push client; this is the read gate only — the \
+             pre-receive hook decides the push itself"
+        );
+        // The fetch probe's sentence is unchanged.
+        assert_eq!(
+            transport_verdict_for("git-upload-pack", 200, true).1,
+            "the relay served the ref advertisement"
+        );
+        // Every other status keeps its existing reading on both services.
+        for status in [401, 403, 404, 503] {
+            assert_eq!(
+                transport_verdict_for("git-receive-pack", status, true),
+                transport_verdict(status, true),
+                "only a 200 push advertisement changes wording"
+            );
+        }
+    }
+
+    fn report_with(prediction: RefPrediction) -> CheckReport {
+        CheckReport {
+            relay: "https://relay.example".to_string(),
+            pubkey: "ab".repeat(32),
+            key_source: "NOSTR_PRIVATE_KEY".to_string(),
+            key_disclosure: None,
+            attestation: AttestationState::Absent,
+            target: ProbeTarget::Remote {
+                owner: "ab".repeat(32),
+                repo: "beekeeper".to_string(),
+            },
+            transport: Vec::new(),
+            gate: None,
+            http_membership: HttpMembership::Accepted { announcements: 0 },
+            repos: Vec::new(),
+            prediction: Some(prediction),
+        }
+    }
+
+    /// The prediction is printed as a prediction, and the refusal it prints is
+    /// the relay's own sentence — produced by the same
+    /// `buzz_core::coding_session_verdict_admission` rule, not a second copy of
+    /// the words.
+    #[test]
+    fn a_prediction_prints_the_relays_own_sentence_under_a_prediction_heading() {
+        let sha = "07c470be007c470be007c470be007c470be007c4";
+        let expected = evaluate_verdict_admission(
+            &[],
+            &VerdictAdmissionQuery {
+                ref_name: "refs/heads/main",
+                new_oid: sha,
+                pusher_pubkey: &"cd".repeat(32),
+                repo_owner_pubkey: &"ab".repeat(32),
+            },
+            &VerdictAdmissionRules::FOUNDER_ONLY,
+        );
+        let VerdictAdmission::Refused(refusal) = expected else {
+            panic!("no candidates admits nothing");
+        };
+        let rendered = render_human(&report_with(RefPrediction {
+            ref_name: "refs/heads/main".to_string(),
+            sha: sha.to_string(),
+            state: RefPredictionState::Refused {
+                reason: refusal.reason(),
+            },
+            serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+        }));
+        assert!(
+            rendered.contains(PREDICTION_HEADING),
+            "the heading says it is not a promise:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(&refusal.reason()),
+            "the CLI prints the relay's own refusal verbatim:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("will be accepted") && !rendered.contains("your push will"),
+            "nothing here may promise an outcome:\n{rendered}"
+        );
+    }
+
+    /// The prediction never claims the serving relay agrees with it.
+    ///
+    /// `unknown_rules` and the prediction are both computed by the LOCAL
+    /// build, which knows `require-verdict`; a relay predating the rule parses
+    /// the token and ignores it, and nothing a person saw used to say so.
+    /// Neither command can fix that — both can stop hiding it (fix round 1,
+    /// F5).
+    #[test]
+    fn a_prediction_says_whose_build_evaluated_it() {
+        let rendered = render_human(&report_with(RefPrediction {
+            ref_name: "refs/heads/main".to_string(),
+            sha: "2".repeat(40),
+            state: RefPredictionState::Ungoverned,
+            serving_relay: "serving relay's version unknown".to_string(),
+        }));
+        assert!(
+            rendered.contains("the rule as THIS build evaluates it"),
+            "the answer names whose rule table produced it:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("a relay predating require-verdict parses the token and ignores it"),
+            "and says what that means when they disagree:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("serving relay's version unknown"),
+            "an unanswering relay is disclosed as unknown, never as agreement:\n{rendered}"
+        );
+    }
+
+    /// An ungoverned ref says exactly that, rather than implying a verdict was
+    /// searched for and missing.
+    #[test]
+    fn an_ungoverned_ref_says_no_rule_governs_it() {
+        let rendered = render_human(&report_with(RefPrediction {
+            ref_name: "refs/heads/topic".to_string(),
+            sha: "2".repeat(40),
+            state: RefPredictionState::Ungoverned,
+            serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+        }));
+        assert!(
+            rendered.contains("no require-verdict rule governs this ref"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("no approved report names"),
+            "an ungoverned ref must not borrow the refusal copy:\n{rendered}"
+        );
+    }
+
+    /// A read the prediction needed and did not get is disclosed as unknown —
+    /// never rendered as "ungoverned", which is a claim about the repository.
+    #[test]
+    fn an_unreadable_prediction_is_unknown_not_permissive() {
+        let rendered = render_human(&report_with(RefPrediction {
+            ref_name: "refs/heads/main".to_string(),
+            sha: "2".repeat(40),
+            state: RefPredictionState::Unreadable {
+                detail: "the relay refused the query".to_string(),
+            },
+            serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+        }));
+        assert!(
+            rendered.contains("not predicted — the relay refused the query"),
+            "{rendered}"
         );
     }
 
@@ -2121,6 +2747,7 @@ mod tests {
             }),
             http_membership: HttpMembership::Accepted { announcements: 0 },
             repos: Vec::new(),
+            prediction: None,
         };
 
         assert_eq!(
@@ -2206,7 +2833,7 @@ mod tests {
         // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
         std::env::set_var("NOSTR_PRIVATE_KEY", seat.secret_key().to_secret_hex());
         std::env::remove_var("BUZZ_AUTH_TAG");
-        let result = cmd_check(&relay, None, false, true).await;
+        let result = cmd_check(&relay, None, false, None, None, true).await;
         std::env::remove_var("NOSTR_PRIVATE_KEY");
 
         let error = result.expect_err("a refused credential is not a success");
@@ -2272,7 +2899,7 @@ mod tests {
         )
         .await;
 
-        let result = cmd_check(&relay, None, false, true).await;
+        let result = cmd_check(&relay, None, false, None, None, true).await;
 
         std::env::remove_var("NOSTR_PRIVATE_KEY");
         std::env::remove_var("BUZZ_AUTH_TAG");

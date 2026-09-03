@@ -5,6 +5,7 @@
 //! - `transport` — Smart HTTP protocol (info/refs, upload-pack, receive-pack)
 //! - `hook` — Pre-receive hook script and injection
 //! - `policy` — Internal policy endpoint (HMAC-authenticated callback from hook)
+//! - `verdict_admission` — the `require-verdict` search and the denial body
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,6 +33,7 @@ pub mod pack_cache;
 pub mod policy;
 pub mod store;
 pub mod transport;
+pub mod verdict_admission;
 
 pub use transport::git_router;
 

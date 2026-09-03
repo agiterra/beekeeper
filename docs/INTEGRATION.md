@@ -547,3 +547,94 @@ build. Desktop dev runs `just desktop-standalone`.
 Running a daily-driver Beekeeper.app and a dev instance side by side on macOS
 (distinct icons, no repeated keychain prompts):
 [local-desktop-instances.md](local-desktop-instances.md).
+
+## Verdict-gated refs
+
+*Added 2026-09-02 (batch 3 lane L6).*
+
+A repository can require that a mission ruled on a commit before it reaches a
+branch:
+
+```bash
+bee repos protect set --id agiterra-beekeeper --ref refs/heads/main --require-verdict
+bee repos protect list --id agiterra-beekeeper
+```
+
+With the rule set, the relay's pre-receive hook admits an update to that ref
+only when a **founder-signed, canonical** kind:44244 `disposition` approves a
+report whose `headSha` is the exact commit being pushed **and whose `branch` is
+the branch being pushed**, in a mission founded by the repository's owner on the
+channel the repository is bound to — and only when the **founder** is the one
+pushing. The reservation to the founder is the relay's rule, not the mission's:
+no session policy is read. The relaxation that lets a seat land exists in the
+code and is switched off until a verdict-gated push has been exercised live
+once.
+
+**Nothing is governed until someone sets the rule.** It is opt-in and is
+currently set on no repository, so today this section describes a capability,
+not a running control.
+
+What this changes for a person landing work:
+
+- `git push` prints the relay's reason, one line per ref, e.g.
+  `remote: refs/heads/main: require-verdict is set and no mission verdict names
+  this commit: no approved report names <sha>. Searched 2 mission(s) — the
+  newest 16 on this channel whose founder owns this repository — over one shared
+  page of the newest 512 team transactions on that channel. An older ruling can
+  fall outside both.`
+- A report that names only a branch does not admit anything — ask for a report
+  carrying `headSha`.
+- An approval is scoped to the branch its report named. A commit approved for
+  `whoami/cli` does not land on `main`, and an approved-but-superseded commit
+  cannot be pushed back over a branch later.
+- Deleting a gated ref is refused for everyone, founder included: no report
+  names the zero oid.
+- The rule is enforced by the relay serving the repository. A relay that
+  predates it ignores the token, so a repository is only as protected as the
+  relay it lives on. `bee repos protect list` and `bee git check --ref` both
+  answer from the *local* build and say so, and print what the serving relay
+  reports being.
+
+To ask what the hook would say *before* pushing:
+
+```bash
+bee git check --push --ref refs/heads/main            # about HEAD
+bee git check --push --ref refs/heads/main --sha <oid>
+```
+
+The answer is printed under `Prediction, not a promise.` — the CLI runs the
+relay's own admission rule over the fold it can read, but the hook decides at
+push time on the commit actually sent, and the CLI reads the authority chain
+off the wire rather than from the relay's accepted projection.
+
+### Seats inherit at most Member on a guarded ref
+
+Also since 2026-09-02: a key that holds repository authority **only** by
+attestation to someone else (a hired seat pushing on its operator's grant) is
+capped at `member` **on a guarded ref**. Two refs are guarded:
+`refs/heads/main`, and any ref an operator wrote a `buzz-protect` rule for.
+There, an inherited grant can no longer force-push, delete a ref, or overwrite
+a tag; it still creates and fast-forwards branches.
+
+**Everywhere else the inherited grant is unchanged.** A seat rebases and
+force-pushes its own `lane/*` or `wip/*` branch, and deletes it afterwards,
+exactly as this document's § Landing a batch, `CLAUDE.md` and
+[CREW_SESSIONS_PLAN.md](CREW_SESSIONS_PLAN.md) tell it to. An earlier draft
+capped every ref and silently broke all three workflows.
+
+A seat's *own* roster row is unaffected anywhere — a seat added to a channel as
+`admin` is admin by that grant, not by inheritance. The cap is not a
+per-repository opt-in: an opt-in would leave every repository that never set
+one with an inherited **Owner** grant over its own trunk, which is how a hired
+lead came to hold owner authority over this repository in live run 3.
+
+**What the cap does not close.** Run 3's push was a *fast-forward*
+(`1dd98e876..07c470be0`), and a fast-forward needs only `member` — which a
+capped seat still holds. The cap closes the inherited-Owner escalation
+(force-push, delete, tag overwrite). The rule that refuses run 3's push is
+`require-verdict`, and it is opt-in and set on nothing yet.
+
+Every ref update the hook decides is now logged by the relay with the
+repository, the ref, both object ids, the authenticated pusher and the
+decision. Before this, "who pushed `main`?" could only be answered from the
+derived kind:30618 event.

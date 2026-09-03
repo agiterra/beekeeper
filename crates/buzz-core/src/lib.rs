@@ -54,6 +54,9 @@ pub mod coding_session_runtime;
 /// NIP-CSTX: signed, append-only team transactions inside a coding session
 /// (44244).
 pub mod coding_session_team_transaction;
+/// The rule a `require-verdict` ref enforces: which canonical mission ruling
+/// admits a commit, and which key may land it.
+pub mod coding_session_verdict_admission;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;

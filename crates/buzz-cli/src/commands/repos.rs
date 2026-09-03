@@ -59,25 +59,39 @@ fn has_tag_name(tag: &Tag, name: &str) -> bool {
     tag.as_slice().first().map(String::as_str) == Some(name)
 }
 
-fn build_protection_tag(
-    ref_pattern: &str,
-    push_role: Option<&str>,
+/// The rule flags one `bee repos protect set` writes, in wire order.
+#[derive(Debug, Clone, Copy, Default)]
+struct ProtectionFlags {
     no_force_push: bool,
     no_delete: bool,
     require_patch: bool,
+    /// Admit an update only when an approved mission verdict names the pushed
+    /// commit. Enforced by the relay serving the repository; one that predates
+    /// the rule parses the token into `unknown_rules` and ignores it, which
+    /// `bee repos protect list` shows.
+    require_verdict: bool,
+}
+
+fn build_protection_tag(
+    ref_pattern: &str,
+    push_role: Option<&str>,
+    flags: ProtectionFlags,
 ) -> Result<Tag, CliError> {
     let mut values = vec!["buzz-protect".to_string(), ref_pattern.to_string()];
     if let Some(role) = push_role {
         values.push(format!("push:{role}"));
     }
-    if no_force_push {
+    if flags.no_force_push {
         values.push("no-force-push".into());
     }
-    if no_delete {
+    if flags.no_delete {
         values.push("no-delete".into());
     }
-    if require_patch {
+    if flags.require_patch {
         values.push("require-patch".into());
+    }
+    if flags.require_verdict {
+        values.push("require-verdict".into());
     }
     let rule_values: Vec<&str> = values[1..].iter().map(String::as_str).collect();
     parse_protection_tag(&rule_values)
@@ -372,7 +386,26 @@ async fn current_repo(client: &BuzzClient, repo_id: &str) -> Result<Event, CliEr
 
 async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliError> {
     let event = current_repo(client, repo_id).await?;
-    println!("{}", protection_rules_json(&event)?);
+    let mut listing = protection_rules_json(&event)?;
+    // `unknown_rules` above is what THIS build does not recognise. A relay
+    // predating a rule has its own unknown list and ignores the token, and a
+    // person reading this listing would otherwise never learn that the two can
+    // disagree. Disclosed here rather than in the docs alone.
+    if let Some(object) = listing.as_object_mut() {
+        object.insert(
+            "evaluated_by".to_string(),
+            serde_json::Value::String(
+                crate::commands::git_setup::ENFORCEMENT_DISCLOSURE.to_string(),
+            ),
+        );
+        object.insert(
+            "serving_relay".to_string(),
+            serde_json::Value::String(
+                crate::commands::git_setup::serving_relay_build(client.relay_url()).await,
+            ),
+        );
+    }
+    println!("{listing}");
     Ok(())
 }
 
@@ -381,22 +414,14 @@ async fn cmd_protect_set(
     repo_id: &str,
     ref_pattern: &str,
     push_role: Option<crate::RepoPushRole>,
-    no_force_push: bool,
-    no_delete: bool,
-    require_patch: bool,
+    flags: ProtectionFlags,
 ) -> Result<(), CliError> {
     let push_role = push_role.map(|role| match role {
         crate::RepoPushRole::Owner => "owner",
         crate::RepoPushRole::Admin => "admin",
         crate::RepoPushRole::Member => "member",
     });
-    let tag = build_protection_tag(
-        ref_pattern,
-        push_role,
-        no_force_push,
-        no_delete,
-        require_patch,
-    )?;
+    let tag = build_protection_tag(ref_pattern, push_role, flags)?;
     let event = current_repo(client, repo_id).await?;
     let builder =
         build_updated_repo_announcement(&event, RepoChange::SetProtection(Box::new(tag)))?;
@@ -555,15 +580,19 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
                 no_force_push,
                 no_delete,
                 require_patch,
+                require_verdict,
             } => {
                 cmd_protect_set(
                     client,
                     &id,
                     &ref_pattern,
                     push,
-                    no_force_push,
-                    no_delete,
-                    require_patch,
+                    ProtectionFlags {
+                        no_force_push,
+                        no_delete,
+                        require_patch,
+                        require_verdict,
+                    },
                 )
                 .await
             }
@@ -581,7 +610,7 @@ mod tests {
     use super::{
         build_create_announcement, build_delete_addressable, build_protection_tag,
         build_updated_repo_announcement, protection_rules_json, validate_write_response,
-        RepoChange, KIND_GIT_REPO_ANNOUNCEMENT,
+        ProtectionFlags, RepoChange, KIND_GIT_REPO_ANNOUNCEMENT,
     };
 
     const OWNER_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -648,8 +677,16 @@ mod tests {
             "repository content",
             100,
         );
-        let replacement = build_protection_tag("refs/heads/main", Some("admin"), true, true, false)
-            .expect("valid replacement");
+        let replacement = build_protection_tag(
+            "refs/heads/main",
+            Some("admin"),
+            ProtectionFlags {
+                no_force_push: true,
+                no_delete: true,
+                ..ProtectionFlags::default()
+            },
+        )
+        .expect("valid replacement");
 
         let updated = build_updated_repo_announcement(
             &existing,
@@ -733,7 +770,7 @@ mod tests {
 
     #[test]
     fn protection_set_requires_at_least_one_rule() {
-        assert!(build_protection_tag("refs/heads/main", None, false, false, false).is_err());
+        assert!(build_protection_tag("refs/heads/main", None, ProtectionFlags::default()).is_err());
     }
 
     #[test]
@@ -746,9 +783,12 @@ mod tests {
             "",
             10,
         );
-        let replacement =
-            build_protection_tag("refs/heads/release", Some("admin"), false, false, false)
-                .expect("valid replacement");
+        let replacement = build_protection_tag(
+            "refs/heads/release",
+            Some("admin"),
+            ProtectionFlags::default(),
+        )
+        .expect("valid replacement");
 
         let error = build_updated_repo_announcement(
             &existing,
@@ -773,7 +813,7 @@ mod tests {
         }
         let existing = signed_repo(tags, "", 10);
         let replacement =
-            build_protection_tag("refs/heads/main", Some("admin"), false, false, false)
+            build_protection_tag("refs/heads/main", Some("admin"), ProtectionFlags::default())
                 .expect("valid replacement");
 
         let error = build_updated_repo_announcement(
@@ -1128,6 +1168,41 @@ mod tests {
                 "accepted": true,
                 "message": "saved",
             })
+        );
+    }
+
+    /// `--require-verdict` writes the token the relay's gate reads. The rule
+    /// is disclosed rather than glossed: a relay predating it parses the token
+    /// into `unknown_rules` and ignores it, and `protect list` shows both.
+    #[test]
+    fn require_verdict_is_written_as_a_rule_token_and_listed() {
+        let tag = build_protection_tag(
+            "refs/heads/main",
+            None,
+            ProtectionFlags {
+                require_verdict: true,
+                ..ProtectionFlags::default()
+            },
+        )
+        .expect("the rule is valid");
+        assert_eq!(
+            tag.as_slice(),
+            ["buzz-protect", "refs/heads/main", "require-verdict"]
+        );
+
+        let event = EventBuilder::new(Kind::Custom(KIND_GIT_REPO_ANNOUNCEMENT as u16), "")
+            .tags([Tag::parse(["d", "beekeeper"]).unwrap(), tag])
+            .sign_with_keys(&Keys::generate())
+            .expect("sign");
+        let listed = protection_rules_json(&event).expect("rules render");
+        assert_eq!(
+            listed["protections"][0]["rules"][0], "require-verdict",
+            "protect list shows the rule: {listed}"
+        );
+        assert_eq!(
+            listed["unknown_rules"].as_array().map(Vec::len),
+            Some(0),
+            "this build knows the rule; an older relay is the one that ignores it"
         );
     }
 }

@@ -869,3 +869,83 @@ collide with PGP or SSH signatures.
 - [NIP-34](https://github.com/nostr-protocol/nips/blob/master/34.md) — Git stuff
 - [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) — HTTP Auth
 - [RFC 4648](https://datatracker.ietf.org/doc/html/rfc4648) — Base Encodings
+
+## Appendix: verdict-gated refs (`require-verdict`)
+
+*Added 2026-09-02 (batch 3 lane L6). This appendix documents a `buzz-protect`
+rule token rather than a signature format; it lives here because no NIP yet
+covers the `buzz-protect` vocabulary, and the rule governs the same push a
+NIP-GS signature travels on.*
+
+A `kind:30617` repository announcement may carry the rule token
+`require-verdict` in a `buzz-protect` tag:
+
+```json
+["buzz-protect", "refs/heads/main", "require-verdict"]
+```
+
+A relay that implements it admits an update to a matching ref only when **all**
+of the following hold. The rule only ever subtracts: it can refuse a push the
+role check allowed, never admit one the role check refused.
+
+1. A `kind:44244` `verdict` of subtype `disposition` whose `decision` is
+   `approve` or `approve-with-notes` is **canonical in its session's NIP-CSTX
+   fold** — never merely present on the relay — and its `reportRef` resolves to
+   a canonical `report` in the same fold whose **`headSha`** equals the pushed
+   object id, compared whole and case-folded. A report naming a 64-hex id names
+   a different object and does not admit.
+2. That session's `kind:44226` genesis is on the channel the repository's
+   `buzz-channel` tag binds, and the genesis signer is the repository owner.
+3. The pushed ref is the branch the approved report named, when it named one.
+   A report naming `whoami/cli` approves that commit **on that branch**; it does
+   not admit the same commit onto `main`, nor admit it back over a branch that
+   has since moved on. A report naming no branch scopes no ref.
+4. The pusher is that founder. **The reservation is the relay's rule, not the
+   mission's** — no session policy is read, and the refusal says so. (A relay
+   MAY admit an active seat of the same umbrella instead; Beekeeper ships that
+   branch **disabled** until a verdict-gated push has been exercised live once.)
+5. The disposition is founder-signed. (A lead's canonical disposition MAY be
+   admitted on the same schedule as 4; Beekeeper ships that disabled too.)
+
+Deleting a gated ref is refused for everyone, the founder included: the zero
+oid is not named by any report.
+
+Two records that look like they should admit never do:
+
+- a report's **`branch`** — a branch name is not a commit, and two pushes to
+  one branch are two commits of which only one was ruled on;
+- a `mission.completed`'s **`landedShas`** — that is the lead's own claim to
+  have landed something, which is exactly the claim that was false when this
+  rule was written (live run 3, 2026-09-02: a verifier's FAIL was on the wire
+  and the branch reached `main` anyway).
+
+**Bounds.** A relay resolves candidates from the newest 16 geneses on the bound
+channel authored by the repository owner, over **one shared page** of the newest
+512 team transactions on that channel — not 512 per mission — and stops at the
+first mission that admits. The refusal names both caps in words, because a
+mission whose records fell outside the page was *named* but not *read*, and on
+a busy channel that is the realistic case rather than a contrived one. Falling
+outside either bound can only produce a refusal, never an admission. There is
+no SHA→session index; adding one costs a migration.
+
+**Forward compatibility, stated plainly.** A relay that predates this rule
+parses `require-verdict` into its unknown-rule list and **ignores it** — the
+push is admitted by the role check alone. The rule is therefore only as strong
+as the relay serving the repository.
+
+A client cannot tell from the announcement whether the serving relay enforces
+the rule: `unknown_rules` in `bee repos protect list` is what the **local**
+build does not recognise, and the local build knows `require-verdict`, so it
+comes back empty either way. Both `protect list` and `bee git check --ref`
+therefore say out loud that the answer is the local build's, and print what the
+serving relay reports being (NIP-11 `software`/`version`, or "unknown" when it
+does not answer). A capability advertisement for the rule itself is the real
+answer and does not exist yet.
+
+**Refusals** are returned in the pre-receive hook's 403 body as one
+`{ref}: {reason}` line per denied ref, in `text/plain`, so an unmodified hook
+script prints them through `git push`. The structured denial list is carried in
+an `X-Buzz-Git-Denials` header instead, omitted above 8 KiB.
+
+See NIP-CSTX (team transactions, kind 44244) and NIP-CSP (session policy,
+kind 44245).

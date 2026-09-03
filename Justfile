@@ -398,8 +398,47 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test: test-genesis
+test: test-genesis test-git-push-gate
     ./scripts/run-tests.sh all
+
+# The push gate's Postgres-backed acceptance cases: the binding gate, the
+# project/channel roster grants, the seat inheritance cap, and the
+# `require-verdict` admission search.
+#
+# Same shape and the same reason as `test-genesis` below. These drive the real
+# `hook_policy_check` through a live database, so they are
+# `#[ignore = "requires Postgres"]`; `scripts/run-tests.sh` runs the workspace
+# *without* `--ignored` and only ever names `-p buzz-db` for the DB-backed
+# steps, so before this recipe existed nothing in the repo executed them. They
+# decide who may push to a protected ref — they may not sit unexecuted.
+#
+# The filter is two module substrings passed as separate libtest filter
+# arguments (libtest ORs them; this is not cargo's single-TESTNAME positional,
+# so both go after `--`):
+#   api::git::policy::tests::gate      — the push-gate cases
+#   api::git::verdict_admission::tests — the verdict-admission cases
+# Extend this list, not the database name, when the next Postgres-gated push
+# proof joins them.
+#
+# A throwaway database for the same reason `test-genesis` needs one: these
+# tests share the schema of the invoking worktree, and pointing them at the dev
+# database would let a feature branch's migrations downgrade it.
+test-git-push-gate: _ensure-services
+    #!/usr/bin/env bash
+    set -euo pipefail
+    db="buzz_push_gate_$$_$(date +%s)"
+    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
+    trap cleanup EXIT
+    cleanup
+    pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
+    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    echo "==> git push-gate acceptance cases against ${db} (serial, isolated)"
+    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+        cargo test -p buzz-relay --lib -- \
+        api::git::policy::tests::gate api::git::verdict_admission::tests \
+        --ignored --test-threads=1
 
 # Genesis uniqueness proofs (kind 44226) and authority-chain proofs (kind
 # 44228) against a throwaway database.
