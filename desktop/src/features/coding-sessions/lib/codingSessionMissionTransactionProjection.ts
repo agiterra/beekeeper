@@ -84,6 +84,7 @@ type DecisionRequestBody = {
   question: string;
   options: string[];
   heldOn: string;
+  recommendation: string | null;
 };
 
 /** A 64-hex actor key — the one `heldOn` spelling that names a person. */
@@ -589,8 +590,48 @@ export function projectNativeTeamFoldToMissionInspector(input: {
     included,
     new Set(unseatedReportEventIds),
   );
+  // The signed decision bodies, carried alongside the stream rows. A stream row
+  // holds a *summary*; an Answer control needs the request's own declared
+  // options and an answered row needs the answer's own choice and condition,
+  // and neither has ever been in a summary.
+  const decisionRequests = included
+    .filter((event) => event.payload.type === "decision.request")
+    .map((event) => {
+      const body = event.payload.body as DecisionRequestBody;
+      return {
+        requestId: event.eventId,
+        question: body.question,
+        options: [...body.options],
+        recommendation: body.recommendation ?? null,
+        createdAt: event.createdAt,
+      };
+    });
+  const decisionAnswers = included
+    .filter((event) => event.payload.type === "decision.answer")
+    .map((event) => {
+      const body = event.payload.body as DecisionAnswerBody;
+      return {
+        answerId: event.eventId,
+        requestRef: body.requestRef,
+        choice: body.choice,
+        note: body.note,
+        condition: body.condition ?? null,
+      };
+    });
   return {
     goal: { kind: "absent" },
+    // What the push path's own rule needs, carried on the projection because
+    // the native predicate reads *signed events*, not a stream row: TypeScript
+    // hands them straight back to Rust and inspects none of them (I6).
+    landEvidence: {
+      includedEventIds: [...fold.includedEventIds],
+      wireEvents,
+    },
+    channelRef: fold.context.channelRef,
+    sessionRef: fold.context.sessionRef,
+    genesisRef: fold.context.genesisRef,
+    decisionRequests,
+    decisionAnswers,
     acceptedPlan,
     assignments,
     seatPlans: [],

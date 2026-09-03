@@ -799,6 +799,10 @@ export function governedMissionWithoutBuilderGrant(
         ...(fixture.foldResponse.context as Record<string, unknown>),
         authorityHeadEventId: null,
         authorityHeadSeq: 0,
+        // L8.3: the adapter echoes the `verifierRequired` it was asked
+        // with, and the decoder requires the key. This fixture reads no
+        // policy, so it asks with `false` and is echoed `false`.
+        verifierRequired: false,
       },
       unseatedReports: report
         ? [

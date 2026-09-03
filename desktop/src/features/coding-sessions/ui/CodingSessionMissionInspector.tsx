@@ -205,6 +205,9 @@ export function CodingSessionMissionInspector({
             completionRefusedNoVerifier={model.integrity.rejectedReasons.some(
               (reason) => reason.code === COMPLETION_NOT_VERIFIED_CODE,
             )}
+            completionNotVerified={model.completionNotVerified}
+            land={model.land}
+            policyRecordKnown={model.policyRecordKnown}
             state={model.missionState}
             waiting={model.waiting}
           />

@@ -25,6 +25,38 @@ export type CodingSessionMissionDecisionInput = {
   answerId: string | null;
 };
 
+/**
+ * The signed `decision.request` body behind one fold row.
+ *
+ * The queue reads the fold's `decisions[]` for *state*, and this for the
+ * *question and its declared options*. The model never invents an option the
+ * request did not declare: a request with `options: []` offers the free-text
+ * field alone.
+ */
+export type CodingSessionMissionDecisionRequestInput = {
+  requestId: string;
+  question: string;
+  options: readonly string[];
+  recommendation: string | null;
+  createdAt: number;
+};
+
+/**
+ * The signed `decision.answer` body behind one answered fold row.
+ *
+ * `condition` is §1k's seventh key. It is `null` on every build whose
+ * `buzz-core` predates lane L7 — absent from the wire is read as null here,
+ * never as an empty string, because "no condition" and "a blank condition" are
+ * different claims and only the first is real.
+ */
+export type CodingSessionMissionDecisionAnswerInput = {
+  answerId: string;
+  requestRef: string;
+  choice: number | string;
+  note: string | null;
+  condition: string | null;
+};
+
 /** The fold's `waitingOnDecision`, verbatim. TypeScript never computes it. */
 export type CodingSessionMissionWaitingOnDecisionInput = {
   requestId: string;
@@ -57,17 +89,19 @@ export type CodingSessionMissionDecisionModel = {
   /** Signed `created_at` of the request in ms, or null when it is not folded. */
   askedAtMs: number | null;
   /**
-   * The class this ruling covers, from the answer's signed `condition`.
+   * The class this ruling covers, from the answer's signed `condition`,
+   * clamped for the row with what was clamped disclosed.
    *
-   * Three values, and they are three different facts (I9, REVIEW-L7 F10):
+   * Three values, and they are three different facts (I9 + I10, REVIEW-L7 F10):
    *
-   * - a **string** — the ruling named this class;
+   * - an **object** — the ruling named this class; `truncated` is how many
+   *   characters the row did not print, 0 when the whole text is shown;
    * - `null` — nothing named a class: the row is open, or the answer named
    *   none;
-   * - `"unknown"` — the answer exists but its row fell outside
-   *   {@link CODING_SESSION_MISSION_TRANSACTION_ROW_LIMIT}, so this surface
-   *   has not read it. It is **not** "named no class", and a renderer must
-   *   not print it as one.
+   * - `"unknown"` — the answer exists but neither its signed body nor its
+   *   stream row is in the bounded window this model was given, so this
+   *   surface has not read it. It is **not** "named no class", and a renderer
+   *   must not print it as one.
    *
    * Live run 2, 11:33 (finding 21): the same question was asked twice because
    * the first answer had been given about one commit. A queue row that shows
@@ -75,7 +109,39 @@ export type CodingSessionMissionDecisionModel = {
    *
    * Quoted, never parsed: no state on this surface is derived from it.
    */
-  condition: string | null | "unknown";
+  answerCondition: { text: string; truncated: number } | null | "unknown";
+  /**
+   * The request's own declared options, in signed order.
+   *
+   * Empty is a real answer from the wire — a question with no options — and
+   * the form then offers free text alone rather than inventing buttons.
+   */
+  options: readonly string[];
+  /** The asker's recommendation, when the signed request carried one. */
+  recommendation: string | null;
+  /** Exactly `founder` or a 64-hex actor pubkey, verbatim from the fold. */
+  heldOn: string;
+  /**
+   * Whether the viewer is the party this ruling is held on.
+   *
+   * `false` disables the control — §1l disables, never hides — and `null` is
+   * the honest answer when this surface does not know the viewer's own key.
+   */
+  viewerIsHolder: boolean | null;
+  /** §1l's sentence when the viewer may not answer, else null. */
+  heldElsewhereSentence: string | null;
+  /**
+   * The chosen option's words, or the free text — from the signed answer.
+   *
+   * A numeric choice is resolved through the *request's* own options; when the
+   * fold did not include the request, the row names the index rather than
+   * inventing the words that went with it.
+   */
+  answerChoiceWord: string | null;
+  /** The umbrella this row belongs to, so the form can publish an answer. */
+  channelRef: string | null;
+  sessionRef: string | null;
+  genesisRef: string | null;
 };
 
 /**
@@ -135,7 +201,7 @@ export function codingSessionMissionAskedRelative(
  * a hand-rolled `slice(0, 8)` here was a `check-pubkey-truncation` failure the
  * lane's own gate list never ran (F1b/F11).
  */
-function heldOnLabel(
+export function heldOnLabel(
   heldOn: string,
   input: CodingSessionMissionInspectorInput,
 ): string {
@@ -168,36 +234,54 @@ function clampQuestion(value: string): string {
 }
 
 /**
- * How much of a signed condition one queue row prints.
+ * How much of a signed condition one answered row prints.
  *
- * The same 200-character bound a question gets, and for the same reason: a
- * rail row is scanned. The whole text is one row away in the Mission stream,
- * which renders the signed record itself.
+ * 200 characters, the same bound the question uses: a condition states the
+ * *class* a ruling covers and can be a paragraph, and a rail row is scanned.
+ * What is clamped is disclosed, never silently dropped (I10). The whole text
+ * is one row away in the Mission stream, which renders the signed record.
  */
-function clampCondition(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
+export const MAX_CODING_SESSION_DECISION_CONDITION_CHARS = 200;
+
+function clampCondition(
+  value: string,
+): { text: string; truncated: number } | null {
   const collapsed = value.trim().replace(/\s+/g, " ");
   if (collapsed.length === 0) return null;
-  return collapsed.length <= MAX_CODING_SESSION_DECISION_QUESTION_CHARS
-    ? collapsed
-    : `${collapsed.slice(0, MAX_CODING_SESSION_DECISION_QUESTION_CHARS - 1)}…`;
+  if (collapsed.length <= MAX_CODING_SESSION_DECISION_CONDITION_CHARS) {
+    return { text: collapsed, truncated: 0 };
+  }
+  return {
+    text: `${collapsed.slice(0, MAX_CODING_SESSION_DECISION_CONDITION_CHARS - 1)}\u2026`,
+    truncated:
+      collapsed.length - (MAX_CODING_SESSION_DECISION_CONDITION_CHARS - 1),
+  };
 }
 
 /**
  * The class an answered row's ruling covered, or why this surface cannot say.
  *
- * `"unknown"` exactly when the answer's own row is not in the bounded window
- * this model was given. Collapsing that to `null` would tell a reader the
- * founder named no class when the truth is that nobody here looked — the
- * unknown-≠-empty rule, in the one place this lane could break it.
+ * Two inputs carry the same signed fact and either will do: the answer's own
+ * decoded body (`decisionAnswers`) and its bounded stream row
+ * (`transactions`). `"unknown"` is returned exactly when *neither* holds the
+ * answer id — the answer is on the wire and this surface has not read it.
+ * Collapsing that to `null` would tell a reader the founder named no class
+ * when the truth is that nobody here looked: the unknown-≠-empty rule (I9),
+ * in the one place this model could break it.
  */
-function answerCondition(
-  answers: ReadonlyMap<string, string | null>,
+function answerConditionFor(
+  bodies: ReadonlyMap<string, { condition: string | null }>,
+  rows: ReadonlyMap<string, string | null>,
   answerId: string | null,
-): string | null | "unknown" {
+): { text: string; truncated: number } | null | "unknown" {
   if (answerId === null) return "unknown";
-  if (!answers.has(answerId)) return "unknown";
-  return clampCondition(answers.get(answerId) ?? null);
+  const body = bodies.get(answerId);
+  if (body !== undefined) {
+    return body.condition === null ? null : clampCondition(body.condition);
+  }
+  if (!rows.has(answerId)) return "unknown";
+  const row = rows.get(answerId) ?? null;
+  return row === null ? null : clampCondition(row);
 }
 
 /** Terminal and conflict states the waiting line may never overwrite (F4). */
@@ -233,18 +317,75 @@ export function deriveDecisions(input: CodingSessionMissionInspectorInput): {
       .filter((row) => row.type === "decision.answer")
       .map((row) => [row.sourceEventId, row.condition ?? null] as const),
   );
+  // The signed bodies behind those rows. Separate from `transactions` because
+  // the stream row carries a *summary*, and an Answer control needs the
+  // request's own declared options, which a summary has never held.
+  const requestBodies = new Map(
+    (input.decisionRequests ?? []).map((row) => [row.requestId, row] as const),
+  );
+  const answerBodies = new Map(
+    (input.decisionAnswers ?? []).map((row) => [row.answerId, row] as const),
+  );
+  const viewer = input.currentUserPubkey?.trim().toLowerCase() ?? null;
+  const founder = input.founderPubkey?.trim().toLowerCase() ?? null;
   const source = input.decisions;
   const rows = (source ?? []).map((decision) => {
     const request = requests.get(decision.requestId) ?? null;
+    const requestBody = requestBodies.get(decision.requestId) ?? null;
     const answered = decision.answeredBy !== null;
+    const answerBody =
+      decision.answerId === null
+        ? null
+        : (answerBodies.get(decision.answerId) ?? null);
     const blocks = decision.blocks.map((eventId) => eventId.slice(0, 8));
+    // The party a ruling is held on, as a key: `founder` resolves through the
+    // umbrella's own founder pubkey, which is the same substitution §1g's
+    // label makes. Unknown stays `null` — a control disabled because we do not
+    // know who is reading is a different fact from one held elsewhere.
+    const holder =
+      decision.heldOn === "founder"
+        ? founder
+        : decision.heldOn.trim().toLowerCase();
+    const viewerIsHolder =
+      viewer === null || holder === null ? null : viewer === holder;
+    const answerChoiceWord =
+      answerBody === null
+        ? null
+        : typeof answerBody.choice === "string"
+          ? answerBody.choice
+          : (requestBody?.options[answerBody.choice] ??
+            `option ${answerBody.choice + 1}`);
     return {
       requestId: decision.requestId,
       shortId: decision.requestId.slice(0, 8),
       question:
-        request && request.summary.trim().length > 0
-          ? clampQuestion(request.summary)
-          : null,
+        requestBody && requestBody.question.trim().length > 0
+          ? clampQuestion(requestBody.question)
+          : request && request.summary.trim().length > 0
+            ? clampQuestion(request.summary)
+            : null,
+      options: requestBody ? [...requestBody.options] : [],
+      recommendation: requestBody?.recommendation ?? null,
+      heldOn: decision.heldOn,
+      viewerIsHolder,
+      // REVIEW-L8 F9: the sentence prints whenever this surface cannot show
+      // the ruling is the viewer's — `false` **and** `null`. Unknown rendered
+      // as permitted is a guess in the direction §8 I9 forbids, and §1l's
+      // sentence is true either way: it names the party the wire says holds
+      // it, and says only they can answer.
+      heldElsewhereSentence:
+        answered || viewerIsHolder === true
+          ? null
+          : `This ruling is held on ${heldOnLabel(decision.heldOn, input)}, so only they can answer it. You can read it here.`,
+      answerChoiceWord,
+      // Read off the answer's own signed record, never off the request: a
+      // condition is something the *ruling* said. Null while the row is open.
+      answerCondition: answered
+        ? answerConditionFor(answerBodies, answers, decision.answerId)
+        : null,
+      channelRef: input.channelRef ?? null,
+      sessionRef: input.sessionRef ?? null,
+      genesisRef: input.genesisRef ?? null,
       state: (answered ? "answered" : "open") as "open" | "answered",
       stateWord: answered
         ? `Answered by ${heldOnLabel(
@@ -259,12 +400,11 @@ export function deriveDecisions(input: CodingSessionMissionInspectorInput): {
               blocks.length === 1 ? "" : "s"
             }: ${blocks.join(", ")}`,
       blocks,
-      askedAtMs: request ? request.createdAt * 1000 : null,
-      // Read off the answer's own signed row, never off the request: a
-      // condition is something the *ruling* said. Null while the row is open;
-      // `unknown` when the answer's row aged out of the bounded window, which
-      // is a different fact from "named no class" (REVIEW-L7 F10).
-      condition: answered ? answerCondition(answers, decision.answerId) : null,
+      askedAtMs: requestBody
+        ? requestBody.createdAt * 1000
+        : request
+          ? request.createdAt * 1000
+          : null,
     };
   });
   rows.sort((left, right) => {

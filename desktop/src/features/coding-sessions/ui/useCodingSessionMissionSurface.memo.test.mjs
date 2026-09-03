@@ -62,11 +62,25 @@ const PROPS = (() => {
 })();
 
 test("F6: the Mission model does not re-derive when nothing about the umbrella moved", async () => {
+  const React = (await import("react")).default;
   const { act, renderHook } = await import("@testing-library/react");
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
   const { useCodingSessionMissionSurface } = await import(
     "./useCodingSessionMissionSurface.tsx"
   );
-  const view = renderHook(() => useCodingSessionMissionSurface(PROPS));
+  // L8.3 wired `useIdentityQuery` into this hook, so it now needs a
+  // `QueryClientProvider` in scope the same way every other React-Query-backed
+  // hook test in this feature does.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const wrapper = ({ children }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+  const view = renderHook(() => useCodingSessionMissionSurface(PROPS), {
+    wrapper,
+  });
   const first = {
     missionState: view.result.current.missionState,
     wakeOperations: view.result.current.wakeOperations,

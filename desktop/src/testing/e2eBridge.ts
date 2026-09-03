@@ -540,6 +540,19 @@ type E2eConfig = {
     codingSessionPolicyFoldResponse?: Record<string, unknown>;
     /** Canonical buzz-core adapter response for the kind-44246 fold (L5). */
     codingSessionObservationFoldResponse?: Record<string, unknown>;
+    /** Canonical buzz-core adapter response for the verdict-gated land rule. */
+    codingSessionLandResponse?: Record<string, unknown>;
+    /** Which optional keys the native 44244 builder reports it accepts. */
+    codingSessionTeamTransactionCapabilities?: Record<string, unknown>;
+    /**
+     * Kinds the mock relay refuses, with the words it refuses them in.
+     *
+     * A surface that prints the relay's own refusal can only be tested against
+     * a relay that actually refuses something; without this a "rejected
+     * publish" scenario has to fake the error somewhere upstream, which tests
+     * the fake rather than the path.
+     */
+    rejectPublishedKinds?: { kind: number; message: string }[];
     /** Delay (ms) applied to `start_pairing` so pairing loading UI is observable. */
     pairingStartDelayMs?: number;
     /**
@@ -1639,6 +1652,12 @@ let mockCodingSessionTeamFoldResponse: Record<string, unknown> | null = null;
 let mockCodingSessionPolicyFoldResponse: Record<string, unknown> | null = null;
 let mockCodingSessionObservationFoldResponse: Record<string, unknown> | null =
   null;
+let mockCodingSessionLandResponse: Record<string, unknown> | null = null;
+let mockCodingSessionTeamTransactionCapabilities: Record<
+  string,
+  unknown
+> | null = null;
+let mockRejectPublishedKinds: { kind: number; message: string }[] = [];
 
 // ── get_event defer/release seam ────────────────────────────────────────────
 // When `window.__BUZZ_E2E_DEFER_GET_EVENT__` is set to a target event ID,
@@ -10394,6 +10413,14 @@ function sendToMockSocket(args: {
   if (type === "EVENT") {
     const event = rest[0] as RelayEvent;
 
+    const refused = mockRejectPublishedKinds.find(
+      (rule) => rule.kind === event.kind,
+    );
+    if (refused) {
+      sendWsText(socket.handler, ["OK", event.id, false, refused.message]);
+      return;
+    }
+
     if (event.kind === 28936) {
       sendWsText(socket.handler, ["OK", event.id, true, ""]);
       return;
@@ -10632,6 +10659,16 @@ export function maybeInstallE2eTauriMocks() {
     ?.codingSessionObservationFoldResponse
     ? structuredClone(config.mock.codingSessionObservationFoldResponse)
     : null;
+  mockCodingSessionLandResponse = config.mock?.codingSessionLandResponse
+    ? structuredClone(config.mock.codingSessionLandResponse)
+    : null;
+  mockCodingSessionTeamTransactionCapabilities = config.mock
+    ?.codingSessionTeamTransactionCapabilities
+    ? structuredClone(config.mock.codingSessionTeamTransactionCapabilities)
+    : null;
+  mockRejectPublishedKinds = config.mock?.rejectPublishedKinds
+    ? structuredClone(config.mock.rejectPublishedKinds)
+    : [];
 
   mockClosedChannelLiveSubscription = false;
   mockWebsocketUnavailable = false;
@@ -13926,6 +13963,71 @@ export function maybeInstallE2eTauriMocks() {
           );
         }
         return activeConfig?.mock?.relaySelf ?? null;
+      // L8: the founder's 44244 build boundary. Only the capability probe is
+      // mocked, and it reports what this base's real `buzz-core` reports —
+      // `condition` is not on the wire until lane L7 lands, so the form does
+      // not offer the field and says so. A mock that claimed `true` would
+      // paint a control the relay would refuse.
+      case "coding_session_team_transaction_capabilities": {
+        return (
+          mockCodingSessionTeamTransactionCapabilities ?? {
+            schema: "buzz-coding-session-team-transaction-adapter/v1",
+            implementation: "buzz-core",
+            choiceMaxBytes: 2048,
+            noteMaxBytes: 8192,
+            conditionMaxBytes: 512,
+            supportsDecisionAnswerCondition: false,
+          }
+        );
+      }
+      // L8: the native 44244 builder. The real command is `buzz-sdk`'s own
+      // envelope builder over `buzz-core`'s strict decoder; the mock echoes
+      // the caller's object as `content` and rebuilds the same five tags, so
+      // the *path* under test — build, keyring sign, relay publish — is the
+      // real one end to end even though the bytes are not core's.
+      case "build_coding_session_team_transaction_event": {
+        const request = (payload as { request: Record<string, unknown> })
+          .request;
+        const transaction = request.transaction as Record<string, unknown>;
+        return {
+          schema: "buzz-coding-session-team-transaction-adapter/v1",
+          implementation: "buzz-core",
+          kind: 44244,
+          content: JSON.stringify(transaction),
+          tags: [
+            ["h", request.channelRef],
+            ["d", transaction.sessionRef],
+            ["cstx-v", "buzz-coding-session-team-transaction/v1"],
+            ["cstx-genesis", transaction.genesisRef],
+            ["cstx-type", transaction.type],
+          ],
+          record: {
+            sessionRef: transaction.sessionRef,
+            genesisRef: transaction.genesisRef,
+            type: transaction.type,
+            body: transaction.body,
+          },
+        };
+      }
+      // L8: the verdict-gated land rule. The real command runs buzz-core's own
+      // predicate; a spec pins the answer so the four states it produces can
+      // each be seen. With nothing configured the mock answers what a surface
+      // holding no repository record gets — which is this build's real case.
+      case "coding_session_land": {
+        return (
+          mockCodingSessionLandResponse ?? {
+            schema: "buzz-coding-session-land-adapter/v1",
+            implementation: "buzz-core",
+            repositoryKnown: false,
+            ruleGoverns: false,
+            admitted: false,
+            evidence: null,
+            refusalReason: null,
+            newestVerdict: null,
+            command: null,
+          }
+        );
+      }
       case "fold_coding_session_team_transactions": {
         const response = mockCodingSessionTeamFoldResponse;
         if (!response) {

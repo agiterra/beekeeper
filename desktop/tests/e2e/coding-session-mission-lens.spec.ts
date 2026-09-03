@@ -450,6 +450,10 @@ function governedMissionEvents(
         founderPubkey: FOUNDER,
         authorityHeadEventId: grant.id,
         authorityHeadSeq: 1,
+        // L8.3: the adapter echoes the `verifierRequired` it was asked
+        // with, and the decoder requires the key. This fixture reads no
+        // policy, so it asks with `false` and is echoed `false`.
+        verifierRequired: false,
       },
       includedEventIds: inputEventIds,
       excluded: [],
@@ -2050,20 +2054,25 @@ test("L2: the rail says who is waiting and lists every ruling", async ({
   await expect(inspector).toBeVisible({ timeout: 15_000 });
 
   // No lead seat holds an open turn in this fixture, so waiting IS the state.
+  // `asFounder: true` makes the viewer's own identity the umbrella's founder
+  // (see the option's own doc comment above), so once L8 wired the surface's
+  // real `currentUserPubkey` through, `heldOnLabel` correctly reads every one
+  // of these as first person rather than naming the founder in the third
+  // person — the viewer IS the founder in this fixture.
   const state = page.getByTestId("mission-state-summary");
   await expect(state).toHaveAttribute("data-mission-waiting", "state-line");
-  await expect(state).toContainText("Waiting on the founder");
+  await expect(state).toContainText("Waiting on you");
 
   const rows = page.getByTestId("mission-decision-row");
   await expect(rows).toHaveCount(2);
   // Open first, then the answered one.
   await expect(rows.first()).toHaveAttribute("data-decision-state", "open");
-  await expect(rows.first()).toContainText("Open · held on the founder");
+  await expect(rows.first()).toContainText("Open · held on you");
   await expect(rows.first()).toContainText(
     `holds up 1 assignment: ${assignment.id.slice(0, 8)}`,
   );
   await expect(rows.last()).toHaveAttribute("data-decision-state", "answered");
-  await expect(rows.last()).toContainText("Answered by the founder");
+  await expect(rows.last()).toContainText("Answered by you");
   // `blocks: []` is a real answer from the fold, never a blank.
   await expect(rows.last()).toContainText("holds up no assignment yet");
   await expect(rows.last()).toContainText(request.id.slice(0, 8));

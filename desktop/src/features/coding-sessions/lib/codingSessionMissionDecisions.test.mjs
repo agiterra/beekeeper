@@ -536,3 +536,214 @@ test("F13: a very long question is bounded on the row", () => {
   );
   assert.ok(model.decisions[0].question.endsWith("…"));
 });
+
+// ── L8: the row an Answer control needs ──────────────────────────────────────
+
+test("L8.1: a row carries the request's own declared options, and invents none", () => {
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({
+      decisions: [
+        {
+          requestId: REQUEST_FOUNDER,
+          heldOn: "founder",
+          blocks: [],
+          answeredBy: null,
+          answerId: null,
+        },
+        {
+          requestId: REQUEST_ACTOR,
+          heldOn: BUILDER,
+          blocks: [ASSIGNMENT],
+          answeredBy: null,
+          answerId: null,
+        },
+      ],
+      channelRef: "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86",
+      sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+      genesisRef: "ab".repeat(32),
+      currentUserPubkey: FOUNDER,
+      founderPubkey: FOUNDER,
+      decisionRequests: [
+        {
+          requestId: REQUEST_FOUNDER,
+          question: "Should the JSON also carry the seat role?",
+          options: ["yes", "no", "only for leads"],
+          recommendation: "yes",
+          createdAt: ASKED_AT,
+        },
+        {
+          requestId: REQUEST_ACTOR,
+          question: "Rebase or merge?",
+          options: [],
+          recommendation: null,
+          createdAt: ASKED_AT,
+        },
+      ],
+    }),
+  );
+  const founderRow = model.decisions.find(
+    (row) => row.requestId === REQUEST_FOUNDER,
+  );
+  assert.deepEqual(founderRow.options, ["yes", "no", "only for leads"]);
+  assert.equal(founderRow.recommendation, "yes");
+  assert.equal(founderRow.channelRef, "e0d3f1b8-8c66-4c62-9ef1-3fa933b32f86");
+
+  const actorRow = model.decisions.find(
+    (row) => row.requestId === REQUEST_ACTOR,
+  );
+  // `options: []` is a real answer from the wire, not a gap: the form offers
+  // free text alone rather than inventing buttons the asker never wrote.
+  assert.deepEqual(actorRow.options, []);
+});
+
+test("L8.1: a row held on somebody else disables with §1l's sentence, and is never hidden", () => {
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({
+      decisions: [
+        {
+          requestId: REQUEST_FOUNDER,
+          heldOn: "founder",
+          blocks: [],
+          answeredBy: null,
+          answerId: null,
+        },
+        {
+          requestId: REQUEST_ACTOR,
+          heldOn: BUILDER,
+          blocks: [ASSIGNMENT],
+          answeredBy: null,
+          answerId: null,
+        },
+      ],
+      currentUserPubkey: FOUNDER,
+      founderPubkey: FOUNDER,
+      resolveActorLabel: (pubkey) => (pubkey === BUILDER ? "Bob" : null),
+    }),
+  );
+  const founderRow = model.decisions.find(
+    (row) => row.requestId === REQUEST_FOUNDER,
+  );
+  assert.equal(founderRow.viewerIsHolder, true);
+  assert.equal(founderRow.heldElsewhereSentence, null);
+
+  const actorRow = model.decisions.find(
+    (row) => row.requestId === REQUEST_ACTOR,
+  );
+  assert.equal(actorRow.viewerIsHolder, false);
+  assert.equal(
+    actorRow.heldElsewhereSentence,
+    "This ruling is held on Bob, so only they can answer it. You can read it here.",
+  );
+  // The row is still in the queue — disabled, never hidden.
+  assert.ok(model.decisions.some((row) => row.requestId === REQUEST_ACTOR));
+});
+
+test("L8.1: a viewer this surface cannot name is not permitted — unknown disables (F9)", () => {
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({
+      decisions: [
+        {
+          requestId: REQUEST_FOUNDER,
+          heldOn: "founder",
+          blocks: [],
+          answeredBy: null,
+          answerId: null,
+        },
+        {
+          requestId: REQUEST_ACTOR,
+          heldOn: BUILDER,
+          blocks: [ASSIGNMENT],
+          answeredBy: null,
+          answerId: null,
+        },
+      ],
+      currentUserPubkey: null,
+      founderPubkey: FOUNDER,
+    }),
+  );
+  for (const row of model.decisions) {
+    // The third state survives on the model — this surface does not know.
+    assert.equal(row.viewerIsHolder, null);
+    // REVIEW-L8 F9: and unknown is not rendered as permitted. §1l's sentence
+    // prints, naming the party the wire says holds the ruling, and the form
+    // disables. Rendering an enabled control here would be a guess in the one
+    // direction §8 I9 forbids.
+    assert.match(
+      row.heldElsewhereSentence,
+      /^This ruling is held on .+, so only they can answer it\. You can read it here\.$/,
+    );
+  }
+});
+
+test("L8.4: an answered row reads its choice and its condition, and discloses the clamp", () => {
+  const long = `every commit on lane/batch3-l8-founder that ${"keeps the gate green ".repeat(20)}`;
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({
+      decisions: [
+        {
+          requestId: REQUEST_FOUNDER,
+          heldOn: "founder",
+          blocks: [],
+          answeredBy: FOUNDER,
+          answerId: ANSWER_FOUNDER,
+        },
+      ],
+      currentUserPubkey: FOUNDER,
+      founderPubkey: FOUNDER,
+      decisionRequests: [
+        {
+          requestId: REQUEST_FOUNDER,
+          question: "Should the JSON also carry the seat role?",
+          options: ["yes", "no", "only for leads"],
+          recommendation: null,
+          createdAt: ASKED_AT,
+        },
+      ],
+      decisionAnswers: [
+        {
+          answerId: ANSWER_FOUNDER,
+          requestRef: REQUEST_FOUNDER,
+          choice: 2,
+          note: null,
+          condition: long,
+        },
+      ],
+    }),
+  );
+  const row = model.decisions.find((r) => r.requestId === REQUEST_FOUNDER);
+  assert.equal(row.state, "answered");
+  // The index is resolved through the *request's* own options.
+  assert.equal(row.answerChoiceWord, "only for leads");
+  assert.equal(row.answerCondition.text.length, 200);
+  assert.ok(row.answerCondition.truncated > 0);
+});
+
+test("L8.4: an answer with no condition renders none, and absent is never blank", () => {
+  const model = deriveCodingSessionMissionInspectorModel(
+    baseInput({
+      decisions: [
+        {
+          requestId: REQUEST_FOUNDER,
+          heldOn: "founder",
+          blocks: [],
+          answeredBy: FOUNDER,
+          answerId: ANSWER_FOUNDER,
+        },
+      ],
+      currentUserPubkey: FOUNDER,
+      founderPubkey: FOUNDER,
+      decisionAnswers: [
+        {
+          answerId: ANSWER_FOUNDER,
+          requestRef: REQUEST_FOUNDER,
+          choice: "rebase onto main first",
+          note: null,
+          condition: null,
+        },
+      ],
+    }),
+  );
+  const row = model.decisions.find((r) => r.requestId === REQUEST_FOUNDER);
+  assert.equal(row.answerCondition, null);
+  assert.equal(row.answerChoiceWord, "rebase onto main first");
+});

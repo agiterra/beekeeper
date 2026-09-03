@@ -66,6 +66,13 @@ function retainedEventCount(store: CodingSessionMissionEvidenceStore): number {
 export function useCodingSessionMissionEvidence(
   scope: CodingSessionMissionEvidenceScope | null,
   client: CodingSessionMissionEvidenceClient = defaultRelayClient,
+  /**
+   * L8.3: the umbrella's `gates.verifierRequired` from the surface's own
+   * policy read (`codingSessionPolicy.ts:91`), or `null` while unknown / no
+   * 44245 reached this view. Handed straight to the native fold — see
+   * `withVerifierRequired` in `codingSessionMissionEvidenceModel.ts`.
+   */
+  verifierRequired: boolean | null = null,
 ): CodingSessionMissionEvidenceResult {
   const channelRef = scope?.channelRef ?? null;
   const sessionRef = scope?.sessionRef ?? null;
@@ -164,6 +171,7 @@ export function useCodingSessionMissionEvidence(
           scope: stableScope,
           relayPubkey,
           snapshot: store.snapshot(),
+          verifierRequired,
         });
         if (cancelled || revision !== projectionRevision) return;
         initialLoad = false;
@@ -256,7 +264,12 @@ export function useCodingSessionMissionEvidence(
       projectionRevision += 1;
       for (const unsubscribe of unsubscribes) unsubscribe();
     };
-  }, [client, runIdentity, stableScope]);
+    // `verifierRequired` typically resolves after this effect's own history
+    // read (it comes from a sibling policy read), so it is a real dependency:
+    // when it changes from `null` (unknown) to the record's actual value, the
+    // whole read reruns once so the native fold sees it rather than folding
+    // with a stale `false` for the surface's whole lifetime (L8.3).
+  }, [client, runIdentity, stableScope, verifierRequired]);
 
   if (state.identity !== runIdentity) {
     return {

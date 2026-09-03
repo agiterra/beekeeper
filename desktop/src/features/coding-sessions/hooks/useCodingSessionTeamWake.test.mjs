@@ -294,6 +294,10 @@ function foldResponse(request) {
       founderPubkey: request.context.founderPubkey,
       authorityHeadEventId: request.context.authorityHeadEventId,
       authorityHeadSeq: request.context.authorityHeadSeq,
+      // L8.3: the adapter echoes the `verifierRequired` it was asked with, and
+      // the decoder requires every key. A caller that read no policy asks with
+      // `false`, so that is what a fixture asking with none is echoed.
+      verifierRequired: false,
     },
     includedEventIds: [...request.inputEventIds],
     excluded: [],

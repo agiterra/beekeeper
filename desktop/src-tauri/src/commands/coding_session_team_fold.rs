@@ -158,6 +158,13 @@ pub struct CodingSessionTeamFoldAdapterContextEcho {
     pub authority_head_event_id: Option<String>,
     /// Accepted authority-chain sequence; zero exactly before the first link.
     pub authority_head_seq: u32,
+    /// The `verifierRequired` this fold was asked with, echoed verbatim.
+    ///
+    /// Required, like the request field it echoes: a caller that has not read
+    /// the policy set says `false` on purpose. Echoed so a caller can prove
+    /// the value reached this boundary and was folded with, instead of
+    /// trusting that it did.
+    pub verifier_required: bool,
 }
 
 impl From<&CodingSessionTeamFoldAdapterContext> for CodingSessionTeamFoldAdapterContextEcho {
@@ -169,6 +176,7 @@ impl From<&CodingSessionTeamFoldAdapterContext> for CodingSessionTeamFoldAdapter
             founder_pubkey: value.founder_pubkey.clone(),
             authority_head_event_id: value.authority_head_event_id.clone(),
             authority_head_seq: value.authority_head_seq,
+            verifier_required: value.verifier_required,
         }
     }
 }

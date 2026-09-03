@@ -306,6 +306,18 @@ export async function projectCodingSessionMissionEvidence(input: {
   scope: CodingSessionMissionEvidenceScope;
   relayPubkey: string;
   snapshot: CodingSessionMissionEvidenceSnapshot;
+  /**
+   * The umbrella's `gates.verifierRequired`, from the surface's own policy
+   * record — or `null` when **no** 44245 reached this view.
+   *
+   * Unknown is not false: `null` crosses the Tauri boundary **as null**, and
+   * the adapter echoes it back, so "nobody told us" and "the policy says no"
+   * stay distinguishable on the wire. The surface, not this layer, renders
+   * the disclosure (§1l).
+   */
+  verifierRequired?: boolean | null;
+  /** The native fold, injected only where a test cannot reach Tauri. */
+  foldTransactions?: typeof invokeCodingSessionTeamFold;
 }): Promise<CodingSessionMissionEvidenceProjection> {
   if (input.snapshot.overflowed) {
     throw new Error(
@@ -342,12 +354,20 @@ export async function projectCodingSessionMissionEvidence(input: {
       });
     }
   }
-  const nativeFold = await invokeCodingSessionTeamFold({
+  const foldTransactions =
+    input.foldTransactions ?? invokeCodingSessionTeamFold;
+  const nativeFold = await foldTransactions({
     channelRef: input.scope.channelRef,
     sessionRef: input.scope.sessionRef,
     genesisRef: input.scope.genesisRef,
     authority: authority.value,
     verifiedTransactions,
+    // Unknown folds as `false`, which is what the native field requires of a
+    // caller that has not read a policy: the fold then behaves exactly as it
+    // did before the field existed. The *difference* between "no record
+    // reached us" and "the policy says no" is kept for the state panel, which
+    // has its own sentence for it — it is not this fold's to guess.
+    verifierRequired: input.verifierRequired ?? false,
   });
   const projected = projectNativeTeamFoldToMissionInspector({ nativeFold });
   if (projected.rejectedEventCount === null) {

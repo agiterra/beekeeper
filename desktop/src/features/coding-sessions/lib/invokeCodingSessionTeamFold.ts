@@ -30,6 +30,15 @@ export type CodingSessionNativeTeamFoldResponse = {
     readonly founderPubkey: string;
     readonly authorityHeadEventId: string | null;
     readonly authorityHeadSeq: number;
+    /**
+     * The `verifierRequired` this fold was asked with, echoed by the adapter.
+     *
+     * Present so a caller can prove the value crossed the boundary rather than
+     * being dropped in TypeScript — `bindResponse` refuses a response whose
+     * echo disagrees. The native field is required, so a caller that supplied
+     * none is echoed `false`, the same answer it was folded with.
+     */
+    readonly verifierRequired: boolean;
   };
   readonly includedEventIds: readonly string[];
   readonly excluded: readonly {
@@ -198,6 +207,7 @@ function isContext(
         "founderPubkey",
         "authorityHeadEventId",
         "authorityHeadSeq",
+        "verifierRequired",
       ],
     ]) &&
     isString(value.channelRef) &&
@@ -206,7 +216,8 @@ function isContext(
     isEventId(value.founderPubkey) &&
     isNullableEventId(value.authorityHeadEventId) &&
     Number.isSafeInteger(value.authorityHeadSeq) &&
-    (value.authorityHeadSeq as number) >= 0
+    (value.authorityHeadSeq as number) >= 0 &&
+    typeof value.verifierRequired === "boolean"
   );
 }
 
@@ -521,7 +532,8 @@ function bindResponse(input: {
  * signed inputs. TypeScript checks transport shape, echo, and provenance only;
  * semantic correctness belongs exclusively to the named Rust implementation.
  */
-export async function invokeCodingSessionTeamFold(input: {
+/** Everything one native fold is asked about. */
+export type CodingSessionTeamFoldInput = {
   channelRef: string;
   sessionRef: string;
   genesisRef: string;
@@ -531,14 +543,60 @@ export async function invokeCodingSessionTeamFold(input: {
    * Whether this umbrella's newest accepted kind-44245 policy sets
    * `gates.verifierRequired`.
    *
-   * Optional at this boundary and `false` when omitted, which is what every
-   * caller passes until the policy hook is wired through: with `false` the
-   * native fold behaves exactly as it did before the field existed. `false`
-   * is **not** a claim that no verifier is required — a surface that has not
-   * read the policy says so in its own words rather than rendering this.
+   * Optional at this boundary and `false` when omitted, because the native
+   * fold's field is required: a caller that has not read the policy set says
+   * `false` on purpose. `false` is **not** a claim that no verifier is
+   * required — a surface that has not read the policy says so in its own
+   * words rather than rendering this. The native fold reads it (L7) and the
+   * adapter echoes it back, so a caller can prove what it asked with.
    */
   verifierRequired?: boolean;
-}): Promise<NativeCodingSessionTeamFold> {
+};
+
+/**
+ * The exact request object this boundary sends.
+ *
+ * Exported so a test can assert what actually crosses the Tauri boundary
+ * without stubbing the boundary: fix round 1's L8.3 tests asserted against an
+ * injected fake and were green while the key was being dropped here
+ * (REVIEW-L8 F5).
+ */
+export function buildCodingSessionTeamFoldRequest(input: {
+  channelRef: string;
+  sessionRef: string;
+  genesisRef: string;
+  authority: CodingSessionMissionAuthorityProjection;
+  inputEventIds: readonly string[];
+  events: readonly ImmutableCodingSessionTeamWireEvent[];
+  verifierRequired?: boolean;
+}) {
+  return Object.freeze({
+    schema: CODING_SESSION_TEAM_FOLD_REQUEST_SCHEMA,
+    context: Object.freeze({
+      channelRef: input.channelRef,
+      sessionRef: input.sessionRef,
+      genesisRef: input.genesisRef,
+      founderPubkey: input.authority.founderPubkey,
+      authorityHeadEventId: input.authority.headEventId,
+      authorityHeadSeq: input.authority.headSeq,
+      activeSeats: Object.freeze(
+        input.authority.activeSeats.map((seat) => Object.freeze({ ...seat })),
+      ),
+      activeGrants: Object.freeze(
+        input.authority.activeGrants.map((grant) =>
+          Object.freeze({ ...grant }),
+        ),
+      ),
+      verifierRequired: input.verifierRequired ?? false,
+    }),
+    inputEventIds: Object.freeze([...input.inputEventIds]),
+    events: input.events,
+  });
+}
+
+export async function invokeCodingSessionTeamFold(
+  input: CodingSessionTeamFoldInput,
+): Promise<NativeCodingSessionTeamFold> {
   if (
     input.authority.channelRef !== input.channelRef ||
     input.authority.genesisRef !== input.genesisRef ||
@@ -572,27 +630,14 @@ export async function invokeCodingSessionTeamFold(input: {
     );
   }
   const immutableWireEvents = Object.freeze([...wireEvents]);
-  const request = Object.freeze({
-    schema: CODING_SESSION_TEAM_FOLD_REQUEST_SCHEMA,
-    context: Object.freeze({
-      channelRef: input.channelRef,
-      sessionRef: input.sessionRef,
-      genesisRef: input.genesisRef,
-      founderPubkey: input.authority.founderPubkey,
-      authorityHeadEventId: input.authority.headEventId,
-      authorityHeadSeq: input.authority.headSeq,
-      verifierRequired: input.verifierRequired ?? false,
-      activeSeats: Object.freeze(
-        input.authority.activeSeats.map((seat) => Object.freeze({ ...seat })),
-      ),
-      activeGrants: Object.freeze(
-        input.authority.activeGrants.map((grant) =>
-          Object.freeze({ ...grant }),
-        ),
-      ),
-    }),
-    inputEventIds: Object.freeze([...inputEventIds]),
+  const request = buildCodingSessionTeamFoldRequest({
+    channelRef: input.channelRef,
+    sessionRef: input.sessionRef,
+    genesisRef: input.genesisRef,
+    authority: input.authority,
+    inputEventIds,
     events: immutableWireEvents,
+    verifierRequired: input.verifierRequired,
   });
   const response = cloneAndFreezeNativeResponse(
     decodeNativeResponse(
@@ -607,6 +652,14 @@ export async function invokeCodingSessionTeamFold(input: {
     genesisRef: input.genesisRef,
     authority: input.authority,
   });
+  // The echo is the proof the value crossed, not an ornament: an adapter that
+  // silently dropped it would answer with `null` and this throws rather than
+  // letting a caller believe the fold was asked something it was not.
+  if (response.context.verifierRequired !== (input.verifierRequired ?? false)) {
+    throw new Error(
+      "native coding-session team fold echoed a different verifierRequired than it was asked with",
+    );
+  }
   const result = Object.freeze({
     fold: response,
     wireEvents: immutableWireEvents,

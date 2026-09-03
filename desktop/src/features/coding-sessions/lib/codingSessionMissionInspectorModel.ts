@@ -14,9 +14,13 @@ import {
   deriveFiles,
 } from "./codingSessionMissionInspectorBounds";
 import type { CodingSessionGoalDisagreement } from "./codingSessionMissionGoal";
+import type { CodingSessionMissionLandModel } from "./codingSessionMissionLand";
+import type { ImmutableCodingSessionTeamWireEvent } from "./invokeCodingSessionTeamFold";
 import {
   deriveDecisions,
+  type CodingSessionMissionDecisionAnswerInput,
   type CodingSessionMissionDecisionInput,
+  type CodingSessionMissionDecisionRequestInput,
   type CodingSessionMissionDecisionModel,
   type CodingSessionMissionWaitingModel,
   type CodingSessionMissionWaitingOnDecisionInput,
@@ -40,6 +44,12 @@ import type {
   CodingSessionMissionTruncation,
 } from "./codingSessionMissionInspectorBounds";
 import { MISSION_INSPECTOR_LIMITS } from "./codingSessionMissionInspectorBounds";
+
+/** The fold's own included set and the signed events it was folded from. */
+export type CodingSessionMissionLandEvidenceInput = {
+  includedEventIds: readonly string[];
+  wireEvents: readonly ImmutableCodingSessionTeamWireEvent[];
+};
 
 export type CodingSessionMissionGoalInput =
   | { kind: "absent" }
@@ -219,6 +229,41 @@ export type CodingSessionMissionInspectorInput = {
   /** The fold's `waitingOnDecision`; null is a folded "nothing is waiting". */
   waitingOnDecision?: CodingSessionMissionWaitingOnDecisionInput | null;
   /**
+   * The signed `decision.request` bodies behind those rows.
+   *
+   * The queue needs the request's own declared options to offer buttons, and a
+   * stream summary has never carried them.
+   */
+  decisionRequests?: readonly CodingSessionMissionDecisionRequestInput[];
+  /** The signed `decision.answer` bodies, for an answered row's own words. */
+  decisionAnswers?: readonly CodingSessionMissionDecisionAnswerInput[];
+  /**
+   * The umbrella this surface is showing, so the Answer control can publish
+   * without a second source of truth about which session it is in.
+   */
+  channelRef?: string | null;
+  sessionRef?: string | null;
+  genesisRef?: string | null;
+  /**
+   * The signed events and the fold's included set, for the push path's rule.
+   *
+   * Absent when no fold ran. Nothing in TypeScript reads inside these — they
+   * are handed to `coding_session_land` and the rule answers.
+   */
+  landEvidence?: CodingSessionMissionLandEvidenceInput;
+  /**
+   * What the push path's rule said about landing this mission, or null when
+   * this surface did not ask. Computed by `useCodingSessionMissionLand`.
+   */
+  land?: CodingSessionMissionLandModel | null;
+  /**
+   * Whether a kind:44245 record reached this view at all.
+   *
+   * Absent or false is disclosed rather than folded into "no requirement":
+   * unknown is not the same fact as a policy that set none (§1l).
+   */
+  policyRecordKnown?: boolean;
+  /**
    * Whether the lead seat has an open turn right now.
    *
    * The one input to the waiting state this surface owns rather than reads:
@@ -340,6 +385,17 @@ export type CodingSessionMissionInspectorModel = {
   decisionsKnown: boolean;
   /** The waiting-on-a-person fact, or null when nothing is waiting. */
   waiting: CodingSessionMissionWaitingModel | null;
+  /** What the push path's rule said about landing this mission, or null. */
+  land: CodingSessionMissionLandModel | null;
+  /**
+   * Whether the Rust fold excluded a `mission.completed` with L7's
+   * `completion_not_verified`.
+   *
+   * Read from the fold's own exclusion code, never decided here (I6).
+   */
+  completionNotVerified: boolean;
+  /** Whether a kind:44245 record reached this view. Unknown ≠ false (§1l). */
+  policyRecordKnown: boolean;
   usage: CodingSessionMissionUsageInput | null;
   integrity: {
     rejectedEventCount: number | null;
@@ -460,6 +516,13 @@ export function deriveCodingSessionMissionInspectorModel(
     ),
     missionState: deriveMissionState(input.missionState, truncations),
     ...deriveDecisions(input),
+    land: input.land ?? null,
+    // L8.3: the fold's own exclusion code, read verbatim. This layer never
+    // decides whether a completion was verified — L7's rule does, in Rust (I6).
+    completionNotVerified: input.rejectedReasons.some(
+      (reason) => reason.code === "completion_not_verified",
+    ),
+    policyRecordKnown: input.policyRecordKnown ?? false,
     usage: hasUsage(input.usage) ? { ...input.usage } : null,
     integrity: {
       rejectedEventCount:

@@ -35,6 +35,9 @@ import { deriveCodingSessionObservationView } from "@/features/coding-sessions/l
 import type { CodingSessionRouteGateRow } from "@/features/coding-sessions/lib/codingSessionRouteModel";
 import { useCodingSessionObservations } from "@/features/coding-sessions/hooks/useCodingSessionObservations";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { truncatePubkey } from "@/shared/lib/pubkey";
+import { useCodingSessionMissionLand } from "@/features/coding-sessions/hooks/useCodingSessionMissionLand";
 import { useCodingSessionSessionPolicy } from "@/features/coding-sessions/hooks/useCodingSessionSessionPolicy";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
@@ -144,7 +147,23 @@ export function useCodingSessionMissionSurface(input: {
       input.umbrella.sessionRef,
     ],
   );
-  const evidence = useCodingSessionMissionEvidence(scope);
+  // Item 107's owed reader. Scoped to the same channel/session/genesis/founder
+  // the fold uses, and read only while Mission is open — a one-shot read with
+  // a refresh, never a poll (I1). Read before `evidence` so its
+  // `gates.verifierRequired` (codingSessionPolicy.ts:91) can reach the native
+  // fold rather than folding with a permanent `false` (L8.3).
+  const policy = useCodingSessionSessionPolicy(scope);
+  // L8.3: the real `gates.verifierRequired`, and — separately — whether a
+  // 44245 reached this view at all. Unknown is not false: with no record the
+  // fold reads `false` exactly as it did before, and the state panel says so.
+  const policyRecordKnown = policy.fold?.selected != null;
+  const verifierRequired =
+    policy.fold?.selected?.record.gates?.verifierRequired ?? null;
+  const evidence = useCodingSessionMissionEvidence(
+    scope,
+    undefined,
+    verifierRequired,
+  );
   // The assignments a 44246 `assignmentRef` may resolve against, taken from
   // the Mission fold this surface already holds. Not re-fetched: the only
   // thing the observation fold does with a pointer is disclose the ones that
@@ -181,10 +200,37 @@ export function useCodingSessionMissionSurface(input: {
     knownAssignmentRefs,
     providerPubkeys,
   );
-  // Item 107's owed reader. Scoped to the same channel/session/genesis/founder
-  // the fold uses, and read only while Mission is open — a one-shot read with
-  // a refresh, never a poll (I1).
-  const policy = useCodingSessionSessionPolicy(scope);
+  // The viewer's own key. §1l's Answer control is disabled for anyone who is
+  // not the party a ruling is held on, and §1f's `you` depends on it too;
+  // without it every row would read as somebody else's and every control
+  // would be enabled for everyone.
+  const viewerPubkey = useIdentityQuery().data?.pubkey ?? null;
+  // L8.2: the repository this session's creates actually named. One address
+  // or none — executions that disagree name no single repository, and the
+  // control then says the session names none rather than picking one (F4).
+  const repoRef = React.useMemo(() => {
+    const named = new Set(
+      input.umbrella.executions
+        .map((execution) => execution.activeGeneration.repoRef?.trim() ?? "")
+        .filter((ref) => ref.length > 0),
+    );
+    return named.size === 1 ? [...named][0] : null;
+  }, [input.umbrella.executions]);
+  // L8.2: the push path's own rule, asked once per fold, over the repository's
+  // own kind:30617 when one is named and readable.
+  const land = useCodingSessionMissionLand({
+    founderPubkey: input.umbrella.founderPubkey,
+    genesisRef: input.umbrella.genesisRef,
+    landEvidence: evidence.inspectorInput.landEvidence,
+    repoRef,
+    resolveWho: (pubkey) =>
+      pubkey.trim().toLowerCase() ===
+      (input.umbrella.founderPubkey ?? "").trim().toLowerCase()
+        ? "the founder"
+        : (input.resolveActorName(pubkey) ?? truncatePubkey(pubkey)),
+    sessionRef: input.umbrella.sessionRef,
+    viewerPubkey,
+  });
   // The same case-folded selection the workspace made, applied again here so
   // this surface trusts a goal for the reasons it can check rather than on
   // three exact-equality comparisons that finding 23 showed can each miss.
@@ -278,12 +324,18 @@ export function useCodingSessionMissionSurface(input: {
             },
           }
         : {}),
+      currentUserPubkey: viewerPubkey,
       founderPubkey: input.umbrella.founderPubkey,
+      land,
       leadHasOpenTurn,
+      policyRecordKnown,
       resolveActorLabel: input.resolveActorName,
     }),
     [
       evidence.inspectorInput,
+      land,
+      policyRecordKnown,
+      viewerPubkey,
       contextLoads,
       input.observedChanges,
       input.participants,

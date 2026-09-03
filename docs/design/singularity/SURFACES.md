@@ -2551,3 +2551,74 @@ findings and phase timings get **no** signs: they would flood the gutter L4
 made legible. A row with no signed `created_at` draws nothing — the rail never
 invents a moment — and a row signed by nobody on the map is off-road, never the
 founder's. Per-road limits and truncation are unchanged.
+
+## 25. 2026-09-02 (batch 3, lane L8) — the founder's two acts leave the terminal
+
+Live run 2 had the founder answering three rulings from a terminal while the
+app that *showed* every question could do nothing about it. Live run 3 ended
+with a verifier's FAIL on the wire and the branch on `main` anyway. Two rulings
+follow, and one correction.
+
+**A screen that shows a ruling can take it.** Each open row of the decision
+queue carries an Answer control that publishes a real `decision.answer` down
+**the same path the launch uses for the 44245 policy**: a Rust command builds
+the exact unsigned event
+(`desktop/src-tauri/src/commands/coding_session_team_transaction.rs`), the
+desktop keyring signs **Rust's own serialization**, and the relay client
+publishes it. TypeScript never serializes a 44244 body, so a producer and a
+consumer that disagree about those bytes cannot survive one answer. The buttons
+are the request's **own** declared `options`, index for index; a request that
+declared none offers free text alone rather than inventing choices its asker
+never wrote. The control is **disabled with a sentence, never hidden**, when
+the viewer is not the party the ruling is held on:
+
+> This ruling is held on {Who}, so only they can answer it. You can read it here.
+
+And a publish is not an answer. Nothing reads `Answered` until a **fold**
+carrying the answer arrives; a rejected publish leaves the row `Open · held on
+…` and prints the relay's own words behind `The relay did not accept this
+answer: `. A queue that flipped on a resolved promise would be the same lie as
+a badge with no event behind it.
+
+**An optional key is offered only where the bytes can carry it.** §1k's
+`condition` (lane L7) reaches the wire through a capability the Rust side
+**measures** — it hands `buzz-core`'s own decoder a canonical answer carrying
+the key and reports whether it was accepted. Where it is, the form shows
+`Condition (optional)` with a byte counter and §1l's hint; where it is not, the
+field is absent and a sentence says so rather than leaving a reader to guess
+whether the feature exists. The day L7 lands, the field appears with no edit in
+this row. An answered row reads `Answered by {Who} · {choice} · condition:
+{text}`, the condition clamped at 200 characters with the remainder disclosed.
+
+**Land is copy-only, and that is a ruling, not an omission.** The Land control
+appears on a mission whose newest canonical approving disposition governs a
+report naming a `headSha` — and **only** when the push path's own predicate
+would admit `(refs/heads/main, HEAD, that sha)`. One function, three callers:
+the relay's pre-receive hook, `bee git check --ref`, and this screen. When the
+predicate refuses, the control **stays** and prints §1j's refusal string
+verbatim behind `Not ready to land: ` — a missing control would leave the
+founder guessing which of "not approved", "not read" and "not governed" they
+were looking at, and a paraphrase would drift from the words the relay will
+actually print at push time. A repository with no `require-verdict` rule says
+so and still shows the verdict it read; a view that holds **no** repository
+record says *that*, because unknown is not the same fact as ungoverned.
+
+The app never runs the push, for three reasons each disqualifying on its own,
+and they are in the copy a person reads rather than in a comment they never
+will: the push is irreversible and mutates a ref other people build on; the app
+holds no working tree and cannot know which checkout or worktree is meant, and
+the main checkout is hot; and `git-credential-nostr` lives in the founder's git
+config and shell, not in the Tauri process, so a push from here would fail on
+NIP-98 or — worse — succeed under a different identity. What the confirm step
+offers is the disposition and report that admit it, the exact command, and a
+Copy button. The command names the **commit**, never the branch: a branch name
+is not a commit, and two pushes to one branch are two commits of which one was
+ruled on.
+
+**Mission agrees with `bee` about a required verifier.** The fold call site
+supplies the real `gates.verifierRequired` instead of TypeScript's `false`
+default, and the state panel renders the `completion_not_verified` exclusion
+with the same sentence the CLI prints. Unknown ≠ false: a surface holding no
+44245 passes `false` — exactly as before — and says `No policy record reached
+this view, so the fold read no verifier requirement.` rather than implying none
+was set.

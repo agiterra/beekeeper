@@ -7,12 +7,14 @@ import {
   type CodingSessionMissionWaitingModel,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { CODING_SESSION_COMPLETION_REFUSED_STATE_LINE } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
+import type { CodingSessionMissionLandModel } from "@/features/coding-sessions/lib/codingSessionMissionLand";
 import {
   missionRowBodyClass,
   missionRowClass,
   missionRowMetaClass,
 } from "@/features/coding-sessions/lib/codingSessionMissionRowGrammar";
 import { cn } from "@/shared/lib/cn";
+import { CodingSessionMissionLandControl } from "./CodingSessionMissionLandControl";
 
 /** The four signed phases of one governed assignment, in order. */
 const PHASES = ["assigned", "reported", "ruled", "acknowledged"] as const;
@@ -72,12 +74,50 @@ export function codingSessionMissionPhase(
  * the mission is in, how far the governed handoff has got, and — when the
  * answer is "blocked" — what a person has to do about it.
  */
+/**
+ * §1l's sentence for a completion the fold excluded `completion_not_verified`.
+ *
+ * The same code string `bee` prints, never a paraphrase: a founder reading two
+ * different sentences for one exclusion has to work out whether they are the
+ * same fact, and the answer must never be "it depends which surface".
+ */
+export const CODING_SESSION_COMPLETION_NOT_VERIFIED_SENTENCE =
+  "Completed, but not verified: this session's policy requires a verifier's " +
+  "ruling and no active verifier has ruled on the approved report. The " +
+  "completion is not this mission's terminal until one does.";
+
+/** §1l's disclosure when no 44245 reached this view. Unknown ≠ false. */
+export const CODING_SESSION_NO_POLICY_RECORD_SENTENCE =
+  "No policy record reached this view, so the fold read no verifier requirement.";
+
 export function CodingSessionMissionStatePanel({
+  completionNotVerified = false,
+  land = null,
   nowMs = Date.now(),
+  policyRecordKnown = true,
   state,
   waiting = null,
   completionRefusedNoVerifier = false,
 }: {
+  /**
+   * Whether the Rust fold excluded a `mission.completed` with L7's
+   * `completion_not_verified`. Read from the fold's own `excluded[]` code;
+   * this panel never decides it (I6).
+   */
+  completionNotVerified?: boolean;
+  /**
+   * What the push path's rule says about landing this mission's commit, or
+   * null when this surface did not ask.
+   */
+  land?: CodingSessionMissionLandModel | null;
+  /**
+   * Whether a kind:44245 record reached this view at all.
+   *
+   * False is disclosed rather than folded into "no requirement": unknown is
+   * not the same fact as a policy that set none, and the fold that ran with
+   * `verifierRequired: false` did so because nothing told it otherwise.
+   */
+  policyRecordKnown?: boolean;
   /** The clock, read once at render — never a timer (I1). */
   nowMs?: number;
   state: CodingSessionMissionStateInput;
@@ -216,6 +256,27 @@ export function CodingSessionMissionStatePanel({
             "No canonical typed transaction establishes the current state. Silence is not completion."}
         </p>
       ) : null}
+      {/* L8.3: the fold's own `completion_not_verified`, in the same words the
+          CLI prints. It is a *state* fact, not a terminal — the completion is
+          on the wire and the fold refused it — so it sits under the state line
+          rather than replacing it. */}
+      {completionNotVerified ? (
+        <p
+          className={cn(missionRowBodyClass(), "mt-1.5 font-medium")}
+          data-testid="mission-completion-not-verified"
+        >
+          {CODING_SESSION_COMPLETION_NOT_VERIFIED_SENTENCE}
+        </p>
+      ) : null}
+      {policyRecordKnown ? null : (
+        <p
+          className={cn(missionRowMetaClass(), "mt-1")}
+          data-testid="mission-policy-record-unknown"
+        >
+          {CODING_SESSION_NO_POLICY_RECORD_SENTENCE}
+        </p>
+      )}
+      {land === null ? null : <CodingSessionMissionLandControl land={land} />}
     </div>
   );
 }

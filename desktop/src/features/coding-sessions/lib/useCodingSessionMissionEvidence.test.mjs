@@ -203,6 +203,11 @@ function nativeResponse(request) {
       founderPubkey: request.context.founderPubkey,
       authorityHeadEventId: request.context.authorityHeadEventId,
       authorityHeadSeq: request.context.authorityHeadSeq,
+      // L8.3: the adapter echoes the `verifierRequired` it was asked
+      // with, and the decoder requires the key. Echo it rather than
+      // restating a default, so this fixture cannot drift from the
+      // boundary it stands in for.
+      verifierRequired: request.context.verifierRequired,
     },
     includedEventIds: [...request.inputEventIds],
     excluded: [],

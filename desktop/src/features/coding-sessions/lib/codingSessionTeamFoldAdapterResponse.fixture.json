@@ -13,7 +13,8 @@
     "genesisRef": "abababababababababababababababababababababababababababababababab",
     "founderPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
     "authorityHeadEventId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-    "authorityHeadSeq": 4
+    "authorityHeadSeq": 4,
+    "verifierRequired": false
   },
   "includedEventIds": [
     "5cf1a7f9d895bc54bfda537c6d7a39db46e112caad3fae8d502cd1d675f0901e",

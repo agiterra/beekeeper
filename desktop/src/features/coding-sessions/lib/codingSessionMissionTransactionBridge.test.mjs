@@ -170,6 +170,10 @@ async function projectAcceptedNonterminal(events, assignments) {
         founderPubkey: FOUNDER,
         authorityHeadEventId: null,
         authorityHeadSeq: 0,
+        // L8.3: the adapter echoes the `verifierRequired` it was asked
+        // with, and the decoder requires the key. These callers read no
+        // policy, so they ask with `false` and are echoed `false`.
+        verifierRequired: false,
       },
       includedEventIds: inputEventIds,
       excluded: [],
@@ -466,6 +470,10 @@ test("native Rust-fold wrapper binds exact inputs before Mission projection", as
       founderPubkey: FOUNDER,
       authorityHeadEventId: null,
       authorityHeadSeq: 0,
+      // L8.3: the adapter echoes the `verifierRequired` it was asked
+      // with, and the decoder requires the key. These callers read no
+      // policy, so they ask with `false` and are echoed `false`.
+      verifierRequired: false,
     },
     includedEventIds: [assignment.id, report.id, blocked.id],
     excluded: [],
@@ -945,6 +953,10 @@ async function projectWithFold(events, foldOverrides) {
         founderPubkey: FOUNDER,
         authorityHeadEventId: null,
         authorityHeadSeq: 0,
+        // L8.3: the adapter echoes the `verifierRequired` it was asked
+        // with, and the decoder requires the key. These callers read no
+        // policy, so they ask with `false` and are echoed `false`.
+        verifierRequired: false,
       },
       includedEventIds: inputEventIds,
       excluded: [],
@@ -1104,6 +1116,10 @@ test("D-T9: the decoder requires the fold's unseatedReports field", async () => 
       founderPubkey: FOUNDER,
       authorityHeadEventId: null,
       authorityHeadSeq: 0,
+      // L8.3: the adapter echoes the `verifierRequired` it was asked
+      // with, and the decoder requires the key. These callers read no
+      // policy, so they ask with `false` and are echoed `false`.
+      verifierRequired: false,
     },
     includedEventIds: [assignmentEvent.id],
     excluded: [],

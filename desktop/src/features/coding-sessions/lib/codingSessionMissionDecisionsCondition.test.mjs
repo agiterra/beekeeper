@@ -98,7 +98,7 @@ test("an answered row carries the class the ruling covers", () => {
   );
   const [row] = model.decisions;
   assert.equal(row.state, "answered");
-  assert.equal(row.condition, CONDITION);
+  assert.deepEqual(row.answerCondition, { text: CONDITION, truncated: 0 });
 });
 
 test("a ruling that named no class carries none", () => {
@@ -107,7 +107,7 @@ test("a ruling that named no class carries none", () => {
       input({ condition }),
     );
     assert.equal(
-      model.decisions[0].condition,
+      model.decisions[0].answerCondition,
       null,
       `condition ${JSON.stringify(condition)} must read as none`,
     );
@@ -119,16 +119,18 @@ test("an open row never claims a condition, because nothing has ruled", () => {
     input({ condition: CONDITION, answered: false }),
   );
   assert.equal(model.decisions[0].state, "open");
-  assert.equal(model.decisions[0].condition, null);
+  assert.equal(model.decisions[0].answerCondition, null);
 });
 
 test("a long condition is bounded like the question beside it", () => {
   const model = deriveCodingSessionMissionInspectorModel(
     input({ condition: "x".repeat(400) }),
   );
-  const { condition } = model.decisions[0];
-  assert.equal(condition.length, 200);
-  assert.ok(condition.endsWith("…"));
+  const { answerCondition } = model.decisions[0];
+  assert.equal(answerCondition.text.length, 200);
+  assert.ok(answerCondition.text.endsWith("…"));
+  // I10: what was clamped is disclosed, never silently dropped.
+  assert.equal(answerCondition.truncated, 400 - 199);
 });
 
 test("an answer that fell outside the row bound reads unknown, not empty", () => {
@@ -147,7 +149,7 @@ test("an answer that fell outside the row bound reads unknown, not empty", () =>
   });
   const [row] = model.decisions;
   assert.equal(row.state, "answered");
-  assert.equal(row.condition, "unknown");
+  assert.equal(row.answerCondition, "unknown");
   // And the row still says who answered: the fold knows that without the row.
   assert.ok(row.stateWord.startsWith("Answered by"));
 });
@@ -159,5 +161,5 @@ test("a null answerId on an answered row is unknown, never a named class", () =>
     decisions: [{ ...base.decisions[0], answerId: null }],
   });
   // `answeredBy` without `answerId` cannot be checked against any row.
-  assert.equal(model.decisions[0].condition, "unknown");
+  assert.equal(model.decisions[0].answerCondition, "unknown");
 });

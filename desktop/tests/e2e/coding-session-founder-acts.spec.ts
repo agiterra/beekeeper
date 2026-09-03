@@ -1,0 +1,279 @@
+import { expect, test } from "@playwright/test";
+
+import { waitForAnimations } from "../helpers/animations";
+import {
+  BUILDER_ACTOR,
+  HEAD_SHA,
+  LAND_REFUSAL_NO_VERDICT,
+  founderActMission,
+  landReadyResponse,
+  landRefusedResponse,
+  openFounderActApp,
+  openMissionLens,
+} from "./helpers/codingSessionFounderActAssertions";
+
+/**
+ * The founder's two acts, on the screen that shows the facts they act on.
+ *
+ * Live run 2 had the founder answering three rulings from a terminal while this
+ * queue displayed every one of them. Live run 3 ended with a verifier's FAIL on
+ * the wire and the branch on `main` anyway. Every assertion below is against
+ * the real components, driven through the mock Tauri bridge and the mock relay
+ * — the publish path is the app's own build → keyring sign → relay publish.
+ */
+
+const SHOTS = "test-results/l8-founder-acts";
+
+test("L8.1: an open ruling held on the viewer carries its own options and the Answer control", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, { foldResponse: mission.foldResponse });
+  await openMissionLens(page, mission);
+
+  const founderRow = page
+    .getByTestId("mission-decision-row")
+    .filter({ hasText: "Land the commit now" });
+  await expect(founderRow).toHaveAttribute("data-decision-state", "open");
+  await expect(founderRow).toContainText("Open · held on you");
+
+  // The buttons are the request's own signed options, index for index.
+  const options = founderRow.getByTestId("decision-answer-option");
+  await expect(options).toHaveCount(3);
+  await expect(options.nth(0)).toHaveText("Land it now");
+  await expect(options.nth(2)).toHaveText(
+    "Hold until the relay carries the condition key",
+  );
+  await expect(options.nth(0)).toBeEnabled();
+  await expect(
+    founderRow.getByTestId("decision-answer-recommendation"),
+  ).toContainText("Asker recommends: Land it now");
+  await expect(founderRow.getByTestId("decision-answer-submit")).toBeVisible();
+
+  await founderRow.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await founderRow.screenshot({ path: `${SHOTS}/01-decision-answer-open.png` });
+});
+
+test("L8.1: a ruling held on somebody else is disabled with §1l's sentence, never hidden", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, { foldResponse: mission.foldResponse });
+  await openMissionLens(page, mission);
+
+  const actorRow = page
+    .getByTestId("mission-decision-row")
+    .filter({ hasText: "worktree kept after landing" });
+  await expect(actorRow).toHaveAttribute("data-decision-state", "open");
+  await expect(actorRow).toContainText("Open · held on Bob");
+  // Present, and every control off.
+  await expect(actorRow.getByTestId("decision-answer-form")).toBeVisible();
+  await expect(
+    actorRow.getByTestId("decision-answer-held-elsewhere"),
+  ).toHaveText(
+    "This ruling is held on Bob, so only they can answer it. You can read it here.",
+  );
+  for (const testId of [
+    "decision-answer-option",
+    "decision-answer-choice",
+    "decision-answer-note",
+    "decision-answer-submit",
+  ]) {
+    await expect(actorRow.getByTestId(testId).first()).toBeDisabled();
+  }
+  expect(BUILDER_ACTOR).toHaveLength(64);
+
+  await actorRow.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await actorRow.screenshot({
+    path: `${SHOTS}/02-decision-answer-disabled.png`,
+  });
+});
+
+test("L8.4: the condition field appears only where this build's wire carries the key", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    supportsCondition: true,
+  });
+  await openMissionLens(page, mission);
+
+  const founderRow = page
+    .getByTestId("mission-decision-row")
+    .filter({ hasText: "Land the commit now" });
+  await expect(
+    founderRow.getByTestId("decision-answer-condition"),
+  ).toBeVisible();
+  await expect(
+    founderRow.getByTestId("decision-answer-condition-hint"),
+  ).toHaveText(
+    "Name the class this ruling covers, so it does not have to be asked again for the next commit.",
+  );
+  await expect(
+    founderRow.getByTestId("decision-answer-condition-counter"),
+  ).toHaveText("0/512 bytes");
+  const condition =
+    "every commit on lane/batch3-l8-founder that keeps the gate green";
+  await founderRow.getByTestId("decision-answer-condition").fill(condition);
+  // Bytes, not characters — the bound `buzz-core` enforces is a byte bound.
+  const bytes = new TextEncoder().encode(condition).length;
+  await expect(
+    founderRow.getByTestId("decision-answer-condition-counter"),
+  ).toHaveText(`${bytes}/512 bytes`);
+
+  await founderRow.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await founderRow.screenshot({
+    path: `${SHOTS}/03-decision-answer-condition.png`,
+  });
+});
+
+test("L8.1: what the keyring signs is the native builder's own bytes", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, { foldResponse: mission.foldResponse });
+  await openMissionLens(page, mission);
+
+  const founderRow = page
+    .getByTestId("mission-decision-row")
+    .filter({ hasText: "Land the commit now" });
+  await founderRow.getByTestId("decision-answer-option").nth(0).click();
+
+  // The bridge records every object handed to `sign_event`. TypeScript never
+  // serialises a 44244 body: what is signed is the string the native builder
+  // returned, and the assertion is on that exact string.
+  const signed = await page.waitForFunction(() => {
+    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    return events.find((event) => event.kind === 44244) ?? null;
+  });
+  const value = (await signed.jsonValue()) as {
+    kind: number;
+    tags: string[][];
+    content: string;
+  };
+  expect(value.kind).toBe(44244);
+  expect(value.tags).toContainEqual(["cstx-type", "decision.answer"]);
+  const body = JSON.parse(value.content).body as Record<string, unknown>;
+  expect(body.requestRef).toBe(mission.ids.founderRequest);
+  expect(body.choice).toBe(0);
+  // The key the wire does not carry on this build is absent, not null.
+  expect(Object.keys(body)).toEqual(["requestRef", "choice", "note"]);
+
+  // Nothing is asserted about the row *after* this publish, and that is a
+  // property of the fixture rather than of the product: the answer this test
+  // really publishes is a 44244 the pinned fold response does not list, so the
+  // next projection refuses its own inputs and the queue unmounts. F8's
+  // rendered receipt and the form going quiet are asserted against the real
+  // components in `CodingSessionMissionDecisionQueue.test.mjs`; the refusal
+  // path — which adds nothing to the wire and so is stable — is the test
+  // below.
+});
+
+test("L8.1: a relay that refuses the answer leaves the row open and prints its own words", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    rejectPublishedKinds: [
+      { kind: 44244, message: "blocked: not a member of this channel" },
+    ],
+  });
+  await openMissionLens(page, mission);
+
+  const founderRow = page
+    .getByTestId("mission-decision-row")
+    .filter({ hasText: "Land the commit now" });
+  await founderRow.getByTestId("decision-answer-option").nth(1).click();
+
+  await expect(founderRow.getByTestId("decision-answer-error")).toContainText(
+    "The relay did not accept this answer:",
+  );
+  await expect(founderRow.getByTestId("decision-answer-error")).toContainText(
+    "blocked: not a member of this channel",
+  );
+  await expect(founderRow).toHaveAttribute("data-decision-state", "open");
+});
+
+test("L8.2: a mission the rule refuses keeps the control and prints §1j's string", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    landResponse: landRefusedResponse(mission),
+  });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  await expect(control).toHaveAttribute("data-land-state", "refused");
+  await expect(control.getByTestId("mission-land-sentence")).toHaveText(
+    `Not ready to land: ${LAND_REFUSAL_NO_VERDICT}`,
+  );
+  await expect(page.getByTestId("mission-land-open")).toHaveCount(0);
+
+  await control.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await control.screenshot({ path: `${SHOTS}/04-land-not-ready.png` });
+});
+
+test("L8.2: an admitted commit offers the exact command, and the app never runs it", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    landResponse: landReadyResponse(mission),
+  });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  await expect(control).toHaveAttribute("data-land-state", "ready");
+  await expect(control.getByTestId("mission-land-open")).toHaveText(
+    `Land ${HEAD_SHA.slice(0, 7)} on main`,
+  );
+  await control.getByTestId("mission-land-open").click();
+
+  await expect(control.getByTestId("mission-land-approval")).toContainText(
+    "The relay's require-verdict rule admits this commit on refs/heads/main.",
+  );
+  await expect(control.getByTestId("mission-land-not-run")).toHaveText(
+    "Beekeeper does not run this for you: the push is irreversible, this app holds no checkout, and your git credential lives in your shell. Run it there:",
+  );
+  // The commit, never the branch.
+  await expect(control.getByTestId("mission-land-command")).toHaveText(
+    `git push origin ${HEAD_SHA}:refs/heads/main`,
+  );
+  await expect(control.getByTestId("mission-land-copy")).toBeVisible();
+
+  await control.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await control.screenshot({ path: `${SHOTS}/05-land-ready.png` });
+});
+
+test("L8.3: an unverified completion and an unread policy each say so in the state panel", async ({
+  page,
+}) => {
+  const mission = founderActMission({ withRefusedCompletion: true });
+  await openFounderActApp(page, { foldResponse: mission.foldResponse });
+  await openMissionLens(page, mission);
+
+  const panel = page.getByTestId("mission-state-summary");
+  await expect(panel.getByTestId("mission-completion-not-verified")).toHaveText(
+    "Completed, but not verified: this session's policy requires a verifier's ruling and no active verifier has ruled on the approved report. The completion is not this mission's terminal until one does.",
+  );
+  // No 44245 reached this view, so the fold read no requirement — and says so.
+  await expect(panel.getByTestId("mission-policy-record-unknown")).toHaveText(
+    "No policy record reached this view, so the fold read no verifier requirement.",
+  );
+  // A mission whose completion the fold excluded is not a completed mission.
+  await expect(panel).not.toContainText("Mission completed");
+
+  await panel.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await panel.screenshot({ path: `${SHOTS}/06-completion-not-verified.png` });
+});

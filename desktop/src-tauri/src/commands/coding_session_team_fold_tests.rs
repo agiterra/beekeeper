@@ -29,9 +29,10 @@ fn context(founder: &Keys) -> CodingSessionTeamFoldAdapterContext {
         authority_head_seq: 4,
         active_seats: Vec::new(),
         active_grants: Vec::new(),
-        // The Desktop default until L8 supplies the real value from the
-        // policy hook: with `false` this adapter folds exactly as it did
-        // before the field existed.
+        // What a caller that has not read the policy set must say. The
+        // founder-acts surface supplies the real value from the policy hook;
+        // with `false` this adapter folds exactly as it did before the field
+        // existed.
         verifier_required: false,
     }
 }
@@ -294,6 +295,40 @@ fn request_cannot_supply_native_exclusions_or_hide_the_terminal() {
     let error = serde_json::from_value::<CodingSessionTeamFoldAdapterRequest>(value)
         .expect_err("native outputs are not request fields");
     assert!(error.to_string().contains("unknown field"));
+}
+
+/// L8.3 (REVIEW-L8 F5) joined to L7: `verifierRequired` crosses this boundary,
+/// comes back echoed, **and is folded with**.
+///
+/// The echo alone was the honest claim while core had no such field. It does
+/// now (`CodingSessionTeamFoldContext::verifier_required`), so this asserts the
+/// stronger thing: the same events with the flag off and on give different
+/// projections. A test that still only checked the echo would let the wiring
+/// rot back out without going red.
+#[test]
+fn verifier_required_crosses_the_boundary_and_is_folded_with() {
+    let (founder, events, ..) = full_chain();
+
+    for asked in [true, false] {
+        let mut request = request(&founder, &events);
+        request.context.verifier_required = asked;
+        let response = fold_adapter(request).expect("fold");
+        assert_eq!(
+            response.context.verifier_required, asked,
+            "the adapter echoes what it was asked with"
+        );
+    }
+
+    // Absent is refused, not defaulted: a caller that has not read the policy
+    // set has to say `false` on purpose.
+    let mut value = serde_json::to_value(request(&founder, &events)).expect("serialize");
+    value["context"]
+        .as_object_mut()
+        .expect("context object")
+        .remove("verifierRequired");
+    let error = serde_json::from_value::<CodingSessionTeamFoldAdapterRequest>(value)
+        .expect_err("verifierRequired is required");
+    assert!(error.to_string().contains("verifierRequired"));
 }
 
 #[test]
