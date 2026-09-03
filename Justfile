@@ -1244,3 +1244,16 @@ benchmark *ARGS:
 # Stop the benchmark Docker stack (state and channels are kept)
 benchmark-down:
     docker compose --project-name buzz-benchmark down
+
+# ─── Worktree lifecycle (L11) ─────────────────────────────────────────────────
+
+# Remove the merged, clean lane worktrees; list the merged-but-dirty ones; refuse
+# every unmerged tree, however old. Opt-in, never wired into `just check` or any
+# hook: this removes directories, and nothing that removes a directory should run
+# because somebody typed a different command. Pass --dry-run first — it prints the
+# whole plan and removes nothing. --targets also deletes target/ in every merged
+# tree, held or not: no commit lives in a build directory.
+worktrees-prune *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash "{{justfile_directory()}}/scripts/worktrees-prune.sh" {{ARGS}}

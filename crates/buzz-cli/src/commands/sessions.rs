@@ -89,6 +89,8 @@ mod seat_authority;
 #[cfg(test)]
 mod seat_authority_tests;
 pub mod whoami;
+// L11: what a session's git worktrees hold, and what may be removed.
+pub mod worktree;
 
 /// Item kinds the 44225 contract recognizes. Anything else is counted as
 /// `other` rather than dropped — a provider that learns a new item kind must
@@ -2605,6 +2607,8 @@ pub async fn dispatch(
         SessionsCmd::Note(args) => operations::cmd_note(client, args).await,
         SessionsCmd::Decide(cmd) => operations::cmd_decide(client, cmd).await,
         SessionsCmd::Operation(cmd) => operations::cmd_read(client, cmd).await,
+        // L11: worktree lifecycle — dispatch logic lives in `worktree.rs`.
+        SessionsCmd::Worktree(cmd) => worktree::dispatch(client, cmd, format).await,
         SessionsCmd::Observe(cmd) => observations::cmd_observe(client, cmd).await,
         SessionsCmd::Observations {
             channel,

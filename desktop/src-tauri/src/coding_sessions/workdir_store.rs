@@ -43,7 +43,16 @@ use crate::session_provider::store::{
 use crate::util::now_iso;
 
 /// Current on-disk schema version of the desktop's own record.
-pub(crate) const WORKDIR_STORE_VERSION: u32 = 1;
+///
+/// Version 2 (L11) adds [`CodingSessionWorkdirStore::worktrees`]. Version 1
+/// files still load: the map is `#[serde(default)]`, so a v1 record reads with
+/// it empty and re-saves as v2. That empty map is the honest answer — the
+/// worktrees cut before this record existed were never recorded and are never
+/// removed by the host.
+pub(crate) const WORKDIR_STORE_VERSION: u32 = 2;
+
+/// Oldest on-disk schema version this build still reads.
+pub(crate) const MIN_WORKDIR_STORE_VERSION: u32 = 1;
 
 /// Schema version written into the provider's `projects.json`.
 pub(crate) const PROJECTS_VIEW_VERSION: u32 = 1;
@@ -57,6 +66,58 @@ pub(crate) const MAX_MRU_ENTRIES: usize = 10;
 /// zero. The cap only bounds the pathological case where receipts never come
 /// back — an unbounded map would grow for the life of the install.
 pub(crate) const MAX_PENDING_HINTS: usize = 64;
+
+/// Upper bound on recorded seat worktrees held at once.
+///
+/// One per seat per session. The cap exists so a corrupted or hostile file
+/// cannot make the host allocate without limit; the steady state is small,
+/// because entries are dropped when their tree is removed.
+pub(crate) const MAX_SEAT_WORKTREES: usize = 4096;
+
+/// One git worktree this host cut for one seat, recorded when it was created.
+///
+/// Written **only** by the create path. Nothing that merely observed a
+/// directory ever writes one of these: the whole point of the record is that
+/// the host can name what it made, and a tree it did not make is a tree it
+/// must not remove. Like every other field here, these paths name one
+/// person's disk and are never published.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodingSessionSeatWorktree {
+    /// Absolute path of the worktree directory.
+    pub path: PathBuf,
+    /// Branch created with it, which shares the directory's slug.
+    pub branch: String,
+    /// Repository the worktree belongs to.
+    pub repo_root: PathBuf,
+    /// When the host cut it, ISO-8601.
+    pub created_at: String,
+}
+
+/// The key one seat worktree is filed under: `<sessionRef>/<seatLabel>`.
+///
+/// A seat is unique inside its session, so this is the whole identity. It is
+/// deliberately not the path: a path can be renamed out from under the host,
+/// and then the record would silently name a directory nobody cut.
+pub(crate) fn seat_worktree_key(session_ref: &str, seat_label: &str) -> String {
+    format!("{}/{}", session_ref.trim(), seat_label.trim())
+}
+
+/// Whether `path` sits inside the one folder worktrees are allowed to live in.
+///
+/// `<repo_root>.worktrees/…` and nothing else. A record naming a directory
+/// outside it would give the prune path a licence over somewhere it has no
+/// business, so the write is refused rather than trusted.
+pub(crate) fn is_inside_worktree_parent(repo_root: &Path, path: &Path) -> bool {
+    let Some(file_name) = repo_root.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(parent) = repo_root.parent() else {
+        return false;
+    };
+    let holder = parent.join(format!("{file_name}.worktrees"));
+    path.is_absolute() && path.starts_with(&holder) && path != holder
+}
 
 /// A remembered directory choice, with the moment it was last set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +153,14 @@ pub(crate) struct CodingSessionWorkdirStore {
     /// One-shot hints keyed by the 44221 `commandId` they belong to.
     #[serde(default)]
     pub pending: BTreeMap<String, PathBuf>,
+    /// Worktrees this host cut, keyed by [`seat_worktree_key`].
+    ///
+    /// Unlike `pending`, this is **durable**: a one-shot hint is cleared the
+    /// moment its receipt arrives, which is exactly why the host could not
+    /// name a single one of the 65 trees on this machine. `#[serde(default)]`
+    /// is what makes a v1 file readable.
+    #[serde(default)]
+    pub worktrees: BTreeMap<String, CodingSessionSeatWorktree>,
 }
 
 impl Default for CodingSessionWorkdirStore {
@@ -102,6 +171,7 @@ impl Default for CodingSessionWorkdirStore {
             by_channel: BTreeMap::new(),
             mru: Vec::new(),
             pending: BTreeMap::new(),
+            worktrees: BTreeMap::new(),
         }
     }
 }
@@ -205,7 +275,52 @@ impl CodingSessionWorkdirStore {
         self.pending.remove(command_id);
     }
 
+    /// Record a worktree this host has just cut for one seat.
+    ///
+    /// Refuses a path outside `<repo_root>.worktrees/`, and refuses an empty
+    /// session ref or seat label — a record that cannot be trusted to name
+    /// what the host made is worse than no record, because the prune path
+    /// believes it.
+    pub(crate) fn record_seat_worktree(
+        &mut self,
+        session_ref: &str,
+        seat_label: &str,
+        entry: CodingSessionSeatWorktree,
+    ) -> Result<(), String> {
+        if session_ref.trim().is_empty() || seat_label.trim().is_empty() {
+            return Err("a seat worktree record needs a session ref and a seat label".to_string());
+        }
+        if !is_inside_worktree_parent(&entry.repo_root, &entry.path) {
+            return Err(format!(
+                "refusing to record a worktree outside the repository's worktrees folder: {}",
+                entry.path.display()
+            ));
+        }
+        if self.worktrees.len() >= MAX_SEAT_WORKTREES
+            && !self
+                .worktrees
+                .contains_key(&seat_worktree_key(session_ref, seat_label))
+        {
+            return Err("this host already records the maximum number of seat worktrees".into());
+        }
+        self.worktrees
+            .insert(seat_worktree_key(session_ref, seat_label), entry);
+        Ok(())
+    }
+
+    /// Drop the record for one seat worktree, after its directory is gone.
+    ///
+    /// Answers whether there was one, so a caller never reports removing a
+    /// record it did not hold.
+    pub(crate) fn forget_seat_worktree(&mut self, key: &str) -> bool {
+        self.worktrees.remove(key).is_some()
+    }
+
     /// Project the desktop record down to what the provider reads.
+    ///
+    /// `worktrees` is deliberately **not** here. The provider resolves a cwd;
+    /// it does not reap, and handing it a list of directories it may not touch
+    /// would only invite something to try.
     pub(crate) fn projects_view(&self) -> CodingSessionProjectsView {
         CodingSessionProjectsView {
             version: PROJECTS_VIEW_VERSION,
@@ -278,7 +393,9 @@ pub(crate) fn load_workdir_store_readonly_from(
     }
     let store: CodingSessionWorkdirStore = serde_json::from_reader(file)
         .map_err(|error| format!("failed to parse coding-session workdir store: {error}"))?;
-    if store.version != WORKDIR_STORE_VERSION {
+    // A range, not an equality: a v1 file predates the worktree record and
+    // reads with that map empty, which is exactly true of it.
+    if store.version < MIN_WORKDIR_STORE_VERSION || store.version > WORKDIR_STORE_VERSION {
         return Err(format!(
             "unsupported coding-session workdir store version: {}",
             store.version
@@ -288,6 +405,7 @@ pub(crate) fn load_workdir_store_readonly_from(
         || store.by_channel.len() > 4096
         || store.mru.len() > MAX_MRU_ENTRIES
         || store.pending.len() > MAX_PENDING_HINTS
+        || store.worktrees.len() > MAX_SEAT_WORKTREES
     {
         return Err("coding-session workdir store exceeds readiness record limits".into());
     }
@@ -297,7 +415,9 @@ pub(crate) fn load_workdir_store_readonly_from(
         .chain(store.by_channel.values())
         .map(|entry| &entry.path)
         .chain(store.mru.iter().map(|entry| &entry.path))
-        .chain(store.pending.values());
+        .chain(store.pending.values())
+        .chain(store.worktrees.values().map(|entry| &entry.path))
+        .chain(store.worktrees.values().map(|entry| &entry.repo_root));
     if paths.into_iter().any(|path| !path.is_absolute()) {
         return Err("coding-session workdir store contains a relative path".into());
     }

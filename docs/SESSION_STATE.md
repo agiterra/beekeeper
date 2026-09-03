@@ -8347,6 +8347,28 @@ removed from here.
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
+- **A worktree is created by a machine and, until L11, deleted by nobody — 70
+  trees and 331 GB.** Measured 2026-09-02 ~19:40 from this checkout: `git
+  worktree list` returned **70** entries and `du -sh
+  /Users/brian/Projects/beekeeper/beekeeper.worktrees` returned **331 GB**,
+  each tree carrying its own `target/` at **18–47 GB** and often a
+  `desktop/node_modules`. (Earlier the same day the count was 65 / 298 GB and
+  the disk had reached 100%; at this measurement `df` reported 64% used with
+  324 GB free, so the *disk-full* symptom is not current — the growth is.) Two producers, neither with a reaper: the hire host
+  cuts one worktree per seat (`useCodingSessionHire.ts:737-746` →
+  `create_coding_session_worktree`, `worktree.rs:345-380`) and orchestration
+  cuts `lane/*` and `batch*-*` trees by hand. The host could not name a single
+  one of them: the only record was a **one-shot** hint keyed by `commandId`
+  (`workdir_store.rs:stage_hint`) that is **cleared the moment the receipt
+  arrives**, so nothing durable survived the create. L11 adds that durable
+  record (`WORKDIR_STORE_VERSION` 1 → 2, `worktrees` map keyed
+  `<sessionRef>/<seatLabel>`), but only for trees cut **after** it lands: the
+  65 that predate it are `unrecorded` and the host removes them **never**.
+  `just worktrees-prune` takes the merged-and-clean lane trees, lists the
+  merged-but-dirty ones with file counts, and refuses unmerged ones however
+  old; `target/` and `desktop/node_modules` are reclaimable the moment a
+  session closes, independently of whether its tree holds uncommitted work.
+
 - **A seat runs the app-bundled `bee` sidecar, so a CLI fix reaches it only
   after an app rebuild.** `desktop/src-tauri/tauri.conf.json:61` lists
   `binaries/bee` as a sidecar and the provider's seat PATH reaches it before

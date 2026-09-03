@@ -2651,6 +2651,12 @@ pub enum SessionsCmd {
     /// ordering, discovery or dedupe.
     #[command(subcommand)]
     Observe(SessionObserveCmd),
+    /// What this machine's session worktrees hold, and what may be removed
+    ///
+    /// L11. Reads the desktop host's own record of the worktrees it cut. A
+    /// tree the host never recorded is listed and removed by nothing here.
+    #[command(subcommand)]
+    Worktree(SessionWorktreeCmd),
     /// Print this umbrella's bounded observation fold (kind 44246).
     ///
     /// One row per checkpoint and phase, and one per `(author, gate)` and
@@ -3304,6 +3310,75 @@ pub enum TeamDecisionCmd {
         /// is told about is an answer that never lands.
         #[arg(long = "wake-to")]
         wake_to: Option<String>,
+    },
+}
+
+/// `bee sessions worktree` — the host's record of the trees it cut, and what
+/// may be done with each one.
+#[derive(Subcommand)]
+pub enum SessionWorktreeCmd {
+    /// Every recorded worktree for a session, and what may be done with it
+    #[command(
+        after_help = "Examples:\n  bee sessions worktree status --session <uuid>\n  bee --format compact sessions worktree status --all"
+    )]
+    Status {
+        /// Canonical umbrella session UUID.
+        #[arg(long)]
+        session: Option<String>,
+        /// Every session the host recorded a worktree for.
+        #[arg(long, conflicts_with = "session")]
+        all: bool,
+        /// Host record path. Defaults to the desktop app's own file.
+        #[arg(long)]
+        store: Option<String>,
+        /// Treat this session's executions as still running.
+        ///
+        /// The host stops a settled session's executions, so this is an
+        /// operator's observation rather than something the record can prove.
+        #[arg(long = "execution-live")]
+        execution_live: bool,
+    },
+    /// Remove the worktrees that are prunable. Without --confirm, prints only
+    #[command(
+        after_help = "Examples:\n  bee sessions worktree prune --session <uuid>\n  bee sessions worktree prune --session <uuid> --seat builder-1 --confirm"
+    )]
+    Prune {
+        /// Canonical umbrella session UUID.
+        #[arg(long)]
+        session: String,
+        /// One seat's worktree rather than every seat's.
+        #[arg(long)]
+        seat: Option<String>,
+        /// Actually remove. Without it nothing is removed.
+        #[arg(long)]
+        confirm: bool,
+        /// Host record path. Defaults to the desktop app's own file.
+        #[arg(long)]
+        store: Option<String>,
+        /// Treat this session's executions as still running.
+        #[arg(long = "execution-live")]
+        execution_live: bool,
+    },
+    /// Remove target/ and desktop/node_modules. Without --confirm, prints only
+    #[command(
+        after_help = "Examples:\n  bee sessions worktree reclaim --session <uuid>\n  bee sessions worktree reclaim --session <uuid> --confirm"
+    )]
+    Reclaim {
+        /// Canonical umbrella session UUID.
+        #[arg(long)]
+        session: String,
+        /// One seat's worktree rather than every seat's.
+        #[arg(long)]
+        seat: Option<String>,
+        /// Actually remove the build directories.
+        #[arg(long)]
+        confirm: bool,
+        /// Host record path. Defaults to the desktop app's own file.
+        #[arg(long)]
+        store: Option<String>,
+        /// Treat this session's executions as still running.
+        #[arg(long = "execution-live")]
+        execution_live: bool,
     },
 }
 
@@ -5042,7 +5117,8 @@ mod tests {
                 "tools",
                 "transcript",
                 "verdict",
-                "whoami"
+                "whoami",
+                "worktree"
             ]
         );
         assert_eq!(
@@ -5126,11 +5202,13 @@ mod tests {
             ("repos", 6),
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
             // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, B2's
-            // `policy` (batch 2 B), `delete`, `whoami`, and batch 3 L1's
-            // `observe` and `observations`.
-            // `subcommand_names_are_stable` above names all thirty-four, so
-            // this count and that list cannot drift apart.
-            ("sessions", 34),
+            // `policy` (batch 2 B), `delete`, `whoami`, batch 3 L1's
+            // `observe` and `observations`, and L11's `worktree`.
+            // `subcommand_names_are_stable` above names all thirty-five, so
+            // this count and that list cannot drift apart. L7, L9 and L10 also
+            // append here (item 108's exact-count trap); the finalizer resolves
+            // the overlap by re-running both tests after integrating them.
+            ("sessions", 35),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

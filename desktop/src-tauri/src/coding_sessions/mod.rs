@@ -13,6 +13,8 @@
 pub(crate) mod naming;
 pub(crate) mod workdir_store;
 pub(crate) mod worktree;
+// L11: what may be done with a worktree once its session is finished.
+pub(crate) mod worktree_prune;
 
 #[cfg(test)]
 mod workdir_store_tests;

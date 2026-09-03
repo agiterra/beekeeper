@@ -48,6 +48,8 @@ export default defineConfig({
         "**/coding-session-connect.spec.ts",
         "**/coding-session-width.spec.ts",
         "**/coding-session-worktree-source.spec.ts",
+        // L11 (worktree lifecycle) — registration line only.
+        "**/coding-session-worktree-closure.spec.ts",
         "**/onboarding-docked-cta-screenshots.spec.ts",
         "**/identity-key-help.spec.ts",
         "**/key-import-reveal.spec.ts",

@@ -337,6 +337,14 @@ type E2eConfig = {
       defaultBranch: string | null;
       headBranch: string | null;
     };
+    /**
+     * Recorded seat worktrees for `list_coding_session_seat_worktrees` (L11).
+     * Opt-in like the branch table: unconfigured, the command throws and the
+     * close dialog shows no worktree section at all — which is the honest
+     * state for a host that cannot answer, and keeps every pre-L11 spec
+     * exactly as it was.
+     */
+    codingSessionSeatWorktrees?: Record<string, unknown>[];
     /** Runtime table once a mocked connect (sign-in) has completed. */
     codingSessionProviderRuntimesAfterConnect?: RawCodingSessionProviderRuntime[];
     activePersonaIds?: string[];
@@ -12745,6 +12753,39 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
         return status;
+      }
+      // L11 (worktree lifecycle) — mocked host record of the trees it cut.
+      case "list_coding_session_seat_worktrees": {
+        const rows = activeConfig?.mock?.codingSessionSeatWorktrees;
+        if (!rows) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return rows;
+      }
+      case "prune_coding_session_seat_worktree": {
+        const input = (payload ?? {}) as {
+          sessionRef?: string;
+          seatLabel?: string;
+        };
+        const rows = activeConfig?.mock?.codingSessionSeatWorktrees ?? [];
+        const row = rows.find((entry) => entry.seatLabel === input.seatLabel) as
+          | { path?: string }
+          | undefined;
+        if (!row) throw new Error("this host has no worktree recorded");
+        return row.path ?? "";
+      }
+      case "reclaim_coding_session_seat_worktree": {
+        const input = (payload ?? {}) as { seatLabel?: string };
+        const rows = activeConfig?.mock?.codingSessionSeatWorktrees ?? [];
+        const row = rows.find((entry) => entry.seatLabel === input.seatLabel) as
+          | { path?: string; reclaimableLabel?: string }
+          | undefined;
+        if (!row) throw new Error("this host has no worktree recorded");
+        return {
+          removed: [`${row.path}/target`, `${row.path}/desktop/node_modules`],
+          freedBytes: null,
+          freedLabel: row.reclaimableLabel ?? "unknown",
+        };
       }
       case "list_coding_session_worktree_branches": {
         const branches = activeConfig?.mock?.codingSessionWorktreeBranches;

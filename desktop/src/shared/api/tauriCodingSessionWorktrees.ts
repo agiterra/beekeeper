@@ -98,3 +98,101 @@ export async function createCodingSessionWorktree(input: {
     { workdir: input.workdir, name: input.name, source: input.source },
   );
 }
+
+// ── L11: the host's record of the worktrees it cut, and what may go ─────────
+//
+// The create path above records what it made; everything below reads that
+// record. Every disposition was decided in Rust
+// (`buzz_core::worktree_lifecycle`) — these wrappers carry the answer across,
+// and the UI renders the strings it is given rather than re-deciding anything.
+
+/** The stable tokens `classify_seat_worktree` can answer with. */
+export const SEAT_WORKTREE_DISPOSITIONS = [
+  "prunable",
+  "held",
+  "not-settled",
+  "tip-not-on-relay",
+  "execution-live",
+  "unrecorded",
+  "protected",
+  "within-grace",
+] as const;
+
+export type SeatWorktreeDisposition =
+  (typeof SEAT_WORKTREE_DISPOSITIONS)[number];
+
+export function isSeatWorktreeDisposition(
+  value: unknown,
+): value is SeatWorktreeDisposition {
+  return (SEAT_WORKTREE_DISPOSITIONS as readonly unknown[]).includes(value);
+}
+
+/** One recorded seat worktree, already classified by the host. */
+export type SeatWorktreeRow = {
+  key: string;
+  sessionRef: string;
+  seatLabel: string;
+  path: string;
+  branch: string;
+  repoRoot: string;
+  disposition: SeatWorktreeDisposition;
+  /** `git status --porcelain` lines, which exclude ignored paths. */
+  dirtyFiles: number;
+  /** Rebuildable bytes, or `null` when they could not be measured. */
+  reclaimableBytes: number | null;
+  /** `{N} GB`, or `unknown` — never `0` for an unmeasurable directory. */
+  reclaimableLabel: string;
+  reclaimableNow: boolean;
+  graceRemainingSecs: number | null;
+  exists: boolean;
+  /** Whether the relay's current ref state was established at all. */
+  tipOnRelayKnown: boolean;
+  /** The one sentence a surface shows for this row. */
+  detail: string;
+};
+
+/** What the caller already knows about a session, from the relay. */
+export type SeatWorktreeSessionFacts = {
+  sessionRef: string;
+  sessionSettled: boolean;
+  executionLive: boolean;
+  /** `null` means unestablished, which never renders as "not pushed". */
+  tipOnRelay: boolean | null;
+  settledForSecs: number | null;
+};
+
+/**
+ * Kind 30618 is parameterized-replaceable, so it says where a ref stands
+ * **now** and is never a push history. Every surface that shows a relay-tip
+ * answer shows this sentence with it.
+ */
+export const TIP_ON_RELAY_LIMIT =
+  "The relay's ref state says where a branch stands now, not whether it was ever pushed.";
+
+export async function listCodingSessionSeatWorktrees(
+  sessions: readonly SeatWorktreeSessionFacts[],
+): Promise<SeatWorktreeRow[]> {
+  return invokeTauri<SeatWorktreeRow[]>("list_coding_session_seat_worktrees", {
+    sessions,
+  });
+}
+
+/** Remove one recorded worktree. Only ever called from a person's own click. */
+export async function pruneCodingSessionSeatWorktree(input: {
+  sessionRef: string;
+  seatLabel: string;
+}): Promise<string> {
+  return invokeTauri<string>("prune_coding_session_seat_worktree", input);
+}
+
+/** Remove `target/` and `desktop/node_modules` from one recorded worktree. */
+export async function reclaimCodingSessionSeatWorktree(input: {
+  sessionRef: string;
+  seatLabel: string;
+}): Promise<{
+  removed: string[];
+  freedBytes: number | null;
+  freedLabel: string;
+}> {
+  return invokeTauri("reclaim_coding_session_seat_worktree", input);
+}

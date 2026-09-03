@@ -79,7 +79,7 @@ fn a_store_round_trips_through_json_unchanged() {
 #[test]
 fn an_absent_file_decodes_as_the_empty_steady_state() {
     let decoded: CodingSessionWorkdirStore =
-        serde_json::from_str(r#"{"version":1}"#).expect("deserialize");
+        serde_json::from_str(r#"{"version":2}"#).expect("deserialize");
     assert_eq!(decoded, CodingSessionWorkdirStore::default());
 }
 

@@ -2375,3 +2375,59 @@ routing record's `reason` ends in one of exactly two clauses:
 Once a class carries `benchAvailableSince`, the second becomes
 `— legacy row · bench available · N days left`, and after thirty days `route`
 refuses the row with the word `unmeasured`.
+---
+
+## `bee sessions worktree` — what a session's worktrees hold (L11)
+
+Reads the desktop host's own record of the git worktrees it cut for seats
+(`coding-session-workdirs.json`, `worktrees` map, schema v2). **A tree the host
+never recorded is listed as `unrecorded` and removed by nothing here** — the
+trees that predate the record are never adopted, whatever their branch is
+named.
+
+```bash
+bee sessions worktree status --session <uuid>
+bee --format compact sessions worktree status --all
+```
+
+Each row answers with one of eight dispositions — `prunable`, `held`,
+`not-settled`, `tip-not-on-relay`, `execution-live`, `unrecorded`, `protected`,
+`within-grace` — decided in `buzz_core::worktree_lifecycle`, plus the file
+count, the measured reclaimable bytes, and one sentence.
+
+Three things to check on a live machine, because each one has a way of being
+quietly wrong:
+
+1. **`dirtyFiles` excludes ignored paths.** In a worktree with a populated
+   `target/` and `desktop/node_modules`, `status` must still report
+   `dirtyFiles: 0` and `disposition: "prunable"` (or `within-grace`). If build
+   output makes a finished tree read as `held`, the count is being taken from
+   the wrong listing.
+
+2. **Unknown is not false.** `tipOnRelayKnown: false` means this host could not
+   establish the relay's ref state at all; the row's sentence must say "could
+   not confirm", never that the branch was not pushed. Kind 30618 is
+   parameterized-replaceable, so a `true` says where the ref stands **now** and
+   is never a push history — `tipOnRelayLimit` carries that sentence in every
+   row.
+
+3. **`prune` refuses rather than skips.** On a session with one held tree:
+
+   ```bash
+   bee sessions worktree prune --session <uuid> --confirm; echo "exit $?"
+   ```
+
+   must exit non-zero and remove nothing, naming the held row. A run that
+   exits 0 having silently passed over held work is the failure this command
+   exists to prevent. Without `--confirm` it prints dispositions and removes
+   nothing, whatever they say.
+
+`reclaim` is the exception that runs on a held tree: `target/` and
+`desktop/node_modules` hold no commits and are removable the moment the session
+settles. After `bee sessions worktree reclaim --session <uuid> --confirm`,
+every source file in the tree must be byte-identical and `git status
+--porcelain` must report the same lines it did before.
+
+For the lane worktrees nobody records, use `just worktrees-prune --dry-run`
+first; it prints the full plan (protected / merged-and-clean / merged-but-dirty
+/ unmerged) and removes nothing.

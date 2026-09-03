@@ -102,6 +102,10 @@ pub mod seat_git_hooks;
 pub mod tenant;
 /// Schnorr signature and event ID verification.
 pub mod verification;
+// L11: pure classification for a coding session's git worktree — what may be
+// pruned, what is held, and what nothing may touch. No filesystem, no `git`.
+/// Worktree lifecycle: what may be done with a coding session's git worktree.
+pub mod worktree_lifecycle;
 
 pub use error::VerificationError;
 pub use event::StoredEvent;

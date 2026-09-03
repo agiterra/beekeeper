@@ -16,7 +16,15 @@
 
 use std::path::{Path, PathBuf};
 
+use tauri::{AppHandle, State};
+
+use crate::app_state::AppState;
+use crate::coding_sessions::workdir_store::{
+    load_workdir_store, save_workdir_store, seat_worktree_key, CodingSessionSeatWorktree,
+    WORKDIR_STORE_VERSION,
+};
 use crate::commands::project_git_exec::{build_local_git_auth_config, run_git};
+use crate::util::now_iso;
 
 /// Longest slug accepted. Long enough for a four-word session name, short
 /// enough that the resulting path stays workable on every platform.
@@ -381,15 +389,94 @@ fn create(
     })
 }
 
+/// Create a worktree, and record it when the caller says whose it is.
+///
+/// `sessionRef` and `seatLabel` are optional so the pre-L11 call shape still
+/// works, but a tree cut without them is **unrecorded**: the host can never
+/// name it and will never remove it. That is the whole gap this record closes,
+/// so a hire path that omits them is a bug, not a style.
+///
+/// Recording is best-effort *after* the tree exists. A failed record leaves an
+/// unrecorded worktree, which is the conservative outcome; failing the create
+/// instead would leave a directory on disk and tell the caller it has none.
 #[tauri::command]
 pub async fn create_coding_session_worktree(
+    app: AppHandle,
+    state: State<'_, AppState>,
     workdir: String,
     name: String,
     source: Option<String>,
+    session_ref: Option<String>,
+    seat_label: Option<String>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
-    tauri::async_runtime::spawn_blocking(move || create(&workdir, &name, source.as_deref()))
-        .await
-        .map_err(|error| format!("worktree create task failed: {error}"))?
+    let created =
+        tauri::async_runtime::spawn_blocking(move || create(&workdir, &name, source.as_deref()))
+            .await
+            .map_err(|error| format!("worktree create task failed: {error}"))??;
+    if let (Some(session_ref), Some(seat_label)) = (session_ref, seat_label) {
+        if let Err(error) =
+            record_created_worktree(&app, &state, &session_ref, &seat_label, &created)
+        {
+            eprintln!("buzz-desktop: failed to record a seat worktree: {error}");
+        }
+    }
+    Ok(created)
+}
+
+/// Write one created worktree into the host's durable record.
+fn record_created_worktree(
+    app: &AppHandle,
+    state: &AppState,
+    session_ref: &str,
+    seat_label: &str,
+    created: &CodingSessionWorktreeCreated,
+) -> Result<(), String> {
+    let mut store = load_workdir_store(app)?;
+    store.record_seat_worktree(
+        session_ref,
+        seat_label,
+        CodingSessionSeatWorktree {
+            path: PathBuf::from(&created.path),
+            branch: created.branch.clone(),
+            repo_root: PathBuf::from(&created.repo_root),
+            created_at: now_iso(),
+        },
+    )?;
+    store.version = WORKDIR_STORE_VERSION;
+    save_workdir_store(app, state, &store)
+}
+
+/// Remove one worktree directory and forget its record.
+///
+/// Never `--force`: git refuses to remove a tree holding modifications, and
+/// that refusal is a feature here — it is the last guard under every decision
+/// made further up. `git worktree prune` afterwards clears the administrative
+/// entry the removal leaves behind.
+pub(crate) fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), String> {
+    let auth = build_local_git_auth_config()?;
+    let path = path.to_string_lossy().into_owned();
+    run_git(&["worktree", "remove", "--", &path], Some(repo_root), &auth)?;
+    run_git(&["worktree", "prune"], Some(repo_root), &auth)?;
+    Ok(())
+}
+
+/// Remove a recorded seat worktree and drop the record naming it.
+pub(crate) fn remove_recorded_seat_worktree(
+    app: &AppHandle,
+    state: &AppState,
+    session_ref: &str,
+    seat_label: &str,
+) -> Result<String, String> {
+    let key = seat_worktree_key(session_ref, seat_label);
+    let mut store = load_workdir_store(app)?;
+    let Some(entry) = store.worktrees.get(&key).cloned() else {
+        return Err(format!("this host has no worktree recorded for {key}"));
+    };
+    remove_worktree(&entry.repo_root, &entry.path)?;
+    store.forget_seat_worktree(&key);
+    store.version = WORKDIR_STORE_VERSION;
+    save_workdir_store(app, state, &store)?;
+    Ok(entry.path.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
