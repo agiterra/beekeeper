@@ -1366,6 +1366,20 @@ mod tests {
 
     use super::*;
 
+    /// The huddle protocol version this relay accepts is a cross-client
+    /// contract, not an implementation detail: the desktop client
+    /// (`desktop/src-tauri/src/huddle/wire.rs`, `PROTOCOL_VERSION`) and the
+    /// mobile client (`mobile/lib/shared/huddle/huddle_wire.dart`,
+    /// `HuddleWireV2.protocolVersion`) both negotiate exactly this number, and
+    /// a room pins to whichever version its first peer requested. Raising it
+    /// here without moving both clients — or pulling in an upstream client
+    /// that asks for a higher version — breaks the handshake rather than
+    /// degrading, so the bump must be a deliberate, coordinated change.
+    #[test]
+    fn huddle_audio_protocol_version_is_pinned_to_v2() {
+        assert_eq!(CURRENT_PROTOCOL_VERSION, 2);
+    }
+
     #[test]
     fn audio_connection_permits_share_the_global_websocket_budget() {
         let semaphore = Arc::new(Semaphore::new(1));
