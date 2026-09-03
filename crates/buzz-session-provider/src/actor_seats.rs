@@ -35,6 +35,11 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+/// The wire's account of the role pack a seat was staged with — the kind:44223
+/// `packRef` object, declared once in `buzz-core` and re-exported here so the
+/// seat file this crate reads and the metadata it publishes cannot drift apart.
+pub use buzz_core::coding_session_payload::PackRef;
+
 /// One agent seat's host-local credentials, as the desktop wrote them.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +85,20 @@ pub struct ActorSeat {
     /// simply materializes nothing.
     #[serde(default)]
     pub persona_id: Option<String>,
+    /// The wire's account of the pack, when the launcher staged one out of a
+    /// project's packs repository.
+    ///
+    /// Unlike `pack_dir` this is *not* host-local: it names a repository, a
+    /// commit, a role and a path, all of which mean the same thing on every
+    /// machine. It is republished verbatim as the seat's kind:44223 `packRef`
+    /// so a reader can answer "which pack ran" from the wire.
+    ///
+    /// Absent for a pack installed on the launching computer — there is no
+    /// repository that can vouch for it, and naming one would be a proof of
+    /// something that did not happen — and absent, of course, for every seat
+    /// staged before this key existed.
+    #[serde(default)]
+    pub pack_ref: Option<PackRef>,
 }
 
 // The whole point of this type is that its second field never appears in a log
@@ -430,6 +449,39 @@ mod tests {
         );
         assert_eq!(env[0].1, NSEC);
         assert_eq!(env[1].1, NSEC, "the NOSTR_PRIVATE_KEY mirror");
+    }
+
+    /// The `packRef` reaches the provider off the host-local file, and a seat
+    /// staged before the key existed still decodes — the finding-31 rule: every
+    /// reader accepts absence, and a `null` is refused like `beeStamp`'s.
+    #[test]
+    fn a_pack_ref_is_read_off_the_seat_and_its_absence_is_legal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let with_pack = format!(
+            r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{pubkey}","nsec":"{NSEC}","authTag":null,"relayUrl":"wss://relay.example","packDir":"/packs/aa-bb/personas/roles/builder","personaId":"builder","packRef":{{"repo":"30617:{pubkey}:packs","sha":"{sha}","role":"builder","path":"personas/roles/builder"}}}}}}}}"#,
+            pubkey = "cd".repeat(32),
+            sha = "ab".repeat(20),
+        );
+        let path = write_seats(dir.path(), &with_pack);
+        let file = ActorSeatsFile::load(Some(&path));
+        let seat = file.seat("create-1").expect("seat");
+        let pack_ref = seat.pack_ref.clone().expect("the launcher staged one");
+        assert_eq!(pack_ref.sha, "ab".repeat(20));
+        assert_eq!(pack_ref.role, "builder");
+        assert_eq!(pack_ref.path, "personas/roles/builder");
+        assert_eq!(
+            seat.pack_coordinates()
+                .map(|(dir, persona)| (dir.to_string_lossy().into_owned(), persona.to_owned())),
+            Some((
+                "/packs/aa-bb/personas/roles/builder".to_owned(),
+                "builder".to_owned()
+            ))
+        );
+
+        // Signed before the key existed: absence is a legal seat, not an error.
+        let older = write_seats(dir.path(), &seats_body("create-1"));
+        let file = ActorSeatsFile::load(Some(&older));
+        assert_eq!(file.seat("create-1").expect("seat").pack_ref, None);
     }
 
     /// The name falls back role → pubkey handle, and never to the operator's.

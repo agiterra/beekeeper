@@ -194,6 +194,20 @@ pub struct SessionRecord {
     /// interrupt authority (plan D7).
     #[serde(default)]
     pub role: Option<String>,
+    /// The role pack this seat was staged with, as the wire describes it.
+    ///
+    /// Unlike the pack's *directory* — host-local, deliberately not persisted
+    /// for the same reason the nsec is not — this is a repository coordinate,
+    /// a commit, a role and a path, all of which mean the same thing on every
+    /// machine. Held here so every 44223 of this generation republishes the
+    /// same answer to "which pack ran", including the ones written long after
+    /// the one-shot seat file was consumed.
+    ///
+    /// `None` for a seat staged from a pack installed on the launching
+    /// computer (no repository can vouch for it), for a packless seat, and for
+    /// every record written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_ref: Option<crate::actor_seats::PackRef>,
     /// Founder pubkey resolved from genesis, or the locally witnessed create
     /// signer for legacy sessions. `None` is retained for pre-field records.
     #[serde(default)]
@@ -1014,6 +1028,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            pack_ref: None,
         }
     }
 

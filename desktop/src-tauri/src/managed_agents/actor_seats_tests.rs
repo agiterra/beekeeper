@@ -1,0 +1,556 @@
+//! Tests for host-local seat custody and the role-driven staging rule.
+//!
+//! Split out of `actor_seats.rs` to keep both files under the repository's
+//! 1000-line ceiling; `use super::*` keeps every claim against the same
+//! module it was written for.
+
+use super::*;
+
+const PUBKEY: &str = "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66";
+
+fn agent_record(
+    source_team: Option<&str>,
+    slug: Option<&str>,
+) -> crate::managed_agents::types::ManagedAgentRecord {
+    crate::managed_agents::types::AgentDefinition {
+        id: "def".into(),
+        display_name: "Builder".into(),
+        avatar_url: None,
+        system_prompt: String::new(),
+        runtime: None,
+        model: None,
+        provider: None,
+        name_pool: vec![],
+        is_builtin: false,
+        is_active: true,
+        shared: false,
+        source_team: source_team.map(str::to_owned),
+        source_team_persona_slug: slug.map(str::to_owned),
+        catalog_source: None,
+        env_vars: Default::default(),
+        respond_to: None,
+        respond_to_allowlist: vec![],
+        parallelism: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+    .into_agent_record()
+}
+
+fn team_record(id: &str, source_dir: Option<PathBuf>) -> crate::managed_agents::types::TeamRecord {
+    crate::managed_agents::types::TeamRecord {
+        id: id.into(),
+        name: id.into(),
+        description: None,
+        instructions: None,
+        persona_ids: vec![],
+        crew: None,
+        is_builtin: false,
+        source_dir,
+        is_symlink: false,
+        symlink_target: None,
+        version: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+}
+
+/// A directory that really is a role pack, with one persona in it.
+fn role_pack(root: &Path, persona: &str) -> PathBuf {
+    let pack = root.join("pack");
+    std::fs::create_dir_all(pack.join(".plugin")).expect("plugin dir");
+    std::fs::create_dir_all(pack.join("personas")).expect("personas dir");
+    std::fs::write(
+        pack.join(".plugin/plugin.json"),
+        format!(
+            r#"{{"id":"com.test.roles","name":"Roles","version":"0.1.0","personas":["personas/{persona}.persona.md"]}}"#
+        ),
+    )
+    .expect("plugin.json");
+    std::fs::write(
+        pack.join(format!("personas/{persona}.persona.md")),
+        format!(
+            "---\nname: {persona}\ndisplay_name: {persona}\ndescription: Builds.\nrole: builder\n---\nYou build.\n"
+        ),
+    )
+    .expect("persona");
+    pack
+}
+
+/// A pack whose persona declares no role at all — the shape every agent
+/// installed before crew roles carries.
+fn roleless_pack(root: &Path, persona: &str) -> PathBuf {
+    let pack = root.join(format!("{persona}-roleless"));
+    std::fs::create_dir_all(pack.join(".plugin")).expect("plugin dir");
+    std::fs::create_dir_all(pack.join("personas")).expect("personas dir");
+    std::fs::write(
+        pack.join(".plugin/plugin.json"),
+        format!(
+            r#"{{"id":"com.test.{persona}","name":"{persona}","version":"0.1.0","personas":["personas/{persona}.persona.md"]}}"#
+        ),
+    )
+    .expect("plugin.json");
+    std::fs::write(
+        pack.join(format!("personas/{persona}.persona.md")),
+        format!(
+            "---\nname: {persona}\ndisplay_name: {persona}\ndescription: Helps.\n---\nYou help.\n"
+        ),
+    )
+    .expect("persona");
+    pack
+}
+
+/// A role pack in its own directory, whose persona declares `role`.
+fn named_role_pack(root: &Path, role: &str) -> PathBuf {
+    let pack = root.join(format!("{role}-pack"));
+    std::fs::create_dir_all(pack.join(".plugin")).expect("plugin dir");
+    std::fs::create_dir_all(pack.join("personas")).expect("personas dir");
+    std::fs::write(
+        pack.join(".plugin/plugin.json"),
+        format!(
+            r#"{{"id":"com.test.{role}","name":"{role}","version":"0.1.0","personas":["personas/{role}.persona.md"]}}"#
+        ),
+    )
+    .expect("plugin.json");
+    std::fs::write(
+        pack.join(format!("personas/{role}.persona.md")),
+        format!(
+            "---\nname: {role}\ndisplay_name: {role}\ndescription: Does {role} work.\nrole: {role}\n---\nYou are the {role}.\n"
+        ),
+    )
+    .expect("persona");
+    pack
+}
+
+/// An installed crew-role agent: home role declared, pack linked.
+fn installed_role_agent(
+    role: &str,
+    pack: &Path,
+) -> crate::managed_agents::types::ManagedAgentRecord {
+    let mut record = agent_record(None, None);
+    record.home_role = Some(role.to_owned());
+    record.persona_team_dir = Some(pack.to_path_buf());
+    record.persona_name_in_team = Some(role.to_owned());
+    record
+}
+
+/// The staging bug this lane exists for (`docs/CREW_FRONT_DOOR.md`: "the
+/// pack that gets staged is still the **home** role's pack").
+///
+/// RED, before the fix — `resolve_seat_pack(&builder, &[])` returned
+/// `…/builder-pack` for a seat created with role `architect`:
+///
+/// ```text
+/// assertion `left == right` failed: a seat whose role is `architect`
+///   left: ".../builder-pack"
+///  right: ".../architect-pack"
+/// ```
+#[test]
+fn a_seat_stages_the_pack_of_the_role_it_was_seated_with() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let builder_pack = named_role_pack(tmp.path(), "builder");
+    let architect_pack = named_role_pack(tmp.path(), "architect");
+    let builder = installed_role_agent("builder", &builder_pack);
+    let architect = installed_role_agent("architect", &architect_pack);
+    let records = vec![builder.clone(), architect];
+
+    // The builder identity, seated as an architect: the architect's pack.
+    let staged = resolve_local_seat_pack(&builder, &records, &[], Some("architect"))
+        .expect("this computer has an architect pack");
+    assert_eq!(
+        staged.0, architect_pack,
+        "a seat whose role is `architect` must stage the architect pack, not {:?}",
+        staged.0
+    );
+    assert_eq!(staged.1, "architect");
+
+    // Seated at its own role, it still stages its own pack.
+    assert_eq!(
+        resolve_local_seat_pack(&builder, &records, &[], Some("builder")),
+        Some((builder_pack, "builder".to_owned()))
+    );
+}
+
+#[test]
+fn a_role_this_computer_holds_no_pack_for_stages_no_pack() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let builder_pack = named_role_pack(tmp.path(), "builder");
+    let builder = installed_role_agent("builder", &builder_pack);
+    let records = vec![builder.clone()];
+    // Not the builder's pack, and not a guess: a role with no pack here is
+    // a packless seat, which every screen is required to disclose.
+    assert!(
+        resolve_local_seat_pack(&builder, &records, &[], Some("verifier")).is_none(),
+        "a seat with no pack for its role must not be given another role's"
+    );
+}
+
+#[test]
+fn an_agent_whose_pack_claims_no_role_still_stages_it() {
+    // A persona with no `role:` frontmatter makes no claim a seat role
+    // could contradict — that pack is simply this agent's own skills, and
+    // withholding it would regress every agent installed before roles.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = roleless_pack(tmp.path(), "helper");
+    let mut record = agent_record(None, None);
+    record.persona_team_dir = Some(dir.clone());
+    record.persona_name_in_team = Some("helper".into());
+    let records = vec![record.clone()];
+    assert_eq!(
+        resolve_local_seat_pack(&record, &records, &[], Some("runner")),
+        Some((dir, "helper".to_owned())),
+    );
+}
+
+#[test]
+fn a_seat_with_no_role_keeps_the_behaviour_it_always_had() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = role_pack(tmp.path(), "builder");
+    let record = agent_record(Some("team-1"), Some("builder"));
+    let teams = vec![team_record("team-1", Some(dir.clone()))];
+    assert_eq!(
+        resolve_local_seat_pack(&record, &[], &teams, None),
+        Some((dir, "builder".to_owned())),
+    );
+    // Whitespace is not a role.
+    assert!(resolve_local_seat_pack(&record, &[], &teams, Some("  ")).is_some());
+}
+
+#[test]
+fn a_packref_rides_only_the_pack_it_names() {
+    let pack_ref = packs_cache::PackRef {
+        repo: format!("30617:{PUBKEY}:packs"),
+        sha: "a".repeat(40),
+        role: "builder".into(),
+        path: "personas/roles/builder".into(),
+    };
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = role_pack(tmp.path(), "builder");
+    let seated = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://r",
+        None,
+        Some((dir, "builder".to_owned())),
+        Some(pack_ref.clone()),
+    )
+    .expect("seat");
+    assert_eq!(seated.pack_ref.as_ref(), Some(&pack_ref));
+    let json = serde_json::to_value(&seated).expect("serialize");
+    assert_eq!(
+        json.pointer("/packRef/sha").and_then(|v| v.as_str()),
+        Some(pack_ref.sha.as_str()),
+        "the provider reads packRef off this entry: {json}"
+    );
+
+    // No pack staged, so nothing to describe — a packRef here would be a
+    // proof of something that did not happen.
+    let packless = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://r",
+        None,
+        None,
+        Some(pack_ref),
+    )
+    .expect("seat");
+    assert_eq!(packless.pack_ref, None);
+    assert!(serde_json::to_value(&packless)
+        .expect("serialize")
+        .get("packRef")
+        .is_none());
+}
+
+#[test]
+fn a_seat_carries_the_pack_its_agent_was_installed_from() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = role_pack(tmp.path(), "builder");
+    let record = agent_record(Some("team-1"), Some("builder"));
+    let teams = vec![team_record("team-1", Some(dir.clone()))];
+    let pack = resolve_seat_pack(&record, &teams).expect("the pack is host-local, not on the wire");
+    assert_eq!(pack.0, dir);
+    assert_eq!(pack.1, "builder");
+
+    let entry = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://relay.example",
+        None,
+        Some(pack),
+        None,
+    )
+    .expect("seat");
+    let json = serde_json::to_value(&entry).expect("serialize");
+    assert_eq!(
+        json.get("packDir").and_then(|v| v.as_str()),
+        Some(dir.to_string_lossy().as_ref()),
+        "the provider reads packDir/personaId off this entry"
+    );
+    assert_eq!(
+        json.get("personaId").and_then(|v| v.as_str()),
+        Some("builder")
+    );
+}
+
+#[test]
+fn a_pack_that_does_not_hold_the_persona_stages_no_pack() {
+    // The provenance fallback used to pair the agent's slug with whatever
+    // directory its team names, checking only that the directory exists.
+    // An agent whose definition arrived from another device carries the
+    // 30175 d-tag uuid as its slug (persona_events.rs), and no pack has a
+    // persona by that name — so the seat was staged with a pack the
+    // provider cannot read, and the provider's materialize_seat_skills
+    // turns that into CreateFailure{PROVIDER_UNAVAILABLE}: a create that
+    // worked before role packs existed, refused afterwards. A seat with no
+    // readable pack is a packless seat, not a refused create.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = role_pack(tmp.path(), "builder");
+    let teams = vec![team_record("team-1", Some(dir.clone()))];
+
+    assert!(
+        resolve_seat_pack(
+            &agent_record(Some("team-1"), Some("9f2c8d1e-inbound-uuid")),
+            &teams,
+        )
+        .is_none(),
+        "a slug the pack has no persona for is not a pack"
+    );
+    // Same for a renamed or removed persona reached by the instance-side
+    // link rather than the provenance fallback.
+    let mut linked = agent_record(None, None);
+    linked.persona_team_dir = Some(dir.clone());
+    linked.persona_name_in_team = Some("architect".into());
+    assert!(
+        resolve_seat_pack(&linked, &teams).is_none(),
+        "a persona no longer in the pack is not a pack"
+    );
+    // A directory that is not a pack at all.
+    let plain = tmp.path().join("plain");
+    std::fs::create_dir_all(&plain).expect("plain dir");
+    assert!(
+        resolve_seat_pack(
+            &agent_record(Some("team-2"), Some("builder")),
+            &[team_record("team-2", Some(plain))],
+        )
+        .is_none(),
+        "an ordinary directory is not a pack"
+    );
+    // The persona the pack really holds still resolves.
+    assert_eq!(
+        resolve_seat_pack(&agent_record(Some("team-1"), Some("builder")), &teams),
+        Some((dir, "builder".to_owned())),
+    );
+}
+
+#[test]
+fn an_agent_with_no_pack_on_this_computer_stages_no_pack() {
+    // No provenance at all.
+    assert!(resolve_seat_pack(&agent_record(None, None), &[]).is_none());
+    // A slug whose team is JSON-only: there is no directory to read.
+    assert!(resolve_seat_pack(
+        &agent_record(Some("team-1"), Some("builder")),
+        &[team_record("team-1", None)],
+    )
+    .is_none());
+    // A team directory that no longer exists is not a pack either.
+    assert!(resolve_seat_pack(
+        &agent_record(Some("team-1"), Some("builder")),
+        &[team_record("team-1", Some(PathBuf::from("/nope/not/here")))],
+    )
+    .is_none());
+
+    let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None, None, None)
+        .expect("seat");
+    let json = serde_json::to_value(&entry).expect("serialize");
+    assert!(
+        json.get("packDir").is_none() && json.get("personaId").is_none(),
+        "a packless seat writes no pack keys: {json}"
+    );
+}
+
+#[test]
+fn a_seat_without_a_key_in_the_keyring_is_refused() {
+    let error = build_actor_seat_entry(PUBKEY, "", None, "wss://relay.example", None, None, None)
+        .expect_err("an empty nsec must refuse the seat");
+    assert!(error.contains("keyring"), "unexpected refusal: {error}");
+    assert!(
+        error.contains(PUBKEY),
+        "refusal must name the agent: {error}"
+    );
+    // Whitespace is not a key either.
+    assert!(
+        build_actor_seat_entry(PUBKEY, "   ", None, "wss://relay.example", None, None, None)
+            .is_err()
+    );
+}
+
+#[test]
+fn a_seat_pubkey_must_be_lowercase_hex() {
+    assert!(
+        build_actor_seat_entry("not-a-pubkey", "nsec1x", None, "wss://r", None, None, None)
+            .is_err()
+    );
+    assert!(build_actor_seat_entry(
+        &PUBKEY.to_uppercase(),
+        "nsec1x",
+        None,
+        "wss://r",
+        None,
+        None,
+        None
+    )
+    .is_err());
+}
+
+#[test]
+fn the_file_shape_is_the_providers_read_contract() {
+    let mut file = ActorSeatsFile::default();
+    let entry = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://relay.example",
+        None,
+        None,
+        None,
+    )
+    .expect("a hydrated key seats an agent");
+    stage_actor_seat(&mut file, "csl-1234", entry).expect("stage");
+    let json: serde_json::Value =
+        serde_json::from_slice(&serde_json::to_vec(&file).expect("serialize")).expect("parse back");
+    let pending = json.get("pending").expect("pending key");
+    let seat = pending.get("csl-1234").expect("keyed by commandId");
+    let keys: Vec<&str> = seat
+        .as_object()
+        .expect("seat object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, vec!["authTag", "nsec", "pubkey", "relayUrl"]);
+    assert_eq!(seat.get("pubkey").and_then(|v| v.as_str()), Some(PUBKEY));
+    assert_eq!(
+        seat.get("nsec").and_then(|v| v.as_str()),
+        Some("nsec1secret")
+    );
+    assert!(seat.get("authTag").expect("authTag present").is_null());
+    assert_eq!(
+        seat.get("relayUrl").and_then(|v| v.as_str()),
+        Some("wss://relay.example")
+    );
+}
+
+/// Ledger 77 (*Fence*, b): the provider turns this into the seat's `git`
+/// author and committer, so a seated execution's commits are attributed to
+/// the agent instead of to the operator whose home directory it runs in.
+#[test]
+fn a_seat_carries_the_agents_display_name_for_its_git_identity() {
+    let entry = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://relay.example",
+        Some("Levain"),
+        None,
+        None,
+    )
+    .expect("seat");
+    let json = serde_json::to_value(&entry).expect("serialize");
+    assert_eq!(
+        json.get("displayName").and_then(|v| v.as_str()),
+        Some("Levain"),
+        "the provider reads displayName off this entry: {json}"
+    );
+
+    // Blank is absent, not a name made of spaces: an empty `git` author is
+    // worse than falling back to the seat's role.
+    let blank = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://relay.example",
+        Some("   "),
+        None,
+        None,
+    )
+    .expect("seat");
+    assert_eq!(blank.display_name, None);
+    assert!(
+        serde_json::to_value(&blank)
+            .expect("serialize")
+            .get("displayName")
+            .is_none(),
+        "a nameless seat writes no displayName key"
+    );
+}
+
+#[test]
+fn an_auth_tag_travels_verbatim() {
+    let entry = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        Some("[\"tag\",\"value\"]"),
+        "wss://relay.example",
+        None,
+        None,
+        None,
+    )
+    .expect("seat");
+    assert_eq!(entry.auth_tag.as_deref(), Some("[\"tag\",\"value\"]"));
+}
+
+#[test]
+fn staging_needs_a_command_id() {
+    let mut file = ActorSeatsFile::default();
+    let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None, None, None)
+        .expect("seat");
+    assert!(stage_actor_seat(&mut file, "  ", entry.clone()).is_err());
+    assert!(stage_actor_seat(&mut file, &"c".repeat(257), entry).is_err());
+    assert!(file.pending.is_empty());
+}
+
+#[test]
+fn clearing_reports_whether_the_provider_beat_us_to_it() {
+    let mut file = ActorSeatsFile::default();
+    let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None, None, None)
+        .expect("seat");
+    stage_actor_seat(&mut file, "csl-9", entry).expect("stage");
+    assert!(clear_actor_seat(&mut file, "csl-9"));
+    assert!(!clear_actor_seat(&mut file, "csl-9"));
+}
+
+#[test]
+fn the_file_round_trips_through_disk_owner_only() {
+    let dir = std::env::temp_dir().join(format!(
+        "buzz-actor-seats-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = actor_seats_path(&dir);
+    assert_eq!(
+        read_actor_seats(&path).expect("missing is empty"),
+        ActorSeatsFile::default()
+    );
+    let mut file = ActorSeatsFile::default();
+    let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None, None, None)
+        .expect("seat");
+    stage_actor_seat(&mut file, "csl-7", entry).expect("stage");
+    write_actor_seats(&path, &file).expect("write");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "the seat file must be owner-only");
+    }
+    assert_eq!(read_actor_seats(&path).expect("read back"), file);
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -118,7 +118,10 @@ test("custody is staged before the publish, keyed by the exact commandId", async
       "ensureMembership",
       { channelId: "channel-1", actorPubkey: SEAT.actor, actorLabel: "Ada" },
     ],
-    ["stageSeat", { commandId: "csl-4", agentPubkey: SEAT.actor }],
+    [
+      "stageSeat",
+      { commandId: "csl-4", agentPubkey: SEAT.actor, role: "builder" },
+    ],
   ]);
 });
 
@@ -156,7 +159,10 @@ test("a resume stages the seat again under the resume's own commandId", async ()
   assert.equal(result, "resumed");
   assert.equal(published, 1);
   assert.deepEqual(calls, [
-    ["stageSeat", { commandId: "csl-resume-1", agentPubkey: SEAT.actor }],
+    [
+      "stageSeat",
+      { commandId: "csl-resume-1", agentPubkey: SEAT.actor, role: null },
+    ],
   ]);
 });
 
@@ -186,7 +192,10 @@ test("a resume that never went out takes its staged key back", async () => {
     /relay rejected the resume/,
   );
   assert.deepEqual(calls, [
-    ["stageSeat", { commandId: "csl-resume-3", agentPubkey: SEAT.actor }],
+    [
+      "stageSeat",
+      { commandId: "csl-resume-3", agentPubkey: SEAT.actor, role: null },
+    ],
     ["clearSeat", "csl-resume-3"],
   ]);
 });
@@ -293,4 +302,49 @@ test("a backend that answers nothing is reported as unknown, not as no pack", as
     publish: async () => "ok",
   });
   assert.deepEqual(staged, []);
+});
+
+// LANE-L23: the seat's role picks the pack, so the role has to reach the host.
+test("a seated create stages under the seat's role, not the actor's", async () => {
+  const { calls, deps } = recorder();
+  await publishSeatedCodingSessionCreate({
+    channelId: "channel-1",
+    commandId: "csl-role",
+    seat: { actor: SEAT.actor, role: "architect" },
+    deps,
+    publish: async () => "ok",
+  });
+  const staged = calls.find(([name]) => name === "stageSeat");
+  assert.ok(staged, "the seat was staged");
+  assert.deepEqual(staged[1], {
+    commandId: "csl-role",
+    agentPubkey: SEAT.actor,
+    role: "architect",
+  });
+});
+
+test("a resume restages under the same role its generation carries", async () => {
+  const { calls, deps } = recorder();
+  await publishSeatedCodingSessionResume({
+    commandId: "csl-resume",
+    actorPubkey: SEAT.actor,
+    actorRole: "architect",
+    deps,
+    publish: async () => "ok",
+  });
+  const staged = calls.find(([name]) => name === "stageSeat");
+  assert.ok(staged, "the seat was staged");
+  assert.equal(staged[1].role, "architect");
+});
+
+test("a resume with no role named stages with none, not with a guess", async () => {
+  const { calls, deps } = recorder();
+  await publishSeatedCodingSessionResume({
+    commandId: "csl-resume-2",
+    actorPubkey: SEAT.actor,
+    deps,
+    publish: async () => "ok",
+  });
+  const staged = calls.find(([name]) => name === "stageSeat");
+  assert.equal(staged[1].role, null);
 });

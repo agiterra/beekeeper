@@ -30,6 +30,13 @@ export type CodingSessionSeatCustody = {
   stageSeat: (input: {
     commandId: string;
     agentPubkey: string;
+    /**
+     * The role the seat holds on this execution. The host stages **that
+     * role's** pack, never the actor's home role's — a `builder` identity
+     * seated as `architect` is an architect here, and was being handed the
+     * builder's skills before this was passed.
+     */
+    role?: string | null;
   }) => Promise<{ packStaged: boolean } | undefined>;
   /** Drop the custody entry again. Best effort; never fails the publish. */
   clearSeat: (commandId: string) => Promise<void>;
@@ -69,6 +76,7 @@ export type SeatedCodingSessionCreateDeps = CodingSessionSeatCustody & {
 async function publishWithStagedSeat<T>(input: {
   commandId: string;
   actorPubkey: string;
+  actorRole?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   onSeatStaged?: CodingSessionSeatStagedReporter;
@@ -76,6 +84,7 @@ async function publishWithStagedSeat<T>(input: {
   const staged = await input.deps.stageSeat({
     commandId: input.commandId,
     agentPubkey: input.actorPubkey,
+    role: input.actorRole ?? null,
   });
   if (staged) input.onSeatStaged?.({ packStaged: staged.packStaged });
   try {
@@ -98,6 +107,12 @@ async function publishWithStagedSeat<T>(input: {
 export async function publishSeatedCodingSessionResume<T>(input: {
   commandId: string;
   actorPubkey: string | null;
+  /**
+   * The role this execution's seat holds, from its own 44223. A resume stages
+   * a fresh custody entry, so it must name the same role the create did or the
+   * new generation would run another role's pack.
+   */
+  actorRole?: string | null;
   publish: () => Promise<T>;
   deps: CodingSessionSeatCustody;
   /** Called with what staging actually put on disk, before the publish. */
@@ -107,6 +122,7 @@ export async function publishSeatedCodingSessionResume<T>(input: {
   return publishWithStagedSeat({
     commandId: input.commandId,
     actorPubkey: input.actorPubkey,
+    actorRole: input.actorRole ?? null,
     publish: input.publish,
     deps: input.deps,
     ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),
@@ -139,6 +155,8 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
   return publishWithStagedSeat({
     commandId: input.commandId,
     actorPubkey: input.seat.actor,
+    // The seat's own role, not the actor's home role: this is the whole fix.
+    actorRole: input.seat.role,
     publish: input.publish,
     deps: input.deps,
     ...(input.onSeatStaged ? { onSeatStaged: input.onSeatStaged } : {}),

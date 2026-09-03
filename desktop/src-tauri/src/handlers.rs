@@ -203,6 +203,8 @@ pub(crate) fn invoke_handler(
         put_managed_agent_runtime_lifecycle,
         create_managed_agent,
         managed_agents::actor_seats::stage_coding_session_actor_seat,
+        managed_agents::actor_seats::preview_coding_session_seat_pack,
+        managed_agents::packs_repo::project_packs_init,
         managed_agents::actor_seats::clear_coding_session_actor_seat,
         start_managed_agent,
         stop_managed_agent,

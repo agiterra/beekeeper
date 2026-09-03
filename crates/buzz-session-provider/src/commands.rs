@@ -1325,6 +1325,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            pack_ref: None,
         }
     }
 

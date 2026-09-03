@@ -136,6 +136,12 @@ type CodingSessionComposerProps = {
    * the provider refuses the reconnect with `ACTOR_UNAVAILABLE`.
    */
   seatActorPubkey?: string | null;
+  /**
+   * The role that seat holds, from this generation's 44223. A resume stages
+   * its own custody entry, and the host picks the pack by role — so without
+   * this a resumed seat would be handed its actor's home-role pack.
+   */
+  seatRole?: string | null;
   /** Host-local seat custody seam; production passes nothing. */
   seatCustody?: CodingSessionSeatCustody;
   /** Display name for the stop-execution confirm; falls back to "this session". */
@@ -187,6 +193,7 @@ export function CodingSessionComposer({
   publishResume = publishCodingSessionResume,
   refusalClient,
   seatActorPubkey = null,
+  seatRole = null,
   seatCustody = DEFAULT_SEAT_CUSTODY,
   sessionLabel = null,
   target,
@@ -623,6 +630,7 @@ export function CodingSessionComposer({
       // publish path unchanged — no custody write at all.
       await publishSeatedCodingSessionResume({
         actorPubkey: seatActorPubkey,
+        actorRole: seatRole,
         commandId,
         deps: seatCustody,
         publish: () =>
@@ -652,6 +660,7 @@ export function CodingSessionComposer({
     publishResume,
     seatActorPubkey,
     seatCustody,
+    seatRole,
     target,
   ]);
 

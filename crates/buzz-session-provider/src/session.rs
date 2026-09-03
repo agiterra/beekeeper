@@ -3067,6 +3067,7 @@ done
             display_name: Some("Levain".into()),
             pack_dir: None,
             persona_id: None,
+            pack_ref: None,
         }
         .post_fence_env(Some("lead"));
         manager.create(create).await.expect("create");

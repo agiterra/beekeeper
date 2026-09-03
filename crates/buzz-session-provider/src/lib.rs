@@ -2309,8 +2309,11 @@ impl Provider {
         // underneath us between the decision and the dispatch. That is still a
         // refusal, and the same one: an execution labelled as an agent that
         // cannot act as one is the lie this code exists to prevent.
-        let (seat_identity, post_fence_env, seat_skills) = match plan.actor.as_deref() {
-            None => (None, Vec::new(), None),
+        let (seat_identity, post_fence_env, seat_skills, seat_pack_ref) = match plan
+            .actor
+            .as_deref()
+        {
+            None => (None, Vec::new(), None, None),
             Some(actor) => {
                 let seats = crate::actor_seats::ActorSeatsFile::load(
                     self.config.actor_seats_file.as_deref(),
@@ -2324,8 +2327,11 @@ impl Provider {
                         };
                         // The pack is a host-local path staged beside the key,
                         // read here for the same reason the key is: it names
-                        // machine state a signed create must never carry.
+                        // machine state a signed create must never carry. Its
+                        // `packRef` is the opposite kind of fact — the same on
+                        // every machine — and is kept for the wire.
                         let skills = seat_skills(seat);
+                        let pack_ref = seat.pack_ref.clone();
                         (
                             Some(identity),
                             // The umbrella's project, so `bee pulse update`
@@ -2341,6 +2347,7 @@ impl Provider {
                                 std::env::var_os("PATH").as_ref(),
                             ),
                             skills,
+                            pack_ref,
                         )
                     }
                     _ => {
@@ -2437,6 +2444,7 @@ impl Provider {
             genesis_ref: plan.genesis_ref.clone(),
             actor: plan.actor.clone(),
             role: plan.role.clone(),
+            pack_ref: seat_pack_ref,
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
@@ -3190,8 +3198,11 @@ impl Provider {
         // generation whose 44223 still says `agentRef: <seat>` while the
         // process behind it holds no credentials at all, which is precisely the
         // "control that lies about what it enforces" class of bug.
-        let (seat_identity, post_fence_env, seat_skills) = match record.actor.as_deref() {
-            None => (None, Vec::new(), None),
+        let (seat_identity, post_fence_env, seat_skills, seat_pack_ref) = match record
+            .actor
+            .as_deref()
+        {
+            None => (None, Vec::new(), None, None),
             Some(actor) => {
                 let seats = crate::actor_seats::ActorSeatsFile::load(
                     self.config.actor_seats_file.as_deref(),
@@ -3207,6 +3218,11 @@ impl Provider {
                         // workdir may have moved on since the create, and the
                         // write is a no-op when it has not.
                         let skills = seat_skills(seat);
+                        // …and re-states which pack that was, because a resume
+                        // may have been staged from a moved ref. The new
+                        // generation's 44223 must describe the pack it is
+                        // actually running, not the one the create ran.
+                        let pack_ref = seat.pack_ref.clone();
                         (
                             Some(identity),
                             // Same coordinate the create carried: a resumed
@@ -3220,6 +3236,7 @@ impl Provider {
                                 std::env::var_os("PATH").as_ref(),
                             ),
                             skills,
+                            pack_ref,
                         )
                     }
                     _ => {
@@ -3305,6 +3322,10 @@ impl Provider {
             record.open_turn = None;
             record.closed = false;
             record.resume_cursor = Some(startup.acp_session_id.clone());
+            // This generation's pack, not the previous one's: a seat restaged
+            // from a moved ref runs a different commit, and the 44223 has to
+            // say which.
+            record.pack_ref = seat_pack_ref.clone();
             if startup.model.is_some() {
                 record.model = startup.model.clone();
             }
@@ -4653,11 +4674,16 @@ impl Provider {
                 .and_then(|record| record.actor.as_deref())
                 .and_then(|_| crate::seat_bee::host_seat_bee())
                 .map(|(_, stamp)| stamp.clone()),
-            // LANE-L23 join point: Lane B fills this from the host's packs
-            // cache once staging resolves a kind:30624 source. `None` is the
-            // honest value until then — no pack staged, and the surfaces say
-            // so rather than naming one.
-            pack_ref: None,
+            // Which pack this seat actually ran, as the host staged it —
+            // repository, commit, role and path, or `app:shipped` with the app
+            // version when the bundled defaults were used. Written by both
+            // seat-start paths (create and reattach) and refreshed per
+            // generation, so publishing it is one field read.
+            //
+            // Absent when no pack was staged from a project's packs
+            // repository. The surfaces say "no pack staged" rather than naming
+            // one that did not run.
+            pack_ref: record.and_then(|record| record.pack_ref.clone()),
         }
     }
 
@@ -7555,6 +7581,7 @@ mod tests {
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
+            pack_ref: None,
         }
     }
 
@@ -10644,6 +10671,84 @@ mod tests {
         }
     }
 
+    /// LANE-L23: the pack a seat was staged with reaches the record, durably,
+    /// so every 44223 of this generation can say which pack ran.
+    ///
+    /// The host stages it beside the key; unlike the key (and unlike the
+    /// pack's *directory*) a `packRef` means the same thing on every machine,
+    /// so it is the half that belongs on the wire.
+    #[tokio::test]
+    async fn a_seated_create_records_the_pack_its_seat_was_staged_with() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let owner = "cd".repeat(32);
+        let sha = "ab".repeat(20);
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "packRef".to_string(),
+            serde_json::json!({
+                "repo": format!("30617:{owner}:packs"),
+                "sha": sha,
+                "role": "lead",
+                "path": "personas/roles/lead",
+            }),
+        );
+        write_actor_seats_with(dir.path(), "create-1", &owner, extra);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event = seated_create_event(&provider, channel_id, "create-1", &owner, "lead");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let record = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("one session record");
+        let pack_ref = record.pack_ref.clone().expect("the seat named its pack");
+        assert_eq!(pack_ref.sha, sha);
+        assert_eq!(pack_ref.role, "lead");
+        assert_eq!(pack_ref.path, "personas/roles/lead");
+        assert_eq!(pack_ref.repo, format!("30617:{owner}:packs"));
+    }
+
+    /// A seat staged before `packRef` existed, and a seat whose pack came from
+    /// this computer, both record no pack reference — an absent fact, never a
+    /// repository invented to fill the field.
+    #[tokio::test]
+    async fn a_seat_with_no_packref_records_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        write_actor_seats(dir.path(), "create-1", &"cd".repeat(32));
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let event =
+            seated_create_event(&provider, channel_id, "create-1", &"cd".repeat(32), "lead");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+        provider.flush(&CollectingSink::new()).await.expect("flush");
+        assert_eq!(
+            provider
+                .state()
+                .sessions()
+                .next()
+                .expect("one session record")
+                .pack_ref,
+            None
+        );
+    }
+
     /// A create whose seat this host does not hold is refused with
     /// `ACTOR_UNAVAILABLE`, and nothing is created: no session record, no
     /// metadata, no adapter.
@@ -11072,19 +11177,30 @@ mod tests {
     const TEST_SEAT_NSEC: &str = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
 
     fn write_actor_seats(dir: &Path, command_id: &str, pubkey: &str) -> std::path::PathBuf {
+        write_actor_seats_with(dir, command_id, pubkey, serde_json::Map::new())
+    }
+
+    /// The same file with extra keys folded into the seat — `packRef`, say.
+    fn write_actor_seats_with(
+        dir: &Path,
+        command_id: &str,
+        pubkey: &str,
+        extra: serde_json::Map<String, serde_json::Value>,
+    ) -> std::path::PathBuf {
         let path = dir.join(config::ACTOR_SEATS_FILE_NAME);
+        let mut seat = serde_json::json!({
+            "pubkey": pubkey,
+            "nsec": TEST_SEAT_NSEC,
+            "authTag": null,
+            "relayUrl": "wss://seat.example",
+        });
+        let object = seat.as_object_mut().expect("seat object");
+        object.extend(extra);
         std::fs::write(
             &path,
             serde_json::json!({
                 "version": 1,
-                "pending": {
-                    command_id: {
-                        "pubkey": pubkey,
-                        "nsec": TEST_SEAT_NSEC,
-                        "authTag": null,
-                        "relayUrl": "wss://seat.example",
-                    }
-                },
+                "pending": { command_id: seat },
             })
             .to_string(),
         )
@@ -11747,6 +11863,7 @@ mod tests {
                         started_at_ms: now_ms(),
                     }),
                     closed: false,
+                    pack_ref: None,
                 })
                 .expect("insert");
             store

@@ -369,6 +369,7 @@ function ExecutionComposer({
       providerAuthorityPubkey={participant.execution.signerPubkey}
       recipientControl={recipientControl}
       seatActorPubkey={record.agentRef}
+      seatRole={record.role}
       target={target}
       variant="floating"
     />

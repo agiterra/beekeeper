@@ -476,6 +476,7 @@ mod tests {
             display_name: None,
             pack_dir: None,
             persona_id: None,
+            pack_ref: None,
         };
         let bee = crate::seat_bee::SeatBee {
             path: std::path::PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/bee"),
