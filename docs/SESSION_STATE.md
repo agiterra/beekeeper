@@ -8354,6 +8354,47 @@ is Brian's call.
        `BUZZ_E2E_PORT=4620 playwright --project=smoke community-rail.spec.ts`
        **24 passed (30.3 s)**. All thirteen commits carry `Signed-off-by`.
 
+### Found 2026-09-03 — the founder could not turn the rule on, and the gate refused the fix
+
+**Fixed and landed on `main` as `251f6719f`, `4a0ea339c`, `3f2ee9773`; the
+installed Beekeeper.app (and the `bee` symlinked out of it) rebuilt from
+`4a0ea339c`.**
+
+- **`bee repos protect set` could never succeed on a real repository.** Every
+  rewrite of a repository announcement was stamped the observed head's
+  `created_at` **plus one second** (`repos.rs`, "advance only the observed
+  head" — meant to stop a delayed writer leapfrogging an intervening update),
+  and the relay refuses any event more than ±15 minutes from its clock
+  (`ingest.rs` `MAX_TIMESTAMP_DRIFT_SECS`). The agiterra-beekeeper announcement
+  dates from 2026-08-24, so the founder's `--require-verdict` write came back
+  `relay error 400: invalid: event timestamp too far from server time`.
+  Local, relay and NTP clocks agreed to the second; it was never skew. The
+  shell-session announce rebuild (`terminals.rs`) had the same `+1`. Now one
+  helper, `next_replaceable_created_at`, stamps the later of head + 1 and now:
+  it still sorts after the head for last-write-wins, still steps past a head
+  stamped in the future, and lands inside the ingest window.
+
+- **The 2026-08-31 `GIT_DIR` hazard, second instance, and this time it wrote
+  into the repository.** That entry ended "no audit of the rest". The
+  buzz-cli worktree module, its fixtures and `scripts/worktrees-prune.sh` all
+  spawned `git` with a working directory and an inherited environment. Under
+  the pre-push hook: 17 tests failed (`could not lock config file
+  …/.git/config: File exists` — parallel `git init`s in temp dirs all writing
+  the *pushing* repository's config; the script "found no trunk" in a
+  repository it was never pointed at), and the fixtures left behind a commit
+  `one` by `L11 <l11@example.invalid>` on the branch under push, a
+  `lane-refuse` branch, and a prunable temp worktree in the bare repo. All
+  three were removed by hand before the branch was pushed again. Reproduce
+  without a hook: `GIT_DIR=<any repo> cargo test -p buzz-cli --lib --
+  commands::sessions::worktree`. Fixed with a `git_command` helper that
+  clears the same seven selection variables the desktop probe does; the
+  fixtures and the script clear them too. **Still unaudited:**
+  `git_setup.rs` and `registry_measure_graders.rs` also spawn `git`.
+
+- **A fresh worktree fails the pre-push gate's Tauri check** with `resource
+  path binaries/buzz-acp-aarch64-apple-darwin doesn't exist`. Run `just
+  _ensure-sidecar-stubs` in it once; nothing says so.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -8411,13 +8452,19 @@ they unblock, and the work item 109 measured but did not do.
    checkout, `cargo build -p buzz-cli`, then `env -u BUZZ_DESKTOP_NOKEYRING
    just desktop-standalone`.
 
-2. **Brian runs `bee repos protect set --ref refs/heads/main
-   --require-verdict` on hive.** A live write, on the founder's key, after the
-   relay redeploys. **Finding 27 is open until this is done** — item 109 ships
-   the rule and nothing else can turn it on. Until then a lead can still land
-   `main` over its own verifier's FAIL, which is what finding 27 is. Verify
-   with `bee repos protect list` and `bee git check --ref refs/heads/main`,
-   both of which now say which build evaluated the rule.
+2. **Done 2026-09-03 — the rule is on the wire; whether hive enforces it is
+   not yet proven.** Andy (a founder, `6cbdf445…`) ran `bee repos protect set
+   --id agiterra-beekeeper --ref refs/heads/main --require-verdict` against
+   hive; the relay accepted event `98ab98af9ce8…`, `bee repos protect list`
+   shows `refs/heads/main` → `require-verdict`, and `bee git check --ref
+   refs/heads/main` answers "admitted by arm (A) — you are a founder". It
+   took a CLI fix first (see "Found 2026-09-03" in §2). **Finding 27 closes
+   only when hive runs a relay built from `42dd921d8` (2026-09-02) or later**;
+   from outside that cannot be read — NIP-11 `version` is 0.2.1 as it has
+   been since 08-21 and `/_status` answers 404 through the proxy — so check
+   the image on the host (`ssh agincus 'incus exec hive -- docker inspect
+   buzz-prod-relay-1 --format "{{.Config.Image}}"'`). Until then the relay
+   parses the token and ignores it, exactly as the CLI's own output warns.
 
 3. **Brian rules on the frozen copy.** §1i–§1l stand provisional, plus L8's
    three unfrozen sentences (`codingSessionMissionLand.ts:252-253`,
