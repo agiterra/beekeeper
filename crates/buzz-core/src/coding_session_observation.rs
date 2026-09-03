@@ -138,6 +138,16 @@ pub enum CodingSessionObservationSource {
     Declared,
 }
 
+impl Default for CodingSessionObservationSource {
+    /// `Declared` — what a record that does not say must be read as.
+    ///
+    /// Only the exact word `observed`, written by a mechanism, buys the
+    /// stronger claim; absence never does.
+    fn default() -> Self {
+        Self::Declared
+    }
+}
+
 impl CodingSessionObservationSource {
     /// The exact wire token.
     pub const fn as_str(self) -> &'static str {
@@ -326,6 +336,18 @@ pub struct CodingSessionObservationPayload {
     /// and a sixth tag would refuse every event a build that predates this
     /// field signed; a reader that wants only observed rows filters the folded
     /// collection rather than the relay query.
+    ///
+    /// **Required on write, optional on read** — the same rule kind 44244's
+    /// `condition` is under, and for the same measured reason (finding 28).
+    /// Serialization always emits the key, so every record this repository
+    /// writes carries it; `serde(default)` plus the read-side exemption below
+    /// means a six-key body signed before 2026-09-02 still decodes, reading as
+    /// `declared`. That is the honest default: a row nothing watched is a
+    /// claim. An explicit `null` is still refused — a key that says nothing is
+    /// not the same as a key that was never written. Without this every 44246
+    /// event on the wire today becomes unreadable, which is a reader losing
+    /// history.
+    #[serde(default)]
     pub source: CodingSessionObservationSource,
     /// The assignment this observation is about, when it is about one.
     ///
@@ -485,6 +507,16 @@ const OBSERVATION_KEYS: &[&str] = &[
 /// The one top-level key an observation may write as JSON `null`.
 const OBSERVATION_NULLABLE_KEYS: &[&str] = &["assignmentRef"];
 
+/// Top-level keys a **reader** accepts as absent, though a writer always emits
+/// them.
+///
+/// `source` joined the payload on 2026-09-02. Requiring it on read would make
+/// every 44246 event signed before that day undecodable — the exact failure
+/// kind 44244's `condition` was measured into and ruled on (finding 28): a wire
+/// widening never loses history. Absent reads as `declared`; an explicit `null`
+/// is still refused by `reject_required_nulls`.
+const OBSERVATION_READ_OPTIONAL_KEYS: &[&str] = &["source"];
+
 /// The exact body keys, and which of them may be `null`, per observation type.
 const fn body_keys(
     observation_type: CodingSessionObservationType,
@@ -555,14 +587,21 @@ pub fn decode_coding_session_observation(
     let object = value
         .as_object()
         .ok_or_else(|| "coding-session observation payload must be an object".to_owned())?;
-    validate_exact_keys(object, OBSERVATION_KEYS, "observation payload")?;
+    validate_exact_keys(
+        object,
+        OBSERVATION_KEYS,
+        OBSERVATION_READ_OPTIONAL_KEYS,
+        "observation payload",
+    )?;
     reject_required_nulls(
         object,
         OBSERVATION_KEYS,
         OBSERVATION_NULLABLE_KEYS,
         "observation payload",
     )?;
-    validate_closed_token(object, "source", OBSERVATION_SOURCES, "observation payload")?;
+    if object.contains_key("source") {
+        validate_closed_token(object, "source", OBSERVATION_SOURCES, "observation payload")?;
+    }
 
     let observation_type: CodingSessionObservationType = serde_json::from_value(
         object
@@ -583,7 +622,7 @@ pub fn decode_coding_session_observation(
         .ok_or_else(|| "coding-session observation body must be an object".to_owned())?;
     let (keys, nullable) = body_keys(observation_type);
     let field = format!("observation {} body", observation_type.as_str());
-    validate_exact_keys(body, keys, &field)?;
+    validate_exact_keys(body, keys, &[], &field)?;
     reject_required_nulls(body, keys, nullable, &field)?;
     // Closed sub-vocabularies are checked here rather than left to serde: an
     // untagged body enum answers an unknown token with "data did not match any
@@ -606,7 +645,7 @@ pub fn decode_coding_session_observation(
                 let row = row
                     .as_object()
                     .ok_or_else(|| "gate row must be an object".to_owned())?;
-                validate_exact_keys(row, GATE_ROW_KEYS, "gate row")?;
+                validate_exact_keys(row, GATE_ROW_KEYS, &[], "gate row")?;
                 reject_required_nulls(row, GATE_ROW_KEYS, GATE_ROW_NULLABLE_KEYS, "gate row")?;
                 validate_closed_token(row, "outcome", GATE_OUTCOMES, "gate row")?;
             }
@@ -693,9 +732,13 @@ fn joined_tokens(tokens: &[&str]) -> String {
 fn validate_exact_keys(
     object: &serde_json::Map<String, Value>,
     keys: &[&str],
+    read_optional: &[&str],
     field: &str,
 ) -> Result<(), String> {
     for key in keys {
+        if read_optional.contains(key) {
+            continue;
+        }
         if !object.contains_key(*key) {
             return Err(format!(
                 "coding-session {field} is missing {key:?}: every key is always present, and an \

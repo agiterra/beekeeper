@@ -3853,6 +3853,37 @@ pub enum PulseCmd {
         #[arg(long)]
         limit: Option<u32>,
     },
+    /// Print one umbrella's mission row — the same sentences Desktop renders
+    ///
+    /// Composed entirely from mechanism: the signed 44244/44245 records, the
+    /// hooks' 44246 observations, and the relay's own 30618 ref state. Nobody
+    /// is asked to report.
+    Missions {
+        /// Channel UUID the umbrella's records live in
+        #[arg(long)]
+        channel: String,
+        /// Umbrella `sessionRef` UUID
+        #[arg(long)]
+        session_ref: String,
+        /// Immutable session-genesis event id
+        #[arg(long)]
+        genesis: String,
+        /// Repository id (the kind:30617 `d` tag) whose ref state to read
+        #[arg(long)]
+        repo: Option<String>,
+    },
+    /// Plan the prune of shared wip refs; prints what it would delete
+    ///
+    /// Deletes nothing outside `refs/heads/wip/`, and keeps any ref whose
+    /// state carries no readable date — unknown is not old.
+    PruneWip {
+        /// Repository id (the kind:30617 `d` tag) whose ref state to read
+        #[arg(long)]
+        repo: String,
+        /// Treat these commits as merged, comma-separated
+        #[arg(long)]
+        merged: Option<String>,
+    },
 }
 
 /// Normalize hand-authored `BUZZ_AUTH_TAG` input to strict JSON.
@@ -4826,7 +4857,15 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "pulse"),
-            vec!["digest", "list", "sessions", "update"]
+            // 4 on the base tree, plus L9's `missions` and `prune-wip`.
+            vec![
+                "digest",
+                "list",
+                "missions",
+                "prune-wip",
+                "sessions",
+                "update"
+            ]
         );
         assert_eq!(
             names(&cmd, "issues"),
@@ -4909,7 +4948,8 @@ mod tests {
             ("patches", 4),
             ("pr", 5),
             ("projects", 11),
-            ("pulse", 4),
+            // 4 on the base tree, plus L9's `missions` and `prune-wip`.
+            ("pulse", 6),
             ("reactions", 3),
             // 5 on the base tree, plus `delete`.
             ("repos", 6),

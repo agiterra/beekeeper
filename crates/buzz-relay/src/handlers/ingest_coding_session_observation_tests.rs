@@ -1,7 +1,8 @@
 use buzz_core::coding_session_observation::{
     validate_coding_session_observation_envelope, CodingSessionObservationBody,
     CodingSessionObservationGate, CodingSessionObservationGateOutcome,
-    CodingSessionObservationGateRow, CodingSessionObservationPayload, CodingSessionObservationType,
+    CodingSessionObservationGateRow, CodingSessionObservationPayload,
+    CodingSessionObservationSource, CodingSessionObservationType,
     CODING_SESSION_OBSERVATION_SCHEMA,
 };
 use buzz_sdk::coding_session_observation::build_coding_session_observation;
@@ -15,6 +16,8 @@ fn gate_observation(session: &str, genesis: &str) -> CodingSessionObservationPay
         session_ref: session.to_owned(),
         genesis_ref: genesis.to_owned(),
         observation_type: CodingSessionObservationType::Gate,
+        // A fixture the relay signs itself: it watched nothing, so it says so.
+        source: CodingSessionObservationSource::Declared,
         assignment_ref: None,
         body: CodingSessionObservationBody::Gate(CodingSessionObservationGate {
             rows: vec![CodingSessionObservationGateRow {

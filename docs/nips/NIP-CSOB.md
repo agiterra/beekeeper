@@ -334,3 +334,58 @@ written live yet.** Every reader and writer in this NIP is exercised by unit
 tests and by the relay's own integration suite, not by a live publish against
 a running community. Until a live write happens, treat the surfaces as proven
 against the code and unproven against the wire.
+
+## Reading observations without asking for them (batch 3, lane L9, 2026-09-02)
+
+Kind 44246 is defined above as something an author *publishes*. This appendix
+records the two producers that publish it **without anybody being asked to**,
+because a vocabulary whose only producer is a cooperating agent inherits that
+agent's memory.
+
+1. **The hire host's git hooks.** At hire time the site creating a seat's
+   worktree writes a `post-commit` and a `prepare-commit-msg` hook into **that
+   worktree's own** `.git/hooks` and that worktree's **own** config (git's
+   `--worktree` scope, which needs one `extensions.worktreeConfig` line in the
+   enclosing repository's shared config and touches nothing else) — never the
+   user's global config. The hook pushes `HEAD` to
+   `refs/heads/wip/<role>/<assignment-hex8>` under the seat's own key. The agent
+   only runs `git commit`. Hook text and config lines are pure strings in
+   `buzz-core::seat_git_hooks`, so every installer writes the same bytes.
+
+   **What it does not yet do.** The 44246 `checkpoint` body has no field for a
+   commit SHA, a branch or a subject, and its `testsWritten`/`testsRed`/
+   `testsGreen` are counts somebody measured. So the hook pushes the ref and
+   publishes **no** checkpoint, logging that it did not: a checkpoint carrying
+   invented counts, or a SHA smuggled into a prose field, would be exactly the
+   claim this kind exists to replace. The provider's own seated-workdir path is
+   a second site that creates seat worktrees and does not install these hooks
+   yet.
+
+2. **The provider's observed gate rows.** A `gate` row derived from a tool call
+   the provider watched carries `source: "observed"` and is signed by the
+   provider instance; a row its author states about its own work stays
+   `declared`. The two classes are **never merged**: a consumer shows which it
+   is holding, and an `observed` row that displaces a `declared` one says so.
+
+### Two fields this appendix depends on
+
+`gate.source` (`observed` | `declared`, closed, always present) and
+`checkpoint.files` (≤ 64 paths, ≤ 256 B each) are **not defined by this lane**.
+Until they land:
+
+- every row reads `declared`, because the strict decoder refuses unknown keys
+  and a row nothing observed is a claim; and
+- no checkpoint names a path, so Project Pulse's overlap row is never computed —
+  the honest failure, since paths nobody published are paths nobody may be told
+  about.
+
+Consumers must read `source` through one adapter that tolerates its absence
+(`buzz_core::pulse_mission::PulseGateSource::from_wire_token`), and must not
+promote an unknown token to `observed`.
+
+### What a checkpoint may not carry
+
+A checkpoint's `testsWritten` / `testsRed` / `testsGreen` are counts somebody
+measured. A producer that has no measurement publishes **no checkpoint** rather
+than a zero: a zero is a measurement, and an invented one is exactly the class
+of claim this kind exists to replace.

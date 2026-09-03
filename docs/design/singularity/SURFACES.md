@@ -2622,3 +2622,118 @@ with the same sentence the CLI prints. Unknown ≠ false: a surface holding no
 44245 passes `false` — exactly as before — and says `No policy record reached
 this view, so the fold read no verifier requirement.` rather than implying none
 was set.
+
+## 26. 2026-09-02 (batch 3, lane L9) — Pulse knows the mission without asking anyone to report
+
+Brian's ruling, the day two live runs turned on agents forgetting to report:
+*"we can achieve this without asking the agents to do it — which I find to
+always be the weak link."* Every fact on this surface is produced by a
+mechanism under a key, not by cooperation:
+
+| producer | what it produces | where |
+|---|---|---|
+| the hire host | a `post-commit` hook in the **seat's own worktree** that pushes `HEAD` to `refs/heads/wip/<role>/<assignment-hex8>` under the seat's key, and a `prepare-commit-msg` hook that adds an `Assignment:` trailer | `buzz-core::seat_git_hooks`, `scripts/wip-post-commit.sh` |
+| a person, opt-in | the same `post-commit` hook, pushing to `refs/heads/wip/<their-pubkey8>/<branch>` under **their own** key, off until `just wip-share-on` | `lefthook.yml` `post-commit`, `Justfile` |
+| the provider | 44246 `gate` rows with `source: "observed"` (Lane L5's field) | consumed here through one adapter |
+| the relay | kind 30618 ref state, signed after a push | `buzz-cli::commands::wip_refs` |
+
+**What the installer writes, and the one line it writes outside the worktree.**
+Hooks go into the target worktree's own `.git/hooks`, and the config lines go
+into that worktree's **own** config — `--worktree` scope, not `--local`, because
+in a linked worktree `--local` *is* the shared repository config and arming the
+seat would arm the human's checkout with it. Getting a per-worktree config at
+all requires one line in the enclosing repository's shared config:
+`extensions.worktreeConfig = true`. So the honest property is "the target
+worktree's own gitdir, **plus that one line in the shared config**", not "only
+the worktree". It is guarded against `core.bare`/`core.worktree`, it is the
+minimum git provides, and it is named here because a reader of the seat-install
+path should know the enclosing repo is touched once.
+
+**A person's ref namespace is their own key.** An earlier draft used a literal
+`human` segment; two people on the same branch then force-pushed over each
+other and kind 30618, which records only the last pusher, re-attributed the
+loser's commits. `just wip-share-on` resolves the person's pubkey and refuses
+rather than guessing, because a ref shared between people is worse than no ref.
+It arms sharing and nothing else: it does **not** configure commit signing, so a
+person's wip commits are signed only if their checkout was already set up for
+`git-sign-nostr`. The push is theirs either way (NIP-98).
+
+**One model, two consumers.** `crates/buzz-core/src/pulse_mission.rs` folds and
+`render_pulse_mission_lines` composes **every sentence in Rust**. `bee pulse
+missions --format compact` prints exactly those strings and Desktop renders the
+same strings into elements with testids, re-wording nothing. A golden test
+(`crates/buzz-cli/src/commands/pulse_mission_tests.rs`) asserts the CLI adds no
+prose of its own; a second test asserts no sentence is composed outside
+`buzz-core`.
+
+**Two limits this surface states rather than implies.**
+
+1. **Kind 30618 is parameterized-replaceable.** It says where a ref *stands
+   now* and who moved it **last** — never a push history. Two pushes to one ref
+   leave one row, at the newer SHA, and no row ever claims two.
+2. **A wip ref proves a commit was pushed, not that anybody reviewed it.** A
+   `landing` row therefore names the verdict or reads `no verdict on the wire
+   for this commit`.
+
+**A repo with no ref state reads `No ref state on the wire for this repo`**, and
+a member with no wip ref reads `{Who}'s local commits: not shared` — a statement
+about **what the relay holds**, never about that person's git config. Wherever a
+wip ref is shown, the prune window is disclosed: `Wip refs are pruned when their
+branch merges or after 30 days`. `bee pulse prune-wip` plans that prune,
+**deletes nothing outside `refs/heads/wip/`**, and keeps any ref whose state
+carries no readable date — unknown is not old.
+
+**Gate truth per seat, never collapsed to one.** An `observed` row beats a
+`declared` row for the same `(author, gate)` **and says so** — `(observed, over
+a declared row)`. Rows sort `failed`, `not-run`, `passed`, then by name, bounded
+to four with a visible count. The wire carries no exit code, so none is
+rendered. A seat with no row reads `No gate row on the wire for {Who} — a claim
+in prose is not a gate row`; absence is stated once, never as a fake row.
+
+**An excluded completion is not a completion.** It renders the exclusion code
+and the mission stays `running`; no 44244 record says that in a field, so the
+row says it in a sentence.
+
+**Rulings.** `openRulings` lists every unanswered `decision.request`;
+`rulingsWaitingOnViewer` is the subset held on the founder when the viewer *is*
+that session's founder, or held on the viewer's own pubkey. With no identity the
+list is empty and the surface reads `No identity on this surface, so nothing
+here can be held on you` — never `0`.
+
+**The overlap row, and the line nothing crosses.** Two **different** umbrellas
+whose newest checkpoints name the same path by **exact equality** — never a
+directory-prefix guess — produce one row naming the files, the seats and each
+commit's age, shown to both sides with nobody asked to look. It is composed only
+from events the reader can already query: if either side is unreadable there is
+**no row**. **There is no cross-umbrella wake.** A lead may publish a `note`
+citing the other umbrella's event and message that lead's pubkey; no record ever
+places work on another umbrella's seat. `pulse_overlap.rs` cannot send anything,
+and a test asserts that against the module's own code.
+
+**Bounds, stated.** The newest **8 open** sessions by observation time; a ninth
+is disclosed by name (`9 open sessions in scope; the newest 8 by observation
+time were read`), never dropped. A 44244 `Err` is **one row's** failure — that
+row reads `unreadable` with the reason and every other session is untouched.
+Wall time comes from 44246 `phase` rows as the authors' own measurements; token
+cost is disclosed as absent (`Token cost is not on this surface: Pulse reads no
+usage events`) rather than guessed.
+
+**Owed, and not yet on the wire.** Four things this section describes are
+built and are not yet producing anything, named here rather than left for a
+reader to discover: (a) the provider's own seated-workdir path
+(`crates/buzz-session-provider/src/session.rs`) is the second site that creates
+a seat worktree and does not yet install these hooks — Lane L5's row; (b) the
+44246 `checkpoint` body has no field for a commit SHA, so the hook pushes the
+ref and publishes no checkpoint, and no overlap row can be computed until L5
+lands `checkpoint.files`; (c) the eight sibling keys ride both `bee pulse
+missions` and `bee pulse digest`, and the CLI computes an overlap row only when
+more than one umbrella is in scope; (d) nothing here has been exercised against
+a live relay.
+
+**Wire compatibility.** `PulseDigest`, `fold_pulse_digest`,
+`PULSE_DIGEST_SCHEMA` and `conformance/project-pulse-fold/` are untouched, and
+kind 44240's event body does not change at all. Mission rows travel as a
+**sibling object** adding exactly eight keys — `missionsSchema`
+(`buzz-pulse-mission-rows/v1`), `missionScope`, `missions`, `missionErrors`,
+`openRulings`, `rulingsWaitingOnViewer`, `overlaps`, `viewerPubkey` — so an
+older digest reader ignores eight unknown keys.

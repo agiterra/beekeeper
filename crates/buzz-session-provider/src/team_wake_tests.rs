@@ -1384,3 +1384,105 @@ fn a_desktop_fallback_start_settles_the_provider_intent_across_a_restart() {
     );
     assert!(next_pending(&mut reopened, &[channel]).is_none());
 }
+
+// ── Lane L9: there is no cross-umbrella wake ─────────────────────────────────
+
+#[test]
+fn a_foreign_umbrellas_pubkey_produces_no_wake_at_all() {
+    // LANE-L9 §L9.5's red, at the producer rather than at the row: "a message
+    // or note from a foreign umbrella's pubkey produces no 44220 wake (assert
+    // on the published set)". REVIEW-L9 F3 found the shipped proof was a source
+    // scan of `pulse_overlap.rs`, which shows the new module cannot send and
+    // says nothing about this one.
+    let founder = Keys::generate();
+    let seated_lead = Keys::generate();
+    let foreign_lead = Keys::generate();
+
+    let authority = CurrentAuthority {
+        seats: BTreeMap::from([(
+            seated_lead.public_key().to_hex(),
+            ("lead".to_string(), "33".repeat(32)),
+        )]),
+        ..CurrentAuthority::default()
+    };
+    let wake_scope = scope(Uuid::new_v4());
+    let context = fold_context(&wake_scope, &founder.public_key().to_hex(), &authority);
+
+    // The founder and this umbrella's own seated lead are not foreign.
+    assert!(!wake_author_is_foreign(
+        &context,
+        &founder.public_key().to_hex()
+    ));
+    assert!(!wake_author_is_foreign(
+        &context,
+        &seated_lead.public_key().to_hex()
+    ));
+
+    // A real, seated, entirely legitimate lead of *another* umbrella is.
+    // Membership of some umbrella is not membership of this one.
+    assert!(wake_author_is_foreign(
+        &context,
+        &foreign_lead.public_key().to_hex()
+    ));
+
+    // And nothing this umbrella can be asked to wake resolves for that pubkey:
+    // the published set for a foreign author is empty, because there is no
+    // target to publish to.
+    let package = package(vec![roster(
+        &seated_lead.public_key().to_hex(),
+        "lead",
+        target(1),
+    )]);
+    let refused = resolve_actor_target(&package, &foreign_lead.public_key().to_hex())
+        .expect_err("a foreign pubkey resolves to no provider generation");
+    assert!(
+        refused.contains("0 active receipt-backed provider generations"),
+        "{refused}"
+    );
+
+    // The seated lead still resolves — the guard refuses foreigners, not
+    // everyone, and a rule that broke ordinary wakes would be replaced within
+    // the hour and the line lost with it.
+    resolve_actor_target(&package, &seated_lead.public_key().to_hex())
+        .expect("this umbrella's own lead still has a target");
+}
+
+#[test]
+fn a_note_citing_another_umbrella_is_a_pointer_and_not_a_wake() {
+    // A lead *may* publish a note citing the other umbrella's commit or
+    // checkpoint — note refs are pointers and cross-umbrella pointers are
+    // allowed. What must never follow is a wake, and `is_team_wake_pointer`
+    // is what decides whether a turn's text is one.
+    assert!(
+        !is_team_wake_pointer("Their wip ref touches crates/buzz-core/src/pulse.rs too."),
+        "prose citing another umbrella is prose"
+    );
+    assert!(
+        !is_team_wake_pointer(&format!("see {}", "ab".repeat(32))),
+        "an event id in prose is a pointer, not a wake"
+    );
+}
+
+#[test]
+fn every_wake_source_names_the_key_that_signed_it() {
+    // The guard is only as good as its input: a source with no author would
+    // slip past `wake_author_is_foreign` untested. Both variants carry one.
+    let report = WakeSource::Report {
+        operation_id: "aa".repeat(32),
+        operation_type: "report".into(),
+        author_pubkey: "bb".repeat(32),
+        created_at: 1,
+    };
+    assert_eq!(report.author_pubkey(), Some("bb".repeat(32).as_str()));
+
+    let terminal = WakeSource::Terminal {
+        terminal_event_id: "cc".repeat(32),
+        actor_pubkey: "dd".repeat(32),
+        role: "builder".into(),
+        caused_by_command_id: "cmd".into(),
+        source_target: target(1),
+        prompt_at_ms: None,
+        terminal_at_ms: 2,
+    };
+    assert_eq!(terminal.author_pubkey(), Some("dd".repeat(32).as_str()));
+}

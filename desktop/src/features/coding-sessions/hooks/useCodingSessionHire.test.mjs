@@ -25,13 +25,42 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost",
 });
 
+/**
+ * Every Tauri command this host invoked, in order.
+ *
+ * REVIEW-L9 F2: `install_coding_session_seat_hooks` had no live caller, so a
+ * hire armed nothing and Pulse showed silence. This records the IPC so the
+ * install is a thing a test watches rather than a thing a comment claims.
+ */
+const ipcCalls = [];
+const tauriInternals = {
+  invoke(command, args) {
+    ipcCalls.push({ command, args });
+    if (command === "install_coding_session_seat_hooks") {
+      return Promise.resolve({
+        wipRef: "refs/heads/wip/builder/ab12cd34",
+        hooksDir: `${args.request.worktreePath}/.git/hooks`,
+        hooksWritten: ["post-commit", "prepare-commit-msg"],
+        configScope: "worktree",
+        dispatch: "worktree",
+        changed: true,
+        signing: "unsigned",
+      });
+    }
+    return Promise.reject(new Error(`unmocked: ${command}`));
+  },
+  transformCallback: () => Math.random(),
+};
+
 before(() => {
+  dom.window.__TAURI_INTERNALS__ = tauriInternals;
   Object.assign(globalThis, {
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
     IS_REACT_ACT_ENVIRONMENT: true,
     localStorage: dom.window.localStorage,
     window: dom.window,
+    __TAURI_INTERNALS__: tauriInternals,
   });
 });
 
@@ -124,6 +153,7 @@ async function signedHire() {
  * next entry.
  */
 async function harness({ grantAnswers = [] } = {}) {
+  ipcCalls.length = 0;
   // A fake wall clock the injected sleep advances, so the grant's 60 s wait
   // budget is measured against the delays this test serves instantly.
   const { act, renderHook } = await import("@testing-library/react");
@@ -148,7 +178,10 @@ async function harness({ grantAnswers = [] } = {}) {
     fetchRosterFold: async () => ({
       accepted: new Map([[LEAD_PUBKEY, "operator"]]),
     }),
-    createWorktree: async (input) => ({ path: `/tmp/trees/${input.name}` }),
+    createWorktree: async (input) => ({
+      path: `/tmp/trees/${input.name}`,
+      branch: `session/${input.name}`,
+    }),
     stageCreateHint: async () => {},
     seatDeps: {
       ensureMembership: async () => {},
@@ -230,6 +263,7 @@ async function harness({ grantAnswers = [] } = {}) {
       await settle();
     },
     grants,
+    ipcCalls,
     outcomes: () => mounted.result.current.outcomes,
     published,
     teardown: () => mounted.unmount(),
@@ -670,4 +704,67 @@ test("N2: switching communities clears the hire-outcome store", async () => {
 
   resetCodingSessionHireOutcomes();
   assert.deepEqual(readCodingSessionHireOutcomes(), []);
+});
+
+test("F2: a hire installs the wip-share hooks into the seat's own worktree", async () => {
+  const host = await harness();
+  const hire = await signedHire();
+  await host.deliver(hire);
+
+  const installs = host.ipcCalls.filter(
+    (call) => call.command === "install_coding_session_seat_hooks",
+  );
+  assert.equal(
+    installs.length,
+    1,
+    "the hire host installed no seat hooks at all",
+  );
+  // The worktree it just cut, the seat it just seated, and the hire the seat
+  // answers — all three derived here, never read back from agent text.
+  assert.equal(
+    installs[0].args.request.worktreePath,
+    "/tmp/trees/agent-teams-builder-1",
+  );
+  assert.equal(installs[0].args.request.seatPubkey, ADA_PUBKEY);
+  assert.equal(installs[0].args.request.seatRole, "builder");
+  assert.equal(installs[0].args.request.assignmentId, hire.id);
+  assert.equal(
+    installs[0].args.request.branch,
+    "session/agent-teams-builder-1",
+  );
+  // The one thing this host cannot supply is null rather than a guess: a seat
+  // signing with the only key file this host can name — the operator's — is a
+  // forged attribution.
+  assert.equal(installs[0].args.request.keyfilePath, null);
+
+  const [outcome] = host.outcomes();
+  assert.equal(outcome.state, "seated");
+  assert.equal(outcome.wipShare.state, "shared");
+  assert.equal(outcome.wipShare.ref, "refs/heads/wip/builder/ab12cd34");
+  assert.match(outcome.wipShare.why, /not signed/);
+  host.teardown();
+});
+
+test("F2: a seat whose arming failed says so instead of going quiet", async () => {
+  const previous = tauriInternals.invoke;
+  tauriInternals.invoke = () => Promise.reject(new Error("not a git worktree"));
+  const warnings = [];
+  const previousWarn = console.warn;
+  console.warn = (line) => warnings.push(line);
+  try {
+    const host = await harness();
+    await host.deliver(await signedHire());
+    const [outcome] = host.outcomes();
+    assert.equal(outcome.state, "seated");
+    assert.equal(outcome.wipShare.state, "unarmed");
+    assert.match(outcome.wipShare.why, /not a git worktree/);
+    assert.ok(
+      warnings.some((line) => line.includes("shares nothing")),
+      `expected a disclosure among:\n${warnings.join("\n")}`,
+    );
+    host.teardown();
+  } finally {
+    tauriInternals.invoke = previous;
+    console.warn = previousWarn;
+  }
 });

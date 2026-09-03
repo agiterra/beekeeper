@@ -72,6 +72,43 @@ hooks:
     git config --local core.hooksPath "$HOOKS_DIR"
     lefthook install --force
 
+# Turn on sharing your local commits under a wip ref (opt-in, per checkout).
+# `just hooks` installs the hook; this is the only thing that arms it.
+#
+# Records `buzz.wipIdentity` — the first 8 hex of your own pubkey — because the
+# ref namespace is per person. An earlier draft used a literal `human` segment
+# and two people on the same branch force-pushed over each other, with kind
+# 30618 then naming only the last pusher. Refuses rather than guessing: a ref
+# shared between people is worse than no ref.
+wip-share-on:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    identity="$(git config --get user.signingkey 2>/dev/null || true)"
+    if ! printf '%s' "$identity" | grep -Eq '^[0-9a-f]{64}$'; then
+        identity=""
+        if command -v bee >/dev/null 2>&1; then
+            identity="$(bee git status 2>/dev/null                 | sed -n 's/.*"effective_pubkey"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p'                 | head -n 1)"
+        fi
+    fi
+    if ! printf '%s' "$identity" | grep -Eq '^[0-9a-f]{64}$'; then
+        echo "Cannot resolve your Nostr pubkey, so this checkout has no ref of its own to push to." >&2
+        echo "Set it with 'git config user.signingkey <your 64-hex pubkey>', or run 'just install-git-credentials' and 'bee git setup', then try again." >&2
+        exit 1
+    fi
+    short="$(printf '%s' "$identity" | cut -c1-8)"
+    git config --local buzz.wipIdentity "$short"
+    git config --local buzz.wipShare true
+    echo "Sharing local commits under refs/heads/wip/$short/<branch> — a namespace only your key writes."
+    echo "Wip refs are pruned on branch merge or after 30 days. Turn it off with: just wip-share-off"
+
+# Stop sharing your local commits. Refs already pushed stay until they are
+# pruned — see CONTRIBUTING.md § Sharing local commits (opt-in).
+wip-share-off:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git config --local --unset buzz.wipShare || true
+    echo "Local commits are no longer shared from this checkout."
+
 # Wipe development state and recreate a clean environment. Installed Buzz is preserved.
 [confirm("This will DELETE all development data and preserve installed Buzz. Continue? (y/N)")]
 reset:

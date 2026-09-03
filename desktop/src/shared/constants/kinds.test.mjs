@@ -17,6 +17,7 @@ import {
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_NAME,
+  KIND_CODING_SESSION_OBSERVATION,
   KIND_CODING_SESSION_PROVIDER_CATALOG,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
   KIND_CODING_SESSION_TRANSCRIPT,
@@ -34,6 +35,7 @@ import {
   KIND_HUDDLE_PARTICIPANT_JOINED,
   KIND_HUDDLE_PARTICIPANT_LEFT,
   KIND_HUDDLE_ENDED,
+  KIND_REPO_STATE,
 } from "./kinds.ts";
 
 test("isConversationalUnreadKind_streamMessage_counts", () => {
@@ -159,4 +161,48 @@ test("codingSessionKinds_neverEnterTheChatTimeline", () => {
       `kind ${kind} must not be a channel event kind`,
     );
   }
+});
+
+test("the kinds Project Pulse missions read match buzz-core", () => {
+  // The mission rows are folded in Rust from relay-signed 30618 ref state and
+  // 44246 observations. Desktop does not query either kind itself — the native
+  // command does — but the integers still have to agree, because a drift here
+  // is a wire break no type checker catches: the events simply stop matching
+  // and the surface renders a project as quieter than it is.
+  //
+  // `crates/buzz-core/src/kind.rs` calls 30618 `KIND_GIT_REPO_STATE`; this
+  // file has carried the same integer as `KIND_REPO_STATE` since NIP-34
+  // landed. One integer, two names — asserted here so the pair cannot drift
+  // apart unnoticed, and so nobody adds a third constant for it.
+  assert.deepEqual(
+    {
+      gitRepoState: KIND_REPO_STATE,
+      codingSessionObservation: KIND_CODING_SESSION_OBSERVATION,
+    },
+    { gitRepoState: 30618, codingSessionObservation: 44246 },
+  );
+  // 30618 is a NIP-33 addressable kind; 44246 is a regular one. A mission fold
+  // that treated an addressable ref-state event as append-only history would
+  // paint superseded refs beside current ones.
+  assert.equal(KIND_REPO_STATE >= 30000 && KIND_REPO_STATE <= 39999, true);
+  assert.equal(
+    KIND_CODING_SESSION_OBSERVATION >= 40000 &&
+      KIND_CODING_SESSION_OBSERVATION <= 49999,
+    true,
+  );
+});
+
+test("the observation kind stays out of the chat timeline and the mock relay set", () => {
+  // 44246 is not in `CODING_SESSION_EVENT_KINDS` on purpose (see kinds.ts):
+  // that list also drives which kinds the e2e mock relay serves, and Desktop
+  // reads observations only through the native mission fold.
+  assert.equal(
+    CODING_SESSION_EVENT_KINDS.includes(KIND_CODING_SESSION_OBSERVATION),
+    false,
+  );
+  assert.equal(
+    CHANNEL_TIMELINE_CONTENT_KINDS.includes(KIND_CODING_SESSION_OBSERVATION),
+    false,
+  );
+  assert.equal(CHANNEL_EVENT_KINDS.includes(KIND_REPO_STATE), false);
 });

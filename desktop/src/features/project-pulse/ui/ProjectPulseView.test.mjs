@@ -1263,3 +1263,119 @@ test("durable closure remains visible beside a provider terminal report", async 
     "Closed",
   );
 });
+
+// ── Mission rows ─────────────────────────────────────────────────────────────
+
+const MISSION_SESSION_REF = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0";
+
+async function missionRows(mutate = () => {}) {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { decodePulseMissionRows } = await import(
+    "@/features/project-pulse/lib/pulseMissionWire"
+  );
+  const here = dirname(fileURLToPath(import.meta.url));
+  const payload = JSON.parse(
+    readFileSync(
+      resolve(here, "..", "lib", "pulseMissionResponse.fixture.json"),
+      "utf8",
+    ),
+  );
+  mutate(payload);
+  return decodePulseMissionRows(payload);
+}
+
+function missionState(rows, overrides = {}) {
+  return {
+    kind: "ready",
+    rows,
+    refreshing: false,
+    message: null,
+    ...overrides,
+  };
+}
+
+test("the decision queue, the overlap and every mission row reach the screen", async () => {
+  const rows = await missionRows();
+  const screen = await renderView(
+    { kind: "ready", digest: digest() },
+    { missions: missionState(rows) },
+  );
+  assert.ok(screen.getByTestId("pulse-rulings-card"));
+  assert.ok(screen.getByTestId("pulse-overlap-card"));
+  // All three missions render: none is a session the digest saw.
+  for (const mission of rows.missions) {
+    assert.ok(
+      screen.getByTestId(`pulse-mission-row-${mission.sessionKey}`),
+      mission.sessionKey,
+    );
+  }
+  assert.equal(
+    screen.getByTestId("pulse-missions-scope").textContent,
+    rows.missionScope,
+  );
+});
+
+test("a mission the digest also saw renders inside that session's card, once", async () => {
+  const rows = await missionRows();
+  const screen = await renderView(
+    {
+      kind: "ready",
+      digest: digest({
+        sessions: [session({ sessionRef: MISSION_SESSION_REF })],
+        providerReachableSessions: [MISSION_SESSION_REF],
+      }),
+    },
+    { missions: missionState(rows) },
+  );
+  const rendered = screen.getAllByTestId(
+    `pulse-mission-row-${MISSION_SESSION_REF}`,
+  );
+  assert.equal(rendered.length, 1, "a mission must not be painted twice");
+  assert.ok(
+    screen.getByTestId("pulse-session-mission").contains(rendered[0]),
+    "the matched mission belongs to its session card",
+  );
+});
+
+test("a mission read that lost sessions says so, in the model's own words", async () => {
+  const rows = await missionRows();
+  const screen = await renderView(
+    { kind: "ready", digest: digest() },
+    { missions: missionState(rows) },
+  );
+  const notes = screen
+    .getAllByTestId("pulse-mission-error")
+    .map((node) => node.textContent);
+  assert.deepEqual(
+    notes,
+    rows.missionErrors.map((error) => error.message),
+  );
+});
+
+test("a mission read that could not be decoded is disclosed, never rendered as quiet", async () => {
+  const screen = await renderView(
+    { kind: "ready", digest: digest() },
+    {
+      missions: {
+        kind: "unreadable",
+        rows: null,
+        refreshing: false,
+        message: "pulse mission rows: response is missing overlaps",
+      },
+    },
+  );
+  assert.equal(
+    screen.getByTestId("pulse-missions-unreadable").textContent,
+    "pulse mission rows: response is missing overlaps",
+  );
+  assert.equal(screen.queryByTestId("pulse-rulings-card"), null);
+});
+
+test("no mission read at all leaves the existing Pulse exactly as it was", async () => {
+  const screen = await renderView({ kind: "ready", digest: digest() });
+  assert.equal(screen.queryByTestId("pulse-missions"), null);
+  assert.equal(screen.queryByTestId("pulse-rulings-card"), null);
+  assert.equal(screen.queryByTestId("pulse-overlap-card"), null);
+});

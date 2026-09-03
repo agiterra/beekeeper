@@ -2257,3 +2257,43 @@ assignment.
 behaves exactly as it did before.** That is the case to check first when a fold
 looks different from yesterday: read `bee sessions policy get` before
 suspecting the 44244 fold.
+## Mission rows and wip refs (lane L9)
+
+`bee pulse missions` prints exactly the sentences Desktop renders. Nothing in
+this section asks a seat to report anything: every row is produced by the hire
+host's git hooks, the provider, or the relay.
+
+```bash
+export BUZZ_RELAY_URL=wss://hive.agiterra.org BUZZ_PRIVATE_KEY=$(cat ~/.nostr/key)
+bee --format compact pulse missions --channel <uuid> --session-ref <uuid> --genesis <hex64> [--repo <repo-id>]
+bee pulse prune-wip --repo <repo-id> [--merged <sha,sha>]
+```
+
+| Situation | Expected line |
+|---|---|
+| an unanswered `decision.request` held on the founder | `Waiting on the founder · asked by {Who} · {age} ago: {question}` — first line of the row |
+| no readable request timestamp | the same line with the age clause omitted; **never** `0m` |
+| no canonical terminal | `Mission running` |
+| a completion the fold excluded | `A completion was excluded · {code} · {8hex} — this mission is not completed`, and the state stays `Mission running` |
+| no verdict on the wire | `No verdict on the wire` |
+| a seat with no 44246 gate row | `No gate row on the wire for {Who} — a claim in prose is not a gate row` |
+| an observed row over a declared one | `{Who} · {gate}: {outcome} (observed, over a declared row) · {command}` |
+| more than four gates | four rows plus `{n} more gates not shown` |
+| a member with no wip ref | `{Who}'s local commits: not shared` — about the relay, not their config |
+| a repo with no 30618 | `No ref state on the wire for this repo` |
+| any wip ref shown | `Wip refs are pruned when their branch merges or after 30 days` |
+| no policy record | `No policy set for this session` |
+| a record setting nothing | `Policy withdrawn by {Who}` |
+| no phase timing | `No phase timing on the wire for this session` |
+| always | `Token cost is not on this surface: Pulse reads no usage events` |
+| a 44244 fold error | one row reading `This session's records could not be read: {reason}`, the rest of the digest intact |
+| `bee pulse prune-wip` on a ref outside `refs/heads/wip/` | listed under `refused`, never under `delete` |
+| a wip ref whose 30618 carries no date | listed under `keep` — unknown is not old |
+
+`bee pulse prune-wip` is **read-only**: it prints the plan and deletes nothing.
+Deleting a ref is a push, and the push belongs to whoever holds the credential.
+
+**Not written live.** Nothing in this section has been exercised against
+`hive.agiterra.org` by the lane that wrote it: the reads above are safe to run,
+and the two producers (the seat hook and the provider's observed rows) need a
+live team run to confirm. Treat the table as the expectation, not as evidence.

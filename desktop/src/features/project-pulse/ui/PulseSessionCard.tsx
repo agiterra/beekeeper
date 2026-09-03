@@ -19,6 +19,8 @@ import type {
   PulseDigestGeneration,
   PulseDigestSession,
 } from "../lib/pulseFold.ts";
+import type { PulseMissionRow as PulseMissionRowModel } from "../lib/pulseMissionWire";
+import { PulseMissionRow } from "./PulseMissionRow";
 
 function generationObservationLabel(
   generation: PulseDigestGeneration,
@@ -36,11 +38,20 @@ export function PulseSessionCard({
   nowSeconds,
   onOpen,
   onOpenExecution,
+  /**
+   * The mission fold's row for this same session, when one was read.
+   *
+   * Rendered *beside* the card's own liveness rather than instead of it: the
+   * digest and the mission fold are two reads of the same work, and collapsing
+   * them would hide a disagreement between them rather than show it.
+   */
+  missionRow,
 }: {
   session: PulseDigestSession;
   nowSeconds: number;
   onOpen?: () => void;
   onOpenExecution?: (targetKey: string) => void;
+  missionRow?: PulseMissionRowModel | null;
 }) {
   const [showExecutions, setShowExecutions] = React.useState(false);
   const generation = pulseSessionDisplayGeneration(session);
@@ -127,6 +138,12 @@ export function PulseSessionCard({
           <span data-testid="pulse-session-closed">Closed</span>
         ) : null}
       </div>
+
+      {missionRow ? (
+        <ul className="mt-2" data-testid="pulse-session-mission">
+          <PulseMissionRow mission={missionRow} />
+        </ul>
+      ) : null}
 
       {olderGenerations.length > 0 ? (
         <div className="mt-2" data-testid="pulse-session-executions">

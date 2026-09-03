@@ -17,6 +17,7 @@ import { projectPulseChannelIds } from "../lib/pulseChannelSet";
 import {
   projectPulseChannelSetUnresolved,
   useProjectPulseDigest,
+  usePulseMissionRows,
 } from "../lib/pulseQueries";
 import {
   ProjectPulseView,
@@ -171,6 +172,28 @@ export function ProjectPulseScreen({
     state.kind === "ready" || state.kind === "partial" ? state.digest : null,
   );
 
+  // The sibling mission read. Same coordinate, same channel floor, its own
+  // failure mode: a mission read that could not be decoded renders as a
+  // disclosed failure on the view below, never as a project with no missions.
+  //
+  // It is handed **this paint's** digest rather than the last cached one, so
+  // the sessions it opens are the sessions the screen is showing; without that
+  // it read one digest behind and, before the sessions were wired at all,
+  // asserted a scope it had never opened (REVIEW-L9 F1).
+  //
+  // The names are the digest's own author map. It resolves entry authors, so a
+  // seat that has never written a Pulse entry still renders as 8 hex — a
+  // weaker rendering of the same fact, never a wrong one. A batch profile read
+  // over the seat pubkeys the response returns would close it.
+  const missionNames = React.useMemo(
+    () => Object.fromEntries(authorNames),
+    [authorNames],
+  );
+  const missions = usePulseMissionRows(coordinate, channelIds, {
+    digest: pulse.digest,
+    displayNames: missionNames,
+  });
+
   // One clock for the whole paint, ticking once a minute so ages stay honest
   // without re-rendering on every frame.
   const [nowSeconds, setNowSeconds] = React.useState(() =>
@@ -192,6 +215,7 @@ export function ProjectPulseScreen({
       // Pulse screens are otherwise pixel-identical chrome, and "No Pulse yet"
       // read against the wrong project is a coordination lie. The heading
       // carries that name; the way back is the window's own back control.
+      missions={missions}
       projectName={embedded ? null : (project?.name ?? null)}
       state={state}
     />

@@ -1121,18 +1121,87 @@ async fn cmd_digest(
         .map(|session| session.session_key.clone())
         .collect();
 
-    let rendered = match format {
+    // The eight mission keys ride **beside** the digest, never inside it: the
+    // 44240 body and `PulseDigest`'s own serialization are byte-unchanged, so
+    // an older reader ignores eight unknown keys (L9.11). They are attached
+    // here as well as on `bee pulse missions` because the spec says they are
+    // added "to what `bee pulse digest` prints and Desktop holds", and shipping
+    // them on only one of the two would have been a silent deviation.
+    let open_sessions: std::collections::BTreeMap<String, (Option<String>, Option<i64>)> = digest
+        .sessions
+        .iter()
+        .filter(|session| session.lifecycle == "open")
+        .filter_map(|session| {
+            Some((
+                session.session_ref.clone()?,
+                (session.name.clone(), session.latest_observation_at),
+            ))
+        })
+        .collect();
+    let open_session_count = open_sessions.len();
+    let mut mission_errors: Vec<buzz_core::pulse_mission::PulseMissionError> = Vec::new();
+    let channels = match project_channel_ids(client, &coordinate).await {
+        Ok((channels, _truncated)) => channels,
+        Err(error) => {
+            mission_errors.push(buzz_core::pulse_mission::PulseMissionError {
+                scope: "channels".to_owned(),
+                message: error.to_string(),
+            });
+            Vec::new()
+        }
+    };
+    let targets = crate::commands::pulse_mission::discover_mission_sessions(
+        client,
+        &channels,
+        &open_sessions,
+        &mut mission_errors,
+    )
+    .await;
+    let missions = crate::commands::pulse_mission::compose_mission_rows(
+        client,
+        &targets,
+        open_session_count,
+        None,
+        mission_errors,
+    )
+    .await;
+
+    let mut rendered = match format {
         // Both formats print `source`; compact drops the two constants a
         // reader already knows and the per-row detail, never a fact.
         crate::OutputFormat::Compact => compact_digest(&digest),
         crate::OutputFormat::Json => serde_json::to_value(&digest).unwrap_or(Value::Null),
     };
+    attach_mission_rows(&mut rendered, &missions);
     println!("{rendered}");
 
     if digest.complete {
         Ok(())
     } else {
         Err(partial_digest_error(failure))
+    }
+}
+
+/// Attach the eight mission keys beside a rendered digest.
+///
+/// Additive by construction: it inserts and never replaces, so a key the digest
+/// already prints is left exactly as `PulseDigest` serialized it. A non-object
+/// rendering (there is none today) is returned untouched rather than reshaped.
+fn attach_mission_rows(
+    rendered: &mut Value,
+    missions: &buzz_core::pulse_mission::PulseMissionRows,
+) {
+    let Some(object) = rendered.as_object_mut() else {
+        return;
+    };
+    let Some(sibling) = crate::commands::pulse_mission::mission_rows_sibling_keys(missions)
+        .as_object()
+        .cloned()
+    else {
+        return;
+    };
+    for (key, value) in sibling {
+        object.entry(key).or_insert(value);
     }
 }
 
@@ -1232,6 +1301,25 @@ pub async fn dispatch(
             branch,
             limit,
         } => cmd_digest(client, project.as_deref(), branch.as_deref(), limit, format).await,
+        PulseCmd::Missions {
+            channel,
+            session_ref,
+            genesis,
+            repo,
+        } => {
+            crate::commands::pulse_mission::cmd_missions(
+                client,
+                &channel,
+                &session_ref,
+                &genesis,
+                repo.as_deref(),
+                format,
+            )
+            .await
+        }
+        PulseCmd::PruneWip { repo, merged } => {
+            crate::commands::wip_refs::cmd_prune_wip(client, &repo, merged.as_deref()).await
+        }
     }
 }
 

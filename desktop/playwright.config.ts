@@ -145,6 +145,7 @@ export default defineConfig({
         "**/project-container-screen.spec.ts",
         "**/project-settings-screenshots.spec.ts",
         "**/projectPulse.spec.ts",
+        "**/project-pulse-missions.spec.ts",
         "**/agentProgress.spec.ts",
         "**/persona-model-combobox-screenshots.spec.ts",
         "**/drafts-screenshots.spec.ts",

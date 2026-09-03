@@ -34,7 +34,12 @@ import {
   type PulseDigestError,
   type PulseDigestSession,
 } from "../lib/pulseFold.ts";
+import type { PulseMissionRowsState } from "../lib/pulseQueries";
+import { pulseMissionRowForSession } from "../lib/pulseMissionWire";
 import { PulseEntryRow } from "./PulseEntryRow";
+import { PulseMissionsSection } from "./PulseMissionRow";
+import { PulseOverlapCard } from "./PulseOverlapCard";
+import { PulseRulingsWaitingCard } from "./PulseRulingsWaitingCard";
 import { PulseSessionCard } from "./PulseSessionCard";
 import { PulseWriteHint } from "./PulseWriteHint";
 
@@ -196,12 +201,21 @@ export function ProjectPulseView({
   /** Back to the project home, when the caller can navigate there. */
   /** Resolved author names by lowercase pubkey. */
   authorNames,
+  /**
+   * The sibling mission read, when the host fetched one.
+   *
+   * Optional so this component keeps taking a digest and nothing else: it
+   * renders, it does not fetch. Absent, the screen is exactly the Pulse it was
+   * before missions existed.
+   */
+  missions,
 }: {
   state: ProjectPulseViewState;
   nowSeconds: number;
   onOpenSession?: (targetKey: string) => void;
   projectName?: string | null;
   authorNames?: PulseAuthorNames;
+  missions?: PulseMissionRowsState;
 }) {
   const [branch, setBranch] = React.useState<string | null | undefined>(
     undefined,
@@ -388,11 +402,22 @@ export function ProjectPulseView({
       sessionsByRef={sessionsByRef}
     />
   );
+  const missionRows = missions?.rows ?? null;
+  // Every mission painted inside a session card, so the section below can show
+  // the rest exactly once — a mission dropped between two views of the same
+  // project is the failure this bookkeeping exists to prevent.
+  const missionSessionKeys = new Set<string>();
   const sessionCard = (session: PulseDigestSession) => {
     const targetKey = pulseSessionDisplayGeneration(session)?.targetKey;
+    const missionRow = pulseMissionRowForSession(
+      missionRows,
+      session.sessionKey,
+    );
+    if (missionRow) missionSessionKeys.add(missionRow.sessionKey);
     return (
       <PulseSessionCard
         key={session.sessionKey}
+        missionRow={missionRow}
         nowSeconds={nowSeconds}
         onOpen={
           onOpenSession && targetKey
@@ -461,6 +486,8 @@ export function ProjectPulseView({
           />
         </StateCard>
       ) : null}
+
+      {missionRows ? <PulseRulingsWaitingCard rows={missionRows} /> : null}
 
       {branches.length > 0 ? (
         <div
@@ -642,6 +669,18 @@ export function ProjectPulseView({
           in a channel outside the project is not listed here.
         </p>
       </section>
+
+      {missions ? (
+        <PulseMissionsSection
+          renderedSessionKeys={missionSessionKeys}
+          rows={missionRows}
+          unreadable={missions.kind === "unreadable" ? missions.message : null}
+        />
+      ) : null}
+
+      {missionRows ? (
+        <PulseOverlapCard overlaps={missionRows.overlaps} />
+      ) : null}
     </div>
   );
 }

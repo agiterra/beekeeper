@@ -49,6 +49,20 @@ commit-msg:
     signoff:
       run: 'git interpret-trailers --if-exists doNothing --trailer "Signed-off-by: $(git var GIT_COMMITTER_IDENT | sed ''s/ [0-9]* [+-][0-9]*$//'')" --in-place {1}'
 
+# Shares the commit that just happened under a wip ref, so Project Pulse can
+# show what a person has committed locally without ever asking them to report
+# it. Deliberately unfiltered: a post-commit hook has no staged file list to
+# filter on, and the script is the same one the hire host installs for seats
+# (`buzz_core::seat_git_hooks::WIP_POST_COMMIT_HOOK`).
+#
+# **Off by default.** The script exits immediately unless this checkout has
+# `buzz.wipShare=true`, which only `just wip-share-on` sets — `just setup` and
+# `just hooks` never do. Installing the hook is not opting in.
+post-commit:
+  commands:
+    wip-share:
+      run: ./scripts/wip-post-commit.sh
+
 pre-push:
   parallel: true
   scripts:

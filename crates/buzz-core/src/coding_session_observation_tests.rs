@@ -420,6 +420,50 @@ fn the_envelope_is_five_ordered_tags_that_agree_with_the_content() {
 }
 
 #[test]
+fn a_body_signed_before_source_existed_still_decodes_and_reads_declared() {
+    // Finding 28's rule, applied to kind 44246: a wire widening never loses
+    // history. `source` joined the payload on 2026-09-02; every observation on
+    // the wire before that carries six keys. Requiring the seventh on read
+    // would make all of them undecodable — which is how this was found, when
+    // Pulse's own fixtures stopped folding.
+    for (observation_type, body) in [
+        ("checkpoint", checkpoint_body()),
+        ("gate", gate_body()),
+        ("finding", finding_body()),
+        ("phase", phase_body()),
+    ] {
+        let mut six_keys = payload_json(observation_type, body);
+        six_keys
+            .as_object_mut()
+            .expect("object")
+            .remove("source")
+            .expect("the fixture writes it");
+        let payload = decode(&six_keys).expect("a six-key body still decodes");
+        assert_eq!(
+            payload.source,
+            CodingSessionObservationSource::Declared,
+            "absent reads as declared — a row nothing watched is a claim"
+        );
+        // And a writer still emits it: what this repository signs has seven.
+        let written = serde_json::to_string(&payload).expect("serialize");
+        assert!(written.contains("\"source\":\"declared\""), "{written}");
+    }
+
+    // An explicit null is still refused: a key that says nothing is not the
+    // same as a key that was never written.
+    let mut nulled = payload_json("gate", gate_body());
+    nulled.as_object_mut().expect("object")["source"] = Value::Null;
+    let error = decode(&nulled).expect_err("an explicit null source is refused");
+    assert!(error.contains("source"), "{error}");
+
+    // An unknown token is refused rather than read as `declared`.
+    let mut unknown = payload_json("gate", gate_body());
+    unknown.as_object_mut().expect("object")["source"] = json!("measured");
+    let error = decode(&unknown).expect_err("an unknown source token is refused");
+    assert!(error.contains("source"), "{error}");
+}
+
+#[test]
 fn a_payload_round_trips_through_serde_with_every_key_present() {
     for (observation_type, body) in [
         ("checkpoint", checkpoint_body()),

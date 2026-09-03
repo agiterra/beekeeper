@@ -86,8 +86,15 @@ pub mod private_managed_agent;
 pub mod pulse;
 /// Pure Project Pulse v2 digest model and fold shared by every adapter.
 pub mod pulse_fold;
+/// What Pulse knows about a mission without asking anyone to report.
+pub mod pulse_mission;
+/// Two umbrellas touching the same file, computed rather than reported.
+pub mod pulse_overlap;
 /// Canonical relay runtime identities.
 pub mod relay;
+/// The git hooks a seat's checkout gets so its local commits reach Pulse
+/// without anyone being asked to report them.
+pub mod seat_git_hooks;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
 /// Schnorr signature and event ID verification.

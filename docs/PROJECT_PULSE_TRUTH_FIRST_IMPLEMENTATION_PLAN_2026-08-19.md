@@ -1552,3 +1552,30 @@ At the end of each slice, report:
 
 Do not claim a slice complete from code inspection alone. Do not start the next
 slice until Brian confirms the current one in the prototype.
+
+## Addendum, 2026-09-02 (batch 3, lane L9) — mission rows travel beside the digest
+
+§3.17 and §3.19 froze `PulseDigest`, `fold_pulse_digest`,
+`PULSE_DIGEST_SCHEMA` (`buzz-project-pulse-digest/v2`) and
+`conformance/project-pulse-fold/`. This lane leaves all four **untouched**, and
+kind 44240's event body does not change at all.
+
+What Pulse gained instead is a **sibling object**, attached after the fold,
+adding exactly eight keys to what `bee pulse digest` prints and Desktop holds:
+`missionsSchema` (`buzz-pulse-mission-rows/v1`), `missionScope`, `missions`,
+`missionErrors`, `openRulings`, `rulingsWaitingOnViewer`, `overlaps`,
+`viewerPubkey`. Nothing existing is removed, renamed or re-typed, so nothing
+predating this lane refuses an entry and an older digest reader ignores eight
+unknown keys. `just conformance-check` passes with no regenerated fixture.
+
+The rows themselves live in `crates/buzz-core/src/pulse_mission.rs` and
+`pulse_overlap.rs`, which **call** the 44244, 44245 and 44246 folds and restate
+none of their rules (§0.5, I6). Decisions 2, 12, 14, 17 and 19 bind them:
+nothing is inferred from silence, every bound is disclosed where it bites, and
+every sentence is composed once, in Rust, for both consumers.
+
+The design constraint that shaped it is Brian's 2026-09-02 ruling: **nothing in
+Pulse's data path may depend on anyone being asked to report.** The producers
+are the hire host's git hooks, the provider's observed tool calls, and the
+relay's own kind 30618 ref state. See `docs/design/singularity/SURFACES.md`
+§26.

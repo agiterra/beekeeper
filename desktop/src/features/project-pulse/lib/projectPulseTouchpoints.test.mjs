@@ -109,3 +109,55 @@ test("a partial read is never banked as a project's last-good Pulse", () => {
   );
   assert.equal(readProjectPulseDigest(PROJECT), null);
 });
+
+test("switching communities clears every banked mission read", async () => {
+  const { readPulseMissionRows, rememberPulseMissionRows } = await import(
+    "@/features/project-pulse/lib/projectPulseCache"
+  );
+  const { decodePulseMissionRows } = await import(
+    "@/features/project-pulse/lib/pulseMissionWire"
+  );
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const rows = decodePulseMissionRows({
+    ...JSON.parse(
+      readFileSync(
+        path.join(here, "pulseMissionResponse.fixture.json"),
+        "utf8",
+      ),
+    ),
+    // Only a read that lost nothing is banked; see the next test.
+    missionErrors: [],
+  });
+  resetProjectPulseState();
+  rememberPulseMissionRows(PROJECT, rows);
+  assert.notEqual(readPulseMissionRows(PROJECT), null);
+  resetProjectPulseState();
+  assert.equal(
+    readPulseMissionRows(PROJECT),
+    null,
+    "one community's seats never paint under another community's project",
+  );
+});
+
+test("a mission read that lost a session is never banked as last-good", async () => {
+  // Same discipline as the digest: `missionErrors` means this read did not see
+  // everything, and freezing it as the last-good answer would keep showing a
+  // project as quieter than it is long after the relay recovered.
+  const { readPulseMissionRows, rememberPulseMissionRows } = await import(
+    "@/features/project-pulse/lib/projectPulseCache"
+  );
+  const { decodePulseMissionRows } = await import(
+    "@/features/project-pulse/lib/pulseMissionWire"
+  );
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const payload = JSON.parse(
+    readFileSync(path.join(here, "pulseMissionResponse.fixture.json"), "utf8"),
+  );
+  resetProjectPulseState();
+  rememberPulseMissionRows(PROJECT, decodePulseMissionRows(payload));
+  assert.equal(readPulseMissionRows(PROJECT), null);
+
+  payload.missionErrors = [];
+  rememberPulseMissionRows(PROJECT, decodePulseMissionRows(payload));
+  assert.notEqual(readPulseMissionRows(PROJECT), null);
+});

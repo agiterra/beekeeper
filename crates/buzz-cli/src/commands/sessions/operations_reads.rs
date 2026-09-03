@@ -22,7 +22,7 @@ use super::operations_authority::fetch_projected_authority;
 use crate::client::BuzzClient;
 use crate::error::CliError;
 
-pub(super) async fn fetch_transactions(
+pub(crate) async fn fetch_transactions(
     client: &BuzzClient,
     channel: &str,
     session_ref: &str,
@@ -107,7 +107,7 @@ pub(super) fn transaction_matches_context(
     })
 }
 
-pub(super) async fn fetch_session_authority(
+pub(crate) async fn fetch_session_authority(
     client: &BuzzClient,
     channel: &str,
     session_ref: &str,
@@ -167,12 +167,12 @@ pub(super) async fn fetch_session_authority(
 
 /// A session's verified genesis and its accepted authority chain, in the two
 /// shapes the CLI's readers need.
-pub(super) struct SessionAuthority {
+pub(crate) struct SessionAuthority {
     /// What the kind-44244 fold judges against.
-    pub(super) context: CodingSessionTeamFoldContext,
+    pub(crate) context: CodingSessionTeamFoldContext,
     /// The grant/revoke history with acceptance times, which kind 44245 needs
     /// because a policy is judged at the moment it was published.
-    pub(super) policy_grants: Vec<CodingSessionPolicyGrant>,
+    pub(crate) policy_grants: Vec<CodingSessionPolicyGrant>,
 }
 
 /// The kind-44244 fold context alone, for the callers that need nothing else.

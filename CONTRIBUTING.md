@@ -534,3 +534,56 @@ their sign-off. When in doubt, check with your legal team.
 
 *Thank you for contributing to Buzz. Every bug report, documentation fix,
 and code contribution makes the project better for everyone. 🐝*
+
+---
+
+## Sharing local commits (opt-in)
+
+Project Pulse can show what you have committed locally but not yet opened a PR
+for. It learns this from a git ref, never from anybody being asked to report:
+`just hooks` installs a `post-commit` hook that pushes the commit you just made
+to `refs/heads/wip/<your-pubkey8>/<branch>` — a namespace only your key writes,
+so two people on the same branch never overwrite each other.
+
+**It is off until you turn it on.** The hook exits immediately unless this
+checkout has `buzz.wipShare=true`, and only one thing sets that:
+
+```bash
+just wip-share-on    # start sharing from this checkout
+just wip-share-off   # stop
+```
+
+`just setup` and `just hooks` install the hook; neither arms it.
+
+What the hook does, and does not do:
+
+- It pushes **`HEAD`** — the commit git has already made. It never inspects
+  your working tree, stages anything, or stashes anything, so uncommitted work
+  cannot leave your machine.
+- It force-pushes to `refs/heads/wip/*` and refuses any other ref name.
+- It resolves the remote from your own push configuration
+  (`branch.<name>.pushRemote`, `remote.pushDefault`, `branch.<name>.remote`, or
+  the single remote when there is exactly one) — never a hard-coded name.
+  Set `buzz.wipRemote` to pin it.
+- It **pushes** under your own Nostr key, via `git-credential-nostr`. See
+  [docs/INTEGRATION.md](docs/INTEGRATION.md) § Pushing to the relay, and run
+  `just install-git-credentials` first.
+- It does **not** configure commit signing. `just wip-share-on` sets only
+  `buzz.wipShare` and `buzz.wipIdentity`; your commits are signed only if this
+  checkout is already configured for `git-sign-nostr` (`gpg.format`,
+  `gpg.x509.program`, `commit.gpgsign`, `user.signingkey`). A seat's hooks are
+  different — the hire host writes that signing config into the seat's own
+  worktree, because it minted that seat's key. Nothing here will sign as you
+  without your having asked for it.
+- `just wip-share-on` refuses rather than guessing when it cannot resolve your
+  pubkey, because a ref shared between people is worse than no ref.
+- Every failure is silent to your commit and logged to
+  `.git/buzz-wip-push.log`. A post-commit hook that fails a commit is worse
+  than no hook.
+
+Wip refs are pruned by `bee pulse prune-wip` when their branch merges, or after
+**30 days** without moving.
+
+If you never turn this on, Pulse says `{Who}'s local commits: not shared`. That
+sentence is about **what the relay holds** — there is no wip ref on the wire for
+that person — and not a claim about how anyone configured their machine.

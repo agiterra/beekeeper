@@ -1,0 +1,262 @@
+{
+  "missionErrors": [
+    {
+      "message": "duplicate supplied team transaction 4c5d6e7f",
+      "scope": "missions:cc33dd44ee55ff6600778899aabbccddeeff0011223344556677889900112233"
+    },
+    {
+      "message": "9 open sessions in scope; the newest 8 by observation time were read",
+      "scope": "missions"
+    }
+  ],
+  "missionScope": "project channels · the newest 8 open sessions by observation time",
+  "missions": [
+    {
+      "channelId": "aa11bb22cc33dd44ee55ff6600778899aabbccddeeff00112233445566778899",
+      "latestObservationAt": 1756800600,
+      "lines": [
+        {
+          "id": "waiting",
+          "text": "Waiting on the founder · asked by Ira · 42m ago: Do we widen the push gate for seats?"
+        },
+        {
+          "id": "state",
+          "text": "Mission running"
+        },
+        {
+          "id": "verdict",
+          "text": "Newest verdict: approve by Ira · 5c6d7e8f"
+        },
+        {
+          "id": "policy",
+          "text": "Policy by You: posture ship · budget 40 turns · irreversible push, deploy"
+        },
+        {
+          "id": "wip-window",
+          "text": "Wip refs are pruned when their branch merges or after 30 days"
+        }
+      ],
+      "moved": [
+        {
+          "ageSeconds": 5400,
+          "authorPubkey": "3d3b7169aa11c2d0f0b7a1e6d5c4b3a2918070605040302010fedcba98765432",
+          "kind": "landing",
+          "lines": [
+            {
+              "id": "moved",
+              "text": "c1d2e3f4 landed on refs/heads/main by You · 1h ago · no verdict on the wire for this commit"
+            }
+          ],
+          "ref": "refs/heads/main",
+          "sha": "c1d2e3f4a5b60718293a4b5c6d7e8f9001122334",
+          "subject": null
+        },
+        {
+          "ageSeconds": 360,
+          "authorPubkey": "11aa22bb33cc44dd55ee66ff7788990011223344556677889900112233445566",
+          "kind": "wip",
+          "lines": [
+            {
+              "id": "moved",
+              "text": "9a1c4e7b on refs/heads/wip/builder/1f2e3d4c by Bob · 6m ago · test: red for the overlap row"
+            }
+          ],
+          "ref": "refs/heads/wip/builder/1f2e3d4c",
+          "sha": "9a1c4e7b2d3f40516273849506172839405a6b7c",
+          "subject": "test: red for the overlap row"
+        }
+      ],
+      "name": "Route rail honesty",
+      "seats": [
+        {
+          "lines": [
+            {
+              "id": "live",
+              "text": "Bob (builder) · green, checkpointed 6m ago"
+            },
+            {
+              "id": "checkpoint",
+              "text": "Bob · tests 11/12 green, 12 seen red · green · 6m ago"
+            },
+            {
+              "id": "gate",
+              "text": "Bob · cargo test: failed (observed, over a declared row) · cargo test -p buzz-core"
+            },
+            {
+              "id": "gate",
+              "text": "Bob · clippy: not-run (declared) · cargo clippy --all-targets -- -D warnings"
+            },
+            {
+              "id": "gate-truncated",
+              "text": "2 more gates not shown"
+            },
+            {
+              "id": "owed",
+              "text": "Bob owes a report on assignment 4a5b6c7d · assigned 3h ago"
+            },
+            {
+              "id": "wip",
+              "text": "Bob's local commits: 9a1c4e7b on wip/builder/1f2e3d4c, ref state as of 6m ago"
+            }
+          ],
+          "pubkey": "11aa22bb33cc44dd55ee66ff7788990011223344556677889900112233445566",
+          "role": "builder"
+        },
+        {
+          "lines": [
+            {
+              "id": "live",
+              "text": "Ira (verifier) · no checkpoint on the wire"
+            },
+            {
+              "id": "gate-missing",
+              "text": "No gate row on the wire for Ira — a claim in prose is not a gate row"
+            },
+            {
+              "id": "wip",
+              "text": "Ira's local commits: not shared"
+            }
+          ],
+          "pubkey": "22bb33cc44dd55ee66ff77889900112233445566778899001122334455667788",
+          "role": "verifier"
+        }
+      ],
+      "sessionKey": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "sessionRef": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "state": "running",
+      "timing": [
+        {
+          "id": "timing",
+          "text": "red: 34m (the author's own measurement)"
+        },
+        {
+          "id": "timing",
+          "text": "green: 1h 12m (the author's own measurement)"
+        },
+        {
+          "id": "cost",
+          "text": "Token cost is not on this surface: Pulse reads no usage events"
+        }
+      ]
+    },
+    {
+      "channelId": "bb22cc33dd44ee55ff6600778899aabbccddeeff001122334455667788990011",
+      "latestObservationAt": 1756800100,
+      "lines": [
+        {
+          "id": "state",
+          "text": "Mission blocked · 7788aabb"
+        },
+        {
+          "id": "verdict",
+          "text": "No verdict on the wire"
+        },
+        {
+          "id": "excluded-completion",
+          "text": "A completion was excluded · completionNotApproved · 99aabbcc — this mission is not completed"
+        },
+        {
+          "id": "policy",
+          "text": "No policy set for this session"
+        },
+        {
+          "id": "seat-claims-refused",
+          "text": "1 claimed seat refused: no accepted authority transition supports it"
+        },
+        {
+          "id": "ref-state",
+          "text": "No ref state on the wire for this repo"
+        }
+      ],
+      "moved": [],
+      "name": null,
+      "seats": [],
+      "sessionKey": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9",
+      "sessionRef": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9",
+      "state": "blocked",
+      "timing": [
+        {
+          "id": "timing-missing",
+          "text": "No phase timing on the wire for this session"
+        },
+        {
+          "id": "cost",
+          "text": "Token cost is not on this surface: Pulse reads no usage events"
+        }
+      ]
+    },
+    {
+      "channelId": "cc33dd44ee55ff6600778899aabbccddeeff0011223344556677889900112233",
+      "latestObservationAt": null,
+      "lines": [
+        {
+          "id": "unreadable",
+          "text": "This session's records could not be read: duplicate supplied team transaction 4c5d6e7f"
+        }
+      ],
+      "moved": [],
+      "name": "Unreadable umbrella",
+      "seats": [],
+      "sessionKey": "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901",
+      "sessionRef": null,
+      "state": "unreadable",
+      "timing": []
+    }
+  ],
+  "missionsSchema": "buzz-pulse-mission-rows/v1",
+  "openRulings": [
+    {
+      "askedAt": 1756798440,
+      "askedBy": "22bb33cc44dd55ee66ff77889900112233445566778899001122334455667788",
+      "heldOn": "founder",
+      "question": "Do we widen the push gate for seats?",
+      "requestId": "2099cdb344444444444444444444444444444444444444444444444444444444",
+      "sessionKey": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0"
+    },
+    {
+      "askedAt": null,
+      "askedBy": "22bb33cc44dd55ee66ff77889900112233445566778899001122334455667788",
+      "heldOn": "3d3b7169aa11c2d0f0b7a1e6d5c4b3a2918070605040302010fedcba98765432",
+      "question": null,
+      "requestId": "30aadcb455555555555555555555555555555555555555555555555555555555",
+      "sessionKey": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9"
+    }
+  ],
+  "overlaps": [
+    {
+      "lines": [
+        {
+          "id": "overlap",
+          "text": "Overlap · crates/buzz-core/src/pulse.rs, justfile: Bob (0f1e2d3c) 9a1c4e7b 6m ago, and Ira (1a2b3c4d) b7c8d9e0"
+        }
+      ],
+      "paths": ["crates/buzz-core/src/pulse.rs", "justfile"],
+      "pathsTruncated": 0,
+      "seats": [
+        {
+          "ageSeconds": 360,
+          "authorPubkey": "11aa22bb33cc44dd55ee66ff7788990011223344556677889900112233445566",
+          "sessionKey": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+          "sha": "9a1c4e7b2d3f40516273849506172839405a6b7c"
+        },
+        {
+          "ageSeconds": null,
+          "authorPubkey": "22bb33cc44dd55ee66ff77889900112233445566778899001122334455667788",
+          "sessionKey": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9",
+          "sha": "b7c8d9e0f1a2334455667788990011223344556f"
+        }
+      ]
+    }
+  ],
+  "rulingsWaitingOnViewer": [
+    {
+      "askedAt": null,
+      "askedBy": "22bb33cc44dd55ee66ff77889900112233445566778899001122334455667788",
+      "heldOn": "3d3b7169aa11c2d0f0b7a1e6d5c4b3a2918070605040302010fedcba98765432",
+      "question": null,
+      "requestId": "30aadcb455555555555555555555555555555555555555555555555555555555",
+      "sessionKey": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9"
+    }
+  ],
+  "viewerPubkey": "3d3b7169aa11c2d0f0b7a1e6d5c4b3a2918070605040302010fedcba98765432"
+}

@@ -56,6 +56,16 @@ import {
   codingSessionGrantFailureReason,
   ensureCodingSessionGrantWithBackoff,
 } from "../lib/codingSessionGrantRetry";
+import {
+  publishHireOutcomes,
+  readCodingSessionHireOutcomes,
+  resetCodingSessionHireOutcomes,
+} from "../lib/codingSessionHireOutcomeStore";
+import {
+  armSeatWorktreeForSharing,
+  seatWipShareWithoutCheckout,
+  type CodingSessionHireWipShare,
+} from "../lib/codingSessionWorktreeSource";
 import { subscribeToObservedCodingSessionEvents } from "../lib/codingSessionObservedEvents";
 import { fetchCodingSessionRosterFold } from "../lib/codingSessionRoster";
 import { ensureCodingSessionOperatorGrant } from "../lib/codingSessionOperatorGrant";
@@ -146,6 +156,11 @@ export type CodingSessionHireOutcome = {
    * Null when this outcome seated nobody.
    */
   requesterLabel: string | null;
+  /**
+   * Whether the seat this host cut will share its commits, and why not when it
+   * will not (REVIEW-L9 F2). Absent on outcomes that seated nobody.
+   */
+  wipShare?: CodingSessionHireWipShare;
   /**
    * The operator whose key signed the seated create — this computer's own.
    *
@@ -328,65 +343,13 @@ export type UseCodingSessionHireInput = {
   deps?: CodingSessionHireDeps;
 };
 
-/**
- * Every outcome this host has produced since the community-scoped subtree
- * mounted, published so a surface with no access to the hook can read it.
- *
- * Module-level, and therefore community-scoped state — but it needs no entry
- * in `resetCommunityState()`, because its only writer is
- * {@link useCodingSessionHire}, which clears it both when its subscription
- * starts and when it is torn down. Switching communities remounts
- * `CodingSessionHireHost` (`App.tsx` keys the subtree), so the teardown runs
- * and no previous community's hires can be read here. If a second writer is
- * ever added, that stops being true and the reset belongs in
- * `useCommunityInit.ts`.
- */
-let publishedHireOutcomes: readonly CodingSessionHireOutcome[] = [];
-const hireOutcomeListeners = new Set<() => void>();
-
-function publishHireOutcomes(next: readonly CodingSessionHireOutcome[]): void {
-  publishedHireOutcomes = next;
-  for (const listener of [...hireOutcomeListeners]) listener();
-}
-
-/** The outcomes this host has published, newest last. */
-export function readCodingSessionHireOutcomes(): readonly CodingSessionHireOutcome[] {
-  return publishedHireOutcomes;
-}
-
-/** Watch the published outcomes. Returns the unsubscribe. */
-export function subscribeToCodingSessionHireOutcomes(
-  listener: () => void,
-): () => void {
-  hireOutcomeListeners.add(listener);
-  return () => {
-    hireOutcomeListeners.delete(listener);
-  };
-}
-
-/** Forget everything answered so far. Called by the hook, and by tests. */
-export function resetCodingSessionHireOutcomes(): void {
-  publishHireOutcomes([]);
-}
-
-/**
- * Seed the store. Tests only — the host is the one writer in the product, and
- * the doc above that store depends on it staying that way.
- */
-export function publishCodingSessionHireOutcomes(
-  outcomes: readonly CodingSessionHireOutcome[],
-): void {
-  publishHireOutcomes(outcomes);
-}
-
-/** The published outcomes, as React state, for surfaces outside this hook. */
-export function useCodingSessionHireOutcomes(): readonly CodingSessionHireOutcome[] {
-  return React.useSyncExternalStore(
-    subscribeToCodingSessionHireOutcomes,
-    readCodingSessionHireOutcomes,
-    readCodingSessionHireOutcomes,
-  );
-}
+export {
+  publishCodingSessionHireOutcomes,
+  readCodingSessionHireOutcomes,
+  resetCodingSessionHireOutcomes,
+  subscribeToCodingSessionHireOutcomes,
+  useCodingSessionHireOutcomes,
+} from "../lib/codingSessionHireOutcomeStore";
 
 /** Watch for hires and honour them. Returns what it has answered, newest last. */
 export function useCodingSessionHire(input: UseCodingSessionHireInput): {
@@ -733,6 +696,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
       // directory that does not exist yet — and never against the operator's
       // own checkout (item 80a).
       const checkout = current.input.checkoutForChannel(request.channelId);
+      let wipShare = seatWipShareWithoutCheckout();
       if (checkout !== null) {
         const created = await hireDeps.createWorktree({
           workdir: checkout,
@@ -743,6 +707,14 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           commandId: plan.commandId,
           path: created.path,
         });
+        // Its commits reach Pulse from a hook in its own worktree, never from
+        // the seat being asked to report. Best-effort — an install that fails
+        // must not cost the hire the seat it just cut — but never silent.
+        wipShare = await armSeatWorktreeForSharing(
+          created,
+          plan,
+          request.eventId,
+        );
       }
       await publishSeatedCodingSessionCreate({
         channelId: plan.channelId,
@@ -832,6 +804,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         granted: grantFailure === null,
         seatActor: plan.actor,
         hostPubkey: operator,
+        wipShare,
         // Compared with the hire's own signer here, because the relay does not
         // (POLICY.md §5). This is what the seat's first turn is attributed to.
         requesterLabel: codingSessionHireRequesterLabel({

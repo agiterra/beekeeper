@@ -17,6 +17,8 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getRelaySelf } from "@/features/moderation/lib/relaySelf";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
@@ -34,8 +36,19 @@ import { hasValidSignature } from "@/shared/lib/authors";
 
 import {
   readProjectPulseDigest,
+  readPulseMissionRows,
   rememberProjectPulseDigest,
+  rememberPulseMissionRows,
 } from "./projectPulseCache";
+import {
+  invokePulseMissionRows,
+  type PulseMissionRowsInvoker,
+} from "./invokePulseMissionRows";
+import type { PulseMissionRowsResponse } from "./pulseMissionWire";
+import {
+  pulseMissionOpenSessions,
+  readPulseMissionSessions,
+} from "./pulseMissionSessionRead";
 import {
   foldProjectPulseDigest,
   type ProjectPulseDigest,
@@ -441,4 +454,226 @@ export function useProjectPulseDigest(
   return query.data.complete
     ? { kind: "ready", digest: query.data, refreshing: query.isFetching }
     : { kind: "partial", digest: query.data, refreshing: query.isFetching };
+}
+
+// ── Mission rows ─────────────────────────────────────────────────────────────
+//
+// The Missions half of Pulse is a **sibling** read: `pulse_mission_rows` is a
+// native command whose response adds eight keys beside the digest above and
+// retypes none of it. Nothing here folds — `buzz-core` writes every sentence,
+// and this module only decides when to ask and what a failure means.
+
+/**
+ * React Query key for one project's mission rows.
+ *
+ * Order-insensitive on the channel set for the same reason the digest key is:
+ * the caller hands back a fresh array every render and a key that moved with
+ * it would re-read on every paint.
+ */
+export function pulseMissionRowsQueryKey(
+  coordinate: string,
+  channelIds: readonly string[],
+): readonly unknown[] {
+  return [
+    "project-pulse-missions",
+    coordinate,
+    [...channelIds].sort().join(","),
+  ];
+}
+
+/** What the surface knows about a project's mission rows right now. */
+export type PulseMissionRowsState =
+  | { kind: "loading"; rows: null; refreshing: false; message: null }
+  | {
+      kind: "ready";
+      rows: PulseMissionRowsResponse;
+      refreshing: boolean;
+      message: null;
+    }
+  | {
+      kind: "unreadable";
+      rows: PulseMissionRowsResponse | null;
+      refreshing: false;
+      message: string;
+    };
+
+/**
+ * Map one query result onto the three answers this surface distinguishes.
+ *
+ * `unreadable` exists so a failed or refused read can never render as "no
+ * missions". A decode rejection means the producer and this reader disagree
+ * about the contract; a project with no missions and a project whose missions
+ * could not be read are different claims and never share a rendering.
+ *
+ * Exported as a pure function so the distinction is testable without a
+ * QueryClient — the component tree that renders it takes rows as a prop and
+ * fetches nothing.
+ */
+export function pulseMissionRowsState(
+  query: {
+    data: PulseMissionRowsResponse | undefined;
+    error: unknown;
+    isPending: boolean;
+    isFetching: boolean;
+  },
+  cached: PulseMissionRowsResponse | null,
+): PulseMissionRowsState {
+  if (query.error) {
+    return {
+      kind: "unreadable",
+      rows: cached,
+      refreshing: false,
+      message: errorMessage(query.error),
+    };
+  }
+  if (query.data) {
+    return {
+      kind: "ready",
+      rows: query.data,
+      refreshing: query.isFetching,
+      message: null,
+    };
+  }
+  // A cached answer is the *last complete read*, not the current one. It paints
+  // (a surface that blanks on every refetch is worse) but is marked, because a
+  // seat that reported since that read is simply absent from it.
+  if (cached) {
+    return { kind: "ready", rows: cached, refreshing: true, message: null };
+  }
+  return { kind: "loading", rows: null, refreshing: false, message: null };
+}
+
+/** What a mission read is about, beyond the coordinate and the channel floor. */
+export type PulseMissionRowsInput = {
+  /**
+   * The digest whose open sessions this read opens.
+   *
+   * The count that reaches the native command is the number of open sessions
+   * **this digest proved**, never the number the gather managed to read: the
+   * command subtracts one from the other and discloses the difference, so a
+   * count taken after the gather would silence exactly the sentence that
+   * admits a session went unread.
+   */
+  digest: ProjectPulseDigest | null;
+  /** The viewer's own pubkey, so `{Who}` can say "You". */
+  viewerPubkey?: string | null;
+  /** Display names by lowercase-hex pubkey; unresolved ones degrade to hex. */
+  displayNames?: Readonly<Record<string, string>>;
+};
+
+/** Read and decode one project's mission rows. Exported for tests. */
+export async function fetchPulseMissionRows(
+  coordinate: string,
+  channelIds: readonly string[],
+  input: PulseMissionRowsInput,
+  dependencies: {
+    invoke?: PulseMissionRowsInvoker;
+    fetchEvents?: PulseEventFetcher;
+    relaySelf?: () => Promise<string | null>;
+  } = {},
+): Promise<PulseMissionRowsResponse> {
+  const openSessions = pulseMissionOpenSessions(input.digest);
+  const read = await readPulseMissionSessions(
+    { channelIds, openSessions },
+    {
+      fetchEvents:
+        dependencies.fetchEvents ??
+        ((filter) => relayClient.fetchEvents(filter)),
+      relaySelf: dependencies.relaySelf ?? getRelaySelf,
+    },
+  );
+  const rows = await invokePulseMissionRows(
+    {
+      project: coordinate,
+      channelIds,
+      openSessionCount: openSessions.length,
+      sessions: read.sessions,
+      readErrors: read.readErrors,
+      viewerPubkey: input.viewerPubkey ?? null,
+      displayNames: input.displayNames,
+    },
+    dependencies,
+  );
+  rememberPulseMissionRows(coordinate, rows);
+  return rows;
+}
+
+/**
+ * One project's mission rows, on the same 60s fallback cadence as the digest.
+ *
+ * No live subscription of its own: the rows are folded from the same signed
+ * facts the digest already subscribes to, and a second subscription over the
+ * same kinds would double the fan-out to say the same thing twice.
+ *
+ * The digest is what this read is *about*: its open sessions are the ones
+ * opened, and its open-session count is what the native command measures the
+ * gather against. Without one the read has no umbrella to open, which is
+ * exactly the state the command's own unread disclosure names.
+ */
+export function usePulseMissionRows(
+  coordinate: string | null,
+  channelIds: readonly string[],
+  options: {
+    /**
+     * The digest this read is a sibling of. Defaults to the last complete
+     * digest folded for this coordinate, so the hook is honest at the call
+     * site it already has; a caller holding the *live* digest should pass it,
+     * because a cached one is one read behind.
+     */
+    digest?: ProjectPulseDigest | null;
+    /** Display names by lowercase-hex pubkey. Unresolved ones read as hex. */
+    displayNames?: Readonly<Record<string, string>>;
+  } = {},
+): PulseMissionRowsState {
+  const channelKey = [...channelIds].sort().join(",");
+  const stableChannelIds = React.useMemo(
+    () => (channelKey === "" ? [] : channelKey.split(",")),
+    [channelKey],
+  );
+  const viewerPubkey = useIdentityQuery().data?.pubkey ?? null;
+  const digest =
+    options.digest ?? (coordinate ? readProjectPulseDigest(coordinate) : null);
+  const openSessions = React.useMemo(
+    () => pulseMissionOpenSessions(digest),
+    [digest],
+  );
+  // The open-session set is part of the key: a session opening or closing
+  // changes what this read is about, and without it the rows would keep
+  // answering about the umbrellas that were open a minute ago.
+  const openSessionKey = openSessions
+    .map((session) => session.sessionKey)
+    .sort()
+    .join(",");
+  const key = React.useMemo(
+    () => [
+      ...pulseMissionRowsQueryKey(coordinate ?? "none", stableChannelIds),
+      openSessionKey,
+      viewerPubkey,
+    ],
+    [coordinate, openSessionKey, stableChannelIds, viewerPubkey],
+  );
+  const displayNames = options.displayNames;
+  const query = useQuery({
+    queryKey: key,
+    enabled: coordinate !== null,
+    refetchInterval: 60_000,
+    // A contract disagreement does not heal by asking again, and retrying one
+    // hides it behind three more seconds of "loading" before it is disclosed.
+    retry: false,
+    queryFn: () =>
+      fetchPulseMissionRows(coordinate ?? "", stableChannelIds, {
+        digest,
+        viewerPubkey,
+        displayNames,
+      }),
+  });
+  return pulseMissionRowsState(
+    {
+      data: query.data,
+      error: query.error,
+      isPending: query.isPending,
+      isFetching: query.isFetching,
+    },
+    coordinate ? readPulseMissionRows(coordinate) : null,
+  );
 }

@@ -67,6 +67,18 @@ pub enum WakeSource {
 }
 
 impl WakeSource {
+    /// The pubkey that signed the record this wake is about.
+    ///
+    /// Both variants have one: a report is signed by its author, a terminal by
+    /// the actor whose turn ended. It is what
+    /// [`wake_author_is_foreign`] is asked about.
+    pub fn author_pubkey(&self) -> Option<&str> {
+        match self {
+            Self::Report { author_pubkey, .. } => Some(author_pubkey),
+            Self::Terminal { actor_pubkey, .. } => Some(actor_pubkey),
+        }
+    }
+
     pub fn event_id(&self) -> &str {
         match self {
             Self::Report { operation_id, .. } => operation_id,
@@ -722,6 +734,30 @@ fn tag_value(event: &Event, name: &str) -> Option<String> {
         let tag = tag.as_slice();
         (tag.len() == 2 && tag[0] == name).then(|| tag[1].clone())
     })
+}
+
+/// Whether a foreign pubkey may cause this umbrella to wake one of its seats.
+///
+/// **It may not, and there is no argument that makes it may.** This is Lane
+/// L9's line and the one thing the overlap row is not allowed to become: two
+/// umbrellas can *see* that they touched the same file, and a lead may publish
+/// a `note` citing the other umbrella's event or message that lead's pubkey
+/// directly. Neither of those places work on another umbrella's seat, and
+/// nothing in this provider may.
+///
+/// A pubkey is foreign to an umbrella when the accepted NIP-CSAT chain holds no
+/// seat for it and it is not the founder. Membership of *some* umbrella is not
+/// membership of *this* one — the whole point is that a real, seated, entirely
+/// legitimate lead of another mission is still foreign here.
+///
+/// Deliberately a named predicate rather than an inline condition: a rule this
+/// absolute should be greppable, and its test should name it.
+pub fn wake_author_is_foreign(context: &CodingSessionTeamFoldContext, author_pubkey: &str) -> bool {
+    author_pubkey != context.founder_pubkey
+        && !context
+            .active_seats
+            .iter()
+            .any(|seat| seat.actor_pubkey == author_pubkey)
 }
 
 #[cfg(test)]

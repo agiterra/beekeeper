@@ -1806,6 +1806,35 @@ impl Provider {
             return Ok(());
         }
 
+        // **There is no cross-umbrella wake.** Whoever signed the thing this
+        // wake is about must belong to *this* umbrella's accepted authority
+        // chain. A real, seated, entirely legitimate lead of another mission is
+        // foreign here, and one team's lead never places work on another team's
+        // seat (LANE-L9 §L9.5). Two umbrellas may see that they touched the
+        // same file — Pulse computes that row and it wakes nobody — and a lead
+        // may note or message the other lead with their own key. That is the
+        // whole permitted surface.
+        //
+        // Retired rather than deferred: a foreign author is a settled answer no
+        // later poll improves, and deferring would retry it forever.
+        if let Some(author) = intent.source.author_pubkey() {
+            let context = team_wake::fold_context(
+                &intent.scope,
+                &snapshot.founder_pubkey,
+                &snapshot.authority,
+            );
+            if team_wake::wake_author_is_foreign(&context, author) {
+                tracing::info!(
+                    target: "csp::team_wake",
+                    %author,
+                    channel_ref = %channel_ref,
+                    "discarding team wake candidate signed outside this umbrella"
+                );
+                self.retire_team_wake(channel_ref)?;
+                return Ok(());
+            }
+        }
+
         match &intent.source {
             team_wake::WakeSource::Report {
                 operation_id,

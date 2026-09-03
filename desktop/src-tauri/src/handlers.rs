@@ -248,6 +248,7 @@ pub(crate) fn invoke_handler(
         create_team,
         team_readiness,
         fold_coding_session_team_transactions,
+        pulse_mission_rows,
         build_coding_session_policy_event,
         build_coding_session_team_transaction_event,
         coding_session_land,
@@ -447,6 +448,7 @@ pub(crate) fn invoke_handler(
         coding_sessions::naming::set_coding_session_naming_settings,
         coding_sessions::naming::generate_coding_session_name,
         coding_sessions::naming::test_coding_session_naming,
+        install_coding_session_seat_hooks,
         commands::coding_session_export::begin_coding_session_transcript_export,
         commands::coding_session_export::write_coding_session_transcript_export,
     ]

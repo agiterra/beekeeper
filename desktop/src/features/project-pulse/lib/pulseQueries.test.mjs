@@ -240,3 +240,255 @@ test("per-turn receipt volume cannot evict the facts a session is proven from", 
     "the 44223 metadata must survive a channel full of turn receipts",
   );
 });
+
+test("a mission read is keyed by coordinate and channel set, not by order", async () => {
+  const { pulseMissionRowsQueryKey } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  assert.deepEqual(
+    pulseMissionRowsQueryKey(PROJECT, ["b", "a"]),
+    pulseMissionRowsQueryKey(PROJECT, ["a", "b"]),
+  );
+  assert.notDeepEqual(
+    pulseMissionRowsQueryKey(PROJECT, ["a"]),
+    pulseMissionRowsQueryKey(PROJECT, ["a", "b"]),
+  );
+});
+
+test("a mission read that failed is unreadable, never an empty mission list", async () => {
+  const { pulseMissionRowsState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const state = pulseMissionRowsState(
+    {
+      data: undefined,
+      error: new Error("pulse mission rows: response is missing overlaps"),
+      isPending: false,
+      isFetching: false,
+    },
+    null,
+  );
+  assert.equal(state.kind, "unreadable");
+  assert.equal(
+    state.message,
+    "pulse mission rows: response is missing overlaps",
+  );
+  assert.equal(state.rows, null);
+});
+
+test("a pending mission read paints its last complete answer, marked as such", async () => {
+  const { pulseMissionRowsState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const cached = { missions: [], missionErrors: [] };
+  const pending = pulseMissionRowsState(
+    { data: undefined, error: null, isPending: true, isFetching: true },
+    cached,
+  );
+  assert.equal(pending.kind, "ready");
+  assert.equal(pending.refreshing, true);
+  assert.equal(pending.rows, cached);
+
+  const cold = pulseMissionRowsState(
+    { data: undefined, error: null, isPending: true, isFetching: true },
+    null,
+  );
+  assert.equal(cold.kind, "loading");
+});
+
+test("a settled mission read is ready and not marked stale", async () => {
+  const { pulseMissionRowsState } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const rows = { missions: [], missionErrors: [] };
+  const state = pulseMissionRowsState(
+    { data: rows, error: null, isPending: false, isFetching: false },
+    null,
+  );
+  assert.equal(state.kind, "ready");
+  assert.equal(state.refreshing, false);
+  assert.equal(state.rows, rows);
+});
+
+// ── The mission read's own inputs ────────────────────────────────────────────
+//
+// REVIEW-L9 F1: the mission request used to be built from nothing — no
+// sessions, and an `openSessionCount` no caller ever passed — so the native
+// command answered with zero rows, zero errors, and one sentence promising
+// "the newest 8 open sessions by observation time" over a read that opened no
+// session at all. These pin the two halves of that: the count is the digest's
+// real count, and every session that could not be read is disclosed by name.
+
+const CHANNEL_ONE = "11111111-2222-3333-4444-555555555555";
+const SESSION_ONE = "aaaaaaaa-1111-2222-3333-444444444444";
+const FOUNDER = "cd".repeat(32);
+const RELAY_SELF = "ef".repeat(32);
+
+function missionFixture() {
+  return {
+    missionsSchema: "buzz-pulse-mission-rows/v1",
+    missionScope:
+      "project channels · the newest 8 open sessions by observation time",
+    missions: [],
+    missionErrors: [],
+    openRulings: [],
+    rulingsWaitingOnViewer: [],
+    overlaps: [],
+    viewerPubkey: null,
+  };
+}
+
+function openSession(sessionKey, sessionRef, latestObservationAt) {
+  return {
+    sessionKey,
+    sessionRef,
+    name: null,
+    goal: null,
+    lifecycle: "open",
+    coordinationState: "open_unverified",
+    latestObservationAt,
+    observedAgeSeconds: null,
+    generations: [],
+    sourceEventIds: [],
+  };
+}
+
+function digestOf(sessions) {
+  return {
+    schema: "buzz-project-pulse-digest/v2",
+    source: "client-composed",
+    project: PROJECT,
+    asOf: 1_756_800_000,
+    complete: true,
+    sessionsScope: "project channels",
+    sessions,
+    providerReachableSessions: [],
+    openUnverifiedSessions: sessions.map((session) => session.sessionKey),
+    closedSessions: [],
+    entries: [],
+    errors: [],
+  };
+}
+
+function genesisEvent(channelRef, sessionRef, id) {
+  return {
+    id,
+    pubkey: FOUNDER,
+    created_at: 1_756_700_000,
+    kind: 44226,
+    tags: [
+      ["h", channelRef],
+      ["csg-v", "csg1-1"],
+      ["csg-session", sessionRef],
+    ],
+    content: JSON.stringify({ sessionRef, v: 1 }),
+    sig: "0".repeat(128),
+  };
+}
+
+test("the mission read sends the number of open sessions the digest proved", async () => {
+  const { fetchPulseMissionRows } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  let sent = null;
+  await fetchPulseMissionRows(
+    PROJECT,
+    [],
+    {
+      digest: digestOf([
+        openSession("s-1", SESSION_ONE, 1_756_800_000),
+        openSession(
+          "s-2",
+          "bbbbbbbb-1111-2222-3333-444444444444",
+          1_756_700_000,
+        ),
+      ]),
+    },
+    {
+      invoke: async (_command, args) => {
+        sent = args;
+        return missionFixture();
+      },
+      fetchEvents: async () => [],
+      relaySelf: async () => RELAY_SELF,
+    },
+  );
+  assert.equal(sent.request.openSessionCount, 2);
+});
+
+test("nine open sessions send eight, and the count still says nine", async () => {
+  const { fetchPulseMissionRows } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  const sessions = [];
+  for (let index = 0; index < 9; index += 1) {
+    const sessionRef = `${String(index).repeat(8)}-1111-2222-3333-444444444444`;
+    sessions.push(openSession(`s-${index}`, sessionRef, 1_756_800_000 - index));
+  }
+  let sent = null;
+  await fetchPulseMissionRows(
+    PROJECT,
+    [CHANNEL_ONE],
+    { digest: digestOf(sessions) },
+    {
+      invoke: async (_command, args) => {
+        sent = args;
+        return missionFixture();
+      },
+      fetchEvents: async (filter) =>
+        filter.kinds[0] === 44226
+          ? sessions.map((session, index) =>
+              genesisEvent(
+                CHANNEL_ONE,
+                session.sessionRef,
+                `${String(index).repeat(2)}${"ab".repeat(31)}`,
+              ),
+            )
+          : [],
+      relaySelf: async () => RELAY_SELF,
+    },
+  );
+  assert.equal(sent.request.openSessionCount, 9);
+  assert.equal(sent.request.sessions.length, 8);
+  // Newest observation first, so the eight that are read are the eight the
+  // scope sentence promises.
+  assert.deepEqual(
+    sent.request.sessions.map((session) => session.sessionKey),
+    ["s-0", "s-1", "s-2", "s-3", "s-4", "s-5", "s-6", "s-7"],
+  );
+});
+
+test("a session whose team records could not be read is disclosed, not dropped", async () => {
+  const { fetchPulseMissionRows } = await import(
+    "@/features/project-pulse/lib/pulseQueries"
+  );
+  let sent = null;
+  await fetchPulseMissionRows(
+    PROJECT,
+    [CHANNEL_ONE],
+    { digest: digestOf([openSession("s-1", SESSION_ONE, 1_756_800_000)]) },
+    {
+      invoke: async (_command, args) => {
+        sent = args;
+        return missionFixture();
+      },
+      fetchEvents: async (filter) => {
+        if (filter.kinds[0] === 44226) {
+          return [genesisEvent(CHANNEL_ONE, SESSION_ONE, "ab".repeat(32))];
+        }
+        if (filter.kinds[0] === 44244) throw new Error("relay unreachable");
+        return [];
+      },
+      relaySelf: async () => RELAY_SELF,
+    },
+  );
+  const disclosed = sent.request.readErrors.find((error) =>
+    error.message.includes("relay unreachable"),
+  );
+  assert.notEqual(disclosed, undefined);
+  assert.equal(disclosed.scope, `missions:${CHANNEL_ONE}`);
+  // The count still says one session is in scope, so the native command's own
+  // unread disclosure fires beside this one.
+  assert.equal(sent.request.openSessionCount, 1);
+  assert.deepEqual(sent.request.sessions, []);
+});
