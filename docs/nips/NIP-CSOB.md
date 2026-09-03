@@ -174,7 +174,9 @@ disagree with its peer about the same signed bytes.
       "outcome": "passed" | "failed" | "not-run",
       "command": "<= 512 B",
       "summary": "<= 2048 B" | null,
-      "durationMs": 41000 | null
+      "durationMs": 41000 | null,
+      "headSha": "<40- or 64-hex git object id>" | null,
+      "dirty": true | false | null
     }
   ]
 }
@@ -184,6 +186,36 @@ One to 32 rows, **unique by `gate`**. `rows: []` is invalid: an observation with
 nothing to say claims to state something and states nothing. The three outcome
 words are deliberately the same three a 44244 `report.tests[].outcome` uses —
 one word per outcome across the whole wire.
+
+#### `headSha` and `dirty` — which commit the gate ran against (2026-09-03)
+
+`headSha` is the commit the gate was measured over, and `dirty` says whether the
+worktree matched it. Both are **required on write and optional on read**, the
+same rule `source` is under (see *Read-optional keys* below).
+
+* They travel **together or not at all**. A row carrying one without the other
+  is refused by name: a commit named without saying whether the tree matched it
+  is not evidence about that commit, and cleanliness with no commit says nothing
+  a reader can use.
+* `headSha` accepts a 40-hex (SHA-1) or 64-hex (SHA-256) object id — the same
+  shape kind 44244's `report.headSha` carries, because the two are compared
+  against each other.
+* Both are `null` when nobody resolved a commit: a workdir that is not a
+  repository, an unborn branch, a `git` that could not answer, or a declared row
+  whose author named none. **Absent and `null` mean "this row names no
+  commit"** and are never read as "the commit currently checked out".
+
+For an `observed` row the producer is the session provider, which runs
+`git rev-parse HEAD` and `git status --porcelain` **in the seat's own workdir at
+the moment the gate closed**, in the provider process. The seat is never asked
+and cannot sign the row. For a `declared` row the author states both itself
+(`bee sessions observe gate --head-sha <sha>:clean|dirty`), and it is still a
+claim.
+
+**Why the key exists.** Without it the strongest thing a reader could say was
+"this mission has green rows somewhere", which would let an earlier commit's
+green stand for a later one. NIP-GS arm (B) — observed gates admitting a push —
+is computed from this key and refuses every row that does not carry it.
 
 ### `finding`
 
@@ -225,6 +257,7 @@ one word per outcome across the whole wire.
 | `gate`, `findingId`, `phase` name | 64 B |
 | `title` | 512 B |
 | `rows` | 1..=32, unique by `gate` |
+| `headSha` | 40 or 64 lowercase hex; present exactly when `dirty` is |
 | `refs` | 0..=16, unique |
 
 Every event id is lowercase 64-hex. Every UUID is lowercase canonical

@@ -69,6 +69,10 @@ function gate(authorPubkey, source, name, outcome, extra = {}) {
     command: `cargo test -p ${name}`,
     summary: null,
     durationMs: null,
+    // Defaulted to the shape every row on the wire carried before
+    // 2026-09-03: no commit, and no cleanliness measurement either.
+    headSha: null,
+    dirty: null,
     ...extra,
   };
 }
@@ -409,6 +413,72 @@ test("REVIEW-L5 F2: a view that verified nothing says so", async () => {
         .textContent,
       /Provenance was not verified in this view/,
     );
+  } finally {
+    screen.cleanup();
+  }
+});
+
+test("a row names the commit it ran at, and says when the tree was dirty", async () => {
+  const screen = await render({
+    view: view(
+      fold({
+        gates: [
+          gate(PROVIDER, "observed", "buzz-core", "passed", {
+            headSha: "07c470be007c470be007c470be007c470be007c4",
+            dirty: false,
+          }),
+          gate(PROVIDER, "observed", "buzz-cli", "passed", {
+            headSha: "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+            dirty: true,
+          }),
+        ],
+      }),
+    ),
+  });
+  try {
+    const commits = screen
+      .getAllByTestId("coding-session-gate-row-commit")
+      .map((node) => node.textContent);
+    // Eight hex, the same short form every other reference on this surface
+    // uses — never the whole id inline, and never a re-wording of it.
+    assert.deepEqual(commits, ["07c470be", "1b1b1b1bdirty"]);
+    const marks = screen
+      .getAllByTestId("coding-session-gate-row-commit")
+      .map((node) => node.getAttribute("data-dirty"));
+    assert.deepEqual(marks, ["false", "true"]);
+  } finally {
+    screen.cleanup();
+  }
+});
+
+test("a row that names no commit says so, and never borrows one", async () => {
+  const screen = await render({
+    view: view(
+      fold({
+        gates: [
+          // The shape of every gate row signed before 2026-09-03, beside one
+          // that does name a commit. The older row must not read as being
+          // about the newer one's commit — that is the whole point of the
+          // key, and reading absent as "whatever is being pushed" would land
+          // a commit on the strength of a row that predates the question.
+          gate(SEAT, "declared", "buzz-cli", "passed"),
+          gate(PROVIDER, "observed", "buzz-core", "passed", {
+            headSha: "07c470be007c470be007c470be007c470be007c4",
+            dirty: false,
+          }),
+        ],
+      }),
+    ),
+  });
+  try {
+    const commits = screen
+      .getAllByTestId("coding-session-gate-row-commit")
+      .map((node) => node.textContent);
+    assert.deepEqual(commits, ["no commit named", "07c470be"]);
+    const marks = screen
+      .getAllByTestId("coding-session-gate-row-commit")
+      .map((node) => node.getAttribute("data-dirty"));
+    assert.deepEqual(marks, [null, "false"]);
   } finally {
     screen.cleanup();
   }

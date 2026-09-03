@@ -3,8 +3,8 @@
   "implementation": "buzz-core",
   "inputEventIds": [
     "eba2ed8e8642041eed7bc9840345c06ea75438017a4534569019bfacccf0de17",
-    "5061d52924734f5c550aa162c4e6acb625c622141e4419d384512f7d47a65eb9",
-    "32470c5376efacfdfd26abddc0486e92cb9e0f79cbe4509336057e1351be858e",
+    "1922189f894ad9eb444bfc3ba8905aa1f538fa9dcf13a4146b7b5a90b469b77e",
+    "ff8f335001cb13840bedc981b9138d7b9062969a305c787833fc8512fdfc62aa",
     "96413b4e30b36e50ba12d433caabf7d55e334d8dd4ec2021e8af147bf70cbf61",
     "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29"
   ],
@@ -30,7 +30,7 @@
       "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
       "source": "declared",
       "eventIds": [
-        "5061d52924734f5c550aa162c4e6acb625c622141e4419d384512f7d47a65eb9"
+        "1922189f894ad9eb444bfc3ba8905aa1f538fa9dcf13a4146b7b5a90b469b77e"
       ],
       "droppedEventIds": 0,
       "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
@@ -38,13 +38,15 @@
       "outcome": "passed",
       "command": "cargo test -p buzz-cli",
       "summary": "13 passed",
-      "durationMs": 41000
+      "durationMs": 41000,
+      "headSha": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+      "dirty": false
     },
     {
       "authorPubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
       "source": "observed",
       "eventIds": [
-        "32470c5376efacfdfd26abddc0486e92cb9e0f79cbe4509336057e1351be858e"
+        "ff8f335001cb13840bedc981b9138d7b9062969a305c787833fc8512fdfc62aa"
       ],
       "droppedEventIds": 0,
       "assignmentRef": null,
@@ -52,7 +54,9 @@
       "outcome": "failed",
       "command": "cargo test -p buzz-cli",
       "summary": "test result: FAILED. 0 passed; 2 failed; 0 ignored",
-      "durationMs": 41000
+      "durationMs": 41000,
+      "headSha": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+      "dirty": true
     }
   ],
   "findings": [

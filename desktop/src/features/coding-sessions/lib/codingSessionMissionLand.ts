@@ -33,7 +33,10 @@ export const CODING_SESSION_LAND_ADAPTER_SCHEMA =
 export const CODING_SESSION_LAND_REF = "refs/heads/main";
 
 /** Which arm of the require-verdict rule admitted a commit. */
-export type CodingSessionLandArm = "founder" | "verifier-verdict";
+export type CodingSessionLandArm =
+  | "founder"
+  | "observed-gates"
+  | "verifier-verdict";
 
 /**
  * What admitted a commit.
@@ -51,6 +54,11 @@ export type CodingSessionLandEvidence = {
   readonly dispositionAuthorPubkey: string;
   readonly refutationEventId: string;
   readonly verifierPubkey: string;
+  /**
+   * Under arm `observed-gates`, the gates that had to be green on this
+   * commit, in the order they were required. Empty under every other arm.
+   */
+  readonly observedGates: readonly string[];
   readonly reportEventId: string;
   readonly headSha: string;
 };
@@ -110,9 +118,14 @@ function isEvidence(value: unknown): value is CodingSessionLandEvidence | null {
         "verifierPubkey",
         "reportEventId",
         "headSha",
+        "observedGates",
       ],
     ]) &&
-      (value.arm === "founder" || value.arm === "verifier-verdict") &&
+      (value.arm === "founder" ||
+        value.arm === "observed-gates" ||
+        value.arm === "verifier-verdict") &&
+      Array.isArray(value.observedGates) &&
+      value.observedGates.every((gate) => typeof gate === "string") &&
       typeof value.sessionRef === "string" &&
       typeof value.dispositionEventId === "string" &&
       typeof value.dispositionAuthorPubkey === "string" &&
@@ -215,6 +228,29 @@ export async function invokeCodingSessionLand(input: {
    * "there are none". The native answer's `seatsRead` says which.
    */
   activeSeats: readonly { actorPubkey: string; role: string }[];
+  /**
+   * The mission's folded kind 44246 gate rows — arm (B)'s only evidence.
+   *
+   * Already folded, so the provenance check that turns a seat's `observed`
+   * claim into `declared` has run. An empty list is "this view read no
+   * observations", never "the gates were red".
+   */
+  observedGates: readonly {
+    authorPubkey: string;
+    source: string;
+    gate: string;
+    outcome: string;
+    headSha: string | null;
+    dirty: boolean | null;
+  }[];
+  /**
+   * The gate half of the mission's newest founder-signed policy, or null when
+   * this view read none.
+   */
+  gatePolicy: {
+    verifierRequired: boolean | null;
+    requiredGates: readonly string[] | null;
+  } | null;
   includedEventIds: readonly string[];
   events: readonly ImmutableCodingSessionTeamWireEvent[];
 }): Promise<CodingSessionLandResult> {
@@ -240,6 +276,24 @@ export async function invokeCodingSessionLand(input: {
           actorPubkey: seat.actorPubkey,
           role: seat.role,
         })),
+        observedGates: input.observedGates.map((row) => ({
+          authorPubkey: row.authorPubkey,
+          source: row.source,
+          gate: row.gate,
+          outcome: row.outcome,
+          headSha: row.headSha,
+          dirty: row.dirty,
+        })),
+        gatePolicy:
+          input.gatePolicy === null
+            ? null
+            : {
+                verifierRequired: input.gatePolicy.verifierRequired,
+                requiredGates:
+                  input.gatePolicy.requiredGates === null
+                    ? null
+                    : [...input.gatePolicy.requiredGates],
+              },
         includedEventIds: [...input.includedEventIds],
         events: input.events.map((event) => ({
           id: event.id,
@@ -441,7 +495,9 @@ export function codingSessionMissionLandModel(input: {
       approvalSentence:
         evidence.arm === "founder"
           ? `You are a founder of this repository, so the require-verdict rule on ${CODING_SESSION_LAND_REF} admits your push with no verdict at all. Nothing here has ruled on this commit.`
-          : `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}, and ${input.resolveWho(evidence.verifierPubkey)} did not refute it (refutation ${short(evidence.refutationEventId)}). The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
+          : evidence.arm === "observed-gates"
+            ? `Gates observed green on ${evidence.headSha.slice(0, 8)} — ready. ${evidence.observedGates.join(", ")} were each watched passing on this exact commit, over a clean worktree, by this mission's own provider. No person has ruled on it, and this mission requires no verifier.`
+            : `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}, and ${input.resolveWho(evidence.verifierPubkey)} did not refute it (refutation ${short(evidence.refutationEventId)}). The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
       notRunSentence: CODING_SESSION_LAND_NOT_RUN_SENTENCE,
       sentence: null,
     };

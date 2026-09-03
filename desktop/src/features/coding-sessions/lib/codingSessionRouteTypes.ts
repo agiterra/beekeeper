@@ -95,6 +95,18 @@ export type CodingSessionRouteGateRow = {
   at: number | null;
   /** The event a reader can go and find. */
   sourceEventId: string | null;
+  /**
+   * First 8 hex of the commit this gate ran against, or null when the row
+   * names none.
+   *
+   * On the sign's title only. A sign is a moment on a road, not a place to
+   * read a commit id from; what it owes the reader is *which* commit the row
+   * it stands for was about, because a green sign that could be about any
+   * commit is the ambiguity the `headSha` key exists to remove.
+   */
+  commitShortSha: string | null;
+  /** Whether the tree was dirty when it ran, or null when unmeasured. */
+  dirty: boolean | null;
 };
 
 /**

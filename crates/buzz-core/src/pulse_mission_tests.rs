@@ -685,3 +685,60 @@ mod wire_tests;
 
 #[path = "pulse_mission_fixture_tests.rs"]
 mod fixture_tests;
+
+/// L22 / finding 31: Pulse reads a gate row signed before `headSha` existed,
+/// and one signed after, and renders both.
+///
+/// Pulse's strict gate for kind 44246 is `buzz-core`'s own decoder — it holds
+/// no second schema of its own (`pulse_mission.rs`'s `pulse_gate_source_token`
+/// reads the raw content for one key and nothing else). So the read-optional
+/// exemption is what keeps every row already on the wire renderable, and this
+/// test is the claim rather than the coincidence: `gate_body` above writes the
+/// five-key shape on purpose.
+#[test]
+fn a_gate_row_from_before_head_sha_and_one_after_both_reach_pulse() {
+    let founder = Keys::generate();
+    let actor = Keys::generate();
+    let context = context(&founder, vec![(&actor, "builder")]);
+    let assignment = signed(&assignment(&actor), &founder, 1);
+    let assignment_ref = assignment.id.to_hex();
+    // The shape every 44246 on the wire carried before 2026-09-03.
+    let old = observation(
+        &actor,
+        "gate",
+        Some(&assignment_ref),
+        gate_body("cargo fmt", "passed", "cargo fmt --check"),
+        2,
+    );
+    // The shape this repository signs now.
+    let mut new_body = gate_body("cargo clippy", "passed", "cargo clippy");
+    new_body["rows"][0]["headSha"] = json!("07c470be007c470be007c470be007c470be007c4");
+    new_body["rows"][0]["dirty"] = json!(false);
+    let new = observation(&actor, "gate", Some(&assignment_ref), new_body, 3);
+    let team = vec![assignment];
+    let observations = vec![old, new];
+
+    let facts = fold_pulse_mission_row(&sources(&context, &team, &observations, &[]), 10_000);
+    let names = names(vec![(&actor.public_key().to_hex(), "Bob")], None);
+    let row = render_pulse_mission_lines(&facts, &names, 10_000);
+    let gate_lines: Vec<&str> = row
+        .seats
+        .iter()
+        .flat_map(|seat| seat.lines.iter())
+        .filter(|line| line.id == "gate")
+        .map(|line| line.text.as_str())
+        .collect();
+    assert_eq!(
+        gate_lines.len(),
+        2,
+        "a widening that dropped the older row would be a reader losing history: {gate_lines:?}"
+    );
+    assert!(
+        gate_lines.iter().any(|line| line.contains("cargo fmt")),
+        "{gate_lines:?}"
+    );
+    assert!(
+        gate_lines.iter().any(|line| line.contains("cargo clippy")),
+        "{gate_lines:?}"
+    );
+}

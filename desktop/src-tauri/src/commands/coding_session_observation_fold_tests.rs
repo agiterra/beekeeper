@@ -83,13 +83,25 @@ fn request(events: &[Event], known: Vec<String>) -> CodingSessionObservationFold
     }
 }
 
-fn gate_body(gate: &str, outcome: &str, command: &str, summary: Option<&str>) -> Value {
+/// One gate row. `head` is the commit it ran against and whether the tree was
+/// dirty — `None` for a row that names no commit, which is what every row
+/// signed before 2026-09-03 and every declared row without `--head-sha`
+/// carries.
+fn gate_body(
+    gate: &str,
+    outcome: &str,
+    command: &str,
+    summary: Option<&str>,
+    head: Option<(&str, bool)>,
+) -> Value {
     json!({ "rows": [{
         "gate": gate,
         "outcome": outcome,
         "command": command,
         "summary": summary.map_or(Value::Null, |value| json!(value)),
         "durationMs": 41_000,
+        "headSha": head.map_or(Value::Null, |(sha, _)| json!(sha)),
+        "dirty": head.map_or(Value::Null, |(_, dirty)| json!(dirty)),
     }] })
 }
 
@@ -133,7 +145,13 @@ fn the_adapter_returns_the_cores_own_fold_with_every_collection_present() {
         "gate",
         "declared",
         None,
-        gate_body("just ci", "passed", "just ci", Some("All tests passed!")),
+        gate_body(
+            "just ci",
+            "passed",
+            "just ci",
+            Some("All tests passed!"),
+            None,
+        ),
     )];
     let response = fold_adapter(request(&events, Vec::new())).expect("fold");
     let wire = serde_json::to_value(&response).expect("serialize");
@@ -170,6 +188,9 @@ fn an_observed_row_and_a_declared_row_reach_the_screen_as_two_rows() {
                 "passed",
                 "cargo test -p buzz-cli",
                 Some("13 passed"),
+                // A declared row may still name a commit; it is never evidence
+                // for a landing, and the surface says which word it carries.
+                Some(("7f".repeat(20).as_str(), false)),
             ),
         ),
         observation(
@@ -182,6 +203,7 @@ fn an_observed_row_and_a_declared_row_reach_the_screen_as_two_rows() {
                 "failed",
                 "cargo test -p buzz-cli",
                 Some("test result: FAILED. 0 passed; 2 failed"),
+                None,
             ),
         ),
     ];
@@ -224,7 +246,7 @@ fn an_unreadable_event_is_listed_rather_than_failing_the_whole_fold() {
         "gate",
         "declared",
         None,
-        gate_body("just ci", "passed", "just ci", None),
+        gate_body("just ci", "passed", "just ci", None, None),
     );
     let malformed = EventBuilder::new(
         Kind::Custom(KIND_CODING_SESSION_OBSERVATION as u16),
@@ -292,6 +314,9 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
                 "passed",
                 "cargo test -p buzz-cli",
                 Some("13 passed"),
+                // A declared row may still name a commit; it is never evidence
+                // for a landing, and the surface says which word it carries.
+                Some(("7f".repeat(20).as_str(), false)),
             ),
         ),
         observation(
@@ -304,6 +329,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
                 "failed",
                 "cargo test -p buzz-cli",
                 Some("test result: FAILED. 0 passed; 2 failed; 0 ignored"),
+                Some(("3a".repeat(20).as_str(), true)),
             ),
         ),
         observation(
@@ -362,7 +388,7 @@ fn a_seat_claiming_observed_is_folded_as_declared_and_listed() {
         "gate",
         "observed",
         None,
-        gate_body("cargo test", "passed", "cargo test -p buzz-cli", None),
+        gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
     )];
     let response = fold_adapter(request(&events, Vec::new())).expect("fold");
     assert_eq!(response.gates.len(), 1);
@@ -384,7 +410,7 @@ fn an_unresolved_provider_set_checks_nothing_and_says_so() {
         "gate",
         "observed",
         None,
-        gate_body("cargo test", "passed", "cargo test -p buzz-cli", None),
+        gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
     )];
     let mut unchecked = request(&events, Vec::new());
     unchecked.provider_pubkeys = None;
@@ -404,14 +430,14 @@ fn a_replaced_gate_row_is_counted_in_the_adapters_truncation() {
             "gate",
             "observed",
             None,
-            gate_body("cargo test", "failed", "cargo test -p buzz-cli", None),
+            gate_body("cargo test", "failed", "cargo test -p buzz-cli", None, None),
         ),
         observation(
             &provider,
             "gate",
             "observed",
             None,
-            gate_body("cargo test", "passed", "cargo test -p buzz-cli", None),
+            gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
         ),
     ];
     let response = fold_adapter(request(&events, Vec::new())).expect("fold");

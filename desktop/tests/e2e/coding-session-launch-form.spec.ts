@@ -436,9 +436,23 @@ test.describe("the one launch form", () => {
     // L21 finding 39: `gates.verifierRequired` is enforced at the 44244 fold's
     // completion check and was the one enforced field the launch form could
     // not set — the disclosure named it while nothing offered it.
-    await page
-      .getByTestId("new-coding-session-policy-verifier-required")
-      .selectOption("true");
+    // L22: the switch now decides which arm of the push rule lands a seat's
+    // work, so its labels say so. L21 rejected exactly these words because
+    // they claimed a push effect the switch did not yet have; the relay reads
+    // the flag now, and a label that still described only the completion
+    // check would understate what the founder is choosing.
+    const verifierSwitch = page.getByTestId(
+      "new-coding-session-policy-verifier-required",
+    );
+    await expect(verifierSwitch).toContainText(
+      "Observed gates land this mission\u2019s work",
+    );
+    await expect(verifierSwitch).toContainText("A verifier must also clear it");
+    await expect(verifierSwitch).toContainText("Not set");
+    await expect(page.getByTestId("new-coding-session-policy")).toContainText(
+      "observed",
+    );
+    await verifierSwitch.selectOption("true");
     await expect(
       page.getByTestId("new-coding-session-plan-policy"),
     ).toHaveAttribute("data-kind", "44245");

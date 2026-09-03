@@ -253,6 +253,33 @@ pub struct CodingSessionObservationGateRow {
     /// milliseconds. Disclosed as the author's claim and never used for
     /// ordering, discovery or dedupe.
     pub duration_ms: Option<u64>,
+    /// The commit the gate ran against, as the author resolved it: a
+    /// lowercase 40- or 64-hex git object id, or `null` when nobody resolved
+    /// one.
+    ///
+    /// **Required on write, optional on read** (2026-09-03), the same rule
+    /// `source` is under and for the same measured reason — see
+    /// [`GATE_ROW_READ_OPTIONAL_KEYS`].
+    ///
+    /// The whole point of the key is that a green row means *this* commit was
+    /// green. Without it the strongest thing a reader could say is "this
+    /// mission has green rows somewhere", which would let an earlier commit's
+    /// green admit a later one. So a row that could not resolve a commit
+    /// carries `null` rather than a guess, and admits nothing.
+    ///
+    /// A 64-hex id is accepted because a SHA-256 repository's object ids are
+    /// that length, exactly as kind 44244's `headSha` accepts one; the two
+    /// are compared against each other, so they must not have different
+    /// shapes.
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    /// Whether the worktree carried uncommitted changes when the gate ran.
+    ///
+    /// Present exactly when `headSha` is: a commit named without saying
+    /// whether the tree matched it is not evidence about that commit. `true`
+    /// says the measurement was of something no commit names.
+    #[serde(default)]
+    pub dirty: Option<bool>,
 }
 
 /// Gate body — one to [`MAX_OBSERVATION_GATE_ROWS`] rows, unique by gate name.
@@ -448,6 +475,18 @@ impl CodingSessionObservationGate {
                 row.summary.as_deref(),
                 MAX_OBSERVATION_SUMMARY_BYTES,
             )?;
+            if let Some(head_sha) = &row.head_sha {
+                validate_git_object_id("gate row headSha", head_sha)?;
+            }
+            // The pair travels together or not at all. A row naming a commit
+            // with no cleanliness would have to be read as clean (admitting a
+            // worktree nobody measured) or as dirty (refusing over a fact
+            // nobody measured); neither is honest, so the shape is refused.
+            match (&row.head_sha, row.dirty) {
+                (Some(_), None) => return Err(GATE_ROW_COMMIT_WITHOUT_CLEANLINESS.into()),
+                (None, Some(_)) => return Err(GATE_ROW_CLEANLINESS_WITHOUT_COMMIT.into()),
+                _ => {}
+            }
             if self.rows[..index].iter().any(|held| held.gate == row.gate) {
                 return Err(format!(
                     "gate row names {:?} twice: one observation states each gate once, and a \
@@ -574,10 +613,40 @@ const FINDING_DISPOSITIONS: &[&str] = &["found", "fixed", "cross-lane", "needs-r
 /// The closed provenance tokens.
 const OBSERVATION_SOURCES: &[&str] = &["observed", "declared", "measured"];
 
+/// Refusal for a gate row that names a commit and no cleanliness.
+///
+/// Frozen copy: it reaches a person through a decoder error and through the
+/// relay's ingest refusal, so both say the same words.
+const GATE_ROW_COMMIT_WITHOUT_CLEANLINESS: &str =
+    "gate row dirty must be present when headSha names a commit: a commit named without saying \
+     whether the tree matched it is not evidence about that commit";
+
+/// Refusal for a gate row that measures cleanliness and names no commit.
+const GATE_ROW_CLEANLINESS_WITHOUT_COMMIT: &str =
+    "gate row headSha must be present when dirty is: cleanliness with no commit says nothing a \
+     reader can use";
+
 /// The exact keys of one gate row, and which of them may be `null`.
-const GATE_ROW_KEYS: &[&str] = &["gate", "outcome", "command", "summary", "durationMs"];
+const GATE_ROW_KEYS: &[&str] = &[
+    "gate",
+    "outcome",
+    "command",
+    "summary",
+    "durationMs",
+    "headSha",
+    "dirty",
+];
 /// The gate-row keys an author may write as JSON `null`.
-const GATE_ROW_NULLABLE_KEYS: &[&str] = &["summary", "durationMs"];
+const GATE_ROW_NULLABLE_KEYS: &[&str] = &["summary", "durationMs", "headSha", "dirty"];
+/// Gate-row keys a **reader** accepts as absent, though a writer always emits
+/// them.
+///
+/// `headSha` and `dirty` joined the row on 2026-09-03. Requiring either on
+/// read would make every gate row signed before that day undecodable — the
+/// same failure `source` was exempted from a day earlier (finding 31): a wire
+/// widening never loses history. Absent reads as "this row names no commit",
+/// which admits nothing anywhere.
+const GATE_ROW_READ_OPTIONAL_KEYS: &[&str] = &["headSha", "dirty"];
 
 /// Strictly decode and validate signed kind 44246 content.
 ///
@@ -656,9 +725,30 @@ pub fn decode_coding_session_observation(
                 let row = row
                     .as_object()
                     .ok_or_else(|| "gate row must be an object".to_owned())?;
-                validate_exact_keys(row, GATE_ROW_KEYS, &[], "gate row")?;
+                validate_exact_keys(row, GATE_ROW_KEYS, GATE_ROW_READ_OPTIONAL_KEYS, "gate row")?;
                 reject_required_nulls(row, GATE_ROW_KEYS, GATE_ROW_NULLABLE_KEYS, "gate row")?;
                 validate_closed_token(row, "outcome", GATE_OUTCOMES, "gate row")?;
+                // Typed here rather than left to serde, for the same reason
+                // the closed vocabularies are: an untagged body enum answers
+                // a wrongly-typed key with "data did not match any variant",
+                // naming neither the field nor what it wanted.
+                if let Some(value) = row.get("headSha") {
+                    if !value.is_null() && !value.is_string() {
+                        return Err("coding-session gate row field \"headSha\" must be a \
+                                    lowercase 40- or 64-hex git object id, or null"
+                            .into());
+                    }
+                }
+                if let Some(value) = row.get("dirty") {
+                    if !value.is_null() && !value.is_boolean() {
+                        return Err(
+                            "coding-session gate row field \"dirty\" must be a boolean, \
+                                    or null: whether a worktree was clean is measured, never \
+                                    described"
+                                .into(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -793,6 +883,26 @@ fn validate_canonical_uuid(field: &str, value: &str) -> Result<(), String> {
     let parsed = Uuid::parse_str(value).map_err(|_| format!("{field} must be a UUID"))?;
     if parsed.to_string() != value {
         return Err(format!("{field} must be a lowercase canonical UUID"));
+    }
+    Ok(())
+}
+
+/// A git object id as both this kind and kind 44244 write one: lowercase hex,
+/// 40 characters under SHA-1 and 64 under SHA-256.
+///
+/// Deliberately the same shape kind 44244's `headSha` carries
+/// (`coding_session_team_transaction_validators.rs:73`). The push gate
+/// compares one against the other, and a validator that admitted a shape the
+/// other refuses would make that comparison silently unanswerable.
+fn validate_git_object_id(field: &str, value: &str) -> Result<(), String> {
+    if !matches!(value.len(), 40 | 64)
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!(
+            "{field} must be a lowercase 40- or 64-hex git object id"
+        ));
     }
     Ok(())
 }

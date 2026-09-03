@@ -31,6 +31,7 @@ fn gate_args(
         gate: gates.into_iter().map(str::to_owned).collect(),
         summary: summaries.into_iter().map(str::to_owned).collect(),
         duration_ms: durations,
+        head_sha: Vec::new(),
     }
 }
 

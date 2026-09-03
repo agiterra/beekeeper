@@ -101,6 +101,16 @@ export type CodingSessionObservationGateRow = {
   readonly command: string;
   readonly summary: string | null;
   readonly durationMs: number | null;
+  /**
+   * The commit this gate ran against, lowercase hex, or `null`.
+   *
+   * `null` is a row that names no commit — one signed before the key existed
+   * (2026-09-03), or one whose workdir had no resolvable `HEAD`. It is never
+   * read as "the commit currently checked out": absent names nothing.
+   */
+  readonly headSha: string | null;
+  /** Whether the tree was dirty when it ran, or `null`. */
+  readonly dirty: boolean | null;
 };
 
 export type CodingSessionObservationFindingRow = {
@@ -217,15 +227,40 @@ function exact(
   value: unknown,
   keys: readonly string[],
   at: string,
+  readOptional: readonly string[] = [],
 ): Record<string, unknown> {
   const object = record(value, at);
   if (hasExactKeys(object, keys)) return object;
-  const missing = keys.filter((key) => !Object.hasOwn(object, key));
+  const missing = keys.filter(
+    (key) => !Object.hasOwn(object, key) && !readOptional.includes(key),
+  );
   if (missing.length > 0) {
     refuse(`${at} is missing ${missing.map(quote).join(", ")}`);
   }
   const extra = Object.keys(object).filter((key) => !keys.includes(key));
-  refuse(`${at} carries unsupported ${extra.map(quote).join(", ")}`);
+  if (extra.length > 0) {
+    refuse(`${at} carries unsupported ${extra.map(quote).join(", ")}`);
+  }
+  return object;
+}
+
+/**
+ * A boolean, or `null`, refused by name when it is neither.
+ *
+ * A string `"false"` is not a measurement of anything, and reading one as a
+ * boolean would make a dirty worktree read as clean.
+ */
+function nullableFlag(
+  object: Record<string, unknown>,
+  key: string,
+  at: string,
+): boolean | null {
+  const value = object[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "boolean") {
+    refuse(`${at} field ${quote(key)} must be a boolean or null`);
+  }
+  return value;
 }
 
 function quote(key: string): string {
@@ -250,7 +285,9 @@ function nullableText(
   at: string,
 ): string | null {
   const value = object[key];
-  if (value === null) return null;
+  // `undefined` is an absent read-optional key; every required key is proved
+  // present by `exact` before this runs.
+  if (value === undefined || value === null) return null;
   if (typeof value !== "string" || value.length === 0) {
     refuse(`${at} field ${quote(key)} must be a non-empty string or null`);
   }
@@ -407,13 +444,28 @@ const GATE_KEYS = [
   "command",
   "summary",
   "durationMs",
+  "headSha",
+  "dirty",
 ] as const;
+
+/**
+ * Gate-row keys this decoder accepts as **absent**, though the adapter always
+ * writes them.
+ *
+ * The finding-31 rule, applied on this side of the boundary too. The adapter
+ * and this decoder ship in one binary and so cannot skew today — but a fold
+ * response replayed from a fixture, a cache, or a build older than
+ * 2026-09-03 can, and a decoder that refused it outright would lose the
+ * history rather than read a row that names no commit. Absent decodes as
+ * `null`, which admits nothing anywhere.
+ */
+const GATE_READ_OPTIONAL_KEYS = ["headSha", "dirty"] as const;
 
 function decodeGate(
   value: unknown,
   at: string,
 ): CodingSessionObservationGateRow {
-  const object = exact(value, GATE_KEYS, at);
+  const object = exact(value, GATE_KEYS, at, GATE_READ_OPTIONAL_KEYS);
   return Object.freeze({
     authorPubkey: eventId(object, "authorPubkey", at),
     source: word<CodingSessionObservationSource>(object, "source", SOURCES, at),
@@ -430,6 +482,8 @@ function decodeGate(
     command: text(object, "command", at),
     summary: nullableText(object, "summary", at),
     durationMs: nullableCount(object, "durationMs", at),
+    headSha: nullableText(object, "headSha", at),
+    dirty: nullableFlag(object, "dirty", at),
   });
 }
 

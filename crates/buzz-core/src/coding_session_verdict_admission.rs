@@ -14,7 +14,7 @@
 //! exists to replace review with proof, not to put a person in the loop. An
 //! update `(ref, old, new)` on a ref carrying the `require-verdict` protection
 //! rule ([`crate::git_perms::ProtectionRule::require_verdict`]) is admitted
-//! when **either** arm holds.
+//! when **any** of the three arms holds.
 //!
 //! ## (A) The pusher is a founder
 //!
@@ -73,51 +73,32 @@
 //! evaluated exactly as before; nothing here can admit a push the ordinary
 //! role check already denied.
 //!
-//! # The arm that could not be built
+//! ## (B) Every required gate was observed green on this commit
 //!
-//! The ruling named a third arm **(B)**: provider-*observed* gate rows (kind
-//! 44246, `source: observed`) green **on the pushed SHA** admit a seat's push
-//! with no verifier at all, when the mission policy's `gates.verifierRequired`
-//! is not set. It is the velocity arm — the one that makes a small mission
-//! cost nothing beyond its own gate run — and **it is absent, because the wire
-//! carries no fact it could be computed from**:
+//! The velocity arm, built 2026-09-03 (L22) once the wire could carry the
+//! fact it needs. A seat's push lands with **no second seat** when the
+//! mission's newest founder-signed kind 44245 policy does not set
+//! `gates.verifierRequired`, and every gate the policy requires — or
+//! [`DEFAULT_REQUIRED_GATES`] when it names none — has a folded kind 44246
+//! row that is `source: observed`, names **this commit** in `headSha`, was
+//! measured over a clean worktree, and says `passed`. The pusher must hold an
+//! active seat, exactly as in (C).
 //!
-//! * [`crate::coding_session_observation::CodingSessionObservationPayload`]
-//!   has exactly seven keys and is `deny_unknown_fields`; none of them is a
-//!   commit.
-//! * [`crate::coding_session_observation::CodingSessionObservationGateRow`]
-//!   has exactly five — `gate`, `outcome`, `command`, `summary`, `durationMs`
-//!   — and none of them is a commit either.
-//! * The fold that reads them
-//!   ([`crate::coding_session_observation_fold`]) deliberately reads **no
-//!   clock**, so "the row is newer than the commit" is not available as a
-//!   substitute.
-//! * The producer has nothing to put there even if the field existed:
-//!   `buzz_session_provider::gate_observer` derives rows from ACP transcript
-//!   frames and never resolves the seat's worktree HEAD (no `rev-parse`
-//!   anywhere in that crate).
+//! `headSha` is what makes it safe. Binding a mission's gate rows to a push by
+//! anything weaker — "this mission has green rows *somewhere*" — would let a
+//! green row from an earlier commit admit a later one, the same class of
+//! defect as the `landedShas` claim finding 27 caught being false. The
+//! provider resolves `git rev-parse HEAD` in the seat's own workdir when it
+//! pairs a gate `tool_call` with its `tool_result`
+//! (`buzz_session_provider::Provider::spawn_gate_head_probe`); the seat is
+//! never asked, and cannot sign the row.
 //!
-//! Binding a mission's gate rows to a push by anything weaker — "this mission
-//! has green rows *somewhere*" — would let a green row from an earlier commit
-//! admit a later one, which is the same class of defect as the `landedShas`
-//! claim finding 27 caught being false. So arm (B) is **not approximated
-//! here**, and no field for it is carried: an earlier draft's
-//! `policy_reserves_push` was removed for exactly that reason (a field nothing
-//! populated, whose refusal blamed a record the relay never fetched), and
-//! adding an unread `observed_gates` would repeat it.
-//!
-//! **The wire fact it needs**, should Brian want arm (B): the provider resolves
-//! `git rev-parse HEAD` in the seat's workdir at the moment it pairs a gate
-//! `tool_call` with its `tool_result`, and signs it as a **sixth** gate-row key
-//! `headSha`. That is a NIP-CSOB amendment, not a code change: the payload's
-//! `deny_unknown_fields` means every reader older than the amendment refuses
-//! such an event outright, so it ships with the read-side exemption `source`
-//! already uses (`#[serde(default)]` plus the six-key exemption), the desktop
-//! wire decoder, and the Pulse's strict gate, or it repeats findings 31/34/35.
-//!
-//! Until then a non-founder push needs arm (C), whatever
-//! `gates.verifierRequired` says. This gate does not read the session policy,
-//! and no refusal here may be read as *"no verifier is required"*.
+//! The rule itself is in [`observed`]. Three things it will not do: read an
+//! **absent** `headSha` as "the commit being pushed" (a row that predates the
+//! key names no commit and admits nothing); count a **declared** row, however
+//! exactly it names the commit, since that is its own subject speaking; or
+//! substitute a clock for the binding, because the observation fold reads
+//! none.
 //!
 //! Two records that look like they should admit and never do:
 //!
@@ -129,9 +110,20 @@
 
 use nostr::Event;
 
+// Arm (B) lives in a sibling file so no file here passes 1,000 lines.
+#[path = "coding_session_verdict_admission_observed.rs"]
+mod observed;
+use observed::{evaluate_observed_gates, ObservedGateVerdict};
+pub use observed::{
+    mission_gate_policy, mission_observations, mission_provider_pubkeys,
+    VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES, VERDICT_ADMISSION_MAX_OBSERVATIONS,
+    VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
+};
+
 use crate::coding_session_authority_transition::{
     decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
 };
+use crate::coding_session_observation::CodingSessionObservationGateEntry;
 use crate::coding_session_team_transaction::{
     fold_coding_session_team_transactions, validate_coding_session_team_transaction_envelope,
     CodingSessionTeamActiveSeat, CodingSessionTeamFold, CodingSessionTeamFoldContext,
@@ -217,6 +209,29 @@ pub struct VerdictAdmissionCandidate {
     /// second. The relay and the desktop already hold the role next to the
     /// pubkey; only this type was throwing it away.
     pub active_seats: Vec<CodingSessionTeamActiveSeat>,
+    /// This mission's folded kind 44246 gate rows — arm (B)'s only evidence.
+    ///
+    /// **Folded, never raw**, and folded with the mission's provider set
+    /// supplied: `fold_coding_session_observations` downgrades an `observed`
+    /// claim from a signer no provider backs to `declared`, so a seat cannot
+    /// reach this arm by writing the word about itself. A caller that folded
+    /// without the provider set hands over rows whose provenance nothing
+    /// checked, and every one of them is `declared` to this rule unless the
+    /// fold said otherwise.
+    ///
+    /// Empty is the honest default for a caller that read no observations: the
+    /// arm is then silent, and the push is judged by arm (C) exactly as
+    /// before.
+    pub observed_gates: Vec<CodingSessionObservationGateEntry>,
+    /// The gate half of this mission's newest founder-signed kind 44245
+    /// policy, when the caller read one.
+    ///
+    /// `None` is "the caller read no policy", which this rule treats the same
+    /// as a policy setting no flag: arm (B) is available and the default gate
+    /// list applies. That is deliberate and it is the direction that only ever
+    /// *subtracts* nothing — it never turns a verifier requirement off, since
+    /// a `Some(true)` is the only thing that could have been read.
+    pub gate_policy: Option<VerdictAdmissionGatePolicy>,
 }
 
 /// What admitted a commit — **which arm**, and the facts it stood on.
@@ -231,6 +246,18 @@ pub enum VerdictAdmissionEvidence {
     FounderPush {
         /// The founder's hex pubkey, as the push authenticated.
         pusher_pubkey: String,
+    },
+    /// Arm (B): every required gate was observed green on this commit.
+    ObservedGates {
+        /// Umbrella whose observations admitted it.
+        session_ref: String,
+        /// The commit every one of those rows named.
+        head_sha: String,
+        /// The gates that had to be green, in the order they were required.
+        gates: Vec<String>,
+        /// The newest observation event id behind each of those gates, in the
+        /// same order — so a reader can go and read the rows themselves.
+        row_event_ids: Vec<String>,
     },
     /// Arm (C): a verifier seat approved a report naming this commit.
     VerifierVerdict {
@@ -298,6 +325,37 @@ pub enum VerdictAdmissionRefusal {
         /// The branch the approved report named.
         approved_branch: String,
     },
+    /// Rows name this commit, and every one of them is its subject's own
+    /// claim.
+    ObservedRowsAreDeclared {
+        /// The pushed object id.
+        new_oid: String,
+        /// How many rows named it — disclosed so a reader can tell "one seat
+        /// said so" from "nobody said anything".
+        rows: usize,
+    },
+    /// A gate was observed red on this very commit.
+    ObservedGateRed {
+        /// The gate's own name, as the row carries it.
+        gate: String,
+        /// The pushed object id.
+        new_oid: String,
+    },
+    /// The gates were observed over a worktree the commit does not name.
+    ObservedDirty {
+        /// The pushed object id.
+        new_oid: String,
+    },
+    /// A required gate has no observed green row on this commit.
+    RequiredGateNotObserved {
+        /// The first required gate with no such row.
+        gate: String,
+        /// The pushed object id.
+        new_oid: String,
+        /// Every gate this mission requires, so the refusal names the whole
+        /// list rather than one item of it.
+        required: Vec<String>,
+    },
     /// The rule is set on a repository bound to no channel at all.
     RepositoryUnbound,
 }
@@ -318,7 +376,10 @@ impl VerdictAdmissionRefusal {
                  {VERDICT_ADMISSION_MAX_SESSIONS} on this channel whose founder is a founder of \
                  this repository — over one shared page of the newest \
                  {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on that channel. An \
-                 older ruling can fall outside both."
+                 older ruling can fall outside both. No observed gate row names {new_oid} \
+                 either, so the gate-row route is not open for it: that route wants every \
+                 required gate published green on this exact commit, by the mission's own \
+                 provider, over a clean worktree."
             ),
             Self::ApprovedReportNamesBranchOnly => "require-verdict is set and no mission verdict \
                  names this commit: the approved report for this work names a branch and no \
@@ -350,6 +411,34 @@ impl VerdictAdmissionRefusal {
             } => format!(
                 "commit {new_oid} is approved for {approved_branch}, and this is a different \
                  ref. A verdict admits a commit to the branch its report named."
+            ),
+            Self::ObservedRowsAreDeclared { new_oid, rows } => format!(
+                "commit {new_oid} is named by {rows} gate row(s), and every one of them is \
+                 `declared` — its own subject saying so about itself. A landing needs rows a \
+                 mechanism watched: the provider publishes those under its own key while the \
+                 gate runs, and `bee sessions observe gate` cannot mint one."
+            ),
+            Self::ObservedGateRed { gate, new_oid } => format!(
+                "gate `{gate}` was observed red on {new_oid}. Fix it and run it again; the next \
+                 observed row names the commit it ran at."
+            ),
+            Self::ObservedDirty { new_oid } => format!(
+                "{new_oid} was observed dirty: the gates ran over a worktree with uncommitted \
+                 changes in it, so they measured something no commit names. Commit the tree and \
+                 run them again."
+            ),
+            Self::RequiredGateNotObserved {
+                gate,
+                new_oid,
+                required,
+            } => format!(
+                "gate `{gate}` has no observed green row on {new_oid}. This mission requires {}, \
+                 each observed green on the commit being pushed and over a clean worktree.",
+                required
+                    .iter()
+                    .map(|gate| format!("`{gate}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             Self::RepositoryUnbound => "require-verdict is set and this repository is bound to no \
                  channel, so no mission verdict can be read here. Remove the rule, or bind the \
@@ -424,13 +513,14 @@ pub fn verdict_admission_fold_context(
         founder_pubkey: founder_pubkey.into(),
         active_seats,
         active_grants: Vec::new(),
-        // This caller has not read the session's policy set, and
-        // `CodingSessionTeamFoldContext::verifier_required` says such a caller
-        // must pass `false`: the fold then behaves exactly as it did before the
-        // flag existed. It is honest about what this fold enforces — nothing
-        // extra — not about what the session requires. The push gate does not
-        // read `gates.verifierRequired`, and no refusal here may be read as
-        // "no verifier is required".
+        // `CodingSessionTeamFoldContext::verifier_required` says a caller
+        // that has not read the policy must pass `false`: the fold then
+        // behaves exactly as it did before the flag existed. It stays `false`
+        // here even now that the gate reads the policy, because the flag it
+        // reads governs **arm (B)** — whether green gate rows may land a push
+        // — and never which 44244 records fold. Turning it on here would make
+        // an unverified report non-canonical and so change what arm (C) can
+        // see, which is a different rule the founder did not ask for.
         verifier_required: false,
     }
 }
@@ -522,7 +612,7 @@ pub fn mission_transactions<'a>(
 }
 
 /// Whether an event carries exactly this two-value tag.
-fn has_exact_tag(event: &Event, name: &str, value: &str) -> bool {
+pub(super) fn has_exact_tag(event: &Event, name: &str, value: &str) -> bool {
     event.tags.iter().any(|tag| match tag.as_slice() {
         [tag_name, tag_value] => tag_name == name && tag_value == value,
         _ => false,
@@ -572,6 +662,24 @@ pub fn evaluate_verdict_admission(
     let mut approvals_naming_the_commit: usize = 0;
     let mut self_approving_verifier: Option<String> = None;
     let mut verified_but_unseated: Option<(String, usize)> = None;
+    // ── Arm (B) ──────────────────────────────────────────────────────────
+    // Answered before arm (C) searches, because it is the cheap arm and the
+    // one a mission with no verifier is actually running. Its refusal is kept
+    // rather than returned, so a mission that *also* has a verdict is not
+    // handed a gate-row sentence about a route it is not taking.
+    let mut observed_refusal: Option<VerdictAdmissionRefusal> = None;
+    for candidate in candidates {
+        if !is_founder(query.repo_founders, &candidate.founder_pubkey) {
+            continue;
+        }
+        match evaluate_observed_gates(candidate, query.new_oid, query.pusher_pubkey) {
+            ObservedGateVerdict::Admits(evidence) => return VerdictAdmission::Admitted(evidence),
+            ObservedGateVerdict::Refuses(refusal) => {
+                observed_refusal.get_or_insert(refusal);
+            }
+            ObservedGateVerdict::Silent => {}
+        }
+    }
 
     for candidate in candidates {
         // A mission counts only when its founder founded the repository.
@@ -676,6 +784,12 @@ pub fn evaluate_verdict_admission(
             new_oid: query.new_oid.to_ascii_lowercase(),
             approvals: approvals_naming_the_commit,
         });
+    }
+    // Arm (B)'s near-miss ranks below every arm (C) one that named this exact
+    // commit, and above the generic "nothing named it": a red gate row on the
+    // pushed SHA is a far more actionable sentence than a bound disclosure.
+    if let Some(refusal) = observed_refusal {
+        return VerdictAdmission::Refused(refusal);
     }
     if approved_branch_only {
         return VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedReportNamesBranchOnly);
@@ -817,3 +931,9 @@ mod tests;
 #[cfg(test)]
 #[path = "coding_session_verdict_admission_arms_tests.rs"]
 mod arms_tests;
+
+/// Arm (B), in its own file: its fixtures are kind 44246 observations rather
+/// than kind 44244 transactions, and its cases are ten.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_observed_tests.rs"]
+mod observed_tests;

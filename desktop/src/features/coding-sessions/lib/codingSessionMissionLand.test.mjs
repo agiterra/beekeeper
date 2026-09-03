@@ -22,7 +22,13 @@ const resolveWho = (pubkey) =>
     : pubkey.slice(0, 8);
 
 test("L8.2: every state of the adapter's real output decodes", () => {
-  for (const key of ["admitted", "refused", "ungoverned", "unknown"]) {
+  for (const key of [
+    "admitted",
+    "observedGates",
+    "refused",
+    "ungoverned",
+    "unknown",
+  ]) {
     const result = decodeCodingSessionLandResult(FIXTURE[key]);
     assert.equal(result.implementation, "buzz-core");
   }
@@ -230,4 +236,27 @@ test("L18: a decoder that loses the founder set is a loud failure", () => {
       `dropping ${key} must throw`,
     );
   }
+});
+
+test("L22: arm (B) says the gates were green on this commit, and names them", () => {
+  const model = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.observedGates),
+    resolveWho,
+  });
+  const evidence = FIXTURE.observedGates.evidence;
+  assert.equal(evidence.arm, "observed-gates");
+  assert.equal(model.state, "ready");
+  assert.equal(
+    model.command,
+    `git push origin ${evidence.headSha}:refs/heads/main`,
+  );
+  assert.equal(
+    model.approvalSentence,
+    `Gates observed green on ${evidence.headSha.slice(0, 8)} — ready. ${evidence.observedGates.join(", ")} were each watched passing on this exact commit, over a clean worktree, by this mission's own provider. No person has ruled on it, and this mission requires no verifier.`,
+  );
+  // The same mission's own newest verdict is `changes-requested`: what admits
+  // this push is the gate rows, and the sentence claims no approval it does
+  // not have.
+  assert.ok(!/Approved by/.test(model.approvalSentence));
+  assert.ok(!/did not refute/.test(model.approvalSentence));
 });

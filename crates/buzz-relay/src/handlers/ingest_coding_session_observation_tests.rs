@@ -26,6 +26,8 @@ fn gate_observation(session: &str, genesis: &str) -> CodingSessionObservationPay
                 command: "just ci".to_owned(),
                 summary: Some("all stages green".to_owned()),
                 duration_ms: Some(515_000),
+                head_sha: None,
+                dirty: None,
             }],
         }),
     }

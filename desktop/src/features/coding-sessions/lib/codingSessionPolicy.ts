@@ -494,9 +494,10 @@ export async function readCodingSessionPolicyEvent(
  * two.
  */
 export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
-  "Enforced: budget.turns at the provider's turn gate, and " +
-  "gates.verifierRequired at the fold's completion check. Every other field " +
-  "is read and shown, never counted.";
+  "Enforced: budget.turns at the provider's turn gate, " +
+  "gates.verifierRequired at the fold's completion check and at the relay's " +
+  "verdict-gated push, and gates.requiredGates at that push. Every other " +
+  "field is read and shown, never counted.";
 
 /**
  * Policy fields a consumer actually enforces today, by dotted name.
@@ -518,6 +519,15 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
  * reaches it, so this name says the *repository* counts the field, not that
  * every surface does.
  *
+ * `gates.requiredGates` joined it on 2026-09-03 (lane L22), and
+ * `gates.verifierRequired` gained a second consumer the same day: the relay's
+ * verdict-gated push rule
+ * (`crates/buzz-core/src/coding_session_verdict_admission_observed.rs`). When
+ * a mission does not require a verifier, a seat's push on a
+ * `require-verdict` ref lands only if every gate on this list was observed
+ * green on that exact commit — so the list a founder writes here is the list
+ * the relay counts.
+ *
  * Every other field stays out until the same thing is true of it. Adding a
  * name here with no consumer behind it is the exact lie this list exists to
  * prevent.
@@ -525,6 +535,7 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
 export const CODING_SESSION_POLICY_ENFORCED_FIELDS: readonly string[] = [
   "budget.turns",
   "gates.verifierRequired",
+  "gates.requiredGates",
 ];
 
 /** True when nothing in this build consumes any field this record sets. */

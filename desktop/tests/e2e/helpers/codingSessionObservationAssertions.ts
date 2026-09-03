@@ -246,6 +246,10 @@ export function observationFixture(genesisRef: string) {
           command: "cargo test -p buzz-cli",
           summary: "test result: ok. 13 passed; 0 failed",
           durationMs: 12_000,
+          // The shape every gate row on the wire carried before 2026-09-03:
+          // the seat's own claim, naming no commit. It must still render.
+          headSha: null,
+          dirty: null,
         },
       ],
     },
@@ -268,6 +272,9 @@ export function observationFixture(genesisRef: string) {
           summary:
             "running 2 tests\nfailures:\n  subcommand_names_are_stable\ntest result: FAILED. 0 passed; 2 failed; 0 ignored",
           durationMs: 41_000,
+          // The provider resolved the seat's own HEAD when the gate closed.
+          headSha: "07c470be007c470be007c470be007c470be007c4",
+          dirty: false,
         },
       ],
     },
@@ -359,6 +366,11 @@ export function observationFixture(genesisRef: string) {
         command: "cargo test -p buzz-cli",
         summary: "test result: ok. 13 passed; 0 failed",
         durationMs: 12_000,
+        // The seat's own claim names no commit — the shape every gate row on
+        // the wire carried before 2026-09-03. It must render as "no commit
+        // named" rather than borrowing the observed row's (L22).
+        headSha: null,
+        dirty: null,
       },
       {
         authorPubkey: PROVIDER_PUBKEY,
@@ -372,6 +384,9 @@ export function observationFixture(genesisRef: string) {
         summary:
           "running 2 tests\nfailures:\n  subcommand_names_are_stable\ntest result: FAILED. 0 passed; 2 failed; 0 ignored",
         durationMs: 41_000,
+        // The provider resolved the seat's own HEAD when the gate closed.
+        headSha: "07c470be007c470be007c470be007c470be007c4",
+        dirty: false,
       },
     ],
     findings: [

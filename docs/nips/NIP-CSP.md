@@ -13,7 +13,7 @@ nothing at all. Budgets lived in a launch dialog, "red first" lived in
 said it once.
 
 This kind is additive. Clients that do not implement NIP-CSP continue to run
-coding sessions exactly as they do today and may ignore kind 44245. **Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.**
+coding sessions exactly as they do today and may ignore kind 44245. **Enforced: budget.turns at the provider's turn gate, gates.verifierRequired at the fold's completion check and at the relay's verdict-gated push, and gates.requiredGates at that push. Every other field is read and shown, never counted.**
 Two fields, named, and nothing else counted — see "Validation boundary" and
 "What v1 deliberately does not have" below, which together are the one thing a
 surface rendering a 44245 must not get wrong. `gates.verifierRequired` joined

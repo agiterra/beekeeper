@@ -554,6 +554,26 @@ pub enum SessionEvent {
         /// Why.
         reason: ExitReason,
     },
+    /// A gate row the provider watched, with the commit it ran against
+    /// resolved.
+    ///
+    /// Produced by a task the provider spawned when
+    /// [`crate::gate_observer::GateObserver`] paired a gate `tool_call` with
+    /// its `tool_result`, for the same reason [`SessionEvent::WorktreeObserved`]
+    /// is: resolving `HEAD` costs two `git` subprocesses, and awaiting them on
+    /// the loop would delay every other session's transcript delivery.
+    ///
+    /// There is no generation fence here and there must not be one. A worktree
+    /// observation describes the session *now*, so a stale one has to lose; a
+    /// gate row describes one command that already ran, so two rows for two
+    /// gates are two facts and neither supersedes the other.
+    GateObserved {
+        /// Which session ran the gate.
+        session_id: String,
+        /// The row, with `head_sha`/`dirty` resolved (or left `None` when the
+        /// workdir is not a repository, or `git` could not answer).
+        observed: crate::gate_observer::ObservedGateRow,
+    },
     /// A bounded look at a session's working directory finished.
     ///
     /// Produced by a task the provider spawned, never by an actor: the probe

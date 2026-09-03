@@ -102,6 +102,8 @@ mod tests {
                     command: "just ci".to_owned(),
                     summary: None,
                     duration_ms: Some(41_000),
+                    head_sha: None,
+                    dirty: None,
                 }],
             }),
         }

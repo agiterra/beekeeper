@@ -135,19 +135,23 @@ test("an empty collection is omitted rather than sent as an empty sub-object", (
   );
 });
 
-test("only fields the record sets become facts, and exactly two are enforced", () => {
+test("only fields the record sets become facts, and exactly three are enforced", () => {
   const facts = codingSessionPolicyFacts(FIXTURE.build.record);
   const fields = facts.map((fact) => fact.field);
   assert.ok(fields.includes("budget.turns"));
   assert.ok(fields.includes("irreversible"));
-  // POLICY.md §4: two names, because two consumers exist — lane B2.4's
-  // provider turn gate (`budget.turns`) and batch 3 item G's 44244 fold
-  // completion check (`gates.verifierRequired`). This list is the only place
-  // the claim is made, so it is asserted exactly rather than by length, and a
-  // third name may only be added when a third consumer is on the wire.
+  // POLICY.md §4: three names, because three consumers exist — lane B2.4's
+  // provider turn gate (`budget.turns`), batch 3 item G's 44244 fold
+  // completion check (`gates.verifierRequired`), and lane L22's relay push
+  // gate, which reads that same flag *and* `gates.requiredGates` when it
+  // decides whether observed-green gates land a seat's push. This list is the
+  // only place the claim is made, so it is asserted exactly rather than by
+  // length, and a fourth name may only be added when a fourth consumer is on
+  // the wire.
   assert.deepEqual(CODING_SESSION_POLICY_ENFORCED_FIELDS, [
     "budget.turns",
     "gates.verifierRequired",
+    "gates.requiredGates",
   ]);
   assert.equal(
     facts.find((fact) => fact.field === "budget.turns")?.enforced,
@@ -177,9 +181,10 @@ test("only fields the record sets become facts, and exactly two are enforced", (
   // which is the defect REVIEW-L7 F1 found.
   assert.equal(
     CODING_SESSION_POLICY_STATED_NOT_ENFORCED,
-    "Enforced: budget.turns at the provider's turn gate, and " +
-      "gates.verifierRequired at the fold's completion check. Every other " +
-      "field is read and shown, never counted.",
+    "Enforced: budget.turns at the provider's turn gate, " +
+      "gates.verifierRequired at the fold's completion check and at the " +
+      "relay's verdict-gated push, and gates.requiredGates at that push. " +
+      "Every other field is read and shown, never counted.",
   );
   for (const field of CODING_SESSION_POLICY_ENFORCED_FIELDS) {
     assert.ok(

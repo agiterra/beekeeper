@@ -94,6 +94,23 @@ export type CodingSessionObservationGateView = {
   readonly hiddenSummaryLines: number;
   /** The author's own measurement, already worded; null when absent. */
   readonly duration: string | null;
+  /**
+   * First 8 hex of the commit this gate ran against, or null when the row
+   * names none.
+   *
+   * Null renders as "no commit named", never as the session's current head:
+   * a row that names no commit is evidence about no commit, and that is
+   * exactly what stops an older green from landing a newer push.
+   */
+  readonly commitShortSha: string | null;
+  /** The whole commit id, for the title attribute. Null with the above. */
+  readonly commitSha: string | null;
+  /**
+   * Whether the worktree carried uncommitted changes when the gate ran, or
+   * null when nothing measured it. `true` is shown as a mark, because a green
+   * gate over a dirty tree is not evidence about the commit it names.
+   */
+  readonly dirty: boolean | null;
   /** The newest event this row was read from — what a reader can go and find. */
   readonly sourceEventId: string;
   /** Older statements about this gate not listed; 0 when none. */
@@ -402,6 +419,13 @@ function gateView(
       lines.length - CODING_SESSION_GATE_SUMMARY_LINE_CEILING,
     ),
     duration: describeDuration(row.durationMs),
+    // `?? null` rather than a strict `=== null`: the key is read-optional on
+    // the wire and on the adapter boundary, so a row that predates it arrives
+    // with the field simply absent. Absent and null are the same statement
+    // here — this row names no commit.
+    commitShortSha: row.headSha == null ? null : row.headSha.slice(0, 8),
+    commitSha: row.headSha ?? null,
+    dirty: row.dirty ?? null,
     sourceEventId: newest,
     droppedEventIds: row.droppedEventIds,
     assignmentUnresolved: false,

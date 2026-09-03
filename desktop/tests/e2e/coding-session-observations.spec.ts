@@ -65,6 +65,21 @@ test("the Audit tab renders this session's signed observations, per seat", async
   await expect(row("passed")).toHaveAttribute("data-source", "declared");
   await expect(sections).toContainText("cargo test -p buzz-cli");
 
+  // L22: the observed row names the commit it ran at, in eight hex, and says
+  // the tree was clean. The seat's own row names none and says so in words —
+  // it must never borrow the observed row's commit, because reading absent as
+  // "the commit in front of you" is what would let an older green stand for a
+  // newer push.
+  await expect(
+    row("failed").getByTestId("coding-session-gate-row-commit"),
+  ).toHaveText("07c470be");
+  await expect(
+    row("failed").getByTestId("coding-session-gate-row-commit"),
+  ).toHaveAttribute("data-dirty", "false");
+  await expect(
+    row("passed").getByTestId("coding-session-gate-row-commit"),
+  ).toHaveText("no commit named");
+
   // REVIEW-L5 F6: the whole observations block is taller than the viewport, so
   // an element shot of it ended mid-row and the rest came out black — cutting
   // off the observed `failed` row the artefact exists to show. Each seat block

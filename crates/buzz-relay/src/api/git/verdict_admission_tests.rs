@@ -456,7 +456,10 @@ mod live {
                  commit: no approved report names {HEAD_SHA}. Searched 1 mission(s) — the \
                  newest 16 on this channel whose founder is a founder of this repository — \
                  over one shared page of the newest 512 team transactions on that channel. An \
-                 older ruling can fall outside both."
+                 older ruling can fall outside both. No observed gate row names {HEAD_SHA} \
+                 either, so the gate-row route is not open for it: that route wants every \
+                 required gate published green on this exact commit, by the mission's own \
+                 provider, over a clean worktree."
             ),
             "the body is what `git push` prints, prefixed by the ref"
         );

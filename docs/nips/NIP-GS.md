@@ -884,12 +884,12 @@ A `kind:30617` repository announcement may carry the rule token
 ["buzz-protect", "refs/heads/main", "require-verdict"]
 ```
 
-*Revised 2026-09-03 (lane L21) to two arms. Brian's ruling: **humans never gate
-a landing.** The rule exists to replace review with proof, not to put a person
-in the loop.*
+*Revised 2026-09-03 (lanes L21, L22) to three arms. Brian's ruling: **humans
+never gate a landing.** The rule exists to replace review with proof, not to put
+a person in the loop.*
 
-A relay that implements it admits an update to a matching ref when **either**
-arm holds. The rule only ever subtracts: it can refuse a push the role check
+A relay that implements it admits an update to a matching ref when **any** arm
+holds. The rule only ever subtracts: it can refuse a push the role check
 allowed, never admit one the role check refused.
 
 ### Arm (A) — the pusher is a founder
@@ -939,38 +939,63 @@ being ruled on. All of:
 5. The pusher is an **active seat of that mission**. Any seat may land what a
    verifier cleared; a stranger holding the same patch may not.
 
-### The arm that is specified and not implemented
+### Arm (B) — every required gate was observed green on this commit
 
-Brian's ruling also named an arm **(B)**: provider-*observed* gate rows
-(`kind:44246`, `source: "observed"`) green **on the pushed SHA** admit a seat's
-push with no verifier at all, when the mission policy's `gates.verifierRequired`
-is not set. It is the velocity arm — the one that makes a small mission cost
-nothing beyond its own gate run.
+*(Implemented 2026-09-03, lane L22.)* The velocity arm: a seat's push lands with
+**no second seat** when a mechanism watched the gates pass on the exact commit
+being pushed. All of:
 
-**Beekeeper does not implement it, because the wire carries no fact it could be
-computed from.** A NIP-CSOB observation payload has exactly seven keys and its
-gate row exactly five (`gate`, `outcome`, `command`, `summary`, `durationMs`);
-none is a commit, both are closed shapes, and the fold that reads them
-deliberately reads no clock, so "the row is newer than the commit" is not
-available as a substitute either. Binding a mission's gate rows to a push by
-anything weaker — "this mission has green rows *somewhere*" — would let a green
-row from an earlier commit admit a later one.
+1. The mission's newest **founder-signed** `kind:44245` policy does not set
+   `gates.verifierRequired: true`. A founder who asked for a second seat gets
+   one; green gates are not one. A mission with no readable policy is treated as
+   setting no flag, and the refusal names the gate list it used rather than
+   implying the founder chose it.
+2. Every **required** gate — the policy's own `gates.requiredGates` when it
+   names any, else the relay default `cargo fmt`, `cargo clippy`, `cargo test` —
+   has a folded `kind:44246` gate row that:
+   * is `source: "observed"` **after the NIP-CSOB fold's provenance check**,
+     which means signed by a provider identity of that mission. A seat that
+     writes the word `observed` about its own work is folded down to `declared`
+     and reaches nothing here;
+   * names the pushed object id in **`headSha`**, compared whole and
+     case-folded;
+   * carries **`dirty: false`** — a gate run over a worktree the commit does not
+     name is not evidence about that commit;
+   * says `passed`.
+3. The pusher is an **active seat of that mission**, exactly as in arm (C).
 
-**The wire fact it needs**: the provider resolves the seat's worktree `HEAD` at
-the moment it pairs a gate `tool_call` with its `tool_result`, and signs it as a
-sixth gate-row key `headSha`. That is a NIP-CSOB amendment with a read-side
-exemption (the payload is `deny_unknown_fields`, so every older reader would
-otherwise refuse such an event outright), plus a new capability in the gate
-observer, which today derives rows from ACP transcript frames alone and resolves
-no git state.
+`headSha` is what makes this safe, and it is exact. A row that names **no**
+commit — every row signed before 2026-09-03, and every row from a workdir with
+no resolvable `HEAD` — admits nothing: absent is never read as "the commit being
+pushed". A `declared` row naming the commit admits nothing either, however
+precisely it names it, because that is its own subject speaking. And there is no
+clock substitute: the NIP-CSOB fold reads none, so "the row is newer than the
+commit" is not available and is not approximated.
 
-Until that exists, a non-founder push needs arm (C) whatever
-`gates.verifierRequired` says. **The gate does not read the session policy**,
-and no refusal it gives may be read as *"no verifier is required"*.
+The producer is the session provider, which resolves `git rev-parse HEAD` and
+the worktree's dirty state **in the seat's own workdir at the moment the gate
+closes**, in the provider process. The seat is never asked and cannot sign the
+row.
 
-Deleting a gated ref is refused for everyone under arm (C): the zero oid is not
-named by any report. A founder deletes it under arm (A), as they may push
-anything else.
+Refusals this arm gives, each naming the commit:
+
+| Situation | Sentence |
+|---|---|
+| rows name the commit, all `declared` | `commit <sha> is named by N gate row(s), and every one of them is `declared` …` |
+| a gate observed red | ``gate `<name>` was observed red on <sha>.`` |
+| observed over a dirty tree | `<sha> was observed dirty: …` |
+| a required gate never observed | ``gate `<name>` has no observed green row on <sha>. This mission requires …`` |
+| nothing names the commit at all | the arm is silent; the no-verdict refusal says `No observed gate row names <sha> either …` |
+
+**Bounds, disclosed.** The relay reads one page of the newest 512 `kind:44246`
+events on the bound channel, the newest 64 founder-signed `kind:44245` policies,
+and the newest 256 `kind:44223` session metadata events (whose signers are the
+provider identities). Every bound fails in the refusing direction: a page that
+missed something can only deny a push it might have admitted.
+
+Deleting a gated ref is refused for everyone under arms (B) and (C): the zero
+oid is named by no report and by no gate row. A founder deletes it under arm
+(A), as they may push anything else.
 
 Two records that look like they should admit never do:
 

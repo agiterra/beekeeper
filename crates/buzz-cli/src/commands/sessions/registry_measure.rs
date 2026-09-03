@@ -825,6 +825,10 @@ async fn publish_rows(
                 )],
                 summary: vec![result.summary()],
                 duration_ms: vec![result.duration_ms],
+                // The bench scores a fixed task set, not a checkout: there is
+                // no commit these rows are about, and naming one would be an
+                // invention.
+                head_sha: Vec::new(),
             }),
             CodingSessionObservationSource::Measured,
         )

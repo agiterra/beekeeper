@@ -1962,6 +1962,14 @@ bee sessions observe gate --channel "$CHANNEL" --session-ref "$SESSION" \
   --summary "" --summary "3 warnings emitted" \
   --duration-ms 1200 --duration-ms 41000
 
+# A declared row may name the commit it ran at. It pairs positionally with the
+# rows like --summary does, and the cleanliness word is mandatory: SHA:clean or
+# SHA:dirty. A declared row NEVER admits a push, however exactly it names the
+# commit — only a row the provider watched does (NIP-GS arm B).
+bee sessions observe gate --channel "$CHANNEL" --session-ref "$SESSION" \
+  --gate "just ci:passed:just ci" \
+  --head-sha "$(git rev-parse HEAD):clean"
+
 # What you found, and what you did about it.
 bee sessions observe finding --channel "$CHANNEL" --session-ref "$SESSION" \
   --finding-id 16 --title "the waiting state does not fire" \
@@ -1994,6 +2002,11 @@ What to check, and what each answer means:
 | an event whose `pubkey` was rewritten after signing | listed under `ignored` with an `invalid observation signature` reason; **never** attributed to the rewritten key |
 | `observations` on a session with none | every collection prints as `[]`, never `null`, and every `truncated` count prints as `0` |
 | `--format compact` on a phase row | the line ends `(author's own measurement)` |
+| `observe gate --head-sha "$(git rev-parse HEAD)"` | usage refusal: the value must be `SHA:clean` or `SHA:dirty` — a commit named without saying whether the tree matched it is not evidence about that commit |
+| `observe gate --head-sha "deadbeef:clean"` | usage refusal naming a lowercase 40- or 64-hex git object id |
+| `observe gate --head-sha "<sha>:dirty"` then `observations` | the row carries `headSha` and `dirty: true`, and its `source` is still `declared` |
+| `bee git check --ref refs/heads/main` from a seat, with the provider's rows green on `HEAD` | `admitted by arm (B)` naming the mission and the gate list; `--format compact` `prediction.arm` is `observed-gates` |
+| the same, after committing one more change | `refused` — `No observed gate row names <new sha>`. The rows are about the old commit and say so |
 
 Two rules worth checking by hand, because they are the ones a reader can be
 lied to about:

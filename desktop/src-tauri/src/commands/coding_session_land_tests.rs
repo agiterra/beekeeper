@@ -245,8 +245,44 @@ fn request(
         project_owner_pubkeys: Some(Vec::new()),
         protection_tags,
         active_seats: mission.seats(),
+        observed_gates: Vec::new(),
+        gate_policy: None,
         included_event_ids: mission.included.clone(),
         events: mission.events.clone(),
+    }
+}
+
+/// The same request, with every default gate observed green on the pushed
+/// commit by a key that is not the pusher — arm (B).
+///
+/// The mission it is built from holds a **`changes-requested`** verdict, so
+/// nothing here can be admitted by arm (C): what admits it is the gate rows
+/// and only the gate rows.
+fn observed_gates_request(
+    mission: &Mission,
+    protection_tags: Option<Vec<Vec<String>>>,
+) -> CodingSessionLandRequest {
+    CodingSessionLandRequest {
+        observed_gates: buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES
+            .iter()
+            .map(
+                |gate| crate::commands::coding_session_land::CodingSessionLandObservedGate {
+                    author_pubkey: "aa".repeat(32),
+                    source: "observed".to_owned(),
+                    gate: (*gate).to_owned(),
+                    outcome: "passed".to_owned(),
+                    head_sha: Some(HEAD_SHA.to_owned()),
+                    dirty: Some(false),
+                },
+            )
+            .collect(),
+        gate_policy: Some(
+            crate::commands::coding_session_land::CodingSessionLandGatePolicy {
+                verifier_required: Some(false),
+                required_gates: None,
+            },
+        ),
+        ..request(mission, protection_tags)
     }
 }
 
@@ -304,7 +340,10 @@ fn changes_requested_over_the_same_commit_refuses_with_ss1j_first_string() {
             "require-verdict is set and no mission verdict names this commit: no approved report \
              names {HEAD_SHA}. Searched 1 mission(s) — the newest 16 on this channel whose \
              founder is a founder of this repository — over one shared page of the newest 512 \
-             team transactions on that channel. An older ruling can fall outside both."
+             team transactions on that channel. An older ruling can fall outside both. No \
+             observed gate row names {HEAD_SHA} either, so the gate-row route is not open for \
+             it: that route wants every required gate published green on this exact commit, by \
+             the mission's own provider, over a clean worktree."
         )
     );
     // The newest *disposition* is the one shown; the verifier's refutation is
@@ -637,6 +676,11 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
             Some(protect(&["require-verdict"])),
         ))
         .expect("approved for another ref"),
+        "observedGates": land_adapter(observed_gates_request(
+            &refused,
+            Some(protect(&["require-verdict"])),
+        ))
+        .expect("observed gates"),
         "unknown": land_adapter(request(&admitted, None)).expect("unknown"),
     }))
     .expect("serialize fixture")
@@ -658,6 +702,13 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     );
     assert_eq!(generated_value["admitted"]["admitted"], json!(true));
     assert_eq!(generated_value["refused"]["admitted"], json!(false));
+    // The same mission, refused by arm (C) and admitted by arm (B): what
+    // changed is the gate rows, and the arm the evidence names says so.
+    assert_eq!(generated_value["observedGates"]["admitted"], json!(true));
+    assert_eq!(
+        generated_value["observedGates"]["evidence"]["arm"],
+        json!("observed-gates")
+    );
     assert_eq!(generated_value["ungoverned"]["ruleGoverns"], json!(false));
     assert_eq!(generated_value["unknown"]["repositoryKnown"], json!(false));
     assert_eq!(

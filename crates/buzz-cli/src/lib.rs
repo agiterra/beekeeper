@@ -3637,6 +3637,14 @@ pub struct SessionObserveGateArgs {
     /// Your own measured duration for the row at the same position, in ms.
     #[arg(long = "duration-ms")]
     pub duration_ms: Vec<u64>,
+    /// The commit the row at the same position ran against, as
+    /// `SHA:clean` or `SHA:dirty`. Repeatable.
+    ///
+    /// Cleanliness is not optional here because a commit named without it is
+    /// not evidence about that commit. A row published by this command is
+    /// `declared` whatever it names, and a declared row never admits a push.
+    #[arg(long = "head-sha")]
+    pub head_sha: Vec<String>,
 }
 
 /// Flags for `bee sessions observe finding`.

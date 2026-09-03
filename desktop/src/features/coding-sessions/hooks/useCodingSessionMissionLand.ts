@@ -194,6 +194,25 @@ export function useCodingSessionMissionLand(input: {
   founderPubkey: string | null;
   viewerPubkey: string | null;
   landEvidence: CodingSessionMissionLandEvidenceInput | undefined;
+  /**
+   * The mission's folded kind 44246 gate rows — arm (B)'s only evidence.
+   *
+   * Empty is "this view read no observations", never "the gates were red";
+   * the rule then simply has no arm-(B) answer to give.
+   */
+  observedGates: readonly {
+    authorPubkey: string;
+    source: string;
+    gate: string;
+    outcome: string;
+    headSha: string | null;
+    dirty: boolean | null;
+  }[];
+  /** The gate half of the newest founder-signed policy, or null when unread. */
+  gatePolicy: {
+    verifierRequired: boolean | null;
+    requiredGates: readonly string[] | null;
+  } | null;
   /** The `repoRef` this session's creates named, or null when none did. */
   repoRef: string | null;
   /**
@@ -222,8 +241,10 @@ export function useCodingSessionMissionLand(input: {
 } {
   const {
     founderPubkey,
+    gatePolicy,
     genesisRef,
     landEvidence,
+    observedGates,
     projectRef,
     repoRef,
     sessionRef,
@@ -258,13 +279,29 @@ export function useCodingSessionMissionLand(input: {
           repoRef ?? "no-repo-ref",
           projectRef ?? "no-project-ref",
           landEvidence.includedEventIds.join(","),
+          // Arm (B)'s own inputs are part of the *question*: a gate row that
+          // arrives after the first ask changes the answer, and an identity
+          // that ignored them would leave the panel showing a refusal the
+          // rule no longer gives. Content, not object identity — the folds
+          // hand fresh arrays every render.
+          observedGates
+            .map(
+              (row) =>
+                `${row.source}:${row.gate}:${row.outcome}:${row.headSha ?? "-"}:${row.dirty ?? "-"}`,
+            )
+            .join(","),
+          gatePolicy === null
+            ? "no-policy"
+            : `${gatePolicy.verifierRequired ?? "unset"}:${(gatePolicy.requiredGates ?? []).join("|")}`,
         ].join(" ");
   const resolveRef = React.useRef(input.resolveWho);
   resolveRef.current = input.resolveWho;
   const request = React.useRef({
     founderPubkey,
+    gatePolicy,
     genesisRef,
     landEvidence,
+    observedGates,
     projectRef,
     repoRef,
     sessionRef,
@@ -272,8 +309,10 @@ export function useCodingSessionMissionLand(input: {
   });
   request.current = {
     founderPubkey,
+    gatePolicy,
     genesisRef,
     landEvidence,
+    observedGates,
     projectRef,
     repoRef,
     sessionRef,
@@ -340,6 +379,8 @@ export function useCodingSessionMissionLand(input: {
           protectionTags: repository?.protectionTags ?? null,
           includedEventIds: current.landEvidence?.includedEventIds ?? [],
           activeSeats: current.landEvidence?.activeSeats ?? [],
+          observedGates: current.observedGates,
+          gatePolicy: current.gatePolicy,
           events: current.landEvidence?.wireEvents ?? [],
         });
         if (cancelled) return;

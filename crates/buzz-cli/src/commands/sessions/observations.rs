@@ -198,15 +198,59 @@ pub(super) fn gate_rows(
                  not-run)"
             ))
         })?;
+        let (head_sha, dirty) = match args.head_sha.get(index) {
+            Some(raw) => {
+                let (head_sha, dirty) = head_sha_of(raw)?;
+                (Some(head_sha), Some(dirty))
+            }
+            None => (None, None),
+        };
         rows.push(CodingSessionObservationGateRow {
             gate: gate.to_owned(),
             outcome: closed_word("--gate outcome", outcome, &["passed", "failed", "not-run"])?,
             command: command.to_owned(),
             summary: args.summary.get(index).cloned(),
             duration_ms: args.duration_ms.get(index).copied(),
+            head_sha,
+            dirty,
         });
     }
     Ok(rows)
+}
+
+/// Parse one `--head-sha SHA:clean|dirty` value.
+///
+/// The cleanliness word is mandatory rather than defaulted. A default of
+/// `clean` would let a seat name a commit its worktree did not match by
+/// leaving a word out, and a default of `dirty` would make the flag useless;
+/// the honest shape is to make the author say which, in a value the wire
+/// refuses to carry half of.
+fn head_sha_of(raw: &str) -> Result<(String, bool), CliError> {
+    let (head_sha, word) = raw.split_once(':').ok_or_else(|| {
+        CliError::Usage(format!(
+            "--head-sha {raw:?} must be SHA:clean or SHA:dirty — a commit named without saying \
+             whether the tree matched it is not evidence about that commit"
+        ))
+    })?;
+    let dirty = match word {
+        "clean" => false,
+        "dirty" => true,
+        _ => {
+            return Err(CliError::Usage(format!(
+                "--head-sha {raw:?} must end in :clean or :dirty"
+            )))
+        }
+    };
+    if !matches!(head_sha.len(), 40 | 64)
+        || !head_sha
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CliError::Usage(format!(
+            "--head-sha {raw:?} must name a lowercase 40- or 64-hex git object id"
+        )));
+    }
+    Ok((head_sha.to_owned(), dirty))
 }
 
 /// Parse one word of a closed vocabulary through the record's own serde

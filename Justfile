@@ -466,8 +466,11 @@ test: test-genesis test-git-push-gate
 # database and the same `trap cleanup EXIT`). Either works; this way `just
 # test-git-push-gate` names one thing and can be run alone, and the recipe's
 # own filter is the whole set — the push-gate cases *and* the
-# verdict-admission ones, 25 tests as of lane L21 (which added arm (A)'s two).
-# A filter of `api::git::policy` alone reaches only 10 of them.
+# verdict-admission ones, 35 tests as of lane L22 (which added arm (B)'s ten
+# in a sibling module; L21 added arm (A)'s two). A filter of `api::git::policy`
+# alone reaches only 10 of them, and one naming only
+# `verdict_admission::tests` misses `verdict_admission::observed_tests`
+# entirely — which is exactly how arm (B)'s ten sat unexecuted for one run.
 test-git-push-gate: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail
@@ -483,6 +486,7 @@ test-git-push-gate: _ensure-services
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
         cargo test -p buzz-relay --lib -- \
         api::git::policy::tests::gate api::git::verdict_admission::tests \
+        api::git::verdict_admission::observed_tests \
         --ignored --test-threads=1
 
 # Genesis uniqueness proofs (kind 44226) and authority-chain proofs (kind

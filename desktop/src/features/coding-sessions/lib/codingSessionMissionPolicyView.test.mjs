@@ -15,7 +15,7 @@ const GENESIS = "ce5d87ed".repeat(8);
 
 // The CLI's own sentence, verbatim (`sessions/policy.rs`).
 const ENFORCEMENT =
-  "Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.";
+  "Enforced: budget.turns at the provider's turn gate, gates.verifierRequired at the fold's completion check and at the relay's verdict-gated push, and gates.requiredGates at that push. Every other field is read and shown, never counted.";
 
 function record(overrides = {}) {
   return {

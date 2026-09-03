@@ -36,10 +36,14 @@ use buzz_core_pkg::coding_session_team_transaction::{
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 
+use buzz_core_pkg::coding_session_observation::{
+    CodingSessionObservationGateEntry, CodingSessionObservationGateOutcome,
+    CodingSessionObservationGateRow, CodingSessionObservationSource,
+};
 use buzz_core_pkg::coding_session_verdict_admission::{
     evaluate_verdict_admission, VerdictAdmission, VerdictAdmissionCandidate,
-    VerdictAdmissionEvidence, VerdictAdmissionQuery, VerdictAdmissionRecord,
-    VerdictAdmissionRefusal,
+    VerdictAdmissionEvidence, VerdictAdmissionGatePolicy, VerdictAdmissionQuery,
+    VerdictAdmissionRecord, VerdictAdmissionRefusal,
 };
 use buzz_core_pkg::git_perms::{parse_protection_tags, EffectiveRules};
 use buzz_core_pkg::repository_founders::RepositoryFounders;
@@ -91,6 +95,18 @@ pub struct CodingSessionLandRequest {
     /// built before the 2026-09-03 ruling still decodes.
     #[serde(default)]
     pub active_seats: Vec<CodingSessionLandSeat>,
+    /// The mission's folded kind 44246 gate rows, as this view already holds
+    /// them.
+    ///
+    /// Arm (B) reads these and nothing else. A caller that sends none gets no
+    /// arm-(B) answer — never a claim that the gates were red. Defaulted so a
+    /// caller built before 2026-09-03 still decodes.
+    #[serde(default)]
+    pub observed_gates: Vec<CodingSessionLandObservedGate>,
+    /// The gate half of the mission's newest founder-signed kind 44245 policy,
+    /// or null when this view read none.
+    #[serde(default)]
+    pub gate_policy: Option<CodingSessionLandGatePolicy>,
     /// Event ids the caller's fold marked canonical, in included order.
     pub included_event_ids: Vec<String>,
     /// Raw signed kind-44244 Nostr events. No projected outputs are accepted.
@@ -107,11 +123,44 @@ pub struct CodingSessionLandSeat {
     pub role: String,
 }
 
+/// One folded gate row, as the mission surface already holds it.
+///
+/// Deliberately the *folded* row and not a raw event: the desktop's fold has
+/// already applied the provenance check that turns a seat's `observed` claim
+/// into `declared` (REVIEW-L5 F2), and re-deriving it here would be a second
+/// implementation of the rule that decides what counts as watched.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionLandObservedGate {
+    /// Who signed the newest observation naming this gate.
+    pub author_pubkey: String,
+    /// `observed` or `declared`, as the fold settled it.
+    pub source: String,
+    /// The gate's name.
+    pub gate: String,
+    /// `passed`, `failed` or `not-run`.
+    pub outcome: String,
+    /// The commit the row names, or null.
+    pub head_sha: Option<String>,
+    /// Whether the tree was dirty, or null.
+    pub dirty: Option<bool>,
+}
+
+/// The gate half of a mission policy, as this view read it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionLandGatePolicy {
+    /// `gates.verifierRequired`, or null when the founder set no flag.
+    pub verifier_required: Option<bool>,
+    /// `gates.requiredGates`, or null when the policy names none.
+    pub required_gates: Option<Vec<String>>,
+}
+
 /// What admitted a commit, for the confirm step's first sentence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingSessionLandEvidence {
-    /// Which arm admitted: `founder` or `verifier-verdict`.
+    /// Which arm admitted: `founder`, `observed-gates` or `verifier-verdict`.
     ///
     /// A screen that says only "ready" over two very different facts — *"you
     /// are trusted"* and *"a machine checked it"* — is the kind of comfortable
@@ -129,8 +178,12 @@ pub struct CodingSessionLandEvidence {
     pub verifier_pubkey: String,
     /// The report both records govern. Empty under arm (A).
     pub report_event_id: String,
-    /// That report's `headSha`, as published. Empty under arm (A).
+    /// That report's `headSha`, as published. Empty under arm (A). Under arm
+    /// (B) it is the commit every required gate row named.
     pub head_sha: String,
+    /// Under arm (B), the gates that had to be green, in the order they were
+    /// required. Empty under every other arm.
+    pub observed_gates: Vec<String>,
 }
 
 /// The newest canonical verdict this mission holds, admitting or not.
@@ -397,6 +450,18 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
                 role: seat.role.clone(),
             })
             .collect(),
+        observed_gates: request
+            .observed_gates
+            .iter()
+            .filter_map(observed_gate_entry)
+            .collect(),
+        gate_policy: request
+            .gate_policy
+            .as_ref()
+            .map(|policy| VerdictAdmissionGatePolicy {
+                verifier_required: policy.verifier_required,
+                required_gates: policy.required_gates.clone(),
+            }),
     };
     let query = VerdictAdmissionQuery {
         ref_name: &request.ref_name,
@@ -424,6 +489,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
                     verifier_pubkey: String::new(),
                     report_event_id: String::new(),
                     head_sha,
+                    observed_gates: Vec::new(),
                 }),
                 ..base
             })
@@ -447,6 +513,28 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
                 verifier_pubkey,
                 report_event_id,
                 head_sha,
+                observed_gates: Vec::new(),
+            }),
+            ..base
+        }),
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::ObservedGates {
+            session_ref,
+            head_sha,
+            gates,
+            ..
+        }) => Ok(CodingSessionLandResponse {
+            admitted: true,
+            command: Some(format!("git push origin {head_sha}:{}", request.ref_name)),
+            evidence: Some(CodingSessionLandEvidence {
+                arm: "observed-gates".to_owned(),
+                session_ref,
+                disposition_event_id: String::new(),
+                disposition_author_pubkey: String::new(),
+                refutation_event_id: String::new(),
+                verifier_pubkey: String::new(),
+                report_event_id: String::new(),
+                head_sha,
+                observed_gates: gates,
             }),
             ..base
         }),
@@ -455,6 +543,39 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
             ..base
         }),
     }
+}
+
+/// Turn one wire row into the fold entry the rule reads.
+///
+/// A row whose `source` or `outcome` is a word this build does not know is
+/// **dropped**, never coerced: a token nobody recognises must not become
+/// `observed` and `passed` by accident, which is the one direction that could
+/// admit a push nothing measured.
+fn observed_gate_entry(
+    row: &CodingSessionLandObservedGate,
+) -> Option<CodingSessionObservationGateEntry> {
+    let source: CodingSessionObservationSource =
+        serde_json::from_value(serde_json::Value::String(row.source.clone())).ok()?;
+    let outcome: CodingSessionObservationGateOutcome =
+        serde_json::from_value(serde_json::Value::String(row.outcome.clone())).ok()?;
+    Some(CodingSessionObservationGateEntry {
+        author_pubkey: row.author_pubkey.clone(),
+        source,
+        row: CodingSessionObservationGateRow {
+            gate: row.gate.clone(),
+            outcome,
+            // The rule reads neither, and a command this boundary invented
+            // would be a fabricated quotation.
+            command: String::new(),
+            summary: None,
+            duration_ms: None,
+            head_sha: row.head_sha.clone(),
+            dirty: row.dirty,
+        },
+        event_ids: Vec::new(),
+        dropped_event_ids: 0,
+        assignment_ref: None,
+    })
 }
 
 /// The commit this mission would land: the newest canonical report's `headSha`.

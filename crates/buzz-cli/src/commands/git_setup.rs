@@ -31,13 +31,16 @@ use nostr::{Keys, ToBech32};
 
 use buzz_core::coding_session_verdict_admission::{
     active_seats_from_authority_transitions, evaluate_verdict_admission, fold_candidate_records,
-    mission_transactions, verdict_admission_fold_context, VerdictAdmission,
-    VerdictAdmissionCandidate, VerdictAdmissionEvidence, VerdictAdmissionQuery,
-    VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
+    mission_gate_policy, mission_observations, mission_provider_pubkeys, mission_transactions,
+    verdict_admission_fold_context, VerdictAdmission, VerdictAdmissionCandidate,
+    VerdictAdmissionEvidence, VerdictAdmissionQuery, VerdictAdmissionRefusal,
+    VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS, VERDICT_ADMISSION_MAX_OBSERVATIONS,
+    VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
     VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
 };
 
@@ -1112,6 +1115,15 @@ pub enum RefPredictionState {
         /// The verifier seat that signed it.
         verifier_pubkey: String,
     },
+    /// Admitted by arm **(B)**: every gate this mission requires was observed
+    /// green on this exact commit, over a clean worktree, by the mission's own
+    /// provider — and no verifier was required.
+    AdmittedByObservedGates {
+        /// The umbrella whose observations admit it.
+        session_ref: String,
+        /// The gates that had to be green, in the order they were required.
+        gates: Vec<String>,
+    },
     /// The same rule refuses it, with the sentence the hook would return.
     Refused {
         /// Verbatim §1j copy, shared with the relay.
@@ -1545,6 +1557,11 @@ async fn predict_ref(
             refutation_event_id,
             verifier_pubkey,
         },
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::ObservedGates {
+            session_ref,
+            gates,
+            ..
+        }) => RefPredictionState::AdmittedByObservedGates { session_ref, gates },
         VerdictAdmission::Refused(refusal) => RefPredictionState::Refused {
             reason: refusal.reason(),
         },
@@ -1628,6 +1645,45 @@ async fn fetch_verdict_candidates(
             .await?,
     )?;
 
+    // Arm (B)'s three inputs, bounded like everything either side of them.
+    // Reading fewer of any of them can only turn an admission into a refusal,
+    // which is the direction a *prediction* must also fail in: `bee git check`
+    // may under-promise and must never over-promise.
+    let observations = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_OBSERVATION],
+                    "#h": [channel],
+                }),
+                VERDICT_ADMISSION_MAX_OBSERVATIONS as u32,
+            )
+            .await?,
+    )?;
+    let policies = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_POLICY],
+                    "#h": [channel],
+                    "authors": founders.pubkeys(),
+                }),
+                VERDICT_ADMISSION_MAX_POLICIES as u32,
+            )
+            .await?,
+    )?;
+    let session_metadata = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_METADATA],
+                    "#h": [channel],
+                }),
+                VERDICT_ADMISSION_MAX_PROVIDER_METADATA as u32,
+            )
+            .await?,
+    )?;
+
     let mut candidates = Vec::new();
     for genesis in &geneses {
         let genesis_ref = genesis.id.to_hex();
@@ -1655,12 +1711,32 @@ async fn fetch_verdict_candidates(
         // A mission that does not fold admits nothing; it must not make the
         // whole prediction unavailable.
         let canonical = fold_candidate_records(&events, &context).unwrap_or_default();
+        let observed_gates =
+            buzz_core::coding_session_observation::fold_coding_session_observations(
+                &mission_observations(&payload.session_ref, &genesis_ref, &observations)
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<nostr::Event>>(),
+                &buzz_core::coding_session_observation::CodingSessionObservationFoldContext {
+                    session_ref: payload.session_ref.clone(),
+                    genesis_ref: genesis_ref.clone(),
+                    known_assignment_refs: Vec::new(),
+                    provider_pubkeys: Some(mission_provider_pubkeys(
+                        &payload.session_ref,
+                        &session_metadata,
+                    )),
+                },
+            )
+            .gates;
+        let gate_policy = mission_gate_policy(&payload.session_ref, &genesis_ref, &policies);
         candidates.push(VerdictAdmissionCandidate {
             session_ref: payload.session_ref,
             genesis_ref,
             founder_pubkey,
             canonical,
             active_seats: seats,
+            observed_gates,
+            gate_policy,
         });
     }
     Ok(candidates)
@@ -1736,6 +1812,7 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
             "arm": match &prediction.state {
                 RefPredictionState::AdmittedAsFounder => Some("founder"),
                 RefPredictionState::AdmittedByVerdict { .. } => Some("verifier-verdict"),
+                RefPredictionState::AdmittedByObservedGates { .. } => Some("observed-gates"),
                 _ => None,
             },
             "answer": match &prediction.state {
@@ -1744,6 +1821,7 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                 RefPredictionState::Unreadable { .. } => "unreadable",
                 RefPredictionState::AdmittedAsFounder => "admitted",
                 RefPredictionState::AdmittedByVerdict { .. } => "admitted",
+                RefPredictionState::AdmittedByObservedGates { .. } => "admitted",
                 RefPredictionState::Refused { .. } => "refused",
             },
             "detail": match &prediction.state {
@@ -1764,6 +1842,13 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                      verifier {verifier_pubkey} did not refute it (refutation \
                      {refutation_event_id})"
                 )),
+                RefPredictionState::AdmittedByObservedGates { session_ref, gates } => {
+                    Some(format!(
+                        "mission {session_ref} observed {} green on this commit, over a clean \
+                         worktree, and requires no verifier",
+                        gates.join(", ")
+                    ))
+                }
             },
         })),
         "relay": report.relay,
@@ -1985,6 +2070,11 @@ pub fn render_human(report: &CheckReport) -> String {
                 short_hex(disposition_event_id),
                 short_hex(verifier_pubkey),
                 short_hex(refutation_event_id)
+            ),
+            RefPredictionState::AdmittedByObservedGates { session_ref, gates } => format!(
+                "  admitted by arm (B) — mission {session_ref} observed {} green on this exact \
+                 commit over a clean worktree, and requires no verifier",
+                gates.join(", ")
             ),
             RefPredictionState::Refused { reason } => format!("  refused — {reason}"),
         };

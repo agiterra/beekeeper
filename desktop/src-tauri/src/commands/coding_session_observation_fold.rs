@@ -118,6 +118,16 @@ pub struct CodingSessionObservationFoldGate {
     pub summary: Option<String>,
     /// The author's own measurement, in milliseconds, or null.
     pub duration_ms: Option<u64>,
+    /// The commit the gate ran against, lowercase 40- or 64-hex, or null when
+    /// the row names none.
+    ///
+    /// Null is what a row signed before 2026-09-03 carries, and what a workdir
+    /// with no resolvable `HEAD` yields. It is rendered as "no commit", never
+    /// as the commit currently checked out.
+    pub head_sha: Option<String>,
+    /// Whether the worktree carried uncommitted changes when the gate ran, or
+    /// null. Present exactly when `head_sha` is.
+    pub dirty: Option<bool>,
 }
 
 /// One folded finding: the newest disposition one author gave one id.
@@ -337,6 +347,8 @@ fn flatten(
                     command: entry.row.command,
                     summary: entry.row.summary,
                     duration_ms: entry.row.duration_ms,
+                    head_sha: entry.row.head_sha,
+                    dirty: entry.row.dirty,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?,

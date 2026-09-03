@@ -263,25 +263,27 @@ export function NewCodingSessionPolicyField({
               }
             >
               <option value="unset">Not set</option>
-              <option value="true">
-                A verifier must clear every settled report
-              </option>
+              <option value="true">A verifier must also clear it</option>
               <option value="false">
-                The lead&rsquo;s approval settles it
+                Observed gates land this mission&rsquo;s work
               </option>
             </select>
           </div>
-          {/* What this switch decides, in the words of the rule that reads it.
-              It is NOT the push gate: `verdict_admission_fold_context` passes
-              `verifier_required: false` and says no refusal there may be read
-              as "no verifier is required". A label that promised otherwise
-              would be a control lying about what it enforces. */}
+          {/* What this switch decides, in the words of the rules that read it.
+              Since L22 that is two rules, and the second one is a push: the
+              relay's verdict gate reads this very flag and, when it is not
+              set, admits a seat's push on gate rows the provider watched
+              green on the exact commit (arm B). The labels the previous lane
+              rejected — because they claimed a push effect the switch did not
+              have — are now the true ones. */}
           <p className="text-2xs text-muted-foreground">
             Set, a <code>mission.completed</code> is refused while any settled
-            report has no verifier&rsquo;s ruling. It does not decide who may
-            push: on a <code>require-verdict</code> ref the repository&rsquo;s
-            own rule admits a founder&rsquo;s push outright, and anyone
-            else&rsquo;s only behind a verifier&rsquo;s verdict.
+            report has no verifier&rsquo;s ruling, and on a{" "}
+            <code>require-verdict</code> ref a seat&rsquo;s push needs that
+            verifier&rsquo;s verdict. Unset, a seat&rsquo;s push lands when
+            every required gate was <em>observed</em> green on that exact
+            commit, over a clean worktree, by this mission&rsquo;s own provider.
+            A founder&rsquo;s push is admitted either way.
           </p>
         </div>
 

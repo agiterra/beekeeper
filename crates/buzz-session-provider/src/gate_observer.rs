@@ -54,6 +54,16 @@ pub const MAX_PENDING_GATE_CALLS: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedGateRow {
     /// The row, ready for a kind 44246 gate body.
+    ///
+    /// `head_sha` and `dirty` are **not** filled in here and are `None` on
+    /// every row this module returns. They are resolved by
+    /// [`crate::Provider::spawn_gate_head_probe`], which runs `git rev-parse
+    /// HEAD` and `git status --porcelain` in the seat's own workdir at the
+    /// moment this row closes — in the provider process, from the `cwd` the
+    /// provider already holds on the session record, never by asking the
+    /// agent. This module only reads transcript frames and has no filesystem
+    /// of its own; splitting it that way is what keeps it synchronous and
+    /// keeps two `git` subprocesses off the provider's event loop.
     pub row: CodingSessionObservationGateRow,
 }
 
@@ -206,6 +216,10 @@ impl GateObserver {
                 duration_ms: now_ms
                     .checked_sub(pending.started_at_ms)
                     .and_then(|elapsed| u64::try_from(elapsed).ok()),
+                // Resolved by the provider after this returns; see
+                // `ObservedGateRow::row`.
+                head_sha: None,
+                dirty: None,
             },
         })
     }

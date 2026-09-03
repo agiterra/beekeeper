@@ -762,6 +762,9 @@ export function landReadyResponse(mission: FounderActMission) {
       verifierPubkey: VERIFIER,
       reportEventId: mission.ids.report,
       headSha: HEAD_SHA,
+      // Arm (B) named none of these gates; the adapter always writes the key
+      // and the mock mirrors it (L22).
+      observedGates: [],
     },
     refusalReason: null,
     newestVerdict: {
@@ -800,6 +803,7 @@ export function landFounderPushResponse(mission: FounderActMission) {
       verifierPubkey: "",
       reportEventId: "",
       headSha: HEAD_SHA,
+      observedGates: [],
     },
     refusalReason: null,
     newestVerdict: {

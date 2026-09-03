@@ -4966,6 +4966,52 @@ impl Provider {
         });
     }
 
+    /// Resolve the commit one watched gate row ran against, then hand the row
+    /// back to the loop.
+    ///
+    /// Two facts, from the seat's own `cwd` as the provider's own record holds
+    /// it: `git rev-parse HEAD` and whether the worktree matched it. **The
+    /// agent is never asked** — the whole point of an `observed` row is that
+    /// its subject cannot write it, and a commit the subject named would be
+    /// exactly the claim finding 26 caught being wrong.
+    ///
+    /// A workdir that is not a repository, an unborn branch with no commits,
+    /// a `git` that is missing, and a probe that times out all yield **no**
+    /// `headSha`: the row is published naming no commit, which admits nothing
+    /// anywhere and says nothing false. The pair travels together, so a probe
+    /// that answered one and not the other yields neither
+    /// (`coding_session_observation.rs`'s gate-row validator refuses the half
+    /// shape outright).
+    fn spawn_gate_head_probe(
+        &mut self,
+        session_id: &str,
+        observed: gate_observer::ObservedGateRow,
+    ) {
+        let Some(record) = self.state.session(session_id) else {
+            return;
+        };
+        let cwd = record.cwd.clone();
+        let events = self.session_events_tx.clone();
+        let session_id = session_id.to_owned();
+        tokio::spawn(async move {
+            let probe = git_probe::probe(&cwd).await;
+            let mut observed = observed;
+            if let (Some(commit), Some(dirty)) = (probe.commit, probe.dirty) {
+                observed.row.head_sha = Some(commit);
+                observed.row.dirty = Some(dirty);
+            }
+            // A closed receiver means the provider loop is gone; the row has
+            // nowhere to be published, so it is dropped rather than logged as
+            // a failure.
+            let _ = events
+                .send(SessionEvent::GateObserved {
+                    session_id,
+                    observed,
+                })
+                .await;
+        });
+    }
+
     fn spawn_git_probe(&mut self, session_id: &str) {
         let Some(record) = self.state.session(session_id) else {
             return;
@@ -5412,7 +5458,11 @@ impl Provider {
                         .or_default()
                         .on_item(&item, now_ms())
                     {
-                        self.publish_observed_gate_row(&session_id, channel_id, observed)?;
+                        // The commit is resolved *now*, at the moment the gate
+                        // closed, not when the row is published: a seat that
+                        // commits between the two would otherwise have its
+                        // green row name a commit the gate never saw.
+                        self.spawn_gate_head_probe(&session_id, observed);
                     }
                     self.enqueue_transcript(
                         channel_id,
@@ -5422,6 +5472,15 @@ impl Provider {
                         Priority::Normal,
                     )?;
                 }
+            }
+            SessionEvent::GateObserved {
+                session_id,
+                observed,
+            } => {
+                let Some((channel_id, _target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                self.publish_observed_gate_row(&session_id, channel_id, observed)?;
             }
             SessionEvent::TurnDropped {
                 session_id,

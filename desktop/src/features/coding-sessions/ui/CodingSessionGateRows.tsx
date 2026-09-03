@@ -121,6 +121,8 @@ function CodingSessionGateRow({
         </>
       )}
       <p className="mt-1 text-2xs text-muted-foreground">
+        <GateCommit row={row} />
+        {" · "}
         <GateSource source={row.source} />
         {" · "}
         {row.duration === null ? (
@@ -141,6 +143,54 @@ function CodingSessionGateRow({
         </p>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * The commit the gate ran against, and whether the tree matched it.
+ *
+ * Eight hex, the length every other short reference on these surfaces uses,
+ * with the whole id on the title. A row that names no commit says so in
+ * words: it is the shape every gate row on the wire carried before
+ * 2026-09-03, and reading it as "the commit you are looking at" would be the
+ * comfortable guess this project treats as a bug.
+ *
+ * `dirty` is carried beside it because a green gate over a tree that did not
+ * match the commit is not evidence about that commit — the push gate refuses
+ * such a row, and a reader must be able to see why.
+ */
+function GateCommit({ row }: { row: CodingSessionObservationGateView }) {
+  if (row.commitShortSha === null) {
+    return (
+      <span
+        data-testid="coding-session-gate-row-commit"
+        title="This row names no commit. Rows signed before the key existed carry none, and so does a gate run in a directory with no resolvable HEAD."
+      >
+        no commit named
+      </span>
+    );
+  }
+  return (
+    <span
+      data-dirty={
+        row.dirty === true ? "true" : row.dirty === false ? "false" : "unknown"
+      }
+      data-testid="coding-session-gate-row-commit"
+      title={`Ran at ${row.commitSha}${
+        row.dirty === true
+          ? ", over a worktree with uncommitted changes in it"
+          : row.dirty === false
+            ? ", over a clean worktree"
+            : ""
+      }`}
+    >
+      <span className="font-mono">{row.commitShortSha}</span>
+      {row.dirty === true ? (
+        <span className="ml-1 rounded-sm border border-destructive/40 px-1 text-destructive">
+          dirty
+        </span>
+      ) : null}
+    </span>
   );
 }
 

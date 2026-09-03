@@ -2824,3 +2824,61 @@ compares two shas as strings.
 host* chose. A seat launched by some other host still gets that host's `PATH`,
 and this key would then be describing a choice it did not make — so it is
 published only by the host that made it, for the seats it started.
+
+---
+
+## 28. 2026-09-03 (batch 3, lane L22) — a gate row names the commit it observed, and observed-green lands
+
+Arm **(B)** of the verdict-gated push rule, and the four surfaces that had to
+change with it. The wire fact is one pair of keys on a kind-44246 gate row:
+`headSha` and `dirty`, resolved by the **provider** in the seat's own workdir at
+the moment the gate closed. Nothing asks the agent, and the agent cannot sign
+the row.
+
+### 28.1 The gate row says which commit, and whether the tree matched it
+
+Every gate row on the Audit tab and in the Inspector's `Structured tests` card —
+one shared component, so the two cannot disagree — now carries the commit in
+eight hex beside the provenance word, with the whole id on the title. A row that
+names **no** commit says `no commit named` in words. It never borrows the
+session's current head, and it never borrows a neighbouring row's: reading
+absent as "the commit you are looking at" is exactly the comfortable guess this
+project treats as a bug, and it is what would let an older green stand for a
+newer push.
+
+`dirty: true` renders as a `dirty` mark beside the commit, because a green gate
+run over a worktree the commit does not name is not evidence about that commit —
+and the push gate refuses such a row, so a reader must be able to see why.
+
+### 28.2 The Route rail's gate sign carries it, in the title
+
+The sign's **word** is still the row's own outcome — the rail never invents a
+second vocabulary — but its title is now
+`{gate} · {outcome} · at {8hex}` (or `no commit named`), with `(dirty)` when the
+row says so. A green sign that could be about any commit is the ambiguity the
+key exists to remove.
+
+### 28.3 Land names arm (B) and does not borrow arm (C)'s words
+
+`Gates observed green on {8hex} — ready.` followed by the gates that had to be
+green, and the plain statement that **no person has ruled on it**. The screen
+says which of three very different facts made it ready — *"you are trusted"*,
+*"a machine checked this commit"*, *"a verifier cleared the report"* — because
+one word over three facts is the class of comfort this project treats as a
+defect.
+
+### 28.4 The launch-form switch finally decides what its labels say
+
+`verifierRequired` now has a landing consequence, so the labels L21 rejected as
+claiming an effect the switch did not have are the true ones:
+**"Observed gates land this mission's work"** (false) /
+**"A verifier must also clear it"** (true) / **"Not set"**. The sentence beneath
+states both consequences — the completion check *and* the push — and still says
+a founder's push is admitted either way.
+
+### 28.5 What the surfaces still cannot say
+
+The Audit tab shows a gate row's commit; it does **not** say whether that row
+would admit a push. That answer needs the repository's protection rules and the
+mission's seats, which the Land control resolves and the row does not. A badge
+on the row promising a landing would be a claim the row cannot check.

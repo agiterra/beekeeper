@@ -8,13 +8,10 @@
 //!
 //! # The arm that is not here
 //!
-//! The ruling also named an arm **(B)** — provider-*observed* gate rows green
-//! on the pushed SHA admit a seat's push with no second seat. There is no test
-//! for it because there is no wire fact to test: kind 44246's payload has
-//! seven keys and its gate row has five
-//! (`coding_session_observation.rs:334`, `:243`), **none of them a commit**,
-//! and both structs are `deny_unknown_fields`. See this module's parent
-//! header, `# The arm that could not be built`, for the proposal.
+//! Arm **(B)** — provider-observed gate rows green on the pushed SHA — was
+//! built on 2026-09-03 once the gate row could name a commit, and its cases
+//! live in [`super::observed_tests`], whose fixtures are kind 44246
+//! observations rather than kind 44244 transactions.
 
 use super::*;
 
@@ -209,6 +206,8 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         founder_pubkey: mission.founder.public_key().to_hex(),
         canonical,
         active_seats: mission.seats.clone(),
+        observed_gates: Vec::new(),
+        gate_policy: None,
     }
 }
 

@@ -222,6 +222,8 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         founder_pubkey: mission.founder.public_key().to_hex(),
         canonical,
         active_seats: mission.seats.clone(),
+        observed_gates: Vec::new(),
+        gate_policy: None,
     }
 }
 
@@ -340,7 +342,10 @@ fn the_run_three_fixture_refuses_with_the_frozen_copy() {
             "require-verdict is set and no mission verdict names this commit: no approved report \
              names {HEAD_SHA}. Searched 1 mission(s) — the newest 16 on this channel whose \
              founder is a founder of this repository — over one shared page of the newest 512 \
-             team transactions on that channel. An older ruling can fall outside both."
+             team transactions on that channel. An older ruling can fall outside both. No \
+             observed gate row names {HEAD_SHA} either, so the gate-row route is not open for \
+             it: that route wants every required gate published green on this exact commit, by \
+             the mission's own provider, over a clean worktree."
         ),
         "both caps are named in words, not just implied by the mission count (fix round 1, F4)"
     );
@@ -642,6 +647,8 @@ fn an_unauthorized_disposition_is_not_canonical_and_never_admits() {
             founder_pubkey: owner.clone(),
             canonical,
             active_seats: Vec::new(),
+            observed_gates: Vec::new(),
+            gate_policy: None,
         }],
         &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
@@ -835,6 +842,8 @@ fn a_superseded_approval_no_longer_admits() {
             founder_pubkey: owner.clone(),
             canonical,
             active_seats: Vec::new(),
+            observed_gates: Vec::new(),
+            gate_policy: None,
         }],
         &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
@@ -905,6 +914,8 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
             founder_pubkey: owner.clone(),
             canonical,
             active_seats: Vec::new(),
+            observed_gates: Vec::new(),
+            gate_policy: None,
         }],
         &query(
             &victim.builder.public_key().to_hex(),

@@ -72,8 +72,9 @@ use crate::{SessionPolicyCmd, SessionPolicySetArgs};
 /// `crates/buzz-cli/tests/policy_enforcement_sentence.rs` holds all three
 /// together.
 pub const POLICY_ENFORCEMENT_DISCLOSURE: &str =
-    "Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the \
-     fold's completion check. Every other field is read and shown, never counted.";
+    "Enforced: budget.turns at the provider's turn gate, gates.verifierRequired at the fold's \
+     completion check and at the relay's verdict-gated push, and gates.requiredGates at that \
+     push. Every other field is read and shown, never counted.";
 
 /// Dispatch `bee sessions policy`.
 pub async fn cmd_policy(client: &BuzzClient, cmd: SessionPolicyCmd) -> Result<(), CliError> {

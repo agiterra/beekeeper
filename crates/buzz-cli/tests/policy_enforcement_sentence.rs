@@ -23,11 +23,19 @@
 use std::path::{Path, PathBuf};
 
 /// The sentence, byte-for-byte. Batch `00-BATCH.md` §1k carries the same text.
-const ENFORCEMENT_SENTENCE: &str = "Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.";
+const ENFORCEMENT_SENTENCE: &str = "Enforced: budget.turns at the provider's turn gate, gates.verifierRequired at the fold's completion check and at the relay's verdict-gated push, and gates.requiredGates at that push. Every other field is read and shown, never counted.";
 
 /// Wordings that must never come back: each one was true before item G and is
 /// false now, and each was printed to a user.
 const RETIRED_PHRASINGS: &[&str] = &[
+    // Retired by lane L22 (2026-09-03): the relay's verdict-gated push now
+    // reads `gates.verifierRequired` *and* `gates.requiredGates`, so a
+    // surface still saying the flag stops at the completion check — or that
+    // the push gate reads no policy — is telling a founder the switch has no
+    // landing effect immediately before it decides their landing.
+    "gates.verifierRequired at the fold's completion check. Every other field",
+    "reads no session policy at all",
+    "arm (B) is not implemented",
     "only budget.turns is enforced",
     "Exactly one field is enforced",
     "Only `budget.turns` is enforced anywhere",
@@ -72,7 +80,7 @@ fn carries_the_sentence(haystack: &str) -> bool {
 }
 
 #[test]
-fn every_surface_states_the_same_two_enforced_fields() {
+fn every_surface_states_the_same_enforced_fields() {
     // (file, what prints it)
     let sites: &[(&str, &str)] = &[
         (
@@ -141,9 +149,9 @@ fn no_surface_still_claims_one_field_is_enforced() {
 
 /// The list of enforced field names and the sentence must agree.
 ///
-/// Two names in the sentence, two names in the list the Mission panel marks
-/// rows with. A name in one and not the other is the drift this pair of tests
-/// exists to stop.
+/// Three names in the sentence, three names in the list the Mission panel
+/// marks rows with. A name in one and not the other is the drift this pair of
+/// tests exists to stop.
 #[test]
 fn the_enforced_field_list_names_exactly_what_the_sentence_names() {
     let body = read("desktop/src/features/coding-sessions/lib/codingSessionPolicy.ts");
@@ -155,7 +163,11 @@ fn the_enforced_field_list_names_exactly_what_the_sentence_names() {
         .map(|offset| start + offset)
         .expect("the list is terminated");
     let list = &body[start..end];
-    for field in ["budget.turns", "gates.verifierRequired"] {
+    for field in [
+        "budget.turns",
+        "gates.verifierRequired",
+        "gates.requiredGates",
+    ] {
         assert!(
             list.contains(field),
             "the enforced-field list does not name {field}, which the enforcement sentence does"

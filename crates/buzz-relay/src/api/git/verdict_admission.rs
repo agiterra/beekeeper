@@ -42,15 +42,23 @@ use tracing::warn;
 use uuid::Uuid;
 
 use buzz_core::coding_session_genesis::decode_coding_session_genesis;
+use buzz_core::coding_session_observation::{
+    fold_coding_session_observations, CodingSessionObservationFoldContext,
+};
 use buzz_core::coding_session_team_transaction::CodingSessionTeamActiveSeat;
 use buzz_core::coding_session_verdict_admission::{
-    evaluate_verdict_admission, fold_candidate_records, mission_transactions,
-    verdict_admission_fold_context, VerdictAdmission, VerdictAdmissionCandidate,
-    VerdictAdmissionQuery, VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_SESSIONS,
+    evaluate_verdict_admission, fold_candidate_records, mission_gate_policy, mission_observations,
+    mission_provider_pubkeys, mission_transactions, verdict_admission_fold_context,
+    VerdictAdmission, VerdictAdmissionCandidate, VerdictAdmissionQuery, VerdictAdmissionRefusal,
+    VERDICT_ADMISSION_MAX_OBSERVATIONS, VERDICT_ADMISSION_MAX_POLICIES,
+    VERDICT_ADMISSION_MAX_PROVIDER_METADATA, VERDICT_ADMISSION_MAX_SESSIONS,
     VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
 use buzz_core::git_perms::{Denial, EffectiveRules, ProtectionRule, RefUpdate};
-use buzz_core::kind::{KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_TEAM_TRANSACTION};
+use buzz_core::kind::{
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION,
+    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_TEAM_TRANSACTION,
+};
 use buzz_core::repository_founders::RepositoryFounders;
 use buzz_db::EventQuery;
 
@@ -220,7 +228,7 @@ pub async fn search_verdict_admission(
 
     let genesis_query = EventQuery {
         kinds: Some(vec![KIND_CODING_SESSION_GENESIS as i32]),
-        authors: Some(founder_bytes),
+        authors: Some(founder_bytes.clone()),
         channel_id: Some(channel_id),
         limit: Some(VERDICT_ADMISSION_MAX_SESSIONS as i64),
         ..EventQuery::for_community(community)
@@ -260,6 +268,75 @@ pub async fn search_verdict_admission(
         .map(|stored| stored.event)
         .collect();
 
+    // Arm (B)'s three inputs, each one page across the bound channel. They are
+    // read here rather than per mission for the same reason the transactions
+    // are: none of these kinds is addressable, so the umbrella label is not a
+    // queryable column and the split into missions happens in memory. Every
+    // bound fails in the refusing direction — fewer rows, fewer providers, an
+    // unread policy — so a page that missed something can only deny a push it
+    // might have admitted.
+    let observations = match state
+        .db
+        .query_events(&EventQuery {
+            kinds: Some(vec![KIND_CODING_SESSION_OBSERVATION as i32]),
+            channel_id: Some(channel_id),
+            limit: Some(VERDICT_ADMISSION_MAX_OBSERVATIONS as i64),
+            ..EventQuery::for_community(community)
+        })
+        .await
+    {
+        Ok(events) => events
+            .into_iter()
+            .map(|stored| stored.event)
+            .collect::<Vec<nostr::Event>>(),
+        Err(error) => {
+            tracing::error!(error = %error, "verdict admission: observation query failed");
+            return VerdictSearch::Unavailable;
+        }
+    };
+    // Founder-signed only: `gates.verifierRequired` decides whether a seat may
+    // land its own work, so a policy anyone else signed must not be able to
+    // turn the requirement off — or on.
+    let policies = match state
+        .db
+        .query_events(&EventQuery {
+            kinds: Some(vec![KIND_CODING_SESSION_POLICY as i32]),
+            authors: Some(founder_bytes),
+            channel_id: Some(channel_id),
+            limit: Some(VERDICT_ADMISSION_MAX_POLICIES as i64),
+            ..EventQuery::for_community(community)
+        })
+        .await
+    {
+        Ok(events) => events
+            .into_iter()
+            .map(|stored| stored.event)
+            .collect::<Vec<nostr::Event>>(),
+        Err(error) => {
+            tracing::error!(error = %error, "verdict admission: policy query failed");
+            return VerdictSearch::Unavailable;
+        }
+    };
+    let session_metadata = match state
+        .db
+        .query_events(&EventQuery {
+            kinds: Some(vec![KIND_CODING_SESSION_METADATA as i32]),
+            channel_id: Some(channel_id),
+            limit: Some(VERDICT_ADMISSION_MAX_PROVIDER_METADATA as i64),
+            ..EventQuery::for_community(community)
+        })
+        .await
+    {
+        Ok(events) => events
+            .into_iter()
+            .map(|stored| stored.event)
+            .collect::<Vec<nostr::Event>>(),
+        Err(error) => {
+            tracing::error!(error = %error, "verdict admission: provider metadata query failed");
+            return VerdictSearch::Unavailable;
+        }
+    };
+
     let mut candidates: Vec<VerdictAdmissionCandidate> = Vec::with_capacity(geneses.len());
     for stored in &geneses {
         let genesis_ref = stored.event.id.to_hex();
@@ -277,7 +354,32 @@ pub async fn search_verdict_admission(
                 .into_iter()
                 .cloned()
                 .collect();
-        if events.is_empty() {
+        // Arm (B) needs neither an assignment nor a report, so a mission that
+        // published no team transaction at all can still admit a push on its
+        // gate rows. The observations are therefore resolved before the
+        // early-out below, not after it.
+        let observed_gates = fold_coding_session_observations(
+            &mission_observations(&payload.session_ref, &genesis_ref, &observations)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<nostr::Event>>(),
+            &CodingSessionObservationFoldContext {
+                session_ref: payload.session_ref.clone(),
+                genesis_ref: genesis_ref.clone(),
+                // The gate resolves no assignments, and an `assignmentRef` it
+                // cannot resolve excludes nothing anywhere. Supplying none is
+                // the honest input, not a shortcut.
+                known_assignment_refs: Vec::new(),
+                provider_pubkeys: Some(mission_provider_pubkeys(
+                    &payload.session_ref,
+                    &session_metadata,
+                )),
+            },
+        )
+        .gates;
+        let gate_policy = mission_gate_policy(&payload.session_ref, &genesis_ref, &policies);
+
+        if events.is_empty() && observed_gates.is_empty() {
             // Nothing published under this genesis: it admits nothing, and
             // asking storage for its seats would be a query for no answer.
             candidates.push(VerdictAdmissionCandidate {
@@ -286,6 +388,8 @@ pub async fn search_verdict_admission(
                 founder_pubkey,
                 canonical: Vec::new(),
                 active_seats: Vec::new(),
+                observed_gates,
+                gate_policy,
             });
             continue;
         }
@@ -339,6 +443,8 @@ pub async fn search_verdict_admission(
             founder_pubkey,
             canonical,
             active_seats: seats,
+            observed_gates,
+            gate_policy,
         });
     }
 
@@ -400,3 +506,9 @@ pub fn denial_response(denials: &[Denial], structured: Option<String>) -> Respon
 #[cfg(test)]
 #[path = "verdict_admission_tests.rs"]
 mod tests;
+
+/// Arm (B) against Postgres, in its own file: its fixtures are observations,
+/// a policy and provider metadata rather than a transaction chain.
+#[cfg(test)]
+#[path = "verdict_admission_observed_tests.rs"]
+mod observed_tests;

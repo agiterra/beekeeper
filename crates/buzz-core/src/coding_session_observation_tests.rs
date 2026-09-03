@@ -48,6 +48,8 @@ fn gate_body() -> Value {
             "command": "cargo fmt --check",
             "summary": Value::Null,
             "durationMs": 1_200,
+            "headSha": Value::Null,
+            "dirty": Value::Null,
         }],
     })
 }
@@ -598,4 +600,124 @@ fn the_content_ceiling_is_enforced_before_anything_is_parsed() {
     let oversize = "x".repeat(MAX_CODING_SESSION_OBSERVATION_CONTENT_BYTES + 1);
     let error = decode_coding_session_observation(&oversize).expect_err("oversize content");
     assert!(error.contains("content exceeds"), "{error}");
+}
+
+/// A gate row signed before `headSha` existed still decodes, and names no
+/// commit.
+///
+/// Finding 31's rule, applied a second time to the same kind: a wire widening
+/// never loses history. `headSha` and `dirty` joined the gate row on
+/// 2026-09-03 so an observed row can say *which commit* it measured. Requiring
+/// either on read would make every gate row on the wire before that day
+/// undecodable — the exact failure `source` was already exempted from.
+#[test]
+fn a_gate_row_signed_before_head_sha_existed_still_decodes_and_names_no_commit() {
+    let mut five_keys = gate_body();
+    for key in ["headSha", "dirty"] {
+        five_keys["rows"][0]
+            .as_object_mut()
+            .expect("row object")
+            .remove(key)
+            .expect("the fixture writes it");
+    }
+    let payload = decode(&payload_json("gate", five_keys)).expect("a five-key row still decodes");
+    let CodingSessionObservationBody::Gate(gate) = &payload.body else {
+        panic!("a gate observation carries a gate body");
+    };
+    assert_eq!(
+        gate.rows[0].head_sha, None,
+        "absent names no commit — it is not an empty string, and not a guess"
+    );
+    assert_eq!(gate.rows[0].dirty, None);
+    // And a writer still emits both: what this repository signs has seven
+    // row keys.
+    let written = serde_json::to_string(&payload).expect("serialize");
+    assert!(written.contains("\"headSha\":null"), "{written}");
+    assert!(written.contains("\"dirty\":null"), "{written}");
+}
+
+/// The commit a row names is a git object id, and its cleanliness is a
+/// boolean — both refused by name when they are not.
+#[test]
+fn a_gate_rows_commit_is_a_git_object_id_and_its_cleanliness_a_boolean() {
+    let sha = "e".repeat(40);
+    let mut body = gate_body();
+    body["rows"][0]["headSha"] = json!(sha);
+    body["rows"][0]["dirty"] = json!(false);
+    let payload = decode(&payload_json("gate", body)).expect("a 40-hex id decodes");
+    let CodingSessionObservationBody::Gate(gate) = &payload.body else {
+        panic!("gate body");
+    };
+    assert_eq!(gate.rows[0].head_sha.as_deref(), Some(sha.as_str()));
+    assert_eq!(gate.rows[0].dirty, Some(false));
+
+    // A 64-hex id is a SHA-256 repository's own object id, and is accepted
+    // for the same reason kind 44244's `headSha` accepts one.
+    let mut body = gate_body();
+    body["rows"][0]["headSha"] = json!("f".repeat(64));
+    body["rows"][0]["dirty"] = json!(true);
+    decode(&payload_json("gate", body)).expect("a 64-hex id decodes");
+
+    for wrong in ["", "abc", &"E".repeat(40), &"g".repeat(40), &"a".repeat(41)] {
+        let mut body = gate_body();
+        body["rows"][0]["headSha"] = json!(wrong);
+        body["rows"][0]["dirty"] = json!(false);
+        let error = decode(&payload_json("gate", body))
+            .expect_err("a value that is not a git object id is refused");
+        assert!(error.contains("headSha"), "{wrong:?}: {error}");
+    }
+
+    let mut body = gate_body();
+    body["rows"][0]["dirty"] = json!("false");
+    let error =
+        decode(&payload_json("gate", body)).expect_err("a string is not a cleanliness measurement");
+    assert!(error.contains("dirty"), "{error}");
+}
+
+/// A row that names a commit says whether it was clean, and one that names no
+/// commit says nothing about cleanliness either.
+///
+/// The pair is what makes the push gate a total function: a row carrying a
+/// `headSha` and no `dirty` would have to be read either as clean (admitting
+/// an unmeasured worktree) or as dirty (a refusal naming a fact nobody
+/// measured). Neither is honest, so the shape is refused instead.
+#[test]
+fn a_commit_and_its_cleanliness_are_written_together_or_not_at_all() {
+    let mut body = gate_body();
+    body["rows"][0]["dirty"] = Value::Null;
+    body["rows"][0]["headSha"] = json!("a".repeat(40));
+    let error = decode(&payload_json("gate", body)).expect_err("headSha without dirty is refused");
+    assert!(error.contains("dirty"), "{error}");
+
+    let mut body = gate_body();
+    body["rows"][0]["headSha"] = Value::Null;
+    body["rows"][0]["dirty"] = json!(true);
+    let error = decode(&payload_json("gate", body)).expect_err("dirty without headSha is refused");
+    assert!(error.contains("headSha"), "{error}");
+}
+
+/// The refusal sentences a person actually reads carry no accidental runs of
+/// whitespace — the shape a Rust literal takes when its `\` continuation is
+/// lost, and one this lane produced once before it was caught.
+#[test]
+fn every_gate_row_refusal_reads_as_one_sentence() {
+    let cases: Vec<String> = {
+        let mut body = gate_body();
+        body["rows"][0]["headSha"] = json!("a".repeat(40));
+        body["rows"][0]["dirty"] = Value::Null;
+        let one = decode(&payload_json("gate", body)).expect_err("headSha without dirty");
+        let mut body = gate_body();
+        body["rows"][0]["dirty"] = json!(true);
+        let two = decode(&payload_json("gate", body)).expect_err("dirty without headSha");
+        let mut body = gate_body();
+        body["rows"][0]["headSha"] = json!(7);
+        let three = decode(&payload_json("gate", body)).expect_err("headSha of the wrong type");
+        let mut body = gate_body();
+        body["rows"][0]["dirty"] = json!("yes");
+        let four = decode(&payload_json("gate", body)).expect_err("dirty of the wrong type");
+        vec![one, two, three, four]
+    };
+    for reason in cases {
+        assert!(!reason.contains("  "), "double space in: {reason:?}");
+    }
 }

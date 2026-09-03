@@ -229,11 +229,46 @@ export function useCodingSessionMissionSurface(input: {
   }, [input.umbrella.executions]);
   // L8.2: the push path's own rule, asked once per fold, over the repository's
   // own kind:30617 when one is named and readable.
+  // Frozen shapes, memoised on content, so the Land effect is not re-run on
+  // every render by a fresh array (the `React.memo` lesson in AGENTS.md).
+  const landObservedGates = React.useMemo(
+    () =>
+      (observations.result?.fold.gates ?? []).map((row) => ({
+        authorPubkey: row.authorPubkey,
+        source: row.source,
+        gate: row.gate,
+        outcome: row.outcome,
+        headSha: row.headSha,
+        dirty: row.dirty,
+      })),
+    [observations.result],
+  );
+  const landGatePolicy = React.useMemo(
+    () =>
+      policyRecordKnown
+        ? {
+            verifierRequired,
+            requiredGates:
+              policy.fold?.selected?.record.gates?.requiredGates ?? null,
+          }
+        : null,
+    [
+      policy.fold?.selected?.record.gates?.requiredGates,
+      policyRecordKnown,
+      verifierRequired,
+    ],
+  );
   const { land, unavailableReason: landUnavailableReason } =
     useCodingSessionMissionLand({
       founderPubkey: input.umbrella.founderPubkey,
       genesisRef: input.umbrella.genesisRef,
       landEvidence: evidence.inspectorInput.landEvidence,
+      // Arm (B): the same folded gate rows the Audit tab renders, and the
+      // same founder-signed policy the state panel reads. Passed rather than
+      // re-derived, so the rule the screen asks is answered over exactly what
+      // the screen shows.
+      observedGates: landObservedGates,
+      gatePolicy: landGatePolicy,
       repoRef,
       // LANE-L20 item 2: the read fallback that infers a repository from the
       // session's project when its own creates named none.
@@ -466,6 +501,8 @@ export function useCodingSessionMissionSurface(input: {
       outcome: row.outcome,
       at: signedAt.get(row.sourceEventId) ?? null,
       sourceEventId: row.sourceEventId.length > 0 ? row.sourceEventId : null,
+      commitShortSha: row.commitShortSha,
+      dirty: row.dirty,
     }));
   }, [observationView.gates, observations.result]);
   const surfaces = React.useMemo(

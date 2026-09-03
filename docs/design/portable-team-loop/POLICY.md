@@ -87,8 +87,8 @@ Only `schema`, `sessionRef` and `genesisRef` are required. Everything else is
 | `attention` | `decisions` \| `decisions-and-milestones` \| `everything` | **UI** | What a person is shown — never what the machine does |
 | `gates.redFirst` | `bool` | **lead pack** | Acceptance tests are written failing first |
 | `gates.reviewEveryLane` | `bool` | **lead pack** | Every lane is reviewed by someone who did not write it |
-| `gates.requiredGates` | ≤ 32 names, ≤ 64 B each, unique | **lead pack** | Named gates every lane must run |
-| `gates.verifierRequired` | `bool` | **lead pack** | A verifier must rule before the mission may settle |
+| `gates.requiredGates` | ≤ 32 names, ≤ 64 B each, unique | **lead pack**, **relay push gate** | Named gates every lane must run — and, under NIP-GS arm (B), the gates that must be observed green before a seat may push |
+| `gates.verifierRequired` | `bool` | **lead pack**, **44244 fold**, **relay push gate** | A verifier must rule before the mission may settle — and, on a `require-verdict` ref, before a seat may push |
 | `bench.identities` | ≤ 64 lowercase 64-hex pubkeys, unique | **router** | Identities eligible for the bench |
 | `bench.providers` | ≤ 16 provider **aliases**, ≤ 256 B each, unique | **router** | Provider instances eligible for the bench |
 | `bench.challengerSampleRate` | finite `f64` in `0.0..=1.0` | **router** | Fraction of eligible jobs given to a challenger |
@@ -259,7 +259,7 @@ answer is the more specific one.
   that umbrella until its next create or resume.** That is a real gap, stated
   rather than hidden.
 
-### 4.2 Enforced: `gates.verifierRequired`, at the fold's completion check
+### 4.2 Enforced: `gates.verifierRequired` and `gates.requiredGates`
 
 Since 2026-09-02 (batch 3, item G). When the umbrella's newest **accepted**
 kind-44245 sets `gates.verifierRequired: true`, the 44244 fold excludes a
@@ -277,18 +277,32 @@ runs, so the record that binds is the record the CLI prints. A caller that has
 not read the policy set passes `false`, which means **this fold enforces
 nothing extra**, never *no verifier is required*; Desktop passes `false` today.
 
-**What it does not gate: the push.** *(Added 2026-09-03, lane L21.)* A
-`require-verdict` ref's admission rule (NIP-GS appendix) reads **no session
-policy at all** — `verdict_admission_fold_context` passes `verifier_required:
-false` and says so in its own comment. Since L21 the push rule needs a
-verifier's `not-refuted` refutation for *every* non-founder push, whatever this
-flag says, and admits *every* founder push, likewise whatever this flag says.
-The flag was specified as the switch between the push rule's arms (B) and (C);
-arm (B) is not implemented, because kind 44246 carries no commit for its gate
-rows to be green *on* (NIP-GS appendix, "The arm that is specified and not
-implemented"). Any surface offering this control must therefore describe the
-completion check and must not promise a landing rule — a control that lies
-about what it enforces is a bug of the same severity as a crash.
+**What it also gates, since 2026-09-03: the push.** *(Lane L22.)* A
+`require-verdict` ref's admission rule (NIP-GS appendix) now reads the
+mission's newest **founder-signed** kind-44245 and switches on this flag. Unset
+or `false`, a seat's push is admitted by **arm (B)** when every required gate
+was *observed* green on that exact commit, over a clean worktree, by the
+mission's own provider. `true`, arm (B) is off and the push needs **arm (C)** —
+a verifier's `not-refuted` refutation. A founder's push is admitted under arm
+(A) either way, whatever this flag says.
+
+The relay reads the policy over one bounded page of founder-signed 44245s; a
+mission whose policy falls outside it is judged as setting no flag, which can
+only *open* arm (B) and never close it, and every arm-(B) refusal names the
+gate list it actually used rather than implying the founder chose it.
+
+For one day (2026-09-02 to 2026-09-03, lane L21) the push rule read no policy at
+all and every non-founder push needed arm (C); the launch-form control was
+labelled for the completion check alone because promising a landing rule the
+switch did not have would have been a control lying about what it enforces.
+That sentence is now true and the labels say so.
+
+**And `gates.requiredGates` is enforced with it.** *(Lane L22.)* Under arm (B)
+the gate list a founder writes is the list the relay counts, in the row's own
+`gate` name. A policy that names none falls back to the relay default —
+`cargo fmt`, `cargo clippy`, `cargo test` — which is disclosed in the refusal.
+An empty list is treated as naming none, so a policy cannot accidentally admit a
+push with no gate green at all.
 
 **Where a founder sets it.** `bee sessions policy set --verifier-required`, and
 since L21 the Desktop launch form's "Completing this mission" control
@@ -301,13 +315,13 @@ offering no way to set it (finding 39).
 The one true sentence, byte-identical in `POLICY_ENFORCEMENT_DISCLOSURE` (CLI
 and Tauri) and asserted by `crates/buzz-cli/tests/policy_enforcement_sentence.rs`:
 
-> Enforced: budget.turns at the provider's turn gate, and gates.verifierRequired at the fold's completion check. Every other field is read and shown, never counted.
+> Enforced: budget.turns at the provider's turn gate, gates.verifierRequired at the fold's completion check and at the relay's verdict-gated push, and gates.requiredGates at that push. Every other field is read and shown, never counted.
 
 ### 4.3 Not enforced: every other field
 
 `posture`, `budget.tokensPerSeat`, `budget.tokensPerSession`,
 `budget.costUsdPerSession`, `budget.contextTier`, `attention`, `gates.redFirst`,
-`gates.reviewEveryLane`, `gates.requiredGates`,
+`gates.reviewEveryLane`,
 `bench.identities`, `bench.providers`, `bench.challengerSampleRate`,
 `irreversible`, `stop.timeBoxSecs` and `stop.onMilestone` are **read and shown,
 and nothing checks them**. Publishing one changes no behaviour anywhere in this

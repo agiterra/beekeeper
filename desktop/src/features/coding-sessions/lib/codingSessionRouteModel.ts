@@ -347,7 +347,15 @@ export function deriveCodingSessionRoute(input: {
       kind: "gate",
       // The row's own outcome, never a second vocabulary for the same fact.
       word: gateRow.outcome,
-      title: `${gateRow.gate} · ${gateRow.outcome} · ${routeTimeLabel(gateRow.at)}`,
+      // The commit is part of the title rather than the word: the word is the
+      // row's own outcome and the rail never invents a second vocabulary, but
+      // "passed" with no commit beside it is the very ambiguity `headSha`
+      // was added to remove.
+      title: `${gateRow.gate} · ${gateRow.outcome} · ${
+        gateRow.commitShortSha === null
+          ? "no commit named"
+          : `at ${gateRow.commitShortSha}${gateRow.dirty === true ? " (dirty)" : ""}`
+      } · ${routeTimeLabel(gateRow.at)}`,
       sourceEventId: gateRow.sourceEventId,
       weight: gateRow.outcome === "failed" ? "attention" : "standard",
       tone: gateRow.outcome === "failed" ? "critical" : null,
