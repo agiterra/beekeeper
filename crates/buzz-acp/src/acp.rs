@@ -18,6 +18,13 @@ use crate::usage::{
     PromptResponseUsage, StandardAdapterKind, StandardUsageTracker, TurnUsage, UsageTracker,
 };
 
+/// The clock the turn deadlines are measured against. See
+/// [`idle_clock::TurnClock`].
+#[path = "acp_idle_clock.rs"]
+mod idle_clock;
+
+use idle_clock::{SystemTurnClock, TurnClock};
+
 /// Maximum allowed size of a single NDJSON line from the agent's stdout.
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
 const MAX_LINE_SIZE: usize = 10_000_000; // 10 MB
@@ -102,11 +109,14 @@ impl DeadlineKind {
         stall_watch: &AnswerStallWatch,
         last_activity_at: tokio::time::Instant,
         wire: &TurnWire,
+        now: tokio::time::Instant,
     ) -> AcpError {
         // One snapshot for every arm: the diagnosis is the same set of facts
         // whichever budget expired, and taking it once means the three cannot
-        // disagree about what the wire had done.
-        let summary = Box::new(wire.summarize(tokio::time::Instant::now(), stall_watch));
+        // disagree about what the wire had done. `now` comes from the clock
+        // that classified the expiry, so the summary can never disagree with
+        // the deadline that fired.
+        let summary = Box::new(wire.summarize(now, stall_watch));
         match self {
             Self::Idle => {
                 tracing::warn!(
@@ -133,8 +143,7 @@ impl DeadlineKind {
                 }
             }
             Self::Hard => {
-                let silence =
-                    tokio::time::Instant::now().saturating_duration_since(last_activity_at);
+                let silence = now.saturating_duration_since(last_activity_at);
                 tracing::warn!(
                     target: "acp::stall",
                     "hard turn timeout exceeded (silence {silence:?}) — {}",
@@ -742,6 +751,13 @@ pub struct AcpClient {
     /// `initialize` answers, matching the pool's own default for adapters that
     /// omit the field.
     protocol_version: u32,
+    /// The clock every turn deadline in this client is measured against.
+    ///
+    /// Always [`SystemTurnClock`] in production — real monotonic time is the
+    /// only correct answer for a silent-agent guard. Replaceable in tests
+    /// (`set_turn_clock`) so a test asserting wire bookkeeping is not also
+    /// asserting how fast the operating system schedules a subprocess.
+    turn_clock: std::sync::Arc<dyn TurnClock>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -1207,7 +1223,16 @@ impl AcpClient {
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
+            turn_clock: std::sync::Arc::new(SystemTurnClock),
         })
+    }
+
+    /// Replace the clock this client's turn deadlines are measured against.
+    ///
+    /// Test-only: production always runs on [`SystemTurnClock`].
+    #[cfg(test)]
+    fn set_turn_clock(&mut self, clock: std::sync::Arc<dyn TurnClock>) {
+        self.turn_clock = clock;
     }
 
     /// Assemble the child `Command` without spawning it.
@@ -1655,7 +1680,7 @@ impl AcpClient {
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
         let params = build_prompt_params(session_id, prompt_blocks);
-        let hard_deadline = tokio::time::Instant::now() + max_duration;
+        let hard_deadline = self.turn_clock.now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
         // Mark the usage tracker as in-flight for this turn BEFORE sending the
@@ -1955,7 +1980,7 @@ impl AcpClient {
         // deadline is already expired or near-expired, grant a 30s floor so the
         // cancel notification has time to propagate and the agent can respond.
         let stored_deadline = self.current_hard_deadline.take();
-        let min_cleanup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let min_cleanup_deadline = self.turn_clock.now() + std::time::Duration::from_secs(30);
         let hard_deadline = match stored_deadline {
             Some(d) if d > min_cleanup_deadline => d,
             Some(_) => {
@@ -1995,7 +2020,7 @@ impl AcpClient {
         grace: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
         let _ = self.current_hard_deadline.take();
-        let hard_deadline = tokio::time::Instant::now() + grace;
+        let hard_deadline = self.turn_clock.now() + grace;
         match self
             .cancel_with_cleanup_until(session_id, hard_deadline)
             .await
@@ -2319,8 +2344,6 @@ impl AcpClient {
         hard_deadline: tokio::time::Instant,
         max_duration: std::time::Duration,
     ) -> Result<serde_json::Value, AcpError> {
-        use tokio::time::Instant;
-
         // Take the per-turn steer receiver into a local so it can be
         // borrowed independently of `self.reader` inside `select!`.
         // Dropped at scope exit (return paths drain `pending_steer` first
@@ -2340,7 +2363,12 @@ impl AcpClient {
             tokio::sync::oneshot::Sender<crate::pool::SteerAck>,
         )> = None;
 
-        let now = Instant::now();
+        // Cloned out of `self` before the loop: the select arms borrow
+        // `self.reader` mutably, so the clock cannot be read through `self`
+        // from inside them.
+        let clock = self.turn_clock.clone();
+
+        let now = clock.now();
         let mut idle_deadline = now + idle_timeout;
         let mut hard_deadline = hard_deadline;
         let mut last_activity_at = now;
@@ -2372,7 +2400,7 @@ impl AcpClient {
             // producing output (see `acp.rs:608` for why the hard deadline
             // exists). Check the classified deadline here so a steady-
             // stream agent is still bounded.
-            if Instant::now() >= next_deadline {
+            if clock.now() >= next_deadline {
                 if let Some((_, _, ack_tx)) = pending_steer.take() {
                     // Prompt is timing out — release the withheld event via
                     // PromptCompletedNeutral (no fallback signal: there is
@@ -2380,7 +2408,13 @@ impl AcpClient {
                     // normal dispatch handles redelivery).
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
-                return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at, &wire));
+                return Err(expiry.into_error(
+                    idle_timeout,
+                    &stall_watch,
+                    last_activity_at,
+                    &wire,
+                    clock.now(),
+                ));
             }
 
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
@@ -2486,7 +2520,7 @@ impl AcpClient {
                     // response or the steer response next.
                     None
                 }
-                _ = tokio::time::sleep_until(next_deadline) => {
+                _ = clock.sleep_until(next_deadline) => {
                     // The pre-select check at the top of the next iteration
                     // would catch this anyway, but firing the deadline arm
                     // here makes the wakeup immediate (no extra reader poll
@@ -2495,11 +2529,12 @@ impl AcpClient {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     return Err(expiry.into_error(
-                    idle_timeout,
-                    &stall_watch,
-                    last_activity_at,
-                    &wire,
-                ));
+                        idle_timeout,
+                        &stall_watch,
+                        last_activity_at,
+                        &wire,
+                        clock.now(),
+                    ));
                 }
             };
 
@@ -2559,7 +2594,7 @@ impl AcpClient {
                     };
                     self.observe("acp_read", msg.clone());
 
-                    let activity_now = Instant::now();
+                    let activity_now = clock.now();
                     idle_deadline = activity_now + idle_timeout;
                     last_activity_at = activity_now;
                     stall_watch.observe(&msg, activity_now);
@@ -2634,7 +2669,7 @@ impl AcpClient {
                                                 }
                                             }
                                             Some(_) => {
-                                                let renew_now = Instant::now();
+                                                let renew_now = clock.now();
                                                 let new_deadline = renew_now + max_duration;
                                                 if new_deadline > hard_deadline {
                                                     hard_deadline = new_deadline;
@@ -2698,7 +2733,7 @@ impl AcpClient {
                         match method {
                             "session/update" => {
                                 if self.handle_session_update(&msg) {
-                                    let activity_now = Instant::now();
+                                    let activity_now = clock.now();
                                     idle_deadline = activity_now + idle_timeout;
                                     last_activity_at = activity_now;
                                     tracing::debug!("idle clock reset: tool call started");
@@ -4987,35 +5022,107 @@ mod tests {
         assert_eq!(result.unwrap()["worked"], serde_json::json!(true));
     }
 
+    /// Keepalive `session/update` lines push the idle deadline past its
+    /// original expiry, and once they stop the idle timeout fires.
+    ///
+    /// Measured on a [`ManualTurnClock`], not on wall time. The wall-clock
+    /// version of this test asserted `elapsed >= 500ms` while a `sleep 0.05`
+    /// loop in a spawned `sh` supplied the keepalives — so it was really
+    /// asserting that the operating system would schedule that subprocess 20
+    /// times inside half a second. Under load average 173 it did not, the
+    /// window expired between keepalives, and the test failed with "elapsed
+    /// only 372ms": a starved subprocess, reported as a broken reset rule.
+    ///
+    /// Here each keepalive is released by a gate file, and the gap before it is
+    /// an advance of the clock. Ten gaps of 90 ms pass inside a 100 ms window —
+    /// nine times the deadline — and the turn survives, because every frame
+    /// resets the window (`acp.rs`, the `activity_now` reset in the read loop).
+    /// The eleventh advance carries the clock past the window with the agent
+    /// silent, and the timeout fires. No `assert` in this test reads wall time.
+    #[cfg(unix)]
     #[tokio::test]
     async fn keepalive_resets_idle_past_deadline() {
-        // Keepalive session/update lines every 50ms against a 100ms idle deadline.
-        // The turn should survive well past the 100ms deadline (proves the fix).
-        let mut client = spawn_script(
-            r#"for i in $(seq 1 20); do echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"keepalive"}}}'; sleep 0.05; done; sleep 10"#,
-        )
-        .await;
-        let max_dur = std::time::Duration::from_secs(10);
-        let hard_deadline = tokio::time::Instant::now() + max_dur;
-        let start = std::time::Instant::now();
-        let result = client
-            .read_until_response_with_idle_timeout(
+        const KEEPALIVES: usize = 10;
+        const WINDOW: std::time::Duration = std::time::Duration::from_millis(100);
+        // Under the window, so no single gap may expire it; ten of them are
+        // nine deadlines' worth of clock time.
+        const GAP: std::time::Duration = std::time::Duration::from_millis(90);
+
+        let dir = std::env::temp_dir().join(format!("buzz-acp-keepalive-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create gate dir");
+        let gates: Vec<std::path::PathBuf> = (0..KEEPALIVES)
+            .map(|i| dir.join(format!("keepalive-{i}")))
+            .collect();
+
+        let frame = r#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"keepalive"}}}"#;
+        let mut script = String::new();
+        for gate in &gates {
+            script.push_str(&format!("echo '{frame}'\n"));
+            // A gate file, not a duration: the script waits for the test, so
+            // the frame's arrival is ordered against the clock advance rather
+            // than racing it. The poll interval is wall time but bounds
+            // nothing — no deadline can expire while the clock is still.
+            script.push_str(&format!(
+                "while [ ! -e '{}' ]; do sleep 0.01; done\n",
+                gate.display()
+            ));
+        }
+        // Then silence, so the idle timeout has something to fire on.
+        script.push_str("sleep 30\n");
+
+        let mut client = spawn_script(&script).await;
+        let observer = crate::observer::ObserverHandle::in_process();
+        let mut reads = observer.subscribe();
+        client.set_observer(Some(observer), 0);
+
+        let clock = idle_clock::ManualTurnClock::frozen();
+        client.set_turn_clock(clock.clone());
+        let started_at = clock.now();
+        let hard_deadline = clock.now() + std::time::Duration::from_secs(3600);
+
+        let driver = async {
+            for gate in &gates {
+                // Wait for the read loop to take this keepalive in, so the
+                // advance below is measured from *its* reset and not from the
+                // previous frame's.
+                loop {
+                    let event = reads.recv().await.expect("observer feed closed");
+                    if event.kind == "acp_read" {
+                        break;
+                    }
+                }
+                clock.advance(GAP);
+                std::fs::write(gate, b"").expect("open gate");
+            }
+            // The agent is silent from here. One advance past the window ends
+            // the turn.
+            clock.advance(WINDOW + std::time::Duration::from_millis(1));
+        };
+
+        let (result, ()) = tokio::join!(
+            client.read_until_response_with_idle_timeout(
                 "test",
                 999,
-                std::time::Duration::from_millis(100),
+                WINDOW,
                 hard_deadline,
-                max_dur,
-            )
-            .await;
-        let elapsed = start.elapsed();
-        // 20 keepalives × 50ms = ~1000ms of activity, then idle fires after 100ms more.
-        // Must survive well past the 100ms deadline.
-        assert!(
-            elapsed >= std::time::Duration::from_millis(500),
-            "keepalive should reset idle past the deadline; elapsed only {elapsed:?}"
+                std::time::Duration::from_secs(3600),
+            ),
+            driver,
         );
-        assert!(elapsed < std::time::Duration::from_secs(5));
-        assert!(matches!(result, Err(AcpError::IdleTimeout { .. })));
+
+        let survived = clock.now().saturating_duration_since(started_at);
+        assert!(
+            survived >= GAP * KEEPALIVES as u32,
+            "keepalives must reset the idle window past its deadline: only \
+             {survived:?} of clock time passed inside a {WINDOW:?} window"
+        );
+        assert!(
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
+            "the turn must end on the idle window once the keepalives stop, \
+             got {result:?}"
+        );
+        drop(client);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// One `session/update` line for the scripted-stream stall tests.
@@ -6476,18 +6583,38 @@ sleep 5
         );
     }
 
+    /// The Claude adapter's wire lifecycle: one `usage_update` before the
+    /// prompt response, and both folded into one turn's usage record.
+    ///
+    /// Runs on a [`ManualTurnClock`] that is never advanced. The assertions
+    /// here are about *bookkeeping*, and on the real clock they were also,
+    /// silently, about how quickly the operating system schedules a spawned
+    /// `sh`: under a saturating build the 2 s idle window expired with
+    /// `frames: 0, bytes: 0, quiet_for: 2.003s` — the child had not written
+    /// its first line yet. Nothing in the turn's deadlines can now expire
+    /// because of load; `manual_clock_still_fires_the_idle_timeout_when_advanced`
+    /// and `keepalive_resets_idle_past_deadline` keep that from being vacuous
+    /// by proving the same clock does fire — and does reset — when it moves.
     #[cfg(unix)]
     #[tokio::test]
     async fn claude_named_adapter_wire_lifecycle_records_prompt_and_cost() {
+        // The `sleep 3` is the flake's own condition, made permanent: a first
+        // frame that arrives *after* the 2 s idle window. On the real clock
+        // that is exactly what a loaded box produced by accident
+        // (`IdleTimeout { frames: 0, bytes: 0, quiet_for: 2.003s }`) and what
+        // this test now survives on purpose. Delete the injected clock below
+        // and this test fails every time instead of one run in fifty.
         let script = r#"
             read -r REQ
             ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
+            sleep 3
             echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"wire-session","update":{"sessionUpdate":"usage_update","cost":{"amount":0.5,"currency":"USD"}}}}'
             echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn","usage":{"inputTokens":7,"outputTokens":3,"totalTokens":10,"cachedReadTokens":2}}}'
             sleep 1
         "#;
         let (mut client, dir) = spawn_named_script("claude-code", script).await;
         assert_eq!(client.standard_adapter, Some(StandardAdapterKind::Claude));
+        client.set_turn_clock(idle_clock::ManualTurnClock::frozen());
         client.notify_session_spawned("wire-session");
 
         let stop = client
@@ -6509,6 +6636,42 @@ sleep 5
         assert_eq!(usage.cumulative_cost_usd, Some(0.5));
         drop(client);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The injected clock is a real clock, not a way to switch the deadlines
+    /// off: advanced past the idle window with a silent agent, the loop still
+    /// returns [`AcpError::IdleTimeout`]. Without this,
+    /// `claude_named_adapter_wire_lifecycle_records_prompt_and_cost` could
+    /// pass because nothing was being measured at all.
+    #[tokio::test]
+    async fn manual_clock_still_fires_the_idle_timeout_when_advanced() {
+        let mut client = spawn_script("sleep 30").await;
+        let clock = idle_clock::ManualTurnClock::frozen();
+        client.set_turn_clock(clock.clone());
+
+        let window = std::time::Duration::from_secs(10);
+        let hard_deadline = clock.now() + std::time::Duration::from_secs(3600);
+        let driver = async {
+            // Wall time never moves this clock, so the loop is parked on
+            // `sleep_until` until the advance below wakes it.
+            tokio::task::yield_now().await;
+            clock.advance(window + std::time::Duration::from_secs(1));
+        };
+        let (result, ()) = tokio::join!(
+            client.read_until_response_with_idle_timeout(
+                "idle-session",
+                999,
+                window,
+                hard_deadline,
+                std::time::Duration::from_secs(3600),
+            ),
+            driver,
+        );
+
+        assert!(
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
+            "expected IdleTimeout on an advanced manual clock, got {result:?}"
+        );
     }
 
     #[tokio::test]
