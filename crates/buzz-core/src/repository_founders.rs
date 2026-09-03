@@ -25,14 +25,18 @@
 //! read ([`RepositoryFounders::roster_owners_read`]), and every surface that
 //! shows a founder set says so rather than presenting a partial set as whole.
 //!
-//! # What this does *not* change
+//! # Rules
 //!
-//! Rules — the `buzz-protect` tags themselves — stay on the announcement, so
-//! in v1 **only the signer can rewrite them**: a replacement kind:30617 signed
-//! by a co-founder is a different addressable event at a different author, not
-//! an edit. That is disclosed in [`RepositoryFounders::rules_sentence`] rather
-//! than left for a co-founder to discover when their `bee repos protect set`
-//! silently creates a second repository.
+//! The `buzz-protect` rows on the announcement can still only be rewritten by
+//! its signer — a replacement kind:30617 signed by a co-founder is a different
+//! addressable event at a different author, not an edit. Since lane L26 that
+//! is no longer the whole story: **any** founder may set or remove a rule by
+//! signing a rule record (kind 30625,
+//! [`crate::repository_protection`]), which the push gate resolves against the
+//! announcement's rows with last-write-wins per exact ref pattern. So the
+//! answer to "who governs this repository's refs" is the founder set, and
+//! [`RepositoryFounders::rules_sentence`] says so — it used to say the signer
+//! alone, which was true when it was written and would be a lie now.
 //!
 //! Membership-based push (the channel binding and the roster's own tiers) is
 //! untouched: this type answers *"who founded it"*, never *"who may push"*.
@@ -203,9 +207,14 @@ impl RepositoryFounders {
 
     /// The sentence a CLI or a screen prints next to a repository's rules.
     ///
-    /// Three facts, none of them flattering to omit: who may rewrite the rules
-    /// (the signer, alone, in v1), who the founders are, and whether the
-    /// roster half of that set was read here.
+    /// Three facts, none of them flattering to omit: who may set or remove a
+    /// rule (any founder, by signing a rule record — kind 30625), who the
+    /// founders are, and whether the roster half of that set was read here.
+    ///
+    /// Before lane L26 this said "the announcement's signer, and only that
+    /// key can rewrite them". That was true then and is false now, and a
+    /// sentence that keeps saying it would be exactly the kind of control
+    /// that lies about what it enforces.
     pub fn rules_sentence(&self) -> String {
         let list = if self.founders.is_empty() {
             "none — this announcement has no parseable signer".to_string()
@@ -227,8 +236,8 @@ impl RepositoryFounders {
             )
         };
         format!(
-            "rules are set by the announcement's signer {} and only that key can rewrite them; \
-             founders of this repository are {} ({}).{}{}",
+            "rules are set by any founder, as a signed rule record; the announcement's own rows \
+             stay with its signer {}; founders of this repository are {} ({}).{}{}",
             self.signer,
             list,
             self.founders.len(),

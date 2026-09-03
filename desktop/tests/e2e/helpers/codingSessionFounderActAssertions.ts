@@ -880,8 +880,9 @@ export function landFounders(viewerIsFounder: boolean) {
   return {
     founders: [FOUNDER, CO_FOUNDER],
     foundersNote:
-      `rules are set by the announcement's signer ${FOUNDER} and only that key can rewrite ` +
-      `them; founders of this repository are ${FOUNDER}, ${CO_FOUNDER} (2).`,
+      `rules are set by any founder, as a signed rule record; the announcement's own rows ` +
+      `stay with its signer ${FOUNDER}; ` +
+      `founders of this repository are ${FOUNDER}, ${CO_FOUNDER} (2).`,
     viewerIsFounder,
     rulesSigner: FOUNDER,
     rosterRead: true,

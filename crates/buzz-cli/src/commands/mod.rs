@@ -21,6 +21,7 @@ pub mod pulse;
 pub mod pulse_mission;
 pub mod reactions;
 pub mod repos;
+pub mod repos_protection;
 pub mod session;
 pub mod sessions;
 pub mod social;

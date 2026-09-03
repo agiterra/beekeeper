@@ -182,8 +182,12 @@ test("L18: the control names the founders whether it offers the push or refuses"
     assert.match(html, /Founders: the founder\./, `${key} names them`);
     assert.match(
       html,
-      /only that key can rewrite them/,
-      `${key} discloses that rules are signer-only in v1`,
+      /Any founder can set or remove a rule/,
+      `${key} says any founder may set a rule (lane L26)`,
+    );
+    assert.ok(
+      !html.includes("only that key can rewrite"),
+      `${key} must not keep the retired signer-only clause`,
     );
   }
 });

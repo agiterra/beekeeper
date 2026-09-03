@@ -181,3 +181,133 @@ test("Repository → Protection: lists real buzz-protect rules, and gates the sw
     "no-delete",
   ]);
 });
+
+test("Repository → Protection: a co-founder sets the rule with a record of their own (kind 30625)", async ({
+  page,
+}) => {
+  // Finding 33 R2, end to end in the app. The viewer is a NIP-34 maintainer of
+  // a repository someone else announced: before lane L26 this card's switch was
+  // disabled with a note saying only the signer could change it. Now the
+  // toggle signs a kind:30625 rule record — an announcement the viewer cannot
+  // address is never republished.
+  await page.addInitScript(
+    ({ self, stranger, repoAddr }) => {
+      window.localStorage.setItem(
+        "buzz-feature-overrides-v1",
+        JSON.stringify({ projects: true, forum: true }),
+      );
+      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+        {
+          id: "seeded-cofounder-container",
+          kind: 30621,
+          pubkey: self,
+          created_at: 1_800_000_000,
+          content: "",
+          tags: [
+            ["d", "cofounderproj"],
+            ["name", "Co-founder Co"],
+            ["a", repoAddr],
+          ],
+        },
+        {
+          id: "seeded-cofounder-repo",
+          kind: 30617,
+          pubkey: stranger,
+          created_at: 1_800_000_000,
+          content: "",
+          tags: [
+            ["d", "cofounded"],
+            ["name", "cofounded"],
+            // The viewer founds this repository without having announced it.
+            ["maintainers", self],
+          ],
+        },
+      ];
+    },
+    { self: SELF, stranger: STRANGER, repoAddr: `30617:${STRANGER}:cofounded` },
+  );
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByTestId("open-projects-view").click();
+  await expect(page.getByTestId("projects-manage-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("manage-project-cofounderproj")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("manage-project-actions-cofounderproj").click();
+  await page.getByRole("menuitem", { name: "Project settings" }).click();
+  await page.getByTestId("project-settings-tab-repository").click();
+  const card = page
+    .getByTestId("project-repository-protection-card")
+    .filter({ hasText: "cofounded" });
+  await expect(card).toBeVisible({ timeout: 10_000 });
+
+  // Live, not read-only — the whole point.
+  await expect(
+    card.getByTestId("project-repository-protection-readonly-note"),
+  ).toHaveCount(0);
+  const toggle = card.getByTestId("project-repository-require-verdict-switch");
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await capture(page, "08-cofounder-before-toggle");
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true", {
+    timeout: 10_000,
+  });
+  await expect(
+    card.getByTestId("project-repository-protection-published"),
+  ).toContainText("your own rule record");
+  // The rule is shown as coming from a rule record, signed by the viewer.
+  await expect(
+    card.getByTestId("project-repository-protection-source-refs/heads/main"),
+  ).toContainText("rule record");
+  await capture(page, "09-cofounder-after-toggle");
+
+  const signed = await page.evaluate(() => {
+    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    return {
+      records: events.filter((event) => event.kind === 30625),
+      announcements: events.filter((event) => event.kind === 30617),
+    };
+  });
+  expect(signed.records).toHaveLength(1);
+  expect(signed.records[0]?.tags).toContainEqual([
+    "d",
+    `${STRANGER}:cofounded`,
+  ]);
+  expect(signed.records[0]?.tags).toContainEqual([
+    "buzz-protect",
+    "refs/heads/main",
+    "require-verdict",
+  ]);
+  expect(JSON.parse(signed.records[0]?.content ?? "{}")).toEqual({
+    schema: "buzz-repo-protection/v1",
+  });
+  // The announcement the viewer cannot address is never republished — the bug
+  // this kind exists to remove.
+  expect(signed.announcements).toHaveLength(0);
+
+  // And turning it back off writes the clear token, not an absent row: an
+  // absent row would fall back to whatever the announcement says.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false", {
+    timeout: 10_000,
+  });
+  const cleared = await page.evaluate(
+    () =>
+      (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+        (event) => event.kind === 30625,
+      ).length,
+  );
+  expect(cleared).toBe(2);
+  const clearRow = await page.evaluate(() => {
+    const events = (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+      (event) => event.kind === 30625,
+    );
+    return events[events.length - 1]?.tags;
+  });
+  expect(clearRow).toContainEqual(["buzz-protect", "refs/heads/main", "none"]);
+});

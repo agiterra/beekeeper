@@ -16,7 +16,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": true,
     "implementation": "buzz-core",
     "newestVerdict": {
@@ -42,7 +42,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": true,
     "implementation": "buzz-core",
     "newestVerdict": {
@@ -78,7 +78,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": true,
     "implementation": "buzz-core",
     "newestVerdict": {
@@ -115,7 +115,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": true,
     "implementation": "buzz-core",
     "newestVerdict": {
@@ -141,7 +141,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": true,
     "implementation": "buzz-core",
     "newestVerdict": {
@@ -167,7 +167,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": true,
     "implementation": "buzz-core",
     "newestVerdict": {
@@ -217,7 +217,7 @@
     "founders": [
       "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
     ],
-    "foundersNote": "rules are set by the announcement's signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa and only that key can rewrite them; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
+    "foundersNote": "rules are set by any founder, as a signed rule record; the announcement's own rows stay with its signer 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa; founders of this repository are 4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa (1).",
     "gateRowsRead": false,
     "implementation": "buzz-core",
     "newestVerdict": {

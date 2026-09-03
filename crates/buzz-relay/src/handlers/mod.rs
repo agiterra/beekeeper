@@ -30,6 +30,7 @@ pub mod product_feedback;
 pub mod push_lease;
 /// NIP-43 relay membership admin command handler (kinds 9030–9032).
 pub mod relay_admin;
+pub mod repo_protection;
 /// NIP-56 report (kind:1984) validation + moderation queue persistence.
 pub mod report;
 /// REQ handler — subscribe, deliver historical events, then EOSE.

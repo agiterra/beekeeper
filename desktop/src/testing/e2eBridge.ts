@@ -55,6 +55,7 @@ import {
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_PROJECT_PACK_SOURCE,
+  KIND_REPO_PROTECTION,
   KIND_PULSE_ENTRY,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
@@ -5730,6 +5731,10 @@ const MOCK_PROJECT_KINDS = new Set<number>([
   // LANE-L23: a project's persona-pack source, `d`-scoped to the project
   // coordinate like the two arms above — see `isMockProjectScopedEvent`.
   KIND_PROJECT_PACK_SOURCE,
+  // LANE-L26: a founder-signed repository rule record, `d`-scoped to a
+  // repository (`<owner-hex>:<repo-id>`) rather than to a channel — see
+  // `isMockProjectScopedEvent`.
+  KIND_REPO_PROTECTION,
   // Project Pulse entries are project-scoped by an `a` tag holding the 30621
   // coordinate — the same shape the NIP-34 kinds below use, so they route
   // through this store rather than the channel path.
@@ -5940,6 +5945,18 @@ function isMockProjectScopedEvent(event: RelayEvent): boolean {
     event.kind === KIND_PROJECT_PACK_SOURCE &&
     event.tags.some(
       (tag) => tag[0] === "d" && (tag[1] ?? "").startsWith(`${KIND_PROJECT}:`),
+    )
+  ) {
+    return true;
+  }
+  // LANE-L26's repository rule record (kind:30625) names its repository in a
+  // `d` tag of the form `<owner-hex>:<repo-id>` — no channel and no `a` tag,
+  // so without this arm a live-published 30625 falls to the channel branch and
+  // is rejected with "Missing channel tag.", exactly as 30624 was.
+  if (
+    event.kind === KIND_REPO_PROTECTION &&
+    event.tags.some(
+      (tag) => tag[0] === "d" && /^[0-9a-f]{64}:/.test(tag[1] ?? ""),
     )
   ) {
     return true;
@@ -14148,8 +14165,9 @@ export function maybeInstallE2eTauriMocks() {
             newestVerdict: null,
             founders: [repoOwnerPubkey],
             foundersNote:
-              `rules are set by the announcement's signer ${repoOwnerPubkey} and only that key can rewrite ` +
-              `them; founders of this repository are ${repoOwnerPubkey} (1).`,
+              `rules are set by any founder, as a signed rule record; the announcement's own rows ` +
+              `stay with its signer ${repoOwnerPubkey}; founders of this repository are ` +
+              `${repoOwnerPubkey} (1).`,
             viewerIsFounder: pusherPubkey === repoOwnerPubkey,
             rulesSigner: repoOwnerPubkey,
             rosterRead: true,

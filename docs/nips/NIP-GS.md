@@ -848,8 +848,14 @@ objects).
 
 ## Kind Usage
 
-This NIP does not define any Nostr event kinds. Signatures are embedded in git
-objects, not published to relays.
+Signatures themselves are embedded in git objects, not published to relays.
+
+The appendix below defines one kind, because the `buzz-protect` vocabulary it
+documents has no NIP of its own:
+
+| Kind | Name | Addressed by |
+|------|------|--------------|
+| 30625 | Repository rule record | `(30625, <founder>, "<repo-owner-hex>:<repo-id>")` |
 
 ## Backwards Compatibility
 
@@ -1081,3 +1087,101 @@ an `X-Buzz-Git-Denials` header instead, omitted above 8 KiB.
 
 See NIP-CSTX (team transactions, kind 44244) and NIP-CSP (session policy,
 kind 44245).
+
+### A founder-signed rule record (kind 30625)
+
+*Added 2026-09-03 (batch 3 lane L26), closing finding 33's residual R2.*
+
+`buzz-protect` rows live on the `kind:30617` announcement, which is
+addressable by `(kind, pubkey, d)`. Only its signer can republish it, so a
+co-founder running `bee repos protect set` did not change the repository's
+rules — they published a **second repository** at their own address. Every
+other authority question in this NIP became plural when finding 33 landed
+(*which missions may rule*, *who may land*, *who names a project's packs*);
+this one stayed singular and was merely disclosed.
+
+A **rule record** carries the same rows at an address keyed to its author:
+
+```
+kind:  30625
+d:     "<repo-owner-hex>:<repo-id>"        (split on the FIRST colon)
+tags:  ["buzz-protect", "<ref-pattern>", "<rule>", …]   (zero or more)
+body:  {"schema":"buzz-repo-protection/v1"}
+```
+
+**Who may publish one.** A relay admits a 30625 only from a **founder** of the
+repository its `d` tag names (see *Founders*: the announcement's signer, its
+NIP-34 `maintainers`, and every Owner on the roster of the project the
+announcement back-references). Nothing about the record's shape confers
+authority; its author is the whole of it, checked at the write. A repository
+that is not announced has no founders, and the refusal says the announcement
+was missing rather than reporting "not a founder".
+
+**The ruling.** *A co-founder MAY remove protection the signer set.* Equal
+founders are equal, and every change is a signed, observable act with a name
+on it — a stronger property than "only one key can change it", where the other
+founder's only recourse is to ask. The alternative (set-but-never-remove) is a
+one-line change to `resolve_protection_layers`.
+
+**Resolution — last write wins, per exact ref pattern.** The rules that govern
+a repository are resolved from layers: the announcement's own rows, plus the
+newest record per **current** founder. For each pattern *string* — byte-exact,
+not by what it matches — the layer with the greatest `created_at` wins and
+contributes all of its rows; every older layer's rows for that pattern are
+dropped. Ties break on the greater event id, so two founders acting in the same
+second resolve identically on every relay and in every client. Patterns are
+independent: setting `refs/heads/main` never disturbs `refs/tags/*`.
+
+**Removal** is the rule token `none`:
+
+```json
+["buzz-protect", "refs/heads/main", "none"]
+```
+
+It wins the pattern like any other row and then contributes nothing, so the ref
+ends up governed by the built-in defaults exactly as if nobody had mentioned
+it — and, unlike an absent row, it is a signed act that says who removed the
+rule. A cleared pattern is **not** a guarded ref. A row carrying `none`
+alongside a real rule is not a clear: the operator said something, and the
+something wins over the nothing.
+
+**Tombstones.** A kind-5 naming a record's own coordinate
+(`30625:<author>:<owner-hex>:<repo-id>` — ingest splits on the first two
+colons) retires that founder's whole layer, through the ordinary
+addressable-deletion path. NIP-09 scopes an a-tag deletion to versions at or
+before the tombstone's `created_at`, so a record dated in the future cannot be
+tombstoned until that time arrives.
+
+**The founder filter is applied at the read, not only at the write.** The write
+gate admits only founders, but the founder set is not frozen — a `maintainers`
+entry can be dropped, a roster Owner demoted — and yesterday's founder's record
+is still on the wire. The push gate keeps only records whose author is in the
+set *now*.
+
+**Read-optional (finding 31).** A repository with no rule record resolves to
+exactly its announcement's rows: the relay's gate, `bee repos protect list`,
+`bee git check --ref`, and the desktop's Protection panel and Land adapter each
+carry a *rules signed before this kind existed* test. An unknown rule token
+inside a record is reported and skipped, never fatal to the record; unknown
+**tags** are ignored outright, deliberately unlike kind 30624 — a pack source's
+authority partly rests on its shape, a rule record's rests entirely on its
+author.
+
+**Bounds.** One indexed query per push (`kind=30625`, `d_tag`), the newest
+**64** records — a bound on distinct founders holding rules, since the kind is
+addressable per author. When it comes back empty, which is every repository
+until someone writes one, nothing further is read: no roster lookup, no founder
+resolution. A repository that does have records pays one further roster query.
+A listing that hit the bound says so.
+
+**Failure is closed** on both sides. A storage error refuses the write as an
+internal error and refuses the push: rules that could not be read are not
+evidence that a repository is ungoverned, and a roster that could not be read is
+not evidence that these records were written by strangers.
+
+**CLI.** `bee repos protect set|remove|list` now read a repository by id
+whoever announced it (a co-founder's listing used to be a `NotFound`). `set`
+and `remove` write the announcement when the caller signed it and the caller's
+own rule record otherwise, and every write says which record it landed in.
+`list` prints `governing[]`: per pattern, the rules, the record, its event id,
+the key that signed it, and what it superseded.

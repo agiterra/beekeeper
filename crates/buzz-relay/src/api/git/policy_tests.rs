@@ -530,6 +530,9 @@ pub(crate) async fn body_string(response: axum::response::Response) -> (StatusCo
 pub(crate) struct ProjectFixture {
     state: Arc<AppState>,
     community: buzz_core::CommunityId,
+    /// The community's own host, for cases that must drive `ingest_event`
+    /// (which needs a resolved tenant) rather than `insert_event`.
+    host: String,
     coordinate: String,
     creator: nostr::Keys,
     collaborator: nostr::Keys,
@@ -583,6 +586,7 @@ pub(crate) async fn project_fixture(visibility: &str) -> ProjectFixture {
     ProjectFixture {
         state,
         community,
+        host,
         coordinate,
         creator,
         collaborator,

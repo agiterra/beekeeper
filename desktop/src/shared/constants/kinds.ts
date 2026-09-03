@@ -101,6 +101,21 @@ export const KIND_SHELL_INPUT = 24312;
 // this lane's cut; 30624 is confirmed free, immediately after 30623).
 export const KIND_PROJECT_PACK_SOURCE = 30624;
 
+/**
+ * A founder-signed repository rule record — `buzz-protect` rows for a
+ * repository the signer did not announce (addressable,
+ * `d` = `<repo-owner-hex>:<repo-id>`).
+ *
+ * Lane L26 / finding 33 R2: rules used to live only on the kind:30617
+ * announcement, which only its signer can rewrite, so a co-founder's
+ * `protect set` published a second repository rather than changing the rules
+ * of the one they co-founded. The relay admits one only from a founder of the
+ * repository the `d` names, and the push gate resolves these against the
+ * announcement's own rows, last write wins per exact ref pattern.
+ * See `crates/buzz-core/src/repository_protection.rs`.
+ */
+export const KIND_REPO_PROTECTION = 30625;
+
 // NIP-MP membership ops: 9010 puts members (add or change role) on a project
 // roster, 9011 removes them; both carry the project coordinate in an `a` tag
 // and are accepted only from the project creator or a roster owner. 39010 is

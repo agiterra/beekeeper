@@ -328,7 +328,7 @@ test("L18: the Land control names both founders, and says the viewer is one", as
   await expect(founders).toContainText(CO_FOUNDER.slice(0, 8));
   await expect(founders).toContainText("You are one of them.");
   await expect(founders).toContainText(
-    "Rules are set by the founder and only that key can rewrite them.",
+    "Any founder can set or remove a rule; the announcement's own rules stay with the founder.",
   );
 
   await control.scrollIntoViewIfNeeded();

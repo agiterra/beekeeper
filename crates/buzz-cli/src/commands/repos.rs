@@ -296,36 +296,6 @@ async fn submit_repo_update_with(
     Ok(())
 }
 
-/// `bee repos protect set`'s own write response: [`submit_repo_update_with`]
-/// plus `relay_commit` (finding 32), printed beside `relay_url` the same way
-/// `bee repos protect list` and `bee sessions whoami` do. Kept as its own
-/// function rather than a third parameter on `submit_repo_update_with`: that
-/// helper also serves `cmd_update_repo` (maintainers), which the lane spec
-/// does not ask to carry this disclosure, and threading an `Option` through
-/// every caller for one of them would be a worse read than one small
-/// sibling.
-async fn submit_repo_update_with_relay_commit(
-    client: &BuzzClient,
-    builder: EventBuilder,
-    founders: String,
-    relay_commit: String,
-) -> Result<(), CliError> {
-    let event = client.sign_event(builder)?;
-    let raw = client.submit_event(event).await?;
-    let response = validate_write_response(&raw)?;
-    let mut value: serde_json::Value = serde_json::from_str(&response)
-        .map_err(|error| CliError::Other(format!("relay response is not JSON: {error}")))?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert("founders".to_string(), serde_json::Value::String(founders));
-        object.insert(
-            "relay_commit".to_string(),
-            serde_json::Value::String(relay_commit),
-        );
-    }
-    println!("{value}");
-    Ok(())
-}
-
 /// Validate a `30621:<owner-hex>:<dtag>` project coordinate and return it in
 /// the normalized form the relay stores.
 ///
@@ -616,9 +586,54 @@ async fn current_repo(client: &BuzzClient, repo_id: &str) -> Result<Event, CliEr
         })
 }
 
+/// `bee repos protect list` — the rules that govern the repository, and which
+/// record carries each one.
+///
+/// Reads by repository id whoever announced it (a co-founder's listing used to
+/// be a `NotFound`), resolves the announcement's own rows against every
+/// founder's rule record, and prints the decision per pattern: the rule, the
+/// record, and the key that signed it. A repository with no rule record prints
+/// exactly what it always did, with `"record": "announcement"` on every row.
 async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliError> {
-    let event = current_repo(client, repo_id).await?;
+    let rules = crate::commands::repos_protection::read_repository_rules(client, repo_id).await?;
+    let event = rules.announcement.clone();
     let mut listing = protection_rules_json(&event)?;
+    if let Some(object) = listing.as_object_mut() {
+        // The *governing* rules, resolved across records — as against
+        // `protections`, which stays what the announcement's own tags say so
+        // nothing that parsed it loses its shape.
+        object.insert(
+            "governing".to_string(),
+            serde_json::Value::Array(
+                rules
+                    .resolved
+                    .decisions()
+                    .iter()
+                    .map(|decision| {
+                        crate::commands::repos_protection::decision_json(&rules, decision)
+                    })
+                    .collect(),
+            ),
+        );
+        object.insert(
+            "rule_records_read".to_string(),
+            serde_json::Value::from(rules.records_read),
+        );
+        object.insert(
+            "rule_records_ignored_non_founder".to_string(),
+            serde_json::Value::from(rules.records_from_non_founders),
+        );
+        if rules.records_read >= crate::commands::repos_protection::PROTECTION_MAX_RECORDS {
+            object.insert(
+                "rule_records_bound".to_string(),
+                serde_json::Value::String(format!(
+                    "the newest {} rule records were read; an older founder's record may be off \
+                     this page",
+                    crate::commands::repos_protection::PROTECTION_MAX_RECORDS
+                )),
+            );
+        }
+    }
     // `unknown_rules` above is what THIS build does not recognise. A relay
     // predating a rule has its own unknown list and ignores the token, and a
     // person reading this listing would otherwise never learn that the two can
@@ -651,13 +666,19 @@ async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliE
         // signer can rewrite them in v1.
         object.insert(
             "founders".to_string(),
-            serde_json::Value::String(repository_founders(client, &event).await.rules_sentence()),
+            serde_json::Value::String(rules.founders.rules_sentence()),
         );
     }
     println!("{listing}");
     Ok(())
 }
 
+/// `bee repos protect set` — set a rule on a repository you founded.
+///
+/// The announcement's signer rewrites the announcement, exactly as before.
+/// Any other founder signs a rule record instead (finding 33 R2): before lane
+/// L26 this command answered them with `NotFound`, or — given the same
+/// repository id under their own key — silently published a second repository.
 async fn cmd_protect_set(
     client: &BuzzClient,
     repo_id: &str,
@@ -671,12 +692,139 @@ async fn cmd_protect_set(
         crate::RepoPushRole::Member => "member",
     });
     let tag = build_protection_tag(ref_pattern, push_role, flags)?;
-    let event = current_repo(client, repo_id).await?;
-    let founders = repository_founders(client, &event).await.rules_sentence();
+    // L24's `relay_commit` disclosure and L26's two records, together: which
+    // record the rule landed in, and which relay build was serving when it
+    // did. Fetched once, before either branch, because both print it.
     let relay_commit = crate::commands::git_setup::serving_relay_commit(client.relay_url()).await;
-    let builder =
-        build_updated_repo_announcement(&event, RepoChange::SetProtection(Box::new(tag)))?;
-    submit_repo_update_with_relay_commit(client, builder, founders, relay_commit).await
+    let rules = crate::commands::repos_protection::read_repository_rules(client, repo_id).await?;
+    let me = client.keys().public_key().to_hex();
+    guard_founder(&rules, &me)?;
+    let founders = rules.founders.rules_sentence();
+    match rules.writable_record(&me) {
+        crate::commands::repos_protection::WritableRecord::Announcement => {
+            let builder = build_updated_repo_announcement(
+                &rules.announcement,
+                RepoChange::SetProtection(Box::new(tag)),
+            )?;
+            submit_repo_update_with_record(
+                client,
+                builder,
+                founders,
+                crate::commands::repos_protection::WritableRecord::Announcement.label(),
+                relay_commit,
+            )
+            .await
+        }
+        crate::commands::repos_protection::WritableRecord::RuleRecord => {
+            let row: Vec<String> = tag.as_slice()[1..].to_vec();
+            write_rule_record(
+                client,
+                &rules,
+                ref_pattern,
+                Some(row),
+                founders,
+                relay_commit,
+            )
+            .await
+        }
+    }
+}
+
+/// Refuse early, and say who may, rather than letting the relay's 403 be the
+/// first news that this key does not found the repository.
+fn guard_founder(
+    rules: &crate::commands::repos_protection::RepositoryRules,
+    pubkey: &str,
+) -> Result<(), CliError> {
+    if rules.may_set_rules(pubkey) {
+        return Ok(());
+    }
+    Err(CliError::Usage(format!(
+        "only a founder of this repository may set its rules; {}",
+        rules.founders.rules_sentence()
+    )))
+}
+
+/// Publish the caller's own rule record, stamped past whatever currently wins
+/// the pattern so the write actually takes effect.
+async fn write_rule_record(
+    client: &BuzzClient,
+    rules: &crate::commands::repos_protection::RepositoryRules,
+    ref_pattern: &str,
+    row: Option<Vec<String>>,
+    founders: String,
+    relay_commit: String,
+) -> Result<(), CliError> {
+    let owner_hex = rules.announcement.pubkey.to_hex();
+    let repo_id = repo_id_from_event(&rules.announcement)?.to_string();
+    let current =
+        crate::commands::repos_protection::fetch_own_rule_record(client, &owner_hex, &repo_id)
+            .await?;
+    let rows = crate::commands::repos_protection::next_rule_record_rows(
+        current.as_ref(),
+        ref_pattern,
+        row,
+    );
+    let head = rules
+        .winning_created_at(ref_pattern)
+        .max(current.map(|event| event.created_at.as_secs()).unwrap_or(0));
+    let created_at = next_replaceable_created_at(head, Timestamp::now().as_secs())
+        .ok_or_else(|| CliError::Other("rule record timestamp cannot be advanced".into()))?;
+    let raw = crate::commands::repos_protection::publish_rule_record(
+        client, &owner_hex, &repo_id, &rows, created_at,
+    )
+    .await?;
+    let response = validate_write_response(&raw)?;
+    print_with_record(
+        &response,
+        founders,
+        crate::commands::repos_protection::WritableRecord::RuleRecord.label(),
+        relay_commit,
+    )
+}
+
+/// Print a write response with the founder sentence, the record it landed
+/// in, and the relay build that accepted it. Which record it was is not
+/// decoration: "your rule is live" and "your rule is live in a second record
+/// the relay resolves against the announcement" are different facts — and
+/// `relay_commit` (finding 32) says which build did the resolving, `unknown`
+/// included.
+fn print_with_record(
+    response: &str,
+    founders: String,
+    record: &'static str,
+    relay_commit: String,
+) -> Result<(), CliError> {
+    let mut value: serde_json::Value = serde_json::from_str(response)
+        .map_err(|error| CliError::Other(format!("relay response is not JSON: {error}")))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("founders".to_string(), serde_json::Value::String(founders));
+        object.insert(
+            "record".to_string(),
+            serde_json::Value::String(record.to_string()),
+        );
+        object.insert(
+            "relay_commit".to_string(),
+            serde_json::Value::String(relay_commit),
+        );
+    }
+    println!("{value}");
+    Ok(())
+}
+
+/// `submit_repo_update_with`, plus the record the write landed in and the
+/// relay build that took it.
+async fn submit_repo_update_with_record(
+    client: &BuzzClient,
+    builder: EventBuilder,
+    founders: String,
+    record: &'static str,
+    relay_commit: String,
+) -> Result<(), CliError> {
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    let response = validate_write_response(&raw)?;
+    print_with_record(&response, founders, record, relay_commit)
 }
 
 /// `bee repos update` — change who co-founds one of your repositories.
@@ -722,6 +870,13 @@ pub async fn cmd_update_repo(
     submit_repo_update_with(client, builder, Some(founders.rules_sentence())).await
 }
 
+/// `bee repos protect remove` — take a rule off a ref.
+///
+/// The signer drops the tag from the announcement. Any other founder signs a
+/// rule record carrying the `none` token for that pattern, which wins the
+/// pattern and leaves the ref governed by the built-in defaults. Dropping
+/// their own row instead would fall back to the announcement's rule, which is
+/// the opposite of what "remove" was asked to do.
 async fn cmd_protect_remove(
     client: &BuzzClient,
     repo_id: &str,
@@ -729,21 +884,42 @@ async fn cmd_protect_remove(
 ) -> Result<(), CliError> {
     RefPattern::parse(ref_pattern)
         .map_err(|error| CliError::Usage(format!("invalid ref pattern: {error}")))?;
-    let event = current_repo(client, repo_id).await?;
-    if !event
-        .tags
-        .iter()
-        .any(|tag| protection_pattern(tag) == Some(ref_pattern))
-    {
+    let rules = crate::commands::repos_protection::read_repository_rules(client, repo_id).await?;
+    let me = client.keys().public_key().to_hex();
+    guard_founder(&rules, &me)?;
+    let governed = rules
+        .resolved
+        .decision_for(ref_pattern)
+        .is_some_and(|decision| !decision.cleared);
+    if !governed {
         return Err(CliError::NotFound(format!(
             "repository {repo_id:?} has no protection rule for {ref_pattern:?}"
         )));
     }
-    let builder = build_updated_repo_announcement(
-        &event,
-        RepoChange::RemoveProtection(ref_pattern.to_string()),
-    )?;
-    submit_repo_update(client, builder).await
+    let founders = rules.founders.rules_sentence();
+    // Same disclosure `protect set` carries: removing a rule is as much a
+    // signed act as setting one, and which relay build resolved it is the
+    // same question (finding 32).
+    let relay_commit = crate::commands::git_setup::serving_relay_commit(client.relay_url()).await;
+    match rules.writable_record(&me) {
+        crate::commands::repos_protection::WritableRecord::Announcement => {
+            let builder = build_updated_repo_announcement(
+                &rules.announcement,
+                RepoChange::RemoveProtection(ref_pattern.to_string()),
+            )?;
+            submit_repo_update_with_record(
+                client,
+                builder,
+                founders,
+                crate::commands::repos_protection::WritableRecord::Announcement.label(),
+                relay_commit,
+            )
+            .await
+        }
+        crate::commands::repos_protection::WritableRecord::RuleRecord => {
+            write_rule_record(client, &rules, ref_pattern, None, founders, relay_commit).await
+        }
+    }
 }
 
 /// Give a repository an ACL — the fix path for issue #3527's permanently-404

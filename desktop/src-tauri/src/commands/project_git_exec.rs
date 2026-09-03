@@ -70,6 +70,18 @@ pub(crate) struct GitAuthConfig {
     credential_helper: Option<std::path::PathBuf>,
     nsec: String,
     allow_file_transport: bool,
+    /// `user.name` / `user.email` for invocations that write a commit.
+    ///
+    /// Every invocation here runs with `GIT_CONFIG_GLOBAL=/dev/null` and
+    /// `GIT_CONFIG_NOSYSTEM=1`, so git has no identity to fall back on except
+    /// its hostname auto-detection — which fails outright on a host whose
+    /// name has no dot ("unable to auto-detect email address"), and otherwise
+    /// authors the commit as `user@hostname`. Callers that commit say who is
+    /// committing; `None` (every production caller today) leaves git's own
+    /// behaviour untouched. **Finding 64**: the packs-seed tests set this
+    /// rather than depending on whatever identity the machine running them
+    /// happens to have.
+    commit_identity: Option<(String, String)>,
 }
 
 fn read_pipe_lossy(pipe: Option<impl Read>) -> String {
@@ -186,6 +198,10 @@ fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credent
             .to_string(),
         ),
     ];
+    if let Some((name, email)) = &auth.commit_identity {
+        entries.push(("user.name", name.clone()));
+        entries.push(("user.email", email.clone()));
+    }
     if needs_credentials {
         let Some(cred_helper) = &auth.credential_helper else {
             return apply_git_config(command, &entries);
@@ -232,6 +248,7 @@ pub(crate) fn build_git_clone_auth_config(
             credential_helper: None,
             nsec: String::new(),
             allow_file_transport: false,
+            commit_identity: None,
         });
     }
     build_git_auth_config(state)
@@ -249,6 +266,7 @@ pub(crate) fn build_git_auth_config_for_keys(keys: &Keys) -> Result<GitAuthConfi
         credential_helper,
         nsec,
         allow_file_transport: false,
+        commit_identity: None,
     })
 }
 
@@ -265,6 +283,7 @@ pub(crate) fn build_local_git_auth_config() -> Result<GitAuthConfig, String> {
         credential_helper: None,
         nsec: String::new(),
         allow_file_transport: false,
+        commit_identity: None,
     })
 }
 
@@ -272,6 +291,14 @@ pub(crate) fn build_local_git_auth_config() -> Result<GitAuthConfig, String> {
 pub(crate) fn build_test_git_auth_config() -> Result<GitAuthConfig, String> {
     let mut auth = build_git_auth_config_for_keys(&Keys::generate())?;
     auth.allow_file_transport = true;
+    // Finding 64: a test that commits names its own author. Without this the
+    // packs-seed tests fail on any machine whose hostname git cannot turn
+    // into an email, and pass elsewhere by authoring commits as whoever
+    // happens to be logged in — a test whose result depends on the operator.
+    auth.commit_identity = Some((
+        "Beekeeper Test".to_string(),
+        "test@example.invalid".to_string(),
+    ));
     Ok(auth)
 }
 

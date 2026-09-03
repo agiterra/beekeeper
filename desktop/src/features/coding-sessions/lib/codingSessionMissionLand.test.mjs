@@ -176,9 +176,16 @@ test("L18: every state carries the founder line, and the viewer's standing", () 
         ? /You are one of them\./
         : /You are not one of them,/,
     );
+    // Lane L26: any founder may set or remove a rule with a signed rule
+    // record; the announcement's own rows still belong to its signer. The
+    // retired clause is asserted absent so it cannot drift back.
     assert.match(
       model.foundersSentence,
-      /Rules are set by the founder and only that key can rewrite them\./,
+      /Any founder can set or remove a rule; the announcement's own rules stay with the founder\./,
+    );
+    assert.ok(
+      !model.foundersSentence.includes("only that key can rewrite"),
+      `the retired signer-only clause must not come back: ${model.foundersSentence}`,
     );
     assert.ok(
       !model.foundersSentence.includes("was not read here"),

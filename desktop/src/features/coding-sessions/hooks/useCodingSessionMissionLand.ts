@@ -1,10 +1,12 @@
 import * as React from "react";
 
 import { relayClient } from "@/shared/api/relayClient";
+import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_PROJECT,
   KIND_PROJECT_MEMBERS,
   KIND_REPO_ANNOUNCEMENT,
+  KIND_REPO_PROTECTION,
 } from "@/shared/constants/kinds";
 import type { CodingSessionMissionLandEvidenceInput } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import {
@@ -21,6 +23,12 @@ export type CodingSessionMissionLandRepository = {
   ownerPubkey: string;
   /** That event's whole tag list, `buzz-protect` rows included. */
   protectionTags: readonly (readonly string[])[];
+  /**
+   * The repository's kind:30625 rule records, as this view read them (lane
+   * L26). Read-optional: `[]` is the ordinary case and means the announcement
+   * carries the whole of the rules, exactly as before that kind existed.
+   */
+  ruleRecords: readonly RelayEvent[];
   /**
    * Pubkeys the repository's project roster grants Owner, or null when the
    * roster could not be read (no `project` back-reference is *not* that case —
@@ -131,9 +139,24 @@ export async function readCodingSessionRepository(
       projectOwnerPubkeys = null;
     }
   }
+  // Any founder may set a rule with a record of their own, so the
+  // announcement's tags are no longer the whole of the rules. Read-optional:
+  // a failed read is an empty list, which predicts the pre-L26 answer rather
+  // than blocking the panel — the relay's own gate is what decides.
+  let ruleRecords: readonly RelayEvent[] = [];
+  try {
+    ruleRecords = await fetchEvents({
+      kinds: [KIND_REPO_PROTECTION],
+      "#d": [`${newest.pubkey.toLowerCase()}:${address.identifier}`],
+      limit: 64,
+    });
+  } catch {
+    ruleRecords = [];
+  }
   return {
     ownerPubkey: newest.pubkey.toLowerCase(),
     protectionTags: newest.tags.map((tag) => [...tag]),
+    ruleRecords,
     projectOwnerPubkeys,
   };
 }
@@ -380,6 +403,7 @@ export function useCodingSessionMissionLand(input: {
           projectOwnerPubkeys: repository?.projectOwnerPubkeys ?? null,
           pusherPubkey: current.viewerPubkey as string,
           protectionTags: repository?.protectionTags ?? null,
+          ruleRecords: repository?.ruleRecords ?? null,
           includedEventIds: current.landEvidence?.includedEventIds ?? [],
           activeSeats: current.landEvidence?.activeSeats ?? [],
           observedGates: current.observedGates,

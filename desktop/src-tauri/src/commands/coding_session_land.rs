@@ -45,8 +45,11 @@ use buzz_core_pkg::coding_session_verdict_admission::{
     VerdictAdmissionEvidence, VerdictAdmissionGatePolicy, VerdictAdmissionQuery,
     VerdictAdmissionRecord, VerdictAdmissionRefusal,
 };
-use buzz_core_pkg::git_perms::{parse_protection_tags, EffectiveRules};
+use buzz_core_pkg::git_perms::EffectiveRules;
 use buzz_core_pkg::repository_founders::RepositoryFounders;
+use buzz_core_pkg::repository_protection::{
+    decode_repository_protection, resolve_protection_layers, ProtectionLayer,
+};
 
 /// Closed wire-schema identifier accepted by this boundary.
 pub const CODING_SESSION_LAND_REQUEST_SCHEMA: &str = "buzz-coding-session-land-request/v1";
@@ -77,6 +80,17 @@ pub struct CodingSessionLandRequest {
     /// Null is **not** "no rule": it is "no record reached this view", and the
     /// two produce different answers.
     pub protection_tags: Option<Vec<Vec<String>>>,
+    /// Signed kind:30625 rule records for this repository, as this view read
+    /// them, or null when it read none.
+    ///
+    /// Lane L26: any founder may set or remove a rule with a record of their
+    /// own, so the announcement's tags are no longer the whole of the rules.
+    /// **Read-optional**: absent or empty means "no record reached this view",
+    /// and a repository whose rules were signed before that kind existed is
+    /// governed by `protection_tags` exactly as it always was. A record whose
+    /// author is not in the founder set is ignored here, as it is at the gate.
+    #[serde(default)]
+    pub rule_records: Option<Vec<serde_json::Value>>,
     /// Pubkeys the repository's project roster grants Owner, or null when
     /// this view could not read the roster.
     ///
@@ -294,11 +308,44 @@ pub const NO_REPOSITORY_FOUNDERS_NOTE: &str =
 ///
 /// A tag list core refuses outright yields no rules and therefore no flag,
 /// which is the same answer the relay's gate gives it.
-fn ref_requires_verdict(tags: &[Vec<String>], ref_name: &str) -> bool {
-    let Ok(parsed) = parse_protection_tags(tags) else {
+fn ref_requires_verdict(
+    tags: &[Vec<String>],
+    rule_records: Option<&Vec<serde_json::Value>>,
+    founders: &RepositoryFounders,
+    ref_name: &str,
+) -> bool {
+    let Ok(announcement) = ProtectionLayer::from_announcement_tags(0, String::new(), tags) else {
         return false;
     };
-    EffectiveRules::for_ref(ref_name, &parsed.rules).require_verdict
+    let mut layers = vec![announcement];
+    for value in rule_records.map(Vec::as_slice).unwrap_or_default() {
+        // Verified, not merely decoded: a rule read off an unverified event
+        // would be a claim about who governs the repository, made by nobody.
+        let Ok(event) = serde_json::from_value::<Event>(value.clone()) else {
+            continue;
+        };
+        if event.verify().is_err() {
+            continue;
+        }
+        let Ok(record) = decode_repository_protection(&event) else {
+            continue;
+        };
+        if !founders.contains(record.author()) {
+            continue;
+        }
+        // The announcement layer is stamped 0 above, so any record wins its
+        // patterns. That is the safe direction here and only here: this
+        // adapter predicts, and the relay — which holds both `created_at`s —
+        // decides. Predicting "governed" for a ref the relay leaves ungoverned
+        // costs a founder one unnecessary verdict; the reverse costs them a
+        // refused push they were told would succeed.
+        layers.push(ProtectionLayer::from_record(
+            &record,
+            record.created_at().max(1),
+        ));
+    }
+    let resolved = resolve_protection_layers(&layers);
+    EffectiveRules::for_ref(ref_name, resolved.rules()).require_verdict
 }
 
 /// Decode the caller's canonical events, in the fold's own included order.
@@ -389,14 +436,13 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
     // without an owner is now a *governed* repository bound to no channel,
     // which is the case §1j's fourth string was written for.
     let repository_known = request.protection_tags.is_some();
-    let rule_governs = request
-        .protection_tags
-        .as_ref()
-        .is_some_and(|tags| ref_requires_verdict(tags, &request.ref_name));
     // The founder set, composed by `buzz-core` from what this view read: the
     // signer and `maintainers` off the announcement's own tags, plus the
     // roster owners the caller resolved. A view with no announcement has no
     // founders to name, and says so rather than naming the viewer.
+    //
+    // Resolved before the rule check, because since lane L26 the rules
+    // themselves are filtered by it: only a founder's rule record governs.
     let founders = match (&request.repo_owner_pubkey, &request.protection_tags) {
         (Some(signer), Some(tags)) => {
             let founders = RepositoryFounders::from_parts(signer, tags);
@@ -407,6 +453,14 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         }
         _ => RepositoryFounders::from_parts("", &[]),
     };
+    let rule_governs = request.protection_tags.as_ref().is_some_and(|tags| {
+        ref_requires_verdict(
+            tags,
+            request.rule_records.as_ref(),
+            &founders,
+            &request.ref_name,
+        )
+    });
     // With no announcement there is no founder set to name, and the empty
     // set's own sentence would read as a claim about a repository this view
     // never saw. Say what actually happened instead.

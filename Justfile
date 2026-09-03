@@ -468,10 +468,14 @@ test: test-genesis test-git-push-gate
 # database and the same `trap cleanup EXIT`). Either works; this way `just
 # test-git-push-gate` names one thing and can be run alone, and the recipe's
 # own filter is the whole set — the push-gate cases *and* the
-# verdict-admission ones, 41 tests as of lane L27 (L21 added arm (A)'s two, L22
-# arm (B)'s ten in a sibling module, L27 arm (C)-plus-rows' six in another). A
+# verdict-admission ones, 50 tests as of lane L26 (L21 added arm (A)'s two,
+# L22 arm (B)'s ten in a sibling module, L27 arm (C)-plus-rows' six in another,
+# and L26 the founder-signed rule record's nine: eight push-gate cases under
+# `policy::tests::gate::protection`, deliberately a *child* of `gate` so the
+# existing filter reaches them, plus the write gate's one case in
+# `handlers::repo_protection::tests`, which needed its own filter arm). A
 # filter of `api::git::policy` alone reaches only 10 of them, and one naming
-# only `verdict_admission::tests` misses both sibling modules entirely — which
+# only `verdict_admission::tests` misses every sibling module entirely — which
 # is exactly how arm (B)'s ten sat unexecuted for one run. **Every new sibling
 # module needs its own substring here**; that is the whole failure mode.
 test-git-push-gate: _ensure-services
@@ -491,6 +495,7 @@ test-git-push-gate: _ensure-services
         api::git::policy::tests::gate api::git::verdict_admission::tests \
         api::git::verdict_admission::observed_tests \
         api::git::verdict_admission::verified_tests \
+        handlers::repo_protection::tests \
         --ignored --test-threads=1
 
 # Genesis uniqueness proofs (kind 44226) and authority-chain proofs (kind

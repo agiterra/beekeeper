@@ -699,3 +699,10 @@ async fn push_gate_lets_a_seat_rewrite_and_delete_its_own_lane_branch() {
         "an explicitly protected ref is guarded wherever it is (body: {body})"
     );
 }
+
+/// The founder-signed rule-record cases (kind 30625, lane L26). A child of
+/// this module so the recipe's `api::git::policy::tests::gate` filter reaches
+/// them — a sibling of `gate` would have sat unexecuted, which is exactly how
+/// arm (B)'s ten did for one run.
+#[path = "policy_protection_tests.rs"]
+mod protection;

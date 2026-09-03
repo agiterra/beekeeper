@@ -921,6 +921,27 @@ pub const KIND_SHELL_SESSION: u32 = 30623;
 /// [`crate::project_pack_source`].
 pub const KIND_PROJECT_PACK_SOURCE: u32 = 30624;
 
+/// A founder-signed repository rule record — `buzz-protect` rows for a
+/// repository the signer does not own (parameterized replaceable,
+/// `d` = `<repo-owner-hex>:<repo-id>`).
+///
+/// Finding 33's residual R2: rules live on the kind:30617 announcement, which
+/// only its signer can rewrite, so a co-founder's `bee repos protect set`
+/// published a second repository instead of changing the rules of the one
+/// they co-founded. This kind carries the same `["buzz-protect", …]` rows at
+/// an address keyed to the **author**, and the relay admits one only from a
+/// founder of the repository the `d` tag names
+/// ([`crate::repository_founders`]).
+///
+/// Content is `{"schema":"buzz-repo-protection/v1"}`. The push gate resolves
+/// the announcement's rows and the newest record per founder with last-write-
+/// wins per exact ref pattern; removal is the `none` rule token, and a kind-5
+/// tombstone by a record's author retires that founder's rows. A repository
+/// with no record of this kind is governed by its announcement exactly as
+/// before. See `docs/nips/NIP-GS.md` § "A founder-signed rule record" and
+/// [`crate::repository_protection`].
+pub const KIND_GIT_REPO_PROTECTION: u32 = 30625;
+
 /// Tag carrying a project's access level (Buzz container extension).
 ///
 /// `["buzz-access", "private"]` restricts the project container to its author
@@ -1663,6 +1684,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 3062
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_SHELL_SESSION)); // 30623 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT_PACK_SOURCE)); // 30624 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_GIT_REPO_PROTECTION)); // 30625 ∈ 30000–39999
 const _: () = assert!(is_ephemeral(KIND_SHELL_WATCH)); // 24310 ∈ 20000–29999, never stored
 const _: () = assert!(is_ephemeral(KIND_SHELL_FRAME)); // 24311 ∈ 20000–29999, never stored
 const _: () = assert!(!is_ephemeral(KIND_SHELL_SESSION));

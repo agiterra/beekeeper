@@ -48,6 +48,21 @@ pub const GIT_NO_CHANNEL_BINDING_TOKEN: &str = "no_channel_binding";
 pub const GIT_NO_CHANNEL_BINDING_BODY: &str =
     "no_channel_binding: repository has no channel binding";
 
+/// The rule token that says a ref pattern carries **no** rules.
+///
+/// A `buzz-protect` row is the only way to name a pattern, and naming one is
+/// how a founder's rule record ([`crate::repository_protection`]) takes a
+/// pattern over from an older record. So "remove the protection someone else
+/// set" needs a row that means *nothing applies here* —
+/// `["buzz-protect", "refs/heads/main", "none"]` — rather than the absence of
+/// a row, which is indistinguishable from never having had an opinion.
+///
+/// A cleared pattern is **not** a guarded ref: the operator said explicitly
+/// that it carries no rules, so [`EffectiveRules::for_ref`] reports no
+/// explicit match for it and the built-in defaults apply, exactly as they
+/// would on a pattern nobody ever mentioned.
+pub const PROTECTION_RULE_CLEAR: &str = "none";
+
 /// Maximum number of `buzz-protect` tags per repo.
 pub const MAX_PROTECTION_RULES: usize = 50;
 /// Maximum character length of a ref pattern.
@@ -300,6 +315,15 @@ pub struct ProtectionRule {
     /// [`ParsedProtection::unknown_rules`] and **ignores it**, so the rule is
     /// only ever as strong as the relay serving the repository.
     pub require_verdict: bool,
+    /// Whether this row is the [`PROTECTION_RULE_CLEAR`] token — "this
+    /// pattern carries no rules".
+    ///
+    /// Meaningful only through [`crate::repository_protection`]'s layering,
+    /// which is what a clear supersedes *something* in. Resolution drops
+    /// cleared rows before anything evaluates them, so a caller reading a
+    /// resolved rule list never sees one; the field exists so the resolver can
+    /// tell "cleared" from "no opinion".
+    pub cleared: bool,
 }
 
 /// Errors from parsing a `buzz-protect` tag.
@@ -357,6 +381,7 @@ pub fn parse_protection_tag_with_warnings(
     let mut no_delete = false;
     let mut require_patch = false;
     let mut require_verdict = false;
+    let mut cleared = false;
     let mut unknown_rules = Vec::new();
 
     for &rule_str in &values[1..] {
@@ -387,6 +412,7 @@ pub fn parse_protection_tag_with_warnings(
                 "no-delete" => no_delete = true,
                 "require-patch" => require_patch = true,
                 "require-verdict" => require_verdict = true,
+                PROTECTION_RULE_CLEAR => cleared = true,
                 // Forward-compatibility: unknown rules are skipped but reported.
                 other => unknown_rules.push(other.to_string()),
             }
@@ -401,6 +427,14 @@ pub fn parse_protection_tag_with_warnings(
             no_delete,
             require_patch,
             require_verdict,
+            // A row that also carries a real rule is not a clear: the operator
+            // said something, and the something wins over the nothing.
+            cleared: cleared
+                && push_role.is_none()
+                && !no_force_push
+                && !no_delete
+                && !require_patch
+                && !require_verdict,
         },
         unknown_rules,
     ))
@@ -548,6 +582,16 @@ impl EffectiveRules {
 
         for rule in rules {
             if !rule.pattern.matches(ref_name) {
+                continue;
+            }
+            // A cleared row is the operator saying this pattern carries no
+            // rules, so it must not count as an explicit match either —
+            // otherwise "removed the protection" would silently leave the ref
+            // guarded (`ref_is_guarded` in the relay's push policy reads
+            // exactly this flag). Resolution normally drops these before we
+            // get here; an unresolved list is handled the same way so the two
+            // paths cannot disagree.
+            if rule.cleared {
                 continue;
             }
             has_explicit_match = true;

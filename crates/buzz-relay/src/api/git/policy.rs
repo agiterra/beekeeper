@@ -60,8 +60,8 @@ use uuid::Uuid;
 
 use buzz_core::channel::MemberRole;
 use buzz_core::git_perms::{
-    evaluate_ref_update, git_role_for_project_role, max_git_role, parse_protection_tags, Denial,
-    EffectiveRules, ProtectionRule, RefUpdate, UpdateKind, GIT_NO_CHANNEL_BINDING_BODY,
+    evaluate_ref_update, git_role_for_project_role, max_git_role, Denial, EffectiveRules,
+    ProtectionRule, RefUpdate, UpdateKind, GIT_NO_CHANNEL_BINDING_BODY,
 };
 use buzz_db::EventQuery;
 
@@ -452,28 +452,39 @@ async fn decide_push(
         }
     };
 
-    // 5. Parse protection rules from kind:30617 tags.
-    let tags: Vec<Vec<String>> = repo_event
-        .event
-        .tags
-        .iter()
-        .map(|t| t.as_slice().to_vec())
-        .collect();
-
-    let rules = match parse_protection_tags(&tags) {
-        Ok(parsed) => {
-            // Log unknown rules as warnings (helps catch typos).
-            for unknown in &parsed.unknown_rules {
-                warn!(repo = %req.repo_id, rule = %unknown, "unknown buzz-protect rule (skipped)");
-            }
-            parsed.rules
-        }
-        Err(e) => {
+    // 5. Resolve protection rules: the announcement's own `buzz-protect`
+    // tags, plus the newest kind:30625 rule record per **current** founder,
+    // last write wins per exact ref pattern (lane L26, finding 33 R2). A
+    // repository with no rule record — every repository whose rules were
+    // signed before that kind existed — resolves to exactly its
+    // announcement's rows and pays one indexed `d_tag` query for the fact.
+    let protection = match crate::api::git::protection_layers::resolve_repository_protection(
+        state,
+        community,
+        &repo_event.event,
+        &req.repo_id,
+    )
+    .await
+    {
+        Ok(protection) => protection,
+        Err(crate::api::git::protection_layers::ProtectionReadError::MalformedAnnouncement(e)) => {
             warn!(repo = %req.repo_id, error = %e, "hook callback: malformed protection tags");
             // Fail-closed: malformed rules = deny.
             return PolicyOutcome::Refused("malformed protection rules");
         }
+        Err(crate::api::git::protection_layers::ProtectionReadError::Unavailable) => {
+            // Fail closed: rules we could not read are not evidence that the
+            // repository is ungoverned.
+            return PolicyOutcome::Refused("internal error");
+        }
     };
+    // Log unknown rules as warnings (helps catch typos) — from every layer,
+    // because a token only one founder's record carries is exactly the typo
+    // nothing else would report.
+    for unknown in protection.resolved.unknown_rules() {
+        warn!(repo = %req.repo_id, rule = %unknown, "unknown buzz-protect rule (skipped)");
+    }
+    let rules = protection.rules().to_vec();
 
     // 6. Resolve channel binding via the shared resolver (same first-tag,
     // fail-closed semantics as the read gate) and check archived state
@@ -765,6 +776,11 @@ async fn decide_push(
     // push of ten refs must not read the roster ten times.
     let founders = if gated.is_empty() {
         None
+    } else if let Some(founders) = protection.founders {
+        // Already resolved: this repository carries at least one rule record,
+        // so reading its rules resolved the founder set on the way. Resolving
+        // it twice would read the roster twice for one push.
+        Some(founders)
     } else {
         match crate::api::git::verdict_admission::resolve_repository_founders(
             state,

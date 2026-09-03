@@ -238,6 +238,17 @@ export async function invokeCodingSessionLand(input: {
   pusherPubkey: string;
   protectionTags: readonly (readonly string[])[] | null;
   /**
+   * The repository's signed kind:30625 rule records, or null when this view
+   * read none (lane L26).
+   *
+   * Read-optional: null and `[]` both mean "the announcement's own rows are
+   * the whole of the rules", which is exactly the answer for a repository
+   * whose protection was signed before that kind existed. A record whose
+   * author is not a founder is ignored by the native adapter, as it is at the
+   * relay's own gate.
+   */
+  ruleRecords: readonly unknown[] | null;
+  /**
    * The mission's active seats, with their roles — arm (C) asks whether a
    * `verifier` seat cleared the report, and an empty list is "not read", not
    * "there are none". The native answer's `seatsRead` says which.
@@ -290,6 +301,7 @@ export async function invokeCodingSessionLand(input: {
           input.protectionTags === null
             ? null
             : input.protectionTags.map((tag) => [...tag]),
+        ruleRecords: input.ruleRecords === null ? null : [...input.ruleRecords],
         activeSeats: input.activeSeats.map((seat) => ({
           actorPubkey: seat.actorPubkey,
           role: seat.role,
@@ -433,10 +445,14 @@ function foundersSentence(
   const you = result.viewerIsFounder
     ? "You are one of them."
     : "You are not one of them, so this repository's rules do not answer to your key.";
+  // Any founder may set or remove a rule with a signed rule record (kind
+  // 30625, lane L26); the announcement's own rows still belong to its signer.
+  // This line used to say the signer alone could rewrite the rules, which was
+  // true when it was written and is false now.
   const rules =
     result.rulesSigner === null
       ? ""
-      : ` Rules are set by ${resolveWho(result.rulesSigner)} and only that key can rewrite them.`;
+      : ` Any founder can set or remove a rule; the announcement's own rules stay with ${resolveWho(result.rulesSigner)}.`;
   // A roster this view could not read means the set may be missing a founder,
   // which is finding 33's own shape. Never silent.
   const roster = result.rosterRead

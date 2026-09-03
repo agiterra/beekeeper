@@ -158,10 +158,13 @@ fn an_empty_roster_read_is_not_an_unread_roster() {
     );
 }
 
-/// The sentence names the signer as the only key that may rewrite the rules —
-/// the v1 residual, said out loud rather than discovered.
+/// The sentence names **any founder** as able to set a rule (lane L26's rule
+/// record), and still names the signer as the one key that owns the
+/// announcement's own rows. It used to say the signer alone governed the
+/// rules; that is now false, and this test is what keeps it from drifting
+/// back.
 #[test]
-fn the_rules_sentence_says_rules_are_signer_only() {
+fn the_rules_sentence_says_any_founder_may_set_a_rule() {
     let keys = Keys::generate();
     let brian = hex(0x3d);
     let sentence = RepositoryFounders::from_announcement(&announcement(
@@ -171,11 +174,19 @@ fn the_rules_sentence_says_rules_are_signer_only() {
     .with_roster_roles(Vec::new())
     .rules_sentence();
     assert!(
+        sentence.contains("rules are set by any founder, as a signed rule record"),
+        "sentence: {sentence}"
+    );
+    assert!(
         sentence.contains(&format!(
-            "rules are set by the announcement's signer {} and only that key can rewrite them",
+            "the announcement's own rows stay with its signer {}",
             keys.public_key().to_hex()
         )),
         "sentence: {sentence}"
+    );
+    assert!(
+        !sentence.contains("only that key can rewrite them"),
+        "the retired clause must not come back: {sentence}"
     );
     assert!(sentence.contains(&brian), "sentence: {sentence}");
     assert!(sentence.contains("(2)"), "sentence: {sentence}");

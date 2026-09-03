@@ -479,6 +479,11 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // Owner — is a separate, closed gate at ingest
         // (`pack_source_write_admitted`); this scope alone admits nothing.
         buzz_core::kind::KIND_PROJECT_PACK_SOURCE => Ok(Scope::ReposWrite),
+        // A repository rule record is repository metadata, so it rides the
+        // same scope as announcing one. Authority — a founder of the
+        // repository its `d` names — is a separate, closed gate at ingest
+        // (`repo_protection_write_admitted`); this scope alone admits nothing.
+        buzz_core::kind::KIND_GIT_REPO_PROTECTION => Ok(Scope::ReposWrite),
         // NIP-ST: a shared-terminal session announce is ordinary member
         // content, not repository metadata.
         buzz_core::kind::KIND_SHELL_SESSION => Ok(Scope::MessagesWrite),
@@ -671,6 +676,11 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // the d_tag is the project coordinate. It belongs to a project, not
             // to a room, so a stray `h` tag must never channel-scope it.
             | buzz_core::kind::KIND_PROJECT_PACK_SOURCE
+            // A repository rule record is addressed by (pubkey, kind, d_tag)
+            // where the d_tag names a repository. It belongs to that
+            // repository, not to a room, so a stray `h` tag must never
+            // channel-scope it — the push gate reads it globally.
+            | buzz_core::kind::KIND_GIT_REPO_PROTECTION
             // Community moderation commands (9040–9044): community-global
             // direct commands, same model as the NIP-43 9030-series. A stray
             // `h` tag must never channel-scope them (pinned contract —
@@ -4116,6 +4126,37 @@ async fn ingest_event_inner(
             Err(()) => {
                 return Err(IngestError::Internal(
                     "error: pack source authority lookup failed".into(),
+                ));
+            }
+        }
+    }
+
+    // Lane L26 (kind 30625): a founder-signed repository rule record. Shape
+    // first, then a **closed** authority gate — these rows decide who may push
+    // a governed ref, so an unrecognized author is refused rather than
+    // tolerated. See `handlers/repo_protection.rs`.
+    if kind_u32 == buzz_core::kind::KIND_GIT_REPO_PROTECTION {
+        buzz_core::repository_protection::decode_repository_protection(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        // Raised as an *auth* failure for the same reason the pack-source gate
+        // is: a refused repository write must surface as HTTP 403 (→ CLI exit
+        // 3), and `bridge.rs` maps every `Rejected` to 400.
+        match super::repo_protection::repo_protection_write_admitted(
+            state,
+            tenant.community(),
+            &event,
+        )
+        .await
+        {
+            Ok(Ok(_admission)) => {}
+            Ok(Err(refusal)) => {
+                return Err(IngestError::AuthFailed(refusal.sentence()));
+            }
+            // Fail closed: a storage blip must not narrow the founder set and
+            // hand one key silent control of the repository's rules.
+            Err(()) => {
+                return Err(IngestError::Internal(
+                    "error: repository protection authority lookup failed".into(),
                 ));
             }
         }

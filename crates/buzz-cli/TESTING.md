@@ -2734,3 +2734,55 @@ refused by the decoder.
 even when the source pinned a ref, and `role` is the **seat's** role. A seat
 metadata event signed before this key existed still decodes; absence reads as
 *no pack staged*.
+
+## Repository rules from a co-founder (`bee repos protect`, kind 30625 — lane L26)
+
+Finding 33's residual R2. `buzz-protect` rows live on the kind:30617
+announcement, which only its signer can republish, so before this lane a
+co-founder's `protect set` either answered `NotFound` (the read was scoped to
+`authors: [me]`) or, given the same repository id under their own key,
+silently published a second repository. Now any **founder** may set or remove
+a rule with a record of their own.
+
+Two identities are needed: the announcement's signer, and a co-founder (a
+NIP-34 `maintainers` entry, or an Owner on the roster of the project the
+repository back-references).
+
+```bash
+# As the signer — unchanged: the announcement is rewritten in place.
+bee repos protect set --id <repo> --ref refs/heads/main --require-verdict
+# → {"event_id":…,"accepted":true,…,"record":"announcement","founders":"rules are set by any founder, …"}
+
+# As a co-founder — a rule record, not a second repository.
+bee repos protect set --id <repo> --ref refs/heads/main --require-verdict
+# → {"event_id":…,"accepted":true,…,"record":"rule-record",…}
+
+# Either identity: who governs what, and which record says so.
+bee repos protect list --id <repo>
+```
+
+`protect list` gains `governing[]` beside the announcement's own
+`protections[]`. Each entry names the exact ref pattern, the rules in force,
+whether a founder **cleared** it, the record (`announcement` or
+`rule-record`), that record's event id, the key that signed it, and what it
+superseded. Also `rule_records_read`, `rule_records_ignored_non_founder`
+(records by a key that no longer founds the repository — ignored here exactly
+as at the relay's gate), and, when the 64-record page was full,
+`rule_records_bound`.
+
+**What to check by hand:**
+
+1. A **stranger's** `protect set` is refused before it reaches the relay, with
+   the founder sentence; if you bypass the CLI, the relay refuses it 403 with
+   `restricted: … founder of that repository …` (CLI exit 3).
+2. `protect remove` as a co-founder writes `["buzz-protect", "<ref>", "none"]`
+   — the clear token — not an absent row. An absent row would fall back to the
+   announcement's rule, which is the opposite of "remove".
+3. `bee git check --ref refs/heads/main` must **not** print `Ungoverned` for a
+   ref a co-founder's record governs. That prediction reads the same layers the
+   relay's gate does; reading the announcement alone was the lying case.
+4. Read-optional: on a repository with no rule record, `protect list` prints
+   exactly what it printed before this lane, every `governing[]` entry labelled
+   `announcement`, and `rule_records_read: 0`.
+5. A kind-5 tombstone naming a record's coordinate
+   (`30625:<author>:<owner-hex>:<repo-id>`) retires that founder's rows.

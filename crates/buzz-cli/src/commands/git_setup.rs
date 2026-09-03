@@ -1592,21 +1592,23 @@ async fn predict_ref(
         }
     };
 
-    let tags: Vec<Vec<String>> = announcement
-        .tags
-        .iter()
-        .map(|tag| tag.as_slice().to_vec())
-        .collect();
-    let rules = match buzz_core::git_perms::parse_protection_tags(&tags) {
-        Ok(parsed) => parsed.rules,
+    // The rules that actually govern this ref: the announcement's own rows
+    // resolved against every founder's kind:30625 rule record (lane L26).
+    // Reading the announcement alone would print `Ungoverned` for a ref a
+    // co-founder governs — a prediction that lies in the admitting direction,
+    // which is the worst one.
+    let rules = match crate::commands::repos_protection::read_repository_rules(client, repo).await {
+        Ok(rules) => rules,
         Err(error) => {
             prediction.state = RefPredictionState::Unreadable {
-                detail: format!("the repository's protection rules do not parse: {error}"),
+                detail: strip_auth_tag_hint(&error.to_string()),
             };
             return prediction;
         }
     };
-    if !buzz_core::git_perms::EffectiveRules::for_ref(ref_name, &rules).require_verdict {
+    if !buzz_core::git_perms::EffectiveRules::for_ref(ref_name, rules.resolved.rules())
+        .require_verdict
+    {
         prediction.state = RefPredictionState::Ungoverned;
         return prediction;
     }
@@ -1631,7 +1633,8 @@ async fn predict_ref(
     // reads the same set the relay resolves — signer, NIP-34 `maintainers`,
     // and the project roster's Owners — and says in its own sentence when the
     // roster half was not readable from here.
-    let founders = crate::commands::repos::repository_founders(client, &announcement).await;
+    // Already resolved on the way to the rules — the same set, read once.
+    let founders = rules.founders;
     prediction.founders = founders.rules_sentence();
     let candidates = match fetch_verdict_candidates(client, &channel, &founders).await {
         Ok(candidates) => candidates,

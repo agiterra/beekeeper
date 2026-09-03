@@ -25,6 +25,15 @@ export type Repository = {
   channelId?: string | null;
   eventContent?: string;
   eventTags?: string[][];
+  /**
+   * The announcement's own event id.
+   *
+   * Only the Protection panel reads it, as the tie-break when a founder's rule
+   * record and the announcement carry the same `created_at`
+   * (`resolveProtection`). Optional so every existing construction of this
+   * type still compiles.
+   */
+  eventId?: string;
 };
 
 export type Project = {
@@ -333,6 +342,7 @@ export function eventToRepository(
   const channel = getTag(event, "buzz-channel");
   return {
     id: `${owner}:${dtag}`,
+    eventId: event.id,
     dtag,
     name: getTag(event, "name") ?? dtag,
     description: getTag(event, "description") ?? event.content ?? "",

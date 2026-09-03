@@ -279,6 +279,10 @@ fn request_without_gate_rows(
         genesis_ref: genesis(),
         founder_pubkey: founder_hex.clone(),
         repo_owner_pubkey: protection_tags.as_ref().map(|_| founder_hex.clone()),
+        // Read-optional: no view has read a rule record here, which is the
+        // "signed before the kind existed" shape every one of these cases is
+        // written against.
+        rule_records: None,
         // A seat, not the founder: arm (A) admits a founder outright, so a
         // founder-pushed fixture would answer "ready" over every mission and
         // exercise none of the rule. The founder's own push has its own case.
@@ -655,7 +659,12 @@ fn the_require_verdict_flag_is_parsed_as_a_flag_not_read_off_the_unknown_list() 
         "so it is no longer an unknown token — the list this must never read"
     );
     assert!(
-        ref_requires_verdict(&protect(&["require-verdict"]), "refs/heads/main"),
+        ref_requires_verdict(
+            &protect(&["require-verdict"]),
+            None,
+            &no_founders(),
+            "refs/heads/main"
+        ),
         "and this boundary reads it as a flag"
     );
 }
@@ -670,7 +679,12 @@ fn a_tag_whose_role_is_invalid_sets_no_flag() {
         "push:bot".to_owned(),
         "require-verdict".to_owned(),
     ];
-    assert!(!ref_requires_verdict(&[tag], "refs/heads/main"));
+    assert!(!ref_requires_verdict(
+        &[tag],
+        None,
+        &no_founders(),
+        "refs/heads/main"
+    ));
 }
 
 #[test]
@@ -678,11 +692,121 @@ fn the_require_verdict_token_is_read_through_cores_own_pattern_matcher() {
     // A rule on another ref pattern must not govern refs/heads/main.
     let mut tag = vec!["buzz-protect".to_owned(), "refs/heads/release/*".to_owned()];
     tag.push("require-verdict".to_owned());
-    assert!(!ref_requires_verdict(&[tag], "refs/heads/main"));
-    assert!(ref_requires_verdict(
-        &protect(&["require-verdict"]),
+    assert!(!ref_requires_verdict(
+        &[tag],
+        None,
+        &no_founders(),
         "refs/heads/main"
     ));
+    assert!(ref_requires_verdict(
+        &protect(&["require-verdict"]),
+        None,
+        &no_founders(),
+        "refs/heads/main"
+    ));
+}
+
+/// The founder set for a case that reads no rule record: with no records to
+/// filter, the set is never consulted, and passing an empty one makes that
+/// explicit rather than borrowing a mission's.
+fn no_founders() -> buzz_core_pkg::repository_founders::RepositoryFounders {
+    buzz_core_pkg::repository_founders::RepositoryFounders::from_parts("", &[])
+}
+
+/// Finding 31's mandatory case on this reader: an announcement whose rules
+/// were signed before kind 30625 existed governs exactly as it always did,
+/// with no record anywhere and `rule_records: None` on the wire.
+#[test]
+fn rules_signed_before_the_rule_record_kind_existed_still_govern() {
+    assert!(ref_requires_verdict(
+        &protect(&["require-verdict"]),
+        None,
+        &no_founders(),
+        "refs/heads/main"
+    ));
+    assert!(ref_requires_verdict(
+        &protect(&["require-verdict"]),
+        Some(&Vec::new()),
+        &no_founders(),
+        "refs/heads/main"
+    ));
+}
+
+/// A co-founder's record governs a ref the announcement says nothing about —
+/// and a stranger's record, or an unverified one, governs nothing.
+#[test]
+fn only_a_founders_rule_record_governs() {
+    use buzz_core_pkg::repository_protection::build_repository_protection;
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+
+    let signer = Keys::generate();
+    let co_founder = Keys::generate();
+    let stranger = Keys::generate();
+    let owner_hex = signer.public_key().to_hex();
+    let announcement_tags = vec![
+        vec!["d".to_owned(), "beekeeper".to_owned()],
+        vec!["maintainers".to_owned(), co_founder.public_key().to_hex()],
+    ];
+    let founders = buzz_core_pkg::repository_founders::RepositoryFounders::from_parts(
+        &owner_hex,
+        &announcement_tags,
+    )
+    .with_roster_owners(Vec::new());
+
+    let record = |keys: &Keys| {
+        let draft = build_repository_protection(
+            &owner_hex,
+            "beekeeper",
+            &[vec![
+                "refs/heads/main".to_owned(),
+                "require-verdict".to_owned(),
+            ]],
+        )
+        .expect("a valid draft");
+        let tags: Vec<Tag> = draft
+            .tags
+            .iter()
+            .map(|tag| Tag::parse(tag.clone()).expect("tag"))
+            .collect();
+        serde_json::to_value(
+            EventBuilder::new(
+                Kind::Custom(buzz_core_pkg::kind::KIND_GIT_REPO_PROTECTION as u16),
+                draft.content.clone(),
+            )
+            .tags(tags)
+            .sign_with_keys(keys)
+            .expect("signs"),
+        )
+        .expect("serializes")
+    };
+
+    assert!(
+        ref_requires_verdict(
+            &announcement_tags,
+            Some(&vec![record(&co_founder)]),
+            &founders,
+            "refs/heads/main"
+        ),
+        "a co-founder's record governs a ref the announcement never mentioned"
+    );
+    assert!(
+        !ref_requires_verdict(
+            &announcement_tags,
+            Some(&vec![record(&stranger)]),
+            &founders,
+            "refs/heads/main"
+        ),
+        "a stranger's record governs nothing, exactly as at the gate"
+    );
+    assert!(
+        !ref_requires_verdict(
+            &announcement_tags,
+            Some(&vec![serde_json::json!({"not":"an event"})]),
+            &founders,
+            "refs/heads/main"
+        ),
+        "an undecodable record is skipped, never fatal"
+    );
 }
 
 /// Path of the fixture the Desktop decoder test reads, relative to this crate.

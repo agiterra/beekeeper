@@ -151,3 +151,58 @@ test("the switch reflects require-verdict on main specifically, not any rule on 
   assert.equal(ariaChecked(withMainRule), "true");
   assert.equal(ariaChecked(withDevRule), "false");
 });
+
+// ── lane L26: any founder may set a rule ────────────────────────────────
+
+test("a co-founder gets a live switch, not a read-only note", () => {
+  // Finding 33 R2: the panel used to disable the control for everyone but the
+  // announcement's signer, and say so — an honest disclosure of a limitation
+  // that no longer exists. A NIP-34 maintainer founds the repository and may
+  // set its rules with a record of their own.
+  const markup = render({
+    self: OTHER,
+    repo: repository({ maintainers: [OTHER] }),
+  });
+  assert.doesNotMatch(
+    markup,
+    /data-testid="project-repository-protection-readonly-note"/,
+  );
+  const button = markup.match(
+    /<button[^>]*data-testid="project-repository-require-verdict-switch"[^>]*>/,
+  )?.[0];
+  assert.ok(button, "switch control must render");
+  assert.doesNotMatch(button, /disabled=""/);
+});
+
+test("a stranger still sees the switch disabled and a founder-shaped sentence", () => {
+  const markup = render({ self: OTHER, repo: repository({ maintainers: [] }) });
+  assert.match(
+    markup,
+    /data-testid="project-repository-protection-readonly-note"/,
+  );
+  assert.match(markup, /Only a founder of this repository can set this\./);
+});
+
+test("each listed rule names the record that carries it and who signed it", () => {
+  const markup = render({
+    repo: repository({
+      eventTags: [["buzz-protect", "refs/heads/main", "require-verdict"]],
+    }),
+  });
+  assert.match(
+    markup,
+    /data-testid="project-repository-protection-source-refs\/heads\/main"/,
+  );
+  assert.match(markup, /on the announcement/);
+  // Finding 31: with no rule record read, the panel shows exactly the rules
+  // the announcement carries — the "signed before the kind existed" case —
+  // and discloses that records were not read rather than implying none exist.
+  assert.match(markup, /Rule records were not read here/);
+});
+
+test("a repository with several founders says any of them can change the rules", () => {
+  const markup = render({ repo: repository({ maintainers: [OTHER] }) });
+  // The apostrophe is HTML-escaped in static markup.
+  assert.match(markup, /Any of this repository&#x27;s 2 founders/);
+  assert.doesNotMatch(markup, /only that key can rewrite/);
+});
