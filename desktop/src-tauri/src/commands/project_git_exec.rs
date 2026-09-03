@@ -132,11 +132,21 @@ fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credent
     command.env("GIT_TERMINAL_PROMPT", "0");
     command.env("GIT_CONFIG_NOSYSTEM", "1");
     for key in [
+        // The seven variables through which an ambient environment can pick
+        // git's repository for it — the same list `bee`'s worktree tools clear
+        // (`buzz-cli/src/commands/sessions/worktree.rs`). This host now runs
+        // `git clone`/`checkout` for the packs cache through here, and a
+        // leaked `GIT_DIR` would point those at whatever repository launched
+        // the app.
         "GIT_DIR",
         "GIT_WORK_TREE",
         "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
         "GIT_OBJECT_DIRECTORY",
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        // Two more this host clears for its own reasons: an inherited ssh
+        // command or external diff would run a program we did not choose.
         "GIT_SSH_COMMAND",
         "GIT_EXTERNAL_DIFF",
     ] {

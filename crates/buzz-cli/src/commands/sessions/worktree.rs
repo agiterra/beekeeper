@@ -95,7 +95,11 @@ const STORE_DIRS: &[&str] = &["io.agiterra.beekeeper.app.dev", "io.agiterra.beek
 /// `git init` in a temp dir wrote to the *pushing* repository's config and
 /// raced its lock — "could not lock config file …/.git/config: File exists" —
 /// and every worktree test failed for anyone pushing from a bare clone.
-fn git_command(cwd: &Path) -> Command {
+///
+/// `pub(crate)` because `bee packs init` seeds a repository in a temp
+/// directory the same way and must not be redirected either — one helper, one
+/// list, so the two cannot drift.
+pub(crate) fn git_command(cwd: &Path) -> Command {
     let mut command = Command::new("git");
     command.current_dir(cwd);
     for var in GIT_REPO_SELECTION_VARS {

@@ -393,9 +393,13 @@ fn seed_packs_repository(
     })?;
     copy_tree(seed, &target)?;
 
+    // `git_command` rather than a bare `Command::new("git")`: git exports
+    // `GIT_DIR` and its six siblings to hooks, and this crate's own tests run
+    // inside the pre-push gate. With those inherited, `git init` in a temp
+    // directory writes to the *pushing* repository's config and races its
+    // lock. One helper, one list — see its doc in `sessions::worktree`.
     let git = |args: &[&str]| -> Result<String, CliError> {
-        let output = std::process::Command::new("git")
-            .current_dir(&work)
+        let output = crate::commands::sessions::worktree::git_command(&work)
             .args(args)
             .output()
             .map_err(|error| CliError::Other(format!("could not run git {args:?}: {error}")))?;
