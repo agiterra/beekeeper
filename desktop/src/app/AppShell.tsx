@@ -84,6 +84,7 @@ import { useChannelStars } from "@/features/sidebar/lib/useChannelStars";
 import { useCommunities } from "@/features/communities/useCommunities";
 import {
   consumePendingCommunityRestore,
+  isChannelKnownInSet,
   loadCommunityDestination,
   saveCommunityDestination,
 } from "@/features/communities/communityNavigationStorage";
@@ -292,8 +293,9 @@ export function AppShell() {
       return;
     }
 
-    const channelIsAvailable = sidebarChannels.some(
-      (channel) => channel.id === destination.channelId,
+    const channelIsAvailable = isChannelKnownInSet(
+      sidebarChannels,
+      destination.channelId,
     );
     if (!channelIsAvailable) {
       saveCommunityDestination(activeCommunityId, { kind: "home" });
@@ -301,9 +303,13 @@ export function AppShell() {
       return;
     }
 
-    // The normal switch path writes the remembered channel into the hash before
-    // the target community mounts, so no intermediate Inbox frame is painted.
-    // Older transition callers may still arrive at neutral Home; repair those.
+    // The switch path only writes the remembered channel into the hash ahead
+    // of time when a cached snapshot for the target community already
+    // validates it (isChannelKnownInSet, shared with this effect), so a warm
+    // cache paints the channel directly with no intermediate Home frame. A
+    // cold community (or any other transition caller) still arrives at
+    // neutral Home; this is the one place that promotes the remembered
+    // channel once this mount's live read has confirmed it.
     if (selectedView === "home") {
       void goChannel(destination.channelId, { replace: true });
     }

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   clearCommunityDestinations,
+  isChannelKnownInSet,
   loadCommunityDestination,
   removeCommunityDestination,
   saveCommunityDestination,
@@ -97,4 +98,24 @@ test("clears all destinations", () => {
   clearCommunityDestinations(storage);
 
   assert.equal(storage.length, 0);
+});
+
+test("isChannelKnownInSet: true when the channel id is present in the set", () => {
+  assert.equal(
+    isChannelKnownInSet([{ id: "general" }, { id: "random" }], "general"),
+    true,
+  );
+});
+
+test("isChannelKnownInSet: false when the channel id is absent from the set", () => {
+  assert.equal(isChannelKnownInSet([{ id: "random" }], "general"), false);
+});
+
+test("isChannelKnownInSet: false for an empty channel set", () => {
+  assert.equal(isChannelKnownInSet([], "general"), false);
+});
+
+test("isChannelKnownInSet: false when no channel set is known yet (null/undefined)", () => {
+  assert.equal(isChannelKnownInSet(null, "general"), false);
+  assert.equal(isChannelKnownInSet(undefined, "general"), false);
 });

@@ -109,3 +109,20 @@ export function consumePendingCommunityRestore(communityId: string): boolean {
   pendingCommunityRestoreId = null;
   return true;
 }
+
+/**
+ * A remembered channel destination may be shown only once it is known to
+ * exist in the target community's channel set — live (the mounted query has
+ * validated it) or cached (a prior live fetch persisted it). This is the one
+ * predicate both the optimistic community-switch write
+ * (`useCommunityNavigationTransitions.switchCommunity`/`removeCommunity`) and
+ * the AppShell repair effect use to decide "known to exist", so they cannot
+ * drift apart and disagree again about what counts as validated.
+ */
+export function isChannelKnownInSet(
+  channels: readonly { id: string }[] | null | undefined,
+  channelId: string,
+): boolean {
+  if (!channels) return false;
+  return channels.some((channel) => channel.id === channelId);
+}
