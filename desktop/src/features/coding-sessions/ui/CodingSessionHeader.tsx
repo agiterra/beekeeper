@@ -5,6 +5,7 @@ import {
   GitCompare,
   Info,
   ListChecks,
+  PanelLeft,
   PanelRight,
   Pencil,
   OctagonX,
@@ -45,7 +46,10 @@ import {
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
+
+import { CodingSessionHeaderOverflow } from "./CodingSessionHeaderOverflow";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { CODING_SESSION_ROUTE_RAIL_ID } from "./CodingSessionRouteRail";
 import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
 
 /**
@@ -117,6 +121,36 @@ type CodingSessionHeaderProps = {
   onStopAll?: () => void;
   /** How many seats {@link onStopAll} would stop. Named on the control. */
   stopAllCount?: number;
+  /**
+   * `Stop all (2 seats)` — the Mission overflow item's label.
+   *
+   * Present only in Mission. Conversation keeps `Stop all (2)` on its flat
+   * button, byte for byte.
+   */
+  stopAllLabel?: string | null;
+  /** The liveness split sentence, from the same W1 map the seat chips read. */
+  stopAllSentence?: string | null;
+  /**
+   * Collapse the Mission Route rail to its 40 px scrubber, and back.
+   *
+   * B1: the Inspector has had a collapse control in this group since §19 and
+   * the rail had none. Absent outside Mission, where there is no rail.
+   */
+  onToggleRouteRail?: () => void;
+  /** Is that rail currently expanded? Reported as `aria-expanded`. */
+  routeRailExpanded?: boolean;
+  /**
+   * Would expanding the rail have to close the Inspector to fit?
+   *
+   * F3: a control that silently cannot act is worse than one that says what
+   * acting costs. This puts the cost in the title.
+   */
+  routeRailDisplacesInspector?: boolean;
+  /**
+   * Collapse the six actions into one `⋯` (DESIGN-SPEC A7). Mission only —
+   * Conversation's flat run of six buttons and its DOM do not move (I8).
+   */
+  missionActions?: boolean;
   /**
    * Dismisses the surface this header sits in — the pop-out window, or the
    * create dialog. Absent in the main window, where the app's own
@@ -206,7 +240,13 @@ export function CodingSessionHeader({
   sessionClosed = false,
   status,
   statusLabelOverride = null,
+  missionActions = false,
+  onToggleRouteRail,
+  routeRailDisplacesInspector = false,
+  routeRailExpanded = false,
   stopAllCount = 0,
+  stopAllLabel = null,
+  stopAllSentence = null,
   surfaceHostId,
   surfaceTabs,
   taskCount = 0,
@@ -465,6 +505,34 @@ export function CodingSessionHeader({
                 </Button>
               ))
             : null}
+          {onToggleRouteRail ? (
+            <Button
+              // F7: the IDREF has to land on something. Both the expanded rail
+              // and the 40 px scrubber carry this id, because the control
+              // governs whichever of the two is mounted.
+              aria-controls={CODING_SESSION_ROUTE_RAIL_ID}
+              aria-expanded={routeRailExpanded}
+              aria-label={
+                routeRailExpanded ? "Collapse route rail" : "Expand route rail"
+              }
+              aria-pressed={routeRailExpanded}
+              data-testid="coding-session-route-toggle"
+              onClick={onToggleRouteRail}
+              size={compact ? "icon" : "sm"}
+              title={
+                routeRailExpanded
+                  ? "Collapse the route rail to its scrubber"
+                  : routeRailDisplacesInspector
+                    ? "Expand the route rail — closes the Inspector, which this width cannot hold beside it"
+                    : "Expand the route rail"
+              }
+              type="button"
+              variant={routeRailExpanded ? "secondary" : "ghost"}
+            >
+              <PanelLeft />
+              <span className={compact ? "sr-only" : undefined}>Route</span>
+            </Button>
+          ) : null}
           {onOpenPeople ? (
             <Button
               aria-label="Show session people"
@@ -495,7 +563,26 @@ export function CodingSessionHeader({
           ) : null}
         </fieldset>
       ) : null}
-      {onAddProvider ? (
+      {missionActions ? (
+        <CodingSessionHeaderOverflow
+          isExporting={isExporting}
+          onAddProvider={onAddProvider}
+          onCloseSession={onCloseSession}
+          onExport={onExport}
+          onPopout={onPopout}
+          onReopenSession={onReopenSession}
+          onStopAll={onStopAll}
+          stopAllLabel={
+            stopAllLabel ??
+            `Stop all (${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"})`
+          }
+          stopAllSentence={
+            stopAllSentence ??
+            `Stop ${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"}. A stopped seat cannot be resumed.`
+          }
+        />
+      ) : null}
+      {!missionActions && onAddProvider ? (
         <Button
           aria-label="Add a provider to this session"
           data-testid="coding-session-add-provider"
@@ -509,7 +596,7 @@ export function CodingSessionHeader({
           <span className={compact ? "sr-only" : undefined}>Add provider</span>
         </Button>
       ) : null}
-      {onStopAll ? (
+      {!missionActions && onStopAll ? (
         <Button
           aria-label={`Stop ${stopAllCount} live ${
             stopAllCount === 1 ? "seat" : "seats"
@@ -527,7 +614,7 @@ export function CodingSessionHeader({
           </span>
         </Button>
       ) : null}
-      {onCloseSession ? (
+      {!missionActions && onCloseSession ? (
         <Button
           aria-label="Close session"
           data-testid="coding-session-close"
@@ -541,7 +628,7 @@ export function CodingSessionHeader({
           <span className={compact ? "sr-only" : undefined}>Close</span>
         </Button>
       ) : null}
-      {onReopenSession ? (
+      {!missionActions && onReopenSession ? (
         <Button
           aria-label="Reopen session"
           data-testid="coding-session-reopen"
@@ -555,7 +642,7 @@ export function CodingSessionHeader({
           <span className={compact ? "sr-only" : undefined}>Reopen</span>
         </Button>
       ) : null}
-      {onExport ? (
+      {!missionActions && onExport ? (
         <Button
           aria-label="Export transcript"
           data-testid="coding-session-export"
@@ -568,7 +655,7 @@ export function CodingSessionHeader({
           <Download />
         </Button>
       ) : null}
-      {onPopout ? (
+      {!missionActions && onPopout ? (
         <Button
           data-testid="coding-session-header-popout"
           onClick={onPopout}

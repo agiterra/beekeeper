@@ -1,7 +1,10 @@
 import * as React from "react";
 
 import type { CodingSessionContextLoad } from "@/features/coding-sessions/lib/codingSessionContextLoad";
-import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
+import type {
+  CodingSessionGoal,
+  CodingSessionGoalReader,
+} from "@/features/coding-sessions/lib/codingSessionGoal";
 import type {
   CodingSessionMissionTransactionInput,
   CodingSessionSeatAuthority,
@@ -97,6 +100,7 @@ export function useCodingSessionMissionSurface(input: {
   goal: CodingSessionGoal | null;
   /** The founder's goal edit control, rendered inside Current goal. */
   goalEditor?: React.ReactNode;
+  goalReader: CodingSessionGoalReader;
   isNarrow: boolean;
   observedChanges: CodingSessionObservedChanges;
   onFocusParticipant: (executionKey: string | null) => void;
@@ -302,6 +306,7 @@ export function useCodingSessionMissionSurface(input: {
                   errorMessage={evidence.errorMessage}
                   focusedExecutionKey={input.focusedExecutionKey}
                   goalEditor={input.goalEditor}
+                  goalReader={input.goalReader}
                   loading={evidence.isLoading}
                   model={model}
                   onFocusParticipant={input.onFocusParticipant}
@@ -357,6 +362,7 @@ export function useCodingSessionMissionSurface(input: {
       input.deliveries,
       input.focusedExecutionKey,
       input.goalEditor,
+      input.goalReader,
       input.isNarrow,
       input.onFocusParticipant,
       input.onOpenTrace,

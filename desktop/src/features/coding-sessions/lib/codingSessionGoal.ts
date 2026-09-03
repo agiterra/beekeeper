@@ -186,3 +186,51 @@ export async function publishCodingSessionGoal(
     "Failed to update the session goal.",
   );
 }
+
+/**
+ * What the goal reader itself can currently say — as opposed to what the wire
+ * holds.
+ *
+ * Critique A1, seen live 12:36 on a session whose 44227 was signed at launch:
+ * `CURRENT GOAL — No accepted mission goal published.` Three different facts
+ * had collapsed into that one sentence — this channel holds no record; the
+ * reader has not settled, or errored; and a record exists that the surface's
+ * identity gate refused. Only the first is what the sentence claims, and it is
+ * I6's exact failure mode: a claim about the wire made from the absence of a
+ * local lookup.
+ *
+ * `resolved` here means only that `useCodingSessionGoals`' history fetch
+ * settled. It says nothing about whether a record was found, and nothing about
+ * whether one was refused on identity — that second question belongs to the
+ * goal *selection*, which discloses its own `rejected` state and its own
+ * sentence. Two readers, two answers, neither guessing the other's.
+ */
+export type CodingSessionGoalReader =
+  | { kind: "unresolved" }
+  | { kind: "errored"; message: string }
+  | { kind: "resolved" };
+
+/** The reader's own condition, from what `useCodingSessionGoals` returned. */
+export function deriveCodingSessionGoalReader(snapshot: {
+  errorMessage: string | null;
+  resolved: boolean;
+}): CodingSessionGoalReader {
+  if (snapshot.errorMessage !== null) {
+    return { kind: "errored", message: snapshot.errorMessage };
+  }
+  return snapshot.resolved ? { kind: "resolved" } : { kind: "unresolved" };
+}
+
+/** `Goal not read yet.` — the reader has not settled. */
+export const CODING_SESSION_GOAL_UNRESOLVED = "Goal not read yet.";
+
+/**
+ * `The goal for this session could not be read — {message}`
+ *
+ * The reader's own message, verbatim. An error the surface paraphrases is an
+ * error nobody can act on, and `useCodingSessionGoals` has carried this string
+ * since it was written — it simply had no reader.
+ */
+export function codingSessionGoalErrorSentence(message: string): string {
+  return `The goal for this session could not be read — ${message}`;
+}

@@ -29,6 +29,7 @@ import { useCodingSessionActorNameResolver } from "@/features/coding-sessions/li
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { useCodingSessionGoals } from "@/features/coding-sessions/useCodingSessionGoals";
 import { selectCodingSessionUmbrellaGoal } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import { deriveCodingSessionGoalReader } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { codingSessionClosureKey } from "@/features/coding-sessions/lib/codingSessionClosure";
@@ -180,6 +181,10 @@ export function CodingSessionWorkspace({
     );
   }
 
+  // A1: the reader's own condition, threaded to the one surface that renders
+  // a sentence about it. `errorMessage` has existed since this hook was
+  // written and nothing read it.
+  const goalReader = deriveCodingSessionGoalReader(goalSnapshot);
   const isMember = channel?.isMember ?? false;
   const umbrella = resolution.umbrella;
   // Finding 23: this used to be an exact-key `Map.get`, and a published goal
@@ -293,6 +298,7 @@ export function CodingSessionWorkspace({
           surface={surface}
           umbrella={umbrella}
           goal={goal}
+          goalReader={goalReader}
           sessionName={sessionName}
           sessionClosed={sessionClosed}
           turnStartedAtFor={catalog.turnStartedAtFor}

@@ -5,6 +5,7 @@ import {
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { getToolString } from "@/features/agents/ui/agentSessionUtils";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import { hasRedactionMarker } from "@/shared/lib/redactionMarker";
 
 export type CodingSessionTurnCompletion = {
   durationMs: number | null;
@@ -449,7 +450,28 @@ function isObservedFileEdit(
   );
 }
 
+/**
+ * Normalize a candidate path, or reject it as no path at all.
+ *
+ * Found live 2026-09-01 at 12:36: `FILES` printed
+ * `[elided private context: 183 bytes, sha256:b35397…]` in the path slot and
+ * `CHANGES` counted it as a second *named* edit. The provider redacts a host
+ * path before signing, and the marker it leaves behind is the provider saying
+ * "I had this and chose not to publish it" — which is precisely an edit with
+ * no reported file name, not a file with a 90-character name.
+ *
+ * The empty string is the caller's existing signal for that, so the marker
+ * takes the `unreportedEditCount` branch the field's own doc comment
+ * describes. The marker's shape is owned by `shared/lib/redactionMarker` and
+ * read from there; a second regex here would be a second definition of the
+ * privacy contract, which is how the two readers drift apart.
+ *
+ * The predicate is a *contains* test on purpose: a marker anywhere in the
+ * candidate makes the whole candidate unusable as a path. A real path that
+ * merely contains the word `elided` matches nothing and is untouched.
+ */
 function normalizeChangedFilePath(path: string): string {
+  if (hasRedactionMarker(path)) return "";
   return path
     .trim()
     .replace(/\\/g, "/")

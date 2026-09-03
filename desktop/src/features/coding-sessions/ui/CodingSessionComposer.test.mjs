@@ -92,7 +92,13 @@ test("immersive working composer uses one compact truthful control row", () => {
   assert.doesNotMatch(markup, /coding-session-control-status/);
   assert.doesNotMatch(markup, />Working</);
   assert.match(markup, /Anthropic · Claude Opus 5/);
+  // A8 is a **Mission** ruling (REVIEW-L4 F4). This composer renders outside
+  // any Mission lens provider, so it is Conversation's, and Conversation's
+  // deck keeps the whole traits summary exactly as it always had it — I8
+  // freezes that DOM, and the masked outerHTML baseline cannot see a trait
+  // the fixture's model does not carry.
   assert.match(markup, />High</);
+  assert.match(markup, /coding-session-control-traits/);
   assert.doesNotMatch(markup, /claude-opus-5\[high\]/);
   assert.match(markup, />Can control</);
   assert.match(markup, /coding-session-composer-steer/);
@@ -570,4 +576,86 @@ test("a composer with no member rights still cannot attach", () => {
     }),
   );
   assert.match(markup, /coding-session-composer-attach"[^>]*disabled/);
+});
+
+/**
+ * A8, both halves, on the model that shows both bugs at once (REVIEW-L4 F4/F5).
+ *
+ * `claude-opus-5[high][1m]` summarises as `High · 1M`. The first version
+ * printed `${traits} context` — `High · 1M context` — which put the noun on
+ * the whole string and left `High` the bare token beside a recipient's name
+ * that A8 exists to remove. And it did it on **both** lenses.
+ */
+async function renderDeckTraits(model, mission) {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { CodingSessionComposerDeck } = await import(
+    "./CodingSessionComposerDeck.tsx"
+  );
+  const { CodingSessionMissionLensContext } = await import(
+    "./CodingSessionUmbrellaWorkspaceModel.ts"
+  );
+  const deck = React.createElement(CodingSessionComposerDeck, {
+    canControl: true,
+    canInterrupt: false,
+    canSessionStop: false,
+    canSteer: false,
+    context: {
+      capabilities: {
+        threadTurnStart: true,
+        threadTurnInterrupt: false,
+        threadSteer: false,
+        context: true,
+        diff: true,
+        plan: true,
+      },
+      model,
+      providerLabel: "Anthropic",
+      runtimeLabel: "Claude Code",
+      status: { kind: "idle", label: "Idle" },
+    },
+    isMember: true,
+    isSending: false,
+    isUnavailable: false,
+    isUngovernedSession: false,
+    isWorking: false,
+    onPrimary: () => {},
+    pendingAction: null,
+    primaryDisabled: false,
+  });
+  return renderToStaticMarkup(
+    React.createElement(
+      CodingSessionMissionLensContext.Provider,
+      { value: mission },
+      deck,
+    ),
+  );
+}
+
+test("A8: Mission names the window and drops every other trait", async () => {
+  const both = await renderDeckTraits("claude-opus-5[high][1m]", true);
+  assert.match(both, />1M context</);
+  assert.doesNotMatch(
+    both,
+    />High · 1M context</,
+    "the noun belongs to the window, not to the whole traits string",
+  );
+  assert.doesNotMatch(both, />High</);
+
+  // A thinking trait with no window gets no slot at all in Mission: `High`
+  // beside a recipient's name reads as a claim about the person.
+  const thinkingOnly = await renderDeckTraits("claude-opus-5[high]", true);
+  assert.doesNotMatch(thinkingOnly, /coding-session-control-traits/);
+});
+
+test("A8: Conversation's deck keeps the whole traits summary (I8)", async () => {
+  const both = await renderDeckTraits("claude-opus-5[high][1m]", false);
+  assert.match(both, />High · 1M</);
+  assert.doesNotMatch(both, /context</);
+
+  // The case the byte-identity fixture could not reach: a thinking trait and
+  // no window still has its slot on Conversation.
+  const thinkingOnly = await renderDeckTraits("claude-opus-5[high]", false);
+  assert.match(thinkingOnly, /coding-session-control-traits/);
+  assert.match(thinkingOnly, />High</);
 });

@@ -20,6 +20,7 @@ import type {
 import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { cn } from "@/shared/lib/cn";
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
+import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 
 export const CODING_SESSION_TASK_RAIL_ID = "coding-session-task-rail";
 
@@ -517,4 +518,38 @@ function formatTaskTimestamp(timestamp: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+/**
+ * The plan rail as a right-side sheet, for a workspace too narrow to dock it.
+ *
+ * Split out of `CodingSessionUmbrellaWorkspace.tsx`, which sits at the
+ * repository's 1,000-line ceiling: the rule is to split the file, never to
+ * raise the limit. Nothing about the sheet changed in the move.
+ */
+export function CodingSessionTaskRailSheet({
+  dock,
+}: {
+  dock: {
+    activeModel: CodingSessionTaskModel | null;
+    close: () => void;
+    open: boolean;
+    show: () => void;
+  };
+}) {
+  return (
+    <Sheet
+      onOpenChange={(open) => (open ? dock.show() : dock.close())}
+      open={dock.open}
+    >
+      <SheetContent
+        aria-describedby={undefined}
+        className="w-[min(90vw,22rem)] max-w-none p-0"
+        side="right"
+      >
+        <SheetTitle className="sr-only">Session plan</SheetTitle>
+        <CodingSessionTaskRail model={dock.activeModel} variant="sheet" />
+      </SheetContent>
+    </Sheet>
+  );
 }

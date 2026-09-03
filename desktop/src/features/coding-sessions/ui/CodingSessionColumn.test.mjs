@@ -8,12 +8,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_COLUMN_CLASS,
+  CODING_SESSION_MISSION_COLUMN_CLASS,
   CodingSessionColumn,
 } from "./CodingSessionColumn.tsx";
 import {
   CODING_SESSION_GUTTER_CLASSES,
   CODING_SESSION_MEASURE_CLASSES,
+  CODING_SESSION_MISSION_DEFAULT_WIDTH,
+  CODING_SESSION_PROSE_MEASURE_CLASSES,
   CODING_SESSION_WIDTH_OPTIONS,
+  codingSessionProseMeasure,
   DEFAULT_CODING_SESSION_WIDTH,
 } from "../lib/codingSessionWidthPreference.ts";
 
@@ -224,9 +228,12 @@ test("the composer dock is opaque before any chip or control begins", () => {
     CODING_SESSION_COMPOSER_DOCK_CLASS,
     /via-background|bg-background\//,
   );
+  // The umbrella's dock moved to its own file when
+  // `CodingSessionUmbrellaWorkspace.tsx` reached the 1,000-line ceiling; the
+  // constant went with it, which is the point of the assertion.
   for (const name of [
     "CodingSessionWorkspace.tsx",
-    "CodingSessionUmbrellaWorkspace.tsx",
+    "CodingSessionUmbrellaDock.tsx",
   ]) {
     assert.match(source(name), /CODING_SESSION_COMPOSER_DOCK_CLASS/);
     assert.doesNotMatch(source(name), /via-background\/85/);
@@ -251,4 +258,82 @@ test("the new-session form keeps its own narrower measure", () => {
   // narrower still. Deliberately not routed through the column.
   const text = source("NewCodingSessionDialog.tsx");
   assert.match(text, /max-w-2xl/);
+});
+
+test("Mission's column is the space between the rails, not a centred box", () => {
+  // B2, measured at 1920: the stream box was 1026 px and the column 768, so
+  // 258 px of the window went to two symmetric margins — and closing the
+  // Inspector raised the cap instead of handing the space over. A dashboard
+  // does not want a chat's measure.
+  assert.doesNotMatch(CODING_SESSION_MISSION_COLUMN_CLASS, /\bmx-auto\b/);
+  assert.doesNotMatch(CODING_SESSION_MISSION_COLUMN_CLASS, /\bmax-w-/);
+  assert.match(CODING_SESSION_MISSION_COLUMN_CLASS, /\bmin-w-0\b/);
+  // Conversation's column is untouched, `mx-auto` and all (I8).
+  assert.match(CODING_SESSION_COLUMN_CLASS, /\bmx-auto\b/);
+
+  const missionMarkup = renderToStaticMarkup(
+    React.createElement(CodingSessionColumn, { mission: true }, "row"),
+  );
+  assert.match(missionMarkup, /data-coding-session-column-mission=""/);
+  assert.doesNotMatch(missionMarkup, /\bmx-auto\b/);
+  assert.match(missionMarkup, /\bmax-w-none\b/);
+  assert.doesNotMatch(missionMarkup, /max-w-(3xl|5xl|6xl|7xl)/);
+
+  const conversationMarkup = renderToStaticMarkup(
+    React.createElement(CodingSessionColumn, null, "row"),
+  );
+  assert.doesNotMatch(conversationMarkup, /data-coding-session-column-mission/);
+  assert.match(conversationMarkup, /\bmx-auto\b/);
+  assert.match(conversationMarkup, /max-w-3xl/);
+  assert.doesNotMatch(conversationMarkup, /message-markdown/);
+});
+
+test("the reading measure moves inside the Mission row, in ch", () => {
+  // The cap has to survive Cmd +/-, so it is a character count and not a px
+  // width; `ch` tracks the rendered font exactly as a rem token does.
+  for (const [width, cap] of Object.entries(
+    CODING_SESSION_PROSE_MEASURE_CLASSES,
+  )) {
+    if (cap === "") continue;
+    assert.match(cap, /max-w-\[\d+ch\]/, `${width}: prose caps in ch`);
+    assert.doesNotMatch(cap, /px|vw|rem/);
+    // Written out in full: Tailwind only emits a class it can see in source,
+    // so a `[&_...]:${measure}` template would compile to nothing at all.
+    assert.match(cap, /^\[&_\.message-markdown\]:/);
+  }
+  assert.equal(CODING_SESSION_PROSE_MEASURE_CLASSES.full, "");
+
+  // A viewer who has chosen keeps their choice on both lenses; only the blank
+  // is filled with the measure that suits a dashboard.
+  assert.equal(
+    codingSessionProseMeasure("narrow", true),
+    CODING_SESSION_PROSE_MEASURE_CLASSES.narrow,
+  );
+  assert.equal(
+    codingSessionProseMeasure(DEFAULT_CODING_SESSION_WIDTH, false),
+    CODING_SESSION_PROSE_MEASURE_CLASSES[CODING_SESSION_MISSION_DEFAULT_WIDTH],
+  );
+
+  const missionMarkup = renderToStaticMarkup(
+    React.createElement(CodingSessionColumn, { mission: true }, "row"),
+  );
+  assert.match(missionMarkup, /\[&amp;_\.message-markdown\]:max-w-\[\d+ch\]/);
+});
+
+test("a Mission code block scrolls in one axis, and Conversation's does not move", () => {
+  // B6: `max-h-[400px] overflow-x-auto overflow-y-auto` inside the stream's
+  // own scroller made the wheel do two things over 40 px of travel. The cap is
+  // lifted from the call site because CodeBlock is shared UI.
+  const missionMarkup = renderToStaticMarkup(
+    React.createElement(CodingSessionColumn, { mission: true }, "row"),
+  );
+  assert.match(missionMarkup, /\[data-code-block\]&gt;pre\]:max-h-none/);
+  assert.match(
+    missionMarkup,
+    /\[data-code-block\]&gt;pre\]:overflow-y-visible/,
+  );
+  const conversationMarkup = renderToStaticMarkup(
+    React.createElement(CodingSessionColumn, null, "row"),
+  );
+  assert.doesNotMatch(conversationMarkup, /data-code-block/);
 });

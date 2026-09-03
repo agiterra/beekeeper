@@ -4,6 +4,7 @@ import { codingSessionTurnBudgetUsage } from "@/features/coding-sessions/lib/cod
 import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import type { CodingSessionTurnBudget } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
+  codingSessionContextLabel,
   codingSessionModelDisplayName,
   codingSessionTraitsSummary,
 } from "@/features/coding-sessions/lib/codingSessionModelDisplay";
@@ -11,6 +12,8 @@ import { formatCodingSessionModelDisplay } from "@/features/coding-sessions/lib/
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+
+import { useCodingSessionMissionLens } from "./CodingSessionUmbrellaWorkspaceModel";
 
 export type CodingSessionComposerControlContext = {
   capabilities: {
@@ -77,6 +80,7 @@ export function CodingSessionComposerDeck({
   primaryDisabled,
   recipientControl,
 }: CodingSessionComposerDeckProps) {
+  const mission = useCodingSessionMissionLens();
   const model = context?.model
     ? formatCodingSessionModelDisplay(context.model)
     : null;
@@ -86,6 +90,28 @@ export function CodingSessionComposerDeck({
         context: model.context,
       })
     : null;
+  // A8: `Send to Keystone · Lead · Can control · 1M`. Every token in that run
+  // is a sentence except the last, which was a bare number whose only gloss
+  // was a `title` attribute. A context size gets its noun; a traits string
+  // that carries no context size gets no slot at all, because `High` beside a
+  // recipient reads as a claim about the person. The identity popover above
+  // still carries the whole string under a `Model traits` label, which is
+  // where an unglossed token belongs.
+  //
+  // Two corrections from REVIEW-L4:
+  //
+  // F5 — the noun goes on the **context token**, not on the whole traits
+  // string. `codingSessionTraitsSummary` returns `High · 1M`, so
+  // `${traits} context` shipped `High · 1M context` and left `High` exactly
+  // the bare token this ruling removed. Only the window gets the word.
+  // F4 — A8 is a **Mission** ruling and this deck renders on both lenses, so
+  // Conversation keeps its whole traits summary, byte for byte. A model with
+  // a thinking trait and no window would otherwise have lost its slot there.
+  const deckTraits = mission
+    ? model?.context
+      ? `${codingSessionContextLabel(model.context)} context`
+      : null
+    : traits;
   const modelName = model ? codingSessionModelDisplayName(model.model) : null;
   const providerName =
     context?.providerLabel ?? context?.runtimeLabel ?? "Session provider";
@@ -200,7 +226,7 @@ export function CodingSessionComposerDeck({
           </PopoverContent>
         </Popover>
 
-        {traits ? (
+        {deckTraits ? (
           <>
             <ComposerDeckSeparator />
             <span
@@ -208,7 +234,7 @@ export function CodingSessionComposerDeck({
               data-testid="coding-session-control-traits"
               title="Fixed model traits for this execution"
             >
-              {traits}
+              {deckTraits}
             </span>
           </>
         ) : null}

@@ -14,7 +14,7 @@ import {
 import {
   buildCodingSessionRouteTransactions,
   deriveCodingSessionRoute,
-  shouldShowCodingSessionRouteRail,
+  codingSessionRouteFits,
   type CodingSessionRoute,
   type CodingSessionRouteHire,
   type CodingSessionRouteParticipant,
@@ -24,13 +24,44 @@ import type {
   CodingSessionExecution,
   CodingSessionUmbrellaRecord,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import {
+  deriveCodingSessionMissionOpenHolds,
+  type CodingSessionMissionOpenHolds,
+} from "@/features/coding-sessions/lib/codingSessionMissionOpenHolds";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
+
+import { useCodingSessionRouteWidth } from "./useCodingSessionRouteWidth";
 
 /** What the workspace needs to place the Route rail and drive it. */
 export type CodingSessionRouteRailState = {
   route: CodingSessionRoute;
-  /** True when §9.2's two width gates both pass; false folds to the scrubber. */
+  /**
+   * Draw the expanded rail? False draws the 40 px scrubber instead.
+   *
+   * Two things and only two: there is room for it (the stream stays above its
+   * 420 px floor), and the viewer has not collapsed it.
+   */
   fits: boolean;
+  /** The rail's width in px, for the rail's own style and `aria-valuenow`. */
+  widthPx: number;
+  /** Did the viewer collapse it, as opposed to the width folding it? */
+  collapsedByViewer: boolean;
+  /**
+   * Is there room for the expanded rail at this width, ignoring the viewer's
+   * own choice?
+   *
+   * The caller needs the two facts apart (REVIEW-L4 F3): at a width where
+   * there is no room, a control that only flips the viewer's flag changes
+   * nothing on screen and lies about its own state. Knowing there is no room
+   * is what lets the caller *make* room.
+   */
+  roomForRail: boolean;
+  /** Set the viewer's collapse choice outright. Persisted per viewer. */
+  setCollapsed: (collapsed: boolean) => void;
+  /** Pointer drag on the rail's separator. */
+  onResizeStart: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  /** Arrow-key resize on the rail's separator. */
+  onResizeKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
   /** Ref for the narrative section, whose width is the free-gutter measurement. */
   sectionRef: React.RefObject<HTMLElement | null>;
   /** Publishes the stream's `revealFact` so the rail can call it. */
@@ -41,6 +72,12 @@ export type CodingSessionRouteRailState = {
   setVisibleAt: (seconds: readonly number[]) => void;
   /** Lift one road's `+N earlier` bound, in place (§9.5). */
   expandRoad: (executionKey: string) => void;
+  /**
+   * Open assignments and reports (A5), from the same inputs the map is drawn
+   * from. Derived here so the rail head's clause and the Inspector's Team line
+   * are two renderings of one derivation, not two derivations that agree.
+   */
+  openHolds: CodingSessionMissionOpenHolds;
 };
 
 /**
@@ -55,7 +92,18 @@ export type CodingSessionRouteRailState = {
  */
 export function useCodingSessionRoute(input: {
   bodyWidthPx: number;
+  /** The workspace body, whose width clamps the rail against the stream floor. */
+  bodyRef: React.RefObject<HTMLElement | null>;
   deliveries: readonly CodingSessionTeamWakeDelivery[];
+  /**
+   * What to call the founder's own party in an open-hold line — `you` when the
+   * viewer *is* the founder, their name otherwise.
+   *
+   * F2: the founder holds no seat, so resolving a hold's counterparty against
+   * the seat roster alone printed `holder not resolved` over the commonest
+   * hold there is: a seat filed a report and the founder owes the verdict.
+   */
+  founderLabel?: string;
   density: CodingSessionMissionDensity;
   founderPubkey: string | null;
   participants: readonly CodingSessionParticipantPresence[];
@@ -82,11 +130,17 @@ export function useCodingSessionRoute(input: {
   // decision from oscillating on the exact pixel where it flips.
   const [sectionRef, sectionWidthPx] = useElementWidth<HTMLElement>();
   const [railShown, setRailShown] = React.useState(false);
-  const fits = shouldShowCodingSessionRouteRail({
-    bodyWidthPx: input.bodyWidthPx,
-    sectionWidthPx,
+  const railWidth = useCodingSessionRouteWidth(input.bodyRef);
+  const roomForRail = codingSessionRouteFits({
     railShown,
+    railWidthPx: railWidth.width,
+    sectionWidthPx,
   });
+  // The viewer's collapse choice and the width's fold are two different
+  // facts and are kept that way: a fold hides the rail without touching what
+  // the viewer stored, so the rail comes back the way they left it when the
+  // window comes back.
+  const fits = roomForRail && !railWidth.collapsed;
   React.useEffect(() => {
     setRailShown(fits);
   }, [fits]);
@@ -194,6 +248,18 @@ export function useCodingSessionRoute(input: {
     ],
   );
 
+  const openHolds = React.useMemo(
+    () =>
+      deriveCodingSessionMissionOpenHolds({
+        founderLabel: input.founderLabel,
+        founderPubkey: input.founderPubkey,
+        nowMs: Date.now(),
+        participants,
+        transactions: rows,
+      }),
+    [input.founderLabel, input.founderPubkey, participants, rows],
+  );
+
   const revealRow = React.useCallback((rowKey: string) => {
     revealRef.current?.(rowKey);
   }, []);
@@ -202,13 +268,33 @@ export function useCodingSessionRoute(input: {
     () => ({
       route,
       fits,
+      openHolds,
+      collapsedByViewer: railWidth.collapsed,
+      roomForRail,
+      widthPx: railWidth.width,
+      setCollapsed: railWidth.setCollapsed,
+      onResizeKeyDown: railWidth.onResizeKeyDown,
+      onResizeStart: railWidth.onResizeStart,
       sectionRef,
       revealRef,
       revealRow,
       setVisibleAt,
       expandRoad,
     }),
-    [expandRoad, fits, revealRow, route, sectionRef],
+    [
+      expandRoad,
+      fits,
+      openHolds,
+      railWidth.collapsed,
+      railWidth.onResizeKeyDown,
+      railWidth.onResizeStart,
+      railWidth.setCollapsed,
+      railWidth.width,
+      revealRow,
+      roomForRail,
+      route,
+      sectionRef,
+    ],
   );
 }
 

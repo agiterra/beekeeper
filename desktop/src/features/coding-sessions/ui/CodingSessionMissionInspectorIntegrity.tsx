@@ -5,21 +5,24 @@ import type {
   CodingSessionMissionDisclosureInput,
   CodingSessionMissionInspectorModel,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import {
+  EmptyCopy,
+  SignedSource,
+} from "./CodingSessionMissionInspectorPrimitives";
 
 /**
- * The Inspector's Integrity section and the two primitives it shares with the
- * rest of the panel.
+ * The Inspector's Integrity section.
  *
  * Split out of `CodingSessionMissionInspector.tsx` when that file reached the
  * repository's 1,000-line ceiling — split, never bump. The reviewer flagged it
- * at 996 with two other lanes still writing to it (REVIEW-L7 §5.7), and F5's
+ * at 996 with two other lanes still writing to it (REVIEW-L7 §5.7), and the
  * state-line wiring was the line that crossed it. Nothing here changed in the
  * move except its home.
+ *
+ * `EmptyCopy` and `SignedSource` came out of the same file in the same wave
+ * and live in `CodingSessionMissionInspectorPrimitives`; two copies of a leaf
+ * that renders an empty state is exactly how two panels drift apart.
  */
-
-export function EmptyCopy({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs text-muted-foreground">{children}</p>;
-}
 
 export function Integrity({
   model,
@@ -108,37 +111,5 @@ function DisclosureList({
         </li>
       ))}
     </ul>
-  );
-}
-
-export function SignedSource({
-  authorLabel,
-  eventId,
-}: {
-  authorLabel?: string;
-  eventId: string;
-}) {
-  return (
-    <details className="mt-1 text-2xs text-muted-foreground">
-      <summary className="w-fit cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        Signed source
-      </summary>
-      <dl className="mt-1 space-y-1">
-        {authorLabel ? (
-          <div>
-            <dt className="font-medium">Author</dt>
-            <dd>
-              <code className="block break-all">{authorLabel}</code>
-            </dd>
-          </div>
-        ) : null}
-        <div>
-          <dt className="font-medium">Event</dt>
-          <dd>
-            <code className="block break-all">{eventId}</code>
-          </dd>
-        </div>
-      </dl>
-    </details>
   );
 }

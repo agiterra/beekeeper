@@ -13,7 +13,7 @@ import {
   ROUTE_SIGNS_PER_ROAD_EXPANDED_LIMIT,
   ROUTE_SIGNS_PER_ROAD_LIMIT,
   ROUTE_STRETCH_PX,
-  shouldShowCodingSessionRouteRail,
+  codingSessionRouteFits,
 } from "./codingSessionRouteModel.ts";
 import { buildCodingSessionMissionTransactionRows } from "./codingSessionMissionTransactionRows.ts";
 
@@ -585,42 +585,83 @@ test("durations read Nm Ss under an hour and Nh Nm above it", () => {
   assert.equal(formatCodingSessionRouteDuration(Number.NaN), null);
 });
 
-test("the rail folds unless the body is wide and the gutter can spare 224 px", () => {
+test("the rail folds only when the stream would drop under its floor", () => {
+  // L4.6: the body-width and reading-reserve gates are gone. The one question
+  // is the stream's own floor, because the viewer now owns the rail's width
+  // and its collapse.
   assert.equal(
-    shouldShowCodingSessionRouteRail({
-      bodyWidthPx: 1_279,
+    codingSessionRouteFits({
+      railShown: false,
+      railWidthPx: 224,
       sectionWidthPx: 1_279,
-      railShown: false,
     }),
-    false,
-    "1280 is the gate the brief fixed",
+    true,
+    "a wide body no longer has to clear 1280 for the rail to be allowed",
   );
+  // 970 px of section: expanding costs 224 - 40 = 184, leaving 786. Fits.
   assert.equal(
-    shouldShowCodingSessionRouteRail({
-      bodyWidthPx: 1_400,
-      sectionWidthPx: 1_040,
+    codingSessionRouteFits({
       railShown: false,
+      railWidthPx: 224,
+      sectionWidthPx: 970,
     }),
     true,
   );
-  // The same body with the 360 px Inspector open cannot spare the gutter.
+  // 603 px of section: expanding leaves 419 — one px under the 420 floor.
   assert.equal(
-    shouldShowCodingSessionRouteRail({
-      bodyWidthPx: 1_400,
-      sectionWidthPx: 1_039,
+    codingSessionRouteFits({
       railShown: false,
+      railWidthPx: 224,
+      sectionWidthPx: 603,
     }),
     false,
   );
-  // Once shown, the rail's own 224 px counts as available, so the decision does
-  // not oscillate as the section shrinks by exactly the rail's width.
   assert.equal(
-    shouldShowCodingSessionRouteRail({
-      bodyWidthPx: 1_400,
-      sectionWidthPx: 1_040 - 224,
+    codingSessionRouteFits({
+      railShown: false,
+      railWidthPx: 224,
+      sectionWidthPx: 604,
+    }),
+    true,
+    "420 px of stream is the floor, not 421",
+  );
+  // A rail the viewer dragged to 480 costs 440 to expand, so the same section
+  // that fits a 224 px rail refuses a 480 px one.
+  assert.equal(
+    codingSessionRouteFits({
+      railShown: false,
+      railWidthPx: 480,
+      sectionWidthPx: 800,
+    }),
+    false,
+  );
+  // Once shown, the section already has the rail subtracted, so the decision
+  // is asked about the same layout either way and does not oscillate on the
+  // exact pixel where it flips.
+  assert.equal(
+    codingSessionRouteFits({
       railShown: true,
+      railWidthPx: 224,
+      sectionWidthPx: 420,
     }),
     true,
+  );
+  assert.equal(
+    codingSessionRouteFits({
+      railShown: true,
+      railWidthPx: 224,
+      sectionWidthPx: 419,
+    }),
+    false,
+  );
+  // Nothing measured yet is not "it fits".
+  assert.equal(
+    codingSessionRouteFits({
+      railShown: false,
+      railWidthPx: 224,
+      sectionWidthPx: 0,
+    }),
+    false,
   );
 });
 

@@ -2142,3 +2142,245 @@ either. Same rule as the goal card, one surface over.
 founder`), sits beside a running state whose lead is working, and *is* the state
 only for a running mission with no open lead turn. A mission that ended does not
 stop having ended because somebody owes a ruling.
+---
+
+## 23. 2026-09-02 — Mission's honesty and its density (batch 3, lane L4)
+
+Brian's frame for the lane was one sentence: *"actually look and say hmm."*
+The design seat's run-3 critique (`review-2026-09-01/batch3/DESIGN-CRITIQUE-RUN3.md`)
+came back with two ranked lists — **A**, what the screen says that is not true,
+and **B**, what it costs a person to use — and ruled that both are findings.
+These are the rulings that landed. Every one is **Mission-gated**: Conversation's
+DOM is frozen by I8 and the masked `outerHTML` diff against the base is the
+proof, not a claim.
+
+### 23a. The goal section says which of four things is true (A1)
+
+`CURRENT GOAL — No accepted mission goal published.` was printed over a session
+whose 44227 had been signed at launch. Three different facts reached that one
+sentence, and only one of them was what it claimed. The reader now states its
+own condition and the Inspector prints the sentence for that condition:
+
+| condition | line |
+|---|---|
+| resolved, none | `No accepted mission goal published.` (unchanged) |
+| unresolved | `Goal not read yet.` |
+| errored | `The goal for this session could not be read — {message}` |
+| rejected | the goal *selection*'s own disclosure (lane L2) |
+
+Wire source: kind **44227**, read by `useCodingSessionGoals`, which now returns
+`{goals, errorMessage, resolved}`. `resolved` means the history fetch settled —
+**a refusal settles it**, because "we tried and failed" is an answer and a
+caller that treated it as still-loading would spin over a relay that had
+already replied. An error carries the reader's own message verbatim; a message
+the surface paraphrases is one nobody can act on.
+
+**`Set goal` renders only under a settled reader that bound a record, or found
+none.** That is the half of A1 that matters most: the control publishes a
+*second* 44227, and the UI's answer to a record it failed to read must never be
+to make the record worse.
+
+### 23b. A redaction marker is not a file name (A2, live finding 24)
+
+`FILES` printed `[elided private context: 183 bytes, sha256:…]` in the path slot
+and `CHANGES` counted it as a second **named** edit. The marker is the host
+saying *"I had this and chose not to publish it"* — which is exactly an edit
+with no reported file name. `deriveCodingSessionObservedChanges` now rejects
+such a candidate upstream, at `normalizeChangedFilePath`, and it falls into
+`unreportedEditCount`, which is what that field exists for. The existing string
+carries it (`Plus N edits with no reported file name.`); no new copy, and **no
+digest disclosure anywhere in Mission** — a redaction disclosed as a redaction
+is the whole point. The predicate is `shared/lib/redactionMarker`'s, read from
+there rather than written a second time: two regexes are two definitions of one
+privacy contract, and that is how readers drift apart.
+
+### 23c. One liveness word, and a stop count that does not call an idle seat live (A4)
+
+Four vocabularies were on one screen for one fact. Two are now fixed and they
+are different subjects: the **umbrella** is `Running` (DESIGN-SPEC A3), the
+**seat** is `live` (B1), and neither borrows the other's word. `Stop all`
+states what it counts:
+
+- button `Stop all (2 seats)`
+- title and accessible name `Stop 2 seats — 1 live, 1 idle. A stopped seat cannot be resumed.`
+- with no live seat, `… — none live. …`; a single seat reads `Stop all (1 seat)` / `Stop 1 seat — live.`
+- the confirm's title drops the borrowed word: `Stop 2 seats?`
+
+The liveness split comes from **the same W1 map the roster chips read**
+(`deriveCodingSessionStreamPresence`, §19b), handed into the stop-all model
+rather than re-derived from status — re-deriving would rebuild the same fault
+one layer down. Nothing on this surface prints the word `live` over a number it
+did not get from that map.
+
+### 23d. The destructive control leaves the top bar (A6, DESIGN-SPEC A7)
+
+In Mission the six actions collapse into one `⋯` overflow carrying
+`Add provider…`, `Stop all (N seats)`, `Close session`, `Reopen session`,
+`Export transcript`, `Pop out`, in that order, with `Stop all` taking the
+destructive treatment the composer's own `Stop execution` item already uses.
+`People` and the surface toggles stay in row 1: they are navigation, not
+action. Conversation keeps its flat run of six buttons and its DOM.
+
+### 23e. Who waits on whom, at every width (A5, observer want 1)
+
+`Assignment open 3m 3s · no report yet` existed in exactly one place — the
+Route rail's legend — where it named the holder and never the waiter, carried
+no clock, and vanished with the rail. `lib/codingSessionMissionOpenHolds.ts`
+derives the holds from the same inputs the map is drawn from and returns, per
+hold, `{waiterLabel, holderLabel, holding, sinceMs, sinceAt, sourceEventId}`;
+every field is null when unknown and the derivation reads **no prose**. Copy,
+from DESIGN-SPEC's Observer table:
+
+- `Keystone waits on Ira · Verifier`
+- `Assignment open 3m 3s · since 12:33 PM · no report yet` (a report awaiting a
+  verdict reads `· no verdict yet`)
+- empty state `No open assignments.`
+
+It renders in the Inspector's `Team` row for the holding seat — the one roster
+that is complete and survives every width — and a hold whose counterparty
+resolves to no seat renders on its own with the words `holder not resolved`,
+never against the wrong seat. The rail head prints the *same* sentence from the
+same function, so the two cannot drift.
+
+### 23f. The Mission grid: two adjustable rails, and a stream that fills what they leave (B1, B2, B7; Brian 2026-09-02)
+
+The Inspector was draggable, persisted and collapsible; the Route rail was a
+hard `w-56` behind a gate the viewer could not influence; and the stream never
+gained the space either gave up, because the column kept `mx-auto` and a cap.
+
+1. **The route rail mirrors the Inspector, control for control.** A
+   `role="separator"` handle with the same pointer, keyboard and
+   `aria-valuenow` semantics, mirrored because this rail is on the left
+   (`ArrowRight` widens). Bounds **176–480, default 224**; width under
+   `buzz.desktop.coding-session-route-width`, collapse under
+   `buzz.desktop.coding-session-route-collapsed`, both strictly parsed —
+   an unreadable stored byte is *not* collapsed, because a rail that hid
+   itself over one would look exactly like the fold gate misfiring.
+   **Collapsed is the existing 40 px scrubber**; nothing new is drawn.
+2. **The automatic gate is a floor, not an opinion.** `codingSessionRouteFits`
+   asks one question — would the stream drop below **420 px** — and the
+   1,280 px body gate and the 816 px reading reserve are gone. The viewer's
+   stored choice is never overwritten by a fold; it is restored when the width
+   returns.
+3. **The stream fills.** In Mission the column drops `mx-auto` and takes
+   `max-w-none`. The reading measure moves *inside* the row as a `ch` cap on
+   prose (`narrow` 65ch · `wide` 85ch · `full` none; Mission's default is
+   `wide` when the viewer has chosen nothing), so a 1,400 px line never happens
+   while transaction rows, the Work Log, code blocks and the Audit table use
+   the whole column. **Conversation's container cap does not move.**
+4. **The Audit table gets room.** Below 400 px of measured width the `PER TURN`
+   table's eight columns degrade to **one card per turn** — every value still
+   shown, one axis of scroll — and a reader who wants the table widens the
+   Inspector with its own handle until the columns return.
+
+Measured at `text-scale 1.25`, both panels at their defaults, from the DOM:
+
+| window | body | route | inspector | stream | column |
+|---|---|---|---|---|---|
+| 1100 | 789 | 224 | 0 — **sheet** (body < 960) | 565 | 485 |
+| 1280 | 969 | 50 (scrubber) | 360 | 559 | 479 |
+| 1600 | 1289 | 224 | 360 | 705 | 625 |
+| 1920 | 1609 | 224 | 360 | **1025** | **945** |
+
+At 1920 the reading column is 945 px against the 768 px cap it replaced.
+
+The 1100 row is worth stating plainly, because the lane spec's own table got it
+wrong: the Inspector becomes a **sheet** below a 960 px body — that is
+`isNarrow`, a body-width gate that predates this lane and is not the 420 px
+floor — so at 1100 it contributes nothing to the row and the rail correctly
+**stays** at 224. There is no width at which an inline Inspector sits beside a
+folded rail at 1100. The fold order in rule 2 is therefore half-shipped: the
+rail folds on the floor, the Inspector still folds on `isNarrow`. It fires
+first at every width tested, so nothing is wrong on screen; it is written down
+here rather than left to be rediscovered.
+
+**The Route control acts at every width.** At 1280 the floor has already
+folded the rail, so a control that only flipped the viewer's stored flag
+changed nothing on screen and never changed its own `aria-expanded` — a
+button labelled `Expand route rail` that expanded nothing. Asking for the rail
+where both panels cannot fit now **closes the Inspector to make the room**,
+and the control's title says so before it is pressed. Collapsing does not
+re-open the Inspector: the viewer closed it.
+
+### 23g. The composer stops owning a third of the Mission window (B4, B6)
+
+In Mission the editor opens at one line (`min-h-11`) and grows on focus and on
+content; the auto-grow and its 12-rem ceiling are unchanged. The stream's
+bottom reserve is **measured from the dock's own height** (a `ResizeObserver`
+applied as an inline `paddingBottom`), not the constant `pb-48` that drifted
+out of register with it and let the `Add provider` button land on a turn block
+when the unreachable notice grew the dock. Conversation keeps `min-h-24`,
+`pb-48` and `pb-[34rem]` exactly — the class string is *appended to*, never
+substituted, so `twMerge` gives Mission `min-h-11` while Conversation's class
+attribute stays byte-for-byte what it was.
+
+**One axis per scroller** (B6): a fenced block in the Mission stream loses its
+`max-h-[400px]` vertical cap and keeps its own horizontal scroll. `CodeBlock`
+is shared UI, so the cap is lifted from the coding-session call site rather
+than from the component.
+
+### 23h. The rail's own words fit, and its map fills it (B5)
+
+A sign takes the rail's remaining width instead of a hard `max-w-32` inside a
+224 px rail, so widening the rail widens the sign — B1 and B5 are one fix. The
+lane gutter is `16 + (drawnRoads − 1) × pitch + 10`, not a constant reserving
+room for seven roads when two are drawn. The `− 1` matters and the first
+version of this ruling did not have it: lanes are centred at
+`16 + lane × pitch` for lanes `0 … n−1`, so the rightmost ink is one pitch left
+of `n × pitch`, and charging the extra lane left the signs still clipped at the
+**default** 224 px width — proving B5 at 480 px and leaving it unfixed at the
+width everybody runs. A map shorter than its container now fills from
+the top, so the blank sits **below** the last sign; §9.2's bottom anchoring
+still governs a map taller than the rail.
+
+### 23i. Three sentences
+
+1. **The unreachable notice names the seat** (A7):
+   `No provider is answering for {Name · Role} — {detail}. Add a provider to
+   the session to continue the work.` With no resolvable name, and on the
+   Conversation lens, today's sentence stands.
+2. **`1M` gets a noun** (A8): the deck renders `{traits} context` where the
+   trait is a context size, and otherwise drops the slot — `High` beside a
+   recipient's name reads as a claim about the person. The identity popover
+   still carries the whole string under its labelled `Model traits` row.
+3. **`STRUCTURED TESTS` stops claiming the wire is silent** (A3):
+   `No test report on this session` /
+   `Kind 44246 carries checkpoint, gate, finding and phase records. This
+   surface does not read them yet.` True before L1 and after it.
+
+### 23j. Residuals, stated
+
+- **The shared turn clock.** `Working for {n}`
+  (`CodingSessionTranscriptParts.tsx`) is Conversation's string too and I8
+  freezes that DOM. Not retitled here.
+- **Three tab groups, three anatomies** (B8). Lens, Brief/Live/Trace and the
+  surface tabs are three different shapes for one idea; their components are
+  Conversation's as well, so the consolidation is not this lane's.
+- **`ROUTE_SCRUBBER_WIDTH_PX` is 40 px against a `w-10` rem width.** Under the
+  app's own Cmd +/- zoom the collapsed rail measures 50 px at a 1.25 text
+  scale while the fold arithmetic still charges 40. The error runs one way:
+  `streamIfExpanded = section − (railWidth − 40)` under-states the stream the
+  scrubber is really leaving, so the gate is **conservative** and the rail
+  **re-expands later** than it should — about 10 px of window at a 1.25 scale,
+  and 80 px at a 2× zoom, where it would move a row of the table. A px
+  constant standing in for a rem box should become a measurement.
+- **The Audit table lives in the Inspector, not in the reading column.**
+  L4.6.4 says the eight `PER TURN` columns render in the reading column when
+  Audit is the selected section; what shipped keeps the Audit inside the
+  surface host and degrades it to one card per turn below 400 px of measured
+  width. The degrade is honest and the viewer can drag the Inspector's own
+  separator until the columns return — but the Inspector's default is 360 px,
+  so at the default the eight columns are never reached, which is critique B7's
+  complaint unresolved for the default viewer. **Follow-on: move the Audit to
+  the reading column**, as the rule states.
+
+### 23k. The named follow-on
+
+> **L5 — the Inspector reads kind 44246.** A `fold_coding_session_observations`
+> Tauri command beside the existing team-fold wrapper, a TypeScript decoder,
+> and four Inspector sections (Tests, Gates, Findings, Phase timing) over
+> `crates/buzz-core/src/coding_session_observation_fold.rs`. It answers
+> observer wants 2, 3, 4 and 7, and it is the only thing that makes 23i.3's
+> sentence obsolete. Kept out of L4 because it is the one item that adds a wire
+> consumer, and a lane that ships half of one ships a surface that reads some
+> observations and silently drops the rest.

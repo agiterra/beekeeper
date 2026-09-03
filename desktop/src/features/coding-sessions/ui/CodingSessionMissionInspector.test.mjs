@@ -481,11 +481,17 @@ test("empty and unknown states disclose absence rather than rendering zeros", as
     assert.ok(view.getByText("No signed edit activity observed."));
     // DESIGN-SPEC §8 / SURFACES D5: the frozen unknown copy, headline plus the
     // sentence that says why nothing is counted.
-    assert.ok(view.getByText("No test report yet"));
+    // A3: the old refusal — "Nothing on the wire reports tests" — became a
+    // false claim about the wire the day L1 shipped kind 44246. The
+    // replacement names what would carry the fact and says this surface does
+    // not read it yet; it is true on both sides of that landing.
+    assert.ok(view.getByText("No test report on this session"));
     assert.match(
       view.container.textContent,
-      /Nothing on the wire reports tests\./,
+      /Kind 44246 carries checkpoint, gate, finding and phase records\. This surface does not read them yet\./,
     );
+    assert.doesNotMatch(view.container.textContent, /Nothing on the wire/);
+    assert.doesNotMatch(view.container.textContent, /will not count/);
     assert.equal(
       view.queryByText("No structured test results published."),
       null,
@@ -1354,4 +1360,198 @@ test("A1: the resolved-and-absent case is untouched", async () => {
   assert.ok(view.getByText("No accepted mission goal published."));
   assert.equal(view.queryByTestId("mission-goal-rejected"), null);
   view.cleanup();
+});
+
+test("the goal card says which of four things is true, and gates Set goal", async () => {
+  // A1, live 12:36: `No accepted mission goal published.` over a session whose
+  // 44227 was signed at launch. Three different facts had collapsed into one
+  // sentence, and the offered remedy published a second record over the first.
+  const editor = "SET-GOAL-CONTROL";
+
+  const unresolved = await renderInspector({
+    goalEditor: editor,
+    goalReader: { kind: "unresolved" },
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+  });
+  assert.ok(unresolved.getByTestId("mission-goal-unresolved"));
+  assert.match(unresolved.container.textContent, /Goal not read yet\./);
+  assert.doesNotMatch(
+    unresolved.container.textContent,
+    /No accepted mission goal published\./,
+  );
+  assert.equal(unresolved.queryByText(editor), null);
+  unresolved.cleanup();
+
+  const errored = await renderInspector({
+    goalEditor: editor,
+    goalReader: { kind: "errored", message: "relay refused the filter" },
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+  });
+  // The reader's own message, verbatim — a paraphrase is an error nobody can
+  // act on.
+  assert.match(
+    errored.container.textContent,
+    /The goal for this session could not be read — relay refused the filter/,
+  );
+  assert.equal(errored.queryByText(editor), null);
+  errored.cleanup();
+
+  // The resolved-and-absent case is byte-unchanged, editor and all.
+  const absent = await renderInspector({
+    goalEditor: editor,
+    goalReader: { kind: "resolved" },
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+  });
+  assert.ok(absent.getByText("No accepted mission goal published."));
+  assert.ok(absent.getByText(editor));
+  absent.cleanup();
+
+  // A goal this surface refused on identity is not an invitation to publish a
+  // second one. The `rejected` member arrives with the goal selection; the
+  // gate is read structurally so it is complete on either side of that seam.
+  const rejected = await renderInspector({
+    goalEditor: editor,
+    goalReader: { kind: "resolved" },
+    model: deriveCodingSessionMissionInspectorModel(
+      input({ goal: { kind: "rejected", disagreements: ["founder"] } }),
+    ),
+    variant: "panel",
+  });
+  assert.equal(rejected.queryByText(editor), null);
+  rejected.cleanup();
+
+  // No `goalReader` at all keeps every existing caller on today's sentences.
+  const legacy = await renderInspector({
+    goalEditor: editor,
+    model: deriveCodingSessionMissionInspectorModel(input()),
+    variant: "panel",
+  });
+  assert.ok(legacy.getByText("No accepted mission goal published."));
+  assert.ok(legacy.getByText(editor));
+  legacy.cleanup();
+});
+
+test("who waits on whom sits on the roster that survives every width", async () => {
+  // A5: `Assignment open 3m 3s · no report yet` existed in exactly one place —
+  // the Route rail's legend — where it named the holder and never the waiter,
+  // carried no clock, and folded away below a ~1,590 px window.
+  //
+  // REVIEW-L4 F2: the hold renders under the seat that **waits**. Anchoring on
+  // the holder put the commonest hold in any mission — a seat's report and the
+  // founder's owed verdict — under no seat at all, because the founder has
+  // none, and it read as the last seat's third line.
+  const model = deriveCodingSessionMissionInspectorModel(
+    input({
+      participants: [
+        { executionKey: "bob", label: "Bob · Builder", disposition: "live" },
+      ],
+    }),
+  );
+  const view = await renderInspector({
+    model,
+    openHolds: {
+      holds: [
+        {
+          holderLabel: "you",
+          holding: "report",
+          sinceAt: 1_756_000_000,
+          sinceMs: 192_000,
+          sourceEventId: "report-event",
+          waiterLabel: "Bob · Builder",
+        },
+      ],
+      omitted: 0,
+    },
+    variant: "panel",
+  });
+  const holds = view.getAllByTestId("mission-open-hold");
+  assert.equal(holds.length, 1, "the hold renders once, on the waiting seat");
+  // The flagship line, whole: who waits, on whom, and for how long.
+  assert.match(
+    holds[0].textContent,
+    /Bob · Builder waits on you.*Report open 3m 12s/s,
+  );
+  assert.match(holds[0].textContent, /· since /);
+  assert.match(holds[0].textContent, /no verdict yet/);
+  assert.doesNotMatch(holds[0].textContent, /holder not resolved/);
+  // It is inside the roster item for the seat that waits, not loose in the
+  // section under whichever seat happened to be last.
+  const seatRow = view
+    .getAllByTestId("mission-team-participant")[0]
+    .closest("li");
+  assert.ok(seatRow.contains(holds[0]));
+  view.cleanup();
+
+  // A hold whose waiter resolves to no seat on this roster goes under its own
+  // heading, never as an unlabelled third line under the last seat.
+  const unseated = await renderInspector({
+    model,
+    openHolds: {
+      holds: [
+        {
+          holderLabel: null,
+          holding: "assignment",
+          sinceAt: null,
+          sinceMs: null,
+          sourceEventId: "assignment-event",
+          waiterLabel: "Keystone",
+        },
+      ],
+      omitted: 0,
+    },
+    variant: "panel",
+  });
+  const orphan = unseated.getAllByTestId("mission-open-hold");
+  assert.equal(orphan.length, 1);
+  assert.match(orphan[0].textContent, /holder not resolved/);
+  assert.ok(unseated.getByText("Open, held off the roster"));
+  assert.equal(
+    unseated
+      .getAllByTestId("mission-team-participant")[0]
+      .closest("li")
+      .contains(orphan[0]),
+    false,
+    "an off-roster hold never sits inside a seat's row",
+  );
+  // `sinceMs` null prints no duration at all, and never `0s`.
+  assert.doesNotMatch(orphan[0].textContent, /\b0s\b/);
+  assert.doesNotMatch(orphan[0].textContent, /open \d/);
+  unseated.cleanup();
+
+  // I10 (F9): the collection is capped and the cap is disclosed.
+  const capped = await renderInspector({
+    model,
+    openHolds: {
+      holds: [
+        {
+          holderLabel: "you",
+          holding: "report",
+          sinceAt: 1_756_000_000,
+          sinceMs: 192_000,
+          sourceEventId: "report-event",
+          waiterLabel: "Bob · Builder",
+        },
+      ],
+      omitted: 12,
+    },
+    variant: "panel",
+  });
+  assert.match(
+    capped.getByTestId("mission-open-holds-truncated").textContent,
+    /12 more not shown/,
+  );
+  capped.cleanup();
+
+  const none = await renderInspector({
+    model,
+    openHolds: { holds: [], omitted: 0 },
+    variant: "panel",
+  });
+  assert.ok(none.getByText("No open assignments."));
+  assert.equal(none.queryAllByTestId("mission-open-hold").length, 0);
+  assert.equal(none.queryByTestId("mission-open-holds-truncated"), null);
+  none.cleanup();
 });

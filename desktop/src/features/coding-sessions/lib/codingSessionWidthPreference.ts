@@ -68,6 +68,49 @@ export const CODING_SESSION_MEASURE_CLASSES: Record<
  * larger window because they have room to spare; Full spends that room on
  * text, which is the entire point of choosing it.
  */
+/**
+ * The cap on *prose*, in `ch`, for the Mission lens.
+ *
+ * L4.6 gives the Mission stream the whole width the rails leave — no centred
+ * box, no `max-w-*` on the column — which is what recovers the 258 px of dead
+ * margin a 1920 window was spending on nothing. That alone would hand a
+ * paragraph a 1,000 px line, which is the thing a reading measure exists to
+ * prevent. So the measure moves *inside* the row: prose is capped here, and
+ * everything that genuinely wants the column — transaction rows, the Work
+ * Log, code blocks, the Audit table — keeps all of it.
+ *
+ * `ch` and not `rem`: the cap is a character count, which is what the
+ * readability constraint actually is, and `ch` tracks the rendered font so it
+ * survives Cmd +/- exactly as a rem token does. `full` caps nothing, the same
+ * way it caps nothing in the container measure above.
+ *
+ * Conversation does not use this. Its container cap is unchanged, byte for
+ * byte, and adding a second cap inside it would narrow its text twice.
+ */
+export const CODING_SESSION_PROSE_MEASURE_CLASSES: Record<
+  CodingSessionWidth,
+  string
+> = {
+  // Written out as complete variant strings, never composed at runtime:
+  // Tailwind generates a class only if it appears literally in the source, so
+  // a `[&_...]:${measure}` template would compile to nothing and the cap would
+  // silently not exist.
+  narrow: "[&_.message-markdown]:max-w-[65ch]",
+  wide: "[&_.message-markdown]:max-w-[85ch]",
+  full: "",
+};
+
+/**
+ * The width Mission reads when the viewer has never chosen one.
+ *
+ * The stored default is `narrow`, a measure picked for a chat transcript in a
+ * centred column. Mission is a dashboard: its column is as wide as the rails
+ * leave, and a 65-character paragraph inside a 1,026 px column reads as a
+ * ribbon. A viewer who *has* chosen keeps their choice on both lenses — this
+ * only fills the blank.
+ */
+export const CODING_SESSION_MISSION_DEFAULT_WIDTH: CodingSessionWidth = "wide";
+
 export const CODING_SESSION_GUTTER_CLASSES: Record<CodingSessionWidth, string> =
   {
     narrow: "px-5 sm:px-8",
@@ -120,6 +163,7 @@ export function parseCodingSessionWidth(
 const listeners = new Set<() => void>();
 
 let codingSessionWidth = readStoredCodingSessionWidth();
+let codingSessionWidthIsExplicit = readCodingSessionWidthIsExplicit();
 
 function readStoredCodingSessionWidth(): CodingSessionWidth {
   try {
@@ -128,6 +172,24 @@ function readStoredCodingSessionWidth(): CodingSessionWidth {
     );
   } catch {
     return DEFAULT_CODING_SESSION_WIDTH;
+  }
+}
+
+/**
+ * Did the viewer actually choose a width, or is this the fallback?
+ *
+ * Mission's prose measure needs the difference: an unset preference is a
+ * blank to be filled with the measure that suits the lens, while a stored one
+ * is a decision that holds on both lenses. Storage that throws — a private
+ * window, blocked site data — reads as "not chosen", which is the safe half:
+ * the viewer sees a default rather than a value invented from an exception.
+ */
+function readCodingSessionWidthIsExplicit(): boolean {
+  try {
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    return raw === "narrow" || raw === "wide" || raw === "full";
+  } catch {
+    return false;
   }
 }
 
@@ -142,8 +204,15 @@ function readStoredCodingSessionWidth(): CodingSessionWidth {
 globalThis.addEventListener?.("storage", (event) => {
   if (event.key !== null && event.key !== STORAGE_KEY) return;
   const next = readStoredCodingSessionWidth();
-  if (next === codingSessionWidth) return;
+  const nextExplicit = readCodingSessionWidthIsExplicit();
+  if (
+    next === codingSessionWidth &&
+    nextExplicit === codingSessionWidthIsExplicit
+  ) {
+    return;
+  }
   codingSessionWidth = next;
+  codingSessionWidthIsExplicit = nextExplicit;
   for (const listener of listeners) listener();
 });
 
@@ -170,6 +239,7 @@ export function getCodingSessionWidth(): CodingSessionWidth {
 /** Update the coding-session width and notify every subscribed surface. */
 export function setCodingSessionWidth(width: CodingSessionWidth): void {
   codingSessionWidth = width;
+  codingSessionWidthIsExplicit = true;
 
   try {
     globalThis.localStorage?.setItem(STORAGE_KEY, width);
@@ -210,4 +280,44 @@ export function useCodingSessionMeasure(expanded: boolean): string {
  */
 export function useCodingSessionColumnGutter(): string {
   return CODING_SESSION_GUTTER_CLASSES[useCodingSessionWidth()];
+}
+
+/**
+ * The prose cap for one lens, given the viewer's choice.
+ *
+ * Mission only. Conversation passes `false` — or, more usually, never calls
+ * this at all — and keeps its container cap as its single measure.
+ */
+export function codingSessionProseMeasure(
+  width: CodingSessionWidth,
+  explicit: boolean,
+): string {
+  return CODING_SESSION_PROSE_MEASURE_CLASSES[
+    explicit ? width : CODING_SESSION_MISSION_DEFAULT_WIDTH
+  ];
+}
+
+/**
+ * The Mission stream's prose cap, as a class for the column to hand down.
+ *
+ * Returns `""` at the Full width, which is the honest answer: that choice is
+ * "no cap", and a caller that wanted one anyway would be overriding a
+ * decision the viewer made on the settings page.
+ */
+export function useCodingSessionProseMeasure(): string {
+  const width = useCodingSessionWidth();
+  const explicit = React.useSyncExternalStore(
+    subscribe,
+    getExplicitSnapshot,
+    getServerExplicitSnapshot,
+  );
+  return codingSessionProseMeasure(width, explicit);
+}
+
+function getExplicitSnapshot(): boolean {
+  return codingSessionWidthIsExplicit;
+}
+
+function getServerExplicitSnapshot(): boolean {
+  return false;
 }

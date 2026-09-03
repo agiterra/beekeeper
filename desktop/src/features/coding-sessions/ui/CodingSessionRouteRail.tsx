@@ -10,6 +10,7 @@ import {
   Flag,
   Gavel,
   GitBranch,
+  PanelLeftClose,
   LifeBuoy,
   OctagonAlert,
   Scale,
@@ -19,19 +20,56 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import {
-  formatCodingSessionRouteDuration,
-  type CodingSessionRoute,
-  type CodingSessionRouteRoad,
-  type CodingSessionRouteSign,
-  type CodingSessionRouteSignKind,
+import type {
+  CodingSessionRoute,
+  CodingSessionRouteRoad,
+  CodingSessionRouteSign,
+  CodingSessionRouteSignKind,
 } from "@/features/coding-sessions/lib/codingSessionRouteModel";
+import { codingSessionOpenHoldStatusLine } from "@/features/coding-sessions/lib/codingSessionMissionOpenHolds";
 import { cn } from "@/shared/lib/cn";
+
+import {
+  CODING_SESSION_ROUTE_DEFAULT_WIDTH_PX,
+  CODING_SESSION_ROUTE_MAX_WIDTH_PX,
+  CODING_SESSION_ROUTE_MIN_WIDTH_PX,
+} from "./useCodingSessionRouteWidth";
+
+/**
+ * The dom id the header's Route control points at (F7).
+ *
+ * Carried by the expanded rail **and** by the scrubber, because the control
+ * governs whichever of the two is mounted and an `aria-controls` that resolves
+ * to nothing is a promise to a screen reader that the app does not keep.
+ */
+export const CODING_SESSION_ROUTE_RAIL_ID = "coding-session-route-rail";
 
 /** Left padding before the first lane. */
 const MAP_PAD_X = 16;
-/** Where the sign column starts, measured from the map's left edge. */
-const SIGN_COLUMN_X = 84;
+/** The connector run between the last drawn lane and the first sign glyph. */
+const LANE_TAIL_PX = 10;
+
+/**
+ * Where the sign column starts, measured from the map's left edge.
+ *
+ * `MAP_PAD_X` plus exactly the lanes that are drawn — not a constant. The
+ * fixed 84 px this replaced reserved room for seven roads whether seven or
+ * two were on the map, so a two-seat session paid 36 px of empty gutter out
+ * of a 224 px rail and its signs truncated to pay for it (critique B5).
+ *
+ * REVIEW-L4 F14: the first version of this still over-reserved by one whole
+ * lane. Lanes are centred at `MAP_PAD_X + lane * pitch` for lanes
+ * `0 … roads.length - 1`, so the rightmost ink is at `(roads.length - 1) *
+ * pitch`, not `roads.length * pitch`; charging the extra pitch gave the signs
+ * one lane less than the map actually uses. What the column needs after the
+ * last lane is the dotted connector, and that is {@link LANE_TAIL_PX}.
+ */
+export function codingSessionRouteSignColumnX(
+  route: CodingSessionRoute,
+): number {
+  const drawn = Math.max(1, route.roads.length);
+  return MAP_PAD_X + (drawn - 1) * route.lanePitchPx + LANE_TAIL_PX;
+}
 /** Breathing room under the newest sign so Now never sits on top of one. */
 const MAP_TAIL_PX = 16;
 
@@ -98,13 +136,29 @@ function signIcon(sign: CodingSessionRouteSign): LucideIcon {
  */
 export function CodingSessionRouteRail({
   className,
+  onCollapse,
   onExpandRoad,
   onFocusRoad,
+  onResizeKeyDown,
+  onResizeStart,
   onRevealRow,
   route,
   variant = "gutter",
+  widthPx = null,
 }: {
   className?: string;
+  /** Fold the rail to the 40 px scrubber. Absent in the sheet variant. */
+  onCollapse?: () => void;
+  /** Arrow-key resize, from `useCodingSessionRouteWidth`. */
+  onResizeKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+  /** Pointer drag, from `useCodingSessionRouteWidth`. */
+  onResizeStart?: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  /**
+   * The viewer's width for this rail, in px. `null` keeps the historical
+   * fixed column — the sheet variant, and any caller that has not adopted the
+   * handle yet.
+   */
+  widthPx?: number | null;
   /** Clicking a lane focuses that participant — the existing chip focus. */
   onFocusRoad?: (executionKey: string | null) => void;
   /** Clicking a sign reveals its stream row: scroll plus the 2.4 s ring. */
@@ -204,25 +258,77 @@ export function CodingSessionRouteRail({
   // gap so a second measurement is never illegible next to the first.
   const stretchLabels = layOutRouteStretchLabels(route);
 
+  const resizable = variant === "gutter" && onResizeStart !== undefined;
+  const signColumnX = codingSessionRouteSignColumnX(route);
   return (
     <nav
       aria-label="Route"
       className={cn(
-        "flex min-h-0 shrink-0 flex-col bg-background",
-        variant === "gutter" && "w-56 border-r border-border/50",
+        "relative flex min-h-0 shrink-0 flex-col bg-background",
+        variant === "gutter" &&
+          cn("border-r border-border/50", widthPx === null && "w-56"),
         variant === "sheet" && "w-full",
         className,
       )}
       data-testid="coding-session-route-rail"
+      // The gutter rail only: the scrubber's own sheet mounts this component
+      // again, and two nodes sharing one id is a different broken IDREF.
+      id={variant === "gutter" ? CODING_SESSION_ROUTE_RAIL_ID : undefined}
       data-variant={variant}
       onKeyDown={onKeyDown}
+      style={
+        variant === "gutter" && widthPx !== null
+          ? { width: `${widthPx}px` }
+          : undefined
+      }
     >
-      {/* Bottom-anchored (§9.2): Now is the rule at the foot of the map, so a
-          session shorter than the column hangs from the bottom instead of
-          leaving a field of nothing under it, and a session taller than the
-          column opens at its newest end. */}
+      {resizable ? (
+        // B1: the Inspector has had a real separator since §19; this rail had
+        // a hard `w-56` and a width gate the viewer could not influence. Same
+        // idiom, same value semantics, mirrored because this rail is on the
+        // left: ArrowRight widens it.
+        // biome-ignore lint/a11y/useSemanticElements: this separator is interactive (pointer drag + arrow-key resizing with value semantics); an <hr> cannot take focus or carry aria-valuenow.
+        <button
+          aria-label="Resize route rail"
+          aria-orientation="vertical"
+          aria-valuemax={CODING_SESSION_ROUTE_MAX_WIDTH_PX}
+          aria-valuemin={CODING_SESSION_ROUTE_MIN_WIDTH_PX}
+          aria-valuenow={Math.round(
+            widthPx ?? CODING_SESSION_ROUTE_DEFAULT_WIDTH_PX,
+          )}
+          className="group absolute inset-y-0 -right-1 z-30 w-2 cursor-col-resize touch-none outline-none"
+          data-testid="coding-session-route-resize"
+          onKeyDown={onResizeKeyDown}
+          onPointerDown={onResizeStart}
+          role="separator"
+          type="button"
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px bg-transparent transition-colors group-hover:bg-primary/70 group-focus-visible:bg-primary" />
+        </button>
+      ) : null}
+      {onCollapse ? (
+        <div className="flex h-7 shrink-0 items-center justify-end pr-1">
+          <button
+            aria-expanded
+            aria-label="Collapse route rail"
+            className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="coding-session-route-collapse"
+            onClick={onCollapse}
+            title="Collapse the route rail to its scrubber"
+            type="button"
+          >
+            <PanelLeftClose aria-hidden className="size-4" />
+          </button>
+        </div>
+      ) : null}
+      {/* §9.2 still governs a map *taller* than the rail: the mount effect
+          above scrolls the scroller to its foot, so a long session opens at
+          its newest end. A map *shorter* than the rail no longer hangs from
+          the bottom — B5 measured ~350 px of blank sitting above the first
+          sign, which reads as a rail that lost its top. The blank belongs
+          under the last sign, where there is nothing to look for. */}
       <div
-        className="flex min-h-0 flex-1 flex-col justify-end overflow-y-auto overscroll-contain pl-4"
+        className="flex min-h-0 flex-1 flex-col justify-start overflow-y-auto overscroll-contain pl-4"
         ref={scrollRef}
       >
         <div
@@ -254,6 +360,7 @@ export function CodingSessionRouteRail({
               }
               selected={sign.key === selectedSignKey}
               sign={sign}
+              signColumnX={signColumnX}
               stopProps={signStopProps(sign.key)}
             />
           ))}
@@ -264,7 +371,7 @@ export function CodingSessionRouteRail({
               data-testid="coding-session-route-stretch"
               key={stretch.key}
               style={{
-                left: `${SIGN_COLUMN_X}px`,
+                left: `${signColumnX}px`,
                 top: `${stretch.labelTopPx}px`,
               }}
             >
@@ -312,6 +419,7 @@ function RouteMap({
   stopProps: (stopId: string) => { onFocus: () => void; tabIndex: number };
 }) {
   const laneX = (lane: number) => MAP_PAD_X + lane * route.lanePitchPx;
+  const signColumnX = codingSessionRouteSignColumnX(route);
   const laneOf = (key: string | null) =>
     route.roads.find((road) => road.key === key)?.lane ?? null;
   return (
@@ -319,7 +427,7 @@ function RouteMap({
       <svg
         aria-hidden
         className="pointer-events-none absolute inset-y-0 left-0 overflow-visible"
-        width={SIGN_COLUMN_X}
+        width={signColumnX}
         height="100%"
       >
         <title>Route map</title>
@@ -413,7 +521,7 @@ function RouteMap({
                 strokeDasharray="1 2"
                 strokeWidth={1}
                 x1={laneX(lane) + 3}
-                x2={SIGN_COLUMN_X - 2}
+                x2={signColumnX - 2}
                 y1={y}
                 y2={y}
               />
@@ -601,14 +709,15 @@ function RouteHead({
   road: CodingSessionRouteRoad;
   stopProps: (stopId: string) => { onFocus: () => void; tabIndex: number };
 }) {
-  const held =
-    road.head.holding === null
-      ? null
-      : `${road.head.holding === "assignment" ? "Assignment" : "Report"} open${
-          road.head.sinceMs === null
-            ? ""
-            : ` ${formatCodingSessionRouteDuration(road.head.sinceMs) ?? ""}`
-        } · ${road.head.holding === "assignment" ? "no report yet" : "no verdict yet"}`;
+  // A5: one string, built once, in `codingSessionMissionOpenHolds` — the rail
+  // head and the Inspector's Team row say the same sentence because neither
+  // writes it. The clock is the half a reader who looked away could not get
+  // from a ticking duration alone.
+  const held = codingSessionOpenHoldStatusLine({
+    holding: road.head.holding,
+    sinceAt: road.head.sinceAt,
+    sinceMs: road.head.sinceMs,
+  });
   return (
     <li data-testid="coding-session-route-head">
       <button
@@ -696,6 +805,7 @@ function RouteSignButton({
   roadAccentText,
   selected,
   sign,
+  signColumnX,
   stopProps,
 }: {
   index: number;
@@ -704,6 +814,8 @@ function RouteSignButton({
   roadAccentText: string;
   selected: boolean;
   sign: CodingSessionRouteSign;
+  /** Left edge of the sign column — the lanes actually drawn, not a constant. */
+  signColumnX: number;
   stopProps: { onFocus: () => void; tabIndex: number };
 }) {
   const Icon = signIcon(sign);
@@ -715,7 +827,12 @@ function RouteSignButton({
       aria-label={local ? `${sign.title} — local time, not signed` : sign.title}
       aria-pressed={selected}
       className={cn(
-        "absolute flex h-5 max-w-32 items-center gap-1 rounded px-1 text-left text-2xs font-medium transition-colors",
+        // B5: the sign takes whatever the rail leaves right of the lanes,
+        // instead of a hard 128 px inside a 224 px rail. A name clipped to
+        // `Buil…` costs the same pixels as the whole word and carries none of
+        // it — and with the drag handle above, widening the rail now widens
+        // the sign, which is why B1 and B5 are one fix.
+        "absolute flex h-5 items-center gap-1 rounded px-1 text-left text-2xs font-medium transition-colors",
         "text-muted-foreground hover:bg-muted/25 hover:text-foreground",
         "focus-visible:outline-none focus-visible:bg-primary/5 focus-visible:ring-1 focus-visible:ring-primary/60",
         critical && "font-semibold text-destructive",
@@ -729,7 +846,11 @@ function RouteSignButton({
         if (sign.revealKey != null) onReveal?.(sign.revealKey);
       }}
       ref={registerRef}
-      style={{ left: `${SIGN_COLUMN_X}px`, top: `${sign.offsetPx}px` }}
+      style={{
+        insetInlineStart: `${signColumnX}px`,
+        insetInlineEnd: `${MAP_PAD_X / 4}px`,
+        top: `${sign.offsetPx}px`,
+      }}
       {...stopProps}
       title={local ? `~ ${sign.title} (local time, not signed)` : sign.title}
       type="button"

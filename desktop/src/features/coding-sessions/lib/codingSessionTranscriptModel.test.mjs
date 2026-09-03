@@ -865,3 +865,65 @@ test("reuses settled turn objects when a massive transcript appends a new tail",
   assert.notEqual(stable.blocks[1], previous.blocks[0]);
   assert.equal(stable.blocks[1].isWorking, true);
 });
+
+/**
+ * L4.2, found live 2026-09-01 at 12:36: `FILES` printed
+ * `[elided private context: 183 bytes, sha256:b35397…]` in the path slot and
+ * `CHANGES` counted it as a second named edit. A marker is the provider saying
+ * it had a path and chose not to publish it — which is the definition of an
+ * edit with no reported file name, not a file.
+ */
+test("a redaction marker in the path slot is an unreported edit, not a file", () => {
+  const named = tool({ id: "edit-named", renderClass: "generic" });
+  named.descriptor = {
+    renderClass: "generic",
+    label: "Tool",
+    preview: null,
+    object: null,
+  };
+  named.toolKind = "edit";
+  named.args = { file_path: "crates/buzz-core/src/kind.rs" };
+  named.result = "";
+
+  const elided = tool({ id: "edit-elided", renderClass: "generic" });
+  elided.descriptor = {
+    renderClass: "generic",
+    label: "Tool",
+    preview: null,
+    object: null,
+  };
+  elided.toolKind = "edit";
+  elided.args = {
+    file_path: `[elided private context: 183 bytes, sha256:${"b3".repeat(32)}]`,
+  };
+  elided.result = "";
+
+  const observed = deriveCodingSessionObservedChanges([named, elided]);
+  assert.equal(observed.files.length, 1);
+  assert.equal(observed.files[0].path, "crates/buzz-core/src/kind.rs");
+  assert.equal(observed.unreportedEditCount, 1);
+  // The bytes and the digest are not re-surfaced: a redaction disclosed as a
+  // redaction is the whole point.
+  assert.ok(!JSON.stringify(observed).includes("sha256:"));
+  assert.ok(!JSON.stringify(observed).includes("183 bytes"));
+});
+
+test("a real path that merely contains the word elided still names a file", () => {
+  const edit = tool({ id: "edit-elided-name", renderClass: "generic" });
+  edit.descriptor = {
+    renderClass: "generic",
+    label: "Tool",
+    preview: null,
+    object: null,
+  };
+  edit.toolKind = "edit";
+  edit.args = { file_path: "src/elided.rs" };
+  edit.result = "";
+
+  const observed = deriveCodingSessionObservedChanges([edit]);
+  assert.equal(observed.unreportedEditCount, 0);
+  assert.deepEqual(
+    observed.files.map((file) => file.path),
+    ["src/elided.rs"],
+  );
+});

@@ -8,6 +8,7 @@ import {
   type CodingSessionMissionAuditTurn,
 } from "@/features/coding-sessions/lib/codingSessionMissionAuditModel";
 import { cn } from "@/shared/lib/cn";
+import { useElementWidth } from "@/shared/hooks/use-mobile";
 
 export type CodingSessionMissionAuditProps = {
   /**
@@ -289,13 +290,65 @@ function sortTurnsBySeat(
   );
 }
 
+/** Below this, eight columns cannot be read and the table becomes cards. */
+const PER_TURN_TABLE_MIN_WIDTH_PX = 400;
+
 function PerTurnTable({
   turns,
 }: {
   turns: readonly CodingSessionMissionAuditTurn[];
 }) {
+  const [widthRef, widthPx] = useElementWidth<HTMLDivElement>();
+  // B6/B7: eight columns in a 300 px rail meant a sideways scroller nested
+  // inside the Audit tab's vertical scroller — the wheel doing two different
+  // things over 40 px of pointer travel, and a horizontal flick that meant
+  // nothing carrying cost and time out of view. Below the floor the same rows
+  // render as one card per turn: every value still shown, one axis of scroll.
+  // `widthPx === 0` is "not measured yet", not "narrow", so the table renders
+  // until a measurement says otherwise.
+  if (widthPx > 0 && widthPx < PER_TURN_TABLE_MIN_WIDTH_PX) {
+    return (
+      <div ref={widthRef}>
+        <ul className="space-y-2" data-testid="mission-audit-per-turn-cards">
+          {turns.map((turn) => (
+            <li
+              className="rounded-lg border border-border/50 p-2"
+              data-execution={turn.executionKey}
+              data-testid="mission-audit-turn-card"
+              key={`${turn.executionKey}:${turn.turnId ?? "no-turn"}`}
+            >
+              <p className="truncate text-xs font-medium">{turn.seat}</p>
+              <dl className="mt-1 grid grid-cols-2 gap-x-3 text-2xs tabular-nums">
+                <PerTurnCardRow label="Started">
+                  <Clock value={turn.startedAt} />
+                </PerTurnCardRow>
+                <PerTurnCardRow label="Duration">
+                  <Duration value={turn.durationMs} />
+                </PerTurnCardRow>
+                <PerTurnCardRow label="Tools">
+                  <ToolCalls turn={turn} />
+                </PerTurnCardRow>
+                <PerTurnCardRow label="Out">
+                  <Num value={turn.outputTokens} />
+                </PerTurnCardRow>
+                <PerTurnCardRow label="Cache reads">
+                  <Num value={turn.cacheReadTokens} />
+                </PerTurnCardRow>
+                <PerTurnCardRow label="Cache writes">
+                  <Num value={turn.cacheWriteTokens} />
+                </PerTurnCardRow>
+                <PerTurnCardRow label="Context window">
+                  <Num value={turn.contextWindow} />
+                </PerTurnCardRow>
+              </dl>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
+    <div className="-mx-1 overflow-x-auto px-1" ref={widthRef}>
       <table
         className="w-full min-w-max border-collapse text-2xs tabular-nums"
         data-testid="mission-audit-per-turn"
@@ -351,6 +404,21 @@ function PerTurnTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function PerTurnCardRow({
+  children,
+  label,
+}: {
+  children: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd>{children}</dd>
     </div>
   );
 }

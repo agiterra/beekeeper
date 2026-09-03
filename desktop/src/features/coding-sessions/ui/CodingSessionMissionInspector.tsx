@@ -1,14 +1,5 @@
 import type { ReactNode } from "react";
-import {
-  Check,
-  Circle,
-  CircleDashed,
-  CircleDot,
-  Flag,
-  Minus,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { Check, Flag, Minus, X } from "lucide-react";
 
 import {
   codingSessionSeatAuthorityCopy,
@@ -20,10 +11,29 @@ import type {
   CodingSessionMissionGoalModel,
   CodingSessionMissionInspectorModel,
   CodingSessionMissionInspectorSection,
-  CodingSessionMissionPlanStep,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
+import {
+  CODING_SESSION_GOAL_UNRESOLVED,
+  codingSessionGoalErrorSentence,
+  type CodingSessionGoalReader,
+} from "@/features/coding-sessions/lib/codingSessionGoal";
+import {
+  CODING_SESSION_NO_OPEN_HOLDS,
+  codingSessionOpenHoldStatusLine,
+  codingSessionOpenHoldWaitLine,
+  codingSessionOpenHoldsTruncation,
+  type CodingSessionMissionOpenHold,
+  type CodingSessionMissionOpenHolds,
+} from "@/features/coding-sessions/lib/codingSessionMissionOpenHolds";
+import { useCodingSessionOpenHolds } from "./CodingSessionUmbrellaWorkspaceModel";
 import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/codingSessionParticipantAccent";
 import { cn } from "@/shared/lib/cn";
+
+import { AcceptedPlan, PlanSteps } from "./CodingSessionMissionPlanSection";
+import {
+  EmptyCopy,
+  SignedSource,
+} from "./CodingSessionMissionInspectorPrimitives";
 import { codingSessionUnseatedReportDetail } from "./CodingSessionMissionDeliveryBadge";
 import { CodingSessionMissionDeliveryList } from "./CodingSessionMissionDeliveryList";
 import {
@@ -32,11 +42,7 @@ import {
   isCodingSessionPrivateContextMarker,
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { CodingSessionMissionDecisionQueue } from "./CodingSessionMissionDecisionQueue";
-import {
-  EmptyCopy,
-  Integrity,
-  SignedSource,
-} from "./CodingSessionMissionInspectorIntegrity";
+import { Integrity } from "./CodingSessionMissionInspectorIntegrity";
 import { CodingSessionMissionStatePanel } from "./CodingSessionMissionStatePanel";
 
 export type CodingSessionMissionInspectorProps = {
@@ -57,6 +63,27 @@ export type CodingSessionMissionInspectorProps = {
   unseatedReportEventIds?: readonly string[];
   /** The founder's goal edit control, rendered under Current goal. */
   goalEditor?: ReactNode;
+  /**
+   * What the goal reader can currently say (A1).
+   *
+   * Defaults to `resolved` so any caller that has not adopted it renders
+   * exactly today's sentences; the surfaces that *have* one hand it over.
+   */
+  goalReader?: CodingSessionGoalReader;
+  /**
+   * Open assignments and reports, from `deriveCodingSessionMissionOpenHolds`.
+   *
+   * A5: `Assignment open 3m 3s · no report yet` existed in exactly one place —
+   * the Route rail's legend — where it named the holder and never the waiter,
+   * carried no clock, and vanished below a ~1,590 px window. It belongs on the
+   * one roster that is complete and survives every width.
+   *
+   * Each hold renders under **the seat that waits**, not the party that holds
+   * (REVIEW-L4 F2). The waiter is the one with a seat in the ordinary case —
+   * a seat files a report and the founder owes the verdict — so anchoring on
+   * the holder put the commonest hold in the mission nowhere.
+   */
+  openHolds?: CodingSessionMissionOpenHolds;
   onFocusParticipant?: (executionKey: string | null) => void;
   /** Finalizer-owned bridge into Trace when observed-file provenance is absent. */
   onOpenFileTrace?: (path: string) => void;
@@ -72,6 +99,8 @@ export function CodingSessionMissionInspector({
   deliveries,
   errorMessage = null,
   goalEditor,
+  goalReader = { kind: "resolved" },
+  openHolds,
   model,
   variant,
   focusedExecutionKey,
@@ -82,6 +111,16 @@ export function CodingSessionMissionInspector({
   seatAuthorities,
   unseatedReportEventIds,
 }: CodingSessionMissionInspectorProps) {
+  // The prop wins when a caller (or a test) supplies one; otherwise the
+  // workspace's provider does. See `CodingSessionOpenHoldsContext` for why the
+  // holds travel as context rather than through the surface hook.
+  const contextOpenHolds = useCodingSessionOpenHolds();
+  const holds = openHolds ?? contextOpenHolds;
+  const seatLabels = new Set(model.participants.map((one) => one.label));
+  const unseatedHolds = holds.holds.filter(
+    (hold) => hold.waiterLabel === null || !seatLabels.has(hold.waiterLabel),
+  );
+  const holdsTruncation = codingSessionOpenHoldsTruncation(holds.omitted);
   const authorityByExecution = new Map(
     (seatAuthorities ?? []).map((authority) => [
       authority.executionKey,
@@ -131,8 +170,14 @@ export function CodingSessionMissionInspector({
           title="Current goal"
           truncations={truncationsFor(model, "goal")}
         >
-          <Goal goal={model.goal} />
-          {goalEditor ? <div className="mt-2">{goalEditor}</div> : null}
+          <Goal goal={model.goal} reader={goalReader} />
+          {/* A1's compounding half: `Set goal` publishes a *second* 44227, and
+              the UI's answer to a record it failed to read must never be to
+              make the record worse. The control appears only when the reader
+              settled and the selection bound a goal to this mission. */}
+          {goalEditor && codingSessionGoalIsEditable(goalReader, model.goal) ? (
+            <div className="mt-2">{goalEditor}</div>
+          ) : null}
         </InspectorSection>
 
         <InspectorSection
@@ -227,11 +272,42 @@ export function CodingSessionMissionInspector({
                     {authority ? (
                       <SeatAuthorityDetail authority={authority} />
                     ) : null}
+                    <OpenHolds
+                      holds={holds.holds.filter(
+                        (hold) => hold.waiterLabel === participant.label,
+                      )}
+                    />
                   </li>
                 );
               })}
             </ul>
           )}
+          {/* A5: a hold whose waiter resolves to no seat on this roster has
+              nowhere on it to live. It renders here under its own heading —
+              never as an unlabelled third line under whichever seat happened
+              to be last, which is how it reads as that seat's (F2). */}
+          {unseatedHolds.length > 0 ? (
+            <div className="mt-3">
+              <h4 className="text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Open, held off the roster
+              </h4>
+              <OpenHolds holds={unseatedHolds} />
+            </div>
+          ) : null}
+          {holdsTruncation === null ? null : (
+            <p
+              className="mt-2 text-2xs text-amber-700 dark:text-amber-300"
+              data-testid="mission-open-holds-truncated"
+              role="status"
+            >
+              {holdsTruncation}
+            </p>
+          )}
+          {holds.holds.length === 0 && model.participants.length > 0 ? (
+            <p className="mt-2 text-2xs text-muted-foreground">
+              {CODING_SESSION_NO_OPEN_HOLDS}
+            </p>
+          ) : null}
         </InspectorSection>
 
         <InspectorSection
@@ -332,11 +408,19 @@ export function CodingSessionMissionInspector({
             // SURFACES D5: the refusal names what it is refusing. No wire kind
             // reports tests today, and a seat writing "3/3 passing" in its turn
             // is prose — this panel will not count it.
+            // A3: the old sentence — "Nothing on the wire reports tests" —
+            // was the best line on this surface right up until L1 shipped kind
+            // 44246, at which point it became a claim about the wire derived
+            // from what this client happens to read. The replacement names
+            // what would carry the fact and says plainly that this surface
+            // does not read it yet; it is true before L1 and after it.
+            // Rendering 44246 is L5's lane, and it is the only thing that
+            // makes this sentence obsolete.
             <EmptyCopy>
-              <span className="block">No test report yet</span>
+              <span className="block">No test report on this session</span>
               <span className="block">
-                Nothing on the wire reports tests. A seat's written report is
-                prose in its turn — Beekeeper will not count it.
+                Kind 44246 carries checkpoint, gate, finding and phase records.
+                This surface does not read them yet.
               </span>
             </EmptyCopy>
           ) : (
@@ -579,7 +663,53 @@ function truncationsFor(
   return model.truncations.filter((item) => item.section === section);
 }
 
-function Goal({ goal }: { goal: CodingSessionMissionGoalModel }) {
+/**
+ * May the founder publish a goal from here?
+ *
+ * Only over a settled reader that bound a record — or found none. A reader
+ * still in flight, one that errored, and a record this surface refused on
+ * identity are all states where publishing a second 44227 would bury the
+ * first.
+ *
+ * The `rejected` member arrives with the goal *selection* (lane L2). With L2
+ * merged it narrows properly; the structural read this replaced existed only
+ * to keep the gate complete while the two halves of A1 sat in two lanes.
+ */
+function codingSessionGoalIsEditable(
+  reader: CodingSessionGoalReader,
+  goal: CodingSessionMissionGoalModel,
+): boolean {
+  return reader.kind === "resolved" && goal.kind !== "rejected";
+}
+
+function Goal({
+  goal,
+  reader,
+}: {
+  goal: CodingSessionMissionGoalModel;
+  reader: CodingSessionGoalReader;
+}) {
+  // The reader speaks before the record does: with nothing read yet there is
+  // no honest sentence about what the wire holds.
+  if (reader.kind === "unresolved") {
+    return (
+      <EmptyCopy>
+        <span data-testid="mission-goal-unresolved">
+          {CODING_SESSION_GOAL_UNRESOLVED}
+        </span>
+      </EmptyCopy>
+    );
+  }
+  if (reader.kind === "errored") {
+    return (
+      <p
+        className="text-xs text-amber-700 dark:text-amber-300"
+        data-testid="mission-goal-errored"
+      >
+        {codingSessionGoalErrorSentence(reader.message)}
+      </p>
+    );
+  }
   if (goal.kind === "absent") {
     return <EmptyCopy>No accepted mission goal published.</EmptyCopy>;
   }
@@ -628,142 +758,6 @@ function Goal({ goal }: { goal: CodingSessionMissionGoalModel }) {
   );
 }
 
-function AcceptedPlan({
-  plan,
-}: {
-  plan: CodingSessionMissionInspectorModel["acceptedPlan"];
-}) {
-  if (plan.kind !== "available") {
-    return (
-      <div>
-        <p
-          className={cn(
-            "text-xs",
-            plan.kind === "conflict"
-              ? "text-amber-700 dark:text-amber-300"
-              : "text-muted-foreground",
-          )}
-        >
-          {plan.label}
-        </p>
-        {plan.sourceEventIds.map((eventId) => (
-          <SignedSource eventId={eventId} key={eventId} />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <div>
-      {plan.steps.length > 0 ? (
-        <PlanSteps
-          ariaLabel="Accepted mission plan"
-          showProvenance
-          steps={plan.steps}
-        />
-      ) : (
-        <EmptyCopy>{plan.label}</EmptyCopy>
-      )}
-    </div>
-  );
-}
-
-function PlanSteps({
-  ariaLabel,
-  showProvenance = false,
-  steps,
-}: {
-  ariaLabel: string;
-  showProvenance?: boolean;
-  steps: readonly CodingSessionMissionPlanStep[];
-}) {
-  return (
-    <ol aria-label={ariaLabel} className="mt-2 space-y-1.5">
-      {steps.map((step, index) => (
-        <li className="flex gap-2 text-xs" key={step.id}>
-          <PlanStepStatus status={step.status} />
-          <div className="min-w-0 flex-1">
-            <span className="mr-1 text-muted-foreground tabular-nums">
-              {index + 1}.
-            </span>
-            {step.text}
-            {showProvenance && step.authorLabel && step.sourceEventId ? (
-              <div className="mt-1">
-                <p className="text-2xs text-muted-foreground">
-                  Accepted from {visibleSourceAuthor(step.authorLabel)}
-                </p>
-                {step.sourceCreatedAt !== null && step.sourceIndex !== null ? (
-                  <p className="text-2xs text-muted-foreground">
-                    Signed criterion source index {step.sourceIndex} ·{" "}
-                    <time
-                      dateTime={new Date(
-                        step.sourceCreatedAt * 1000,
-                      ).toISOString()}
-                    >
-                      {new Date(step.sourceCreatedAt * 1000).toLocaleString(
-                        [],
-                        { dateStyle: "medium", timeStyle: "short" },
-                      )}
-                    </time>
-                  </p>
-                ) : null}
-                <SignedSource
-                  authorLabel={
-                    isRawSourceIdentifier(step.authorLabel)
-                      ? step.authorLabel
-                      : undefined
-                  }
-                  eventId={step.sourceEventId}
-                />
-              </div>
-            ) : null}
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function PlanStepStatus({
-  status,
-}: {
-  status: CodingSessionMissionPlanStep["status"];
-}) {
-  const Icon =
-    status === "completed"
-      ? Check
-      : status === "in_progress"
-        ? CircleDot
-        : status === "blocked" || status === "failed"
-          ? TriangleAlert
-          : status === "cancelled"
-            ? X
-            : status === "unknown"
-              ? CircleDashed
-              : status === null
-                ? Minus
-                : Circle;
-  const label =
-    status === null ? "status not reported" : status.replace("_", " ");
-  return (
-    <span
-      className={cn(
-        "mt-0.5 inline-flex shrink-0 items-center gap-1 text-2xs",
-        status === "completed" && "text-emerald-600 dark:text-emerald-400",
-        status === "in_progress" && "text-primary",
-        (status === "blocked" || status === "failed") &&
-          "text-amber-700 dark:text-amber-300",
-        status === "unknown" && "text-amber-700 dark:text-amber-300",
-        (status === null || status === "pending" || status === "cancelled") &&
-          "text-muted-foreground",
-      )}
-      data-plan-status={status ?? "not-reported"}
-    >
-      <Icon aria-hidden className="size-3.5" />
-      <span>{label}</span>
-    </span>
-  );
-}
-
 function Changes({ model }: { model: CodingSessionMissionInspectorModel }) {
   const changes = model.changes;
   if (changes.state === "none") {
@@ -795,6 +789,38 @@ function Changes({ model }: { model: CodingSessionMissionInspectorModel }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The open-hold lines for one seat, or for the holds no seat answers.
+ *
+ * Two lines, both from `codingSessionMissionOpenHolds` — this component writes
+ * no prose of its own, which is what keeps the Inspector's sentence and the
+ * rail head's the same sentence rather than two that agree today.
+ */
+function OpenHolds({
+  holds,
+}: {
+  holds: readonly CodingSessionMissionOpenHold[];
+}) {
+  if (holds.length === 0) return null;
+  return (
+    <>
+      {holds.map((hold) => {
+        const status = codingSessionOpenHoldStatusLine(hold);
+        return (
+          <p
+            className="mt-0.5 pl-2.5 text-2xs text-muted-foreground"
+            data-testid="mission-open-hold"
+            key={`${hold.sourceEventId ?? "undated"}:${hold.holding}`}
+          >
+            <span className="block">{codingSessionOpenHoldWaitLine(hold)}</span>
+            {status === null ? null : <span className="block">{status}</span>}
+          </p>
+        );
+      })}
+    </>
   );
 }
 
@@ -867,14 +893,4 @@ function unknownSeatAuthority(
     detail: codingSessionSeatAuthorityCopy.unknown.detail,
     remedy: null,
   };
-}
-
-function visibleSourceAuthor(authorLabel: string): string {
-  return isRawSourceIdentifier(authorLabel)
-    ? `${authorLabel.slice(0, 8)}…${authorLabel.slice(-6)}`
-    : authorLabel;
-}
-
-function isRawSourceIdentifier(value: string): boolean {
-  return /^[0-9a-f]{64}$/i.test(value);
 }

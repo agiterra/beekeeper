@@ -44,12 +44,21 @@ export const ROUTE_SIGNS_PER_ROAD_EXPANDED_LIMIT =
   ROUTE_SIGNS_PER_ROAD_LIMIT * 5;
 /** The `You are here` band is never shorter than this, however brief its span. */
 export const ROUTE_BAND_MIN_PX = 24;
-/** Total rail width, and the free gutter the workspace must have to show it. */
+/** The rail's width when the viewer has not chosen one. */
 export const ROUTE_RAIL_WIDTH_PX = 224;
-/** Body width below which the rail always folds to the scrubber (§9.2). */
-export const ROUTE_RAIL_MIN_BODY_PX = 1280;
-/** Reading column plus its breathing room, subtracted from the free gutter. */
-export const ROUTE_COLUMN_RESERVE_PX = 816;
+/** The collapsed rail: the scrubber's own 40 px track. */
+export const ROUTE_SCRUBBER_WIDTH_PX = 40;
+/**
+ * The stream's floor — the same 420 px the Inspector's clamp already enforces.
+ *
+ * This is now the *only* automatic opinion about the rail. §9.2 used to also
+ * demand a 1,280 px body and an 816 px reading reserve, which folded the rail
+ * away at a ~1,590 px window (SURFACES §20e) and took the one sentence about
+ * who is waiting on whom with it. Folding may hide detail; it may not be the
+ * whole opinion about a panel the viewer is now able to size and collapse for
+ * themselves.
+ */
+export const ROUTE_STREAM_MIN_WIDTH_PX = 420;
 
 /** What one sign stands for. Every member maps to a signed artifact. */
 export type CodingSessionRouteSignKind =
@@ -334,24 +343,35 @@ export function formatCodingSessionRouteDuration(
 }
 
 /**
- * Should the workspace draw the full rail, or fold to the scrubber?
+ * Is there room for the expanded rail, or must it fold to the scrubber?
  *
- * §9.2's two gates, both of them: the body has to be wide enough *and* the
- * gutter left of the reading column has to be able to give up 224 px without
- * squeezing it. `railShown` is fed back in so the measurement of the section —
- * which the rail itself narrows — stays stable instead of oscillating.
+ * One question, and it is the stream's: would showing the rail at the
+ * viewer's width push the stream under {@link ROUTE_STREAM_MIN_WIDTH_PX}? The
+ * body-width and reading-reserve gates are gone — they were an opinion about
+ * where a rail belongs, held against a viewer who now has a handle and a
+ * collapse control of their own.
+ *
+ * `railShown` is fed back in for the same reason it always was: the section's
+ * measured width already has the rail subtracted when the rail is drawn, so
+ * the decision has to be asked about the *same* layout either way or it
+ * oscillates on the exact pixel where it flips.
+ *
+ * This returns whether the rail *fits*. Whether it is *shown* is that answer
+ * and the viewer's own collapse choice, and the viewer's choice is never
+ * rewritten by a fold — see `useCodingSessionRoute`.
  */
-export function shouldShowCodingSessionRouteRail(input: {
-  bodyWidthPx: number;
+export function codingSessionRouteFits(input: {
   /** Width of the narrative section as currently laid out. */
   sectionWidthPx: number;
   railShown: boolean;
+  /** The viewer's rail width; the scrubber's 40 px is the cost either way. */
+  railWidthPx: number;
 }): boolean {
-  if (input.bodyWidthPx < ROUTE_RAIL_MIN_BODY_PX) return false;
   if (input.sectionWidthPx <= 0) return false;
-  const withoutRail =
-    input.sectionWidthPx + (input.railShown ? ROUTE_RAIL_WIDTH_PX : 0);
-  return withoutRail - ROUTE_COLUMN_RESERVE_PX >= ROUTE_RAIL_WIDTH_PX;
+  const streamIfExpanded = input.railShown
+    ? input.sectionWidthPx
+    : input.sectionWidthPx - (input.railWidthPx - ROUTE_SCRUBBER_WIDTH_PX);
+  return streamIfExpanded >= ROUTE_STREAM_MIN_WIDTH_PX;
 }
 
 /**

@@ -29,6 +29,17 @@ import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/l
 export function useCodingSessionStopAll(input: {
   channelId: string;
   currentUserPubkey: string | null;
+  /**
+   * W1's liveness, by execution key, from `deriveCodingSessionStreamPresence`.
+   *
+   * The one map the roster chips, the live strip and the road heads already
+   * read (SURFACES §19b). Handed in rather than re-derived so the header's
+   * `1 live, 1 idle` and the chips' `live`/`idle` are the same answer, not two
+   * answers that agree by luck (L4.3).
+   */
+  liveByExecutionKey: ReadonlyMap<string, boolean>;
+  /** Which lens is asking; L4.3's copy is a Mission ruling only (F6). */
+  mission: boolean;
   resolveActorName: CodingSessionActorNameResolver;
   resolveReachability: CodingSessionReachabilityResolver;
   umbrella: CodingSessionUmbrellaRecord;
@@ -42,6 +53,8 @@ export function useCodingSessionStopAll(input: {
   const {
     channelId,
     currentUserPubkey,
+    liveByExecutionKey,
+    mission,
     resolveActorName,
     resolveReachability,
     umbrella,
@@ -52,6 +65,7 @@ export function useCodingSessionStopAll(input: {
         channelId,
         founderPubkey: umbrella.founderPubkey,
         currentUserPubkey,
+        mission,
         executions: umbrella.executions.map((execution) => ({
           // The seat's own name when it has one, its role when nothing
           // resolves it, and the execution's title for a person's own
@@ -67,6 +81,7 @@ export function useCodingSessionStopAll(input: {
             execution.activeGeneration.statusAt,
             resolveReachability(execution.activeGeneration.commandTarget),
           ),
+          live: liveByExecutionKey.get(execution.executionKey) ?? false,
           target: execution.activeGeneration.commandTarget,
           providerAuthorityPubkey:
             execution.activeGeneration.providerAuthorityPubkey,
@@ -75,6 +90,8 @@ export function useCodingSessionStopAll(input: {
     [
       channelId,
       currentUserPubkey,
+      liveByExecutionKey,
+      mission,
       resolveActorName,
       resolveReachability,
       umbrella.executions,

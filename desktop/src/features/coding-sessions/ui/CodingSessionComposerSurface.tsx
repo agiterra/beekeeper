@@ -11,6 +11,10 @@ import { Textarea } from "@/shared/ui/textarea";
 import type { CodingSessionAttachmentController } from "@/features/coding-sessions/lib/useCodingSessionImageAttachments";
 import { CodingSessionComposerAttachments } from "./CodingSessionComposerAttachments";
 import {
+  useCodingSessionComposerRecipient,
+  useCodingSessionMissionLens,
+} from "./CodingSessionUmbrellaWorkspaceModel";
+import {
   CodingSessionComposerDeck,
   type CodingSessionComposerControlContext,
 } from "./CodingSessionComposerDeck";
@@ -117,6 +121,8 @@ export function CodingSessionComposerSurface({
   unreachableDetail,
   variant,
 }: ComposerSurfaceProps) {
+  const mission = useCodingSessionMissionLens();
+  const recipientLabel = useCodingSessionComposerRecipient();
   return (
     <div
       className={cn(
@@ -145,6 +151,12 @@ export function CodingSessionComposerSurface({
           onReconnect={onReconnect}
           onSessionStop={onSessionStop}
           providerAuthorityPubkey={providerAuthorityPubkey}
+          // A7 is a Mission ruling, and I8 freezes Conversation's DOM: the
+          // masked outerHTML diff against the base caught this sentence
+          // changing on the Conversation lens too, because the recipient
+          // context wraps the whole workspace body rather than one lens.
+          // Conversation keeps `for this execution`, byte for byte.
+          recipientLabel={mission ? recipientLabel : null}
           unreachable={unreachable}
           unreachableDetail={unreachableDetail}
         />
@@ -198,6 +210,20 @@ export function CodingSessionComposerSurface({
             "min-h-16 min-w-0 flex-1 resize-y text-foreground caret-primary",
             immersive &&
               "block min-h-24 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-4 pb-1 shadow-none focus-visible:ring-0",
+            // B4: Conversation's composer is that lens's centre of gravity and
+            // keeps its four-line opening. Mission's job is watching, and a
+            // ~390 px reserve for an empty text box is a third of a 1080-tall
+            // window. It opens at one line and grows on focus and on content —
+            // `CodingSessionComposer`'s auto-grow and its 12-rem ceiling are
+            // unchanged.
+            //
+            // Appended, never substituted: `cn` is `twMerge`, so Mission's
+            // `min-h-11` wins over the `min-h-24` in the string above while
+            // Conversation's class attribute stays byte-for-byte what it was.
+            // Lifting `min-h-24` out into a ternary would have reordered
+            // Conversation's classes — same styles, different bytes, and I8
+            // freezes the bytes.
+            immersive && mission && "min-h-11",
             !immersive &&
               variant === "floating" &&
               "border-0 bg-transparent shadow-none",
@@ -366,9 +392,12 @@ function ComposerLifecycleNotice({
   onReconnect,
   onSessionStop,
   providerAuthorityPubkey,
+  recipientLabel,
   unreachable,
   unreachableDetail,
 }: {
+  /** The seat this notice is about, or null to keep the unnamed sentence. */
+  recipientLabel: string | null;
   canControl: boolean;
   canSessionStop: boolean;
   error: string | null;
@@ -415,7 +444,7 @@ function ComposerLifecycleNotice({
           }
           testId="coding-session-composer-unreachable"
         >
-          {`No provider is answering for this execution${unreachableDetail ? ` — ${unreachableDetail}` : ""}. Add a provider to the session to continue the work.`}
+          {`No provider is answering for ${recipientLabel ?? "this execution"}${unreachableDetail ? ` — ${unreachableDetail}` : ""}. Add a provider to the session to continue the work.`}
         </LifecycleNoticeRow>
       ) : isDisconnected ? (
         <LifecycleNoticeRow

@@ -1636,11 +1636,23 @@ test("A3.5: the Audit tab renders this session's own accounting", async ({
   const audit = page.getByTestId("coding-session-mission-audit");
   await expect(audit).toBeVisible({ timeout: 15_000 });
 
-  // Per turn: one row per signed turn, and no invented zero where the driver
+  // Per turn: one entry per signed turn, and no invented zero where the driver
   // reported nothing.
+  //
+  // Edited by lane L4 (REVIEW-L4 F11), disclosed in REPORT-L4: below 400 px of
+  // measured width the eight-column table renders as one card per turn — every
+  // value still shown, one axis of scroll instead of a sideways scroller
+  // nested in a vertical one (L4.6.4). The Inspector's default is 360 px, so
+  // this assertion is on the *entries*, whichever shape they took. Moving the
+  // Audit to the reading column, where the table is reachable by default, is
+  // the recorded follow-on.
   const rows = audit.getByTestId("mission-audit-turn-row");
-  await expect(rows).toHaveCount(2);
-  await expect(rows.first()).toContainText("Bob · Builder");
+  const cards = audit.getByTestId("mission-audit-turn-card");
+  const entries = (await rows.count()) > 0 ? rows : cards;
+  await expect(entries).toHaveCount(2);
+  await expect(entries.first()).toContainText("Bob · Builder");
+  // The "not reported" carrier survives the degrade: a bare value where the
+  // driver reported nothing would be the honesty loss, not the shape change.
   await expect(
     audit.getByTestId("mission-audit-not-reported").first(),
   ).toHaveAttribute("title", "not reported");
@@ -1826,9 +1838,25 @@ test("A4: the Route rail maps the session, and folds to a scrubber below its wid
   await page.keyboard.press("k");
   await expect(signs.first()).toBeFocused();
 
-  // Below 1280 the map folds to the 40 px scrubber, which still names the
-  // attention signs in words rather than going quiet.
-  await page.setViewportSize({ width: 1100, height: 900 });
+  // Below the stream's 420 px floor the map folds to the 40 px scrubber,
+  // which still names the attention signs in words rather than going quiet.
+  //
+  // Edited by lane L4 (REVIEW-L4 F11), disclosed in REPORT-L4: the old gate
+  // folded the rail on a 1,280 px *body* and an 816 px reading reserve, an
+  // opinion held against a viewer with no handle. L4.6 replaces it with the
+  // stream's own floor, so a narrow window alone no longer folds anything —
+  // this test closed the Inspector at the top, and with nothing beside it the
+  // rail has all the room it needs at any width the app runs at. The fold
+  // happens when both panels genuinely cannot fit, so the Inspector is
+  // re-opened first: at a 1280 window the body is 969 and
+  // 969 − 224 − 360 = 385, under the 420 px floor.
+  await page
+    .getByTestId("coding-session-surface-toggle-mission-inspector")
+    .click();
+  await expect(
+    page.getByTestId("coding-session-mission-inspector"),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   const scrubber = page.getByTestId("coding-session-route-scrubber");
   await expect(scrubber).toBeVisible();
   await expect(rail).toHaveCount(0);

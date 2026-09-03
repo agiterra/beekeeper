@@ -14,7 +14,10 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionRouteModel";
 import { cn } from "@/shared/lib/cn";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
-import { CodingSessionRouteRail } from "./CodingSessionRouteRail";
+import {
+  CODING_SESSION_ROUTE_RAIL_ID,
+  CodingSessionRouteRail,
+} from "./CodingSessionRouteRail";
 
 /** Breathing room under the newest mark so Now never sits on top of one. */
 const TRACK_TAIL_PX = 16;
@@ -72,6 +75,7 @@ export function CodingSessionRouteScrubber({
           className,
         )}
         data-testid="coding-session-route-scrubber"
+        id={CODING_SESSION_ROUTE_RAIL_ID}
         onClick={() => setOpen(true)}
         title={label}
         type="button"
