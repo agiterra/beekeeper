@@ -282,9 +282,21 @@ nothing extra**, never *no verifier is required*; Desktop passes `false` today.
 mission's newest **founder-signed** kind-44245 and switches on this flag. Unset
 or `false`, a seat's push is admitted by **arm (B)** when every required gate
 was *observed* green on that exact commit, over a clean worktree, by the
-mission's own provider. `true`, arm (B) is off and the push needs **arm (C)** —
-a verifier's `not-refuted` refutation. A founder's push is admitted under arm
-(A) either way, whatever this flag says.
+mission's own provider. `true`, arm (B) is off and the push needs **arm (C)**.
+A founder's push is admitted under arm (A) either way, whatever this flag says.
+
+**What arm (C) is, since 2026-09-03.** *(Lane L27, the follow-up ruling L22
+§6.3 left open.)* Arm (C) is a verifier's `not-refuted` refutation **and** arm
+(B)'s gate rows — the same required gates, observed green on the same commit,
+over a clean worktree, by the mission's own provider. The flag therefore adds a
+requirement and never substitutes one: setting it asks for **more** proof than
+the gate-row route, not different proof.
+
+For one day (2026-09-03, lane L22 to lane L27) it did substitute, and that was
+backwards: a founder who set `verifierRequired: true` made their mission the
+*weaker* of the two arms, since arm (B) demanded three green gates on the pushed
+commit and arm (C) demanded none. A control that loosens the thing it is
+labelled to tighten is the kind of defect this project ranks with a crash.
 
 The relay reads the policy over one bounded page of founder-signed 44245s; a
 mission whose policy falls outside it is judged as setting no flag, which can
@@ -297,8 +309,9 @@ labelled for the completion check alone because promising a landing rule the
 switch did not have would have been a control lying about what it enforces.
 That sentence is now true and the labels say so.
 
-**And `gates.requiredGates` is enforced with it.** *(Lane L22.)* Under arm (B)
-the gate list a founder writes is the list the relay counts, in the row's own
+**And `gates.requiredGates` is enforced with it.** *(Lane L22; under both arms
+since L27.)* Under arm (B) — and, since the follow-up ruling, under arm (C) too
+— the gate list a founder writes is the list the relay counts, in the row's own
 `gate` name. A policy that names none falls back to the relay default —
 `cargo fmt`, `cargo clippy`, `cargo test` — which is disclosed in the refusal.
 An empty list is treated as naming none, so a policy cannot accidentally admit a

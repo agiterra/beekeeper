@@ -2637,6 +2637,16 @@ spirit: an approval nobody checked, a verifier who is the report's own author,
 and a verified commit pushed by a key that holds no seat are three different
 problems and get three different sentences.
 
+*(2026-09-03, lane L27.)* Arm (C) now stands on a **third** record — arm (B)'s
+gate rows, observed green on the same commit — so the sentence names those too:
+`…, over cargo fmt, cargo clippy, cargo test observed green on this exact
+commit.` Naming only the verifier would say half of what admitted the push, and
+would leave a reader unable to explain why the very same clearance stops
+admitting the moment a gate goes red. Its refusal is the fourth nearest-missing
+sentence and names **both** halves — the verifier who did clear it, and the
+gate that did not pass — because either alone sends a person looking for the
+wrong thing.
+
 The screen also carries whether the mission's **seat roster** reached the rule
 at all (`seatsRead`). Arm (C) is a question about roles, so a surface that sent
 no seats has not learned that no verifier cleared the report — it has learned
@@ -2859,6 +2869,10 @@ row says so. A green sign that could be about any commit is the ambiguity the
 key exists to remove.
 
 ### 28.3 Land names arm (B) and does not borrow arm (C)'s words
+
+*(Amended 2026-09-03 by lane L27: arm (C) now also stands on these rows, so it
+names them — but it never borrows this section's sentence, which says "no person
+has ruled on it" and under arm (C) somebody has.)*
 
 `Gates observed green on {8hex} — ready.` followed by the gates that had to be
 green, and the plain statement that **no person has ruled on it**. The screen

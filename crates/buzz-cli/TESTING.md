@@ -2231,9 +2231,16 @@ Live checks, on a repository whose `refs/heads/main` carries `require-verdict`:
    readable** — arm (A) reads no mission, and the relay short-circuits before
    its three queries. A prediction that turned "unreadable" into a refusal for
    a founder would be refusing over a fact the rule does not consult.
-2. **As a seat, with a verifier's clearance on the wire.** `prediction.arm` is
-   `"verifier-verdict"` and the sentence names both records: the lead's
-   disposition and the verifier's refutation, each by short id.
+2. **As a seat, with a verifier's clearance on the wire and the gates observed
+   green.** `prediction.arm` is `"verifier-verdict"` and the sentence names
+   three things: the lead's disposition, the verifier's refutation (each by
+   short id), and the gates that were observed green on this exact commit.
+   Since lane L27 the clearance alone is **not** enough — arm (C) is the
+   clearance *and* arm (B)'s rows — so a mission with a refutation and no
+   observed row predicts `refused`, with a sentence beginning
+   `verifier <hex> cleared <sha>, and a landing also needs every required gate
+   observed green on it: …`. That is the case to capture first, because it is
+   the one whose behaviour changed.
 3. **As a seat, with only an approval.** Refused, and the sentence is
    `… and no active verifier seat has cleared the report it approves. The gate
    wants a `refutation` verdict of `not-refuted` on that report …`. Publish one

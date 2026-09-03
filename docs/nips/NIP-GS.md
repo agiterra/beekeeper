@@ -888,6 +888,15 @@ A `kind:30617` repository announcement may carry the rule token
 never gate a landing.** The rule exists to replace review with proof, not to put
 a person in the loop.*
 
+*Revised again 2026-09-03 (lane L27, the follow-up ruling L22 §6.3 left open):
+**arm (C) requires arm (B)'s gate rows as well as the verifier's clearance.**
+Proof is scaled to risk, and scaling means the riskier class gets strictly more
+proof, not different proof. Until this revision a repository whose mission set
+`gates.verifierRequired: true` was the **weaker** of the two arms — (B) demanded
+every required gate green on the pushed commit and (C) demanded none — so
+tightening the policy loosened the landing. The rows cost nothing to require:
+the provider signs them whether or not anyone reads them.*
+
 A relay that implements it admits an update to a matching ref when **any** arm
 holds. The rule only ever subtracts: it can refuse a push the role check
 allowed, never admit one the role check refused.
@@ -902,7 +911,7 @@ observable through the relay's push record (`kind:30618`), and revoking or
 blocking remains a founder's power at every moment — after the fact, never as a
 blocking step.
 
-### Arm (C) — a verifier's verdict names the commit
+### Arm (C) — a verifier's verdict names the commit, over gates observed green
 
 Any other pusher needs a machine-checkable ruling by a key that is not the one
 being ruled on. All of:
@@ -938,12 +947,24 @@ being ruled on. All of:
    has since moved on. A report naming no branch scopes no ref.
 5. The pusher is an **active seat of that mission**. Any seat may land what a
    verifier cleared; a stranger holding the same patch may not.
+6. **Every required gate was observed green on this very commit** — clauses 2
+   and 3 of arm (B) below, whole, and its clause 1 (the policy must not require
+   a verifier) dropped, because a mission that reached this arm has already
+   produced the second seat that flag asks for. *(Added 2026-09-03, lane L27.)*
+
+   The refusal names **both** halves, because either alone sends a pusher after
+   the wrong thing: `verifier <hex> cleared <sha>, and a landing also needs
+   every required gate observed green on it: ` followed verbatim by arm (B)'s
+   own sentence for whatever is missing — a red gate, a dirty tree, a declared
+   row, or a gate nobody ran. A commit **no** row names is the last of those and
+   names the whole required list; it is never reported as "0 declared rows".
 
 ### Arm (B) — every required gate was observed green on this commit
 
 *(Implemented 2026-09-03, lane L22.)* The velocity arm: a seat's push lands with
 **no second seat** when a mechanism watched the gates pass on the exact commit
-being pushed. All of:
+being pushed. Since lane L27 it is arm (C) minus the second seat rather than an
+alternative to it — what (B) drops is the verifier, never the gates. All of:
 
 1. The mission's newest **founder-signed** `kind:44245` policy does not set
    `gates.verifierRequired: true`. A founder who asked for a second seat gets
@@ -985,7 +1006,8 @@ Refusals this arm gives, each naming the commit:
 | a gate observed red | ``gate `<name>` was observed red on <sha>.`` |
 | observed over a dirty tree | `<sha> was observed dirty: …` |
 | a required gate never observed | ``gate `<name>` has no observed green row on <sha>. This mission requires …`` |
-| nothing names the commit at all | the arm is silent; the no-verdict refusal says `No observed gate row names <sha> either …` |
+| nothing names the commit at all | under (B) the arm is silent and the no-verdict refusal says `No observed gate row names <sha> either …`; under (C) it is the "required gate never observed" sentence, naming the whole list |
+| under (C), any of the above | the same sentence, behind `verifier <hex> cleared <sha>, and a landing also needs every required gate observed green on it: ` |
 
 **Bounds, disclosed.** The relay reads one page of the newest 512 `kind:44246`
 events on the bound channel, the newest 64 founder-signed `kind:44245` policies,

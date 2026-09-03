@@ -752,8 +752,10 @@ export function landReadyResponse(mission: FounderActMission) {
     ruleGoverns: true,
     admitted: true,
     evidence: {
-      // Arm (C): the founder's disposition settled it and the verifier seat
-      // independently failed to refute the same report (L21).
+      // Arm (C): the founder's disposition settled it, the verifier seat
+      // independently failed to refute the same report (L21), and the
+      // mission's own provider watched every required gate pass on this exact
+      // commit (L27 — the clearance alone no longer admits).
       arm: "verifier-verdict",
       sessionRef: SESSION_REF,
       dispositionEventId: mission.ids.disposition,
@@ -762,9 +764,10 @@ export function landReadyResponse(mission: FounderActMission) {
       verifierPubkey: VERIFIER,
       reportEventId: mission.ids.report,
       headSha: HEAD_SHA,
-      // Arm (B) named none of these gates; the adapter always writes the key
-      // and the mock mirrors it (L22).
-      observedGates: [],
+      // L27: arm (C) stands on these too, so an admitting arm-(C) answer never
+      // carries an empty list. A mock that kept one would be exercising a
+      // response the adapter cannot produce.
+      observedGates: ["cargo fmt", "cargo clippy", "cargo test"],
     },
     refusalReason: null,
     newestVerdict: {
@@ -884,6 +887,10 @@ export function landFounders(viewerIsFounder: boolean) {
     rosterRead: true,
     // The mission's seats reached the rule — arm (C) could be evaluated.
     seatsRead: true,
+    // And so did its gate rows, which arm (C) has needed since L27. `false`
+    // here would make every refusal in these fixtures carry the "this view
+    // read no gate rows" disclosure.
+    gateRowsRead: true,
   };
 }
 

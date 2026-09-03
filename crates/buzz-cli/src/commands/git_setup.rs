@@ -1193,7 +1193,8 @@ pub enum RefPredictionState {
     /// read at all.
     AdmittedAsFounder,
     /// Admitted by arm **(C)**: a lead's approving disposition over a report
-    /// naming this commit, cleared by an independent verifier seat.
+    /// naming this commit, cleared by an independent verifier seat, **and**
+    /// every required gate observed green on that same commit.
     AdmittedByVerdict {
         /// The umbrella whose ruling admits it.
         session_ref: String,
@@ -1203,6 +1204,14 @@ pub enum RefPredictionState {
         refutation_event_id: String,
         /// The verifier seat that signed it.
         verifier_pubkey: String,
+        /// The gates that also had to be green on this commit, in the order
+        /// they were required.
+        ///
+        /// Named since the 2026-09-03 follow-up ruling. A prediction that
+        /// said only "a verifier cleared it" over an arm that also checked
+        /// three gates would leave a reader unable to tell why the same
+        /// clearance stops admitting the moment a gate goes red.
+        gates: Vec<String>,
     },
     /// Admitted by arm **(B)**: every gate this mission requires was observed
     /// green on this exact commit, over a clean worktree, by the mission's own
@@ -1649,12 +1658,14 @@ async fn predict_ref(
             disposition_event_id,
             refutation_event_id,
             verifier_pubkey,
+            gates,
             ..
         }) => RefPredictionState::AdmittedByVerdict {
             session_ref,
             disposition_event_id,
             refutation_event_id,
             verifier_pubkey,
+            gates,
         },
         VerdictAdmission::Admitted(VerdictAdmissionEvidence::ObservedGates {
             session_ref,
@@ -2114,10 +2125,12 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                 ),
                 RefPredictionState::AdmittedByVerdict {
                     session_ref, disposition_event_id, refutation_event_id, verifier_pubkey,
+                    gates,
                 } => Some(format!(
                     "mission {session_ref} approved it (disposition {disposition_event_id}) and \
                      verifier {verifier_pubkey} did not refute it (refutation \
-                     {refutation_event_id})"
+                     {refutation_event_id}), over {} observed green on this commit",
+                    gates.join(", ")
                 )),
                 RefPredictionState::AdmittedByObservedGates { session_ref, gates } => {
                     Some(format!(
@@ -2341,12 +2354,15 @@ pub fn render_human(report: &CheckReport) -> String {
                 disposition_event_id,
                 refutation_event_id,
                 verifier_pubkey,
+                gates,
             } => format!(
-                "  admitted by arm (C) — mission {session_ref} approved it (disposition {}), and \
-                 verifier {} did not refute it (refutation {})",
+                "  admitted by arm (C) — mission {session_ref} approved it (disposition {}), \
+                 verifier {} did not refute it (refutation {}), and {} were observed green on \
+                 this exact commit",
                 short_hex(disposition_event_id),
                 short_hex(verifier_pubkey),
-                short_hex(refutation_event_id)
+                short_hex(refutation_event_id),
+                gates.join(", ")
             ),
             RefPredictionState::AdmittedByObservedGates { session_ref, gates } => format!(
                 "  admitted by arm (B) — mission {session_ref} observed {} green on this exact \

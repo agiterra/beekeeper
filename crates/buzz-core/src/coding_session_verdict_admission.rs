@@ -26,7 +26,7 @@
 //! for them. The push record (30618) is what makes the landing observable
 //! afterwards, and revocation stays a founder's power at every moment.
 //!
-//! ## (C) A verifier's verdict names the commit
+//! ## (C) A verifier's verdict names the commit, over gates observed green
 //!
 //! Otherwise the push needs a machine-checkable ruling by a key that is not
 //! the one being ruled on. All of:
@@ -67,7 +67,25 @@
 //!    pushed — an approval of a commit *for `main`* does not admit that commit
 //!    onto `release`;
 //! 4. the pusher is an **active seat of that mission**. Any seat may land what
-//!    a verifier cleared; a stranger holding the same patch may not.
+//!    a verifier cleared; a stranger holding the same patch may not;
+//! 5. **every required gate was observed green on this very commit** — arm
+//!    (B)'s whole rule ([`observed::gates_observed_green`]) minus its first
+//!    clause, the one that closes that arm when the policy requires a
+//!    verifier. Added by the 2026-09-03 **follow-up** ruling (L22 §6.3, built
+//!    in L27): proof is scaled to risk, and scaling means the riskier class
+//!    gets strictly *more* proof, not different proof.
+//!
+//!    Until this clause existed a founder who set
+//!    `gates.verifierRequired: true` made their own mission the **weaker** of
+//!    the two arms — (B) demanded three green gates on the pushed commit and
+//!    (C) demanded none — so tightening the policy loosened the landing. The
+//!    rows cost nothing to require: the provider signs them whether or not
+//!    anyone reads them.
+//!
+//!    Its refusal, [`VerdictAdmissionRefusal::VerifiedButGatesNotGreen`],
+//!    names both halves — the verifier who *did* clear it and the gate that
+//!    did not pass — because either half alone sends a pusher looking for the
+//!    wrong thing.
 //!
 //! **The rule only ever subtracts.** A ref without the protection rule is
 //! evaluated exactly as before; nothing here can admit a push the ordinary
@@ -76,7 +94,9 @@
 //! ## (B) Every required gate was observed green on this commit
 //!
 //! The velocity arm, built 2026-09-03 (L22) once the wire could carry the
-//! fact it needs. A seat's push lands with **no second seat** when the
+//! fact it needs. It is arm (C)'s clause 5 without a verifier rather than a
+//! separate rule: what (B) drops is the second seat, never the gates. A
+//! seat's push lands with **no second seat** when the
 //! mission's newest founder-signed kind 44245 policy does not set
 //! `gates.verifierRequired`, and every gate the policy requires — or
 //! [`DEFAULT_REQUIRED_GATES`] when it names none — has a folded kind 44246
@@ -113,7 +133,7 @@ use nostr::Event;
 // Arm (B) lives in a sibling file so no file here passes 1,000 lines.
 #[path = "coding_session_verdict_admission_observed.rs"]
 mod observed;
-use observed::{evaluate_observed_gates, ObservedGateVerdict};
+use observed::{evaluate_observed_gates, gates_observed_green, ObservedGateVerdict};
 pub use observed::{
     mission_gate_policy, mission_observations, mission_provider_pubkeys,
     VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES, VERDICT_ADMISSION_MAX_OBSERVATIONS,
@@ -259,7 +279,8 @@ pub enum VerdictAdmissionEvidence {
         /// same order — so a reader can go and read the rows themselves.
         row_event_ids: Vec<String>,
     },
-    /// Arm (C): a verifier seat approved a report naming this commit.
+    /// Arm (C): a verifier seat cleared a report naming this commit, **and**
+    /// every required gate was observed green on it.
     VerifierVerdict {
         /// Umbrella whose fold admitted it.
         session_ref: String,
@@ -273,6 +294,17 @@ pub enum VerdictAdmissionEvidence {
         head_sha: String,
         /// The verifier seat that signed the refutation.
         verifier_pubkey: String,
+        /// The gates that also had to be green on this commit, in the order
+        /// they were required.
+        ///
+        /// Present since the 2026-09-03 follow-up ruling, and never empty: a
+        /// surface that says "a verifier cleared it" over an arm that also
+        /// checked three gates is telling half the truth, and this project
+        /// treats a comfortable half-truth as a defect.
+        gates: Vec<String>,
+        /// The newest observation event id behind each of those gates, in the
+        /// same order — so a reader can go and read the rows themselves.
+        row_event_ids: Vec<String>,
     },
 }
 
@@ -356,97 +388,33 @@ pub enum VerdictAdmissionRefusal {
         /// list rather than one item of it.
         required: Vec<String>,
     },
+    /// A verifier cleared this commit and its gates were not observed green
+    /// on it.
+    ///
+    /// The refusal that carries the 2026-09-03 follow-up ruling. It names
+    /// **both** halves — the one that is satisfied and the one that is not —
+    /// because a pusher told only "the gates are not green" would go looking
+    /// for a verifier they already have, and one told only "cleared" would not
+    /// understand why the push stopped.
+    VerifiedButGatesNotGreen {
+        /// The cleared object id.
+        new_oid: String,
+        /// The verifier seat that cleared it.
+        verifier: String,
+        /// Arm (B)'s own sentence about the rows, boxed because a refusal that
+        /// contains a refusal is otherwise infinitely sized. Carried whole
+        /// rather than paraphrased: the words a pusher reads here are the same
+        /// words the gate-row route would have given them.
+        gates: Box<VerdictAdmissionRefusal>,
+    },
     /// The rule is set on a repository bound to no channel at all.
     RepositoryUnbound,
 }
 
-impl VerdictAdmissionRefusal {
-    /// The exact sentence a pusher sees, without the ref name.
-    ///
-    /// Provisional copy (batch 3 §1j): frozen in code so both callers say the
-    /// same thing, pending Brian's word on the wording itself.
-    pub fn reason(&self) -> String {
-        match self {
-            Self::NoApprovingVerdict {
-                new_oid,
-                searched_sessions,
-            } => format!(
-                "require-verdict is set and no mission verdict names this commit: no approved \
-                 report names {new_oid}. Searched {searched_sessions} mission(s) — the newest \
-                 {VERDICT_ADMISSION_MAX_SESSIONS} on this channel whose founder is a founder of \
-                 this repository — over one shared page of the newest \
-                 {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on that channel. An \
-                 older ruling can fall outside both. No observed gate row names {new_oid} \
-                 either, so the gate-row route is not open for it: that route wants every \
-                 required gate published green on this exact commit, by the mission's own \
-                 provider, over a clean worktree."
-            ),
-            Self::ApprovedReportNamesBranchOnly => "require-verdict is set and no mission verdict \
-                 names this commit: the approved report for this work names a branch and no \
-                 headSha, and a branch name is not a commit."
-                .to_string(),
-            Self::ApprovedButNotVerified { new_oid, approvals } => format!(
-                "commit {new_oid} is approved ({approvals} approving disposition(s)) and no \
-                 active verifier seat has cleared the report it approves. The gate wants a \
-                 `refutation` verdict of `not-refuted` on that report, signed by a verifier \
-                 seat of that mission — a lead's approval is the settlement, not the check. A \
-                 founder may land this commit by pushing it themselves."
-            ),
-            Self::VerifierIsTheReportAuthor { new_oid, verifier } => format!(
-                "commit {new_oid} is cleared only by {verifier}, which is the key that wrote the \
-                 report being cleared. A seat cannot stand as the verifier of its own work."
-            ),
-            Self::PushNotSeated {
-                new_oid,
-                session_ref,
-                seats,
-            } => format!(
-                "commit {new_oid} carries a verifier's verdict on mission {session_ref}, and \
-                 this key is not an active seat of it ({seats} seat(s)). A founder of this \
-                 repository may land it, or a seat of that mission may."
-            ),
-            Self::ApprovedForAnotherRef {
-                new_oid,
-                approved_branch,
-            } => format!(
-                "commit {new_oid} is approved for {approved_branch}, and this is a different \
-                 ref. A verdict admits a commit to the branch its report named."
-            ),
-            Self::ObservedRowsAreDeclared { new_oid, rows } => format!(
-                "commit {new_oid} is named by {rows} gate row(s), and every one of them is \
-                 `declared` — its own subject saying so about itself. A landing needs rows a \
-                 mechanism watched: the provider publishes those under its own key while the \
-                 gate runs, and `bee sessions observe gate` cannot mint one."
-            ),
-            Self::ObservedGateRed { gate, new_oid } => format!(
-                "gate `{gate}` was observed red on {new_oid}. Fix it and run it again; the next \
-                 observed row names the commit it ran at."
-            ),
-            Self::ObservedDirty { new_oid } => format!(
-                "{new_oid} was observed dirty: the gates ran over a worktree with uncommitted \
-                 changes in it, so they measured something no commit names. Commit the tree and \
-                 run them again."
-            ),
-            Self::RequiredGateNotObserved {
-                gate,
-                new_oid,
-                required,
-            } => format!(
-                "gate `{gate}` has no observed green row on {new_oid}. This mission requires {}, \
-                 each observed green on the commit being pushed and over a clean worktree.",
-                required
-                    .iter()
-                    .map(|gate| format!("`{gate}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::RepositoryUnbound => "require-verdict is set and this repository is bound to no \
-                 channel, so no mission verdict can be read here. Remove the rule, or bind the \
-                 repository to the mission's channel."
-                .to_string(),
-        }
-    }
-}
+/// The frozen refusal copy lives in a sibling file so no file here passes
+/// 1,000 lines; it is `impl VerdictAdmissionRefusal` and adds no new name.
+#[path = "coding_session_verdict_admission_reasons.rs"]
+mod reasons;
 
 /// The answer, for one ref update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -662,6 +630,10 @@ pub fn evaluate_verdict_admission(
     let mut approvals_naming_the_commit: usize = 0;
     let mut self_approving_verifier: Option<String> = None;
     let mut verified_but_unseated: Option<(String, usize)> = None;
+    // The 2026-09-03 follow-up ruling's own near-miss: everything arm (C)
+    // wanted except the gate rows. Kept rather than returned so a *second*
+    // candidate that satisfies both halves still admits.
+    let mut verified_but_gates_not_green: Option<(String, VerdictAdmissionRefusal)> = None;
     // ── Arm (B) ──────────────────────────────────────────────────────────
     // Answered before arm (C) searches, because it is the cheap arm and the
     // one a mission with no verifier is actually running. Its refusal is kept
@@ -741,6 +713,21 @@ pub fn evaluate_verdict_admission(
                         });
                         continue;
                     }
+                    // Condition 5, added by the 2026-09-03 follow-up ruling:
+                    // arm (B)'s evidence, minus its "the policy must not
+                    // require a verifier" clause — which this mission has
+                    // already satisfied by producing one. A verifier-required
+                    // mission was otherwise the *weaker* of the two arms.
+                    let green =
+                        match gates_observed_green(candidate, query.new_oid, query.pusher_pubkey) {
+                            Ok(green) => green,
+                            Err(refusal) => {
+                                verified_but_gates_not_green.get_or_insert_with(|| {
+                                    (cleared.author_pubkey.to_ascii_lowercase(), refusal)
+                                });
+                                continue;
+                            }
+                        };
                     return VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict {
                         session_ref: candidate.session_ref.clone(),
                         disposition_event_id: record.event_id.clone(),
@@ -748,6 +735,8 @@ pub fn evaluate_verdict_admission(
                         report_event_id: report_ref.to_string(),
                         head_sha: head_sha.to_string(),
                         verifier_pubkey: cleared.author_pubkey.to_ascii_lowercase(),
+                        gates: green.gates,
+                        row_event_ids: green.row_event_ids,
                     });
                 }
                 Some(_) => {}
@@ -758,8 +747,19 @@ pub fn evaluate_verdict_admission(
         }
     }
 
-    // Nearest missing fact first: a verified commit blocked only on the
-    // pusher's seat is a different problem from one nobody verified.
+    // Nearest missing fact first, and this is the nearest of all: a commit a
+    // verifier cleared, pushed by a seat of that very mission, short only of
+    // the gate rows. Every other refusal below is about a fact further from
+    // the pusher's own situation.
+    if let Some((verifier, gates)) = verified_but_gates_not_green {
+        return VerdictAdmission::Refused(VerdictAdmissionRefusal::VerifiedButGatesNotGreen {
+            new_oid: query.new_oid.to_ascii_lowercase(),
+            verifier,
+            gates: Box::new(gates),
+        });
+    }
+    // A verified commit blocked only on the pusher's seat is a different
+    // problem from one nobody verified.
     if let Some((session_ref, seats)) = verified_but_unseated {
         return VerdictAdmission::Refused(VerdictAdmissionRefusal::PushNotSeated {
             new_oid: query.new_oid.to_ascii_lowercase(),
@@ -922,6 +922,13 @@ fn eq_hex(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 
+/// The kind 44246 half every arm-(C) fixture needs since L27, shared so the
+/// four test files cannot each grow their own — and one of them skip the
+/// provenance fold.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_gate_fixture.rs"]
+mod gate_fixture;
+
 #[cfg(test)]
 #[path = "coding_session_verdict_admission_tests.rs"]
 mod tests;
@@ -937,3 +944,10 @@ mod arms_tests;
 #[cfg(test)]
 #[path = "coding_session_verdict_admission_observed_tests.rs"]
 mod observed_tests;
+
+/// Arm (C) after the 2026-09-03 follow-up ruling, in its own file: its
+/// fixtures need a transaction chain **and** folded observations at once,
+/// which neither sibling carries.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_verified_tests.rs"]
+mod verified_tests;

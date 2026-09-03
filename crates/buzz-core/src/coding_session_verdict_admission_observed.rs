@@ -31,6 +31,17 @@
 //!    (C) ends on. Any seat may land what the gates cleared; a stranger
 //!    holding the same patch may not.
 //!
+//! # The same rule, under arm (C)
+//!
+//! Since the 2026-09-03 follow-up ruling (L27) arm (C) requires this evidence
+//! too, minus clause 1: a verifier-required mission needs the verifier's
+//! clearance **and** the rows, because proof scaled to risk means the riskier
+//! class gets strictly more proof, not different proof. Clause 1 is the only
+//! thing dropped, and only because a mission reaching arm (C) has already
+//! produced the second seat the flag asked for. [`gates_observed_green`] is
+//! that shared half; [`evaluate_observed_gates`] is it plus clause 1 plus the
+//! silence a mission with no rows for this commit is owed under arm (B).
+//!
 //! # What it deliberately will not do
 //!
 //! * **Absent is not "this commit".** A row signed before `headSha` existed
@@ -141,11 +152,24 @@ pub(super) enum ObservedGateVerdict {
     Silent,
 }
 
+/// What [`gates_observed_green`] found when it found it: the gates it required,
+/// in order, and the newest observation event behind each.
+pub(super) struct ObservedGreenGates {
+    /// The gates that had to be green, in the order the policy required them.
+    pub gates: Vec<String>,
+    /// The newest observation event id behind each of those gates, in the same
+    /// order, so a reader can go and read the rows themselves.
+    pub row_event_ids: Vec<String>,
+}
+
 /// Judge one candidate under arm (B).
 ///
 /// `Silent` rather than a refusal is the answer whenever this arm has nothing
 /// to say, so a mission running arm (C) never has an arm-(B) sentence put in
-/// front of its own.
+/// front of its own. The two things that silence this arm are exactly the two
+/// arm (C) does **not** inherit when it asks the same question
+/// ([`gates_observed_green`]): a founder-signed `gates.verifierRequired`, and
+/// a commit no row mentions at all.
 pub(super) fn evaluate_observed_gates(
     candidate: &VerdictAdmissionCandidate,
     new_oid: &str,
@@ -158,6 +182,47 @@ pub(super) fn evaluate_observed_gates(
     {
         return ObservedGateVerdict::Silent;
     }
+    if rows_naming(candidate, new_oid).is_empty() {
+        return ObservedGateVerdict::Silent;
+    }
+    match gates_observed_green(candidate, new_oid, pusher_pubkey) {
+        Ok(green) => ObservedGateVerdict::Admits(VerdictAdmissionEvidence::ObservedGates {
+            session_ref: candidate.session_ref.clone(),
+            head_sha: new_oid.to_ascii_lowercase(),
+            gates: green.gates,
+            row_event_ids: green.row_event_ids,
+        }),
+        Err(refusal) => ObservedGateVerdict::Refuses(refusal),
+    }
+}
+
+/// Arm (B)'s whole rule **minus the "policy must not require a verifier"
+/// clause** — the half arm (C) requires on top of a verifier's clearance.
+///
+/// # Why arm (C) asks this at all
+///
+/// L22 §6.3 left it open and the 2026-09-03 follow-up ruling (L27) closed it:
+/// **(C) = (B)'s rows + the verifier's clearance.** Proof is scaled to risk,
+/// and scaling means the riskier class gets strictly *more* proof, not
+/// different proof. Until this existed a founder who set
+/// `gates.verifierRequired: true` made their mission the **weaker** of the two
+/// arms — (B) wanted three green gates on the pushed commit and (C) wanted
+/// none — which is precisely backwards. The rows cost nothing to require: the
+/// provider signs them whether or not anyone reads them.
+///
+/// The verifier clause is the one thing dropped, and it is dropped because
+/// under arm (C) it is already satisfied by construction: the caller reaches
+/// this only after finding the verifier's `not-refuted` refutation.
+///
+/// Silence is not an answer here either. A commit **no row names** is
+/// `RequiredGateNotObserved` naming the whole list, not a shrug: arm (C) has
+/// already decided the gates are owed, so "nobody measured it" is the refusal
+/// rather than a reason to stop asking.
+pub(super) fn gates_observed_green(
+    candidate: &VerdictAdmissionCandidate,
+    new_oid: &str,
+    pusher_pubkey: &str,
+) -> Result<ObservedGreenGates, VerdictAdmissionRefusal> {
     let required = candidate
         .gate_policy
         .clone()
@@ -167,27 +232,21 @@ pub(super) fn evaluate_observed_gates(
     // Rows this mission holds for this exact commit, whoever signed them.
     // Kept apart from the observed set so the refusal can tell "nobody
     // measured this commit" from "its subject said so about itself".
-    let naming: Vec<&CodingSessionObservationGateEntry> = candidate
-        .observed_gates
-        .iter()
-        .filter(|entry| {
-            entry
-                .row
-                .head_sha
-                .as_deref()
-                .is_some_and(|sha| sha.eq_ignore_ascii_case(new_oid))
-        })
-        .collect();
-    if naming.is_empty() {
-        return ObservedGateVerdict::Silent;
-    }
+    let naming = rows_naming(candidate, new_oid);
     let observed: Vec<&CodingSessionObservationGateEntry> = naming
         .iter()
         .copied()
         .filter(|entry| entry.source == CodingSessionObservationSource::Observed)
         .collect();
     if observed.is_empty() {
-        return ObservedGateVerdict::Refuses(VerdictAdmissionRefusal::ObservedRowsAreDeclared {
+        // Nothing observed names it. Which sentence that earns depends on
+        // whether anything named it at all — "its own subject said so" and
+        // "nobody measured this commit" are different facts, and a `rows: 0`
+        // declared-rows sentence would be the second dressed as the first.
+        if naming.is_empty() {
+            return Err(no_row_names_it(&required, new_oid));
+        }
+        return Err(VerdictAdmissionRefusal::ObservedRowsAreDeclared {
             new_oid: new_oid.to_ascii_lowercase(),
             rows: naming.len(),
         });
@@ -199,35 +258,33 @@ pub(super) fn evaluate_observed_gates(
         .iter()
         .find(|entry| entry.row.outcome == CodingSessionObservationGateOutcome::Failed)
     {
-        return ObservedGateVerdict::Refuses(VerdictAdmissionRefusal::ObservedGateRed {
+        return Err(VerdictAdmissionRefusal::ObservedGateRed {
             gate: red.row.gate.clone(),
             new_oid: new_oid.to_ascii_lowercase(),
         });
     }
     if observed.iter().any(|entry| entry.row.dirty == Some(true)) {
-        return ObservedGateVerdict::Refuses(VerdictAdmissionRefusal::ObservedDirty {
+        return Err(VerdictAdmissionRefusal::ObservedDirty {
             new_oid: new_oid.to_ascii_lowercase(),
         });
     }
 
-    let mut event_ids: Vec<String> = Vec::with_capacity(required.len());
+    let mut row_event_ids: Vec<String> = Vec::with_capacity(required.len());
     for gate in &required {
         let Some(entry) = observed.iter().find(|entry| {
             &entry.row.gate == gate
                 && entry.row.outcome == CodingSessionObservationGateOutcome::Passed
                 && entry.row.dirty == Some(false)
         }) else {
-            return ObservedGateVerdict::Refuses(
-                VerdictAdmissionRefusal::RequiredGateNotObserved {
-                    gate: gate.clone(),
-                    new_oid: new_oid.to_ascii_lowercase(),
-                    required: required.clone(),
-                },
-            );
+            return Err(VerdictAdmissionRefusal::RequiredGateNotObserved {
+                gate: gate.clone(),
+                new_oid: new_oid.to_ascii_lowercase(),
+                required: required.clone(),
+            });
         };
         // The newest observation naming this gate — the one the fold shows.
         if let Some(id) = entry.event_ids.last() {
-            event_ids.push(id.clone());
+            row_event_ids.push(id.clone());
         }
     }
 
@@ -236,19 +293,56 @@ pub(super) fn evaluate_observed_gates(
         .iter()
         .any(|seat| seat.actor_pubkey.eq_ignore_ascii_case(pusher_pubkey))
     {
-        return ObservedGateVerdict::Refuses(VerdictAdmissionRefusal::PushNotSeated {
+        return Err(VerdictAdmissionRefusal::PushNotSeated {
             new_oid: new_oid.to_ascii_lowercase(),
             session_ref: candidate.session_ref.clone(),
             seats: candidate.active_seats.len(),
         });
     }
 
-    ObservedGateVerdict::Admits(VerdictAdmissionEvidence::ObservedGates {
-        session_ref: candidate.session_ref.clone(),
-        head_sha: new_oid.to_ascii_lowercase(),
+    Ok(ObservedGreenGates {
         gates: required,
-        row_event_ids: event_ids,
+        row_event_ids,
     })
+}
+
+/// Every folded row of this mission that names `new_oid`, whoever signed it.
+fn rows_naming<'a>(
+    candidate: &'a VerdictAdmissionCandidate,
+    new_oid: &str,
+) -> Vec<&'a CodingSessionObservationGateEntry> {
+    candidate
+        .observed_gates
+        .iter()
+        .filter(|entry| {
+            entry
+                .row
+                .head_sha
+                .as_deref()
+                .is_some_and(|sha| sha.eq_ignore_ascii_case(new_oid))
+        })
+        .collect()
+}
+
+/// The refusal for a commit **no** gate row names, under a rule that requires
+/// them.
+///
+/// The first required gate carries the sentence and the whole list is named
+/// beside it, so a reader learns what is owed rather than only what is
+/// missing. [`VerdictAdmissionGatePolicy::required_gates`] never returns an
+/// empty list — an empty `requiredGates` falls back to
+/// [`DEFAULT_REQUIRED_GATES`] — and the fallback here says so out loud rather
+/// than printing an empty gate name if that ever stops being true.
+fn no_row_names_it(required: &[String], new_oid: &str) -> VerdictAdmissionRefusal {
+    let gate = required
+        .first()
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_REQUIRED_GATES[0].to_owned());
+    VerdictAdmissionRefusal::RequiredGateNotObserved {
+        gate,
+        new_oid: new_oid.to_ascii_lowercase(),
+        required: required.to_vec(),
+    }
 }
 
 /// The kind 44246 observations belonging to one mission, out of a page read

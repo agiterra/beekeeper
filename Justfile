@@ -452,8 +452,10 @@ test: test-genesis test-git-push-gate
 # The filter is two module substrings passed as separate libtest filter
 # arguments (libtest ORs them; this is not cargo's single-TESTNAME positional,
 # so both go after `--`):
-#   api::git::policy::tests::gate      — the push-gate cases
-#   api::git::verdict_admission::tests — the verdict-admission cases
+#   api::git::policy::tests::gate          — the push-gate cases
+#   api::git::verdict_admission::tests     — the verdict-admission cases
+#   …::observed_tests, …::verified_tests   — arms (B) and (C), each in its own
+#                                            module and so its own substring
 # Extend this list, not the database name, when the next Postgres-gated push
 # proof joins them.
 #
@@ -466,11 +468,12 @@ test: test-genesis test-git-push-gate
 # database and the same `trap cleanup EXIT`). Either works; this way `just
 # test-git-push-gate` names one thing and can be run alone, and the recipe's
 # own filter is the whole set — the push-gate cases *and* the
-# verdict-admission ones, 35 tests as of lane L22 (which added arm (B)'s ten
-# in a sibling module; L21 added arm (A)'s two). A filter of `api::git::policy`
-# alone reaches only 10 of them, and one naming only
-# `verdict_admission::tests` misses `verdict_admission::observed_tests`
-# entirely — which is exactly how arm (B)'s ten sat unexecuted for one run.
+# verdict-admission ones, 41 tests as of lane L27 (L21 added arm (A)'s two, L22
+# arm (B)'s ten in a sibling module, L27 arm (C)-plus-rows' six in another). A
+# filter of `api::git::policy` alone reaches only 10 of them, and one naming
+# only `verdict_admission::tests` misses both sibling modules entirely — which
+# is exactly how arm (B)'s ten sat unexecuted for one run. **Every new sibling
+# module needs its own substring here**; that is the whole failure mode.
 test-git-push-gate: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail
@@ -487,6 +490,7 @@ test-git-push-gate: _ensure-services
         cargo test -p buzz-relay --lib -- \
         api::git::policy::tests::gate api::git::verdict_admission::tests \
         api::git::verdict_admission::observed_tests \
+        api::git::verdict_admission::verified_tests \
         --ignored --test-threads=1
 
 # Genesis uniqueness proofs (kind 44226) and authority-chain proofs (kind

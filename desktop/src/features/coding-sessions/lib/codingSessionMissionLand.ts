@@ -55,8 +55,12 @@ export type CodingSessionLandEvidence = {
   readonly refutationEventId: string;
   readonly verifierPubkey: string;
   /**
-   * Under arm `observed-gates`, the gates that had to be green on this
-   * commit, in the order they were required. Empty under every other arm.
+   * The gates that had to be green on this commit, in the order they were
+   * required. Empty only under arm `founder`, which reads no mission.
+   *
+   * Under `verifier-verdict` too since the 2026-09-03 follow-up ruling: that
+   * arm is the clearance **and** these rows, and a confirm step naming only
+   * the verifier would say half of what admitted the push.
    */
   readonly observedGates: readonly string[];
   readonly reportEventId: string;
@@ -102,6 +106,15 @@ export type CodingSessionLandResult = {
    * about a check that did not run, and the screen says so.
    */
   readonly seatsRead: boolean;
+  /**
+   * Whether any folded kind 44246 gate row reached the rule.
+   *
+   * Half of arm (C) since the 2026-09-03 follow-up ruling, so `false` means
+   * the gate half could not be evaluated from this surface — never that the
+   * gates were not green. A refusal naming a gate with "no observed green row"
+   * is then a fact about this screen's reads, and it says so.
+   */
+  readonly gateRowsRead: boolean;
   readonly command: string | null;
 };
 
@@ -179,6 +192,7 @@ export function decodeCodingSessionLandResult(
         "rulesSigner",
         "rosterRead",
         "seatsRead",
+        "gateRowsRead",
         "command",
       ],
     ]) ||
@@ -197,6 +211,7 @@ export function decodeCodingSessionLandResult(
     (value.rulesSigner !== null && typeof value.rulesSigner !== "string") ||
     typeof value.rosterRead !== "boolean" ||
     typeof value.seatsRead !== "boolean" ||
+    typeof value.gateRowsRead !== "boolean" ||
     (value.command !== null && typeof value.command !== "string")
   ) {
     throw new Error("native land adapter returned a malformed response");
@@ -229,11 +244,14 @@ export async function invokeCodingSessionLand(input: {
    */
   activeSeats: readonly { actorPubkey: string; role: string }[];
   /**
-   * The mission's folded kind 44246 gate rows — arm (B)'s only evidence.
+   * The mission's folded kind 44246 gate rows — arm (B)'s only evidence, and
+   * since the 2026-09-03 follow-up ruling half of arm (C)'s too.
    *
    * Already folded, so the provenance check that turns a seat's `observed`
    * claim into `declared` has run. An empty list is "this view read no
-   * observations", never "the gates were red".
+   * observations", never "the gates were red" — and on a governed ref it now
+   * means no arm but (A) can admit, which is the honest prediction: the relay
+   * reads the rows whether or not this view did.
    */
   observedGates: readonly {
     authorPubkey: string;
@@ -383,6 +401,20 @@ export const CODING_SESSION_LAND_NOT_RUN_SENTENCE =
   "there:";
 
 /**
+ * The disclosure a refusal carries when this view read no gate rows at all.
+ *
+ * Arm (C) has needed those rows since the 2026-09-03 follow-up ruling, so a
+ * refusal can now name a gate that "has no observed green row" for two very
+ * different reasons: nobody ran it, or nobody here read the answer. The
+ * relay's own copy cannot tell them apart — it always read — so the screen
+ * says which one this is rather than letting the stronger reading stand.
+ */
+export const CODING_SESSION_LAND_NO_GATE_ROWS_READ =
+  "This view read no gate rows for this mission, so a sentence about a gate " +
+  "with no observed green row is a fact about what reached this screen, not " +
+  "about what the mission ran.";
+
+/**
  * The founder line, with names where the surface knows them.
  *
  * The sentence itself comes from `buzz-core` — one rule, one wording — and
@@ -497,7 +529,7 @@ export function codingSessionMissionLandModel(input: {
           ? `You are a founder of this repository, so the require-verdict rule on ${CODING_SESSION_LAND_REF} admits your push with no verdict at all. Nothing here has ruled on this commit.`
           : evidence.arm === "observed-gates"
             ? `Gates observed green on ${evidence.headSha.slice(0, 8)} — ready. ${evidence.observedGates.join(", ")} were each watched passing on this exact commit, over a clean worktree, by this mission's own provider. No person has ruled on it, and this mission requires no verifier.`
-            : `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}, and ${input.resolveWho(evidence.verifierPubkey)} did not refute it (refutation ${short(evidence.refutationEventId)}). The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
+            : `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}, and ${input.resolveWho(evidence.verifierPubkey)} did not refute it (refutation ${short(evidence.refutationEventId)}), over ${evidence.observedGates.join(", ")} observed green on this exact commit. The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
       notRunSentence: CODING_SESSION_LAND_NOT_RUN_SENTENCE,
       sentence: null,
     };
@@ -508,6 +540,11 @@ export function codingSessionMissionLandModel(input: {
     state: "refused",
     // §1j's string verbatim behind §1l's prefix. A paraphrase would drift from
     // the words the relay will actually print at push time.
-    sentence: `Not ready to land: ${result.refusalReason ?? "the rule refused this commit and gave no reason, which is itself a defect worth reporting."}`,
+    //
+    // L27: the rule can now refuse over gate rows, so a screen that read none
+    // must not let "no observed green row" read as a fact about the mission.
+    // The disclosure is a **second sentence** rather than an edit to the
+    // first, so §1j's copy stays verbatim.
+    sentence: `Not ready to land: ${result.refusalReason ?? "the rule refused this commit and gave no reason, which is itself a defect worth reporting."}${result.gateRowsRead ? "" : ` ${CODING_SESSION_LAND_NO_GATE_ROWS_READ}`}`,
   };
 }

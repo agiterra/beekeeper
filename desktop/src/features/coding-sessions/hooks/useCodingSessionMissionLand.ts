@@ -195,10 +195,13 @@ export function useCodingSessionMissionLand(input: {
   viewerPubkey: string | null;
   landEvidence: CodingSessionMissionLandEvidenceInput | undefined;
   /**
-   * The mission's folded kind 44246 gate rows — arm (B)'s only evidence.
+   * The mission's folded kind 44246 gate rows — arm (B)'s only evidence, and
+   * since the 2026-09-03 follow-up ruling half of arm (C)'s too.
    *
-   * Empty is "this view read no observations", never "the gates were red";
-   * the rule then simply has no arm-(B) answer to give.
+   * Empty is "this view read no observations", never "the gates were red".
+   * The consequence changed with the ruling: on a governed ref no arm but (A)
+   * can then admit, which is the honest prediction rather than a silent pass —
+   * the relay reads the rows whether or not this view did.
    */
   observedGates: readonly {
     authorPubkey: string;

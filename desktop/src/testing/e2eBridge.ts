@@ -14159,6 +14159,14 @@ export function maybeInstallE2eTauriMocks() {
             seatsRead: Array.isArray(request?.activeSeats)
               ? (request.activeSeats as unknown[]).length > 0
               : false,
+            // Same rule the native adapter applies
+            // (`coding_session_land.rs:437`): gate rows were read exactly
+            // when the request carried some. A mock that always said `true`
+            // would suppress the disclosure L27 added for the case where
+            // this view read none.
+            gateRowsRead: Array.isArray(request?.observedGates)
+              ? (request.observedGates as unknown[]).length > 0
+              : false,
             command: null,
           };
         }
@@ -14180,6 +14188,9 @@ export function maybeInstallE2eTauriMocks() {
           rulesSigner: null,
           rosterRead: false,
           seatsRead: false,
+          // No repository record reached the rule, so nothing was folded for
+          // it to read gate rows from either.
+          gateRowsRead: false,
           command: null,
         };
       }

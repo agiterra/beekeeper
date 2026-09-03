@@ -512,3 +512,10 @@ mod tests;
 #[cfg(test)]
 #[path = "verdict_admission_observed_tests.rs"]
 mod observed_tests;
+
+/// Arm (C) after the 2026-09-03 follow-up ruling, against Postgres: its
+/// fixtures need the transaction chain **and** the observations **and** the
+/// policy at once, which neither sibling assembles.
+#[cfg(test)]
+#[path = "verdict_admission_verified_tests.rs"]
+mod verified_tests;

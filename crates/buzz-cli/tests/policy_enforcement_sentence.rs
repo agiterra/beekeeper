@@ -34,6 +34,13 @@ const RETIRED_PHRASINGS: &[&str] = &[
     // the push gate reads no policy — is telling a founder the switch has no
     // landing effect immediately before it decides their landing.
     "gates.verifierRequired at the fold's completion check. Every other field",
+    // Retired by lane L27 (2026-09-03): arm (C) is the verifier's clearance
+    // **and** arm (B)'s gate rows. A surface still describing it as the
+    // refutation alone tells a founder that tightening the flag swaps one
+    // proof for another, when it adds one — and for one day it did the
+    // opposite, making the stricter policy the weaker arm.
+    "arm (B) is off and the push needs **arm (C)** — a verifier's `not-refuted` refutation.",
+    "a verifier-required mission needs no gate rows",
     "reads no session policy at all",
     "arm (B) is not implemented",
     "only budget.turns is enforced",

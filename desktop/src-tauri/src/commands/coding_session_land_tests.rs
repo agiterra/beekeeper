@@ -221,12 +221,53 @@ fn mission(decision: &str, head_sha: Option<&str>, branch: Option<&str>) -> Miss
     )
 }
 
+/// Every default gate, observed green on the pushed commit by a key that is
+/// neither the pusher nor any seat — the shape both arm (B) and, since the
+/// 2026-09-03 follow-up ruling, arm (C) require.
+fn green_rows() -> Vec<crate::commands::coding_session_land::CodingSessionLandObservedGate> {
+    buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES
+        .iter()
+        .map(
+            |gate| crate::commands::coding_session_land::CodingSessionLandObservedGate {
+                author_pubkey: "aa".repeat(32),
+                source: "observed".to_owned(),
+                gate: (*gate).to_owned(),
+                outcome: "passed".to_owned(),
+                head_sha: Some(HEAD_SHA.to_owned()),
+                dirty: Some(false),
+            },
+        )
+        .collect()
+}
+
 /// The ordinary request: the roster was read and named no extra Owner.
 ///
 /// `Some(vec![])` rather than `None` on purpose — "read, and it adds nobody"
 /// is the common case, and `None` is the disclosure a caller that *could not*
 /// read the roster must carry (finding 33).
+///
+/// It carries the gate rows **and** `verifierRequired: true` since L27: arm
+/// (C) now wants both halves, and the flag keeps arm (B) silent so a case
+/// about the verdict is answered by the verdict. `request_without_gate_rows`
+/// is the same fixture short of the new half.
 fn request(
+    mission: &Mission,
+    protection_tags: Option<Vec<Vec<String>>>,
+) -> CodingSessionLandRequest {
+    CodingSessionLandRequest {
+        observed_gates: green_rows(),
+        gate_policy: Some(
+            crate::commands::coding_session_land::CodingSessionLandGatePolicy {
+                verifier_required: Some(true),
+                required_gates: None,
+            },
+        ),
+        ..request_without_gate_rows(mission, protection_tags)
+    }
+}
+
+/// The pre-L27 request: a verifier's clearance and no gate row at all.
+fn request_without_gate_rows(
     mission: &Mission,
     protection_tags: Option<Vec<Vec<String>>>,
 ) -> CodingSessionLandRequest {
@@ -263,26 +304,14 @@ fn observed_gates_request(
     protection_tags: Option<Vec<Vec<String>>>,
 ) -> CodingSessionLandRequest {
     CodingSessionLandRequest {
-        observed_gates: buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES
-            .iter()
-            .map(
-                |gate| crate::commands::coding_session_land::CodingSessionLandObservedGate {
-                    author_pubkey: "aa".repeat(32),
-                    source: "observed".to_owned(),
-                    gate: (*gate).to_owned(),
-                    outcome: "passed".to_owned(),
-                    head_sha: Some(HEAD_SHA.to_owned()),
-                    dirty: Some(false),
-                },
-            )
-            .collect(),
+        observed_gates: green_rows(),
         gate_policy: Some(
             crate::commands::coding_session_land::CodingSessionLandGatePolicy {
                 verifier_required: Some(false),
                 required_gates: None,
             },
         ),
-        ..request(mission, protection_tags)
+        ..request_without_gate_rows(mission, protection_tags)
     }
 }
 
@@ -318,6 +347,43 @@ fn an_approved_commit_on_a_require_verdict_ref_is_admitted_and_names_the_commit(
         Some(format!("git push origin {HEAD_SHA}:refs/heads/main").as_str())
     );
     assert!(answer.refusal_reason.is_none());
+}
+
+/// L27: arm (C) is the clearance **and** the rows, and the evidence names
+/// both — a confirm step saying only "a verifier cleared it" over an arm that
+/// also checked three gates would be telling half the truth.
+#[test]
+fn an_arm_c_admission_names_the_gates_it_also_stood_on() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let answer = land_adapter(request(&mission, Some(protect(&["require-verdict"]))))
+        .expect("the boundary answers");
+    let evidence = answer.evidence.expect("admitted answers carry evidence");
+    assert_eq!(evidence.arm, "verifier-verdict");
+    assert_eq!(
+        evidence.observed_gates,
+        buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES.to_vec()
+    );
+}
+
+/// The same cleared report with no gate row naming the commit is refused, and
+/// the refusal names the half that *is* satisfied first.
+#[test]
+fn a_clearance_with_no_gate_rows_is_refused_and_names_both_halves() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let answer = land_adapter(request_without_gate_rows(
+        &mission,
+        Some(protect(&["require-verdict"])),
+    ))
+    .expect("the boundary answers");
+    assert!(!answer.admitted, "a clearance alone no longer lands");
+    let reason = answer.refusal_reason.expect("a refusal carries its reason");
+    assert!(
+        reason.contains(&mission.verifier.public_key().to_hex()),
+        "{reason}"
+    );
+    for gate in buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES {
+        assert!(reason.contains(gate), "{reason}");
+    }
 }
 
 #[test]
@@ -681,6 +747,13 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
             Some(protect(&["require-verdict"])),
         ))
         .expect("observed gates"),
+        // L27: the same cleared report, with no gate row naming the commit.
+        // The screen must say why a verifier's clearance stopped being enough.
+        "verifiedButGatesNotGreen": land_adapter(request_without_gate_rows(
+            &admitted,
+            Some(protect(&["require-verdict"])),
+        ))
+        .expect("verified but gates not green"),
         "unknown": land_adapter(request(&admitted, None)).expect("unknown"),
     }))
     .expect("serialize fixture")
@@ -709,6 +782,19 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
         generated_value["observedGates"]["evidence"]["arm"],
         json!("observed-gates")
     );
+    // L27: a clearance with no rows is refused, and the sentence names both
+    // the verifier who cleared it and the gate list that is owed.
+    assert_eq!(
+        generated_value["verifiedButGatesNotGreen"]["admitted"],
+        json!(false)
+    );
+    let refusal = generated_value["verifiedButGatesNotGreen"]["refusalReason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(refusal.starts_with("verifier "), "{refusal}");
+    for gate in buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES {
+        assert!(refusal.contains(gate), "{refusal}");
+    }
     assert_eq!(generated_value["ungoverned"]["ruleGoverns"], json!(false));
     assert_eq!(generated_value["unknown"]["repositoryKnown"], json!(false));
     assert_eq!(

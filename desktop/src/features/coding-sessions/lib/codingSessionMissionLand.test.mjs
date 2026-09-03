@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  CODING_SESSION_LAND_NO_GATE_ROWS_READ,
   CODING_SESSION_LAND_NOT_RUN_SENTENCE,
   codingSessionMissionLandModel,
   decodeCodingSessionLandResult,
@@ -25,6 +26,7 @@ test("L8.2: every state of the adapter's real output decodes", () => {
   for (const key of [
     "admitted",
     "observedGates",
+    "verifiedButGatesNotGreen",
     "refused",
     "ungoverned",
     "unknown",
@@ -56,7 +58,7 @@ test("L8.2: an admitted commit offers the command, and the command names the com
   assert.ok(!/refs\/heads\/main:refs/.test(model.command));
   assert.equal(
     model.approvalSentence,
-    `Approved by the founder in disposition ${FIXTURE.admitted.evidence.dispositionEventId.slice(0, 8)}, over report ${FIXTURE.admitted.evidence.reportEventId.slice(0, 8)}, and ${FIXTURE.admitted.evidence.verifierPubkey.slice(0, 8)} did not refute it (refutation ${FIXTURE.admitted.evidence.refutationEventId.slice(0, 8)}). The relay's require-verdict rule admits this commit on refs/heads/main.`,
+    `Approved by the founder in disposition ${FIXTURE.admitted.evidence.dispositionEventId.slice(0, 8)}, over report ${FIXTURE.admitted.evidence.reportEventId.slice(0, 8)}, and ${FIXTURE.admitted.evidence.verifierPubkey.slice(0, 8)} did not refute it (refutation ${FIXTURE.admitted.evidence.refutationEventId.slice(0, 8)}), over ${FIXTURE.admitted.evidence.observedGates.join(", ")} observed green on this exact commit. The relay's require-verdict rule admits this commit on refs/heads/main.`,
   );
   assert.equal(model.notRunSentence, CODING_SESSION_LAND_NOT_RUN_SENTENCE);
   assert.match(model.notRunSentence, /irreversible/);
@@ -71,6 +73,9 @@ test("L8.2: a refusal prints §1j's string verbatim behind §1l's prefix", () =>
   });
   assert.equal(model.state, "refused");
   assert.equal(model.command, null);
+  // `refused` carries gate rows, so no disclosure is appended and §1j's copy
+  // is the whole sentence.
+  assert.equal(FIXTURE.refused.gateRowsRead, true);
   assert.equal(
     model.sentence,
     `Not ready to land: ${FIXTURE.refused.refusalReason}`,
@@ -259,4 +264,55 @@ test("L22: arm (B) says the gates were green on this commit, and names them", ()
   // not have.
   assert.ok(!/Approved by/.test(model.approvalSentence));
   assert.ok(!/did not refute/.test(model.approvalSentence));
+});
+
+test("L27: arm (C) names the gates it also stood on, and never only the verifier", () => {
+  const evidence = FIXTURE.admitted.evidence;
+  assert.equal(evidence.arm, "verifier-verdict");
+  assert.ok(
+    evidence.observedGates.length > 0,
+    "an arm (C) admission stands on gate rows too",
+  );
+  const model = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.admitted),
+    resolveWho,
+  });
+  for (const gate of evidence.observedGates) {
+    assert.ok(
+      model.approvalSentence.includes(gate),
+      `the confirm step names ${gate}: ${model.approvalSentence}`,
+    );
+  }
+});
+
+test("L27: a refusal over rows this view never read says which it is", () => {
+  const unread = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.verifiedButGatesNotGreen),
+    resolveWho,
+  });
+  assert.equal(FIXTURE.verifiedButGatesNotGreen.gateRowsRead, false);
+  assert.ok(
+    unread.sentence.endsWith(CODING_SESSION_LAND_NO_GATE_ROWS_READ),
+    unread.sentence,
+  );
+  // The same disclosure must NOT appear when the rows did reach the screen:
+  // there the gate sentence is a fact about the mission.
+  const read = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.refused),
+    resolveWho,
+  });
+  assert.equal(FIXTURE.refused.gateRowsRead, true);
+  assert.ok(!read.sentence.includes(CODING_SESSION_LAND_NO_GATE_ROWS_READ));
+});
+
+test("L27: a clearance with no gate rows is refused, naming both halves", () => {
+  const model = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.verifiedButGatesNotGreen),
+    resolveWho,
+  });
+  assert.equal(model.state, "refused");
+  assert.equal(model.command, null);
+  assert.match(model.sentence, /^Not ready to land: verifier /);
+  assert.match(model.sentence, /also needs every required gate observed green/);
+  assert.match(model.sentence, /cargo fmt/);
 });

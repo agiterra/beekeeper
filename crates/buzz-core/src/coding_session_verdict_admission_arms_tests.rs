@@ -206,8 +206,17 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         founder_pubkey: mission.founder.public_key().to_hex(),
         canonical,
         active_seats: mission.seats.clone(),
-        observed_gates: Vec::new(),
-        gate_policy: None,
+        // L27: arm (C) requires arm (B)'s evidence on top of the clearance, so
+        // an arm-(C) fixture that publishes no gate row now tests the *new*
+        // refusal rather than the verdict it was written for. Both halves are
+        // supplied here; the cases that are about a missing half live in
+        // `super::verified_tests`, which varies them one at a time.
+        observed_gates: super::gate_fixture::observed_green_gates(
+            CHANNEL, SESSION, GENESIS, HEAD_SHA,
+        ),
+        // And `verifierRequired`, so arm (B) stays silent and the arm that
+        // answers is the one under test.
+        gate_policy: super::gate_fixture::verifier_required_policy(),
     }
 }
 

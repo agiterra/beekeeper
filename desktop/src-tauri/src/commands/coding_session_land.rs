@@ -98,8 +98,12 @@ pub struct CodingSessionLandRequest {
     /// The mission's folded kind 44246 gate rows, as this view already holds
     /// them.
     ///
-    /// Arm (B) reads these and nothing else. A caller that sends none gets no
-    /// arm-(B) answer — never a claim that the gates were red. Defaulted so a
+    /// Arm (B) reads these, and since the 2026-09-03 follow-up ruling so does
+    /// arm (C). A caller that sends none gets **no landing at all** on a
+    /// governed ref unless the viewer is a founder — which is the honest
+    /// answer, not a silent pass: the relay reads the rows whether this view
+    /// did or not, and a screen that said "ready" over rows it never read
+    /// would be predicting an admission the push will not get. Defaulted so a
     /// caller built before 2026-09-03 still decodes.
     #[serde(default)]
     pub observed_gates: Vec<CodingSessionLandObservedGate>,
@@ -181,8 +185,13 @@ pub struct CodingSessionLandEvidence {
     /// That report's `headSha`, as published. Empty under arm (A). Under arm
     /// (B) it is the commit every required gate row named.
     pub head_sha: String,
-    /// Under arm (B), the gates that had to be green, in the order they were
-    /// required. Empty under every other arm.
+    /// The gates that had to be green on this commit, in the order they were
+    /// required. Empty only under arm (A), which reads no mission.
+    ///
+    /// Under arm (C) too since the 2026-09-03 follow-up ruling: a verifier's
+    /// clearance is half of what that arm wants and these rows are the other
+    /// half, so a confirm step that named only the verifier would be telling
+    /// half the truth about what admitted the push.
     pub observed_gates: Vec<String>,
 }
 
@@ -250,6 +259,15 @@ pub struct CodingSessionLandResponse {
     /// screen that prints the second over the first is telling a comfortable
     /// lie about a gate.
     pub seats_read: bool,
+    /// Whether the caller sent any folded kind 44246 gate row at all.
+    ///
+    /// Load-bearing since the 2026-09-03 follow-up ruling made those rows half
+    /// of arm (C). `false` means the gate half **could not be evaluated from
+    /// here** — not that the gates were never green. Without it the refusal
+    /// *"gate `cargo fmt` has no observed green row on <sha>"* reads as a fact
+    /// about the mission when it may only be a fact about this screen's reads,
+    /// which is the same comfortable lie `seats_read` exists to prevent.
+    pub gate_rows_read: bool,
     /// The exact command a person runs, or null when nothing is admitted.
     ///
     /// It names the **commit**, never the branch: a branch name is not a
@@ -416,6 +434,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         },
         roster_read: founders.roster_owners_read().is_some(),
         seats_read: !request.active_seats.is_empty(),
+        gate_rows_read: !request.observed_gates.is_empty(),
         command: None,
     };
     if !rule_governs {
@@ -501,6 +520,8 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
             report_event_id,
             head_sha,
             verifier_pubkey,
+            gates,
+            ..
         }) => Ok(CodingSessionLandResponse {
             admitted: true,
             command: Some(format!("git push origin {head_sha}:{}", request.ref_name)),
@@ -513,7 +534,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
                 verifier_pubkey,
                 report_event_id,
                 head_sha,
-                observed_gates: Vec::new(),
+                observed_gates: gates,
             }),
             ..base
         }),
