@@ -88,6 +88,41 @@ const LEAD_PACK_SENTENCES: &[(&str, &str, &str)] = &[
         "finding 21 again, from the other end: the ruling was given about one SHA, so the next SHA needed the same ruling",
     ),
 ];
+/// The verbatim sentence every shipped pack must carry about which `bee` it
+/// runs.
+///
+/// Handed over by lane L12, which owns the unskippable half (the seat briefing
+/// names `$BEE` too). A pack can be skipped and a briefing cannot, so this is
+/// belt and braces on the same fact: on 2026-09-01 a seat reached the desktop
+/// app's bundled sidecar because that is what its `PATH` found first, and ran a
+/// build of the CLI older than the fix it was testing.
+const BEE_PATH_RULE: &str = "Run the CLI as `$BEE` — your host chose it and put it on your PATH; never a path someone typed at you, and never a path from a transcript.";
+
+/// What a pack may never point at.
+///
+/// A pack that cites a source path teaches a seat to read `crates/` to use
+/// `bee`, which is the whole cost this lane removes: on 2026-09-01 a lead
+/// grepped the fold's Rust source for the word its own tool had printed. The
+/// answers live in `bee sessions <verb> --help` and `bee sessions explain
+/// <word>`; a pack points there.
+const FORBIDDEN_POINTERS: &[&str] = &[
+    "crates/",
+    // A Windows separator is the same pointer (REVIEW-L13 F4).
+    "crates\\",
+    "desktop/src",
+    // The way a Desktop path is usually written in this repo's own documents.
+    "src/features/",
+    "mobile/lib/",
+    "web/src/",
+    "00-BATCH",
+];
+
+/// Source-file extensions whose `name.ext:NN` form is a line citation.
+///
+/// REVIEW-L13 F4: the first version scanned `.rs:NN` only, and this repository's
+/// UI is TypeScript and Dart — `codingSessionTeamTransactionFold.ts:412` slipped
+/// straight through the guard that exists to catch exactly that.
+const CITED_EXTENSIONS: &[&str] = &[".rs:", ".ts:", ".tsx:", ".dart:"];
 
 /// Repository root, derived from this crate's manifest directory.
 fn repo_root() -> PathBuf {
@@ -220,5 +255,175 @@ fn every_shipped_role_pack_still_loads() {
     assert!(
         loaded >= SEAT_ROLES.len(),
         "expected at least the four seat packs under personas/roles, found {loaded}"
+    );
+}
+
+/// Every markdown file under `personas/`, in a stable order.
+fn every_pack_markdown_file() -> Vec<PathBuf> {
+    fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(&repo_root().join("personas"), &mut found);
+    found.sort();
+    found
+}
+
+/// Why one line of a pack points a seat at the source tree, or `None`.
+///
+/// Shared by the walker below and by
+/// `the_forbidden_pointer_scan_catches_every_neighbouring_spelling`, so the
+/// cases the review demonstrated are checked against the same code the packs
+/// are.
+fn source_pointer_in(line: &str) -> Option<String> {
+    for needle in FORBIDDEN_POINTERS {
+        if line.contains(needle) {
+            return Some(format!("{needle:?}"));
+        }
+    }
+    // A `file.rs:NN` citation is the same failure in a shorter form, in every
+    // language this repository writes.
+    for extension in CITED_EXTENSIONS {
+        let mut rest = line;
+        while let Some(position) = rest.find(extension) {
+            let after = &rest[position + extension.len()..];
+            if after.starts_with(|character: char| character.is_ascii_digit()) {
+                return Some(format!("a file{extension}NN citation"));
+            }
+            rest = &rest[position + extension.len()..];
+        }
+    }
+    None
+}
+
+/// Whether one line points at the source tree.
+fn line_points_at_the_source_tree(line: &str) -> bool {
+    source_pointer_in(line).is_some()
+}
+
+/// Batch 3 L13.3. A ratchet: it fails on the first pack that sends a seat to
+/// the source tree, whether or not one does today.
+#[test]
+fn no_pack_points_at_the_source_tree() {
+    let mut offences: Vec<String> = Vec::new();
+    for path in every_pack_markdown_file() {
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        for (index, line) in body.lines().enumerate() {
+            if let Some(reason) = source_pointer_in(line) {
+                offences.push(format!(
+                    "{}:{}: {reason} in {line:?}",
+                    path.display(),
+                    index + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        offences.is_empty(),
+        "a pack points a seat at this repository's source instead of at the tool.\n\
+         The answers are in `bee sessions <verb> --help` and `bee sessions explain <word>`; \
+         cite those.\n{}",
+        offences.join("\n")
+    );
+}
+
+/// REVIEW-L13 F4. Each of these reached a pack unchallenged by the first
+/// version of the guard; the review found all five by appending them to a
+/// builder persona in a scratch copy and watching six tests stay green.
+#[test]
+fn the_forbidden_pointer_scan_catches_every_neighbouring_spelling() {
+    let slips = [
+        "Read `src/features/coding-sessions/lib/foo.ts` for the shape.",
+        "See `crates\\buzz-core\\src\\x.rs` on Windows.",
+        "`mobile/lib/shared/relay/nostr_models.dart` holds the kinds.",
+        "`web/src/app.tsx` renders it.",
+        "see `codingSessionTeamTransactionFold.ts:412` for the rest",
+        "`CodingSessionMissionInspector.tsx:88` draws the badge",
+        "`lib/features/mission/mission_page.dart:31` on mobile",
+        "`crates/buzz-core/src/x.rs` is the fold",
+        "`coding_session_team_transaction_fold.rs:99` is the enum",
+        "00-BATCH.md \u{a7}1d froze the sentence",
+    ];
+    for line in slips {
+        assert!(
+            line_points_at_the_source_tree(line),
+            "this pointer would still reach a seat unchallenged: {line:?}"
+        );
+    }
+
+    // And the guard must not fire on the prose the packs legitimately carry.
+    let allowed = [
+        "Run `$BEE sessions explain unseated` for the meaning.",
+        "`bee sessions operation get --id <operationId>` fetches the record.",
+        "Read `docs/SESSION_STATE.md` \u{a7}3 Next and nothing else.",
+        "`AGENTS.md` \u{a7} Quality Gates is the contract.",
+        "The mission's terminal is a `mission.completed`, never a note.",
+    ];
+    for line in allowed {
+        assert!(
+            !line_points_at_the_source_tree(line),
+            "the guard fired on prose a pack is allowed to carry: {line:?}"
+        );
+    }
+}
+
+/// Batch 3 L13.3, L12's cross-lane sentence.
+#[test]
+fn every_shipped_pack_carries_the_bee_path_rule_verbatim() {
+    let roles_dir = repo_root().join("personas").join("roles");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&roles_dir).expect("personas/roles is readable") {
+        let role_dir = entry.expect("a readable directory entry").path();
+        if !role_dir.is_dir() {
+            continue;
+        }
+        let role = role_dir
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let persona = role_dir.join("personas").join(format!("{role}.persona.md"));
+        let body = std::fs::read_to_string(&persona)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", persona.display()));
+        assert!(
+            body.contains(BEE_PATH_RULE),
+            "role {role}'s persona does not carry the $BEE rule byte-for-byte. A seat that \
+             runs a `bee` someone typed at it runs whichever build that path holds — on \
+             2026-09-01 that was a stale bundled sidecar."
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= SEAT_ROLES.len(),
+        "expected at least the four seat packs, checked {checked}"
+    );
+}
+
+/// The packs must send a reader to the tool for the fold's vocabulary.
+#[test]
+fn the_lead_pack_points_at_the_tool_for_the_words() {
+    let skill = repo_root()
+        .join("personas")
+        .join("roles")
+        .join("lead")
+        .join("skills")
+        .join("triage-report")
+        .join("SKILL.md");
+    let body = std::fs::read_to_string(&skill)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", skill.display()));
+    assert!(
+        body.contains("sessions explain"),
+        "the lead's triage skill must name `$BEE sessions explain <word>`: the words it has \
+         to read (unseated, dangling, superseded, an exclusion code) are defined there and \
+         nowhere a seat can reach without a checkout"
     );
 }

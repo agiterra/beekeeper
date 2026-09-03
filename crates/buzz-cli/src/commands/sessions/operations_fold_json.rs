@@ -11,12 +11,20 @@ use serde_json::{json, Value};
 /// Every collection is present even when empty, and every nullable field is
 /// present as `null`: "not disclosed" and "empty" are different answers and
 /// this surface must never merge them.
+///
+/// `excluded[].code` is the **snake_case wire spelling**
+/// ([`buzz_core::team_vocabulary::fold_exclusion_wire_code`]), the same word
+/// the Tauri adapter emits and the same word `bee sessions explain <word>`
+/// answers to. It used to be the Rust `Debug` spelling here and snake_case
+/// there — one code, two names, depending on which surface a seat happened to
+/// read (REVIEW-L13 F5). `explain` still accepts both spellings, so a seat that
+/// copied the old one still gets an answer.
 pub(super) fn fold_json(fold: &CodingSessionTeamFold) -> Value {
     json!({
         "includedEventIds": fold.included_event_ids,
         "excluded": fold.excluded.iter().map(|item| json!({
             "eventId": item.event_id,
-            "code": format!("{:?}", item.code),
+            "code": buzz_core::team_vocabulary::fold_exclusion_wire_code(item.code),
             "reason": item.reason,
         })).collect::<Vec<_>>(),
         "conflicts": fold.conflicts.iter().map(|item| json!({

@@ -931,7 +931,7 @@ fn operation_json(event: &Event, fold: &CodingSessionTeamFold) -> Result<Value, 
         "payload": payload,
         "canonical": fold.included_event_ids.contains(&event.id.to_hex()),
         "exclusion": exclusion.map(|item| json!({
-            "code": format!("{:?}", item.code),
+            "code": buzz_core::team_vocabulary::fold_exclusion_wire_code(item.code),
             "reason": item.reason,
         })),
     }))

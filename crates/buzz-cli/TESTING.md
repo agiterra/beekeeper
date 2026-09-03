@@ -2431,3 +2431,138 @@ every source file in the tree must be byte-identical and `git status
 For the lane worktrees nobody records, use `just worktrees-prune --dry-run`
 first; it prints the full plan (protected / merged-and-clean / merged-but-dirty
 / unmerged) and removes nothing.
+## `bee sessions explain` and the verb recipes (batch 3, lane L13)
+
+The vocabulary is compiled into the binary, so this section needs no relay, no
+key and no checkout. Run it against the build under test.
+
+```bash
+bee sessions explain unseated          # one entry
+bee --format compact sessions explain waiting
+bee sessions explain                   # every word once, as a JSON array
+bee sessions explain unseted; echo "exit $?"
+bee sessions explain postgres; echo "exit $?"
+```
+
+Expected:
+
+1. `explain unseated` prints a JSON object with `word`, `aliases`, `meaning`,
+   `cause`, `command`, `frozenSource` and `frozen`. `frozen` is a **string** for
+   a word the batch specification froze a sentence for and JSON `null` for one
+   it did not — never `""`, because "nobody froze one" and "one exists" are
+   different answers.
+2. `--format compact` prints exactly four keys: `word`, `meaning`, `cause`,
+   `command`.
+3. Bare `explain` prints a JSON array with every word once.
+4. `explain unseted` exits **1** and the message reads
+   `unknown word "unseted": did you mean "unseated"? …`.
+5. `explain postgres` exits **1** with **no** "did you mean" — a wild miss is
+   never answered with a confident guess.
+6. Aliases resolve: `explain dangling_reference` and `explain DanglingReference`
+   both print the `dangling` entry. Every fold exclusion code resolves by its
+   snake_case wire spelling and by its Rust `Debug` spelling.
+7. With `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` unset, every command above still
+   works. That is the point of the lane: a seat asking what a word means should
+   not have to be authenticated or online to find out.
+
+Every `bee sessions <verb> --help` ends with a `Recipe:` block holding one
+runnable line, and four verbs (`report`, `observe`, `observations`,
+`seat-repair`) additionally carry a `Rule:` block quoting a frozen sentence
+byte-for-byte. Spot-check:
+
+```bash
+bee sessions seat-repair --help | tail -6
+bee sessions report --help | tail -6
+```
+
+### The exclusion-code read contract CHANGED (batch 3, lane L13 / REVIEW-L13 F5)
+
+`bee --format json sessions operation list|get` used to print
+`.fold.excluded[].code` and `.operations[].exclusion.code` as the Rust `Debug`
+spelling — `DanglingReference` — while the desktop adapter printed
+`dangling_reference` for the same code. One code, two names, depending on which
+surface a seat happened to read.
+
+**Both CLI sites now print the snake_case wire spelling**, so the CLI, the
+adapter, and `bee sessions explain` all say the same word:
+
+```bash
+bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64> \
+  | jq -r '.fold.excluded[].code'
+# was: DanglingReference     now: dangling_reference
+```
+
+The `bee sessions assign|report|verdict|…` pre-publish refusal that names an
+excluded reference changed with them, and now points at the tool:
+
+```
+… the fold excluded it (dangling_reference: <reason>). Run `bee sessions explain
+dangling_reference` for what that means. Cite the record that replaced it.
+```
+
+**If you have a `jq` filter, a script, or a pack example matching the old
+CamelCase spelling, it needs updating.** `bee sessions explain` accepts **both**
+spellings, so a seat that copied the old one still gets an answer.
+
+### L13.4 — the acceptance, and why it cannot be measured yet
+
+The intended acceptance is **observed, not declared**: on a live run, a lead's
+**first turn** makes zero `Read`/`Grep`/`Glob` tool calls whose path argument is
+under `crates/`. No agent is asked whether it read the source — the tool calls
+are already signed records in kind 44225.
+
+**This metric is not readable today, and an empty result does not mean it
+passed.** Three facts about the current wire, each measured against
+`wss://hive.agiterra.org` channel `c0066ddd-8214-4baf-81d2-3046fead0d32`:
+
+1. **`.item.tool.input` is `{}` on every tool call the ACP adapter in use
+   publishes.** 53 of 53 rows across two sessions carried `input` with zero
+   keys. The serialiser can carry arguments — it reads `rawInput`, `input`,
+   `arguments` or `args` (`buzz-session-provider/src/transcript.rs`, `tool_input`)
+   — but the adapter sends none for read-class calls. **There is no path on the
+   wire at all.**
+2. **`toolName` is a display label, not a tool identifier**: `Terminal`,
+   `Read File`, `Edit`, `Preparing file…`, `ToolSearch` — never `Read`, `Grep`
+   or `Glob`.
+3. **`bee sessions tools` has no per-turn breakdown**, so "a lead's *first
+   turn*" is not a question that aggregate can answer either.
+
+So an empty result means *"no paths on the wire"*, not *"the lead read no
+source"*. **Unknown ≠ empty ≠ zero.** Do not report a clean run from silence
+here.
+
+**The observable proxy available today** — a count, with no path and no
+per-turn split:
+
+```bash
+bee sessions tools --channel <uuid>          # e.g. {"calls":7,"toolName":"Read File"}
+```
+
+**The pipeline, with the field names the wire actually uses.** It is written
+against the shape a 44225 tool call really carries, so it is runnable and will
+start returning rows the moment (1) is fixed — today it correctly returns
+nothing, which is why the paragraph above exists:
+
+```bash
+bee sessions transcript --channel <uuid> --session <session-id> --format jsonl \
+  | jq -r 'select(.kind==44225) | .content' \
+  | jq -r 'select(.item.kind=="tool_call")
+           | [.item.tool.toolName, (.item.tool.input | tostring)] | @tsv' \
+  | awk -F'\t' '$2 ~ /(^|\/)crates\//'
+```
+
+The wire shape it reads, for reference:
+
+```json
+{"schema":"buzz-coding-session-transcript/v1","eventSeq":24,"turnId":"9e032d7b-…",
+ "item":{"kind":"tool_call",
+         "tool":{"input":{},"toolId":"toolu_018WCz…","toolKind":"read","toolName":"Read File"}}}
+```
+
+**Cross-lane request — what closing L13.4 needs.** The provider must publish the
+**path** (never the file's content) for read-class tool calls, either in the
+44225 item's `tool.input` or as a kind 44246 observed checkpoint. That is the
+`no-asking-agents-to-report` shape: the record is produced by the provider from
+observed tool calls, under its own key, with no cooperation from the seat. Until
+it exists, this lane's acceptance has **no honest measurement**, and inventing
+one that runs today would be a control that lies about what it enforces.

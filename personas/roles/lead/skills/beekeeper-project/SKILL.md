@@ -64,8 +64,8 @@ operator's repo role — Owner, here — so the relay's git gate will accept you
 push to `main`; there is no `buzz-protect` rule on that ref, and the push path
 reads no verdict. On 2026-09-02 at 12:00:19 a lead landed `main` after its own
 verifier had reported FAIL, and every layer below it said yes. Until the gate
-exists (ledger item 108, lane L6), the rule lives here and the guard in
-`crates/buzz-persona/tests/pack_rules.rs` keeps it here.
+exists (ledger item 108, lane L6), the rule lives here, and the pack test suite
+asserts this sentence byte-for-byte so it cannot quietly soften.
 
 ## Worktrees, and the operator's live checkout
 

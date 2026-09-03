@@ -183,7 +183,7 @@ fn fold_json_prints_the_dangling_reference_code() {
         wire["excluded"],
         json!([{
             "eventId": id("22"),
-            "code": "DanglingReference",
+            "code": "dangling_reference",
             "reason": format!(
                 "reference {} is absent from the supplied transaction set",
                 id("77")
@@ -218,7 +218,7 @@ fn fold_json_prints_the_invalid_correction_code() {
     };
 
     let wire = fold_json(&fold);
-    assert_eq!(wire["excluded"][0]["code"], "InvalidCorrection");
+    assert_eq!(wire["excluded"][0]["code"], "invalid_correction");
     assert!(wire["excluded"][0]["reason"]
         .as_str()
         .expect("reason string")
@@ -247,7 +247,7 @@ fn fold_json_prints_the_wrong_type_reference_code() {
     };
 
     let wire = fold_json(&fold);
-    assert_eq!(wire["excluded"][0]["code"], "WrongTypeReference");
+    assert_eq!(wire["excluded"][0]["code"], "wrong_type_reference");
     assert_eq!(wire["includedEventIds"], json!([id("11"), id("22")]));
 }
 

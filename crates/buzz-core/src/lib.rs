@@ -98,6 +98,9 @@ pub mod relay;
 /// The git hooks a seat's checkout gets so its local commits reach Pulse
 /// without anyone being asked to report them.
 pub mod seat_git_hooks;
+/// The team-fold vocabulary, carried in the binary rather than in the source
+/// tree — the words `bee sessions explain` answers with.
+pub mod team_vocabulary;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
 /// Schnorr signature and event ID verification.

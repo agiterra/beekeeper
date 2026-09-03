@@ -164,8 +164,7 @@ reading `hire refused: <code> — <reason>`. The seat was never created.
 
 `HIRE_ROLE_BUSY` is a code the host really answers with (ledger item 90): its
 policy returns it whenever this computer holds the role and every identity of
-it is already seated here (`codingSessionHirePolicy.ts:575-581`), and the
-reason names those seats. It is not `HIRE_NO_IDENTITY`, and its remedy is never
+it is already seated here, and the reason names those seats. It is not `HIRE_NO_IDENTITY`, and its remedy is never
 "install a role you already have" — send this brief to the seat the reason
 names.
 

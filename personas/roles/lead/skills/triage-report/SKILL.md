@@ -44,6 +44,24 @@ If the acceptance cannot be run on this host, that is not an approval with a not
 
 A report without a command's exit code, a SHA, or a `file:line` did not happen — send it back.
 
+## Ask the tool what a word means
+
+The fold's words are defined in the binary you are already running, not in this
+repository's source:
+
+```
+$BEE sessions explain unseated          # one word: meaning, cause, and the command that shows it
+$BEE sessions explain                   # every word once
+$BEE sessions operation list --help     # the verb's own rule and one runnable recipe
+```
+
+`unseated`, `dangling`, `waiting`, `superseded` and every exclusion code an
+operation read can print are there, each with the one command that shows it. On
+2026-09-01 a lead spent a turn grepping this repository's Rust for the word its
+own tool had just printed; nothing was wrong with the grep, and the answer is
+now one command away instead. An unknown word exits 1 and names the closest
+spelling.
+
 ## A wrong reference is replaced, never corrected
 
 `--supersedes` changes an operation's **wording**, never what it is about. A

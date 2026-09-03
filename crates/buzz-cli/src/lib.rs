@@ -2371,7 +2371,7 @@ pub enum ModerationCmd {
 pub enum SessionsCmd {
     /// List the coding-session generations recorded in a channel
     #[command(
-        after_help = "Examples:\n  bee sessions list --channel <uuid>\n  bee --format compact sessions list --channel <uuid>"
+        after_help = "Examples:\n  bee sessions list --channel <uuid>\n  bee --format compact sessions list --channel <uuid>\n\nRecipe:\n  bee sessions list --channel <uuid>"
     )]
     List {
         /// Channel UUID the sessions were published into
@@ -2380,7 +2380,7 @@ pub enum SessionsCmd {
     },
     /// Print one generation's transcript in sequence order
     #[command(
-        after_help = "Examples:\n  bee sessions transcript --channel <uuid> --session <session-id>\n  bee sessions transcript --channel <uuid> --target '<cs-target>' --format jsonl"
+        after_help = "Examples:\n  bee sessions transcript --channel <uuid> --session <session-id>\n  bee sessions transcript --channel <uuid> --target '<cs-target>' --format jsonl\n\nRecipe:\n  bee sessions transcript --channel <uuid> --session <session-id>"
     )]
     Transcript {
         /// Channel UUID the session was published into
@@ -2415,7 +2415,7 @@ pub enum SessionsCmd {
     /// This does not stop a running execution on its host. Close or stop the
     /// session first if one is still live; a closure frees the host slot.
     #[command(
-        after_help = "Examples:\n  bee sessions delete --channel <uuid> --session-ref <uuid>\n  bee sessions delete --channel <uuid> --session-ref <uuid> --dry-run"
+        after_help = "Examples:\n  bee sessions delete --channel <uuid> --session-ref <uuid>\n  bee sessions delete --channel <uuid> --session-ref <uuid> --dry-run\n\nRecipe:\n  bee sessions delete --channel <uuid> --session-ref <uuid> --dry-run"
     )]
     Delete {
         /// Channel UUID the session was published into
@@ -2430,7 +2430,7 @@ pub enum SessionsCmd {
     },
     /// Diagnose how each turn ended — spans, unterminated tools, stalled prompts
     #[command(
-        after_help = "Examples:\n  bee sessions doctor --channel <uuid>\n  bee --format compact sessions doctor --channel <uuid> --target '<cs-target>'\n\nReports, per turn: wall span, unterminated tool calls, the terminal result's\ntoken counts, and the `turn_wire` row when the producer published one. A\nfailed turn whose result carries no usage was never resolved by the agent."
+        after_help = "Examples:\n  bee sessions doctor --channel <uuid>\n  bee --format compact sessions doctor --channel <uuid> --target '<cs-target>'\n\nReports, per turn: wall span, unterminated tool calls, the terminal result's\ntoken counts, and the `turn_wire` row when the producer published one. A\nfailed turn whose result carries no usage was never resolved by the agent.\n\nRecipe:\n  bee sessions doctor --channel <uuid>"
     )]
     Doctor {
         /// Channel UUID the session was published into
@@ -2460,7 +2460,7 @@ pub enum SessionsCmd {
     /// commands (`retryLoops`, whose `identicalResults` is `null` when the
     /// results were never published).
     #[command(
-        after_help = "Examples:\n  bee sessions audit --channel <uuid>\n  bee sessions audit --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions audit --channel <uuid>   # one JSON row per turn"
+        after_help = "Examples:\n  bee sessions audit --channel <uuid>\n  bee sessions audit --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions audit --channel <uuid>   # one JSON row per turn\n\nRecipe:\n  bee sessions audit --channel <uuid> --session-ref <uuid>"
     )]
     Audit {
         /// Channel UUID to audit
@@ -2472,7 +2472,7 @@ pub enum SessionsCmd {
     },
     /// Aggregate tool usage and error rates across transcripts
     #[command(
-        after_help = "Examples:\n  bee sessions tools --channel <uuid>\n  bee sessions tools --channel <uuid> --target '<cs-target>'"
+        after_help = "Examples:\n  bee sessions tools --channel <uuid>\n  bee sessions tools --channel <uuid> --target '<cs-target>'\n\nRecipe:\n  bee sessions tools --channel <uuid>"
     )]
     Tools {
         /// Channel UUID to aggregate over
@@ -2484,7 +2484,7 @@ pub enum SessionsCmd {
     },
     /// Write every generation's raw events to a directory, with a manifest
     #[command(
-        after_help = "Examples:\n  bee sessions export --channel <uuid> --out ./session-archive\n\nThe directory must be absent or empty — an export never overwrites."
+        after_help = "Examples:\n  bee sessions export --channel <uuid> --out ./session-archive\n\nThe directory must be absent or empty — an export never overwrites.\n\nRecipe:\n  bee sessions export --channel <uuid> --out <dir>"
     )]
     Export {
         /// Channel UUID to export
@@ -2505,7 +2505,7 @@ pub enum SessionsCmd {
     /// — is a **role seat**, and it has its own verb, `grant-seat`. Writing
     /// authority is opted into, never reached by mistyping a tier here.
     #[command(
-        after_help = "Examples:\n  bee sessions grant --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role collaborator\n\nA role seat is granted with `bee sessions grant-seat` and withdrawn with\n`bee sessions revoke-seat`; `revoke` only clears these two tiers."
+        after_help = "Examples:\n  bee sessions grant --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role collaborator\n\nA role seat is granted with `bee sessions grant-seat` and withdrawn with\n`bee sessions revoke-seat`; `revoke` only clears these two tiers.\n\nRecipe:\n  bee sessions grant --channel <uuid> --genesis <hex64> --pubkey <hex64> --role collaborator"
     )]
     Grant {
         /// Channel UUID the session's authority chain lives in
@@ -2534,7 +2534,7 @@ pub enum SessionsCmd {
     /// seated actor is never silently re-roled.
     #[command(
         name = "grant-seat",
-        after_help = "Examples:\n  bee sessions grant-seat --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role builder\n\nExit codes: 0 granted or already granted, 1 refused, 5 submitted but\nunconfirmed by the accepted chain."
+        after_help = "Examples:\n  bee sessions grant-seat --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role builder\n\nExit codes: 0 granted or already granted, 1 refused, 5 submitted but\nunconfirmed by the accepted chain.\n\nRecipe:\n  bee sessions grant-seat --channel <uuid> --genesis <hex64> --pubkey <hex64> --role builder"
     )]
     GrantSeat {
         /// Channel UUID the session's authority chain lives in
@@ -2564,7 +2564,7 @@ pub enum SessionsCmd {
     /// refuses first, naming the role the actor really holds.
     #[command(
         name = "revoke-seat",
-        after_help = "Examples:\n  bee sessions revoke-seat --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role builder\n\nExit codes: 0 revoked, 1 refused (no seat, or a different role), 5 submitted\nbut unconfirmed by the accepted chain."
+        after_help = "Examples:\n  bee sessions revoke-seat --channel <uuid> --genesis <64-hex> --pubkey <64-hex> --role builder\n\nExit codes: 0 revoked, 1 refused (no seat, or a different role), 5 submitted\nbut unconfirmed by the accepted chain.\n\nRecipe:\n  bee sessions revoke-seat --channel <uuid> --genesis <hex64> --pubkey <hex64> --role builder"
     )]
     RevokeSeat {
         /// Channel UUID the session's authority chain lives in
@@ -2587,6 +2587,9 @@ pub enum SessionsCmd {
     /// Revoke a pubkey's live coding-session grant (NIP-CSAT kind 44228).
     ///
     /// The relay refuses a revoke naming a pubkey with no live grant.
+    #[command(
+        after_help = "Recipe:\n  bee sessions revoke --channel <uuid> --genesis <hex64> --pubkey <hex64>"
+    )]
     Revoke {
         /// Channel UUID the session's authority chain lives in
         #[arg(long)]
@@ -2603,6 +2606,7 @@ pub enum SessionsCmd {
     /// Grants are folded from relay acceptance receipts (kind 40099) in
     /// sequence order; transitions with no matching receipt are listed as
     /// pending.
+    #[command(after_help = "Recipe:\n  bee sessions roster --channel <uuid> --genesis <hex64>")]
     Roster {
         /// Channel UUID the session's authority chain lives in
         #[arg(long)]
@@ -2612,16 +2616,34 @@ pub enum SessionsCmd {
         genesis: String,
     },
     /// Publish a signed team assignment (kind 44244).
+    #[command(
+        after_help = "Recipe:\n  bee sessions assign --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @assignment.json --wake-to builder"
+    )]
     Assign(TeamTransactionWriteArgs),
     /// Publish a signed assignment report (kind 44244).
+    #[command(
+        after_help = "Rule:\n  reports **included** by assignee-equality whose author holds no active seat for the assignment's `assignee_role`.\n\nRecipe:\n  bee sessions report --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @report.json --wake-to lead"
+    )]
     Report(TeamTransactionWriteArgs),
     /// Publish a signed refutation or disposition (kind 44244).
+    #[command(
+        after_help = "Recipe:\n  bee sessions verdict --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @disposition.json --wake-to builder"
+    )]
     Verdict(TeamTransactionWriteArgs),
     /// Acknowledge receipt of a governing disposition (kind 44244).
+    #[command(
+        after_help = "Recipe:\n  bee sessions acknowledge --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @acknowledgement.json"
+    )]
     Acknowledge(TeamTransactionWriteArgs),
     /// Publish mission completion after locally verifying every approval chain.
+    #[command(
+        after_help = "Recipe:\n  bee sessions complete --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @completion.json"
+    )]
     Complete(TeamTransactionWriteArgs),
     /// Publish an explicit terminal blocker (kind 44244).
+    #[command(
+        after_help = "Recipe:\n  bee sessions block --channel <uuid> --session-ref <uuid> --genesis <hex64> --body @blocked.json"
+    )]
     Block(TeamTransactionWriteArgs),
     /// Say something without changing any mission state (kind 44244).
     ///
@@ -2630,14 +2652,20 @@ pub enum SessionsCmd {
     /// instead of a `mission.blocked` whenever the mission has not actually
     /// stopped.
     #[command(
-        after_help = "Examples:\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text 'lane B is rebasing, nothing is blocked'\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text 'context for the ruling' --ref <event-id> --ref <event-id>"
+        after_help = "Examples:\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text 'lane B is rebasing, nothing is blocked'\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text 'context for the ruling' --ref <event-id> --ref <event-id>\n\nRecipe:\n  bee sessions note --channel <uuid> --session-ref <uuid> --genesis <hex64> --text <note-text>"
     )]
     Note(TeamNoteArgs),
     /// Ask for, or give, a ruling the mission needs (kind 44244).
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Recipe:\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <hex64> --choice <chosen-option>"
+    )]
     Decide(TeamDecisionCmd),
     /// Read signed team operations and their deterministic fold.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Recipe:\n  bee sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>"
+    )]
     Operation(TeamOperationCmd),
     /// Publish one observation: something you saw while working (kind 44246).
     ///
@@ -2649,13 +2677,19 @@ pub enum SessionsCmd {
     /// Every duration and `--started-at-ms` you pass is **your own
     /// measurement**. It is printed as your claim and is never used for
     /// ordering, discovery or dedupe.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Rule:\n  Unknown tokens are refused, never ignored.\n\nRecipe:\n  bee sessions observe gate --channel <uuid> --session-ref <uuid> --gate <gate:outcome:command>"
+    )]
     Observe(SessionObserveCmd),
     /// What this machine's session worktrees hold, and what may be removed
     ///
     /// L11. Reads the desktop host's own record of the worktrees it cut. A
     /// tree the host never recorded is listed and removed by nothing here.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Recipe:\n  bee sessions worktree status --session <uuid>"
+    )]
     Worktree(SessionWorktreeCmd),
     /// Print this umbrella's bounded observation fold (kind 44246).
     ///
@@ -2665,7 +2699,7 @@ pub enum SessionsCmd {
     /// listed because the older one is still on the wire. `--format compact`
     /// prints one line each.
     #[command(
-        after_help = "Examples:\n  bee sessions observations --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions observations --channel <uuid> --session-ref <uuid>"
+        after_help = "Examples:\n  bee sessions observations --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions observations --channel <uuid> --session-ref <uuid>\n\nRule:\n  Unknown tokens are refused, never ignored.\n\nRecipe:\n  bee sessions observations --channel <uuid> --session-ref <uuid>"
     )]
     Observations {
         /// Channel UUID containing the session.
@@ -2690,7 +2724,10 @@ pub enum SessionsCmd {
     /// check (so `bee sessions complete` refuses a completion no verifier has
     /// ruled on). Every other field is read and shown, never counted, and both
     /// `set` and `get` say exactly that in their own output.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Recipe:\n  bee sessions policy get --channel <uuid> --session-ref <uuid> --genesis <hex64>"
+    )]
     Policy(SessionPolicyCmd),
     /// Send a turn to a coding-session execution (kind 44220).
     ///
@@ -2706,7 +2743,7 @@ pub enum SessionsCmd {
     /// receipt's own word, or `unconfirmed`), and `delivery` (one sentence).
     /// A `--deliver steer` a runtime cannot honour reports `turn_degraded`.
     #[command(
-        after_help = "Examples:\n  echo 'rebase and re-run the gate' | bee sessions send --channel <uuid> --to builder --session-ref <uuid> --content -\n  bee sessions send --channel <uuid> --to '<cs-target>' --deliver interrupt --content 'stop'\n  bee sessions send --channel <uuid> --readdress <commandId>"
+        after_help = "Examples:\n  echo 'rebase and re-run the gate' | bee sessions send --channel <uuid> --to builder --session-ref <uuid> --content -\n  bee sessions send --channel <uuid> --to '<cs-target>' --deliver interrupt --content 'stop'\n  bee sessions send --channel <uuid> --readdress <commandId>\n\nRecipe:\n  bee sessions send --channel <uuid> --session-ref <uuid> --to builder --content <turn-text>"
     )]
     Send {
         /// Channel UUID the session lives in
@@ -2747,7 +2784,7 @@ pub enum SessionsCmd {
     /// are refused here: an actor's key material is host-local custody the
     /// CLI does not hold — see `--actor`.
     #[command(
-        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -"
+        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -"
     )]
     Create {
         /// Channel UUID to publish the create into
@@ -2872,7 +2909,7 @@ pub enum SessionsCmd {
     /// no answer at all, and a request that gets no answer is a crash with
     /// better manners.
     #[command(
-        after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request."
+        after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request.\n\nRule:\n  coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte \"[From the lead] \" prefix, so its ceiling is the initial-turn ceiling minus that prefix\n\nRecipe:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief <path>"
     )]
     Hire {
         /// Channel UUID the umbrella lives in
@@ -2973,7 +3010,7 @@ pub enum SessionsCmd {
     /// still reports `already_granted` on a second run. Every non-granting
     /// outcome names every candidate it considered, and none of them writes.
     #[command(
-        after_help = "Examples:\n  bee sessions seat-repair --channel <uuid> --session-ref <uuid> --actor <64-hex>\n  bee --format compact sessions seat-repair --channel <uuid> --session-ref <uuid> --genesis <64-hex> --actor <64-hex>\n\nSafe to re-run: a seat that already holds the exact role is reported\n`already_granted` with no write. Never hire again to recover a seat."
+        after_help = "Examples:\n  bee sessions seat-repair --channel <uuid> --session-ref <uuid> --actor <64-hex>\n  bee --format compact sessions seat-repair --channel <uuid> --session-ref <uuid> --genesis <64-hex> --actor <64-hex>\n\nSafe to re-run: a seat that already holds the exact role is reported\n`already_granted` with no write. Never hire again to recover a seat.\n\nRule:\n  execution has `agentRef` and `role` (a receipt-backed create) and no live seat for that exact pair\n\nRecipe:\n  bee sessions seat-repair --channel <uuid> --session-ref <uuid> --actor <hex64>"
     )]
     SeatRepair {
         /// Channel UUID the umbrella lives in
@@ -2995,7 +3032,7 @@ pub enum SessionsCmd {
     /// Oldest first, each row carrying the newest receipt stage its command
     /// has been answered with.
     #[command(
-        after_help = "Examples:\n  bee sessions inbox --channel <uuid>\n  bee sessions inbox --channel <uuid> --since <event-id>"
+        after_help = "Examples:\n  bee sessions inbox --channel <uuid>\n  bee sessions inbox --channel <uuid> --since <event-id>\n\nRecipe:\n  bee sessions inbox --channel <uuid>"
     )]
     Inbox {
         /// Channel UUID to read
@@ -3012,7 +3049,7 @@ pub enum SessionsCmd {
     /// `--json-lines` / `--no-json-lines`, and the rule spelled out below the
     /// examples.
     #[command(
-        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines\n  bee sessions status --channel <uuid> --no-json-lines\n\nOutput shape, when neither flag is given and --format is not named:\nstdout decides. A terminal gets the single document (the --format json\nenvelope, or the --format compact array); a pipe or a file gets NDJSON --\none JSON object per execution, one per line. Naming --format explicitly\nalways gets that format's document, terminal or pipe. This is a different\nthing from `sessions transcript --format jsonl`, which is whole signed\nevents rather than these rows.\n\nThe context field: how full this seat's model context is, from the wire\nonly. Two sources, in order. (1) The driver's own context_window_updated\nitem (used/size) \u{2014} occupancy, measured by the driver against the prompt\nit was about to send, so it never exceeds the window. (2) Failing that, the\nturn's result usage block: inputTokens + cacheReadTokens + cacheWriteTokens,\nthe three disjoint prompt-side counts. That second number is the turn's\nconsumption across every model call the turn made, so on a multi-call turn\nit is larger than the context the model held. The cell reads '\u{2014}' (an em\ndash) when nothing on the wire has said, and --format json prints null\nthere; '<n> (window unknown)' means tokens are known and the window is\nnot \u{2014} never a percentage of a guess."
+        after_help = "Examples:\n  bee sessions status --channel <uuid>\n  bee sessions status --channel <uuid> --json-lines\n  bee sessions status --channel <uuid> --no-json-lines\n\nOutput shape, when neither flag is given and --format is not named:\nstdout decides. A terminal gets the single document (the --format json\nenvelope, or the --format compact array); a pipe or a file gets NDJSON --\none JSON object per execution, one per line. Naming --format explicitly\nalways gets that format's document, terminal or pipe. This is a different\nthing from `sessions transcript --format jsonl`, which is whole signed\nevents rather than these rows.\n\nThe context field: how full this seat's model context is, from the wire\nonly. Two sources, in order. (1) The driver's own context_window_updated\nitem (used/size) \u{2014} occupancy, measured by the driver against the prompt\nit was about to send, so it never exceeds the window. (2) Failing that, the\nturn's result usage block: inputTokens + cacheReadTokens + cacheWriteTokens,\nthe three disjoint prompt-side counts. That second number is the turn's\nconsumption across every model call the turn made, so on a multi-call turn\nit is larger than the context the model held. The cell reads '\u{2014}' (an em\ndash) when nothing on the wire has said, and --format json prints null\nthere; '<n> (window unknown)' means tokens are known and the window is\nnot \u{2014} never a percentage of a guess.\n\nRecipe:\n  bee sessions status --channel <uuid>"
     )]
     Status {
         /// Channel UUID to read
@@ -3060,7 +3097,7 @@ pub enum SessionsCmd {
     /// than skipped, because a provider whose models cannot be read is a
     /// provider whose models are invisible.
     #[command(
-        after_help = "Examples:\n  bee sessions catalog --channel <uuid>\n  bee --format compact sessions catalog --channel <uuid>"
+        after_help = "Examples:\n  bee sessions catalog --channel <uuid>\n  bee --format compact sessions catalog --channel <uuid>\n\nRecipe:\n  bee sessions catalog --channel <uuid>"
     )]
     Catalog {
         /// Channel UUID the providers publish their catalogs into
@@ -3068,7 +3105,10 @@ pub enum SessionsCmd {
         channel: String,
     },
     /// The model registry, checked against the live catalog.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Recipe:\n  bee sessions registry check --channel <uuid>"
+    )]
     Registry(RegistryCmd),
     /// Choose an execution target for a class at a risk tier, and say why.
     ///
@@ -3103,7 +3143,7 @@ pub enum SessionsCmd {
     /// binding trait, the minimum it wanted, and the best score anything
     /// available actually has. It never falls back to the smartest model.
     #[command(
-        after_help = "Examples:\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2\n  bee sessions route --channel <uuid> --class runner --risk 1,1,1 --scope bounded\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2 --challenger-sample\n  bee sessions route --channel <uuid> --class verifier --risk 3,3,2 --counterpart-provider codex-primary\n  bee --format compact sessions route --channel <uuid> --class architect --risk 5,4,4 --review-flags contractChange\n\n--format json prints the whole table: every candidate with the gate it\ncleared or the reason it did not, the cost/latency/retry numbers behind the\ncomparison, the formula itself, and the provenance of any fact that gated a\ncandidate. --format compact prints the routing record alone -- the same\nobject that rides on a hire."
+        after_help = "Examples:\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2\n  bee sessions route --channel <uuid> --class runner --risk 1,1,1 --scope bounded\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2 --challenger-sample\n  bee sessions route --channel <uuid> --class verifier --risk 3,3,2 --counterpart-provider codex-primary\n  bee --format compact sessions route --channel <uuid> --class architect --risk 5,4,4 --review-flags contractChange\n\n--format json prints the whole table: every candidate with the gate it\ncleared or the reason it did not, the cost/latency/retry numbers behind the\ncomparison, the formula itself, and the provenance of any fact that gated a\ncandidate. --format compact prints the routing record alone -- the same\nobject that rides on a hire.\n\nRecipe:\n  bee sessions route --channel <uuid> --class builder --risk 3,3,2"
     )]
     Route {
         /// Channel UUID the providers publish their catalogs into
@@ -3160,9 +3200,29 @@ pub enum SessionsCmd {
     /// Print this signer's identity as one JSON object: pubkey, relay
     /// display name, relay URL, and any active team seat role.
     #[command(
-        after_help = "Examples:\n  bee sessions whoami\n  bee --format compact sessions whoami"
+        after_help = "Examples:\n  bee sessions whoami\n  bee --format compact sessions whoami\n\nRecipe:\n  bee sessions whoami"
     )]
     Whoami,
+    /// Define one word this session's fold prints — and say where it is shown.
+    ///
+    /// Every word a team fold puts in front of a seat — `unseated`, `dangling`,
+    /// `waiting`, `superseded`, and every exclusion code — is carried in this
+    /// binary as data, not in the source tree. With a word, this prints that
+    /// one entry: what it means, what causes it, and the one command that shows
+    /// it. With no word, it lists every word once. An unknown word exits 1
+    /// naming the closest spelling.
+    ///
+    /// It reaches no relay and needs no key. On 2026-09-01 a lead spent its own
+    /// context grepping this repository's Rust source for the string
+    /// `"unseated"`, because that was the only place the word its own tool had
+    /// just printed was defined. This command is the answer to that.
+    #[command(
+        after_help = "Examples:\n  bee sessions explain unseated\n  bee sessions explain dangling_reference\n  bee sessions explain           # every word, once\n\nRecipe:\n  bee sessions explain <word>"
+    )]
+    Explain {
+        /// The word to define. Omit to list every word once.
+        word: Option<String>,
+    },
 }
 
 /// Common envelope and JSON-body input for one typed team transaction.
@@ -4203,6 +4263,14 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         .await;
     }
 
+    // `sessions explain` answers from a data file compiled into this binary.
+    // It is handled here, before the key requirement below, on purpose: a seat
+    // that has to ask what a word its own tool printed means should not have to
+    // be authenticated, on a network, or in a checkout to find out.
+    if let Cmd::Sessions(SessionsCmd::Explain { ref word }) = cli.command {
+        return commands::sessions::explain::cmd_explain(word.as_deref(), &cli.format);
+    }
+
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
     let private_key_str = cli.private_key.ok_or_else(|| {
@@ -5094,6 +5162,7 @@ mod tests {
                 "decide",
                 "delete",
                 "doctor",
+                "explain",
                 "export",
                 "grant",
                 "grant-seat",
@@ -5203,12 +5272,14 @@ mod tests {
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
             // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, B2's
             // `policy` (batch 2 B), `delete`, `whoami`, batch 3 L1's
-            // `observe` and `observations`, and L11's `worktree`.
-            // `subcommand_names_are_stable` above names all thirty-five, so
-            // this count and that list cannot drift apart. L7, L9 and L10 also
-            // append here (item 108's exact-count trap); the finalizer resolves
-            // the overlap by re-running both tests after integrating them.
-            ("sessions", 35),
+            // `observe` and `observations`, batch 3 L11's `worktree` and
+            // L13's `explain`.
+            // `subcommand_names_are_stable` above names all thirty-six, so this
+            // count and that list cannot drift apart. Five lanes of this wave
+            // appended here and two of them independently wrote 35 (item 108's
+            // exact-count trap); the finalizer set it once, after every lane,
+            // and both tests re-run green.
+            ("sessions", 36),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),
@@ -5232,6 +5303,154 @@ mod tests {
                 group_name, expected_count, actual_count
             );
         }
+    }
+
+    /// The `sessions` verbs whose `--help` carries a **Rule** block, and the
+    /// label of the frozen sentence it must quote.
+    ///
+    /// The set is exhaustive on purpose: a verb the specification froze no
+    /// sentence for gets its recipe and nothing else. Inventing a rule to fill
+    /// the gap would put a sentence nobody ruled on in front of every seat.
+    const SESSIONS_RULE_SOURCES: &[(&str, &str)] = &[
+        ("report", "batch vocabulary, fold disclosure"),
+        ("hire", "batch vocabulary, hire brief ceiling"),
+        ("observe", "batch vocabulary, observation tokens"),
+        ("observations", "batch vocabulary, observation tokens"),
+        ("seat-repair", "batch vocabulary, seat authority remedy"),
+    ];
+
+    /// The `after_help` text of one `bee sessions` verb.
+    ///
+    /// Read from the built `Command` rather than from rendered help: clap wraps
+    /// rendered output at the terminal width, and a wrapped line cannot be
+    /// compared byte-for-byte against a frozen sentence.
+    fn sessions_after_help(name: &str) -> String {
+        let cmd = Cli::command();
+        let sessions = cmd
+            .get_subcommands()
+            .find(|s| s.get_name() == "sessions")
+            .unwrap_or_else(|| panic!("the sessions group exists"));
+        let verb = sessions
+            .get_subcommands()
+            .find(|s| s.get_name() == name)
+            .unwrap_or_else(|| panic!("sessions verb '{name}' exists"));
+        verb.get_after_help()
+            .map(|help| help.to_string())
+            .unwrap_or_default()
+    }
+
+    /// Every `bee sessions` verb, `help` excluded.
+    fn sessions_verb_names() -> Vec<String> {
+        let cmd = Cli::command();
+        let sessions = cmd
+            .get_subcommands()
+            .find(|s| s.get_name() == "sessions")
+            .unwrap_or_else(|| panic!("the sessions group exists"));
+        sessions
+            .get_subcommands()
+            .map(|s| s.get_name().to_string())
+            .filter(|n| n != "help")
+            .collect()
+    }
+
+    /// The line under `Recipe:`, or `None` when the verb carries no block.
+    fn recipe_line(after_help: &str) -> Option<String> {
+        let start = after_help.find("Recipe:\n  ")?;
+        let rest = &after_help[start + "Recipe:\n  ".len()..];
+        Some(rest.lines().next().unwrap_or(rest).to_string())
+    }
+
+    /// The line under `Rule:`, or `None` when the verb carries no block.
+    fn rule_line(after_help: &str) -> Option<String> {
+        let start = after_help.find("Rule:\n  ")?;
+        let rest = &after_help[start + "Rule:\n  ".len()..];
+        Some(rest.lines().next().unwrap_or(rest).to_string())
+    }
+
+    /// Batch 3 L13.1. A seat should learn a verb from one `--help`, not from a
+    /// file read. The next verb added without a recipe fails here rather than
+    /// in a live run.
+    #[test]
+    fn every_sessions_verb_help_carries_a_runnable_recipe() {
+        for name in sessions_verb_names() {
+            let after_help = sessions_after_help(&name);
+            let recipe = recipe_line(&after_help).unwrap_or_else(|| {
+                panic!(
+                    "`bee sessions {name} --help` carries no Recipe block. Add one to the \
+                     variant's after_help: a verb whose help does not show how to run it \
+                     sends the reader to the source."
+                )
+            });
+            assert!(
+                recipe.starts_with("bee sessions "),
+                "sessions {name}: the recipe must be a runnable `bee sessions ...` line, got {recipe:?}"
+            );
+        }
+    }
+
+    /// A recipe that names a flag the verb does not have is worse than none:
+    /// it is a confident wrong answer. Every recipe is parsed as the command
+    /// it claims to be.
+    #[test]
+    fn every_recipe_line_parses_as_the_command_it_shows() {
+        for name in sessions_verb_names() {
+            let after_help = sessions_after_help(&name);
+            let Some(recipe) = recipe_line(&after_help) else {
+                continue;
+            };
+            let argv: Vec<&str> = recipe.split_whitespace().collect();
+            let parsed = Cli::try_parse_from(&argv);
+            assert!(
+                parsed.is_ok(),
+                "sessions {name}: the recipe in --help does not parse.\n  recipe: {recipe}\n  clap: {}",
+                parsed.err().map(|e| e.to_string()).unwrap_or_default()
+            );
+        }
+    }
+
+    /// A Rule block quotes a frozen sentence verbatim, and only the verbs the
+    /// specification froze one for carry a Rule at all.
+    #[test]
+    fn only_the_verbs_with_a_frozen_sentence_carry_a_rule() {
+        let mut with_rule: Vec<String> = Vec::new();
+        for name in sessions_verb_names() {
+            if rule_line(&sessions_after_help(&name)).is_some() {
+                with_rule.push(name);
+            }
+        }
+        with_rule.sort();
+        let mut expected: Vec<String> = SESSIONS_RULE_SOURCES
+            .iter()
+            .map(|(verb, _)| (*verb).to_string())
+            .collect();
+        expected.sort();
+        assert_eq!(
+            with_rule, expected,
+            "a Rule block appeared on a verb the specification froze no sentence for, or \
+             vanished from one it did. Never invent a rule to fill a gap; write the recipe \
+             alone and say so."
+        );
+
+        for (verb, label) in SESSIONS_RULE_SOURCES {
+            let frozen = buzz_core::team_vocabulary::frozen_sentence(label)
+                .expect("the frozen-sentence snapshot parses")
+                .unwrap_or_else(|| panic!("no snapshot block is labelled {label:?}"));
+            let rule = rule_line(&sessions_after_help(verb))
+                .unwrap_or_else(|| panic!("sessions {verb} carries no Rule block"));
+            assert_eq!(
+                rule, frozen,
+                "sessions {verb}: the Rule in --help has drifted from the checked-in copy \
+                 of the frozen sentence"
+            );
+        }
+    }
+
+    /// `sessions explain` is the verb the lane exists for; it must be listed
+    /// and it must be reachable with no argument.
+    #[test]
+    fn sessions_explain_takes_an_optional_word() {
+        assert!(Cli::try_parse_from(["bee", "sessions", "explain"]).is_ok());
+        assert!(Cli::try_parse_from(["bee", "sessions", "explain", "unseated"]).is_ok());
     }
 
     /// Collect all args (recursing into subcommands) whose env var name looks

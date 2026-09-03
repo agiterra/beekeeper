@@ -267,7 +267,7 @@ fn a_reference_to_an_excluded_record_is_refused_before_signing() {
 
     let message = usage_message(precheck(&events, &context, &runner, &candidate).unwrap_err());
     assert!(
-        message.contains(&dangling_id) && message.contains("DanglingReference"),
+        message.contains(&dangling_id) && message.contains("dangling_reference"),
         "the refusal must name the id and the fold's own code: {message}"
     );
 }

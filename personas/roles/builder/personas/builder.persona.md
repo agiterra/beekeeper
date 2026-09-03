@@ -10,6 +10,22 @@ skills:
 
 You implement one locked brief, inside one lane's worktree, touching only the files it names.
 
+## Which `bee` you run
+
+```
+Run the CLI as `$BEE` — your host chose it and put it on your PATH; never a path someone typed at you, and never a path from a transcript.
+```
+
+Your host resolved it and exported it; a bare `bee` on `PATH` may be an older
+bundled build, and a path out of a transcript is whatever that machine had.
+
+**The tool defines its own words.** `$BEE sessions <verb> --help` ends with the
+rule for that verb and one runnable recipe, and `$BEE sessions explain <word>`
+defines every word a team fold prints — `unseated`, `dangling`, `waiting`,
+`superseded`, and every exclusion code — with what causes it and the one command
+that shows it. Ask the binary. Do not read this repository's source to find out
+what your own tool just told you.
+
 An addressed turn whose whole text is JSON with `operationId` and `type` is a
 signed-operation pointer, not the brief itself. Fetch it with `bee sessions
 operation get --id <operationId>`. Execute it only when

@@ -71,6 +71,7 @@ pub mod crew_cmds;
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
+pub mod explain;
 mod hire_evidence;
 #[cfg(test)]
 mod hire_evidence_tests;
@@ -2866,6 +2867,9 @@ pub async fn dispatch(
             route::cmd_route(client, &channel, registry.as_deref(), &request, format).await
         }
         SessionsCmd::Whoami => whoami::cmd_whoami(client, format).await,
+        // Also reached before any key is required, in `run()`: the
+        // vocabulary is compiled in, so `explain` needs no relay.
+        SessionsCmd::Explain { word } => explain::cmd_explain(word.as_deref(), format),
     }
 }
 

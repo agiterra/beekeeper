@@ -478,3 +478,24 @@ before this rule existed. Like `CompletionNotApproved` and
 `CompletionBlockedByOpenDecision`, the rule only ever **subtracts**: it never
 admits a completion the other rules refuse, and it is an exclusion of one
 record, never an error over the set.
+## Where the words are defined
+
+Every word this fold puts in front of a reader — `unseated`, `dangling`,
+`waiting`, `superseded`, and each of the exclusion codes above — is defined as
+**data** in `buzz-core`'s compiled-in vocabulary, and read with:
+
+```
+bee sessions explain <word>     # meaning, cause, and the one command that shows it
+bee sessions explain            # every word once
+```
+
+The vocabulary is `include_str!`-ed at compile time, so the binary carries the
+words with or without a checkout. A guard asserts that every exclusion-code
+variant this fold can emit has an entry, and the wire spelling of each code is
+the snake_case form in that vocabulary; the CLI's `fold_json` currently prints
+the Rust `Debug` spelling (`DanglingReference`) while the Tauri adapter prints
+the snake_case one (`dangling_reference`), and `explain` accepts both.
+
+This section exists because on 2026-09-01 a lead spent a turn grepping this
+fold's Rust source for the string `"unseated"` to learn what the word its own
+tool had just printed meant. The answer was only there; now it is in the tool.

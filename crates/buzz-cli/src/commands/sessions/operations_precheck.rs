@@ -223,10 +223,12 @@ fn require_included(
     if let Some(exclusion) = fold.excluded.iter().find(|item| item.event_id == reference) {
         return Err(CliError::Usage(format!(
             "refusing to publish this {}: {reference} is not canonical in this session — the \
-             fold excluded it ({:?}: {}). Cite the record that replaced it.",
+             fold excluded it ({}: {}). Run `bee sessions explain {}` for what that \
+             means. Cite the record that replaced it.",
             transaction_type.as_str(),
-            exclusion.code,
-            exclusion.reason
+            buzz_core::team_vocabulary::fold_exclusion_wire_code(exclusion.code),
+            exclusion.reason,
+            buzz_core::team_vocabulary::fold_exclusion_wire_code(exclusion.code)
         )));
     }
     if !fold.included_event_ids.iter().any(|id| id == reference) {

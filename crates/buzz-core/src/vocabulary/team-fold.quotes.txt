@@ -1,0 +1,33 @@
+The frozen sentences, copied.
+
+Each block below is one sentence from the batch specification's frozen
+vocabulary, copied byte for byte. The only change made to any of them is that
+the specification's markdown line wrapping is collapsed to single spaces; no
+other byte differs. The specification itself lives outside this repository and
+cannot be a build input, which is exactly why this copy is checked in.
+
+`team_vocabulary_tests.rs` asserts that every `frozen` value in
+`team-fold.toml` is byte-identical to the block its `frozen_source` names, and
+that no block here is unused. Editing one file without the other is a red test,
+not a silent drift.
+
+Format: a `== <label> ==` line, then the sentence on the following line. The
+label is a `frozen_source` value in `team-fold.toml`.
+
+== batch vocabulary, fold disclosure ==
+reports **included** by assignee-equality whose author holds no active seat for the assignment's `assignee_role`.
+
+== batch vocabulary, waiting and decisions ==
+Rail: `Waiting on the founder`, or `Waiting on {Who}` for an actor-held request.
+
+== batch vocabulary, verified completion ==
+mission.completed requires a verifier's ruling while the policy sets gates.verifierRequired: assignment <assignmentId> settled on report <reportId>, and no active verifier seat has ruled on that report
+
+== batch vocabulary, observation tokens ==
+Unknown tokens are refused, never ignored.
+
+== batch vocabulary, seat authority remedy ==
+execution has `agentRef` and `role` (a receipt-backed create) and no live seat for that exact pair
+
+== batch vocabulary, hire brief ceiling ==
+coding-session lifecycle command action.brief exceeds 12272 bytes (got <n>): a hire's brief becomes the seat's first turn behind the host's 16-byte "[From the lead] " prefix, so its ceiling is the initial-turn ceiling minus that prefix
