@@ -328,18 +328,20 @@ export function hasStrictLeaseValues(
 /**
  * Every field set `buzz-core`'s `decode_coding_session_metadata` accepts.
  *
- * Six independent additive amendments have landed on the metadata payload —
+ * Seven independent additive amendments have landed on the metadata payload —
  * the `sessionRef` echo, the agent seat's `role`, D9's `turnBudget`, B1's four
  * coordinate facts (which travel all-four-or-none), the 2026-08-30 `routing`
- * record, and `beeStamp` (`crates/buzz-core/src/coding_session_payload.rs:989`,
+ * record, `beeStamp` (`crates/buzz-core/src/coding_session_payload.rs:989`,
  * documented there in Rust's own words as "the sixth independent additive
- * key") — and each is present or absent on its own, so the base key set has
- * **sixty-four** valid shapes, not five (this list drifted to five amendments
- * / thirty-two shapes when `beeStamp` shipped without a matching bit here,
- * rejecting every 44223 that carried one). Enumerating fewer silently drops
- * every event carrying an amendment this list forgot, which is a
- * whole-surface outage rather than a strictness nuance: the reader sees no
- * sessions at all.
+ * key"), and `packRef` (LANE-L23, the seventh) — and each is present or
+ * absent on its own, so the base key set has **128** valid shapes, not sixty-
+ * four (this list drifted to five amendments / thirty-two shapes when
+ * `beeStamp` shipped without a matching bit here, rejecting every 44223 that
+ * carried one — finding 31's own class, guarded against here by adding
+ * `packRef`'s bit in the same lane that adds the key to the decoder).
+ * Enumerating fewer silently drops every event carrying an amendment this
+ * list forgot, which is a whole-surface outage rather than a strictness
+ * nuance: the reader sees no sessions at all.
  */
 function metadataFieldForms(): string[][] {
   const base = [
@@ -363,6 +365,7 @@ function metadataFieldForms(): string[][] {
     METADATA_FACT_FIELDS,
     ["routing"],
     ["beeStamp"],
+    ["packRef"],
   ];
   const forms: string[][] = [];
   for (let mask = 0; mask < 1 << amendments.length; mask += 1) {
@@ -441,6 +444,47 @@ function isBeeStamp(value: unknown): boolean {
   );
 }
 
+const EXACT_SHA = /^[0-9a-f]{40}$/;
+const PACK_REF_ROLE_SLUG = /^[a-z0-9-]{1,64}$/;
+/** `30617:<64-hex>:<dtag>` — a git repository announcement coordinate. */
+const PACK_REF_REPO_COORD = /^30617:[0-9a-f]{64}:[a-zA-Z0-9._-]{1,200}$/;
+/** The literal `repo` value a shipped-defaults `packRef` carries. */
+const PACK_REF_SHIPPED_REPO = "app:shipped";
+/** A loose semver-ish app version — digits/dots, optional `-`/`+` suffix. */
+const PACK_REF_APP_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
+
+/**
+ * A `packRef` object: exactly the four keys `PackRef`
+ * (LANE-L23, `crates/buzz-core/src/coding_session_payload.rs`) carries, each
+ * on its own terms. `sha` is exact 40-hex (never the 7-40 shorthand
+ * `beeStamp` allows — a pack is pinned to one commit, never a prefix), `role`
+ * is the wire's own role-slug shape, and `repo` is a `30617:<owner>:<id>`
+ * coordinate — or, since the setup-lives-inside-the-app addendum
+ * (2026-09-03), the literal `app:shipped` paired with a version-shaped `sha`
+ * instead of a commit, the app's own bundled-packs fallback. Mirrors the
+ * desktop's own `readPackRef` (`codingSessionPackRef.ts`) exactly, so the two
+ * decoders agree.
+ */
+function isPackRef(value: unknown): boolean {
+  if (
+    !isPlainObject(value) ||
+    !hasExactFields(value, [["repo", "sha", "role", "path"]]) ||
+    typeof value.repo !== "string" ||
+    typeof value.sha !== "string" ||
+    typeof value.role !== "string" ||
+    !PACK_REF_ROLE_SLUG.test(value.role) ||
+    typeof value.path !== "string" ||
+    value.path.length === 0 ||
+    value.path.length > 512
+  ) {
+    return false;
+  }
+  if (value.repo === PACK_REF_SHIPPED_REPO) {
+    return PACK_REF_APP_VERSION.test(value.sha);
+  }
+  return PACK_REF_REPO_COORD.test(value.repo) && EXACT_SHA.test(value.sha);
+}
+
 /** Strict metadata shape/value check matching buzz-core's sixteen forms. */
 export function hasStrictMetadataJson(
   source: string,
@@ -502,6 +546,15 @@ export function hasStrictMetadataJson(
   if (
     Object.hasOwn(content, "beeStamp") &&
     (content.beeStamp === null || !isBeeStamp(content.beeStamp))
+  ) {
+    return false;
+  }
+  // Same omit-when-absent contract as `beeStamp`: `packRef`'s producer never
+  // writes an explicit `null` either, so a null here is a shape this build
+  // has never seen a real host emit, not "no pack staged".
+  if (
+    Object.hasOwn(content, "packRef") &&
+    (content.packRef === null || !isPackRef(content.packRef))
   ) {
     return false;
   }

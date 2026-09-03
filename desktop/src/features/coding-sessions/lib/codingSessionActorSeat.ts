@@ -147,9 +147,15 @@ export type CodingSessionSeatRoleNotice = {
  * Disclose the distance between the role this seat is given and the role the
  * agent *is*.
  *
- * The wire carries the seat's role, but custody staging carries the agent's
- * **home** role pack — so a builder seated as a lead is briefed as a builder.
- * That gap is invisible unless it is said here, before anything is signed.
+ * LANE-L23 fixed the staging bug this notice used to describe: custody
+ * staging now carries the **seat's** role pack, never the actor's home role
+ * — so a builder seated as a lead is briefed, and packed, as a lead. Before
+ * that fix this notice's own warning claimed the opposite ("it will carry
+ * the builder pack"), which made the disclosure a lie about the very
+ * mechanism it existed to explain. The gap it still discloses is real — an
+ * agent's home role and its seat's role can differ, and a person choosing
+ * the seat should know that — but the pack named here is now the one the
+ * host will actually stage.
  *
  * An agent whose home role is unknown (`undefined`) or absent (`null`)
  * produces no notice at all. Absence is not a claim: a build that never asked
@@ -171,7 +177,7 @@ export function codingSessionSeatRoleNotice(input: {
     tone: "warn",
     message:
       `${input.agent.name} is a ${homeRole} — seating it as ${role}; ` +
-      `it will carry the ${homeRole} pack.`,
+      `it will carry the ${role} pack.`,
   };
 }
 

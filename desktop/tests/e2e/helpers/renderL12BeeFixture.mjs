@@ -46,6 +46,12 @@ switch (caseName) {
       items: seatItems(),
       onFocus() {},
       seatBeeStamps: new Map(Object.entries(payload.stamps ?? {})),
+      // Only set when the caller passed packs at all (LANE-L23) — an
+      // omitted key here must stay byte-identical to every pre-L23 harness
+      // case, which never plumbed pack data.
+      ...(payload.packs
+        ? { seatPackRefs: new Map(Object.entries(payload.packs)) }
+        : {}),
     });
     break;
   }

@@ -12,6 +12,7 @@ import {
   writeCodingSessionMissionDensity,
 } from "@/features/coding-sessions/lib/codingSessionMissionDensity";
 import { deriveCodingSessionStreamPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
+import { derivePackRefs } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import { deriveSeatBeeStamps } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionTeamWake } from "@/features/coding-sessions/hooks/useCodingSessionTeamWake";
@@ -678,6 +679,14 @@ export function UmbrellaCodingSessionWorkspace({
     [umbrella.executions],
   );
 
+  // Which persona pack each seat actually staged (LANE-L23), same fold as
+  // `seatBeeStamps` immediately above — active generation first, then the
+  // newest prior generation's.
+  const seatPackRefs = React.useMemo(
+    () => derivePackRefs(umbrella.executions),
+    [umbrella.executions],
+  );
+
   return (
     <main
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
@@ -715,6 +724,7 @@ export function UmbrellaCodingSessionWorkspace({
         routedSeats={routedSeats}
         routeRail={routeRail}
         seatBeeStamps={seatBeeStamps}
+        seatPackRefs={seatPackRefs}
         sessionClosed={sessionClosed}
         setRenameOpen={setRenameOpen}
         streamParticipants={streamPresence.participants}

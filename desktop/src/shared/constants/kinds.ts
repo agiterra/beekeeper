@@ -89,6 +89,17 @@ export const KIND_SHELL_SESSION = 30623;
 export const KIND_SHELL_WATCH = 24310;
 export const KIND_SHELL_FRAME = 24311;
 export const KIND_SHELL_INPUT = 24312;
+// LANE-L23: a project's persona-pack source. Addressable, d = the project
+// coordinate `30621:<owner-hex>:<slug>`. Author must be a founder of one of
+// the project's repositories (L18's RepositoryFounders) or the project
+// owner — the relay refuses others. Tags: `["repo", "30617:<owner>:<id>"]`
+// (the packs repository), exactly one of `["ref", "refs/heads/main"]` or
+// `["sha", "<40-hex>"]`, optional `["path", "personas/roles"]` (default
+// `personas/roles`). Content: `{"schema":"buzz-project-pack-source/v1",
+// "note":"<=512 bytes, optional>"}`.
+// Keep in sync: crates/buzz-core/src/kind.rs (Lane A — not yet landed as of
+// this lane's cut; 30624 is confirmed free, immediately after 30623).
+export const KIND_PROJECT_PACK_SOURCE = 30624;
 
 // NIP-MP membership ops: 9010 puts members (add or change role) on a project
 // roster, 9011 removes them; both carry the project coordinate in an `a` tag

@@ -239,15 +239,19 @@ test("a seat on its own home role says so, quietly", () => {
   assert.deepEqual(notice, { tone: "muted", message: "Its home role." });
 });
 
-test("a seat given someone else's role names the pack it will actually carry", () => {
+test("a seat given someone else's role names the pack it will actually carry (LANE-L23: the seat's role, not the home role)", () => {
   const notice = codingSessionSeatRoleNotice({
     agent: { pubkey: ACTOR, name: "Ada", homeRole: "builder" },
     role: "lead",
   });
   assert.equal(notice?.tone, "warn");
+  // Before LANE-L23's staging fix this asserted "it will carry the builder
+  // pack" — the home role — which described a bug (the seat's role never
+  // picked the pack) as if it were the product's actual behavior. The
+  // staging rule now keys on the seat's role, so the disclosure does too.
   assert.equal(
     notice?.message,
-    "Ada is a builder — seating it as lead; it will carry the builder pack.",
+    "Ada is a builder — seating it as lead; it will carry the lead pack.",
   );
 });
 

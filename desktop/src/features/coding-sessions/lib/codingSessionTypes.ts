@@ -1,5 +1,6 @@
 import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionTurnBudget } from "./codingSessionIngressPayloads";
+import type { PackRef } from "./codingSessionPackRef";
 import type { SeatBeeStamp } from "./codingSessionSeatBee";
 import type { CodingSessionProjectedTranscriptItem } from "./codingSessionTranscriptItems";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
@@ -100,6 +101,14 @@ export type CodingSessionCatalogRecord = {
    * one place this is read back out across an execution's generations.
    */
   beeStamp: SeatBeeStamp | null;
+  /**
+   * Which persona pack this generation's seat was observed staging
+   * (LANE-L23), or `null` when this exact 44223 carried no `packRef` — no
+   * 30624 source for the project, or an older host. `derivePackRefs` in
+   * `codingSessionPackRef.ts` is the one place this is read back out across
+   * an execution's generations.
+   */
+  packRef: PackRef | null;
 };
 
 /**

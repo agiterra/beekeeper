@@ -1,0 +1,531 @@
+import { getVersion } from "@tauri-apps/api/app";
+import * as React from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { truncatePubkey } from "@/shared/lib/pubkey";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
+
+import type { ProjectContainer } from "../hooks";
+import {
+  canSetProjectPackSource,
+  fetchProjectPackSource,
+  publishProjectPackSource,
+  type ProjectPackSource,
+} from "../lib/projectPackSource";
+import {
+  projectPacksInit,
+  type ProjectPacksInitResult,
+} from "../lib/projectPacksInit";
+import { useProjectCapabilities } from "../lib/projectPermissions";
+import { useProjectRosterQuery } from "../lib/projectMembers";
+
+/** Query key for one project's newest pack source. */
+export function projectPackSourceQueryKey(projectCoord: string) {
+  return ["project-pack-source", projectCoord] as const;
+}
+
+/**
+ * This app's own version, the way the "shipped defaults" disclosure names
+ * it — `getVersion()` is the same Tauri API `SettingsView.tsx` already reads
+ * it from, so this surface and the About screen can never disagree about
+ * which build a viewer is running. `null` until the async read settles, or
+ * on a webview where the Tauri API is unavailable (never invented).
+ */
+function useAppVersion(): string | null {
+  const [version, setVersion] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    void getVersion()
+      .then((value) => {
+        if (!cancelled) setVersion(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return version;
+}
+
+/**
+ * "Packs" — the project settings row showing which git repository (and
+ * pinned commit) this project's coding-session seats stage their persona
+ * packs from (LANE-L23), and, for a founder or the project owner, the two
+ * actions the "setup lives inside the app" addendum (2026-09-03) asks for:
+ * "Create packs repository" (announce, seed from the shipped packs, and
+ * publish the source — one host call) and "Use an existing repository"
+ * (pick or paste a coordinate and publish the source directly).
+ *
+ * A project with no `30624` source is no longer "no pack": the app bundles
+ * the seven role packs at build time and stages them as the fallback, so the
+ * empty state names that fallback — "shipped defaults vX (app <version>)" —
+ * rather than reading as if nothing were staged at all.
+ *
+ * The relay is the actual gate (author must be a founder of one of the
+ * project's repositories, or the project owner); this surface's own check
+ * ({@link canSetProjectPackSource}) is advisory and deliberately the *safe*
+ * subset — a project owner is always one of the two allowed arms, so gating
+ * the actions on that arm alone never shows a control the relay would
+ * refuse. It can, however, hide the actions from a non-owner repository
+ * founder this client has no way to identify without a native command (no
+ * different from `codingSessionMissionLand.ts`'s own `viewerIsFounder`,
+ * which needed exactly that) — disclosed here, not silently narrowed.
+ */
+export function ProjectPacksSettingsSection({
+  project,
+}: {
+  project: ProjectContainer;
+}) {
+  const queryClient = useQueryClient();
+  const identityQuery = useIdentityQuery();
+  const rosterQuery = useProjectRosterQuery(project);
+  const capabilities = useProjectCapabilities(project);
+  const appVersion = useAppVersion();
+  const sourceQuery = useQuery({
+    queryKey: projectPackSourceQueryKey(project.address),
+    queryFn: () => fetchProjectPackSource(project.address),
+  });
+
+  const self = identityQuery.data?.pubkey ?? null;
+  const roster = rosterQuery.data ?? project.members;
+  // The safe subset of the wire rule — see the module doc above.
+  const canSet =
+    capabilities.isOwner ||
+    canSetProjectPackSource({ self, project, roster, repo: null });
+
+  const [activeAction, setActiveAction] = React.useState<
+    "none" | "create" | "use-existing"
+  >("none");
+  const invalidateSource = () =>
+    void queryClient.invalidateQueries({
+      queryKey: projectPackSourceQueryKey(project.address),
+    });
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="project-packs-section">
+      <p className="text-xs text-muted-foreground">
+        Which git repository this project's coding-session seats stage their
+        persona packs from. Without a source, seats stage the app&apos;s own
+        shipped packs.
+      </p>
+
+      <ProjectPackSourceRow
+        appVersion={appVersion}
+        loading={sourceQuery.isLoading}
+        source={sourceQuery.data ?? null}
+      />
+
+      {canSet ? (
+        <div className="flex flex-col gap-3">
+          {activeAction === "none" ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                className="self-start"
+                data-testid="project-packs-create-repo-open"
+                onClick={() => setActiveAction("create")}
+                size="sm"
+                variant="outline"
+              >
+                Create packs repository
+              </Button>
+              <Button
+                className="self-start"
+                data-testid="project-packs-use-existing-open"
+                onClick={() => setActiveAction("use-existing")}
+                size="sm"
+                variant="outline"
+              >
+                Use an existing repository
+              </Button>
+            </div>
+          ) : null}
+          {activeAction === "create" ? (
+            <ProjectPacksCreateRepoAction
+              onCancel={() => setActiveAction("none")}
+              onCreated={() => {
+                invalidateSource();
+              }}
+              projectRef={project.address}
+            />
+          ) : null}
+          {activeAction === "use-existing" ? (
+            <ProjectPackSourceForm
+              existingRepoAddrs={project.repoAddrs}
+              onCancel={() => setActiveAction("none")}
+              onSaved={() => {
+                setActiveAction("none");
+                invalidateSource();
+              }}
+              projectCoord={project.address}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="project-packs-readonly-note"
+        >
+          Only this project&apos;s repository founders or its owner can set the
+          pack source.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ProjectPackSourceRow({
+  appVersion,
+  loading,
+  source,
+}: {
+  appVersion: string | null;
+  loading: boolean;
+  source: ProjectPackSource | null;
+}) {
+  if (loading) {
+    return <p className="text-xs text-muted-foreground">Reading the source…</p>;
+  }
+  if (source === null) {
+    return (
+      <p className="text-sm" data-testid="project-packs-source-shipped">
+        {appVersion
+          ? `shipped defaults v${appVersion} (app ${appVersion})`
+          : "shipped defaults"}
+        {
+          " — no project source is set, so seats stage the packs built into this app."
+        }
+      </p>
+    );
+  }
+  const pin = source.sha ? `sha ${source.sha.slice(0, 8)}` : source.ref;
+  return (
+    <dl
+      className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm"
+      data-testid="project-packs-source-row"
+    >
+      <dt className="text-muted-foreground">Repository</dt>
+      <dd className="truncate font-mono text-xs">{source.repo}</dd>
+      <dt className="text-muted-foreground">Pinned to</dt>
+      <dd className="truncate font-mono text-xs">{pin}</dd>
+      <dt className="text-muted-foreground">Path</dt>
+      <dd className="truncate font-mono text-xs">{source.path}</dd>
+      <dt className="text-muted-foreground">Set by</dt>
+      <dd className="truncate text-xs">
+        {truncatePubkey(source.author)} on{" "}
+        {new Date(source.createdAt * 1000).toLocaleString()}
+      </dd>
+      {source.note ? (
+        <>
+          <dt className="text-muted-foreground">Note</dt>
+          <dd className="text-xs">{source.note}</dd>
+        </>
+      ) : null}
+    </dl>
+  );
+}
+
+/**
+ * "Create packs repository" — calls Lane B's `project_packs_init` host
+ * command (announce, seed, publish, all one step) and prints every wire
+ * fact it produced, per the addendum's own words: "every step reports the
+ * wire fact it produced (event ids, the push record)".
+ */
+function ProjectPacksCreateRepoAction({
+  onCancel,
+  onCreated,
+  projectRef,
+}: {
+  onCancel: () => void;
+  onCreated: () => void;
+  projectRef: string;
+}) {
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<ProjectPacksInitResult | null>(
+    null,
+  );
+
+  async function handleCreate() {
+    setPending(true);
+    setError(null);
+    try {
+      const created = await projectPacksInit({ projectRef });
+      setResult(created);
+      onCreated();
+    } catch (thrown) {
+      setError(
+        thrown instanceof Error
+          ? thrown.message
+          : "Failed to create the packs repository.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-md border border-border/60 p-3"
+      data-testid="project-packs-create-repo-panel"
+    >
+      <p className="text-xs text-muted-foreground">
+        Announces a new repository under your key, seeds it from this app&apos;s
+        shipped packs with one signed commit, and sets it as this project&apos;s
+        pack source.
+      </p>
+      {error ? (
+        <p
+          className="text-xs text-destructive"
+          data-testid="project-packs-create-repo-error"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+      {result ? (
+        <dl
+          className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs"
+          data-testid="project-packs-create-repo-result"
+        >
+          <dt className="text-muted-foreground">Repository</dt>
+          <dd className="truncate font-mono">{result.repoRef}</dd>
+          <dt className="text-muted-foreground">Source event</dt>
+          {result.sourceEventId === null ? (
+            <dd className="text-muted-foreground">
+              not published — the seed push did not reach the relay
+            </dd>
+          ) : (
+            <dd className="truncate font-mono">
+              {truncatePubkey(result.sourceEventId)}
+            </dd>
+          )}
+          <dt className="text-muted-foreground">Seed commit</dt>
+          <dd className="truncate font-mono">
+            {result.seedCommitSha.slice(0, 8)}
+          </dd>
+          <dt className="text-muted-foreground">Push record</dt>
+          {result.pushRecordEventId === null ? (
+            <dd className="text-muted-foreground">
+              none yet — the relay had published no 30618 when this looked
+            </dd>
+          ) : (
+            <dd className="truncate font-mono">
+              {truncatePubkey(result.pushRecordEventId)}
+            </dd>
+          )}
+        </dl>
+      ) : null}
+      <div className="flex justify-end gap-2">
+        <Button
+          disabled={pending}
+          onClick={onCancel}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          {result ? "Close" : "Cancel"}
+        </Button>
+        {result ? null : (
+          <Button
+            data-testid="project-packs-create-repo-submit"
+            disabled={pending}
+            onClick={handleCreate}
+            size="sm"
+            type="button"
+          >
+            {pending ? "Creating…" : "Create"}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectPackSourceForm({
+  existingRepoAddrs,
+  onCancel,
+  onSaved,
+  projectCoord,
+}: {
+  existingRepoAddrs: readonly string[];
+  onCancel: () => void;
+  onSaved: () => void;
+  projectCoord: string;
+}) {
+  const [repo, setRepo] = React.useState(existingRepoAddrs[0] ?? "");
+  const [pinKind, setPinKind] = React.useState<"ref" | "sha">("ref");
+  const [pin, setPin] = React.useState("refs/heads/main");
+  const [path, setPath] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [publishedEventId, setPublishedEventId] = React.useState<string | null>(
+    null,
+  );
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      const published = await publishProjectPackSource({
+        note: note.trim() || null,
+        path: path.trim() || null,
+        projectCoord,
+        repoCoord: repo.trim(),
+        ref: pinKind === "ref" ? pin.trim() : null,
+        sha: pinKind === "sha" ? pin.trim() : null,
+      });
+      setPublishedEventId(published.eventId);
+      onSaved();
+    } catch (thrown) {
+      setError(
+        thrown instanceof Error
+          ? thrown.message
+          : "Failed to set the pack source.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      className="flex flex-col gap-3 rounded-md border border-border/60 p-3"
+      data-testid="project-packs-set-source-form"
+      onSubmit={handleSubmit}
+    >
+      <div className="flex flex-col gap-1">
+        <label
+          className="text-xs font-medium text-muted-foreground"
+          htmlFor="project-packs-repo"
+        >
+          Repository coordinate
+        </label>
+        <Input
+          data-testid="project-packs-repo-input"
+          id="project-packs-repo"
+          list="project-packs-repo-suggestions"
+          onChange={(event) => setRepo(event.target.value)}
+          placeholder="30617:<owner-hex>:<id>"
+          value={repo}
+        />
+        <datalist id="project-packs-repo-suggestions">
+          {existingRepoAddrs.map((addr) => (
+            <option key={addr} value={addr} />
+          ))}
+        </datalist>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">
+          Pin to
+        </span>
+        <div className="flex gap-2">
+          <label className="flex items-center gap-1 text-xs">
+            <input
+              checked={pinKind === "ref"}
+              onChange={() => {
+                setPinKind("ref");
+                setPin("refs/heads/main");
+              }}
+              type="radio"
+              value="ref"
+            />
+            A branch (ref)
+          </label>
+          <label className="flex items-center gap-1 text-xs">
+            <input
+              checked={pinKind === "sha"}
+              onChange={() => {
+                setPinKind("sha");
+                setPin("");
+              }}
+              type="radio"
+              value="sha"
+            />
+            An exact commit (sha)
+          </label>
+        </div>
+        <Input
+          data-testid="project-packs-pin-input"
+          onChange={(event) => setPin(event.target.value)}
+          placeholder={
+            pinKind === "ref" ? "refs/heads/main" : "40 hex characters"
+          }
+          value={pin}
+        />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label
+          className="text-xs font-medium text-muted-foreground"
+          htmlFor="project-packs-path"
+        >
+          Path (optional — defaults to <code>personas/roles</code>)
+        </label>
+        <Input
+          id="project-packs-path"
+          onChange={(event) => setPath(event.target.value)}
+          placeholder="personas/roles"
+          value={path}
+        />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label
+          className="text-xs font-medium text-muted-foreground"
+          htmlFor="project-packs-note"
+        >
+          Note (optional)
+        </label>
+        <Input
+          id="project-packs-note"
+          maxLength={512}
+          onChange={(event) => setNote(event.target.value)}
+          value={note}
+        />
+      </div>
+
+      {error ? (
+        <p
+          className="text-xs text-destructive"
+          data-testid="project-packs-error"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+      {publishedEventId ? (
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="project-packs-published"
+        >
+          Published {truncatePubkey(publishedEventId)}.
+        </p>
+      ) : null}
+
+      <div className="flex justify-end gap-2">
+        <Button
+          disabled={saving}
+          onClick={onCancel}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Cancel
+        </Button>
+        <Button
+          data-testid="project-packs-set-source-submit"
+          disabled={saving || repo.trim() === "" || pin.trim() === ""}
+          size="sm"
+          type="submit"
+        >
+          {saving ? "Setting…" : "Use this repository"}
+        </Button>
+      </div>
+    </form>
+  );
+}

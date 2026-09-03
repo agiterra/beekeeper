@@ -376,3 +376,67 @@ test("a malformed routing record refuses the payload, it is not dropped", () => 
     );
   }
 });
+
+// LANE-L23's `packRef`: the seventh additive key on 44223, same
+// omit-when-absent contract as `routing` and `beeStamp` (finding 31's rule —
+// every new payload key on an existing kind is read-optional with a stated
+// default, and the lane adding it ships a "signed before the key existed"
+// decode test).
+const PACK_REF = {
+  repo: `30617:${SEAT_ACTOR}:agiterra-packs`,
+  sha: "b".repeat(40),
+  role: "builder",
+  path: "personas/roles/builder",
+};
+
+test("metadata carrying a packRef decodes it", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataContent({ packRef: PACK_REF }),
+  );
+  assert.deepEqual(parsed?.packRef, PACK_REF);
+});
+
+// The setup-lives-inside-the-app addendum (2026-09-03): a project with no
+// 30624 source falls back to the app's own bundled packs, disclosed as a
+// `packRef` naming `app:shipped` and a version instead of a commit.
+test("metadata carrying a shipped-defaults packRef decodes it", () => {
+  const shipped = {
+    repo: "app:shipped",
+    sha: "0.1.0",
+    role: "builder",
+    path: "personas/roles/builder",
+  };
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataContent({ packRef: shipped }),
+  );
+  assert.deepEqual(parsed?.packRef, shipped);
+});
+
+test("a 44223 signed before packRef existed still decodes, with the key absent", () => {
+  // No `packRef` key at all — the shape every host before this lane signed.
+  const parsed = parseBuzzCodingSessionMetadata(metadataContent({}));
+  assert.notEqual(parsed, null, "an older 44223 must still decode");
+  assert.equal(Object.hasOwn(parsed, "packRef"), false);
+});
+
+test("metadata rejects an explicit null packRef", () => {
+  assert.equal(
+    parseBuzzCodingSessionMetadata(metadataContent({ packRef: null })),
+    null,
+  );
+});
+
+test("a malformed packRef refuses the payload, it is not dropped", () => {
+  for (const packRef of [
+    { ...PACK_REF, repo: "not-a-coordinate" },
+    { ...PACK_REF, sha: "deadbeef" },
+    { ...PACK_REF, role: "Not A Slug" },
+    { class: "builder" },
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(metadataContent({ packRef })),
+      null,
+      `decoded ${JSON.stringify(packRef)} instead of refusing it`,
+    );
+  }
+});

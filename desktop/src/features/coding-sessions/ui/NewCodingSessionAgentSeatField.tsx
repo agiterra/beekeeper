@@ -7,6 +7,7 @@ import {
   MAX_CODING_SESSION_ROLE_BYTES,
 } from "@/features/coding-sessions/lib/codingSessionActorSeat";
 import type { CodingSessionSeatAgent } from "@/features/coding-sessions/lib/codingSessionSeatAgent";
+import { useCodingSessionPackStatusPreview } from "@/features/coding-sessions/lib/useCodingSessionPackStatusPreview";
 import { Input } from "@/shared/ui/input";
 import {
   DropdownMenu,
@@ -14,6 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { NewCodingSessionPackPreviewLine } from "./NewCodingSessionPackPreviewLine";
 
 /** The datalist id the role field offers its suggestions through. */
 const ROLE_SUGGESTION_LIST_ID = "coding-session-role-suggestions";
@@ -44,6 +46,7 @@ export function NewCodingSessionAgentSeatField({
   error = null,
   onActorChange,
   onRoleChange,
+  projectRef = null,
   role,
 }: {
   /** Pubkey of the seated agent, or null for an unseated execution. */
@@ -54,6 +57,13 @@ export function NewCodingSessionAgentSeatField({
   error?: string | null;
   onActorChange: (actor: string | null) => void;
   onRoleChange: (role: string) => void;
+  /**
+   * The project this session belongs to, when the caller knows one
+   * (LANE-L23) — feeds the pack preview below the role box. `null` (the
+   * default, and every pre-L23 caller's implicit value) shows no preview at
+   * all, byte-identical to before this prop existed.
+   */
+  projectRef?: string | null;
   role: string;
 }) {
   const selected = agents.find((agent) => agent.pubkey === actor) ?? null;
@@ -61,6 +71,15 @@ export function NewCodingSessionAgentSeatField({
   // home-role/pack knowledge renders exactly the field it rendered before.
   const roleNotice = codingSessionSeatRoleNotice({ agent: selected, role });
   const packNotice = codingSessionSeatPackNotice(selected);
+  // LANE-L23: a *different* pack notion from `packNotice` above — that one is
+  // "does this computer have a role-pack installer for this agent at all";
+  // this is "what would the host actually stage from the project's 30624
+  // source". Both can be true or false independently, so both render.
+  const packPreview = useCodingSessionPackStatusPreview({
+    agentPubkey: actor,
+    projectRef,
+    role,
+  });
   const label = selected
     ? selected.name
     : actor
@@ -159,6 +178,7 @@ export function NewCodingSessionAgentSeatField({
               {packNotice}
             </p>
           ) : null}
+          <NewCodingSessionPackPreviewLine preview={packPreview} />
           <p className="text-2xs text-muted-foreground">
             The seat holds this agent's own identity on the relay and is added
             to the channel, so its work is signed as itself.

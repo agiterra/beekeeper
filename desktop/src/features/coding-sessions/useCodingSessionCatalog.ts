@@ -358,6 +358,11 @@ export function mergeTrustedCodingSessionIngress(
       // own metadata carried no `beeStamp` — an older host, not an unknown
       // build (`codingSessionSeatBee.ts`).
       beeStamp: metadata?.beeStamp ?? null,
+      // Which persona pack this exact generation's seat was observed
+      // staging, straight off the same 44223. Null means this record's own
+      // metadata carried no `packRef` — no 30624 source for the project, or
+      // an older host (`codingSessionPackRef.ts`).
+      packRef: metadata?.packRef ?? null,
     } satisfies CodingSessionCatalogRecord;
   });
 

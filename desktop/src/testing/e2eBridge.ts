@@ -54,6 +54,7 @@ import {
   KIND_PERSONA,
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
+  KIND_PROJECT_PACK_SOURCE,
   KIND_PULSE_ENTRY,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
@@ -345,6 +346,26 @@ type E2eConfig = {
      * exactly as it was.
      */
     codingSessionSeatWorktrees?: Record<string, unknown>[];
+    /**
+     * Answer for `preview_coding_session_seat_pack` (LANE-L23), the host
+     * command behind the hire/launch dialogs' pack preview
+     * (`desktop/src/features/coding-sessions/lib/codingSessionPackStatus.ts`).
+     * Opt-in like the tables above: unconfigured, the command throws and the
+     * preview renders nothing — the honest state for a build that cannot
+     * answer. Keyed by role, so a spec can seed one role's preview without
+     * answering for every role the dropdown offers. The value is a
+     * `SeatPackPreview` as `actor_seats.rs` serializes it.
+     */
+    codingSessionPackStatusByRole?: Record<string, Record<string, unknown>>;
+    /**
+     * Answer for `project_packs_init` (LANE-L23), the "Create packs
+     * repository" host command
+     * (`desktop/src/features/projects-container/lib/projectPacksInit.ts`).
+     * Opt-in: unconfigured, the command throws and the Packs settings
+     * button surfaces the failure rather than a fabricated success. Keyed
+     * by `projectRef` so a spec can answer for one project's own create.
+     */
+    projectPacksInitByProject?: Record<string, Record<string, unknown>>;
     /** Runtime table once a mocked connect (sign-in) has completed. */
     codingSessionProviderRuntimesAfterConnect?: RawCodingSessionProviderRuntime[];
     activePersonaIds?: string[];
@@ -5701,6 +5722,9 @@ const MOCK_PROJECT_SUBJECTS = [
 const MOCK_PROJECT_KINDS = new Set<number>([
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
+  // LANE-L23: a project's persona-pack source, `d`-scoped to the project
+  // coordinate like the two arms above — see `isMockProjectScopedEvent`.
+  KIND_PROJECT_PACK_SOURCE,
   // Project Pulse entries are project-scoped by an `a` tag holding the 30621
   // coordinate — the same shape the NIP-34 kinds below use, so they route
   // through this store rather than the channel path.
@@ -5901,6 +5925,20 @@ function getMockProjectEventStore(): RelayEvent[] {
 function isMockProjectScopedEvent(event: RelayEvent): boolean {
   // Project container events (kind:30621) are global — no repo `a`-tag needed.
   if (event.kind === KIND_PROJECT) return true;
+  // LANE-L23's project pack source (kind:30624) names its project in a `d`
+  // tag, not an `a` tag — the same "own-kind" exception 30621 gets just
+  // above, for the same reason: without this arm a live-published 30624
+  // falls through to the channel branch and is rejected with "Missing
+  // channel tag.", the exact fixture gap the comment below already names for
+  // NIP-34/Pulse events.
+  if (
+    event.kind === KIND_PROJECT_PACK_SOURCE &&
+    event.tags.some(
+      (tag) => tag[0] === "d" && (tag[1] ?? "").startsWith(`${KIND_PROJECT}:`),
+    )
+  ) {
+    return true;
+  }
   // NIP-09 deletion of a project container (kind:5 with a 30621 `a` tag).
   if (
     event.kind === KIND_DELETION &&
@@ -12761,6 +12799,28 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
         return rows;
+      }
+      // Opt-in-or-throw, like every other host command mocked here:
+      // unconfigured, the pack preview renders nothing, never a guess.
+      case "preview_coding_session_seat_pack": {
+        const input = (payload ?? {}) as { role?: string };
+        const role = input.role;
+        const byRole = activeConfig?.mock?.codingSessionPackStatusByRole;
+        const result = role ? byRole?.[role] : undefined;
+        if (!result) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return result;
+      }
+      case "project_packs_init": {
+        const input = (payload ?? {}) as { projectRef?: string };
+        const projectRef = input.projectRef;
+        const byProject = activeConfig?.mock?.projectPacksInitByProject;
+        const result = projectRef ? byProject?.[projectRef] : undefined;
+        if (!result) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return result;
       }
       case "prune_coding_session_seat_worktree": {
         const input = (payload ?? {}) as {

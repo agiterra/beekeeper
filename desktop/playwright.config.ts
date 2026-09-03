@@ -146,6 +146,8 @@ export default defineConfig({
         "**/project-pr-review.spec.ts",
         "**/projects-sidebar.spec.ts",
         "**/project-container-screen.spec.ts",
+        "**/project-packs.spec.ts",
+        "**/project-repository-protection.spec.ts",
         "**/project-settings-screenshots.spec.ts",
         "**/projectPulse.spec.ts",
         "**/project-pulse-missions.spec.ts",

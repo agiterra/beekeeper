@@ -6,6 +6,7 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionMissionContracts";
 import type { CodingSessionParticipantPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
 import { codingSessionParticipantAccent } from "@/features/coding-sessions/lib/codingSessionParticipantAccent";
+import type { PackRef } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import { codingSessionSeatBeeLine } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import type { SeatBeeStamp } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import { cn } from "@/shared/lib/cn";
@@ -14,6 +15,7 @@ import {
   CodingSessionSeatAuthorityBadge,
 } from "./CodingSessionMissionDeliveryBadge";
 import { CodingSessionSeatBeeLine } from "./CodingSessionSeatBeeLine";
+import { CodingSessionSeatPackLine } from "./CodingSessionSeatPackLine";
 
 /**
  * Singularity's always-readable roster: identity first, provider details second.
@@ -37,6 +39,7 @@ export function CodingSessionParticipantBar({
   onFocus,
   seatAuthorities,
   seatBeeStamps,
+  seatPackRefs,
 }: {
   /** Merged last — the finalizer owns the strip's border and background. */
   className?: string;
@@ -58,6 +61,19 @@ export function CodingSessionParticipantBar({
    * null `sha` and reads `bee build unknown`.
    */
   seatBeeStamps?: ReadonlyMap<string, SeatBeeStamp | null>;
+  /**
+   * The persona pack each seat actually staged, keyed by `executionKey`
+   * (LANE-L23).
+   *
+   * A `Map` entry missing entirely means this caller never plumbed pack
+   * data at all — the chip discloses nothing about packs, matching every
+   * pre-L23 caller exactly. A present entry (including `null`) means the
+   * caller *does* know, and the chip renders `pack <role>@<sha8>` or the
+   * honest `no pack staged` — unlike `beeStamp`, absence is disclosed here
+   * because "no 30624 source for this project" is itself a fact a founder
+   * needs to see.
+   */
+  seatPackRefs?: ReadonlyMap<string, PackRef | null>;
 }) {
   if (items.length === 0) return null;
   const authorityByExecution = new Map(
@@ -100,6 +116,15 @@ export function CodingSessionParticipantBar({
         // exact height it had before this lane.
         const beeStamp = seatBeeStamps?.get(item.executionKey) ?? null;
         const hasBeeLine = codingSessionSeatBeeLine(beeStamp) !== null;
+        // Unlike `seatBeeStamps`, presence in the map (not just a truthy
+        // value) is the signal: a caller that never plumbed pack data at all
+        // renders no pack line, but a caller that did — even for a seat with
+        // no staged pack — owes the reader `no pack staged` rather than a
+        // silent chip.
+        const hasPackLine = seatPackRefs?.has(item.executionKey) ?? false;
+        const packRef = hasPackLine
+          ? (seatPackRefs?.get(item.executionKey) ?? null)
+          : null;
         return (
           <button
             aria-label={`${selected ? "Show all participants" : `Focus ${item.label}`} — ${item.disposition}`}
@@ -155,7 +180,10 @@ export function CodingSessionParticipantBar({
                 The chip carries identity, the W1 word, and the two facts a
                 reader could not otherwise learn (seat authority, delivery).
               */}
-              {shownAuthority !== null || delivery !== null || hasBeeLine ? (
+              {shownAuthority !== null ||
+              delivery !== null ||
+              hasBeeLine ||
+              hasPackLine ? (
                 <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
                   {shownAuthority !== null ? (
                     <CodingSessionSeatAuthorityBadge
@@ -166,6 +194,9 @@ export function CodingSessionParticipantBar({
                     <CodingSessionMissionDeliveryBadge delivery={delivery} />
                   ) : null}
                   <CodingSessionSeatBeeLine stamp={beeStamp} />
+                  {hasPackLine ? (
+                    <CodingSessionSeatPackLine packRef={packRef} />
+                  ) : null}
                 </span>
               ) : null}
             </span>

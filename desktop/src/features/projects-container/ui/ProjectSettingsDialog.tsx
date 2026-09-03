@@ -29,6 +29,8 @@ import { useProjectCapabilities } from "../lib/projectPermissions";
 import { ProjectColorPickerField } from "./ProjectColorPickerField";
 import { ProjectIconPickerField } from "./ProjectIconPickerField";
 import { ProjectMembersManager } from "./ProjectMembersManager";
+import { ProjectPacksSettingsSection } from "./ProjectPacksSettingsSection";
+import { ProjectRepositoryProtectionSection } from "./ProjectRepositoryProtectionSection";
 import { ProjectSettingsLocalSection } from "./ProjectSettingsLocalSection";
 import { ProjectVisibilitySettings } from "./ProjectVisibilitySettings";
 
@@ -148,6 +150,15 @@ export function ProjectSettingsDialog({
             <TabsTrigger data-testid="project-settings-tab-local" value="local">
               This computer
             </TabsTrigger>
+            <TabsTrigger data-testid="project-settings-tab-packs" value="packs">
+              Packs
+            </TabsTrigger>
+            <TabsTrigger
+              data-testid="project-settings-tab-repository"
+              value="repository"
+            >
+              Repository
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="general">
@@ -249,6 +260,16 @@ export function ProjectSettingsDialog({
 
           <TabsContent value="local">
             {project ? <ProjectSettingsLocalSection project={project} /> : null}
+          </TabsContent>
+
+          <TabsContent value="packs">
+            {project ? <ProjectPacksSettingsSection project={project} /> : null}
+          </TabsContent>
+
+          <TabsContent value="repository">
+            {project ? (
+              <ProjectRepositoryProtectionSection project={project} />
+            ) : null}
           </TabsContent>
         </Tabs>
       </DialogContent>

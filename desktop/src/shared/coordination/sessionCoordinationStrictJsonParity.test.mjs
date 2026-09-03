@@ -74,6 +74,13 @@ const BEE_STAMP = {
   dirty: false,
 };
 
+const PACK_REF = {
+  repo: `30617:${ACTOR}:agiterra-packs`,
+  sha: "d".repeat(40),
+  role: "builder",
+  path: "personas/roles/builder",
+};
+
 const CAPABILITIES_SIX_KEY = {
   threadTurnStart: true,
   threadTurnInterrupt: true,
@@ -108,6 +115,20 @@ function fixtures() {
         beeStamp: { ...BEE_STAMP, version: null, sha: null, dirty: null },
       },
     ],
+    // The seventh amendment (LANE-L23): guarded against beeStamp's own
+    // outage by growing this fixture list in the same lane that adds the key.
+    ["a real packRef", { packRef: PACK_REF }],
+    [
+      "a shipped-defaults packRef",
+      {
+        packRef: {
+          repo: "app:shipped",
+          sha: "0.1.0",
+          role: "builder",
+          path: "personas/roles/builder",
+        },
+      },
+    ],
     [
       "every amendment at once",
       {
@@ -118,6 +139,7 @@ function fixtures() {
         ...FACTS,
         routing: ROUTING,
         beeStamp: BEE_STAMP,
+        packRef: PACK_REF,
         capabilities: { ...CAPABILITIES_SIX_KEY, promptImage: true },
       },
     ],

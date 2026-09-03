@@ -9,6 +9,7 @@ import type {
 import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import type { CodingSessionActorNameResolver } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import type { PackRef } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import type { SeatBeeStamp } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import type { useCodingSessionTeamWake } from "@/features/coding-sessions/hooks/useCodingSessionTeamWake";
@@ -79,6 +80,7 @@ export function CodingSessionUmbrellaHeaderRow({
   routedSeats,
   routeRail,
   seatBeeStamps,
+  seatPackRefs,
   sessionClosed,
   setRenameOpen,
   streamParticipants,
@@ -123,6 +125,8 @@ export function CodingSessionUmbrellaHeaderRow({
   routeRail: CodingSessionRouteRailState;
   /** Which `bee` each seat is running, keyed by `executionKey` (L12/L17). */
   seatBeeStamps: ReadonlyMap<string, SeatBeeStamp | null>;
+  /** Which persona pack each seat staged, keyed by `executionKey` (LANE-L23). */
+  seatPackRefs: ReadonlyMap<string, PackRef | null>;
   sessionClosed: boolean;
   setRenameOpen: (open: boolean) => void;
   streamParticipants: React.ComponentProps<
@@ -280,6 +284,7 @@ export function CodingSessionUmbrellaHeaderRow({
           // it the chips would badge nothing at all.
           seatAuthorities={teamWake.seatAuthorities}
           seatBeeStamps={seatBeeStamps}
+          seatPackRefs={seatPackRefs}
         />
       ) : isMultiExecution ? (
         <CodingSessionDispositionStrip

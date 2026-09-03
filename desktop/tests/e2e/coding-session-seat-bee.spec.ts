@@ -21,6 +21,7 @@ import {
   codingSessionMetadataSemanticKey,
   lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
+import type { PackRef } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import type { SeatBeeStamp } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import {
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
@@ -220,6 +221,43 @@ test("a seat chip names the bee that seat is running, in every state", async ({
   await capture(page, unknown, "03-seat-bee-unknown");
 });
 
+const PACK_REF: PackRef = {
+  repo: `30617:${"a".repeat(64)}:agiterra-packs`,
+  sha: "23728227ba1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+  role: "builder",
+  path: "personas/roles/builder",
+};
+
+test("LANE-L23: a seat chip names the pack that seat staged, and discloses its absence", async ({
+  page,
+}) => {
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  // 1 — a staged pack: role and short sha, words only.
+  const staged = await mount(
+    page,
+    renderFixture("participant-bar", { packs: { builder: PACK_REF } }),
+    360,
+  );
+  await expect(staged.getByTestId("coding-session-seat-pack")).toHaveText(
+    "pack builder@23728227",
+  );
+  await capture(page, staged, "07-seat-pack-staged");
+
+  // 2 — no 30624 source for the project (or an older host): disclosed, not
+  // silent, unlike the bee line's own absence.
+  const none = await mount(
+    page,
+    renderFixture("participant-bar", { packs: { builder: null } }),
+    360,
+  );
+  await expect(none.getByTestId("coding-session-seat-pack")).toHaveText(
+    "no pack staged",
+  );
+  await capture(page, none, "08-seat-pack-none");
+});
+
 test("Pulse owes the reader every seat behind main, and says what it could not compare", async ({
   page,
 }) => {
@@ -340,6 +378,7 @@ function seatEvents(input: {
   providerPubkey: string;
   title: string;
   beeStamp?: SeatBeeStamp;
+  packRef?: PackRef;
 }): RelayEvent[] {
   const genesis = finalizeEvent(
     (() => {
@@ -425,6 +464,7 @@ function seatEvents(input: {
         capabilities: CAPABILITIES,
         sessionRef: SESSION_REF,
         ...(input.beeStamp ? { beeStamp: input.beeStamp } : {}),
+        ...(input.packRef ? { packRef: input.packRef } : {}),
       }),
     },
     input.providerSecret,
@@ -482,9 +522,13 @@ test("a real, decoded kind:44223 beeStamp reaches the chip through the running a
             sha: "23728227b",
             dirty: false,
           },
+          packRef: PACK_REF,
         }),
-        // No `beeStamp` at all — an older host. The chip must stay silent for
-        // this seat, never read "bee build unknown".
+        // No `beeStamp` and no `packRef` at all — an older host. The bee
+        // chip stays silent for this seat (never "bee build unknown"), but
+        // the pack line still shows: `derivePackRefs` covers every
+        // execution the umbrella carries, so this seat's honest reading is
+        // `no pack staged`, not silence — LANE-L23's own disclosure rule.
         ...seatEvents({
           target: REFUTER_TARGET,
           commandId: "l17-seat-refuter",
@@ -515,4 +559,19 @@ test("a real, decoded kind:44223 beeStamp reaches the chip through the running a
   await expect(chips).toHaveCount(1);
   await expect(chips).toHaveText("bee 23728227b (bundled)");
   await capture(page, bar, "06-seat-bee-real-workspace");
+
+  // LANE-L23: the pack line reaches the same chip through the same real
+  // pipeline — `derivePackRefs` folds every execution the umbrella carries,
+  // so the builder shows its staged pack and the refuter (no `packRef` on
+  // its own 44223) shows the honest `no pack staged`, not silence.
+  const packLines = bar.getByTestId("coding-session-seat-pack");
+  await expect(packLines).toHaveCount(2);
+  const packLineTexts = (await packLines.allTextContents()).sort();
+  expect(packLineTexts).toEqual(
+    ["no pack staged", "pack builder@23728227"].sort(),
+  );
+  // No second capture here: the pack lines are already on the same `bar`
+  // element `06-seat-bee-real-workspace` captured above — a second shot of
+  // the same locator with nothing changed would be the identical-pixels
+  // regression this repo's own screenshot rule guards against.
 });

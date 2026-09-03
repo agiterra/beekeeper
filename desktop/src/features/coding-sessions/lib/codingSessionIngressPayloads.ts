@@ -9,6 +9,7 @@ import {
   isStrictCodingSessionRoutingRecord,
   type CodingSessionRoutingRecord,
 } from "./codingSessionRouting";
+import { readPackRef, type PackRef } from "./codingSessionPackRef";
 import { readSeatBeeStamp, type SeatBeeStamp } from "./codingSessionSeatBee";
 import type {
   CodingSessionCapabilities,
@@ -252,6 +253,15 @@ export type BuzzCodingSessionMetadataV1 = {
    * either decoder accepts — see `codingSessionSeatBee.ts`.
    */
   beeStamp?: Readonly<SeatBeeStamp>;
+  /**
+   * Which persona pack this seat actually staged, as the host resolved it
+   * (LANE-L23, the seventh independent additive key on this payload).
+   * Additive and omit-when-absent like `beeStamp`: a host with no 30624
+   * source (or one that predates this key) carries no key at all, and an
+   * explicit `packRef: null` is not a shape either decoder accepts — see
+   * `codingSessionPackRef.ts`.
+   */
+  packRef?: Readonly<PackRef>;
 };
 
 /** How much of one crew session's turn allowance has been spent (D9). */
@@ -538,6 +548,7 @@ export function parseBuzzCodingSessionMetadata(
     "turnBudget",
     "routing",
     "beeStamp",
+    "packRef",
     ...factFields,
   ] as const;
   if (
@@ -628,6 +639,15 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // Same omit-when-absent contract as `beeStamp` and `routing` (finding 31's
+  // rule): a host that resolved no pack (no 30624 source, or an older host
+  // that predates this key) omits `packRef` entirely; an explicit
+  // `packRef: null` is not a shape the Rust decoder accepts either, so this
+  // reader rejects the whole metadata over it or a malformed shape rather
+  // than accepting a looser dialect Rust would refuse to sign.
+  if (Object.hasOwn(value, "packRef") && readPackRef(value.packRef) === null) {
+    return null;
+  }
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
@@ -679,6 +699,9 @@ export function parseBuzzCodingSessionMetadata(
       : {}),
     ...(Object.hasOwn(value, "beeStamp")
       ? { beeStamp: readSeatBeeStamp(value.beeStamp) as SeatBeeStamp }
+      : {}),
+    ...(Object.hasOwn(value, "packRef")
+      ? { packRef: readPackRef(value.packRef) as PackRef }
       : {}),
     ...(hasFacts
       ? {

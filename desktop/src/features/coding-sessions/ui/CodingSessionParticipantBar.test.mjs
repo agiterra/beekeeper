@@ -456,3 +456,62 @@ test("L12: the bee line shares the badge row rather than adding one of its own",
     1,
   );
 });
+
+const PACK_REF = {
+  repo: `30617:${SEAT_ACTOR}:agiterra-packs`,
+  sha: "c".repeat(40),
+  role: "builder",
+  path: "personas/roles/builder",
+};
+
+test("LANE-L23: a seat's chip names the pack that seat actually staged", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatPackRefs: new Map([
+        ["lead", null],
+        ["builder", PACK_REF],
+      ]),
+    }),
+  );
+  assert.match(markup, /no pack staged/);
+  assert.match(markup, /pack builder@cccccccc/);
+  assert.equal(
+    (markup.match(/data-testid="coding-session-seat-pack"/g) ?? []).length,
+    2,
+    "one pack line per seat once the caller plumbs pack data at all",
+  );
+});
+
+test("LANE-L23: a caller that never plumbs seatPackRefs adds no pack line at all", () => {
+  const withoutPackRefs = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+    }),
+  );
+  assert.doesNotMatch(withoutPackRefs, /coding-session-seat-pack/);
+});
+
+test("LANE-L23: the pack line shares the badge row rather than adding one of its own", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionParticipantBar, {
+      focusedExecutionKey: null,
+      items: chipItems(),
+      onFocus() {},
+      seatBeeStamps: new Map([["builder", BUNDLED_STAMP]]),
+      seatPackRefs: new Map([["builder", PACK_REF]]),
+    }),
+  );
+  const chips = markup.match(/<button[\s\S]*?<\/button>/g) ?? [];
+  const builderChip = chips.find((chip) => chip.includes("Bob · Builder"));
+  assert.ok(builderChip.includes("coding-session-seat-bee"));
+  assert.ok(builderChip.includes("coding-session-seat-pack"));
+  assert.equal(
+    (builderChip.match(/class="mt-1 flex min-w-0 flex-wrap/g) ?? []).length,
+    1,
+  );
+});

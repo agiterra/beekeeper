@@ -345,7 +345,14 @@ const BEE_STAMP = {
   dirty: false,
 };
 
-test("the sixty-four metadata shapes buzz-core accepts all decode", () => {
+const PACK_REF = {
+  repo: `30617:${ACTOR}:agiterra-packs`,
+  sha: "d".repeat(40),
+  role: "builder",
+  path: "personas/roles/builder",
+};
+
+test("the 128 metadata shapes buzz-core accepts all decode", () => {
   const amendments = [
     { sessionRef: SESSION_REF },
     { agentRef: ACTOR, role: "builder" },
@@ -353,9 +360,10 @@ test("the sixty-four metadata shapes buzz-core accepts all decode", () => {
     FACTS,
     { routing: ROUTING },
     { beeStamp: BEE_STAMP },
+    { packRef: PACK_REF },
   ];
   let accepted = 0;
-  for (let mask = 0; mask < 64; mask += 1) {
+  for (let mask = 0; mask < 128; mask += 1) {
     const content = {};
     for (const [index, amendment] of amendments.entries()) {
       if (mask & (1 << index)) Object.assign(content, amendment);
@@ -363,7 +371,7 @@ test("the sixty-four metadata shapes buzz-core accepts all decode", () => {
     if (content.turnBudget) content.sessionRef = SESSION_REF;
     if (isStrictMetadataContent(metadata(content))) accepted += 1;
   }
-  assert.equal(accepted, 64);
+  assert.equal(accepted, 128);
 });
 
 // ── The sixth amendment: `beeStamp` ──────────────────────────────────────────
@@ -414,6 +422,83 @@ test("a malformed beeStamp is refused", () => {
       `accepted a malformed beeStamp: ${JSON.stringify(beeStamp)}`,
     );
   }
+});
+
+// ── The seventh amendment: `packRef` (LANE-L23) ─────────────────────────────
+//
+// Same finding-31 discipline `beeStamp` established: an additive optional key
+// ships with a matching bit in `metadataFieldForms` in the same lane, so this
+// gate never repeats beeStamp's own outage (every 44223 carrying the new key
+// rejected outright because the shape-form list did not know it existed).
+
+test("a real packRef decodes", () => {
+  const source = metadata({ packRef: PACK_REF });
+  assert.equal(
+    isStrictMetadataContent(source),
+    true,
+    `a real packRef shape was rejected: ${source}`,
+  );
+});
+
+test("an explicit null packRef is refused, naming the key", () => {
+  // Same omit-when-absent contract as `beeStamp`: an absent pack is never
+  // written as an explicit null.
+  assert.equal(isStrictMetadataContent(metadata({ packRef: null })), false);
+});
+
+test("a malformed packRef is refused", () => {
+  const bad = [
+    { ...PACK_REF, repo: "not-a-coordinate" },
+    { ...PACK_REF, repo: `30621:${ACTOR}:agiterra-packs` }, // wrong kind prefix
+    { ...PACK_REF, sha: "deadbeef" }, // not 40 hex
+    { ...PACK_REF, sha: "a1b2c3d" }, // beeStamp's own 7-40 shorthand refused here
+    { ...PACK_REF, role: "Not A Slug" },
+    { ...PACK_REF, path: "" },
+    { ...PACK_REF, extra: true },
+  ];
+  for (const packRef of bad) {
+    assert.equal(
+      isStrictMetadataContent(metadata({ packRef })),
+      false,
+      `accepted a malformed packRef: ${JSON.stringify(packRef)}`,
+    );
+  }
+});
+
+// The setup-lives-inside-the-app addendum (2026-09-03): a project with no
+// 30624 source falls back to the app's own bundled packs, disclosed as a
+// `packRef` naming `app:shipped` and a version instead of a commit.
+const SHIPPED_PACK_REF = {
+  repo: "app:shipped",
+  sha: "0.1.0",
+  role: "builder",
+  path: "personas/roles/builder",
+};
+
+test("a shipped-defaults packRef decodes", () => {
+  const source = metadata({ packRef: SHIPPED_PACK_REF });
+  assert.equal(
+    isStrictMetadataContent(source),
+    true,
+    `a shipped-defaults packRef shape was rejected: ${source}`,
+  );
+});
+
+test("app:shipped paired with a commit sha is refused, and a real coordinate paired with a version is refused", () => {
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ packRef: { ...SHIPPED_PACK_REF, sha: "d".repeat(40) } }),
+    ),
+    false,
+    "app:shipped must carry a version, not a commit",
+  );
+  assert.equal(
+    isStrictMetadataContent(
+      metadata({ packRef: { ...PACK_REF, sha: "0.1.0" } }),
+    ),
+    false,
+    "a real coordinate must carry a commit, not a version",
+  );
 });
 
 test("a routing record that disagrees with its own risk is refused", () => {

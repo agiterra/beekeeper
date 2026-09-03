@@ -41,10 +41,21 @@ test("a seat on the agent's own home role reads as unremarkable", () => {
 
 test("a seat given another role names the pack it will actually carry", () => {
   const markup = render({ role: "lead" });
+  // LANE-L23: the seat's role picks the pack, never the actor's home role —
+  // "the lead pack", not "the builder pack".
   assert.match(
     markup,
-    /Ada is a builder — seating it as lead; it will carry the builder pack\./,
+    /Ada is a builder — seating it as lead; it will carry the lead pack\./,
   );
+});
+
+test("LANE-L23: with no project known, no pack-status probe is attempted and no preview shows", () => {
+  // No `projectRef` passed — every pre-L23 caller's implicit default. The
+  // static render never runs effects anyway, but the field must not crash
+  // reaching for a project it was never given, and the preview testid must
+  // be absent either way.
+  const markup = render({ role: "lead" });
+  assert.doesNotMatch(markup, /data-testid="new-coding-session-pack-preview"/);
 });
 
 test("an agent with no role pack on this computer says so before submit", () => {

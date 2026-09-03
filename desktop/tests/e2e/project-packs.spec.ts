@@ -1,0 +1,180 @@
+import { createHash } from "node:crypto";
+
+import { expect, test } from "@playwright/test";
+import { waitForAnimations } from "../helpers/animations";
+import { installMockBridge } from "../helpers/bridge";
+
+/**
+ * LANE-L23 — the "Packs" project-settings row: which git repository (and
+ * pinned commit) a project's coding-session seats stage their persona packs
+ * from, kind:30624.
+ *
+ * The founder-only "Set source" form publishes straight from the desktop —
+ * `signRelayEvent` + `relayClient.publishEvent`, the same client-side
+ * publish path `publishProjectContainer` uses for kind:30621 — so this spec
+ * drives the real dialog, the real form, and reads the real signed event
+ * back off `window.__BUZZ_E2E_SIGNED_EVENTS__`, exactly like
+ * `project-settings-screenshots.spec.ts` does for icon/color.
+ */
+
+const SHOTS =
+  "/Users/brian/Projects/beekeeper/review-2026-09-01/batch3/l23c-shots";
+
+const hashes = new Map<string, string>();
+
+async function capture(page: import("@playwright/test").Page, name: string) {
+  await waitForAnimations(page);
+  const buffer = await page.screenshot({
+    path: `${SHOTS}/${name}.png`,
+    clip: { x: 0, y: 0, width: 900, height: 700 },
+  });
+  const digest = createHash("sha256").update(buffer).digest("hex");
+  for (const [other, otherDigest] of hashes) {
+    expect(digest, `${name} captured the same pixels as ${other}`).not.toBe(
+      otherDigest,
+    );
+  }
+  hashes.set(name, digest);
+}
+
+test("the project owner sets a pack source, and the row reads it back off the real signed event", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "buzz-feature-overrides-v1",
+      JSON.stringify({ projects: true, forum: true }),
+    );
+  });
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByTestId("open-projects-view").click();
+  await expect(page.getByTestId("projects-manage-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("projects-create-menu").click();
+  await page.getByTestId("projects-create-menu-project").click();
+  await page.getByTestId("create-project-container-name").fill("Waggle");
+  await page.getByTestId("create-project-container-submit").click();
+  const card = page.getByTestId("manage-project-waggle");
+  await expect(card).toBeVisible({ timeout: 10_000 });
+
+  await page.getByTestId("manage-project-actions-waggle").click();
+  await page.getByRole("menuitem", { name: "Project settings" }).click();
+  await expect(page.getByTestId("edit-project-container-name")).toHaveValue(
+    "Waggle",
+  );
+  await waitForAnimations(page);
+
+  await page.getByTestId("project-settings-tab-packs").click();
+  await expect(page.getByTestId("project-packs-section")).toBeVisible();
+
+  // 1 — before anything is set: the honest shipped-defaults disclosure, and
+  // (this identity created the project, so it is the owner) both founder
+  // actions.
+  await expect(page.getByTestId("project-packs-source-shipped")).toContainText(
+    "no project source is set, so seats stage the packs built into this app.",
+  );
+  await expect(page.getByTestId("project-packs-create-repo-open")).toHaveText(
+    "Create packs repository",
+  );
+  await expect(page.getByTestId("project-packs-use-existing-open")).toHaveText(
+    "Use an existing repository",
+  );
+  await capture(page, "01-packs-empty");
+
+  // 2 — "Use an existing repository": fill and submit the form.
+  await page.getByTestId("project-packs-use-existing-open").click();
+  const repoCoord = `30617:${"a".repeat(64)}:agiterra-packs`;
+  await page.getByTestId("project-packs-repo-input").fill(repoCoord);
+  await page.getByTestId("project-packs-pin-input").fill("refs/heads/main");
+  await capture(page, "02-packs-form-filled");
+  await page.getByTestId("project-packs-set-source-submit").click();
+
+  // 3 — the row reads back the real signed 30624: repo, ref, default path.
+  await expect(page.getByTestId("project-packs-source-row")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("project-packs-source-row")).toContainText(
+    repoCoord,
+  );
+  await expect(page.getByTestId("project-packs-source-row")).toContainText(
+    "refs/heads/main",
+  );
+  await expect(page.getByTestId("project-packs-source-row")).toContainText(
+    "personas/roles",
+  );
+  await capture(page, "03-packs-source-set");
+
+  const published = await page.evaluate(() => {
+    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const event = [...events].reverse().find((entry) => entry.kind === 30624);
+    return event
+      ? {
+          tags: event.tags,
+          content: JSON.parse(event.content),
+        }
+      : null;
+  });
+  expect(published).not.toBeNull();
+  expect(published?.content.schema).toBe("buzz-project-pack-source/v1");
+  expect(published?.tags).toContainEqual(["repo", repoCoord]);
+  expect(published?.tags).toContainEqual(["ref", "refs/heads/main"]);
+  // Exactly one of ref/sha on the real signed event.
+  expect(published?.tags.some((tag) => tag[0] === "sha")).toBe(false);
+});
+
+const SELF = "deadbeef".repeat(8);
+
+test("Create packs repository: the founder-only host action prints every wire fact it produced", async ({
+  page,
+}) => {
+  const projectRef = `30621:${SELF}:beeline`;
+  const initResult = {
+    repoRef: `30617:${SELF}:beeline-packs`,
+    sourceEventId: "f".repeat(64),
+    seedCommitSha: "1".repeat(40),
+    pushRecordEventId: "2".repeat(64),
+  };
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "buzz-feature-overrides-v1",
+      JSON.stringify({ projects: true, forum: true }),
+    );
+  });
+  await installMockBridge(page, {
+    projectPacksInitByProject: { [projectRef]: initResult },
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByTestId("open-projects-view").click();
+  await expect(page.getByTestId("projects-manage-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("projects-create-menu").click();
+  await page.getByTestId("projects-create-menu-project").click();
+  await page.getByTestId("create-project-container-name").fill("Beeline");
+  await page.getByTestId("create-project-container-submit").click();
+  await expect(page.getByTestId("manage-project-beeline")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  await page.getByTestId("manage-project-actions-beeline").click();
+  await page.getByRole("menuitem", { name: "Project settings" }).click();
+  await page.getByTestId("project-settings-tab-packs").click();
+  await expect(page.getByTestId("project-packs-section")).toBeVisible();
+
+  await page.getByTestId("project-packs-create-repo-open").click();
+  await expect(
+    page.getByTestId("project-packs-create-repo-panel"),
+  ).toBeVisible();
+  await page.getByTestId("project-packs-create-repo-submit").click();
+
+  // Every wire fact the host command produced, printed — not summarized.
+  const resultPanel = page.getByTestId("project-packs-create-repo-result");
+  await expect(resultPanel).toBeVisible({ timeout: 10_000 });
+  await expect(resultPanel).toContainText(initResult.repoRef);
+  await expect(resultPanel).toContainText(initResult.seedCommitSha.slice(0, 8));
+  await capture(page, "06-packs-create-repo-result");
+});
