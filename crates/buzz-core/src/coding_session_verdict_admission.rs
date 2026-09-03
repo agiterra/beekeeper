@@ -22,9 +22,11 @@
 //!    `new` — compared whole and case-folded, so a report naming a 64-hex id
 //!    names a different object and does not admit;
 //! 2. that session's genesis is on the channel the repository is bound to and
-//!    its founder is the repository owner (the caller resolves both and
-//!    supplies only candidates that pass);
-//! 3. the pusher is that founder — or, once
+//!    its founder is **a founder of the repository**
+//!    ([`crate::repository_founders::RepositoryFounders`]: the announcement's
+//!    signer, its NIP-34 `maintainers`, and every project-roster Owner) — the
+//!    caller resolves both and supplies only candidates that pass;
+//! 3. the pusher is a founder of the repository — or, once
 //!    [`VerdictAdmissionRules::seat_may_push`] is enabled, an active seat of
 //!    the umbrella. **The reservation is the relay's rule, not the mission's:**
 //!    no session policy is read, and the refusal says whose rule refused;
@@ -128,8 +130,19 @@ pub struct VerdictAdmissionQuery<'a> {
     pub new_oid: &'a str,
     /// Hex pubkey the push authenticated as.
     pub pusher_pubkey: &'a str,
-    /// Hex pubkey of the kind:30617 announcement's author.
-    pub repo_owner_pubkey: &'a str,
+    /// Every founder of the repository, lower-hex.
+    ///
+    /// Finding 33: this was a single `repo_owner_pubkey`, the kind:30617
+    /// signer, which made a two-human repository unlandable by one of them.
+    /// The caller resolves the set with
+    /// [`crate::repository_founders::RepositoryFounders`] — signer ∪ NIP-34
+    /// `maintainers` ∪ project-roster Owners — and passes
+    /// [`crate::repository_founders::RepositoryFounders::pubkeys`] here;
+    /// `buzz-core` cannot query the roster, so it never resolves it itself.
+    ///
+    /// An empty slice admits nothing: no candidate's founder is in it, and no
+    /// pusher is either.
+    pub repo_founders: &'a [String],
 }
 
 /// One canonical transaction, decoded once for the search.
@@ -193,6 +206,10 @@ pub enum VerdictAdmissionRefusal {
     ApprovedButPushReserved {
         /// The approved object id.
         new_oid: String,
+        /// How many founders this repository has — the set the push is
+        /// reserved to, disclosed so a co-founder reading the refusal can
+        /// tell "you are not the owner" from "this repository has one".
+        founders: usize,
     },
     /// The commit is approved, but for a different branch than this ref.
     ApprovedForAnotherRef {
@@ -218,8 +235,8 @@ impl VerdictAdmissionRefusal {
             } => format!(
                 "require-verdict is set and no mission verdict names this commit: no approved \
                  report names {new_oid}. Searched {searched_sessions} mission(s) — the newest \
-                 {VERDICT_ADMISSION_MAX_SESSIONS} on this channel whose founder owns this \
-                 repository — over one shared page of the newest \
+                 {VERDICT_ADMISSION_MAX_SESSIONS} on this channel whose founder is a founder of \
+                 this repository — over one shared page of the newest \
                  {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on that channel. An \
                  older ruling can fall outside both."
             ),
@@ -227,9 +244,11 @@ impl VerdictAdmissionRefusal {
                  names this commit: the approved report for this work names a branch and no \
                  headSha, and a branch name is not a commit."
                 .to_string(),
-            Self::ApprovedButPushReserved { new_oid } => format!(
+            Self::ApprovedButPushReserved { new_oid, founders } => format!(
                 "commit {new_oid} is approved, but the relay's require-verdict rule reserves a \
-                 gated ref to the founder (founder-only pushes). Ask the founder to land it."
+                 gated ref to a founder of this repository ({founders} founder(s): the \
+                 announcement's signer, its maintainers tag, and the project roster's owners). \
+                 Ask a founder to land it."
             ),
             Self::ApprovedForAnotherRef {
                 new_oid,
@@ -444,11 +463,13 @@ pub fn evaluate_verdict_admission(
     let mut approved_for_other_ref: Option<String> = None;
 
     for candidate in candidates {
-        // Belt and braces. Both shipped callers set `founder_pubkey` to the
-        // repository owner they queried by, so this cannot fail for them —
-        // the real enforcement is the author filter on the genesis query. It
-        // stays for a future caller that assembles candidates differently.
-        if !eq_hex(&candidate.founder_pubkey, query.repo_owner_pubkey) {
+        // A mission counts only when its founder founded the repository.
+        // Since finding 33 that is a **set** — signer, maintainers, project
+        // owners — not the announcement's signer alone. The relay's genesis
+        // query is scoped to the same set, so this cannot fail for it; it is
+        // the whole check for the desktop and CLI callers, which assemble a
+        // single candidate themselves.
+        if !is_founder(query.repo_founders, &candidate.founder_pubkey) {
             continue;
         }
         for record in &candidate.canonical {
@@ -512,7 +533,12 @@ pub fn evaluate_verdict_admission(
     })
 }
 
-/// Condition 3: an approved commit still needs a key allowed to land it.
+/// Condition 3: an approved commit still needs a key allowed to land it —
+/// **any** founder of the repository, not only the mission's own founder.
+///
+/// Finding 33's second half: a co-founder who did not found the mission is
+/// still an equal owner of the code, and reserving the landing to the mission's
+/// founder alone would refuse the very push the ruling authorises.
 fn admit_or_reserve(
     candidate: &VerdictAdmissionCandidate,
     disposition: &VerdictAdmissionRecord,
@@ -521,7 +547,7 @@ fn admit_or_reserve(
     query: &VerdictAdmissionQuery<'_>,
     rules: &VerdictAdmissionRules,
 ) -> VerdictAdmission {
-    let pusher_is_founder = eq_hex(query.pusher_pubkey, &candidate.founder_pubkey);
+    let pusher_is_founder = is_founder(query.repo_founders, query.pusher_pubkey);
     let seat_may_land = rules.seat_may_push
         && candidate
             .active_seat_pubkeys
@@ -537,8 +563,14 @@ fn admit_or_reserve(
     } else {
         VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedButPushReserved {
             new_oid: query.new_oid.to_ascii_lowercase(),
+            founders: query.repo_founders.len(),
         })
     }
+}
+
+/// Whether `pubkey` is one of the repository's founders. Case-folded, whole.
+fn is_founder(founders: &[String], pubkey: &str) -> bool {
+    founders.iter().any(|founder| eq_hex(founder, pubkey))
 }
 
 /// The canonical report a disposition governs, or `None` when the fold did not

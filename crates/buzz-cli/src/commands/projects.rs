@@ -861,6 +861,52 @@ fn coordinate_creator(coordinate: &str) -> &str {
     coordinate.split(':').nth(1).unwrap_or("")
 }
 
+/// Every pubkey the project at `coordinate` grants **Owner** — the roster half
+/// of a repository's founder set (finding 33).
+///
+/// The creator is an Owner implicitly (they hold no roster row: a membership
+/// op naming them is refused outright), and is always first. Then the accepted
+/// roster: the relay-signed kind:39010 projection when one exists, and
+/// otherwise the project head's own `p` tags, which is what the relay's ACL
+/// was built from before any membership op was accepted — the same fallback
+/// [`cmd_members`] uses, so this cannot disagree with what a person is shown.
+///
+/// An `Err` here means the roster could not be **read**, which every caller
+/// must disclose rather than treat as "there are no other owners".
+pub(crate) async fn project_owner_pubkeys(
+    client: &BuzzClient,
+    coordinate: &str,
+) -> Result<Vec<String>, CliError> {
+    let creator = coordinate_creator(coordinate).to_ascii_lowercase();
+    let slug = coordinate.splitn(3, ':').nth(2).unwrap_or_default();
+    let raw = client
+        .query(&serde_json::json!({
+            "kinds": [KIND_PROJECT_MEMBERS],
+            "#d": [coordinate],
+            "limit": 1,
+        }))
+        .await?;
+    let mut projections: Vec<serde_json::Value> = serde_json::from_str(&raw)
+        .map_err(|e| CliError::Other(format!("failed to parse relay response: {e}")))?;
+    projections.sort_by_key(|event| {
+        std::cmp::Reverse(event.get("created_at").and_then(serde_json::Value::as_i64))
+    });
+    let roster = match projections.first() {
+        Some(projection) => roster_from_event_json(projection),
+        None => match fetch_project(client, slug, Some(&creator)).await? {
+            Some(head) => roster_from_event_json(&serde_json::json!({
+                "tags": head.tags.iter().map(|t| t.as_slice().to_vec()).collect::<Vec<_>>(),
+            })),
+            None => Vec::new(),
+        },
+    };
+    Ok(roster_with_creator(&creator, roster)
+        .into_iter()
+        .filter(|(_, role)| role == PROJECT_ROLE_OWNER)
+        .map(|(pubkey, _)| pubkey)
+        .collect())
+}
+
 /// `bee projects members` — print the authoritative roster as
 /// `[{pubkey, role}]`.
 ///

@@ -563,12 +563,35 @@ bee repos protect list --id agiterra-beekeeper
 With the rule set, the relay's pre-receive hook admits an update to that ref
 only when a **founder-signed, canonical** kind:44244 `disposition` approves a
 report whose `headSha` is the exact commit being pushed **and whose `branch` is
-the branch being pushed**, in a mission founded by the repository's owner on the
-channel the repository is bound to — and only when the **founder** is the one
-pushing. The reservation to the founder is the relay's rule, not the mission's:
-no session policy is read. The relaxation that lets a seat land exists in the
+the branch being pushed**, in a mission founded by **a founder of the
+repository** on the channel the repository is bound to — and only when **a
+founder** is the one pushing. The reservation to the founders is the relay's
+rule, not the mission's: no session policy is read. The relaxation that lets a seat land exists in the
 code and is switched off until a verdict-gated push has been exercised live
 once.
+
+**Who founds a repository** (2026-09-03, finding 33): the announcement's
+signer, every pubkey in its NIP-34 `["maintainers", …]` tag, and every Owner on
+the project roster its `["project", …]` back-reference names. Before this the
+gate keyed both questions to the signer alone, which is right for a
+single-founder repository and wrong for `agiterra-beekeeper`: it is announced
+by Andy and co-owned by Brian, so Brian's missions would have ruled on nothing
+and Brian's landing pushes would have been refused.
+
+```bash
+# Add a co-founder to a repository you announced.
+bee repos update --id agiterra-beekeeper --maintainer <hex64>
+# Read the set back, with the sentence that says who may rewrite the rules.
+bee repos get --id agiterra-beekeeper --owner <hex64>   # .founders, .founders_note
+bee sessions explain founder
+```
+
+**Rules are still signer-only in v1.** The `buzz-protect` tags live on the
+announcement, which is addressable at its author, so a co-founder's
+`bee repos protect set` would create *their own* repository rather than edit
+yours. Every surface that prints the founder set says this. Changing it needs a
+founder-signed rule event the gate reads alongside the announcement — not
+built.
 
 **Nothing is governed until someone sets the rule.** It is opt-in and is
 currently set on no repository, so today this section describes a capability,
@@ -579,7 +602,8 @@ What this changes for a person landing work:
 - `git push` prints the relay's reason, one line per ref, e.g.
   `remote: refs/heads/main: require-verdict is set and no mission verdict names
   this commit: no approved report names <sha>. Searched 2 mission(s) — the
-  newest 16 on this channel whose founder owns this repository — over one shared
+  newest 16 on this channel whose founder is a founder of this repository — over
+  one shared
   page of the newest 512 team transactions on that channel. An older ruling can
   fall outside both.`
 - A report that names only a branch does not admit anything — ask for a report
@@ -587,7 +611,7 @@ What this changes for a person landing work:
 - An approval is scoped to the branch its report named. A commit approved for
   `whoami/cli` does not land on `main`, and an approved-but-superseded commit
   cannot be pushed back over a branch later.
-- Deleting a gated ref is refused for everyone, founder included: no report
+- Deleting a gated ref is refused for everyone, founders included: no report
   names the zero oid.
 - The rule is enforced by the relay serving the repository. A relay that
   predates it ignores the token, so a repository is only as protected as the

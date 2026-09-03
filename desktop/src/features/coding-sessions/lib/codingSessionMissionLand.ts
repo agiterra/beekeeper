@@ -60,6 +60,18 @@ export type CodingSessionLandResult = {
   readonly evidence: CodingSessionLandEvidence | null;
   readonly refusalReason: string | null;
   readonly newestVerdict: CodingSessionLandNewestVerdict | null;
+  /** Every founder of the repository, lower-hex, signer first (finding 33). */
+  readonly founders: readonly string[];
+  /** Who may rewrite the rules, who the founders are, and whether this view
+   * could read the project roster. Composed by `buzz-core`, never here. */
+  readonly foundersNote: string;
+  /** Whether the viewer's own key founds this repository. */
+  readonly viewerIsFounder: boolean;
+  /** The announcement's signer — the only key that may rewrite the rules in
+   * v1 — or null when no announcement reached this view. */
+  readonly rulesSigner: string | null;
+  /** Whether the project roster half of the founder set was read. */
+  readonly rosterRead: boolean;
   readonly command: string | null;
 };
 
@@ -120,6 +132,11 @@ export function decodeCodingSessionLandResult(
         "evidence",
         "refusalReason",
         "newestVerdict",
+        "founders",
+        "foundersNote",
+        "viewerIsFounder",
+        "rulesSigner",
+        "rosterRead",
         "command",
       ],
     ]) ||
@@ -131,6 +148,12 @@ export function decodeCodingSessionLandResult(
     !isEvidence(value.evidence) ||
     (value.refusalReason !== null && typeof value.refusalReason !== "string") ||
     !isNewestVerdict(value.newestVerdict) ||
+    !Array.isArray(value.founders) ||
+    !value.founders.every((founder) => typeof founder === "string") ||
+    typeof value.foundersNote !== "string" ||
+    typeof value.viewerIsFounder !== "boolean" ||
+    (value.rulesSigner !== null && typeof value.rulesSigner !== "string") ||
+    typeof value.rosterRead !== "boolean" ||
     (value.command !== null && typeof value.command !== "string")
   ) {
     throw new Error("native land adapter returned a malformed response");
@@ -145,6 +168,15 @@ export async function invokeCodingSessionLand(input: {
   genesisRef: string;
   founderPubkey: string;
   repoOwnerPubkey: string | null;
+  /**
+   * Pubkeys the repository's project roster grants Owner, or null when this
+   * view could not read the roster.
+   *
+   * Finding 33: a repository's founders are its signer, its NIP-34
+   * `maintainers`, and every Owner on the project roster its `project`
+   * back-reference names. Null is "not read", never "there are none".
+   */
+  projectOwnerPubkeys: readonly string[] | null;
   pusherPubkey: string;
   protectionTags: readonly (readonly string[])[] | null;
   includedEventIds: readonly string[];
@@ -159,6 +191,10 @@ export async function invokeCodingSessionLand(input: {
         genesisRef: input.genesisRef,
         founderPubkey: input.founderPubkey,
         repoOwnerPubkey: input.repoOwnerPubkey,
+        projectOwnerPubkeys:
+          input.projectOwnerPubkeys === null
+            ? null
+            : [...input.projectOwnerPubkeys],
         pusherPubkey: input.pusherPubkey,
         protectionTags:
           input.protectionTags === null
@@ -206,6 +242,16 @@ export type CodingSessionMissionLandModel = {
   readonly notRunSentence: string | null;
   /** `Not ready to land: ` + §1j verbatim, or the ungoverned/unknown line. */
   readonly sentence: string | null;
+  /**
+   * Who founds this repository, in every state — finding 33.
+   *
+   * Rendered whatever the answer is: "you are not one of this repository's
+   * founders" is the single most useful thing a refused reader can be told,
+   * and it is exactly what the pre-L18 screen could not say.
+   */
+  readonly foundersSentence: string;
+  /** Whether the viewer's own key is one of them. */
+  readonly viewerIsFounder: boolean;
 };
 
 /**
@@ -219,6 +265,37 @@ export const CODING_SESSION_LAND_NOT_RUN_SENTENCE =
   "Beekeeper does not run this for you: the push is irreversible, this app " +
   "holds no checkout, and your git credential lives in your shell. Run it " +
   "there:";
+
+/**
+ * The founder line, with names where the surface knows them.
+ *
+ * The sentence itself comes from `buzz-core` — one rule, one wording — and
+ * this only prefixes who the viewer is relative to it. A key with no display
+ * name renders as its first eight hex, the same shorthand every other line on
+ * this surface uses.
+ */
+function foundersSentence(
+  result: CodingSessionLandResult,
+  resolveWho: (pubkey: string) => string,
+): string {
+  if (result.founders.length === 0) return result.foundersNote;
+  const named = result.founders
+    .map((founder) => resolveWho(founder))
+    .join(", ");
+  const you = result.viewerIsFounder
+    ? "You are one of them."
+    : "You are not one of them, so this repository's rules do not answer to your key.";
+  const rules =
+    result.rulesSigner === null
+      ? ""
+      : ` Rules are set by ${resolveWho(result.rulesSigner)} and only that key can rewrite them.`;
+  // A roster this view could not read means the set may be missing a founder,
+  // which is finding 33's own shape. Never silent.
+  const roster = result.rosterRead
+    ? ""
+    : " The project roster was not read here, so an Owner on this repository's project is not listed.";
+  return `Founders: ${named}. ${you}${rules}${roster}`;
+}
 
 /** Turn the native rule's answer into the sentences §1l freezes. */
 export function codingSessionMissionLandModel(input: {
@@ -243,6 +320,8 @@ export function codingSessionMissionLandModel(input: {
     approvalSentence: null,
     notRunSentence: null,
     sentence: null,
+    foundersSentence: foundersSentence(result, input.resolveWho),
+    viewerIsFounder: result.viewerIsFounder,
   } as const;
 
   if (!result.repositoryKnown) {
@@ -271,6 +350,8 @@ export function codingSessionMissionLandModel(input: {
   if (result.admitted && result.evidence !== null && result.command !== null) {
     const evidence = result.evidence;
     return {
+      foundersSentence: base.foundersSentence,
+      viewerIsFounder: base.viewerIsFounder,
       state: "ready",
       buttonLabel: `Land ${evidence.headSha.slice(0, 7)} on main`,
       headSha: evidence.headSha,

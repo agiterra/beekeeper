@@ -1,6 +1,7 @@
 use buzz_core::{
     git_perms::{parse_protection_tag, parse_protection_tags, RefPattern},
     kind::KIND_GIT_REPO_ANNOUNCEMENT,
+    repository_founders::RepositoryFounders,
 };
 use buzz_sdk::build_delete_addressable;
 use nostr::{Event, EventBuilder, Tag, Timestamp};
@@ -108,6 +109,35 @@ enum RepoChange {
     /// Link (or relink) the repo into a project: replaces every existing
     /// `project` tag with exactly one carrying the normalized coordinate.
     LinkProject(String),
+    /// Replace the NIP-34 `maintainers` tag with exactly one carrying these
+    /// pubkeys — or, given none, remove it. Every listed key becomes a
+    /// **founder** of the repository (finding 33), so this is an authority
+    /// change and never a merge: the tag as written is the whole list.
+    SetMaintainers(Vec<String>),
+}
+
+/// The NIP-34 tag naming co-maintainers, re-exported from `buzz-core` so the
+/// writer and the reader cannot spell it differently.
+const MAINTAINERS_TAG: &str = buzz_core::repository_founders::REPOSITORY_MAINTAINERS_TAG;
+
+/// One `["maintainers", <hex>, …]` tag, or `None` for "remove the tag".
+///
+/// Every value is validated as lower 64-hex here rather than at the gate: a
+/// mistyped key would silently not be a founder, and the CLI is the last place
+/// that can say so out loud.
+fn build_maintainers_tag(maintainers: &[String]) -> Result<Option<Tag>, CliError> {
+    let mut values: Vec<String> = vec![MAINTAINERS_TAG.to_string()];
+    for maintainer in maintainers {
+        let normalized = maintainer.trim().to_ascii_lowercase();
+        validate_lower_hex64("maintainer", &normalized)?;
+        if !values.iter().skip(1).any(|value| value == &normalized) {
+            values.push(normalized);
+        }
+    }
+    if values.len() == 1 {
+        return Ok(None);
+    }
+    Ok(Some(Tag::parse(values).map_err(tag_error)?))
 }
 
 fn build_updated_repo_announcement(
@@ -140,6 +170,10 @@ fn build_updated_repo_announcement(
             let coordinate = validate_project_coordinate(&project)?;
             let tag = Tag::parse(["project", coordinate.as_str()]).map_err(tag_error)?;
             (None, Some("project"), Some(tag))
+        }
+        RepoChange::SetMaintainers(maintainers) => {
+            let tag = build_maintainers_tag(&maintainers)?;
+            (None, Some(MAINTAINERS_TAG), tag)
         }
     };
 
@@ -222,9 +256,33 @@ fn validate_write_response(raw: &str) -> Result<String, CliError> {
 }
 
 async fn submit_repo_update(client: &BuzzClient, builder: EventBuilder) -> Result<(), CliError> {
+    submit_repo_update_with(client, builder, None).await
+}
+
+/// Submit a repository update, optionally disclosing the founder set the
+/// change leaves behind.
+///
+/// `founders` is added as an extra key on the write response rather than
+/// folded into `message`: the `{event_id, accepted, message}` shape every
+/// agent parses is unchanged, and the disclosure is additive.
+async fn submit_repo_update_with(
+    client: &BuzzClient,
+    builder: EventBuilder,
+    founders: Option<String>,
+) -> Result<(), CliError> {
     let event = client.sign_event(builder)?;
     let raw = client.submit_event(event).await?;
-    println!("{}", validate_write_response(&raw)?);
+    let response = validate_write_response(&raw)?;
+    let Some(founders) = founders else {
+        println!("{response}");
+        return Ok(());
+    };
+    let mut value: serde_json::Value = serde_json::from_str(&response)
+        .map_err(|error| CliError::Other(format!("relay response is not JSON: {error}")))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("founders".to_string(), serde_json::Value::String(founders));
+    }
+    println!("{value}");
     Ok(())
 }
 
@@ -262,6 +320,7 @@ fn build_create_announcement(
     relays: &[String],
     channel: Option<&str>,
     project: Option<&str>,
+    maintainers: &[String],
 ) -> Result<EventBuilder, CliError> {
     validate_repo_id(repo_id)?;
 
@@ -286,6 +345,12 @@ fn build_create_announcement(
         let coordinate = validate_project_coordinate(project)?;
         builder = builder.tag(Tag::parse(["project", &coordinate]).map_err(tag_error)?);
     }
+    // Co-founders, in the standard NIP-34 tag. Buzz's announcement builder
+    // never emitted one before finding 33, so every repository announced
+    // before this had exactly one founder whether or not it had one owner.
+    if let Some(tag) = build_maintainers_tag(maintainers)? {
+        builder = builder.tag(tag);
+    }
     Ok(builder)
 }
 
@@ -300,6 +365,7 @@ pub async fn cmd_create_repo(
     relays: &[String],
     channel: Option<&str>,
     project: Option<&str>,
+    maintainers: &[String],
 ) -> Result<(), CliError> {
     let builder = build_create_announcement(
         repo_id,
@@ -310,6 +376,7 @@ pub async fn cmd_create_repo(
         relays,
         channel,
         project,
+        maintainers,
     )?;
     let event = client.sign_event(builder)?;
     let owner = event.pubkey.to_hex();
@@ -341,7 +408,55 @@ pub async fn cmd_get_repo(
     }
 
     let resp = client.query(&filter).await?;
-    println!("{resp}");
+    // Each announcement is returned exactly as the relay served it, plus the
+    // derived `founders` list and the sentence that says who may rewrite the
+    // rules and whether the project roster was readable from here. Finding 33
+    // was invisible precisely because nothing ever printed this set.
+    let mut rows: Vec<serde_json::Value> = serde_json::from_str(&resp)
+        .map_err(|error| CliError::Other(format!("failed to parse relay response: {error}")))?;
+    for row in &mut rows {
+        let signer = row
+            .get("pubkey")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let tags: Vec<Vec<String>> = row
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| {
+                        tag.as_array().map(|values| {
+                            values
+                                .iter()
+                                .filter_map(|value| {
+                                    value.as_str().map(std::string::ToString::to_string)
+                                })
+                                .collect()
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let founders = repository_founders_from_parts(client, &signer, &tags).await;
+        if let Some(object) = row.as_object_mut() {
+            object.insert(
+                "founders".to_string(),
+                serde_json::Value::Array(
+                    founders
+                        .pubkeys()
+                        .iter()
+                        .map(|pubkey| serde_json::Value::String(pubkey.clone()))
+                        .collect(),
+                ),
+            );
+            object.insert(
+                "founders_note".to_string(),
+                serde_json::Value::String(founders.rules_sentence()),
+            );
+        }
+    }
+    println!("{}", serde_json::Value::Array(rows));
     Ok(())
 }
 
@@ -371,6 +486,54 @@ pub async fn cmd_list_repos(
     let resp = client.query(&filter).await?;
     println!("{resp}");
     Ok(())
+}
+
+/// Who founds this repository, as far as this client can read it.
+///
+/// Finding 33: the announcement's signer is one founder, not the founder. The
+/// signed half (signer ∪ NIP-34 `maintainers`) needs nothing but the event;
+/// the roster half needs the project the `["project", …]` back-reference names
+/// and is read over the wire. A roster this client could not read leaves the
+/// set marked unread, and
+/// [`buzz_core::repository_founders::RepositoryFounders::rules_sentence`] says
+/// so — a partial set presented as whole is exactly the shape of finding 33.
+pub(crate) async fn repository_founders(
+    client: &BuzzClient,
+    announcement: &Event,
+) -> RepositoryFounders {
+    let tags: Vec<Vec<String>> = announcement
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice().to_vec())
+        .collect();
+    repository_founders_from_parts(client, &announcement.pubkey.to_hex(), &tags).await
+}
+
+/// The same derivation for a caller holding the announcement as raw JSON.
+///
+/// `bee repos get` prints the relay's own bytes and must not re-serialize a
+/// parsed event to do it — the relay strips signatures on reads, and a
+/// round-trip through `nostr::Event` would put one back.
+pub(crate) async fn repository_founders_from_parts(
+    client: &BuzzClient,
+    signer_pubkey: &str,
+    tags: &[Vec<String>],
+) -> RepositoryFounders {
+    let founders = RepositoryFounders::from_parts(signer_pubkey, tags);
+    let coordinate = tags.iter().find_map(|tag| match tag.as_slice() {
+        [name, value, ..] if name == "project" => {
+            buzz_core::kind::normalize_project_coordinate(value)
+        }
+        _ => None,
+    });
+    let Some(coordinate) = coordinate else {
+        // No project back-reference: there is no roster, so nothing is missing.
+        return founders.with_roster_owners(Vec::new());
+    };
+    match crate::commands::projects::project_owner_pubkeys(client, &coordinate).await {
+        Ok(owners) => founders.with_roster_owners(owners),
+        Err(_) => founders,
+    }
 }
 
 async fn current_repo(client: &BuzzClient, repo_id: &str) -> Result<Event, CliError> {
@@ -404,6 +567,14 @@ async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliE
                 crate::commands::git_setup::serving_relay_build(client.relay_url()).await,
             ),
         );
+        // Rules and founders are two different authorities and the difference
+        // bites: the founder set governs which missions rule and who may land,
+        // while the rules themselves live on the announcement and only its
+        // signer can rewrite them in v1.
+        object.insert(
+            "founders".to_string(),
+            serde_json::Value::String(repository_founders(client, &event).await.rules_sentence()),
+        );
     }
     println!("{listing}");
     Ok(())
@@ -423,9 +594,53 @@ async fn cmd_protect_set(
     });
     let tag = build_protection_tag(ref_pattern, push_role, flags)?;
     let event = current_repo(client, repo_id).await?;
+    let founders = repository_founders(client, &event).await.rules_sentence();
     let builder =
         build_updated_repo_announcement(&event, RepoChange::SetProtection(Box::new(tag)))?;
-    submit_repo_update(client, builder).await
+    submit_repo_update_with(client, builder, Some(founders)).await
+}
+
+/// `bee repos update` — change who co-founds one of your repositories.
+///
+/// Writing the `maintainers` tag is an authority change: every listed key
+/// becomes a founder, whose missions can rule on this repository and who may
+/// land a verdict-gated ref. The list is replaced whole, never merged, so what
+/// the command prints is what the announcement now says.
+pub async fn cmd_update_repo(
+    client: &BuzzClient,
+    repo_id: &str,
+    maintainers: &[String],
+    clear_maintainers: bool,
+) -> Result<(), CliError> {
+    if maintainers.is_empty() && !clear_maintainers {
+        return Err(CliError::Usage(
+            "nothing to update: pass --maintainer <hex> (repeatable) or --clear-maintainers".into(),
+        ));
+    }
+    if !maintainers.is_empty() && clear_maintainers {
+        return Err(CliError::Usage(
+            "--clear-maintainers cannot be combined with --maintainer".into(),
+        ));
+    }
+    let event = current_repo(client, repo_id).await?;
+    let builder =
+        build_updated_repo_announcement(&event, RepoChange::SetMaintainers(maintainers.to_vec()))?;
+    // The sentence is derived from what is being written, not from the
+    // announcement that is being replaced.
+    let mut updated_tags: Vec<Vec<String>> = event
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice().to_vec())
+        .filter(|tag| tag.first().map(String::as_str) != Some(MAINTAINERS_TAG))
+        .collect();
+    if let Some(tag) = build_maintainers_tag(maintainers)? {
+        updated_tags.push(tag.as_slice().to_vec());
+    }
+    let founders = buzz_core::repository_founders::RepositoryFounders::from_parts(
+        &event.pubkey.to_hex(),
+        &updated_tags,
+    );
+    submit_repo_update_with(client, builder, Some(founders.rules_sentence())).await
 }
 
 async fn cmd_protect_remove(
@@ -549,6 +764,7 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
             relays,
             channel,
             project,
+            maintainers,
         } => {
             cmd_create_repo(
                 client,
@@ -560,9 +776,15 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
                 &relays,
                 channel.as_deref(),
                 project.as_deref(),
+                &maintainers,
             )
             .await
         }
+        ReposCmd::Update {
+            id,
+            maintainers,
+            clear_maintainers,
+        } => cmd_update_repo(client, &id, &maintainers, clear_maintainers).await,
         ReposCmd::Get { id, owner } => cmd_get_repo(client, &id, owner.as_deref()).await,
         ReposCmd::List { owner, limit } => cmd_list_repos(client, owner.as_deref(), limit).await,
         ReposCmd::Bind {
@@ -609,8 +831,9 @@ mod tests {
 
     use super::{
         build_create_announcement, build_delete_addressable, build_protection_tag,
-        build_updated_repo_announcement, protection_rules_json, validate_write_response,
-        ProtectionFlags, RepoChange, KIND_GIT_REPO_ANNOUNCEMENT,
+        build_updated_repo_announcement, protection_rules_json, validate_write_response, CliError,
+        ProtectionFlags, RepoChange, RepositoryFounders, KIND_GIT_REPO_ANNOUNCEMENT,
+        MAINTAINERS_TAG,
     };
 
     const OWNER_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1018,6 +1241,7 @@ mod tests {
             &[],
             Some(&channel),
             None,
+            &[],
         )
         .expect("build create announcement")
         .sign_with_keys(&Keys::generate())
@@ -1041,7 +1265,7 @@ mod tests {
 
     #[test]
     fn create_without_channel_emits_no_binding_tag() {
-        let event = build_create_announcement("demo", None, None, &[], None, &[], None, None)
+        let event = build_create_announcement("demo", None, None, &[], None, &[], None, None, &[])
             .expect("build create announcement")
             .sign_with_keys(&Keys::generate())
             .expect("sign create announcement");
@@ -1058,7 +1282,7 @@ mod tests {
     #[test]
     fn create_rejects_malformed_channel_uuid() {
         let error =
-            build_create_announcement("demo", None, None, &[], None, &[], Some("nope"), None)
+            build_create_announcement("demo", None, None, &[], None, &[], Some("nope"), None, &[])
                 .expect_err("malformed channel id must not build an announcement");
         assert!(matches!(error, crate::error::CliError::Usage(_)));
     }
@@ -1071,11 +1295,20 @@ mod tests {
         // Mixed case in: the relay stores and compares lowercase, so the tag
         // must go out normalized or the coordinate never matches an ACL row.
         let coordinate = format!("30621:{}:Demo-Project", owner.to_uppercase());
-        let event =
-            build_create_announcement("demo", None, None, &[], None, &[], None, Some(&coordinate))
-                .expect("build create announcement")
-                .sign_with_keys(&Keys::generate())
-                .expect("sign create announcement");
+        let event = build_create_announcement(
+            "demo",
+            None,
+            None,
+            &[],
+            None,
+            &[],
+            None,
+            Some(&coordinate),
+            &[],
+        )
+        .expect("build create announcement")
+        .sign_with_keys(&Keys::generate())
+        .expect("sign create announcement");
 
         let links: Vec<_> = event
             .tags
@@ -1109,6 +1342,7 @@ mod tests {
             &[],
             Some(&channel),
             Some(&coordinate),
+            &[],
         )
         .expect("build create announcement")
         .sign_with_keys(&Keys::generate())
@@ -1135,11 +1369,172 @@ mod tests {
             "30621:0000000000000000000000000000000000000000000000000000000000000000:",
         ] {
             let error =
-                build_create_announcement("demo", None, None, &[], None, &[], None, Some(bad))
+                build_create_announcement("demo", None, None, &[], None, &[], None, Some(bad), &[])
                     .expect_err("malformed coordinate must not build an announcement");
             assert!(
                 matches!(error, crate::error::CliError::Usage(_)),
                 "{bad:?} must be a usage error"
+            );
+        }
+    }
+
+    // ── finding 33: co-founders on the announcement ──────────────────
+
+    /// `--maintainer` writes exactly one NIP-34 tag, deduped and lowercased,
+    /// and `RepositoryFounders` reads the two founders back out of it.
+    #[test]
+    fn create_with_maintainers_emits_one_deduped_lowercase_tag() {
+        let brian = "3d".repeat(32);
+        let andy = Keys::generate();
+        let event = build_create_announcement(
+            "demo",
+            None,
+            None,
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            &[brian.to_uppercase(), brian.clone(), format!("  {brian}  ")],
+        )
+        .expect("build create announcement")
+        .sign_with_keys(&andy)
+        .expect("sign create announcement");
+
+        let tags: Vec<&[String]> = event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice())
+            .filter(|tag| tag.first().map(String::as_str) == Some(MAINTAINERS_TAG))
+            .collect();
+        assert_eq!(tags.len(), 1, "exactly one maintainers tag: {tags:?}");
+        assert_eq!(tags[0], ["maintainers".to_string(), brian.clone()]);
+
+        let founders = RepositoryFounders::from_announcement(&event);
+        assert_eq!(
+            founders.pubkeys(),
+            &[andy.public_key().to_hex(), brian],
+            "signer first, then the maintainer"
+        );
+    }
+
+    /// A maintainer that is not 64-hex is a usage error at the writer, not a
+    /// key that quietly founds nothing.
+    #[test]
+    fn a_malformed_maintainer_is_refused_at_the_writer() {
+        for bad in ["nope", &"ab".repeat(31), &format!("{}z", "ab".repeat(31))] {
+            let error = build_create_announcement(
+                "demo",
+                None,
+                None,
+                &[],
+                None,
+                &[],
+                None,
+                None,
+                &[bad.to_string()],
+            )
+            .expect_err("a malformed maintainer must not build an announcement");
+            assert!(matches!(error, CliError::Usage(_)), "{bad:?}: {error:?}");
+        }
+    }
+
+    /// `repos update --maintainer` replaces the tag whole rather than merging,
+    /// so the printed founder set is what the announcement now says.
+    #[test]
+    fn updating_maintainers_replaces_the_tag_whole() {
+        let owner = Keys::generate();
+        let old = "aa".repeat(32);
+        let new = "bb".repeat(32);
+        let existing =
+            EventBuilder::new(nostr::Kind::Custom(KIND_GIT_REPO_ANNOUNCEMENT as u16), "")
+                .tags([
+                    Tag::parse(["d", "demo"]).expect("d"),
+                    Tag::parse(["maintainers", &old]).expect("maintainers"),
+                ])
+                .sign_with_keys(&owner)
+                .expect("sign existing");
+
+        let updated = build_updated_repo_announcement(
+            &existing,
+            RepoChange::SetMaintainers(vec![new.clone()]),
+        )
+        .expect("build update")
+        .sign_with_keys(&owner)
+        .expect("sign update");
+        let founders = RepositoryFounders::from_announcement(&updated);
+        assert_eq!(founders.pubkeys(), &[owner.public_key().to_hex(), new]);
+        assert!(
+            !founders.contains(&old),
+            "the previous maintainer is gone, not merged"
+        );
+    }
+
+    /// `--clear-maintainers` removes the tag, leaving the signer alone.
+    #[test]
+    fn clearing_maintainers_removes_the_tag() {
+        let owner = Keys::generate();
+        let existing =
+            EventBuilder::new(nostr::Kind::Custom(KIND_GIT_REPO_ANNOUNCEMENT as u16), "")
+                .tags([
+                    Tag::parse(["d", "demo"]).expect("d"),
+                    Tag::parse(["maintainers", &"aa".repeat(32)]).expect("maintainers"),
+                ])
+                .sign_with_keys(&owner)
+                .expect("sign existing");
+
+        let updated =
+            build_updated_repo_announcement(&existing, RepoChange::SetMaintainers(Vec::new()))
+                .expect("build update")
+                .sign_with_keys(&owner)
+                .expect("sign update");
+        assert!(
+            !updated
+                .tags
+                .iter()
+                .any(|tag| tag.as_slice().first().map(String::as_str) == Some(MAINTAINERS_TAG)),
+            "no maintainers tag survives a clear"
+        );
+        assert_eq!(
+            RepositoryFounders::from_announcement(&updated).len(),
+            1,
+            "the signer is the only founder the announcement names"
+        );
+    }
+
+    /// Setting maintainers leaves every other tag — the binding, the project
+    /// back-reference, the protection rules — exactly as it found them.
+    #[test]
+    fn setting_maintainers_preserves_every_other_tag() {
+        let owner = Keys::generate();
+        let channel = uuid::Uuid::new_v4().to_string();
+        let existing =
+            EventBuilder::new(nostr::Kind::Custom(KIND_GIT_REPO_ANNOUNCEMENT as u16), "")
+                .tags([
+                    Tag::parse(["d", "demo"]).expect("d"),
+                    Tag::parse(["buzz-channel", &channel]).expect("channel"),
+                    Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"])
+                        .expect("protect"),
+                ])
+                .sign_with_keys(&owner)
+                .expect("sign existing");
+
+        let updated = build_updated_repo_announcement(
+            &existing,
+            RepoChange::SetMaintainers(vec!["cc".repeat(32)]),
+        )
+        .expect("build update")
+        .sign_with_keys(&owner)
+        .expect("sign update");
+        let names: Vec<String> = updated
+            .tags
+            .iter()
+            .filter_map(|tag| tag.as_slice().first().cloned())
+            .collect();
+        for expected in ["d", "buzz-channel", "buzz-protect", "maintainers"] {
+            assert!(
+                names.iter().any(|name| name == expected),
+                "{expected} survives: {names:?}"
             );
         }
     }

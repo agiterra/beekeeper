@@ -54,6 +54,7 @@ export function CodingSessionMissionLandControl({
         >
           {land.sentence}
         </p>
+        <FoundersLine land={land} />
       </div>
     );
   }
@@ -124,15 +125,39 @@ export function CodingSessionMissionLandControl({
           </div>
         </div>
       ) : (
-        <button
-          className="rounded-md border border-border/60 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          data-testid="mission-land-open"
-          onClick={() => setConfirming(true)}
-          type="button"
-        >
-          {land.buttonLabel}
-        </button>
+        <>
+          <button
+            className="rounded-md border border-border/60 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="mission-land-open"
+            onClick={() => setConfirming(true)}
+            type="button"
+          >
+            {land.buttonLabel}
+          </button>
+          <FoundersLine land={land} />
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * Who founds this repository, and whether the viewer is one of them.
+ *
+ * Rendered in every state — finding 33. Until this line existed the screen
+ * could say "not ready to land" without ever saying that the rule answers to a
+ * key the reader does not hold, which is the difference between a mission that
+ * failed and a repository that never counted you.
+ */
+function FoundersLine({ land }: { land: CodingSessionMissionLandModel }) {
+  if (land.foundersSentence.length === 0) return null;
+  return (
+    <p
+      className={cn(missionRowMetaClass(), "mt-1")}
+      data-founder={land.viewerIsFounder ? "viewer" : "other"}
+      data-testid="mission-land-founders"
+    >
+      {land.foundersSentence}
+    </p>
   );
 }

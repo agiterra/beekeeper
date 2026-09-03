@@ -194,21 +194,25 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
 /// The default is the mission's own branch because that is the update an
 /// approval is *for*; pushing the same commit somewhere else is a separate
 /// question with its own test.
-fn query<'a>(pusher: &'a str, owner: &'a str, new_oid: &'a str) -> VerdictAdmissionQuery<'a> {
-    query_on("refs/heads/whoami/cli", pusher, owner, new_oid)
+fn query<'a>(
+    pusher: &'a str,
+    founders: &'a [String],
+    new_oid: &'a str,
+) -> VerdictAdmissionQuery<'a> {
+    query_on("refs/heads/whoami/cli", pusher, founders, new_oid)
 }
 
 fn query_on<'a>(
     ref_name: &'a str,
     pusher: &'a str,
-    owner: &'a str,
+    founders: &'a [String],
     new_oid: &'a str,
 ) -> VerdictAdmissionQuery<'a> {
     VerdictAdmissionQuery {
         ref_name,
         new_oid,
         pusher_pubkey: pusher,
-        repo_owner_pubkey: owner,
+        repo_founders: founders,
     }
 }
 
@@ -225,7 +229,7 @@ fn founder_signed_approval_over_the_pushed_head_sha_admits() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     match outcome {
@@ -252,7 +256,7 @@ fn approve_with_notes_admits_and_changes_requested_refuses() {
         let owner = mission.founder.public_key().to_hex();
         let outcome = evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query(&owner, &owner, HEAD_SHA),
+            &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
             &VerdictAdmissionRules::FOUNDER_ONLY,
         );
         assert_eq!(
@@ -276,7 +280,7 @@ fn the_run_three_fixture_refuses_with_the_frozen_copy() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
@@ -287,8 +291,8 @@ fn the_run_three_fixture_refuses_with_the_frozen_copy() {
         format!(
             "require-verdict is set and no mission verdict names this commit: no approved report \
              names {HEAD_SHA}. Searched 1 mission(s) — the newest 16 on this channel whose \
-             founder owns this repository — over one shared page of the newest 512 team \
-             transactions on that channel. An older ruling can fall outside both."
+             founder is a founder of this repository — over one shared page of the newest 512 \
+             team transactions on that channel. An older ruling can fall outside both."
         ),
         "both caps are named in words, not just implied by the mission count (fix round 1, F4)"
     );
@@ -305,7 +309,7 @@ fn a_report_naming_only_a_branch_never_admits() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
@@ -336,7 +340,7 @@ fn landed_shas_never_admit() {
     // The completion in the fixture names HEAD_SHA in `landedShas`.
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
@@ -358,7 +362,7 @@ fn a_disposition_in_a_stranger_umbrella_never_admits() {
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
         // The repository is owned by someone who did not found this mission.
-        &query(&stranger, &stranger, HEAD_SHA),
+        &query(&stranger, std::slice::from_ref(&stranger), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
@@ -391,7 +395,7 @@ fn a_sixty_four_hex_head_sha_does_not_admit_a_forty_hex_push() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(!outcome.is_admitted(), "a prefix is not a match");
@@ -411,7 +415,7 @@ fn head_sha_matching_is_case_folded() {
     let pushed = HEAD_SHA.to_ascii_uppercase();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, &pushed),
+        &query(&owner, std::slice::from_ref(&owner), &pushed),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(outcome.is_admitted(), "hex case is not identity");
@@ -437,7 +441,7 @@ fn a_seat_is_refused_the_approved_commit_under_the_shipped_rule() {
     // shipped rule, and the sentence says so (fix round 1, F3).
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&seat, &owner, HEAD_SHA),
+        &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
@@ -447,7 +451,9 @@ fn a_seat_is_refused_the_approved_commit_under_the_shipped_rule() {
         refusal.reason(),
         format!(
             "commit {HEAD_SHA} is approved, but the relay's require-verdict rule reserves a \
-             gated ref to the founder (founder-only pushes). Ask the founder to land it."
+             gated ref to a founder of this repository (1 founder(s): the announcement's \
+             signer, its maintainers tag, and the project roster's owners). Ask a founder to \
+             land it."
         )
     );
 }
@@ -474,7 +480,7 @@ fn a_seat_lands_only_when_the_relays_own_flag_allows_it() {
     assert!(
         evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query(&seat, &owner, HEAD_SHA),
+            &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
             &relaxed,
         )
         .is_admitted(),
@@ -483,7 +489,7 @@ fn a_seat_lands_only_when_the_relays_own_flag_allows_it() {
     assert!(
         !evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query(&seat, &owner, HEAD_SHA),
+            &query(&seat, std::slice::from_ref(&owner), HEAD_SHA),
             &VerdictAdmissionRules::FOUNDER_ONLY,
         )
         .is_admitted(),
@@ -493,7 +499,7 @@ fn a_seat_lands_only_when_the_relays_own_flag_allows_it() {
     assert!(
         !evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query(&stranger, &owner, HEAD_SHA),
+            &query(&stranger, std::slice::from_ref(&owner), HEAD_SHA),
             &relaxed,
         )
         .is_admitted(),
@@ -514,7 +520,7 @@ fn a_lead_disposition_does_not_admit_under_the_shipped_rule() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
@@ -536,7 +542,7 @@ fn a_lead_disposition_admits_once_the_flag_is_on() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules {
             lead_disposition_admits: true,
             ..VerdictAdmissionRules::FOUNDER_ONLY
@@ -561,7 +567,7 @@ fn no_candidates_discloses_a_zero_search() {
     let owner = Keys::generate().public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
@@ -628,7 +634,7 @@ fn an_unauthorized_disposition_is_not_canonical_and_never_admits() {
             canonical,
             active_seat_pubkeys: Vec::new(),
         }],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules {
             lead_disposition_admits: true,
             ..VerdictAdmissionRules::FOUNDER_ONLY
@@ -663,7 +669,7 @@ fn an_approval_is_scoped_to_the_branch_its_report_named() {
         assert!(
             evaluate_verdict_admission(
                 &[candidate(&mission)],
-                &query_on(ref_name, &owner, &owner, HEAD_SHA),
+                &query_on(ref_name, &owner, std::slice::from_ref(&owner), HEAD_SHA),
                 &VerdictAdmissionRules::FOUNDER_ONLY,
             )
             .is_admitted(),
@@ -675,7 +681,7 @@ fn an_approval_is_scoped_to_the_branch_its_report_named() {
     for ref_name in ["refs/heads/main", "refs/heads/release", "refs/tags/v9"] {
         let outcome = evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query_on(ref_name, &owner, &owner, HEAD_SHA),
+            &query_on(ref_name, &owner, std::slice::from_ref(&owner), HEAD_SHA),
             &VerdictAdmissionRules::FOUNDER_ONLY,
         );
         let VerdictAdmission::Refused(refusal) = outcome else {
@@ -711,14 +717,24 @@ fn branch_scoping_matches_whole_names_only() {
     let owner = mission.founder.public_key().to_hex();
     assert!(evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query_on("refs/heads/main", &owner, &owner, HEAD_SHA),
+        &query_on(
+            "refs/heads/main",
+            &owner,
+            std::slice::from_ref(&owner),
+            HEAD_SHA
+        ),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     )
     .is_admitted());
     assert!(
         !evaluate_verdict_admission(
             &[candidate(&mission)],
-            &query_on("refs/heads/main-2", &owner, &owner, HEAD_SHA),
+            &query_on(
+                "refs/heads/main-2",
+                &owner,
+                std::slice::from_ref(&owner),
+                HEAD_SHA
+            ),
             &VerdictAdmissionRules::FOUNDER_ONLY,
         )
         .is_admitted(),
@@ -742,7 +758,7 @@ fn a_report_naming_no_branch_scopes_no_ref() {
         assert!(
             evaluate_verdict_admission(
                 &[candidate(&mission)],
-                &query_on(ref_name, &owner, &owner, HEAD_SHA),
+                &query_on(ref_name, &owner, std::slice::from_ref(&owner), HEAD_SHA),
                 &VerdictAdmissionRules::FOUNDER_ONLY,
             )
             .is_admitted(),
@@ -816,7 +832,7 @@ fn a_superseded_approval_no_longer_admits() {
             canonical,
             active_seat_pubkeys: Vec::new(),
         }],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
@@ -841,7 +857,7 @@ fn a_report_naming_the_parent_sha_refuses_the_child() {
     let owner = mission.founder.public_key().to_hex();
     let outcome = evaluate_verdict_admission(
         &[candidate(&mission)],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     let VerdictAdmission::Refused(refusal) = outcome else {
@@ -887,7 +903,7 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
             canonical,
             active_seat_pubkeys: Vec::new(),
         }],
-        &query(&owner, &owner, HEAD_SHA),
+        &query(&owner, std::slice::from_ref(&owner), HEAD_SHA),
         &VerdictAdmissionRules::FOUNDER_ONLY,
     );
     assert!(
@@ -895,3 +911,8 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
         "a reportRef that resolves to nothing in THIS fold admits nothing: {outcome:?}"
     );
 }
+
+/// Finding 33's cases live in their own file: they need every fixture above,
+/// and this one is already 900 lines.
+#[path = "coding_session_verdict_admission_founder_tests.rs"]
+mod founders;

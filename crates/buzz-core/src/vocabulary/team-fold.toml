@@ -171,3 +171,17 @@ cause = "The policy sets gates.verifierRequired, the assignment settled on a rep
 command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].reason"
 frozen_source = "batch vocabulary, verified completion"
 frozen = "mission.completed requires a verifier's ruling while the policy sets gates.verifierRequired: assignment <assignmentId> settled on report <reportId>, and no active verifier seat has ruled on that report"
+
+# Finding 33 (2026-09-03). The word appears in the relay's own refusal copy
+# ("reserves a gated ref to a founder of this repository"), in `bee repos get`,
+# and on the desktop's Land control, and until this entry nothing defined it.
+# The batch specification freezes no sentence about the word itself, so
+# `frozen` is empty rather than invented.
+[[entry]]
+word = "founder"
+aliases = ["founders", "founder_pubkey", "founderPubkey", "repo_founders", "maintainers"]
+meaning = "A key that speaks for a repository: the kind:30617 announcement's signer, every pubkey in its NIP-34 maintainers tag, and every Owner on the project roster its project back-reference names."
+cause = "The require-verdict gate searches only missions whose founder is one of these keys, and reserves a gated ref to them. Rules are narrower: only the announcement's signer can rewrite a buzz-protect tag in v1, so a co-founder who edits rules creates their own repository instead of editing yours."
+command = "bee repos get --id <repo-id> --owner <hex64>   # read .founders and .founders_note"
+frozen_source = ""
+frozen = ""

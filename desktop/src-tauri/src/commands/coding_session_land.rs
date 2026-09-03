@@ -40,6 +40,7 @@ use buzz_core_pkg::coding_session_verdict_admission::{
     VerdictAdmissionRecord, VerdictAdmissionRefusal, VerdictAdmissionRules,
 };
 use buzz_core_pkg::git_perms::{parse_protection_tags, EffectiveRules};
+use buzz_core_pkg::repository_founders::RepositoryFounders;
 
 /// Closed wire-schema identifier accepted by this boundary.
 pub const CODING_SESSION_LAND_REQUEST_SCHEMA: &str = "buzz-coding-session-land-request/v1";
@@ -70,6 +71,15 @@ pub struct CodingSessionLandRequest {
     /// Null is **not** "no rule": it is "no record reached this view", and the
     /// two produce different answers.
     pub protection_tags: Option<Vec<Vec<String>>>,
+    /// Pubkeys the repository's project roster grants Owner, or null when
+    /// this view could not read the roster.
+    ///
+    /// Finding 33: a repository's founders are its announcement's signer, its
+    /// NIP-34 `maintainers`, **and** every Owner on the project roster its
+    /// `["project", …]` back-reference names (commit `a56ad5d01`). The first
+    /// two are on `protection_tags`; only this one needs a second read, and
+    /// null is "not read", never "there are none" — the answer says which.
+    pub project_owner_pubkeys: Option<Vec<String>>,
     /// Event ids the caller's fold marked canonical, in included order.
     pub included_event_ids: Vec<String>,
     /// Raw signed kind-44244 Nostr events. No projected outputs are accepted.
@@ -132,6 +142,23 @@ pub struct CodingSessionLandResponse {
     pub refusal_reason: Option<String>,
     /// The newest canonical verdict, or null when the mission holds none.
     pub newest_verdict: Option<CodingSessionLandNewestVerdict>,
+    /// Every founder of the repository, lower-hex, signer first.
+    pub founders: Vec<String>,
+    /// The sentence naming who may rewrite the rules, who the founders are,
+    /// and whether the project roster was readable from here.
+    pub founders_note: String,
+    /// Whether the viewer's own key is one of them.
+    pub viewer_is_founder: bool,
+    /// The announcement's signer — the one key that may rewrite the rules in
+    /// v1 — or null when no announcement reached this view.
+    ///
+    /// Carried as its own field so the screen can render a *short* founder
+    /// line (display names, 8-hex) without re-parsing the prose sentence.
+    /// The rule stays `buzz-core`'s; only the rendering is the screen's.
+    pub rules_signer: Option<String>,
+    /// Whether the project roster was read. `false` is "not read", and the
+    /// screen must say so rather than present a partial set as whole.
+    pub roster_read: bool,
     /// The exact command a person runs, or null when nothing is admitted.
     ///
     /// It names the **commit**, never the branch: a branch name is not a
@@ -139,6 +166,14 @@ pub struct CodingSessionLandResponse {
     /// ruled on.
     pub command: Option<String>,
 }
+
+/// What the founder line says when no repository record reached this view.
+///
+/// The empty set's own sentence would read as a claim about a repository
+/// nobody here has seen — "founders are none" is a fact about the repository,
+/// and this is a fact about the read.
+pub const NO_REPOSITORY_FOUNDERS_NOTE: &str =
+    "No repository record reached this view, so nothing here can name its founders.";
 
 /// Whether `require-verdict` covers this ref.
 ///
@@ -249,6 +284,28 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         .protection_tags
         .as_ref()
         .is_some_and(|tags| ref_requires_verdict(tags, &request.ref_name));
+    // The founder set, composed by `buzz-core` from what this view read: the
+    // signer and `maintainers` off the announcement's own tags, plus the
+    // roster owners the caller resolved. A view with no announcement has no
+    // founders to name, and says so rather than naming the viewer.
+    let founders = match (&request.repo_owner_pubkey, &request.protection_tags) {
+        (Some(signer), Some(tags)) => {
+            let founders = RepositoryFounders::from_parts(signer, tags);
+            match &request.project_owner_pubkeys {
+                Some(owners) => founders.with_roster_owners(owners.clone()),
+                None => founders,
+            }
+        }
+        _ => RepositoryFounders::from_parts("", &[]),
+    };
+    // With no announcement there is no founder set to name, and the empty
+    // set's own sentence would read as a claim about a repository this view
+    // never saw. Say what actually happened instead.
+    let founders_note = if repository_known && request.repo_owner_pubkey.is_some() {
+        founders.rules_sentence()
+    } else {
+        NO_REPOSITORY_FOUNDERS_NOTE.to_owned()
+    };
     let base = CodingSessionLandResponse {
         schema: CODING_SESSION_LAND_ADAPTER_SCHEMA.to_owned(),
         implementation: "buzz-core".to_owned(),
@@ -258,6 +315,15 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         evidence: None,
         refusal_reason: None,
         newest_verdict: newest,
+        founders: founders.pubkeys().to_vec(),
+        founders_note,
+        viewer_is_founder: repository_known && founders.contains(&request.pusher_pubkey),
+        rules_signer: if repository_known {
+            request.repo_owner_pubkey.clone()
+        } else {
+            None
+        },
+        roster_read: founders.roster_owners_read().is_some(),
         command: None,
     };
     if !rule_governs {
@@ -266,7 +332,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         // it read, because "nothing gates this" and "nobody ruled" differ.
         return Ok(base);
     }
-    let Some(repo_owner) = request.repo_owner_pubkey.clone() else {
+    let Some(_repo_owner) = request.repo_owner_pubkey.clone() else {
         return Ok(CodingSessionLandResponse {
             refusal_reason: Some(VerdictAdmissionRefusal::RepositoryUnbound.reason()),
             ..base
@@ -294,7 +360,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
         ref_name: &request.ref_name,
         new_oid: newest_head_sha(&records).unwrap_or_default(),
         pusher_pubkey: &request.pusher_pubkey,
-        repo_owner_pubkey: &repo_owner,
+        repo_founders: founders.pubkeys(),
     };
     match evaluate_verdict_admission(std::slice::from_ref(&candidate), &query, &rules) {
         VerdictAdmission::Admitted(evidence) => Ok(CodingSessionLandResponse {

@@ -95,6 +95,8 @@ pub mod pulse_overlap;
 pub mod registry_bench;
 /// Canonical relay runtime identities.
 pub mod relay;
+/// Who founded a repository — signer, NIP-34 maintainers, project owners.
+pub mod repository_founders;
 /// The git hooks a seat's checkout gets so its local commits reach Pulse
 /// without anyone being asked to report them.
 pub mod seat_git_hooks;

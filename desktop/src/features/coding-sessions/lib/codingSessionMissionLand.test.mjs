@@ -145,3 +145,80 @@ test("L8.2: §1j's no-verdict string discloses both caps", () => {
   assert.match(model.sentence, /newest 512 team transactions/);
   assert.match(model.sentence, /An older ruling can fall outside both\./);
 });
+
+// ── finding 33: the Land control names the founders ──────────────────────
+
+test("L18: every state carries the founder line, and the viewer's standing", () => {
+  for (const key of ["admitted", "refused", "ungoverned"]) {
+    const model = codingSessionMissionLandModel({
+      result: decodeCodingSessionLandResult(FIXTURE[key]),
+      resolveWho,
+    });
+    assert.match(model.foundersSentence, /^Founders: the founder\./);
+    assert.match(model.foundersSentence, /You are one of them\./);
+    assert.match(
+      model.foundersSentence,
+      /Rules are set by the founder and only that key can rewrite them\./,
+    );
+    assert.ok(
+      !model.foundersSentence.includes("was not read here"),
+      `a read roster is not disclosed as unread: ${model.foundersSentence}`,
+    );
+    assert.equal(model.viewerIsFounder, true);
+  }
+});
+
+test("L18: a viewer who founded nothing is told so, not left guessing", () => {
+  const other = "3d".repeat(32);
+  const model = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult({
+      ...FIXTURE.refused,
+      founders: [FIXTURE.refused.newestVerdict.authorPubkey, other],
+      viewerIsFounder: false,
+      rosterRead: false,
+    }),
+    resolveWho,
+  });
+  assert.equal(model.viewerIsFounder, false);
+  assert.match(model.foundersSentence, /You are not one of them/);
+  assert.match(
+    model.foundersSentence,
+    /The project roster was not read here/,
+    "an unread roster is disclosed on the screen too",
+  );
+  assert.ok(
+    model.foundersSentence.includes(other.slice(0, 8)),
+    `the second founder is named: ${model.foundersSentence}`,
+  );
+});
+
+test("L18: with no repository record the line is about the read, not the repo", () => {
+  const model = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.unknown),
+    resolveWho,
+  });
+  assert.equal(model.state, "unknown");
+  assert.equal(
+    model.foundersSentence,
+    "No repository record reached this view, so nothing here can name its founders.",
+  );
+  assert.equal(model.viewerIsFounder, false);
+});
+
+test("L18: a decoder that loses the founder set is a loud failure", () => {
+  for (const key of [
+    "founders",
+    "foundersNote",
+    "viewerIsFounder",
+    "rulesSigner",
+    "rosterRead",
+  ]) {
+    const { [key]: dropped, ...missing } = FIXTURE.admitted;
+    assert.notEqual(dropped, undefined);
+    assert.throws(
+      () => decodeCodingSessionLandResult(missing),
+      /malformed response/,
+      `dropping ${key} must throw`,
+    );
+  }
+});

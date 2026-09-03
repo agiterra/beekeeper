@@ -2615,6 +2615,23 @@ Copy button. The command names the **commit**, never the branch: a branch name
 is not a commit, and two pushes to one branch are two commits of which one was
 ruled on.
 
+**The Land control names the repository's founders, in every state.** A
+repository has **founders**, not an owner: the kind:30617 announcement's
+signer, every pubkey in its NIP-34 `maintainers` tag, and every Owner on the
+project roster its `project` back-reference names. The control prints them —
+by display name where the surface knows one, 8-hex otherwise — beside a
+sentence saying whether the viewer is one of them, and it prints that line
+whether it is offering the push, refusing it, or saying the rule does not
+govern. Until this line existed the screen could say *"not ready to land"*
+without ever saying that the rule answers to a key the reader does not hold,
+which are two entirely different problems for the person reading it. Two facts
+travel with it because both change what the reader should do: **rules are set
+by the announcement's signer alone in v1**, so a co-founder editing them makes
+their own repository rather than editing this one; and a project roster this
+view could not read is disclosed as unread rather than rendered as an empty
+one, since a partial founder set presented as whole is exactly the defect
+(finding 33) this line exists to prevent.
+
 **Mission agrees with `bee` about a required verifier.** The fold call site
 supplies the real `gates.verifierRequired` instead of TypeScript's `false`
 default, and the state panel renders the `completion_not_verified` exclusion

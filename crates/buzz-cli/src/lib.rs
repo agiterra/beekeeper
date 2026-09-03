@@ -1302,6 +1302,37 @@ pub enum ReposCmd {
         /// the author runs `bee repos bind` (issue #3527).
         #[arg(long)]
         project: Option<String>,
+        /// A co-founder's pubkey (64-char lowercase hex). Repeatable.
+        ///
+        /// Written as the NIP-34 `maintainers` tag. Everyone listed is a
+        /// **founder** of the repository alongside you: their missions can
+        /// rule on it, and they may land a `require-verdict` ref. Rules
+        /// themselves stay yours — only the announcement's signer can rewrite
+        /// a `buzz-protect` tag in v1.
+        #[arg(long = "maintainer")]
+        maintainers: Vec<String>,
+    },
+    /// Change who co-founds one of your repositories.
+    ///
+    /// `--maintainer` replaces the NIP-34 `maintainers` tag whole; it is never
+    /// merged with what is already there, so the printed founder set is what
+    /// the announcement now says. This is an authority change: a founder's
+    /// missions can rule on this repository and a founder may land a
+    /// `require-verdict` ref.
+    #[command(
+        after_help = "Examples:\n  bee repos update --id myrepo --maintainer <hex>\n  bee repos update --id myrepo --maintainer <hex> --maintainer <hex>\n  bee repos update --id myrepo --clear-maintainers"
+    )]
+    Update {
+        /// Repository identifier (d-tag).
+        #[arg(long)]
+        id: String,
+        /// A co-founder's pubkey (64-char lowercase hex). Repeatable.
+        #[arg(long = "maintainer")]
+        maintainers: Vec<String>,
+        /// Remove the `maintainers` tag entirely, leaving you the only founder
+        /// the announcement names.
+        #[arg(long, default_value_t = false)]
+        clear_maintainers: bool,
     },
     /// Get a repository announcement
     Get {
@@ -4992,6 +5023,49 @@ mod tests {
         );
     }
 
+    /// `bee repos update` takes repeatable `--maintainer` and a
+    /// `--clear-maintainers` switch, and `bee repos create` takes the same
+    /// repeatable flag. Finding 33: without a writer, the `maintainers` tag
+    /// the gate now reads could only be produced by hand.
+    #[test]
+    fn repos_maintainer_flags_parse() {
+        let a = "aa".repeat(32);
+        let b = "bb".repeat(32);
+        assert!(Cli::try_parse_from([
+            "bee",
+            "repos",
+            "create",
+            "--id",
+            "demo",
+            "--maintainer",
+            &a,
+            "--maintainer",
+            &b,
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "bee",
+            "repos",
+            "update",
+            "--id",
+            "demo",
+            "--maintainer",
+            &a
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "bee",
+            "repos",
+            "update",
+            "--id",
+            "demo",
+            "--clear-maintainers"
+        ])
+        .is_ok());
+        // `--id` is not optional: an update with no repository names nothing.
+        assert!(Cli::try_parse_from(["bee", "repos", "update", "--maintainer", &a]).is_err());
+    }
+
     #[test]
     fn subcommand_names_are_stable() {
         fn names(cmd: &clap::Command, group: &str) -> Vec<String> {
@@ -5092,7 +5166,7 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "repos"),
-            vec!["bind", "create", "delete", "get", "list", "protect"]
+            vec!["bind", "create", "delete", "get", "list", "protect", "update"]
         );
         let repos = cmd
             .get_subcommands()
@@ -5268,7 +5342,7 @@ mod tests {
             ("pulse", 6),
             ("reactions", 3),
             // 5 on the base tree, plus `delete`.
-            ("repos", 6),
+            ("repos", 7),
             // 24 on the base tree, plus A1's `audit`, `grant-seat` and
             // `revoke-seat` (batch 2 A), B1c's `decide` and `note`, B2's
             // `policy` (batch 2 B), `delete`, `whoami`, batch 3 L1's

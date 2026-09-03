@@ -157,3 +157,47 @@ test("L8.3: a panel given neither fact renders exactly what it did before this l
   assert.ok(!/mission-policy-record-unknown/.test(html));
   assert.ok(!/mission-land-control/.test(html));
 });
+
+// ── finding 33: the founder line is on the screen in every state ─────────
+
+test("L18: the control names the founders whether it offers the push or refuses", () => {
+  for (const key of ["admitted", "refused", "ungoverned"]) {
+    const html = render(key);
+    assert.match(
+      html,
+      /data-testid="mission-land-founders"/,
+      `${key} shows the founder line`,
+    );
+    assert.match(
+      html,
+      /data-founder="viewer"/,
+      `${key} says the viewer founds it`,
+    );
+    assert.match(html, /Founders: the founder\./, `${key} names them`);
+    assert.match(
+      html,
+      /only that key can rewrite them/,
+      `${key} discloses that rules are signer-only in v1`,
+    );
+  }
+});
+
+test("L18: a viewer who founds nothing is marked as such, not merely refused", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionMissionLandControl, {
+      land: codingSessionMissionLandModel({
+        result: decodeCodingSessionLandResult({
+          ...FIXTURE.refused,
+          founders: [
+            FIXTURE.refused.newestVerdict.authorPubkey,
+            "3d".repeat(32),
+          ],
+          viewerIsFounder: false,
+        }),
+        resolveWho: (pubkey) => pubkey.slice(0, 8),
+      }),
+    }),
+  );
+  assert.match(html, /data-founder="other"/);
+  assert.match(html, /You are not one of them/);
+});

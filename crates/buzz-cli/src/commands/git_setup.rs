@@ -1077,6 +1077,10 @@ pub struct RefPrediction {
     /// prediction is the *local* build's rule; this says whose relay will
     /// actually decide.
     pub serving_relay: String,
+    /// Who founds this repository, and who may rewrite its rules — finding 33.
+    /// Empty until an announcement is read; the rule is never predicted
+    /// without one.
+    pub founders: String,
 }
 
 /// The prediction's answer, or why there is none.
@@ -1431,6 +1435,7 @@ async fn predict_ref(
         state: RefPredictionState::NoRepository,
         // Filled in by the caller, which knows the relay origin.
         serving_relay: "serving relay's version unknown".to_string(),
+        founders: String::new(),
     };
     let ProbeTarget::Remote { owner, repo } = target else {
         return prediction;
@@ -1493,7 +1498,13 @@ async fn predict_ref(
         return prediction;
     };
 
-    let candidates = match fetch_verdict_candidates(client, &channel, owner).await {
+    // Finding 33: a repository has founders, not an owner. The prediction
+    // reads the same set the relay resolves — signer, NIP-34 `maintainers`,
+    // and the project roster's Owners — and says in its own sentence when the
+    // roster half was not readable from here.
+    let founders = crate::commands::repos::repository_founders(client, &announcement).await;
+    prediction.founders = founders.rules_sentence();
+    let candidates = match fetch_verdict_candidates(client, &channel, &founders).await {
         Ok(candidates) => candidates,
         Err(error) => {
             prediction.state = RefPredictionState::Unreadable {
@@ -1507,7 +1518,7 @@ async fn predict_ref(
         ref_name,
         new_oid: &sha_value,
         pusher_pubkey,
-        repo_owner_pubkey: owner,
+        repo_founders: founders.pubkeys(),
     };
     prediction.state =
         match evaluate_verdict_admission(&candidates, &query, &VerdictAdmissionRules::FOUNDER_ONLY)
@@ -1549,7 +1560,7 @@ async fn fetch_repo_announcement(
 async fn fetch_verdict_candidates(
     client: &crate::client::BuzzClient,
     channel: &str,
-    owner: &str,
+    founders: &buzz_core::repository_founders::RepositoryFounders,
 ) -> Result<Vec<VerdictAdmissionCandidate>, CliError> {
     let decode = |rows: Vec<serde_json::Value>| -> Result<Vec<nostr::Event>, CliError> {
         rows.into_iter()
@@ -1564,9 +1575,10 @@ async fn fetch_verdict_candidates(
         client
             .query_paginated(
                 serde_json::json!({
+                    // Every founder's missions, not only the signer's.
                     "kinds": [KIND_CODING_SESSION_GENESIS],
                     "#h": [channel],
-                    "authors": [owner],
+                    "authors": founders.pubkeys(),
                 }),
                 VERDICT_ADMISSION_MAX_SESSIONS as u32,
             )
@@ -1612,11 +1624,14 @@ async fn fetch_verdict_candidates(
                 .cloned()
                 .collect();
         let seats = active_seats_from_authority_transitions(&authority, &genesis_ref);
+        // The mission's founder is whoever signed this genesis — with a
+        // founder set that is no longer always the announcement's signer.
+        let founder_pubkey = genesis.pubkey.to_hex();
         let context = verdict_admission_fold_context(
             channel,
             payload.session_ref.clone(),
             genesis_ref.clone(),
-            owner,
+            founder_pubkey.clone(),
             seats.clone(),
         );
         // A mission that does not fold admits nothing; it must not make the
@@ -1625,7 +1640,7 @@ async fn fetch_verdict_candidates(
         candidates.push(VerdictAdmissionCandidate {
             session_ref: payload.session_ref,
             genesis_ref,
-            founder_pubkey: owner.to_string(),
+            founder_pubkey,
             canonical,
             active_seat_pubkeys: seats.into_iter().map(|seat| seat.actor_pubkey).collect(),
         });
@@ -1697,6 +1712,7 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
             "heading": PREDICTION_HEADING,
             "evaluated_by": ENFORCEMENT_DISCLOSURE,
             "serving_relay": prediction.serving_relay,
+            "founders": prediction.founders,
             "ref": prediction.ref_name,
             "sha": prediction.sha,
             "answer": match &prediction.state {
@@ -1933,6 +1949,9 @@ pub fn render_human(report: &CheckReport) -> String {
         let _ = writeln!(out, "{line}");
         let _ = writeln!(out, "  {ENFORCEMENT_DISCLOSURE}");
         let _ = writeln!(out, "  {}", prediction.serving_relay);
+        if !prediction.founders.is_empty() {
+            let _ = writeln!(out, "  {}", prediction.founders);
+        }
     }
 
     if !report.repos.is_empty() {
@@ -2517,7 +2536,7 @@ mod tests {
                 ref_name: "refs/heads/main",
                 new_oid: sha,
                 pusher_pubkey: &"cd".repeat(32),
-                repo_owner_pubkey: &"ab".repeat(32),
+                repo_founders: &["ab".repeat(32)],
             },
             &VerdictAdmissionRules::FOUNDER_ONLY,
         );
@@ -2531,6 +2550,7 @@ mod tests {
                 reason: refusal.reason(),
             },
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+            founders: String::new(),
         }));
         assert!(
             rendered.contains(PREDICTION_HEADING),
@@ -2560,6 +2580,7 @@ mod tests {
             sha: "2".repeat(40),
             state: RefPredictionState::Ungoverned,
             serving_relay: "serving relay's version unknown".to_string(),
+            founders: String::new(),
         }));
         assert!(
             rendered.contains("the rule as THIS build evaluates it"),
@@ -2584,6 +2605,7 @@ mod tests {
             sha: "2".repeat(40),
             state: RefPredictionState::Ungoverned,
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+            founders: String::new(),
         }));
         assert!(
             rendered.contains("no require-verdict rule governs this ref"),
@@ -2606,6 +2628,7 @@ mod tests {
                 detail: "the relay refused the query".to_string(),
             },
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+            founders: String::new(),
         }));
         assert!(
             rendered.contains("not predicted — the relay refused the query"),

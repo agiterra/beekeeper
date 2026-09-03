@@ -440,9 +440,9 @@ mod live {
             format!(
                 "refs/heads/main: require-verdict is set and no mission verdict names this \
                  commit: no approved report names {HEAD_SHA}. Searched 1 mission(s) — the \
-                 newest 16 on this channel whose founder owns this repository — over one \
-                 shared page of the newest 512 team transactions on that channel. An older \
-                 ruling can fall outside both."
+                 newest 16 on this channel whose founder is a founder of this repository — \
+                 over one shared page of the newest 512 team transactions on that channel. An \
+                 older ruling can fall outside both."
             ),
             "the body is what `git push` prints, prefixed by the ref"
         );
@@ -582,8 +582,9 @@ mod live {
             body,
             format!(
                 "refs/heads/main: commit {HEAD_SHA} is approved, but the relay's \
-                 require-verdict rule reserves a gated ref to the founder (founder-only \
-                 pushes). Ask the founder to land it."
+                 require-verdict rule reserves a gated ref to a founder of this repository (1 \
+                 founder(s): the announcement's signer, its maintainers tag, and the project \
+                 roster's owners). Ask a founder to land it."
             ),
             "the reservation is attributed to the relay's rule, not to a mission policy \
              nobody read"
@@ -609,6 +610,272 @@ mod live {
             StatusCode::OK,
             "an UNGOVERNED main still takes a seat's fast-forward — this is finding 27's \
              hole, and only the rule closes it (body: {body})"
+        );
+    }
+
+    // ── finding 33: a repository has founders, not an owner ─────────────
+
+    /// Make `pubkey` an ordinary member of the mission's channel, so the role
+    /// check lets them reach the verdict gate at all. Member is exactly the
+    /// tier a fast-forward of `refs/heads/main` needs.
+    async fn channel_member(m: &Mission, keys: &Keys) {
+        m.state
+            .db
+            .ensure_user(m.community, &keys.public_key().to_bytes())
+            .await
+            .expect("user");
+        m.state
+            .db
+            .add_member(
+                m.community,
+                m.channel_id,
+                &keys.public_key().to_bytes(),
+                buzz_core::channel::MemberRole::Member,
+                Some(&m.founder.public_key().to_bytes()),
+            )
+            .await
+            .expect("member");
+    }
+
+    /// The live shape on hive: the announcement is Andy's, the mission is
+    /// Brian's, and a `maintainers` tag says they are both founders. Before
+    /// this lane the genesis query was author-scoped to Andy, so Brian's
+    /// ruling was never even read.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_maintainers_tag_admits_the_other_founders_mission() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::Approve,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let announcer = Keys::generate();
+        let mut tags = guarded_repo(m.channel_id);
+        tags.push(
+            Tag::parse(["maintainers", &m.founder.public_key().to_hex()]).expect("maintainers"),
+        );
+        let response = push_response(
+            &m.state,
+            m.community,
+            &announcer,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            tags,
+            &m.founder.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a maintainer's own approved commit lands (body: {body})"
+        );
+    }
+
+    /// The same announcement without the tag refuses exactly as it does today
+    /// — the rule is not weakened for a single-founder repository, and the
+    /// refusal discloses that nothing was found to search.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn without_the_maintainers_tag_the_same_push_is_refused() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::Approve,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let announcer = Keys::generate();
+        let response = push_response(
+            &m.state,
+            m.community,
+            &announcer,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            guarded_repo(m.channel_id),
+            &m.founder.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(
+            body.contains("Searched 0 mission(s)"),
+            "no mission on this channel was founded by a founder: {body}"
+        );
+    }
+
+    /// The reservation half: the ruling is the announcement signer's, and a
+    /// maintainer who founded no mission still lands it. `admit_or_reserve`
+    /// compared the pusher with the mission's own founder before this lane.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_maintainer_may_land_a_ruling_the_signer_made() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::Approve,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let maintainer = Keys::generate();
+        channel_member(&m, &maintainer).await;
+        let mut tags = guarded_repo(m.channel_id);
+        tags.push(
+            Tag::parse(["maintainers", &maintainer.public_key().to_hex()]).expect("maintainers"),
+        );
+        let response = push_response(
+            &m.state,
+            m.community,
+            &m.founder,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            tags,
+            &maintainer.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "an equal owner lands the other's ruling (body: {body})"
+        );
+    }
+
+    /// A key with a channel row but no founder standing is still reserved out,
+    /// and the refusal now discloses how many founders there are.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_non_founder_member_is_still_reserved_out() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::Approve,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let stranger = Keys::generate();
+        channel_member(&m, &stranger).await;
+        let response = push_response(
+            &m.state,
+            m.community,
+            &m.founder,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            guarded_repo(m.channel_id),
+            &stranger.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body,
+            format!(
+                "refs/heads/main: commit {HEAD_SHA} is approved, but the relay's require-verdict \
+                 rule reserves a gated ref to a founder of this repository (1 founder(s): the \
+                 announcement's signer, its maintainers tag, and the project roster's owners). \
+                 Ask a founder to land it."
+            )
+        );
+    }
+
+    /// The coordinator's case, and the live one: the second founder holds no
+    /// `maintainers` row. They are an Owner on the project roster the
+    /// announcement's `["project", …]` back-reference names — Andy's
+    /// `a56ad5d01` model — and that is what makes their mission's ruling
+    /// admit their own push.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_project_roster_owner_founds_the_repository() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::Approve,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let announcer = Keys::generate();
+        let dtag = format!("proj-{}", Uuid::new_v4().simple());
+        m.state
+            .db
+            .upsert_project_acl(
+                m.community,
+                &announcer.public_key().to_bytes(),
+                &dtag,
+                "public",
+                &[(
+                    m.founder.public_key().to_bytes().to_vec(),
+                    buzz_core::channel::ProjectRole::Owner,
+                )],
+                1,
+            )
+            .await
+            .expect("project acl");
+        let coordinate = format!("30621:{}:{dtag}", announcer.public_key().to_hex());
+        let mut tags = guarded_repo(m.channel_id);
+        tags.push(Tag::parse(["project", &coordinate]).expect("project"));
+
+        let response = push_response(
+            &m.state,
+            m.community,
+            &announcer,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            tags,
+            &m.founder.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a project Owner founds the repository too (body: {body})"
+        );
+    }
+
+    /// …and a project *collaborator* does not. The roster grants them push,
+    /// not founder standing, so their own mission's ruling admits nothing.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_project_collaborator_does_not_found_the_repository() {
+        let m = mission(
+            CodingSessionTeamDispositionDecision::Approve,
+            Some(HEAD_SHA),
+            Some("main"),
+        )
+        .await;
+        let announcer = Keys::generate();
+        let dtag = format!("proj-{}", Uuid::new_v4().simple());
+        m.state
+            .db
+            .upsert_project_acl(
+                m.community,
+                &announcer.public_key().to_bytes(),
+                &dtag,
+                "public",
+                &[(
+                    m.founder.public_key().to_bytes().to_vec(),
+                    buzz_core::channel::ProjectRole::Collaborator,
+                )],
+                1,
+            )
+            .await
+            .expect("project acl");
+        let coordinate = format!("30621:{}:{dtag}", announcer.public_key().to_hex());
+        let mut tags = guarded_repo(m.channel_id);
+        tags.push(Tag::parse(["project", &coordinate]).expect("project"));
+
+        let response = push_response(
+            &m.state,
+            m.community,
+            &announcer,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            tags,
+            &m.founder.public_key().to_hex(),
+            fast_forward(HEAD_SHA),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+        assert!(
+            body.contains("Searched 0 mission(s)"),
+            "a collaborator's mission is not searched: {body}"
         );
     }
 }

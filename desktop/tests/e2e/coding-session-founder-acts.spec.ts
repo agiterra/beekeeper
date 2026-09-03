@@ -3,9 +3,11 @@ import { expect, test } from "@playwright/test";
 import { waitForAnimations } from "../helpers/animations";
 import {
   BUILDER_ACTOR,
+  CO_FOUNDER,
   HEAD_SHA,
   LAND_REFUSAL_NO_VERDICT,
   founderActMission,
+  landFounders,
   landReadyResponse,
   landRefusedResponse,
   openFounderActApp,
@@ -253,6 +255,61 @@ test("L8.2: an admitted commit offers the exact command, and the app never runs 
   await control.scrollIntoViewIfNeeded();
   await waitForAnimations(page);
   await control.screenshot({ path: `${SHOTS}/05-land-ready.png` });
+});
+
+test("L18: the Land control names both founders, and says the viewer is one", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    landResponse: landReadyResponse(mission),
+  });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  const founders = control.getByTestId("mission-land-founders");
+  await expect(founders).toHaveAttribute("data-founder", "viewer");
+  // Both founders — the viewer by the name this surface knows them by, the
+  // co-founder by its 8-hex — and the v1 residual: rules answer to the signer
+  // alone. Full 64-hex twice was unreadable and clipped; the sentence the
+  // screen composes is short, and `buzz-core` still owns the rule.
+  await expect(founders).toContainText("Founders: the founder,");
+  await expect(founders).toContainText(CO_FOUNDER.slice(0, 8));
+  await expect(founders).toContainText("You are one of them.");
+  await expect(founders).toContainText(
+    "Rules are set by the founder and only that key can rewrite them.",
+  );
+
+  await control.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await control.screenshot({ path: `${SHOTS}/08-land-founders.png` });
+});
+
+test("L18: a viewer who founds nothing is told so on the refused control", async ({
+  page,
+}) => {
+  const mission = founderActMission();
+  await openFounderActApp(page, {
+    foldResponse: mission.foldResponse,
+    landResponse: {
+      ...landRefusedResponse(mission),
+      ...landFounders(false),
+    },
+  });
+  await openMissionLens(page, mission);
+
+  const control = page.getByTestId("mission-land-control");
+  await expect(control).toHaveAttribute("data-land-state", "refused");
+  const founders = control.getByTestId("mission-land-founders");
+  await expect(founders).toHaveAttribute("data-founder", "other");
+  await expect(founders).toContainText(
+    "You are not one of them, so this repository's rules do not answer to your key.",
+  );
+
+  await control.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await control.screenshot({ path: `${SHOTS}/09-land-not-a-founder.png` });
 });
 
 test("L8.3: an unverified completion and an unread policy each say so in the state panel", async ({

@@ -895,12 +895,15 @@ role check allowed, never admit one the role check refused.
    object id, compared whole and case-folded. A report naming a 64-hex id names
    a different object and does not admit.
 2. That session's `kind:44226` genesis is on the channel the repository's
-   `buzz-channel` tag binds, and the genesis signer is the repository owner.
+   `buzz-channel` tag binds, and the genesis signer is **a founder of the
+   repository** (see *Founders* below).
 3. The pushed ref is the branch the approved report named, when it named one.
    A report naming `whoami/cli` approves that commit **on that branch**; it does
    not admit the same commit onto `main`, nor admit it back over a branch that
    has since moved on. A report naming no branch scopes no ref.
-4. The pusher is that founder. **The reservation is the relay's rule, not the
+4. The pusher is **a founder of the repository** — not necessarily the one who
+   founded the mission: co-owners are equal owners of the code, and a ruling by
+   one is landable by the other. **The reservation is the relay's rule, not the
    mission's** — no session policy is read, and the refusal says so. (A relay
    MAY admit an active seat of the same umbrella instead; Beekeeper ships that
    branch **disabled** until a verdict-gated push has been exercised live once.)
@@ -919,8 +922,31 @@ Two records that look like they should admit never do:
   rule was written (live run 3, 2026-09-02: a verifier's FAIL was on the wire
   and the branch reached `main` anyway).
 
+**Founders.** *(Added 2026-09-03, lane L18; finding 33.)* A repository's
+**founders** are, in order:
+
+1. the announcement's signer;
+2. every pubkey in its NIP-34 `["maintainers", <hex>, <hex>, …]` tag;
+3. every pubkey whose effective git role on the repository resolves to Owner
+   through the project roster its `["project", …]` back-reference names — the
+   git ACL Buzz already authorizes pushes against.
+
+A malformed `maintainers` value is ignored **and counted**; nothing guesses at
+a mistyped key. Keying the rule to the signer alone was correct only for a
+single-founder repository: `agiterra-beekeeper` is announced by one human and
+co-owned by two, so under the original rule the second founder's missions ruled
+on nothing and their landing pushes were refused, whatever the roster said.
+
+**Rules are narrower than founders, and this is a v1 limit.** The
+`buzz-protect` tags live on the announcement, which is addressable at its
+author, so only the **signer** can rewrite them: a co-founder's replacement
+`kind:30617` is a different repository, not an edit. Every surface that prints
+a founder set says this out loud. Making a rule change founder-signed needs a
+separate event kind that the gate reads alongside the announcement; it is not
+in this appendix.
+
 **Bounds.** A relay resolves candidates from the newest 16 geneses on the bound
-channel authored by the repository owner, over **one shared page** of the newest
+channel authored by **any founder**, over **one shared page** of the newest
 512 team transactions on that channel — not 512 per mission — and stops at the
 first mission that admits. The refusal names both caps in words, because a
 mission whose records fell outside the page was *named* but not *read*, and on

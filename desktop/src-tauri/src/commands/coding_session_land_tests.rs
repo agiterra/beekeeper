@@ -152,6 +152,11 @@ fn mission(decision: &str, head_sha: Option<&str>, branch: Option<&str>) -> Miss
     }
 }
 
+/// The ordinary request: the roster was read and named no extra Owner.
+///
+/// `Some(vec![])` rather than `None` on purpose — "read, and it adds nobody"
+/// is the common case, and `None` is the disclosure a caller that *could not*
+/// read the roster must carry (finding 33).
 fn request(
     mission: &Mission,
     protection_tags: Option<Vec<Vec<String>>>,
@@ -165,6 +170,7 @@ fn request(
         founder_pubkey: founder_hex.clone(),
         repo_owner_pubkey: protection_tags.as_ref().map(|_| founder_hex.clone()),
         pusher_pubkey: founder_hex,
+        project_owner_pubkeys: Some(Vec::new()),
         protection_tags,
         included_event_ids: mission.included.clone(),
         events: mission.events.clone(),
@@ -213,8 +219,8 @@ fn changes_requested_over_the_same_commit_refuses_with_ss1j_first_string() {
         format!(
             "require-verdict is set and no mission verdict names this commit: no approved report \
              names {HEAD_SHA}. Searched 1 mission(s) — the newest 16 on this channel whose \
-             founder owns this repository — over one shared page of the newest 512 team \
-             transactions on that channel. An older ruling can fall outside both."
+             founder is a founder of this repository — over one shared page of the newest 512 \
+             team transactions on that channel. An older ruling can fall outside both."
         )
     );
     let newest = answer.newest_verdict.expect("the verdict it read is shown");
@@ -339,7 +345,9 @@ fn a_pusher_who_is_not_the_founder_gets_the_reserved_act_string() {
         Some(
             format!(
                 "commit {HEAD_SHA} is approved, but the relay's require-verdict rule reserves a \
-                 gated ref to the founder (founder-only pushes). Ask the founder to land it."
+                 gated ref to a founder of this repository (1 founder(s): the announcement's \
+                 signer, its maintainers tag, and the project roster's owners). Ask a founder \
+                 to land it."
             )
             .as_str()
         )
@@ -523,4 +531,77 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
         generated_value["approvedForAnotherRef"]["admitted"],
         json!(false)
     );
+}
+
+// ── finding 33: the Land control names the founders ─────────────────────
+
+/// A viewer who is a `maintainers` co-founder — but not the announcement's
+/// signer and not the mission's founder — may land the ruling, and the answer
+/// names both founders so the screen can say who they are.
+#[test]
+fn a_maintainer_may_land_and_the_answer_names_both_founders() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let maintainer = Keys::generate().public_key().to_hex();
+    let mut tags = protect(&["require-verdict"]);
+    tags.push(vec!["maintainers".to_owned(), maintainer.clone()]);
+    let mut request = request(&mission, Some(tags));
+    request.pusher_pubkey = maintainer.clone();
+
+    let answer = land_adapter(request).expect("the boundary answers");
+    assert!(answer.admitted, "an equal owner lands the other's ruling");
+    assert!(answer.viewer_is_founder);
+    assert_eq!(
+        answer.founders,
+        vec![mission.founder.public_key().to_hex(), maintainer]
+    );
+    assert!(
+        answer.founders_note.contains("(2)"),
+        "the sentence names both: {}",
+        answer.founders_note
+    );
+}
+
+/// The roster half, which no tag carries: the caller passes the project's
+/// Owners, and the same viewer becomes a founder. Passing `None` instead is
+/// "not read", and the sentence says so.
+#[test]
+fn project_roster_owners_join_the_founder_set_and_null_is_disclosed() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let roster_owner = Keys::generate().public_key().to_hex();
+
+    let mut read = request(&mission, Some(protect(&["require-verdict"])));
+    read.pusher_pubkey = roster_owner.clone();
+    read.project_owner_pubkeys = Some(vec![roster_owner.clone()]);
+    let answer = land_adapter(read).expect("the boundary answers");
+    assert!(answer.admitted, "a project Owner founds the repository too");
+    assert!(answer.viewer_is_founder);
+    assert!(
+        !answer.founders_note.contains("was not read here"),
+        "a read roster is not disclosed as unread: {}",
+        answer.founders_note
+    );
+
+    let mut unread = request(&mission, Some(protect(&["require-verdict"])));
+    unread.pusher_pubkey = roster_owner.clone();
+    unread.project_owner_pubkeys = None;
+    let answer = land_adapter(unread).expect("the boundary answers");
+    assert!(!answer.admitted, "an unread roster grants nobody");
+    assert!(!answer.viewer_is_founder);
+    assert!(
+        answer.founders_note.contains("was not read here"),
+        "an unread roster is disclosed: {}",
+        answer.founders_note
+    );
+}
+
+/// With no repository record the founder line is a fact about the *read*, not
+/// a claim that the repository has no founders.
+#[test]
+fn no_repository_record_names_no_founders_and_says_why() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let answer = land_adapter(request(&mission, None)).expect("the boundary answers");
+    assert!(!answer.repository_known);
+    assert!(answer.founders.is_empty());
+    assert_eq!(answer.founders_note, NO_REPOSITORY_FOUNDERS_NOTE);
+    assert!(!answer.viewer_is_founder);
 }

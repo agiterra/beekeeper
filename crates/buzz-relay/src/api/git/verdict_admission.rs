@@ -3,8 +3,19 @@
 //!
 //! [`buzz_core::coding_session_verdict_admission`] holds the rule itself and
 //! has no I/O. This module supplies it with candidates: the bounded set of
-//! missions on the repository's bound channel whose founder is the repository
-//! owner, each folded from stored events.
+//! missions on the repository's bound channel whose founder is **a founder of
+//! the repository**, each folded from stored events.
+//!
+//! # Who founds a repository
+//!
+//! Finding 33: keying that to the kind:30617 signer alone made a two-human
+//! repository unlandable by one of them. [`resolve_repository_founders`] is
+//! the one function the push path asks, and it composes three sources — the
+//! announcement's signer, its NIP-34 `maintainers` tag, and every project
+//! roster row whose git tier is Owner under
+//! [`buzz_core::git_perms::git_role_for_project_role`] (commit `a56ad5d01`:
+//! the roster is a first-class git ACL). `buzz-core` cannot reach the roster,
+//! so the set is resolved here and passed to the predicate.
 //!
 //! # Cost
 //!
@@ -19,7 +30,9 @@
 //!
 //! **Nothing here runs unless a matching `buzz-protect` rule sets
 //! `require-verdict`.** An ordinary push issues exactly the queries it issued
-//! before this module existed.
+//! before this module existed — the founder resolution included, which is why
+//! `policy.rs` calls [`resolve_repository_founders`] inside the gated branch
+//! and not beside the role check.
 
 use std::sync::Arc;
 
@@ -38,6 +51,7 @@ use buzz_core::coding_session_verdict_admission::{
 };
 use buzz_core::git_perms::{Denial, EffectiveRules, ProtectionRule, RefUpdate};
 use buzz_core::kind::{KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_TEAM_TRANSACTION};
+use buzz_core::repository_founders::RepositoryFounders;
 use buzz_db::EventQuery;
 
 use crate::state::AppState;
@@ -74,10 +88,9 @@ pub struct VerdictSearchRequest<'a> {
     /// error but a refusal, because a rule that cannot read a verdict must
     /// not silently pass one.
     pub channel_id: Option<Uuid>,
-    /// kind:30617 author, hex.
-    pub repo_owner_hex: &'a str,
-    /// The same key as bytes, for the indexed author query.
-    pub repo_owner_bytes: &'a [u8],
+    /// Every founder of the repository, resolved once per push by
+    /// [`resolve_repository_founders`].
+    pub founders: &'a RepositoryFounders,
     /// Full ref name being updated.
     pub ref_name: &'a str,
     /// The object id the update would leave on it.
@@ -109,6 +122,56 @@ pub fn refs_requiring_verdict<'a>(
         .collect()
 }
 
+/// Who founds this repository: signer ∪ NIP-34 `maintainers` ∪ roster Owners.
+///
+/// The single function the push path asks "who speaks for this repository",
+/// so the verdict gate and any future caller cannot answer it two ways. The
+/// announcement half is [`RepositoryFounders::from_announcement`]; the roster
+/// half is the project the announcement's `["project", …]` back-reference
+/// names, read through [`buzz_db::Db::get_project_roster`] — the same rows
+/// `get_project_role_by_coordinate` authorizes pushes against (`a56ad5d01`).
+///
+/// A repository with no `project` tag has no roster to read, and the set is
+/// still marked **read**: there is nothing missing from it. A roster the
+/// coordinate does not resolve is likewise read-and-empty — an unknown project
+/// grants nobody. Only a storage failure is an error, and it fails the push
+/// closed rather than silently narrowing the set to the signer.
+pub async fn resolve_repository_founders(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    announcement: &nostr::Event,
+) -> Result<RepositoryFounders, ()> {
+    let founders = RepositoryFounders::from_announcement(announcement);
+    let Some(coordinate) = buzz_core::kind::repo_project_ref(announcement) else {
+        return Ok(founders.with_roster_owners(Vec::new()));
+    };
+    let roster = match state.db.get_project_roster(community, &coordinate).await {
+        Ok(roster) => roster,
+        Err(error) => {
+            tracing::error!(error = %error, "verdict admission: project roster lookup failed");
+            return Err(());
+        }
+    };
+    let Some(roster) = roster else {
+        return Ok(founders.with_roster_owners(Vec::new()));
+    };
+    // The creator holds no `project_acl_members` row — a membership op naming
+    // them is refused outright — and is an implicit Owner everywhere else that
+    // reads this roster. Omitting them here would drop the one founder the
+    // coordinate itself names.
+    let mut rows: Vec<(String, buzz_core::channel::ProjectRole)> = vec![(
+        hex::encode(&roster.owner),
+        buzz_core::channel::ProjectRole::Owner,
+    )];
+    rows.extend(
+        roster
+            .members
+            .into_iter()
+            .map(|(pubkey, role)| (hex::encode(pubkey), role)),
+    );
+    Ok(founders.with_roster_roles(rows))
+}
+
 /// Search the bound channel's missions for a ruling that admits `new_oid`.
 pub async fn search_verdict_admission(
     state: &Arc<AppState>,
@@ -117,8 +180,7 @@ pub async fn search_verdict_admission(
     let VerdictSearchRequest {
         community,
         channel_id,
-        repo_owner_hex,
-        repo_owner_bytes,
+        founders,
         ref_name,
         new_oid,
         pusher_pubkey,
@@ -127,9 +189,24 @@ pub async fn search_verdict_admission(
         return VerdictSearch::Refused(VerdictAdmissionRefusal::RepositoryUnbound);
     };
 
+    // Every founder's geneses, not only the signer's. A founder whose hex the
+    // announcement mangled is already absent from the set (counted, not
+    // guessed at), so `hex::decode` here cannot fail on a founder that
+    // `RepositoryFounders` admitted; a value that somehow does is skipped
+    // rather than turned into a wildcard author filter.
+    let founder_bytes: Vec<Vec<u8>> = founders
+        .pubkeys()
+        .iter()
+        .filter_map(|founder| hex::decode(founder).ok())
+        .filter(|bytes| bytes.len() == 32)
+        .collect();
+    if founder_bytes.is_empty() {
+        return decide(&[], ref_name, new_oid, pusher_pubkey, founders);
+    }
+
     let genesis_query = EventQuery {
         kinds: Some(vec![KIND_CODING_SESSION_GENESIS as i32]),
-        pubkey: Some(repo_owner_bytes.to_vec()),
+        authors: Some(founder_bytes),
         channel_id: Some(channel_id),
         limit: Some(VERDICT_ADMISSION_MAX_SESSIONS as i64),
         ..EventQuery::for_community(community)
@@ -142,7 +219,7 @@ pub async fn search_verdict_admission(
         }
     };
     if geneses.is_empty() {
-        return decide(&[], ref_name, new_oid, pusher_pubkey, repo_owner_hex);
+        return decide(&[], ref_name, new_oid, pusher_pubkey, founders);
     }
 
     // One page of team transactions for the whole channel, not one per
@@ -172,6 +249,12 @@ pub async fn search_verdict_admission(
     let mut candidates: Vec<VerdictAdmissionCandidate> = Vec::with_capacity(geneses.len());
     for stored in &geneses {
         let genesis_ref = stored.event.id.to_hex();
+        // The mission's founder is whoever signed **this** genesis, not the
+        // announcement's signer. Before finding 33 the query was scoped to one
+        // author so the two were the same string; with a founder set they are
+        // not, and writing the wrong one here would make a co-founder's own
+        // ruling fail the fold's `founder_pubkey` check.
+        let founder_pubkey = stored.event.pubkey.to_hex();
         let Ok(payload) = decode_coding_session_genesis(&stored.event.content) else {
             continue;
         };
@@ -186,7 +269,7 @@ pub async fn search_verdict_admission(
             candidates.push(VerdictAdmissionCandidate {
                 session_ref: payload.session_ref.clone(),
                 genesis_ref,
-                founder_pubkey: repo_owner_hex.to_string(),
+                founder_pubkey,
                 canonical: Vec::new(),
                 active_seat_pubkeys: Vec::new(),
             });
@@ -219,7 +302,7 @@ pub async fn search_verdict_admission(
             channel_id.to_string(),
             payload.session_ref.clone(),
             genesis_ref.clone(),
-            repo_owner_hex.to_string(),
+            founder_pubkey.clone(),
             seats.clone(),
         );
         // One malformed mission must not deny every ref update: a fold that
@@ -239,19 +322,13 @@ pub async fn search_verdict_admission(
         candidates.push(VerdictAdmissionCandidate {
             session_ref: payload.session_ref.clone(),
             genesis_ref,
-            founder_pubkey: repo_owner_hex.to_string(),
+            founder_pubkey,
             canonical,
             active_seat_pubkeys: seats.into_iter().map(|seat| seat.actor_pubkey).collect(),
         });
     }
 
-    decide(
-        &candidates,
-        ref_name,
-        new_oid,
-        pusher_pubkey,
-        repo_owner_hex,
-    )
+    decide(&candidates, ref_name, new_oid, pusher_pubkey, founders)
 }
 
 /// Run the pure rule over the resolved candidates.
@@ -263,13 +340,13 @@ fn decide(
     ref_name: &str,
     new_oid: &str,
     pusher_pubkey: &str,
-    repo_owner_hex: &str,
+    founders: &RepositoryFounders,
 ) -> VerdictSearch {
     let query = VerdictAdmissionQuery {
         ref_name,
         new_oid,
         pusher_pubkey,
-        repo_owner_pubkey: repo_owner_hex,
+        repo_founders: founders.pubkeys(),
     };
     match evaluate_verdict_admission(candidates, &query, &VerdictAdmissionRules::FOUNDER_ONLY) {
         VerdictAdmission::Admitted(_) => VerdictSearch::Admitted,

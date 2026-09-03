@@ -1,7 +1,11 @@
 import * as React from "react";
 
 import { relayClient } from "@/shared/api/relayClient";
-import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
+import {
+  KIND_PROJECT,
+  KIND_PROJECT_MEMBERS,
+  KIND_REPO_ANNOUNCEMENT,
+} from "@/shared/constants/kinds";
 import type { CodingSessionMissionLandEvidenceInput } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import {
   codingSessionMissionLandModel,
@@ -15,7 +19,66 @@ export type CodingSessionMissionLandRepository = {
   ownerPubkey: string;
   /** That event's whole tag list, `buzz-protect` rows included. */
   protectionTags: readonly (readonly string[])[];
+  /**
+   * Pubkeys the repository's project roster grants Owner, or null when the
+   * roster could not be read (no `project` back-reference is *not* that case —
+   * a repository in no project has no roster, and nothing is missing).
+   *
+   * Finding 33: a project Owner founds the repository under `a56ad5d01`'s
+   * model, and the pre-L18 Land control read only the announcement's signer.
+   */
+  projectOwnerPubkeys: readonly string[] | null;
 };
+
+/** A NIP-MP project coordinate, `30621:<owner>:<d>`. */
+const PROJECT_ADDRESS = /^30621:([0-9a-f]{64}):(.+)$/i;
+
+/**
+ * The Owners of the project at `coordinate`, from the wire.
+ *
+ * The relay-signed kind:39010 projection when one exists, and otherwise the
+ * project head's own `p` tags — which is what the relay's ACL was built from
+ * before any membership op was accepted. The creator holds no roster row (a
+ * membership op naming them is refused outright) and is an Owner implicitly,
+ * so they are always included.
+ *
+ * Throws rather than returning `[]` on a read it could not make: an empty
+ * roster and an unread one are different facts and the sentence says which.
+ */
+export async function readProjectOwners(
+  coordinate: string,
+  fetchEvents: typeof relayClient.fetchEvents = (filter) =>
+    relayClient.fetchEvents(filter),
+): Promise<readonly string[]> {
+  const match = PROJECT_ADDRESS.exec(coordinate.trim());
+  if (match === null) return [];
+  const creator = match[1].toLowerCase();
+  const identifier = match[2];
+  const projections = await fetchEvents({
+    kinds: [KIND_PROJECT_MEMBERS],
+    "#d": [coordinate],
+    limit: 1,
+  });
+  let source = [...projections].sort((a, b) => b.created_at - a.created_at)[0];
+  if (!source) {
+    const heads = await fetchEvents({
+      kinds: [KIND_PROJECT],
+      authors: [creator],
+      "#d": [identifier],
+      limit: 1,
+    });
+    source = [...heads].sort((a, b) => b.created_at - a.created_at)[0];
+  }
+  const owners = [creator];
+  for (const tag of source?.tags ?? []) {
+    // `["p", <hex>, <relay hint>, <role>]` — a role-less invite is the legacy
+    // collaborator, which is not an Owner.
+    if (tag[0] !== "p" || tag[3] !== "owner") continue;
+    const pubkey = (tag[1] ?? "").toLowerCase();
+    if (pubkey.length === 64 && !owners.includes(pubkey)) owners.push(pubkey);
+  }
+  return owners;
+}
 
 /** A NIP-34 repository address, `30617:<owner>:<d>`. */
 const REPO_ADDRESS = /^30617:([0-9a-f]{64}):(.+)$/i;
@@ -55,9 +118,21 @@ export async function readCodingSessionRepository(
   // older copy alongside the live one.
   const newest = [...events].sort((a, b) => b.created_at - a.created_at)[0];
   if (!newest) return null;
+  const coordinate = newest.tags.find((tag) => tag[0] === "project")?.[1];
+  let projectOwnerPubkeys: readonly string[] | null = [];
+  if (coordinate !== undefined) {
+    try {
+      projectOwnerPubkeys = await readProjectOwners(coordinate, fetchEvents);
+    } catch {
+      // Unread, and disclosed as unread. Guessing `[]` here would print a
+      // founder set that silently omits a co-owner — finding 33's own shape.
+      projectOwnerPubkeys = null;
+    }
+  }
   return {
     ownerPubkey: newest.pubkey.toLowerCase(),
     protectionTags: newest.tags.map((tag) => [...tag]),
+    projectOwnerPubkeys,
   };
 }
 
@@ -166,6 +241,7 @@ export function useCodingSessionMissionLand(input: {
           genesisRef: current.genesisRef as string,
           founderPubkey: current.founderPubkey as string,
           repoOwnerPubkey: repository?.ownerPubkey ?? null,
+          projectOwnerPubkeys: repository?.projectOwnerPubkeys ?? null,
           pusherPubkey: current.viewerPubkey as string,
           protectionTags: repository?.protectionTags ?? null,
           includedEventIds: current.landEvidence?.includedEventIds ?? [],

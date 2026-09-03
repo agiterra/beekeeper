@@ -14065,6 +14065,14 @@ export function maybeInstallE2eTauriMocks() {
             evidence: null,
             refusalReason: null,
             newestVerdict: null,
+            // Finding 33: no repository record reached the rule, so it names
+            // no founders — and says that is a fact about the read.
+            founders: [],
+            foundersNote:
+              "No repository record reached this view, so nothing here can name its founders.",
+            viewerIsFounder: false,
+            rulesSigner: null,
+            rosterRead: false,
             command: null,
           }
         );

@@ -758,14 +758,38 @@ async fn decide_push(
             .into_iter()
             .cloned()
             .collect();
+    // Who founds this repository — signer, NIP-34 `maintainers`, and the
+    // project roster's Owners (finding 33). Resolved **inside** the gated
+    // branch and once per push, not per ref: an ungoverned push must issue
+    // exactly the queries it issued before the gate existed, and a governed
+    // push of ten refs must not read the roster ten times.
+    let founders = if gated.is_empty() {
+        None
+    } else {
+        match crate::api::git::verdict_admission::resolve_repository_founders(
+            state,
+            community,
+            &repo_event.event,
+        )
+        .await
+        {
+            Ok(founders) => Some(founders),
+            // Fail closed: a roster we could not read is not evidence that the
+            // pusher did not found this repository.
+            Err(()) => return PolicyOutcome::Refused("internal error"),
+        }
+    };
     for update in &gated {
+        let Some(founders) = founders.as_ref() else {
+            // Unreachable: `founders` is `Some` whenever `gated` is non-empty.
+            return PolicyOutcome::Refused("internal error");
+        };
         match crate::api::git::verdict_admission::search_verdict_admission(
             state,
             &VerdictSearchRequest {
                 community,
                 channel_id,
-                repo_owner_hex: &repo_owner_hex,
-                repo_owner_bytes: &owner_bytes,
+                founders,
                 ref_name: &update.ref_name,
                 new_oid: &update.new_oid,
                 pusher_pubkey: &req.pusher_pubkey,

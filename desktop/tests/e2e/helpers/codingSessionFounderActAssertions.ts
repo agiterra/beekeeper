@@ -706,6 +706,7 @@ export function landReadyResponse(mission: FounderActMission) {
       headSha: HEAD_SHA,
     },
     command: `git push origin ${HEAD_SHA}:refs/heads/main`,
+    ...landFounders(true),
   };
 }
 
@@ -733,6 +734,34 @@ const LAND_FIXTURE = JSON.parse(
 export const LAND_REFUSAL_NO_VERDICT = LAND_FIXTURE.refused
   .refusalReason as string;
 
+/**
+ * The repository's second founder — a NIP-34 `maintainers` co-owner who signs
+ * nothing in this mission (finding 33).
+ */
+export const CO_FOUNDER =
+  "3d3b7169a13a8311b480bdfce85b4a0c7ff9b185832cbc6e547db7bbcf96c05e";
+
+/**
+ * The founder set every mock land answer carries, and the sentence
+ * `buzz-core` composes for it.
+ *
+ * The sentence is the shape `RepositoryFounders::rules_sentence` emits with a
+ * read roster; keeping it here rather than importing the crate is deliberate —
+ * the fixture the Rust adapter generates is what pins the *wording*, and this
+ * helper only needs a well-formed answer to render.
+ */
+export function landFounders(viewerIsFounder: boolean) {
+  return {
+    founders: [FOUNDER, CO_FOUNDER],
+    foundersNote:
+      `rules are set by the announcement's signer ${FOUNDER} and only that key can rewrite ` +
+      `them; founders of this repository are ${FOUNDER}, ${CO_FOUNDER} (2).`,
+    viewerIsFounder,
+    rulesSigner: FOUNDER,
+    rosterRead: true,
+  };
+}
+
 /** §1j's branch-scoping string, as `buzz-core` formats it for this fixture. */
 export const LAND_REFUSAL_ANOTHER_REF = LAND_FIXTURE.approvedForAnotherRef
   .refusalReason as string;
@@ -755,6 +784,7 @@ export function landRefusedResponse(mission: FounderActMission) {
       headSha: HEAD_SHA,
     },
     command: null,
+    ...landFounders(true),
   };
 }
 
