@@ -14,6 +14,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 const encoder = new TextEncoder();
 const MAX_IDENTIFIER_BYTES = 256;
 const MAX_REFERENCE_BYTES = 2 * 1024;
+// Closed and kept closed: this is `SessionStatus`, a `#[serde(rename_all =
+// "snake_case")]` Rust enum (crates/buzz-core/src/coding_session_payload.rs),
+// not a config-driven string — the ten variants here are exactly its ten, and
+// a wire value can only widen this set by a Rust change on the other side,
+// which moves this list too. It is also the state machine every consumer
+// keys UI off of, so an unrecognized value must surface as "this build does
+// not know this status" rather than be silently accepted as some default.
 const SESSION_STATUSES = new Set([
   "starting",
   "idle",
@@ -81,6 +88,11 @@ export function hasExactFields(
   );
 }
 
+// Closed and kept closed: mirrors `CodingSessionTarget`
+// (crates/buzz-core/src/coding_session_command.rs), which is itself
+// `#[serde(deny_unknown_fields)]` — the four fields are the exact identity of
+// one live provider execution a signed command addresses, so a fifth field
+// here would be routing surface the relay does not itself recognize either.
 /** Exact four-field shape shared by command, receipt, and lease targets. */
 export function hasExactSessionTargetFields(
   value: unknown,
@@ -230,12 +242,35 @@ export function hasStrictLifecycleReceiptValues(
   if (
     content.schema !== "buzz-coding-session-lifecycle-receipt/v1" ||
     !boundedString(content.commandId, MAX_IDENTIFIER_BYTES) ||
-    !hasStrictSessionTargetValues(content.session) ||
     typeof content.status !== "string"
   ) {
     return false;
   }
-  if (content.status === "created" || content.status === "resumed") {
+  // A create that never reached a session names none: `failed` is the one
+  // lifecycle status whose `session` is `None`
+  // (`LifecycleReceipt::failed`, crates/buzz-core/src/coding_session_payload.rs:338).
+  // Every other status this reader accepts always carries a target
+  // (`validate_lifecycle_receipt`, coding_session_payload.rs:629-636), so the
+  // session-target check runs only past this branch. `code` here is a bounded
+  // identifier, not a closed set — the same callers that produce it
+  // (`PROVIDER_UNAVAILABLE`, `SESSION_LIMIT`, …) show it is open, and Rust's
+  // own general error check only bounds its length.
+  if (content.status === "failed") {
+    return (
+      content.session === null &&
+      isPlainObject(content.error) &&
+      boundedString(content.error.code, MAX_IDENTIFIER_BYTES) &&
+      boundedString(content.error.message, 1024 + 3)
+    );
+  }
+  if (!hasStrictSessionTargetValues(content.session)) return false;
+  // `stopped` is a plain terminal receipt exactly like `created`/`resumed` —
+  // a session, no error (`LifecycleReceipt::stopped`, coding_session_payload.rs:384).
+  if (
+    content.status === "created" ||
+    content.status === "resumed" ||
+    content.status === "stopped"
+  ) {
     return content.error === null;
   }
   if (
@@ -252,6 +287,12 @@ export function hasStrictLifecycleReceiptValues(
       boundedString(content.error.message, 1024 + 3)
     );
   }
+  // Every turn-stage status (`turn_queued`, `turn_started`, …) is rejected
+  // here on purpose: this reader is scoped to the lifecycle vocabulary the
+  // coordination fold cares about, and the caller (`readLifecycleReceipt`,
+  // `sessionCoordinationFold.ts`) further discriminates by the `csl-command`/
+  // `cslr-v` tag pair a turn receipt never carries. Turn-stage receipts
+  // decode through `codingSessionIngressPayloads.ts` instead.
   return false;
 }
 
@@ -271,6 +312,10 @@ export function hasStrictLeaseJson(
 export function hasStrictLeaseValues(
   content: Record<string, unknown>,
 ): boolean {
+  // `state` closed and kept closed: `CodingSessionLeaseState`
+  // (crates/buzz-core/src/coding_session_lease.rs) is a two-variant Rust enum,
+  // and the value is the authority fact this lease exists to assert — whether
+  // a provider currently owns a reachable live actor for this generation.
   return (
     content.schema === "buzz-coding-session-lease/v1" &&
     hasStrictSessionTargetValues(content.target) &&
@@ -283,12 +328,16 @@ export function hasStrictLeaseValues(
 /**
  * Every field set `buzz-core`'s `decode_coding_session_metadata` accepts.
  *
- * Five independent additive amendments have landed on the metadata payload —
+ * Six independent additive amendments have landed on the metadata payload —
  * the `sessionRef` echo, the agent seat's `role`, D9's `turnBudget`, B1's four
- * coordinate facts (which travel all-four-or-none), and the 2026-08-30
- * `routing` record — and each is present or absent on its own, so the base key
- * set has **thirty-two** valid shapes, not five. Enumerating fewer silently
- * drops every event carrying an amendment this list forgot, which is a
+ * coordinate facts (which travel all-four-or-none), the 2026-08-30 `routing`
+ * record, and `beeStamp` (`crates/buzz-core/src/coding_session_payload.rs:989`,
+ * documented there in Rust's own words as "the sixth independent additive
+ * key") — and each is present or absent on its own, so the base key set has
+ * **sixty-four** valid shapes, not five (this list drifted to five amendments
+ * / thirty-two shapes when `beeStamp` shipped without a matching bit here,
+ * rejecting every 44223 that carried one). Enumerating fewer silently drops
+ * every event carrying an amendment this list forgot, which is a
  * whole-surface outage rather than a strictness nuance: the reader sees no
  * sessions at all.
  */
@@ -313,6 +362,7 @@ function metadataFieldForms(): string[][] {
     ["turnBudget"],
     METADATA_FACT_FIELDS,
     ["routing"],
+    ["beeStamp"],
   ];
   const forms: string[][] = [];
   for (let mask = 0; mask < 1 << amendments.length; mask += 1) {
@@ -360,6 +410,34 @@ function isTurnBudget(value: unknown, sessionRef: unknown): boolean {
     (value.used as number) >= 0 &&
     Number.isSafeInteger(value.limit) &&
     (value.limit as number) > 0
+  );
+}
+
+const BEE_STAMP_SOURCES = new Set(["bundled", "path"]);
+const SHORT_SHA = /^[0-9a-f]{7,40}$/;
+
+/**
+ * A `beeStamp` object: exactly the five keys `BeeStamp`
+ * (`crates/buzz-core/src/coding_session_payload.rs:1030`, `deny_unknown_fields`)
+ * carries, each on its own terms. `source` is a genuine two-variant Rust enum
+ * (`BeeStampSource`) — closed and kept closed, unlike `capabilities` or
+ * `routing`'s open tokens, because a third resolution outcome is a Rust change
+ * this file would need to grow with. `sha`'s hex-and-length check mirrors the
+ * desktop's own `readSeatBeeStamp` (`codingSessionSeatBee.ts`) rather than
+ * Rust's plain `Option<String>`, so the two decoders agree exactly rather than
+ * this one being looser.
+ */
+function isBeeStamp(value: unknown): boolean {
+  return (
+    isPlainObject(value) &&
+    hasExactFields(value, [["path", "source", "version", "sha", "dirty"]]) &&
+    typeof value.path === "string" &&
+    value.path.length > 0 &&
+    BEE_STAMP_SOURCES.has(value.source as string) &&
+    (value.version === null || typeof value.version === "string") &&
+    (value.sha === null ||
+      (typeof value.sha === "string" && SHORT_SHA.test(value.sha))) &&
+    (value.dirty === null || typeof value.dirty === "boolean")
   );
 }
 
@@ -417,6 +495,29 @@ export function hasStrictMetadataJson(
   ) {
     return false;
   }
+  // Same omit-when-absent contract as `routing`: `beeStamp`'s producer never
+  // writes an explicit `null` ("coding-session metadata beeStamp must not be
+  // null", `decode_coding_session_metadata`), so a null here is a shape this
+  // build has never seen a real host emit, not "no stamp".
+  if (
+    Object.hasOwn(content, "beeStamp") &&
+    (content.beeStamp === null || !isBeeStamp(content.beeStamp))
+  ) {
+    return false;
+  }
+  // `capabilities` is an open map of booleans, not a closed set. It carries
+  // no authority and decides no protocol enum the relay enforces — it is a
+  // provider's self-report of what its own execution can do, read straight
+  // off `Capabilities` (`crates/buzz-core/src/coding_session_payload.rs`),
+  // whose fields grow by plain Rust struct addition (`prompt_image` in
+  // 15bbe6158, `#[serde(default)]`, no `deny_unknown_fields`). A closed key
+  // set here silently drops every event from a host newer than this build —
+  // exactly finding 34: 209 of 1,500 live 44223s rejected the day
+  // `promptImage` shipped. So the six named keys stay required (a producer
+  // that dropped one would be a different regression), a boolean-valued key
+  // this build has never heard of is ignored, and a non-boolean value on any
+  // key, named or not, is still refused — that is a shape violation
+  // regardless of what the key is called.
   const capabilityKeys = [
     "threadTurnStart",
     "threadTurnInterrupt",
@@ -425,12 +526,12 @@ export function hasStrictMetadataJson(
     "diff",
     "plan",
   ];
+  const capabilities = content.capabilities;
   if (
-    !hasExactFields(content.capabilities, [capabilityKeys]) ||
-    !capabilityKeys.every(
-      (key) =>
-        isPlainObject(content.capabilities) &&
-        typeof content.capabilities[key] === "boolean",
+    !isPlainObject(capabilities) ||
+    !capabilityKeys.every((key) => Object.hasOwn(capabilities, key)) ||
+    !Object.values(capabilities).every(
+      (entryValue) => typeof entryValue === "boolean",
     )
   ) {
     return false;
@@ -455,8 +556,15 @@ export function isStrictMetadataContent(source: string): boolean {
   }
 }
 
+// Only the router's own purchase — `chosen`/`runnerUp` — is a closed effort
+// set: `validate_routing_target` (coding_session_routing.rs:1252-1262) is the
+// protocol boundary the relay itself enforces, the autonomous ceiling `xhigh`/
+// `max`/`ultra` are deliberately excluded from. `RoutingOverride.effort` is
+// the opposite case: `validate_override` (:1276-1283) only `bounded_token`s
+// it, because a human override is exactly where those three values belong
+// (:118-121) — closing it here would refuse every legitimate xhigh/max/ultra
+// override the wire ever carries.
 const ROUTING_EFFORTS = new Set(["low", "medium", "high"]);
-const ROUTING_TIERS = new Set(["fast", "standard", "deep"]);
 /**
  * A review reason is a bounded token, not a member of a closed set.
  *
@@ -471,18 +579,6 @@ const MAX_ROUTING_REVIEW_REASONS = 16;
 const MAX_ROUTING_TOKEN_BYTES = 256;
 /** One sentence, bounded. Mirrors `MAX_ROUTING_DISAGREEMENT_BYTES`. */
 const MAX_ROUTING_DISAGREEMENT_BYTES = 512;
-const ROUTING_TRAITS = new Set([
-  "reasoning",
-  "coding",
-  "taste",
-  "judgment",
-  "agency",
-  "discipline",
-  "context",
-  "verification",
-  "velocity",
-  "costEfficiency",
-]);
 const ROUTING_RECORD_FIELDS = [
   "class",
   "tier",
@@ -515,6 +611,13 @@ const ROUTING_RECORD_FIELDS = [
  * - `chosen.effort` must be one the router is allowed to buy. `xhigh`, `max`
  *   and `ultra` are human-override only (spec §2); a record asserting one as
  *   a routed effort is refused rather than displayed.
+ *
+ * `class` and `tier` are bounded tokens, not closed sets: `bounded_token`
+ * checks both (`RoutingRecord::validate`, coding_session_routing.rs:1314-1316)
+ * against the registry's own config-driven names
+ * (`Registry::tiers: BTreeMap<String, TierPolicy>`, `::classes`), not a Rust
+ * enum — a registry that adds a tier or a class does not recompile this
+ * reader, so pinning either here would silently drop it.
  */
 export function hasStrictRoutingRecord(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
@@ -527,13 +630,8 @@ export function hasStrictRoutingRecord(value: unknown): boolean {
   if (ROUTING_RECORD_FIELDS.some((key) => !Object.hasOwn(value, key))) {
     return false;
   }
-  if (
-    typeof value.class !== "string" ||
-    !/^[a-z0-9_-]{1,64}$/.test(value.class)
-  ) {
-    return false;
-  }
-  if (!ROUTING_TIERS.has(value.tier as string)) return false;
+  if (!boundedString(value.class, MAX_ROUTING_TOKEN_BYTES)) return false;
+  if (!boundedString(value.tier, MAX_ROUTING_TOKEN_BYTES)) return false;
   if (!isRoutingRisk(value.risk)) return false;
   if (!isRoutingTarget(value.chosen)) return false;
   if (value.runnerUp !== null && !isRoutingTarget(value.runnerUp)) return false;
@@ -573,11 +671,15 @@ export function hasStrictRoutingRecord(value: unknown): boolean {
   // writes (`Routing::profile` has no `skip_serializing_if`), so an observer
   // that accepted only an object refused every record the CLI ever wrote.
   if (!Object.hasOwn(value, "profile") || value.profile === null) return true;
+  // A trait name is `bounded_token`-checked (`validate_profile`,
+  // coding_session_routing.rs:1233-1250), not a member of a closed
+  // vocabulary — a lead may ask for a minimum on any trait it names, and a
+  // registry can score a trait this build has never heard of.
   return (
     isPlainObject(value.profile) &&
     Object.entries(value.profile).every(
       ([trait, minimum]) =>
-        ROUTING_TRAITS.has(trait) &&
+        boundedString(trait, MAX_ROUTING_TOKEN_BYTES) &&
         typeof minimum === "number" &&
         Number.isFinite(minimum) &&
         minimum >= 1 &&
@@ -627,14 +729,21 @@ function isRoutingOverride(value: unknown): boolean {
   // `null` is the canonical "take the tier's effort": buzz-core writes
   // `RoutingOverride.effort` unconditionally
   // (crates/buzz-core/src/coding_session_routing.rs:1005), so an override on
-  // the wire always carries the key, explicitly null when unstated.
+  // the wire always carries the key, explicitly null when unstated. A
+  // non-null value is a `bounded_token`, not the router's closed
+  // `low`/`medium`/`high` set (`validate_override`, :1276-1283) — `xhigh`,
+  // `max` and `ultra` are exactly what a human override is for.
   return (
     !Object.hasOwn(value, "effort") ||
     value.effort === null ||
-    ROUTING_EFFORTS.has(value.effort as string)
+    boundedString(value.effort, MAX_ROUTING_TOKEN_BYTES)
   );
 }
 
+// `action` closed and kept closed: `CodingSessionClosureAction`
+// (crates/buzz-core/src/coding_session_closure.rs) is a three-variant Rust
+// enum, and the value decides the umbrella's shared ownership/settled state —
+// the exact authority fact `CodingSessionClosurePayload` exists to carry.
 /** Strict closure content check matching buzz-core's decoder. */
 export function hasStrictClosureJson(
   source: string,
