@@ -103,7 +103,6 @@ type AppSidebarProps = {
   isCreatingForum: boolean;
   profile?: Profile;
   relayConnectionCard: ReturnType<typeof useSidebarRelayConnectionCard>;
-  /** Whether this app is behind the relay it is connected to. */
   relayBuildDrift: RelayBuildDrift;
   selfPresenceStatus: PresenceStatus;
   errorMessage?: string;
@@ -236,8 +235,6 @@ export function AppSidebar({
     React.useState(false);
   const showSidebarUpdateCard =
     canShowSidebarUpdateCard && !isSidebarUpdateCardDismissed;
-  const [isRelayBuildCardDismissed, setIsRelayBuildCardDismissed] =
-    React.useState(false);
   const [dmActionsMenuOpen, setDmActionsMenuOpen] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   useSidebarScrollLock(scrollRef);
@@ -262,15 +259,6 @@ export function AppSidebar({
       setIsSidebarUpdateCardDismissed(false);
     }
   }, [canShowSidebarUpdateCard]);
-
-  // Same session-only shape as the update card: a dismissal is forgotten once
-  // the condition clears, so the card returns if the app falls behind again
-  // rather than being permanently silenced by one click.
-  React.useEffect(() => {
-    if (relayBuildDrift.state !== "behind") {
-      setIsRelayBuildCardDismissed(false);
-    }
-  }, [relayBuildDrift.state]);
 
   // Allow the create-channel dialog to be opened from outside (e.g. the
   // ⌘⇧N global shortcut in AppShell), mirroring the controlled new-DM lift.
@@ -894,17 +882,12 @@ export function AppSidebar({
                 />
               </div>
             ) : null}
-            {relayBuildDrift.state === "behind" &&
-            !isRelayBuildCardDismissed ? (
-              <div className="mb-2 group-data-[collapsible=icon]:hidden">
-                <SidebarRelayBuildCard
-                  drift={relayBuildDrift}
-                  onDismiss={() => setIsRelayBuildCardDismissed(true)}
-                  onSelectSettings={() => onSelectSettings()}
-                  updateAvailable={canShowSidebarUpdateCard}
-                />
-              </div>
-            ) : null}
+            <SidebarRelayBuildCard
+              className="mb-2 group-data-[collapsible=icon]:hidden"
+              drift={relayBuildDrift}
+              onSelectSettings={() => onSelectSettings()}
+              updateAvailable={canShowSidebarUpdateCard}
+            />
             <HuddleProfileControl
               channels={channels}
               onHuddleEnded={onHuddleEnded}
