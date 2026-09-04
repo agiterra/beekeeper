@@ -128,6 +128,37 @@ fn the_four_words_the_live_run_asked_for_are_defined() {
 }
 
 #[test]
+fn the_arm_entry_names_all_three_arms_and_none_as_unbuilt() {
+    // Finding 74 (live run 6, 2026-09-04): this entry once called arm (B)
+    // unbuilt, a lead seat believed it over the relay's own refusal, and a
+    // landable commit was abandoned. The relay has
+    // read `headSha` on kind 44246 rows since 2026-09-03
+    // (`coding_session_verdict_admission_observed.rs`), so the word must name
+    // every arm and must not call any of them unbuilt.
+    let arm = lookup_word("arm")
+        .expect("the compiled-in vocabulary parses")
+        .expect("`arm` is defined");
+    for label in ["(A)", "(B)", "(C)"] {
+        assert!(
+            arm.meaning.contains(label),
+            "the `arm` meaning must name arm {label}: {:?}",
+            arm.meaning
+        );
+    }
+    assert!(
+        !arm.meaning.contains("not implemented"),
+        "the `arm` meaning must not call an arm unbuilt: {:?}",
+        arm.meaning
+    );
+    for alias in ["arm_b", "gate-row route", "gate_row_route"] {
+        let hit = lookup_word(alias)
+            .expect("the compiled-in vocabulary parses")
+            .unwrap_or_else(|| panic!("{alias:?} resolves to a word"));
+        assert_eq!(hit.word, "arm", "{alias:?} is a spelling of `arm`");
+    }
+}
+
+#[test]
 fn aliases_resolve_and_are_case_insensitive() {
     let by_alias = lookup_word("DanglingReference")
         .expect("the compiled-in vocabulary parses")
