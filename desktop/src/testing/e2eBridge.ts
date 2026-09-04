@@ -556,6 +556,17 @@ type E2eConfig = {
     // line). Absent/undefined -> null, which the UI discloses as "unknown" —
     // the same fail-open shape `get_relay_self` uses.
     relayBuildCommit?: string | null;
+    /**
+     * This app's own compiled-in build identity, for
+     * `get_app_build_identity`. Absent -> a build that could tell nothing
+     * about itself, which is what an e2e bundle genuinely is: the mock is
+     * the honest default, not a placeholder.
+     */
+    appBuildIdentity?: {
+      commit?: string | null;
+      commitCount?: number | null;
+      sourceDirty?: boolean | null;
+    } | null;
     oaOwnerIsMe?: boolean;
     /** Whether the mock relay advertises NIP-43 membership support. Defaults to false. */
     relayRequiresMembership?: boolean;
@@ -14143,6 +14154,14 @@ export function maybeInstallE2eTauriMocks() {
         return activeConfig?.mock?.relaySelf ?? null;
       case "get_relay_build_commit":
         return activeConfig?.mock?.relayBuildCommit ?? null;
+      case "get_app_build_identity":
+        return {
+          commit: activeConfig?.mock?.appBuildIdentity?.commit ?? null,
+          commitCount:
+            activeConfig?.mock?.appBuildIdentity?.commitCount ?? null,
+          sourceDirty:
+            activeConfig?.mock?.appBuildIdentity?.sourceDirty ?? null,
+        };
       // L8: the founder's 44244 build boundary. Only the capability probe is
       // mocked, and it reports what this base's real `buzz-core` reports —
       // `condition` is not on the wire until lane L7 lands, so the form does

@@ -193,6 +193,7 @@ pub(crate) fn invoke_handler(
         list_archived_identities,
         get_relay_self,
         get_relay_build_commit,
+        get_app_build_identity,
         resolve_oa_owner,
         list_relay_agents,
         list_managed_agents,

@@ -113,6 +113,22 @@ fn expose_source_revision() {
     }
     if let Some(sha) = git_output(&repo, &["rev-parse", "HEAD"]) {
         println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_SOURCE_SHA={sha}");
+        // The ordinal of that same commit, for comparison against a relay's
+        // NIP-11 `software_commit_count`. Emitted only from a full checkout:
+        // in a shallow clone `rev-list --count` returns the size of the
+        // graft rather than the commit's position, and an app subtracting
+        // that would tell the user it is tens of thousands of commits
+        // behind. Absent is the honest answer; the comparison degrades to
+        // "different build" without a number.
+        //
+        // Guarded inside the SHA's own branch so the two can only ever be
+        // emitted together, describing one commit.
+        if git_output(&repo, &["rev-parse", "--is-shallow-repository"]).as_deref() == Some("false")
+        {
+            if let Some(count) = git_output(&repo, &["rev-list", "--count", "HEAD"]) {
+                println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_SOURCE_COMMIT_COUNT={count}");
+            }
+        }
     }
 
     let tracked = git_exit(&repo, &["diff-index", "--quiet", "HEAD", "--"]);
