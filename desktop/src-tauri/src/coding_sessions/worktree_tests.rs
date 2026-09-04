@@ -95,7 +95,7 @@ fn disambiguator_is_four_hex_characters() {
 
 #[test]
 fn plan_reports_a_missing_working_directory_rather_than_failing() {
-    let planned = plan("/definitely/not/a/directory/here", "some name", None).expect("plan");
+    let planned = plan("/definitely/not/a/directory/here", "some name", None, None).expect("plan");
     assert!(planned.path.is_none());
     assert_eq!(
         planned.problem.as_deref(),
@@ -105,7 +105,7 @@ fn plan_reports_a_missing_working_directory_rather_than_failing() {
 
 #[test]
 fn plan_reports_an_unnameable_worktree() {
-    let planned = plan("/tmp", "!!!", None).expect("plan");
+    let planned = plan("/tmp", "!!!", None, None).expect("plan");
     assert!(planned.path.is_none());
     assert_eq!(
         planned.problem.as_deref(),
@@ -149,7 +149,7 @@ fn a_worktree_is_planned_created_and_then_disambiguated() {
     }
     let checkout_str = checkout.to_string_lossy().into_owned();
 
-    let planned = plan(&checkout_str, "Improve Coding Session Creation", None).expect("plan");
+    let planned = plan(&checkout_str, "Improve Coding Session Creation", None, None).expect("plan");
     assert_eq!(planned.problem, None);
     // The scratch repository's one branch is `main`, so the default start
     // point is `main` — even though `HEAD` would answer the same commit here.
@@ -192,7 +192,7 @@ fn a_worktree_is_planned_created_and_then_disambiguated() {
     );
 
     // The same name again: same request, different answer, and it says so.
-    let again = plan(&checkout_str, "Improve Coding Session Creation", None).expect("plan");
+    let again = plan(&checkout_str, "Improve Coding Session Creation", None, None).expect("plan");
     assert_eq!(again.problem, None);
     assert!(again.disambiguated, "a taken name must be disambiguated");
     assert_ne!(again.path, planned.path);
@@ -259,7 +259,7 @@ fn a_worktree_starts_from_main_even_when_the_checkout_is_parked_elsewhere() {
     assert_eq!(listed.head_branch.as_deref(), Some("old-topic"));
 
     // Create with no explicit source, the way the dialog's default submits.
-    let created = create(&checkout_str, "fresh session", None).expect("create");
+    let created = create(&checkout_str, "fresh session", None, None).expect("create");
     assert_eq!(
         rev_parse(Path::new(&created.path), "HEAD"),
         rev_parse(&checkout, "main"),
@@ -267,15 +267,15 @@ fn a_worktree_starts_from_main_even_when_the_checkout_is_parked_elsewhere() {
     );
 
     // An explicit source is honored too.
-    let from_topic =
-        create(&checkout_str, "topic followup", Some("old-topic")).expect("create from topic");
+    let from_topic = create(&checkout_str, "topic followup", None, Some("old-topic"))
+        .expect("create from topic");
     assert_eq!(
         rev_parse(Path::new(&from_topic.path), "HEAD"),
         rev_parse(&checkout, "old-topic"),
     );
 
     // A source that does not exist is one sentence, not a git error.
-    let missing = plan(&checkout_str, "ghost", Some("no-such-branch")).expect("plan");
+    let missing = plan(&checkout_str, "ghost", None, Some("no-such-branch")).expect("plan");
     assert_eq!(
         missing.problem.as_deref(),
         Some("That repository has no branch named \"no-such-branch\".")
@@ -309,7 +309,7 @@ fn a_repository_without_a_trunk_falls_back_to_head() {
     assert_eq!(listed.branches, vec!["trunk".to_string()]);
     assert_eq!(listed.default_branch, None);
 
-    let planned = plan(&checkout_str, "no trunk name", None).expect("plan");
+    let planned = plan(&checkout_str, "no trunk name", None, None).expect("plan");
     assert_eq!(planned.problem, None);
     assert_eq!(planned.source, None, "no trunk means HEAD, and it says so");
 }
@@ -325,6 +325,69 @@ fn listing_branches_outside_a_repository_is_empty() {
     assert_eq!(listed.head_branch, None);
 }
 
+/// A folder a person names wins over both defaults — but only after being
+/// checked, because recording a worktree there hands the prune path a licence
+/// over that folder's contents.
+#[test]
+fn a_chosen_folder_is_used_when_it_is_allowed_and_refused_with_a_sentence_when_not() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    let checkout_str = checkout.to_string_lossy().into_owned();
+
+    // Canonicalized on the expectation side too: git answers in canonical
+    // paths (`/private/var` on macOS) and so, deliberately, does the plan.
+    let elsewhere = root.path().join("trees");
+    std::fs::create_dir_all(&elsewhere).expect("create chosen folder");
+    let elsewhere_canonical = elsewhere.canonicalize().expect("canonicalize");
+    let planned = plan(
+        &checkout_str,
+        "fix the timeout",
+        Some(&elsewhere.to_string_lossy()),
+        None,
+    )
+    .expect("plan");
+    assert_eq!(planned.parent_problem, None);
+    assert_eq!(planned.placement.as_deref(), Some("chosen"));
+    assert_eq!(
+        planned.path.as_deref().map(Path::new),
+        Some(elsewhere_canonical.join("fix-the-timeout").as_path())
+    );
+
+    // Inside the repository and not ignored: every session would then show up
+    // in `git status`, which is the reason placement is outside the repo.
+    let inside = checkout.join("trees");
+    let refused = plan(
+        &checkout_str,
+        "fix the timeout",
+        Some(&inside.to_string_lossy()),
+        None,
+    )
+    .expect("plan");
+    assert!(
+        refused
+            .parent_problem
+            .as_deref()
+            .is_some_and(|why| why.contains("git status")),
+        "expected a sentence about git status, got {:?}",
+        refused.parent_problem
+    );
+    assert_eq!(refused.path, None, "a refused folder plans nothing");
+
+    // A folder containing the repository would swallow the checkout.
+    let swallowing = plan(
+        &checkout_str,
+        "fix the timeout",
+        Some(&root.path().to_string_lossy()),
+        None,
+    )
+    .expect("plan");
+    assert!(swallowing.parent_problem.is_some());
+}
+
 /// A repository that has opted in — an existing `.worktrees` directory that
 /// git ignores — keeps its worktrees inside itself rather than scattering
 /// siblings across its parent.
@@ -338,7 +401,7 @@ fn an_existing_ignored_holder_wins_over_the_sibling() {
     }
     std::fs::write(checkout.join(".gitignore"), ".worktrees/\n").expect("write gitignore");
 
-    let planned = plan(&checkout.to_string_lossy(), "fix the timeout", None).expect("plan");
+    let planned = plan(&checkout.to_string_lossy(), "fix the timeout", None, None).expect("plan");
     assert_eq!(planned.problem, None);
     assert_eq!(planned.placement.as_deref(), Some("in-repo-holder"));
     assert_eq!(
@@ -385,7 +448,7 @@ fn a_linked_worktree_plans_against_its_main_worktree() {
     )
     .expect("git proved usable above, so a failure here is this test being wrong");
 
-    let planned = plan(&linked.to_string_lossy(), "fix the timeout", None).expect("plan");
+    let planned = plan(&linked.to_string_lossy(), "fix the timeout", None, None).expect("plan");
     assert_eq!(planned.problem, None);
     let repo_root = planned.repo_root.as_deref().map(Path::new);
     assert_eq!(
@@ -440,7 +503,7 @@ fn a_directory_inside_a_repository_plans_against_the_repository_root() {
         return;
     }
 
-    let planned = plan(&nested.to_string_lossy(), "nested start", None).expect("plan");
+    let planned = plan(&nested.to_string_lossy(), "nested start", None, None).expect("plan");
     assert_eq!(planned.problem, None);
     // Not `crates/buzz-core-wt-…` — the worktree belongs to the repository,
     // so it is named and placed from the repository's own folder.

@@ -58,6 +58,8 @@ pub struct CodingSessionWorktreePlan {
     pub placement: Option<String>,
     /// True when the repository has no working tree of its own.
     pub bare: bool,
+    /// Why a folder the caller named was refused, when one was.
+    pub parent_problem: Option<String>,
     /// The one sentence explaining why no worktree can be planned.
     pub problem: Option<String>,
 }
@@ -274,6 +276,7 @@ fn free_slug(
 fn plan(
     workdir: &str,
     name: &str,
+    chosen_parent: Option<&str>,
     source: Option<&str>,
 ) -> Result<CodingSessionWorktreePlan, String> {
     let Some(slug) = worktree_slug(name) else {
@@ -302,9 +305,50 @@ fn plan(
     };
     let repo_root = resolved.root;
     let bare = resolved.bare;
+    // A folder a person named wins over both defaults, but only after it has
+    // been checked: a record hands the prune path a licence over that
+    // folder's contents, so a bad choice is refused with a sentence rather
+    // than silently accepted.
+    let chosen = chosen_parent
+        .map(Path::new)
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(canonical_enough);
+    let chosen = chosen.as_deref();
+    if let Some(chosen) = chosen {
+        let inside = chosen.strip_prefix(&repo_root).ok().map(|relative| {
+            let probe = format!("{}/", relative.to_string_lossy());
+            build_local_git_auth_config().is_ok_and(|auth| {
+                run_git(
+                    &["check-ignore", "-q", "--", &probe],
+                    Some(&repo_root),
+                    &auth,
+                )
+                .is_ok()
+            })
+        });
+        if let Some(why) = buzz_core_pkg::worktree_placement::chosen_parent_refusal(
+            &repo_root,
+            chosen,
+            inside,
+            dirs::home_dir().as_deref(),
+            std::env::current_dir().ok().as_deref(),
+        ) {
+            return Ok(CodingSessionWorktreePlan {
+                repo_root: Some(repo_root.to_string_lossy().into_owned()),
+                bare,
+                parent_problem: Some(why.to_string()),
+                ..Default::default()
+            });
+        }
+    }
     let holder_ready = holder_exists_and_is_ignored(&repo_root);
-    let Some(placement) =
-        buzz_core_pkg::worktree_placement::default_worktree_parent(&repo_root, holder_ready)
+    let Some(placement) = chosen
+        .map(|chosen| {
+            buzz_core_pkg::worktree_placement::WorktreeParent::Chosen(chosen.to_path_buf())
+        })
+        .or_else(|| {
+            buzz_core_pkg::worktree_placement::default_worktree_parent(&repo_root, holder_ready)
+        })
     else {
         return Ok(CodingSessionWorktreePlan {
             repo_root: Some(repo_root.to_string_lossy().into_owned()),
@@ -349,8 +393,37 @@ fn plan(
         slug: Some(slug),
         disambiguated,
         source,
+        parent_problem: None,
         problem: None,
     })
+}
+
+/// A path resolved as far as it exists, so comparisons against git's own
+/// answer line up.
+///
+/// git reports canonical paths (`/private/var/...` on macOS), while a folder
+/// a person typed or picked is whatever they gave us (`/var/...`). Comparing
+/// the two without this silently answers "not inside the repository" for a
+/// folder that plainly is — which would let an unignored in-repo folder past
+/// the one check that exists to refuse it. The chosen folder need not exist
+/// yet, so the longest existing ancestor is canonicalized and the remainder
+/// re-appended.
+fn canonical_enough(path: &Path) -> PathBuf {
+    let mut suffix = PathBuf::new();
+    let mut probe = path;
+    loop {
+        if let Ok(canonical) = probe.canonicalize() {
+            return canonical.join(&suffix);
+        }
+        let Some(name) = probe.file_name() else {
+            return path.to_path_buf();
+        };
+        suffix = Path::new(name).join(&suffix);
+        let Some(parent) = probe.parent() else {
+            return path.to_path_buf();
+        };
+        probe = parent;
+    }
 }
 
 /// Whether `<repo_root>/.worktrees` both exists and is ignored by git.
@@ -410,10 +483,13 @@ pub async fn plan_coding_session_worktree(
     workdir: String,
     name: String,
     source: Option<String>,
+    parent: Option<String>,
 ) -> Result<CodingSessionWorktreePlan, String> {
-    tauri::async_runtime::spawn_blocking(move || plan(&workdir, &name, source.as_deref()))
-        .await
-        .map_err(|error| format!("worktree plan task failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        plan(&workdir, &name, parent.as_deref(), source.as_deref())
+    })
+    .await
+    .map_err(|error| format!("worktree plan task failed: {error}"))?
 }
 
 /// The branches a worktree here could start from, and which one is default.
@@ -435,10 +511,14 @@ pub async fn list_coding_session_worktree_branches(
 fn create(
     workdir: &str,
     name: &str,
+    chosen_parent: Option<&str>,
     source: Option<&str>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
-    let planned = plan(workdir, name, source)?;
-    if let Some(problem) = planned.problem {
+    // Re-planned rather than trusting the caller: the dialog's preview can go
+    // stale between showing and submitting, and a refused folder must be
+    // refused here too, not only in the preview.
+    let planned = plan(workdir, name, chosen_parent, source)?;
+    if let Some(problem) = planned.problem.or(planned.parent_problem) {
         return Err(problem);
     }
     let (Some(repo_root), Some(path), Some(branch)) =
@@ -482,19 +562,25 @@ fn create(
 /// unrecorded worktree, which is the conservative outcome; failing the create
 /// instead would leave a directory on disk and tell the caller it has none.
 #[tauri::command]
+// Each parameter is an IPC field the frontend names, so grouping them into a
+// struct would move the shape into the wire rather than remove it. The
+// established exemption in this crate (16 other sites) is to say so here.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_coding_session_worktree(
     app: AppHandle,
     state: State<'_, AppState>,
     workdir: String,
     name: String,
     source: Option<String>,
+    parent: Option<String>,
     session_ref: Option<String>,
     seat_label: Option<String>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
-    let created =
-        tauri::async_runtime::spawn_blocking(move || create(&workdir, &name, source.as_deref()))
-            .await
-            .map_err(|error| format!("worktree create task failed: {error}"))??;
+    let created = tauri::async_runtime::spawn_blocking(move || {
+        create(&workdir, &name, parent.as_deref(), source.as_deref())
+    })
+    .await
+    .map_err(|error| format!("worktree create task failed: {error}"))??;
     if let (Some(session_ref), Some(seat_label)) = (session_ref, seat_label) {
         if let Err(error) =
             record_created_worktree(&app, &state, &session_ref, &seat_label, &created)

@@ -30,6 +30,8 @@ export type CodingSessionWorktreePlan = {
   placement: string | null;
   /** True when the repository has no working tree of its own. */
   bare: boolean;
+  /** Why a folder the caller named was refused, when one was. */
+  parentProblem: string | null;
   /**
    * Branch the new branch starts from — the requested source, else the
    * repository's default. Null means the checkout's current HEAD.
@@ -62,6 +64,8 @@ export async function planCodingSessionWorktree(input: {
   workdir: string;
   name: string;
   source: string | null;
+  /** A folder chosen for this repository's worktrees, or null for the default. */
+  parent?: string | null;
 }): Promise<CodingSessionWorktreePlan> {
   return invokeTauri<CodingSessionWorktreePlan>(
     "plan_coding_session_worktree",
@@ -69,6 +73,7 @@ export async function planCodingSessionWorktree(input: {
       workdir: input.workdir,
       name: input.name,
       source: input.source,
+      parent: input.parent ?? null,
     },
   );
 }
@@ -109,6 +114,8 @@ export async function createCodingSessionWorktree(input: {
   workdir: string;
   name: string;
   source: string | null;
+  /** A folder chosen for this repository's worktrees, or null for the default. */
+  parent?: string | null;
   sessionRef?: string | null;
   seatLabel?: string | null;
 }): Promise<CodingSessionWorktreeCreated> {
@@ -118,6 +125,7 @@ export async function createCodingSessionWorktree(input: {
       workdir: input.workdir,
       name: input.name,
       source: input.source,
+      parent: input.parent ?? null,
       sessionRef: input.sessionRef ?? null,
       seatLabel: input.seatLabel ?? null,
     },

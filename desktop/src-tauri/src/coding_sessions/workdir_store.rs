@@ -158,6 +158,17 @@ pub(crate) struct CodingSessionWorkdirStore {
     /// is what makes a v1 file readable.
     #[serde(default)]
     pub worktrees: BTreeMap<String, CodingSessionSeatWorktree>,
+    /// Worktree folders a person chose, keyed by canonical repository root.
+    ///
+    /// Keyed by the *repository*, not the working directory, which is the
+    /// whole point of resolving through `--git-common-dir`: the same
+    /// repository reached from a subdirectory, a linked worktree, or the bare
+    /// folder must get the same answer. Additive and `#[serde(default)]`, so
+    /// a v2 file reads with it empty — deliberately **not** a version bump,
+    /// because `bee` hard-errors on a version above its own maximum and would
+    /// stop working on every machine that opened the app once.
+    #[serde(default)]
+    pub worktree_parents: BTreeMap<String, PathBuf>,
 }
 
 impl Default for CodingSessionWorkdirStore {
@@ -169,6 +180,7 @@ impl Default for CodingSessionWorkdirStore {
             mru: Vec::new(),
             pending: BTreeMap::new(),
             worktrees: BTreeMap::new(),
+            worktree_parents: BTreeMap::new(),
         }
     }
 }
@@ -403,6 +415,7 @@ pub(crate) fn load_workdir_store_readonly_from(
         || store.mru.len() > MAX_MRU_ENTRIES
         || store.pending.len() > MAX_PENDING_HINTS
         || store.worktrees.len() > MAX_SEAT_WORKTREES
+        || store.worktree_parents.len() > 4096
     {
         return Err("coding-session workdir store exceeds readiness record limits".into());
     }
@@ -414,7 +427,8 @@ pub(crate) fn load_workdir_store_readonly_from(
         .chain(store.mru.iter().map(|entry| &entry.path))
         .chain(store.pending.values())
         .chain(store.worktrees.values().map(|entry| &entry.path))
-        .chain(store.worktrees.values().map(|entry| &entry.repo_root));
+        .chain(store.worktrees.values().map(|entry| &entry.repo_root))
+        .chain(store.worktree_parents.values());
     if paths.into_iter().any(|path| !path.is_absolute()) {
         return Err("coding-session workdir store contains a relative path".into());
     }
