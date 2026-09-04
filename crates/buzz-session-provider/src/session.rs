@@ -1077,6 +1077,7 @@ fn materialize_seat_skills_outside(
         refreshed = written.iter().filter(|s| s.written).count(),
         "seat skills materialized"
     );
+    exclude_materialized_pack(cwd);
     let mut names: Vec<String> = written.iter().map(|skill| skill.name.clone()).collect();
     names.sort_unstable();
     names.dedup();
@@ -1085,6 +1086,38 @@ fn materialize_seat_skills_outside(
         prompt: persona.system_prompt.trim().to_owned(),
         skills: names,
     })
+}
+
+/// Keep the pack just written out of `git status` in `cwd`.
+///
+/// Finding 76: the gate observer stamps every gate row with `dirty` from
+/// `git status --porcelain`, untracked files included, and the relay refuses
+/// an observed-dirty row — so a seat whose worktree carries an untracked
+/// `.agents/skills/` can never have a push admitted. Runs in the same path as
+/// the write, before the child exists, so the seat's first gate row is already
+/// honest. A working directory that is not a git worktree is left alone.
+///
+/// Not fatal: the skills the seat was briefed on are on disk regardless, and
+/// a seat that cannot be excluded is a seat whose pushes are refused with a
+/// reason, not a seat that lies. The failure is logged so the operator can see
+/// why.
+fn exclude_materialized_pack(cwd: &Path) {
+    use crate::git_exclude::{exclude_materialized_pack, ExcludeOutcome, EXCLUDE_LINE};
+    match exclude_materialized_pack(cwd) {
+        Ok(ExcludeOutcome::Added { exclude_file }) => tracing::info!(
+            target: "csp::session",
+            exclude_file = %exclude_file.display(),
+            "added `{EXCLUDE_LINE}` to the worktree's git exclude so the materialized pack \
+             does not read as dirty"
+        ),
+        Ok(ExcludeOutcome::AlreadyExcluded { .. }) | Ok(ExcludeOutcome::NotARepository) => {}
+        Err(error) => tracing::warn!(
+            target: "csp::session",
+            cwd = %cwd.display(),
+            "could not add `{EXCLUDE_LINE}` to the worktree's git exclude — every gate row for \
+             this seat will read dirty: {error}"
+        ),
+    }
 }
 
 /// Spawn the adapter and open one ACP session in `request.cwd`.
@@ -3040,6 +3073,67 @@ done
                 "# Brief"
             );
         }
+    }
+
+    /// Finding 76: the pack the provider writes must not make the seat's
+    /// worktree dirty, or the host's own gate observer refuses every push.
+    /// Proved through the real materialization path against a throwaway
+    /// `git init` repository — never a worktree of this one.
+    #[test]
+    fn a_materialized_pack_leaves_a_git_worktree_clean() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief");
+        let workdir = dir.path().join("seat");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let git = |args: &[&str]| {
+            let mut command = std::process::Command::new("git");
+            for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+                command.env_remove(var);
+            }
+            let output = command
+                .arg("-C")
+                .arg(&workdir)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "seat")
+                .env("GIT_AUTHOR_EMAIL", "seat@example.invalid")
+                .env("GIT_COMMITTER_NAME", "seat")
+                .env("GIT_COMMITTER_EMAIL", "seat@example.invalid")
+                .output()
+                .expect("git");
+            assert!(output.status.success(), "git {args:?} failed");
+            String::from_utf8(output.stdout).expect("utf-8")
+        };
+        git(&["init", "-q", "-b", "seat-branch", "."]);
+        std::fs::write(workdir.join("README"), "seat").expect("write");
+        git(&["add", "README"]);
+        git(&["commit", "-q", "--no-gpg-sign", "-m", "one"]);
+        assert_eq!(git(&["status", "--porcelain"]), "");
+
+        let skills = SeatSkills {
+            pack_dir: pack,
+            persona_id: "builder".into(),
+        };
+        materialize_seat_skills(&skills, &workdir).expect("materialize");
+        assert_eq!(
+            std::fs::read_to_string(workdir.join(".agents/skills/brief/SKILL.md"))
+                .expect("skill present"),
+            "# Brief"
+        );
+        assert_eq!(
+            git(&["status", "--porcelain"]),
+            "",
+            "the materialized pack reads as dirty"
+        );
+
+        // A second materialization (the seat is re-created in the same tree)
+        // neither rewrites the exclude nor dirties the tree.
+        materialize_seat_skills(&skills, &workdir).expect("materialize again");
+        assert_eq!(git(&["status", "--porcelain"]), "");
+        let exclude = std::fs::read_to_string(workdir.join(".git/info/exclude")).expect("exclude");
+        assert_eq!(
+            exclude.lines().filter(|line| *line == ".agents/").count(),
+            1
+        );
     }
 
     /// D6/C: an agent seat's adapter holds *its own* identity and nothing else

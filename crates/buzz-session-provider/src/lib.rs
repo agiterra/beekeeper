@@ -40,6 +40,7 @@ pub mod context_projector;
 mod context_store;
 mod context_window;
 mod gate_observer;
+mod git_exclude;
 mod git_probe;
 mod lease;
 mod model_catalog;
