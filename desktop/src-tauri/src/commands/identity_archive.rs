@@ -400,7 +400,7 @@ fn relay_build_identity_from_doc(doc: RelayInformationDocument) -> RelayBuildIde
     RelayBuildIdentity {
         // A count with no usable commit describes nothing — the same
         // coupling the relay enforces when it stamps the pair.
-        commit_count: commit.as_ref().and_then(|_| doc.software_commit_count),
+        commit_count: commit.as_ref().and(doc.software_commit_count),
         commit,
         build_time: doc.build_time,
         software: doc.software,
