@@ -18,12 +18,17 @@ use buzz_core::coding_session_observation::{
 };
 use buzz_sdk::coding_session_observation::parse_coding_session_observation;
 
+/// The `buzz-agent`/L5 harness shape: the command sits on the call itself.
+/// `toolKind: "execute"` is what makes a call eligible to be remembered at
+/// all now (finding 69) — every real exec call carries it (`transcript.rs`),
+/// so this fixture does too.
 fn tool_call(tool_id: &str, command: &str) -> serde_json::Value {
     serde_json::json!({
         "kind": "tool_call",
         "tool": {
             "toolName": "Bash",
             "toolId": tool_id,
+            "toolKind": "execute",
             "input": { "command": command },
         },
     })
@@ -34,6 +39,7 @@ fn tool_result(tool_id: &str, is_error: bool, content: &str) -> serde_json::Valu
         "kind": "tool_result",
         "toolId": tool_id,
         "toolName": "Bash",
+        "toolKind": "execute",
         "content": content,
         "isError": is_error,
     })

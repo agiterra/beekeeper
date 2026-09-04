@@ -9,12 +9,17 @@ use serde_json::json;
 
 use super::*;
 
+/// The `buzz-agent`/L5 harness shape: the command sits on the call itself.
+/// `toolKind: "execute"` is what makes a call eligible to be remembered at
+/// all now (finding 69) — every real exec call carries it (`transcript.rs`),
+/// so every fixture in this module does too.
 fn tool_call(tool_id: &str, command: &str) -> Value {
     json!({
         "kind": "tool_call",
         "tool": {
             "toolName": "Bash",
             "toolId": tool_id,
+            "toolKind": "execute",
             "input": { "command": command },
         },
     })
@@ -25,6 +30,7 @@ fn tool_result(tool_id: &str, is_error: bool, content: &str) -> Value {
         "kind": "tool_result",
         "toolId": tool_id,
         "toolName": "Bash",
+        "toolKind": "execute",
         "content": content,
         "isError": is_error,
     })
@@ -249,10 +255,19 @@ fn a_result_that_never_says_whether_it_failed_is_not_a_pass() {
 }
 
 #[test]
-fn a_call_that_ran_no_gate_is_never_remembered() {
+fn a_call_that_ran_no_gate_produces_no_row_once_its_result_is_in() {
+    // Finding 69: which gate(s) a call ran can only be known once the
+    // result is in hand (some harnesses never put a command on the call at
+    // all), so the call itself is remembered regardless — `git status` is
+    // not exempted from opening a pending entry any more than a gate is.
+    // What stays true is the observable finding 26 exists to check: no row
+    // for a command that was never a gate.
     let mut observer = GateObserver::default();
     observer.on_item(&tool_call("t1", "git status --porcelain"), 0);
-    assert!(observer.pending.is_empty());
+    assert!(
+        !observer.pending.is_empty(),
+        "every execute call is remembered, gate or not"
+    );
     assert!(observer
         .on_item(&tool_result("t1", false, "clean"), 10)
         .is_empty());
@@ -283,11 +298,47 @@ fn the_pending_window_is_bounded_and_forgets_the_oldest_first() {
 fn a_command_longer_than_the_wire_allows_is_dropped_rather_than_shortened() {
     let long = format!("cargo test -p buzz-core {}", "x".repeat(600));
     assert!(long.len() > MAX_OBSERVATION_COMMAND_BYTES);
+
+    // The L5/`buzz-agent` shape: the over-long command is on the call.
+    // Finding 69 moved bounds-checking from `open` to `close` (the call is
+    // remembered regardless of its command now), so this asserts on the
+    // *row*, not on `pending` staying empty — it no longer does.
     let mut observer = GateObserver::default();
     observer.on_item(&tool_call("t1", &long), 0);
     assert!(
-        observer.pending.is_empty(),
+        observer
+            .on_item(&tool_result("t1", false, "ok"), 10)
+            .is_empty(),
         "a shortened command line is a different command"
+    );
+
+    // Finding 69's own shape: the call names nothing at all, and the
+    // over-long command only shows up on the result's `input.command`.
+    // The bound applies exactly the same way there.
+    let mut observer = GateObserver::default();
+    observer.on_item(
+        &json!({
+            "kind": "tool_call",
+            "tool": { "toolId": "t2", "toolKind": "execute", "input": {} },
+        }),
+        0,
+    );
+    assert!(
+        observer
+            .on_item(
+                &json!({
+                    "kind": "tool_result",
+                    "toolId": "t2",
+                    "toolKind": "execute",
+                    "toolName": "Terminal",
+                    "input": { "command": long },
+                    "content": "ok",
+                    "isError": false,
+                }),
+                10
+            )
+            .is_empty(),
+        "the same bound applies wherever the command was finally found"
     );
 }
 
@@ -389,5 +440,176 @@ fn a_composed_line_that_failed_publishes_nothing_for_more_than_one_gate() {
             .on_item(&tool_result("t1", true, "error: ..."), 100)
             .is_empty(),
         "two gates share one exit; neither row can honestly claim it"
+    );
+}
+
+/// Finding 69, `run5-gate-items.json` eventSeq 36–41 verbatim (the `content`
+/// on eventSeq 39 is abbreviated from the ~18.5 KB `cargo` progress bar the
+/// live transcript actually carries — nothing the observer reads lives in
+/// that noise, and the fields that matter are byte-for-byte the wire's own).
+///
+/// `claude-agent-acp` never puts a command on the `tool_call` frame at all —
+/// `tool.input` arrives as `{}`. The text lands on the paired `tool_result`
+/// instead, in `input.command`. Before this fix, [`GateObserver::open`] read
+/// the command from the *call's* `tool.input` (`command_of` on `{}` →
+/// `None`), so it never opened a pending entry for either of these two
+/// commands, and the paired results — both real, both green — closed
+/// against nothing and became no rows. Ever, on this harness.
+#[test]
+fn finding_69_the_command_lands_on_the_result_not_the_call() {
+    let items: Vec<Value> = vec![
+        // eventSeq 36 — tool_call, empty input, toolKind "execute".
+        json!({
+            "kind": "tool_call",
+            "tool": {
+                "input": {},
+                "toolId": "toolu_01VSakN3EV2vpDSerszprACX",
+                "toolKind": "execute",
+                "toolName": "Terminal",
+            },
+        }),
+        // eventSeq 37 — tool_result, command on `input.command`.
+        json!({
+            "content": "(Bash completed with no output)",
+            "input": {
+                "command": "cargo fmt --all --check",
+                "description": "Gate 1 pre-commit: cargo fmt check",
+                "timeout": 600_000,
+            },
+            "isError": false,
+            "kind": "tool_result",
+            "toolId": "toolu_01VSakN3EV2vpDSerszprACX",
+            "toolKind": "execute",
+            "toolName": "cargo fmt --all --check",
+        }),
+        // eventSeq 38 — tool_call, empty input, toolKind "execute".
+        json!({
+            "kind": "tool_call",
+            "tool": {
+                "input": {},
+                "toolId": "toolu_01DRVtn2xVqCwuajPFx89376",
+                "toolKind": "execute",
+                "toolName": "Terminal",
+            },
+        }),
+        // eventSeq 39 — tool_result, command on `input.command`; `content`
+        // abbreviated (see the test doc comment above) from the live
+        // transcript's own `cargo` build noise, ending in the same tail.
+        json!({
+            "content": "   Compiling libc v0.2.186\n...\ntest result: ok",
+            "input": {
+                "command": "cargo clippy -p buzz-cli -- -D warnings",
+                "description": "Gate 2 pre-commit: clippy on buzz-cli",
+                "timeout": 600_000,
+            },
+            "isError": false,
+            "kind": "tool_result",
+            "toolId": "toolu_01DRVtn2xVqCwuajPFx89376",
+            "toolKind": "execute",
+            "toolName": "cargo clippy -p buzz-cli -- -D warnings",
+        }),
+        // eventSeq 40 — plain assistant prose, not a tool frame at all.
+        json!({
+            "kind": "assistant_text",
+            "text": "Clippy clean. Third gate:",
+        }),
+        // eventSeq 41 — a third call opens, unpaired in this fixture: no
+        // result for it ships in the live evidence either.
+        json!({
+            "kind": "tool_call",
+            "tool": {
+                "input": {},
+                "toolId": "toolu_01BeqS27u62DQoGAirnge4Y7",
+                "toolKind": "execute",
+                "toolName": "Terminal",
+            },
+        }),
+    ];
+
+    let mut observer = GateObserver::default();
+    assert!(
+        observer.on_item(&items[0], 1_788_486_650_506).is_empty(),
+        "a call opens nothing to return"
+    );
+    let fmt = observer
+        .on_item(&items[1], 1_788_486_655_782)
+        .pop()
+        .expect("the fmt result closes the call it paired with, command and all");
+    assert_eq!(fmt.row.gate, "cargo fmt");
+    assert_eq!(fmt.row.command, "cargo fmt --all --check");
+    assert_eq!(fmt.row.outcome, CodingSessionObservationGateOutcome::Passed);
+
+    assert!(observer.on_item(&items[2], 1_788_486_656_723).is_empty());
+    let clippy = observer
+        .on_item(&items[3], 1_788_486_686_359)
+        .pop()
+        .expect("the clippy result closes the call it paired with, command and all");
+    assert_eq!(clippy.row.gate, "cargo clippy");
+    assert_eq!(
+        clippy.row.command,
+        "cargo clippy -p buzz-cli -- -D warnings"
+    );
+    assert_eq!(
+        clippy.row.outcome,
+        CodingSessionObservationGateOutcome::Passed
+    );
+
+    assert!(
+        observer.on_item(&items[4], 1_788_486_686_374).is_empty(),
+        "prose is not a tool frame"
+    );
+    assert!(
+        observer.on_item(&items[5], 1_788_486_686_374).is_empty(),
+        "a third call opens nothing to return, and this fixture never pairs it"
+    );
+}
+
+/// L5's shape (command on the call, none on the result) still works, in the
+/// same observer that also handles finding 69's shape — mixed within one
+/// session is exactly what a provider watching real seats sees, since a
+/// session's driver does not change mid-turn but the provider itself never
+/// assumes a single harness.
+#[test]
+fn l5s_shape_still_works_alongside_finding_69s() {
+    let mut observer = GateObserver::default();
+
+    // finding 69: empty call, command on the result.
+    observer.on_item(
+        &json!({
+            "kind": "tool_call",
+            "tool": { "toolId": "acp1", "toolKind": "execute", "input": {} },
+        }),
+        0,
+    );
+    // L5: command on the call, nothing on the result.
+    observer.on_item(&tool_call("agent1", "cargo test -p buzz-core"), 0);
+
+    let acp_row = observer
+        .on_item(
+            &json!({
+                "kind": "tool_result",
+                "toolId": "acp1",
+                "toolKind": "execute",
+                "toolName": "cargo fmt --all --check",
+                "input": { "command": "cargo fmt --all --check" },
+                "content": "",
+                "isError": false,
+            }),
+            100,
+        )
+        .pop()
+        .expect("finding 69's shape still closes");
+    assert_eq!(acp_row.row.gate, "cargo fmt");
+    assert_eq!(acp_row.row.command, "cargo fmt --all --check");
+
+    let agent_row = observer
+        .on_item(&tool_result("agent1", true, "test result: FAILED"), 200)
+        .pop()
+        .expect("L5's shape still closes");
+    assert_eq!(agent_row.row.gate, "cargo test");
+    assert_eq!(agent_row.row.command, "cargo test -p buzz-core");
+    assert_eq!(
+        agent_row.row.outcome,
+        CodingSessionObservationGateOutcome::Failed
     );
 }

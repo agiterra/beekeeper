@@ -9,12 +9,13 @@
 //! signed row with the command can.
 //!
 //! So this module writes the row instead of asking for it. It reads the
-//! transcript items the provider is already publishing, pairs each `tool_call`
-//! that ran a **recognised gate command** with its own `tool_result`, and
-//! hands back one [`ObservedGateRow`]. The provider signs it with its own key
-//! and publishes it as kind 44246 with `source: "observed"`. A seat's own
-//! `bee sessions observe gate` row is `declared` and is never merged with one
-//! of these.
+//! transcript items the provider is already publishing, pairs each `execute`
+//! `tool_call` with its own `tool_result`, and — once that result names a
+//! **recognised gate command** (see "Harness shapes" below for where that
+//! name is actually read from) — hands back one [`ObservedGateRow`]. The
+//! provider signs it with its own key and publishes it as kind 44246 with
+//! `source: "observed"`. A seat's own `bee sessions observe gate` row is
+//! `declared` and is never merged with one of these.
 //!
 //! # What it will not claim
 //!
@@ -34,6 +35,31 @@
 //! * **Nothing unbounded.** At most [`MAX_PENDING_GATE_CALLS`] calls are
 //!   remembered at once; the oldest is forgotten first, and a call whose
 //!   result never arrives simply never becomes a row.
+//!
+//! # Harness shapes (finding 69)
+//!
+//! Live run 5, `claude-agent-acp`: every `tool_call` frame for a shell
+//! command carries `tool.input: {}` and `toolName: "Terminal"` — the command
+//! text is not on the call at all. It shows up on the paired `tool_result`
+//! instead, as `input.command`, with `toolName` echoing the command line
+//! itself (`"cargo fmt --all --check"`, not a generic label). The observer of
+//! record read the command from the *call's* `tool.input`
+//! (`GateObserver::open`, pre-fix), so it never opened a pending entry for
+//! either of run 5's two green gates, and the results — real, matched,
+//! green — closed against nothing and became no rows. Ever, on this harness.
+//!
+//! `buzz-agent`'s own driver puts the command on the call, as do every
+//! pre-existing fixture in `gate_observer_tests.rs` (predating this
+//! finding). Both shapes are real and both must keep working, so **which
+//! gate(s) a call ran is no longer decided at `open`** — every `execute`
+//! call is remembered regardless of whether (or where) it names a command —
+//! **and is decided at `close`**, once the result is in hand, by
+//! [`resolve_command`]: the result's own `input.command` first, the call's
+//! `tool.input.command` (remembered at `open`) second, and the result's
+//! `toolName` last, tried only when it passes the same bounds every other
+//! candidate command does. A harness that puts a command nowhere this
+//! function looks still produces no row — silence, not a guess, exactly as
+//! before.
 //!
 //! # Composed commands (finding 57)
 //!
@@ -82,11 +108,14 @@ use buzz_core::coding_session_observation::{
 };
 use serde_json::Value;
 
-/// Tool calls remembered while waiting for their results.
+/// Execute tool calls remembered while waiting for their results.
 ///
-/// A gate command runs for minutes and a seat interleaves reads and edits with
-/// it, so the window has to be wider than one call — but it is a window, not a
-/// map that grows with the session.
+/// Every `execute` call takes a slot here, not only the ones that turn out to
+/// run a gate — see the module doc, "Harness shapes", for why that can no
+/// longer be told apart at `open`. A gate command runs for minutes and a seat
+/// interleaves reads, edits, and plenty of non-gate shell commands with it, so
+/// the window has to be wider than one call regardless — but it is a window,
+/// not a map that grows with the session.
 pub const MAX_PENDING_GATE_CALLS: usize = 32;
 
 /// One gate row the provider watched, and the moment it started.
@@ -183,15 +212,18 @@ struct PendingSegment {
     command: String,
 }
 
-/// One pending call: which gate(s) it ran, and when it opened.
+/// One pending call, remembered while its result is awaited.
 ///
-/// `segments` has exactly one entry for the overwhelming common case — a
-/// bare gate command — and more than one only when the line was accepted as
-/// composed (see the module doc, "Composed commands").
+/// Which gate(s) it names is not decided here — see the module doc, "Harness
+/// shapes" — because some harnesses (finding 69) never put a command on the
+/// `tool_call` frame at all, so nothing about it can be classified until the
+/// paired `tool_result` arrives. `call_command` is the command as it stood on
+/// the call, when the call carried one; `None` for exactly the harnesses that
+/// don't.
 #[derive(Debug, Clone)]
 struct PendingGate {
     tool_id: String,
-    segments: Vec<PendingSegment>,
+    call_command: Option<String>,
     /// Milliseconds since the epoch, from the provider's own clock — the same
     /// `now_ms()` every other provider row is stamped with.
     started_at_ms: i64,
@@ -215,8 +247,11 @@ impl GateObserver {
     pub fn on_item(&mut self, item: &Value, now_ms: i64) -> Vec<ObservedGateRow> {
         match item.get("kind").and_then(Value::as_str) {
             Some("tool_call") => {
-                // A call that names no gate is simply not remembered; opening
-                // nothing is never a failure.
+                // A call that is not `toolKind: "execute"`, or carries no
+                // `toolId`, is simply not remembered; opening nothing is
+                // never a failure. Every execute call *is* remembered, even
+                // one that turns out to run no gate at all — see `open` and
+                // the module doc, "Harness shapes".
                 let _ = self.open(item, now_ms);
                 Vec::new()
             }
@@ -227,15 +262,24 @@ impl GateObserver {
 
     fn open(&mut self, item: &Value, now_ms: i64) -> Option<()> {
         let tool = item.get("tool")?;
+        // Only `execute` calls can ever become a gate row. Restricting the
+        // window to them is what keeps it a window at all once opening no
+        // longer requires a recognised — or even present — command; see
+        // `MAX_PENDING_GATE_CALLS`.
+        if tool.get("toolKind").and_then(Value::as_str) != Some("execute") {
+            return None;
+        }
         let tool_id = string_at(tool, "toolId")?;
-        let command = command_of(tool.get("input"))?;
-        let segments = match_gate_segments(&command)?;
+        // Some harnesses (finding 69) put the command here; some put it only
+        // on the result. Either way it is remembered now, in case the result
+        // needs it as a fallback — see `resolve_command`.
+        let call_command = command_of(tool.get("input"));
         if self.pending.len() >= MAX_PENDING_GATE_CALLS {
             self.pending.pop_front();
         }
         self.pending.push_back(PendingGate {
             tool_id,
-            segments,
+            call_command,
             started_at_ms: now_ms,
         });
         Some(())
@@ -255,21 +299,30 @@ impl GateObserver {
         let Some(is_error) = item.get("isError").and_then(Value::as_bool) else {
             return Vec::new();
         };
+        // Which gate(s) this call ran can only be known now — see
+        // `resolve_command` and the module doc, "Harness shapes". A call that
+        // ran no gate at all, or whose command this seam still cannot read
+        // exactly, produces no row, exactly as it always has.
+        let Some(command) = resolve_command(item, pending.call_command.as_deref()) else {
+            return Vec::new();
+        };
+        let Some(segments) = match_gate_segments(&command) else {
+            return Vec::new();
+        };
         // A composed call pairs one exit with several gates. `isError: true`
         // there cannot say which of them produced it — a `&&` line may not
         // even have reached a later gate at all — so more than one gate
         // segment on a failing call publishes nothing rather than a guess.
         // A single segment is unambiguous either way, exactly the bare-gate
         // case this module has always reported.
-        if is_error && pending.segments.len() > 1 {
+        if is_error && segments.len() > 1 {
             return Vec::new();
         }
         let duration_ms = now_ms
             .checked_sub(pending.started_at_ms)
             .and_then(|elapsed| u64::try_from(elapsed).ok());
         let summary = summary_of(item.get("content"));
-        pending
-            .segments
+        segments
             .into_iter()
             .map(|segment| ObservedGateRow {
                 row: CodingSessionObservationGateRow {
@@ -301,17 +354,50 @@ impl GateObserver {
 /// a file rather than a command line has not run a gate, and a structured
 /// argv would need a quoting rule this seam has no business inventing.
 fn command_of(input: Option<&Value>) -> Option<String> {
-    let raw = input?.get("command")?.as_str()?.trim();
+    valid_command(input?.get("command")?.as_str()?)
+}
+
+/// The bounds every candidate command text is held to, wherever it came from.
+///
+/// A command longer than the wire's own ceiling is not truncated into a row:
+/// a *shortened* command line is a different command, and a reader who copied
+/// it would run something else. A control character is refused outright
+/// rather than stripped, for the same reason.
+fn valid_command(raw: &str) -> Option<String> {
+    let raw = raw.trim();
     if raw.is_empty() || raw.len() > MAX_OBSERVATION_COMMAND_BYTES {
-        // A command longer than the wire's own ceiling is not truncated into a
-        // row: a *shortened* command line is a different command, and a reader
-        // who copied it would run something else.
         return None;
     }
     if raw.chars().any(char::is_control) {
         return None;
     }
     Some(raw.to_owned())
+}
+
+/// The command text a gate row should read, tried in the order a real result
+/// frame can carry it — see the module doc, "Harness shapes".
+///
+/// 1. **`input.command` on the result itself.** `claude-agent-acp` (finding
+///    69, live run 5) puts the command here and nowhere else — `tool.input`
+///    on the call arrives empty (`{}`).
+/// 2. **`tool.input.command` on the call**, remembered in `call_command` at
+///    [`GateObserver::open`]. `buzz-agent`'s own driver — and every
+///    pre-existing fixture in this module's tests — puts it there instead,
+///    and a result that repeats it (or omits `input` altogether) still
+///    resolves correctly through this fallback.
+/// 3. **The result's own `toolName`**, when it looks like a command at all
+///    (passes the same [`valid_command`] bounds every other source does).
+///    `claude-agent-acp`'s result frame sets `toolName` to the command line
+///    itself (`"cargo fmt --all --check"`), not a generic label — unlike the
+///    *call's* `toolName` (`"Terminal"`), which this function never reads.
+///    A harness whose `toolName` is a generic label falls through to no
+///    command at all, exactly as before; [`match_gate_segments`] refusing a
+///    label like `"Bash"` is the same silence-over-a-guess rule this module
+///    has always followed, not a new check.
+fn resolve_command(result: &Value, call_command: Option<&str>) -> Option<String> {
+    command_of(result.get("input"))
+        .or_else(|| call_command.map(str::to_owned))
+        .or_else(|| valid_command(result.get("toolName").and_then(Value::as_str)?))
 }
 
 /// One token of a shell command line, as far as this seam reads one.

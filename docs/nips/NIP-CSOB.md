@@ -400,6 +400,23 @@ agent's memory.
    `declared`. The two classes are **never merged**: a consumer shows which it
    is holding, and an `observed` row that displaces a `declared` one says so.
 
+   **Where the command comes from is harness-specific (finding 69, batch 3,
+   lane L32, 2026-09-03).** `buzz-agent`'s driver puts the shell command
+   straight on the `tool_call` frame. Live run 5's harness, `claude-agent-acp`,
+   does not: its `tool_call` carries an empty `tool.input` (`{}`), and the
+   command only appears on the paired `tool_result`, either as
+   `input.command` or, failing that, as the result's own `toolName` (which
+   for this harness *is* the command line, not a generic label). Before the
+   fix the observer read the command only off the call, so this harness's
+   gates — genuinely run, genuinely green — never became a row. The observer
+   (`crates/buzz-session-provider/src/gate_observer.rs`) now remembers every
+   `execute` call regardless of where or whether it names a command, and
+   resolves the command at the result — result's `input.command`, then the
+   call's own, then the result's `toolName` — before matching it against the
+   closed gate table. A harness that names a command nowhere this order
+   checks still produces no row, exactly as before: this widens *where* the
+   command may be found, not what counts as a recognised one.
+
 ### Two fields this appendix depends on
 
 `gate.source` (`observed` | `declared`, closed, always present) and
