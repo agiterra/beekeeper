@@ -19,6 +19,33 @@ pub(crate) fn source_sha() -> &'static str {
     env!("BUZZ_RELAY_SOURCE_SHA")
 }
 
+/// `git rev-list --count` of [`source_sha`] — the number of commits
+/// reachable from it, inclusive — or `None`.
+///
+/// Set by `build.rs` alongside [`source_sha`] and always describing the
+/// **same** commit: `resolve_stamp` resolves the pair from one source or
+/// yields no count at all, so this can never be an ordinal from a different
+/// history than the SHA beside it.
+///
+/// `None` whenever the count could not be established honestly: the
+/// `BUZZ_SOURCE_COMMIT_COUNT` build-arg absent or malformed on a Docker
+/// build (whose context has no `.git`), a shallow checkout — where
+/// `rev-list --count` returns the graft's size rather than the true ordinal
+/// — or no git at all. Advertised as NIP-11 `software_commit_count`, where
+/// it serializes as `null`: the same disclosed non-answer `software_commit`'s
+/// literal `unknown` is, never omitted and never guessed.
+pub(crate) fn source_commit_count() -> Option<u32> {
+    // `build.rs` writes either a `parse_commit_count`-validated decimal or
+    // the empty string, so this only distinguishes the two. The `>= 1` guard
+    // is kept rather than assumed: `0` is the value a shallow or broken
+    // pipeline would produce, and it is the one number that would subtract
+    // as data instead of reading as absent.
+    match env!("BUZZ_RELAY_SOURCE_COMMIT_COUNT") {
+        "" => None,
+        value => value.parse().ok().filter(|count| *count >= 1),
+    }
+}
+
 /// RFC 3339 UTC timestamp this binary was compiled, second precision.
 ///
 /// Set by `build.rs` (`BUZZ_RELAY_BUILD_TIME`) from the build machine's

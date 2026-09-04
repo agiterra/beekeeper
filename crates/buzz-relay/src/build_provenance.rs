@@ -41,6 +41,54 @@ pub fn is_full_sha(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// A `git rev-list --count` result, parsed.
+///
+/// The count's contract mirrors [`is_full_sha`]'s: a value that is not
+/// exactly what git prints is refused rather than served. Rejects the empty
+/// string, [`UNKNOWN_STAMP`], signs, leading zeros (git never pads), inner
+/// whitespace, anything non-decimal, anything overflowing `u32` — and `0`.
+///
+/// `0` is refused because `rev-list --count` of a real commit is at minimum
+/// 1 (the commit itself), so a `0` can only come from a broken pipeline; and
+/// unlike a malformed string, a `0` served as data would silently take part
+/// in a consumer's subtraction and read as agreement.
+pub fn parse_commit_count(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if value.is_empty() || value == UNKNOWN_STAMP {
+        return None;
+    }
+    if value.len() > 1 && value.starts_with('0') {
+        return None;
+    }
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let count: u32 = value.parse().ok()?;
+    (count >= 1).then_some(count)
+}
+
+/// Whether `git_dir` belongs to a shallow clone.
+///
+/// A shallow checkout's `rev-list --count` returns the size of the *graft*,
+/// not the commit's true ordinal — `actions/checkout` defaults to
+/// `fetch-depth: 1`, which would stamp a count of `1` and make every client
+/// comparing against it announce a drift of the entire history. Refusing to
+/// count at all is the only honest answer.
+///
+/// A filesystem check rather than `git rev-parse --is-shallow-repository`, so
+/// it holds even where spawning `git` is undesirable or impossible, and so it
+/// is testable over a fixture layout without a real git binary. `build.rs`
+/// asks git as well; either saying shallow drops the count.
+///
+/// Resolved through [`common_dir`] for the same reason
+/// [`stamp_watch_paths`] is: a linked worktree's own gitdir holds neither the
+/// marker nor the refs, both of which live in the common directory. Checking
+/// beside the worktree's `HEAD` finds nothing and silently reports "not
+/// shallow" — which is exactly the wrong direction to be wrong in.
+pub fn is_shallow_checkout(git_dir: &Path) -> bool {
+    common_dir(git_dir).join("shallow").exists()
+}
+
 /// Resolve a checkout's git directory, following the `.git` *file* a linked
 /// worktree carries.
 ///
@@ -195,6 +243,65 @@ mod tests {
         assert!(!is_full_sha("6a683c9e3"), "a short SHA is not accepted");
         assert!(!is_full_sha("not-hex-at-all-not-hex-at-all-not-hex-a"));
         assert!(!is_full_sha(""));
+    }
+
+    #[test]
+    fn parse_commit_count_accepts_only_what_git_actually_prints() {
+        assert_eq!(parse_commit_count("1"), Some(1));
+        assert_eq!(parse_commit_count("40312"), Some(40_312));
+        assert_eq!(
+            parse_commit_count(" 40312\n"),
+            Some(40_312),
+            "git's trailing newline"
+        );
+
+        assert_eq!(parse_commit_count(""), None);
+        assert_eq!(parse_commit_count(UNKNOWN_STAMP), None);
+        assert_eq!(
+            parse_commit_count("0"),
+            None,
+            "rev-list --count of a real commit is at least 1; a 0 would subtract as data"
+        );
+        assert_eq!(parse_commit_count("007"), None, "git never pads");
+        assert_eq!(parse_commit_count("-1"), None);
+        assert_eq!(parse_commit_count("+1"), None);
+        assert_eq!(parse_commit_count("1 2"), None, "inner whitespace");
+        assert_eq!(parse_commit_count("1e3"), None);
+        assert_eq!(parse_commit_count("12a"), None);
+        assert_eq!(
+            parse_commit_count("4294967296"),
+            None,
+            "one past u32::MAX is refused, not wrapped"
+        );
+    }
+
+    #[test]
+    fn a_shallow_checkout_is_recognized_from_the_main_checkout_and_from_a_worktree() {
+        let repo = FakeRepo::new();
+        let worktree_git = repo.main_git().join("worktrees/batch3-l24-relay-build");
+        assert!(
+            !is_shallow_checkout(&repo.main_git()),
+            "a full checkout has no shallow marker"
+        );
+        assert!(!is_shallow_checkout(&worktree_git));
+
+        // The marker lives in the *common* directory, never beside a linked
+        // worktree's own HEAD. Looking in the wrong place reports "not
+        // shallow" and stamps a graft size as if it were an ordinal — the
+        // failure this whole guard exists to prevent.
+        fs::write(
+            repo.main_git().join("shallow"),
+            format!("{}\n", "c".repeat(40)),
+        )
+        .expect("write shallow marker");
+        assert!(
+            is_shallow_checkout(&repo.main_git()),
+            "a fetch-depth:1 clone must never be counted"
+        );
+        assert!(
+            is_shallow_checkout(&worktree_git),
+            "a worktree of a shallow clone is just as uncountable"
+        );
     }
 
     #[test]

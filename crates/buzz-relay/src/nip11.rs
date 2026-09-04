@@ -61,6 +61,24 @@ pub struct RelayInfo {
     /// redeployed hive could not be observed by mechanism before this. See
     /// `build_info::source_sha` and `docs/INTEGRATION.md` § NIP-11.
     pub software_commit: String,
+    /// `git rev-list --count` of [`Self::software_commit`] — the number of
+    /// commits reachable from it, inclusive — or `null`.
+    ///
+    /// Always describes the *same* commit as `software_commit`: `build.rs`
+    /// resolves the pair from one source or yields no count, so the two can
+    /// never come from different histories.
+    ///
+    /// `null` is the disclosed non-answer, exactly as `unknown` is for
+    /// `software_commit`: never omitted from the document, never guessed,
+    /// and never `0` — `rev-list --count` of a real commit is at least 1, so
+    /// a `0` could only come from a broken pipeline, and unlike `null` it
+    /// would silently take part in a consumer's subtraction.
+    ///
+    /// A count is comparable **only** against a count from the same linear
+    /// history, and a difference of two counts is a distance only when one
+    /// commit is an ancestor of the other. See `docs/INTEGRATION.md` § NIP-11.
+    #[serde(default)]
+    pub software_commit_count: Option<u32>,
     /// RFC 3339 UTC timestamp this binary was compiled, or `unknown`.
     /// See `build_info::build_time`.
     pub build_time: String,
@@ -179,6 +197,7 @@ impl RelayInfo {
             pairing_relay_url: pairing_relay_url.map(str::to_string),
             relay_self: relay_self.map(|s| s.to_string()),
             software_commit: crate::build_info::source_sha().to_string(),
+            software_commit_count: crate::build_info::source_commit_count(),
             build_time: crate::build_info::build_time().to_string(),
         }
     }
@@ -432,6 +451,23 @@ mod tests {
             "build_time must be RFC 3339 UTC, got {:?}",
             info.build_time
         );
+        assert_eq!(
+            info.software_commit_count,
+            crate::build_info::source_commit_count()
+        );
+        assert!(
+            info.software_commit_count.is_none_or(|count| count >= 1),
+            "a count is absent or at least 1, never 0: {:?}",
+            info.software_commit_count
+        );
+        // The coupling `build.rs::resolve_stamp` exists to guarantee: a
+        // count is only ever emitted alongside a commit it actually
+        // describes, so a count with an `unknown` commit would mean the two
+        // came from different sources.
+        assert!(
+            info.software_commit_count.is_none() || info.software_commit != "unknown",
+            "a count must never be paired with an unknown commit"
+        );
     }
 
     #[test]
@@ -447,6 +483,17 @@ mod tests {
         assert!(
             json.get("build_time").and_then(|v| v.as_str()).is_some(),
             "build_time must always serialize, never be omitted"
+        );
+        let count = json
+            .get("software_commit_count")
+            .expect("software_commit_count must always serialize, never be omitted");
+        // Omitting it would make "this relay could not determine a count"
+        // indistinguishable from "this relay predates the field", which is
+        // the disclosure distinction finding 32 exists to preserve.
+        assert!(
+            count.is_null() || count.as_u64().is_some_and(|n| n >= 1),
+            "software_commit_count is a positive integer or null — never 0, \
+             never a string: {count:?}"
         );
         // Existing fields untouched — additive means additive.
         assert_eq!(json["software"], "https://github.com/agiterra/beekeeper");
