@@ -5450,9 +5450,12 @@ impl Provider {
                 };
                 for item in items {
                     // The observed half of kind 44246 (§ addendum): the gate
-                    // row is derived from the seat's own tool calls, published
-                    // under this provider's key, and never asked for.
-                    if let Some(observed) = self
+                    // row(s) are derived from the seat's own tool calls,
+                    // published under this provider's key, and never asked
+                    // for. A composed command (finding 57) can close more
+                    // than one gate at once, so this is a loop, not an `if
+                    // let` — every row it hands back gets its own probe.
+                    for observed in self
                         .gate_observers
                         .entry(session_id.clone())
                         .or_default()

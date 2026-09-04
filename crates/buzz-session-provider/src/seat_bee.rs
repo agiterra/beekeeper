@@ -166,11 +166,25 @@ pub fn resolve_host_seat_bee() -> Option<SeatBee> {
 ///
 /// `None` means this host holds no `bee`: seats get no `BEE`, no prepended
 /// entry, and their 44223 carries no `beeStamp`. An absent fact, not a guess.
+///
+/// Live-run finding 53 (2026-09-03): a seat's 44223 carried no `beeStamp` on
+/// a build that resolves one, and the host log held not one line naming
+/// `bee`, `seat_bee`, or `beeStamp` anywhere — the success branch below has
+/// always logged which binary a seat gets, but nothing ever logged *this*
+/// branch, so "found none" and "never asked" were the same silence on the
+/// wire and in the log both. They no longer are.
 pub fn host_seat_bee() -> Option<&'static (SeatBee, BeeStamp)> {
     static RESOLVED: std::sync::OnceLock<Option<(SeatBee, BeeStamp)>> = std::sync::OnceLock::new();
     RESOLVED
         .get_or_init(|| {
-            let bee = resolve_host_seat_bee()?;
+            let Some(bee) = resolve_host_seat_bee() else {
+                tracing::warn!(
+                    "no bee binary found beside this process or on its inherited PATH; \
+                     seats get no BEE, no prepended PATH entry, and no beeStamp on their \
+                     44223 until this host is restarted with one reachable"
+                );
+                return None;
+            };
             let stamp = observe_bee_stamp(&bee);
             tracing::info!(
                 path = %bee.path.display(),

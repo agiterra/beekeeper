@@ -165,6 +165,7 @@ async function harness({ grantAnswers = [] } = {}) {
   const published = [];
   const grants = [];
   const delays = [];
+  const worktreeCalls = [];
   let clockMs = 0;
   let listener = null;
 
@@ -178,10 +179,13 @@ async function harness({ grantAnswers = [] } = {}) {
     fetchRosterFold: async () => ({
       accepted: new Map([[LEAD_PUBKEY, "operator"]]),
     }),
-    createWorktree: async (input) => ({
-      path: `/tmp/trees/${input.name}`,
-      branch: `session/${input.name}`,
-    }),
+    createWorktree: async (input) => {
+      worktreeCalls.push(input);
+      return {
+        path: `/tmp/trees/${input.name}`,
+        branch: `session/${input.name}`,
+      };
+    },
     stageCreateHint: async () => {},
     seatDeps: {
       ensureMembership: async () => {},
@@ -267,6 +271,7 @@ async function harness({ grantAnswers = [] } = {}) {
     outcomes: () => mounted.result.current.outcomes,
     published,
     teardown: () => mounted.unmount(),
+    worktreeCalls,
   };
 }
 
@@ -704,6 +709,23 @@ test("N2: switching communities clears the hire-outcome store", async () => {
 
   resetCodingSessionHireOutcomes();
   assert.deepEqual(readCodingSessionHireOutcomes(), []);
+});
+
+test("finding 60: the worktree create carries the session ref and seat label the host needs to record it", async () => {
+  // Live-run finding 60: the host staged every seat worktree into `pending`
+  // and never promoted one into its durable `worktrees` record, because the
+  // hire path never told `create_coding_session_worktree` which session and
+  // seat the tree belonged to — even though, unlike the lead's own worktree
+  // at launch, a hire always targets a mission that already exists, so both
+  // are known before the tree is even cut.
+  const host = await harness();
+  const hire = await signedHire();
+  await host.deliver(hire);
+
+  assert.equal(host.worktreeCalls.length, 1);
+  assert.equal(host.worktreeCalls[0].sessionRef, SESSION_REF);
+  assert.equal(host.worktreeCalls[0].seatLabel, "Ada");
+  host.teardown();
 });
 
 test("F2: a hire installs the wip-share hooks into the seat's own worktree", async () => {

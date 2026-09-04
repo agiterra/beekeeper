@@ -354,7 +354,8 @@ fn the_run_three_fixture_refuses_with_the_frozen_copy() {
              team transactions on that channel. An older ruling can fall outside both. No \
              observed gate row names {HEAD_SHA} either, so the gate-row route is not open for \
              it: that route wants every required gate published green on this exact commit, by \
-             the mission's own provider, over a clean worktree."
+             the mission's own provider, over a clean worktree. Run each gate as its own \
+             command so the host can record it."
         ),
         "both caps are named in words, not just implied by the mission count (fix round 1, F4)"
     );

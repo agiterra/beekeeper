@@ -87,15 +87,34 @@ export async function listCodingSessionWorktreeBranches(input: {
  * The plan is recomputed inside the command, so the answer names where the
  * worktree actually landed — which may carry a disambiguating suffix the
  * preview did not show.
+ *
+ * `sessionRef`/`seatLabel` are the L11 record's own key, and are optional
+ * only because a caller cutting a worktree before its session exists (the
+ * lead's own, at the moment a mission is founded — `codingSessionCrewLaunch
+ * .ts`) genuinely cannot supply them yet. Any caller that already knows the
+ * session this worktree belongs to — a hire into a mission that has already
+ * been founded, which is the overwhelming majority of seat worktrees cut —
+ * must pass both, or `create_coding_session_worktree` records nothing and
+ * the tree is invisible to `bee sessions worktree status/prune/reclaim` and
+ * to Pulse's disk row until this host restarts (live-run finding 60: 27
+ * worktrees staged, zero recorded).
  */
 export async function createCodingSessionWorktree(input: {
   workdir: string;
   name: string;
   source: string | null;
+  sessionRef?: string | null;
+  seatLabel?: string | null;
 }): Promise<CodingSessionWorktreeCreated> {
   return invokeTauri<CodingSessionWorktreeCreated>(
     "create_coding_session_worktree",
-    { workdir: input.workdir, name: input.name, source: input.source },
+    {
+      workdir: input.workdir,
+      name: input.name,
+      source: input.source,
+      sessionRef: input.sessionRef ?? null,
+      seatLabel: input.seatLabel ?? null,
+    },
   );
 }
 

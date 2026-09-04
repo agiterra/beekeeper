@@ -5,6 +5,13 @@ description: "How to run a one-pass refutation against a brief's named constrain
 
 # One pass, against named constraints
 
+The transcript is not the record. Run every required gate as its own
+command — a semicolon-joined block the host cannot attribute to one gate
+gets no observed row at all (live-run finding 57). End every assignment with
+`bee sessions report --channel <uuid> --session-ref <uuid> --genesis <hex64>
+--body @report.json`, naming `headSha` and `branch` in the body — a founder's
+goal that says "report" means the wire, not chat (live-run finding 62).
+
 Read the brief's constraints first — the "Refuter constraints" line a lead writes for tier-2 work. Then read the diff once, straight through, hunting only for ways those named constraints break.
 
 ## Phrasing CONFIRMED

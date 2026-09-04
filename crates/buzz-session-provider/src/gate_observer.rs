@@ -34,6 +34,45 @@
 //! * **Nothing unbounded.** At most [`MAX_PENDING_GATE_CALLS`] calls are
 //!   remembered at once; the oldest is forgotten first, and a call whose
 //!   result never arrives simply never becomes a row.
+//!
+//! # Composed commands (finding 57)
+//!
+//! Live run 4 ran all three gates green and produced **zero** observed rows:
+//! Keystone ran each one as `echo "== fmt =="; cargo fmt --all --check; echo
+//! "fmt exit=$?"`, and the observer of record refused every line with a `;`
+//! outright. That is still the right refusal for a line this seam cannot
+//! read exactly — but a `;`/`&&`-joined line whose every top-level segment is
+//! *itself* either a recognised gate or one of the four wrappers a seat
+//! legitimately narrates with (`cd`, `echo`, `nice`, `env`) is not such a
+//! line, and is now accepted.
+//!
+//! One `tool_result` still carries exactly one `isError` for the *whole*
+//! line, never one per segment, so a composed call cannot say which segment
+//! produced that exit the way a bare one can:
+//!
+//! * **`isError: true` on more than one gate segment publishes nothing.**
+//!   The failure could be any of them (or, for a `&&` line, a wrapper ahead
+//!   of all of them, which never let a gate run at all) — a guess here is
+//!   exactly the false claim this module exists to refuse.
+//! * **`isError: false` publishes a `passed` row for every gate segment.**
+//!   Sound for a pure `&&` line (bash's own short-circuit means reaching the
+//!   end at all proves every segment succeeded) and for the common
+//!   banner-then-gate shape. **Not sound in general** for a `;` line whose
+//!   *last* segment is a wrapper that cannot itself fail, such as Keystone's
+//!   own `echo "fmt exit=$?"` tail — bash reports the tail's exit, not the
+//!   gate's, so a failing gate followed by that tail is indistinguishable
+//!   from a passing one at this seam. Two consequences, both deliberate: a
+//!   solitary gate segment still gets a `failed` row on `isError: true`
+//!   (unchanged from the pre-existing `cd <path> && <gate>` case, which
+//!   carries the same "a wrapper ahead of it could have been what failed"
+//!   caveat and was never flagged for it); and Keystone's *actual* line is
+//!   refused regardless of any of the above, because the hermit-activation
+//!   prefix it also carries (`. <path> >/dev/null 2>&1; …`) is a genuine
+//!   redirect, which this module keeps refusing unconditionally. The code
+//!   fix here widens what a *bare-enough* composed line can prove; it does
+//!   not make an embedded redirect provable, and does not make a `;`-tailed
+//!   gate's failure provable. The seat-facing fix for both is the same one:
+//!   run each gate as its own command (see the persona packs).
 
 use std::collections::VecDeque;
 
@@ -135,12 +174,24 @@ const GATE_MATCHERS: &[GateMatcher] = &[
     },
 ];
 
-/// One pending call: what gate it is, what it ran, and when it opened.
+/// One gate segment of a pending call: its name and its own command text.
+#[derive(Debug, Clone)]
+struct PendingSegment {
+    gate: &'static str,
+    /// This segment's own text, trimmed, never the whole line — so a row
+    /// from a composed call names only the gate that produced it.
+    command: String,
+}
+
+/// One pending call: which gate(s) it ran, and when it opened.
+///
+/// `segments` has exactly one entry for the overwhelming common case — a
+/// bare gate command — and more than one only when the line was accepted as
+/// composed (see the module doc, "Composed commands").
 #[derive(Debug, Clone)]
 struct PendingGate {
     tool_id: String,
-    gate: &'static str,
-    command: String,
+    segments: Vec<PendingSegment>,
     /// Milliseconds since the epoch, from the provider's own clock — the same
     /// `now_ms()` every other provider row is stamped with.
     started_at_ms: i64,
@@ -155,20 +206,22 @@ pub struct GateObserver {
 impl GateObserver {
     /// Feed one published transcript item.
     ///
-    /// Returns a row exactly when this item is the *result* of a gate command
-    /// this observer opened. Everything else — prose, plans, reads, edits, a
-    /// shell command that is not a gate — returns `None` and is not
-    /// remembered.
-    pub fn on_item(&mut self, item: &Value, now_ms: i64) -> Option<ObservedGateRow> {
+    /// Returns one row per gate segment this item closed — zero for anything
+    /// that is not the *result* of a call this observer opened, exactly one
+    /// for the common bare-command case, and more than one only for an
+    /// accepted composed line. Everything else — prose, plans, reads, edits,
+    /// a shell command that is not a gate — opens nothing and returns
+    /// nothing.
+    pub fn on_item(&mut self, item: &Value, now_ms: i64) -> Vec<ObservedGateRow> {
         match item.get("kind").and_then(Value::as_str) {
             Some("tool_call") => {
-                // A call that names no gate is simply not remembered; the
-                // `None` here is "nothing to open", never a failure.
+                // A call that names no gate is simply not remembered; opening
+                // nothing is never a failure.
                 let _ = self.open(item, now_ms);
-                None
+                Vec::new()
             }
             Some("tool_result") => self.close(item, now_ms),
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -176,52 +229,69 @@ impl GateObserver {
         let tool = item.get("tool")?;
         let tool_id = string_at(tool, "toolId")?;
         let command = command_of(tool.get("input"))?;
-        let gate = match_gate(&command)?;
+        let segments = match_gate_segments(&command)?;
         if self.pending.len() >= MAX_PENDING_GATE_CALLS {
             self.pending.pop_front();
         }
         self.pending.push_back(PendingGate {
             tool_id,
-            gate,
-            command,
+            segments,
             started_at_ms: now_ms,
         });
         Some(())
     }
 
-    fn close(&mut self, item: &Value, now_ms: i64) -> Option<ObservedGateRow> {
-        let tool_id = string_at(item, "toolId")?;
-        let index = self
-            .pending
-            .iter()
-            .position(|pending| pending.tool_id == tool_id)?;
-        let pending = self.pending.remove(index)?;
+    fn close(&mut self, item: &Value, now_ms: i64) -> Vec<ObservedGateRow> {
+        let Some(tool_id) = string_at(item, "toolId") else {
+            return Vec::new();
+        };
+        let Some(index) = self.pending.iter().position(|p| p.tool_id == tool_id) else {
+            return Vec::new();
+        };
+        let pending = self.pending.remove(index).expect("index just found");
         // `isError` is the published form of ACP's own terminal status. A
         // result that carries neither is not evidence of a pass, so it is
         // dropped rather than turned into one.
-        let is_error = item.get("isError").and_then(Value::as_bool)?;
-        Some(ObservedGateRow {
-            row: CodingSessionObservationGateRow {
-                gate: pending.gate.to_owned(),
-                outcome: if is_error {
-                    CodingSessionObservationGateOutcome::Failed
-                } else {
-                    CodingSessionObservationGateOutcome::Passed
+        let Some(is_error) = item.get("isError").and_then(Value::as_bool) else {
+            return Vec::new();
+        };
+        // A composed call pairs one exit with several gates. `isError: true`
+        // there cannot say which of them produced it — a `&&` line may not
+        // even have reached a later gate at all — so more than one gate
+        // segment on a failing call publishes nothing rather than a guess.
+        // A single segment is unambiguous either way, exactly the bare-gate
+        // case this module has always reported.
+        if is_error && pending.segments.len() > 1 {
+            return Vec::new();
+        }
+        let duration_ms = now_ms
+            .checked_sub(pending.started_at_ms)
+            .and_then(|elapsed| u64::try_from(elapsed).ok());
+        let summary = summary_of(item.get("content"));
+        pending
+            .segments
+            .into_iter()
+            .map(|segment| ObservedGateRow {
+                row: CodingSessionObservationGateRow {
+                    gate: segment.gate.to_owned(),
+                    outcome: if is_error {
+                        CodingSessionObservationGateOutcome::Failed
+                    } else {
+                        CodingSessionObservationGateOutcome::Passed
+                    },
+                    command: segment.command,
+                    summary: summary.clone(),
+                    // A clock that went backwards between the two frames
+                    // yields `null`, never a negative or a zero: an
+                    // unmeasurable span is not a span of no time (§8 I9).
+                    duration_ms,
+                    // Resolved by the provider after this returns; see
+                    // `ObservedGateRow::row`.
+                    head_sha: None,
+                    dirty: None,
                 },
-                command: pending.command,
-                summary: summary_of(item.get("content")),
-                // A clock that went backwards between the two frames yields
-                // `null`, never a negative or a zero: an unmeasurable span is
-                // not a span of no time (§8 I9).
-                duration_ms: now_ms
-                    .checked_sub(pending.started_at_ms)
-                    .and_then(|elapsed| u64::try_from(elapsed).ok()),
-                // Resolved by the provider after this returns; see
-                // `ObservedGateRow::row`.
-                head_sha: None,
-                dirty: None,
-            },
-        })
+            })
+            .collect()
     }
 }
 
@@ -249,29 +319,45 @@ fn command_of(input: Option<&Value>) -> Option<String> {
 enum ShellToken {
     /// A word, with any quoting removed.
     Word(String),
-    /// The one separator a gate may hide behind, and only as `cd … && <gate>`.
+    /// A top-level `&&`.
     AndAnd,
+    /// A top-level `;`.
+    Semicolon,
 }
 
-/// Which gate a command line is, or none.
+/// One top-level segment of a command line, classified.
+enum SegmentKind {
+    /// `cd <path>` or `echo …` — narration around a gate, never a gate
+    /// itself, and never able to produce the exit status a row would read.
+    Wrapper,
+    /// A recognised gate, named as the table names it.
+    Gate(&'static str),
+}
+
+/// Which gate a *single, uncomposed* command line is, or none.
 ///
 /// Three steps, all of them refusals by default:
 ///
-/// 1. **Split into argv.** Anything the split cannot read as plain words and at
-///    most one `&&` — a pipe, a redirect, a `;`, a backtick, a `$(`, an
-///    unbalanced quote — is refused outright. The observer cannot say which
-///    segment of a composed line produced the exit it is about to read, so it
-///    declines to name any of them.
-/// 2. **Strip the wrappers a seat legitimately uses**, and only those: a
-///    leading `cd <path> &&`, `nice [-n N]`, and `env [VAR=VALUE …]`. None of
-///    them produces an exit status of its own.
+/// 1. **Split into argv.** Anything the split cannot read as plain words — a
+///    pipe, a redirect, a `;`, a `&&`, a backtick, a `$(`, an unbalanced
+///    quote — is refused outright.
+/// 2. **Strip the wrappers a seat legitimately uses**, and only those:
+///    `nice [-n N]` and `env [VAR=VALUE …]`. Neither produces an exit status
+///    of its own.
 /// 3. **Match program and subcommand at the head**, against the closed table.
 ///
-/// What survives all three is a single command whose own exit the paired tool
-/// result reports — which is what makes `outcome` a measurement rather than a
-/// guess about a pipeline.
+/// This is the single-segment half of [`match_gate_segments`]; a `cd`/`echo`
+/// wrapper or a `&&`/`;` composition is that function's job, not this one's.
 fn match_gate(command: &str) -> Option<&'static str> {
-    let argv = strip_wrappers(gate_argv(command)?)?;
+    let tokens = shell_split(command)?;
+    let mut words = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        match token {
+            ShellToken::Word(word) => words.push(word),
+            ShellToken::AndAnd | ShellToken::Semicolon => return None,
+        }
+    }
+    let argv = strip_wrappers(words)?;
     let program = argv.first()?.as_str();
     let subcommand = argv.get(1)?.as_str();
     GATE_MATCHERS
@@ -280,50 +366,59 @@ fn match_gate(command: &str) -> Option<&'static str> {
         .map(|matcher| matcher.gate)
 }
 
-/// The argv a gate would run under, or `None` when the line is composed.
+/// Which gate(s) a command line names, or none — the composed-command
+/// entry point [`GateObserver::open`] actually calls.
 ///
-/// `cd <path> && <rest>` yields `<rest>`; every other use of `&&`, and every
-/// other metacharacter, is refused. A `cd` is exempt because it cannot itself
-/// produce the exit status the row reports.
-fn gate_argv(command: &str) -> Option<Vec<String>> {
-    let tokens = shell_split(command)?;
-    let separators = tokens
-        .iter()
-        .filter(|token| **token == ShellToken::AndAnd)
-        .count();
-    let mut words: Vec<String> = Vec::new();
-    match separators {
-        0 => {
-            for token in tokens {
-                match token {
-                    ShellToken::Word(word) => words.push(word),
-                    ShellToken::AndAnd => return None,
-                }
-            }
+/// Splits the line into top-level segments at `&&`/`;` (see
+/// [`split_top_level_segments`] for exactly what that refuses) and
+/// classifies each one as a wrapper (`cd`, `echo`, and — as a prefix inside
+/// a gate segment — `nice`/`env`) or a gate via [`match_gate`]. **Any**
+/// segment that is neither refuses the whole line: a line this seam cannot
+/// classify in full is a line it must not partly label. A line with no `&&`
+/// or `;` at all is one segment, so the bare-gate case — the overwhelming
+/// common one — goes through exactly the path it always has.
+///
+/// See the module doc, "Composed commands", for what a caller may and may
+/// not conclude from the rows this produces.
+fn match_gate_segments(command: &str) -> Option<Vec<PendingSegment>> {
+    let segments = split_top_level_segments(command)?;
+    let mut gates = Vec::new();
+    for segment in segments {
+        let kind = if segment_is_cd(segment) || segment_is_echo(segment) {
+            SegmentKind::Wrapper
+        } else if let Some(gate) = match_gate(segment) {
+            SegmentKind::Gate(gate)
+        } else {
+            return None;
+        };
+        if let SegmentKind::Gate(gate) = kind {
+            gates.push(PendingSegment {
+                gate,
+                command: segment.to_owned(),
+            });
         }
-        1 => {
-            let mut before: Vec<String> = Vec::new();
-            let mut seen = false;
-            for token in tokens {
-                match token {
-                    ShellToken::AndAnd => seen = true,
-                    ShellToken::Word(word) => {
-                        if seen {
-                            words.push(word);
-                        } else {
-                            before.push(word);
-                        }
-                    }
-                }
-            }
-            // Exactly `cd <path>`, nothing else and nothing more.
-            if before.len() != 2 || before[0] != "cd" {
-                return None;
-            }
-        }
-        _ => return None,
     }
-    (!words.is_empty()).then_some(words)
+    (!gates.is_empty()).then_some(gates)
+}
+
+/// Whether a segment is exactly `cd <path>` — nothing else, nothing more.
+fn segment_is_cd(segment: &str) -> bool {
+    let Some(tokens) = shell_split(segment) else {
+        return false;
+    };
+    matches!(
+        tokens.as_slice(),
+        [ShellToken::Word(first), ShellToken::Word(_)] if first == "cd"
+    )
+}
+
+/// Whether a segment starts with `echo` — any arguments, since none of them
+/// can change whether the segment itself produces an exit status.
+fn segment_is_echo(segment: &str) -> bool {
+    let Some(tokens) = shell_split(segment) else {
+        return false;
+    };
+    matches!(tokens.first(), Some(ShellToken::Word(word)) if word == "echo")
 }
 
 /// Drop the wrappers that run a gate without being one.
@@ -364,12 +459,12 @@ fn strip_wrappers(mut argv: Vec<String>) -> Option<Vec<String>> {
     }
 }
 
-/// Split a command line into words and `&&`, or refuse it.
+/// Split a command line into words, `&&`, and `;`, or refuse it.
 ///
-/// Deliberately small and deliberately strict. It understands single and double
-/// quotes and nothing else: any other shell construct — `|`, `;`, `<`, `>`,
-/// a backtick, `$(`, an unterminated quote — returns `None`, because a line
-/// this seam cannot read exactly is a line it must not label.
+/// Deliberately small and deliberately strict. It understands single and
+/// double quotes and nothing else: any other shell construct — `|`, `<`,
+/// `>`, a backtick, `$(`, an unterminated quote — returns `None`, because a
+/// line this seam cannot read exactly is a line it must not label.
 fn shell_split(command: &str) -> Option<Vec<ShellToken>> {
     let mut tokens: Vec<ShellToken> = Vec::new();
     let mut current = String::new();
@@ -402,7 +497,14 @@ fn shell_split(command: &str) -> Option<Vec<ShellToken>> {
                 }
                 tokens.push(ShellToken::AndAnd);
             }
-            '|' | ';' | '<' | '>' | '`' | '\n' => return None,
+            ';' => {
+                if !current.is_empty() || quoted {
+                    tokens.push(ShellToken::Word(std::mem::take(&mut current)));
+                    quoted = false;
+                }
+                tokens.push(ShellToken::Semicolon);
+            }
+            '|' | '<' | '>' | '`' | '\n' => return None,
             '$' => {
                 if chars.peek() == Some(&'(') {
                     return None;
@@ -422,6 +524,70 @@ fn shell_split(command: &str) -> Option<Vec<ShellToken>> {
         tokens.push(ShellToken::Word(current));
     }
     (!tokens.is_empty()).then_some(tokens)
+}
+
+/// Split a command line into its own top-level segments, verbatim.
+///
+/// Reads the same alphabet [`shell_split`] reads — single/double quotes,
+/// `&&`, and `;` — and refuses exactly what `shell_split` refuses: a pipe, a
+/// redirect, a lone `&`, a backtick, a `$(`, an unterminated quote. Unlike
+/// `shell_split`, this returns the *original* text between separators
+/// (trimmed of the whitespace touching the separator, nothing else), so a
+/// gate segment's `command` field ends up byte-for-byte what the seat typed
+/// for it, never a word list rejoined with normalised spacing.
+///
+/// A leading, trailing, or doubled separator — an empty segment — is refused
+/// rather than skipped: `foo;;bar` and `; foo` are not lines this seam has
+/// business guessing the shape of.
+fn split_top_level_segments(command: &str) -> Option<Vec<&str>> {
+    let mut segments = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut start = 0usize;
+    let mut chars = command.char_indices().peekable();
+    while let Some((pos, character)) = chars.next() {
+        if let Some(open) = quote {
+            if character == open {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            '|' | '<' | '>' | '`' | '\n' => return None,
+            '$' if chars.peek().map(|&(_, next)| next) == Some('(') => return None,
+            '$' => {}
+            ';' => {
+                let segment = command[start..pos].trim();
+                if segment.is_empty() {
+                    return None;
+                }
+                segments.push(segment);
+                start = pos + character.len_utf8();
+            }
+            '&' => {
+                if chars.peek().map(|&(_, next)| next) != Some('&') {
+                    return None;
+                }
+                let (next_pos, next_char) = chars.next().expect("peeked Some above");
+                let segment = command[start..pos].trim();
+                if segment.is_empty() {
+                    return None;
+                }
+                segments.push(segment);
+                start = next_pos + next_char.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    let last = command[start..].trim();
+    if last.is_empty() {
+        return None;
+    }
+    segments.push(last);
+    Some(segments)
 }
 
 /// The tail a reader wants: the command's last non-blank line, bounded.

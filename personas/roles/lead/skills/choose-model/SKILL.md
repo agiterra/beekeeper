@@ -88,16 +88,21 @@ whose hard part was one paragraph.
 ## 4. Emit the routing record
 
 The record rides `session.hire` and is echoed on the resulting create and on the
-seat's 44223 metadata. You fill `class`, `tier`, `risk`, optionally `profile`,
-plus review flags, challenger sampling and any override; **the router fills
-`chosen`, `runnerUp`, `reason`, `registryVersion` and `catalogRevision`.**
+seat's 44223 metadata. You fill `class`, `risk`, optionally `profile`, plus
+review flags, challenger sampling and any override; **the router derives the
+tier from `risk` itself and fills `chosen`, `runnerUp`, `reason`,
+`registryVersion` and `catalogRevision`.** A request that asserts `tier` is
+malformed — `HIRE_MALFORMED — action.routing.tier` — and never reaches the
+wire (2026-09-03 live-run finding 54: this section's own worked examples used
+to show `tier` in the record and every hire built from them was refused). §2's
+risk→tier table is for reading the router's *answer* back, never for writing
+one into the request.
 
 A FAST builder task — *"implement approved API endpoint"*:
 
 ```json
 {
   "class": "builder",
-  "tier": "fast",
   "risk": { "impact": 2, "uncertainty": 1, "irreversibility": 2, "score": 4 },
   "profile": { "coding": 4.2, "discipline": 4.5, "verification": 4.2 },
   "reviewRequired": false,
@@ -113,7 +118,6 @@ the session runtime or above it"*:
 ```json
 {
   "class": "architect",
-  "tier": "deep",
   "risk": { "impact": 5, "uncertainty": 4, "irreversibility": 5, "score": 100 },
   "profile": { "reasoning": 4.8, "judgment": 4.8, "context": 4.8, "verification": 4.5 },
   "reviewRequired": true,

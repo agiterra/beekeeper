@@ -5,6 +5,13 @@ description: "How to run a long command safely and report its result without opi
 
 # Run and report, nothing else
 
+The transcript is not the record. Run every required gate as its own
+command — a semicolon-joined block the host cannot attribute to one gate
+gets no observed row at all (live-run finding 57). End every assignment with
+`bee sessions report --channel <uuid> --session-ref <uuid> --genesis <hex64>
+--body @report.json`, naming `headSha` and `branch` in the body — a founder's
+goal that says "report" means the wire, not chat (live-run finding 62).
+
 ## Long-running commands
 
 Launch in the background and wait for the real completion signal (an exit line, a log tail, a monitor) — never a fixed sleep, never a guess. If you must poll, poll on a real condition and stop as soon as it's met.

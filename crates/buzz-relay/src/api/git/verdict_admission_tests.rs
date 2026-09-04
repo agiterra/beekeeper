@@ -459,7 +459,8 @@ mod live {
                  older ruling can fall outside both. No observed gate row names {HEAD_SHA} \
                  either, so the gate-row route is not open for it: that route wants every \
                  required gate published green on this exact commit, by the mission's own \
-                 provider, over a clean worktree."
+                 provider, over a clean worktree. Run each gate as its own command so the \
+                 host can record it."
             ),
             "the body is what `git push` prints, prefixed by the ref"
         );

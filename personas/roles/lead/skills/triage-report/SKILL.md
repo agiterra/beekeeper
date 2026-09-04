@@ -7,6 +7,16 @@ description: "How to read a lane's report and refuter verdict, check the live va
 
 Read the report, not the transcript. Read the diff, not the exploration.
 
+The transcript is not the record, for you either. Tell every lane to run its
+required gates as bare commands — a semicolon-joined block the host cannot
+attribute to one gate gets no observed row at all (live-run finding 57) — and
+to end its assignment with `bee sessions report`, never chat prose alone. When
+the mission itself is settled, publish it: `bee sessions complete --channel
+<uuid> --session-ref <uuid> --genesis <hex64> --body @completion.json`. A
+founder's goal that says "report" or "done" means the wire, not the last
+turn's words (live-run finding 62: a mission finished in transcript only,
+and Mission state, Land, Pulse and the push gate never saw it).
+
 ## The report you're reading
 
 ```

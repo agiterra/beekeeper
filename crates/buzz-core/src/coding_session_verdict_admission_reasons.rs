@@ -34,7 +34,8 @@ impl VerdictAdmissionRefusal {
                  older ruling can fall outside both. No observed gate row names {new_oid} \
                  either, so the gate-row route is not open for it: that route wants every \
                  required gate published green on this exact commit, by the mission's own \
-                 provider, over a clean worktree."
+                 provider, over a clean worktree. Run each gate as its own command so the host \
+                 can record it."
             ),
             Self::ApprovedReportNamesBranchOnly => "require-verdict is set and no mission verdict \
                  names this commit: the approved report for this work names a branch and no \
