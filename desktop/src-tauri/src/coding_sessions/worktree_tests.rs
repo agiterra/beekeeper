@@ -303,6 +303,82 @@ fn listing_branches_outside_a_repository_is_empty() {
     assert_eq!(listed.head_branch, None);
 }
 
+/// The bug this resolution fix exists for: a *linked worktree* is not its own
+/// repository. Asking `--show-toplevel` from inside one names the worktree,
+/// so a second worktree home gets built beside it — which is exactly what
+/// happened on the machine this was found on, leaving two `.worktrees`
+/// directories for one repository. The sibling of
+/// `a_directory_inside_a_repository_plans_against_the_repository_root`, which
+/// only ever covered a subdirectory.
+#[test]
+fn a_linked_worktree_plans_against_its_main_worktree() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    let auth = build_local_git_auth_config().expect("auth");
+    let linked = root.path().join("beekeeper-relayver");
+    run_git(
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "relayver",
+            &linked.to_string_lossy(),
+            "main",
+        ],
+        Some(&checkout),
+        &auth,
+    )
+    .expect("git proved usable above, so a failure here is this test being wrong");
+
+    let planned = plan(&linked.to_string_lossy(), "fix the timeout", None).expect("plan");
+    assert_eq!(planned.problem, None);
+    let repo_root = planned.repo_root.as_deref().map(Path::new);
+    assert_eq!(
+        repo_root,
+        Some(checkout.canonicalize().expect("canonicalize").as_path()),
+        "a linked worktree must resolve to the repository, never to itself"
+    );
+    let path = planned.path.as_deref().unwrap_or_default();
+    assert!(
+        !path.contains("beekeeper-relayver."),
+        "must not build a worktree home beside the worktree: {path}"
+    );
+}
+
+/// A bare repository is a perfectly good worktree host — arguably the best
+/// one, since it has no checkout to collide with. It used to be refused with
+/// "not a git checkout", because `--show-toplevel` fails where there is no
+/// work tree.
+///
+/// Asserts the resolution itself rather than a whole plan: building a bare
+/// repository by cloning would need the file transport this auth config
+/// deliberately forbids, and `git init --bare` leaves no branch to plan from.
+/// Resolution is the thing the fix changed, so it is the thing to pin.
+#[test]
+fn a_bare_repository_resolves_to_itself_rather_than_being_refused() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let bare = root.path().join("beekeeper.git");
+    std::fs::create_dir_all(&bare).expect("create bare dir");
+    let auth = build_local_git_auth_config().expect("auth");
+    if run_git(&["init", "--bare", "."], Some(&bare), &auth).is_err() {
+        return;
+    }
+
+    let resolved = resolve_repo(&bare)
+        .expect("resolution must not error")
+        .expect("a bare repository is a repository");
+    assert_eq!(
+        resolved.root.canonicalize().expect("canonicalize"),
+        bare.canonicalize().expect("canonicalize"),
+        "a bare repo's root is the folder holding its git dir"
+    );
+    assert!(resolved.bare, "and it must know that it is bare");
+}
+
 #[test]
 fn a_directory_inside_a_repository_plans_against_the_repository_root() {
     let root = tempfile::tempdir().expect("tempdir");

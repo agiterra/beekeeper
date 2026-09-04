@@ -127,30 +127,63 @@ fn worktree_parent(repo_root: &Path) -> Option<PathBuf> {
     Some(parent.join(format!("{file_name}.worktrees")))
 }
 
-/// Resolve the repository root containing `workdir`.
+/// What a folder turns out to belong to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedRepo {
+    /// The canonical repository folder: the *main* worktree's root, or, for a
+    /// bare repository, the folder holding the common git dir.
+    pub(crate) root: PathBuf,
+    /// True when the repository itself has no working tree of its own.
+    pub(crate) bare: bool,
+}
+
+/// Resolve the repository `folder` belongs to.
 ///
-/// Returns `Ok(None)` when the path is simply not in a git checkout — the
-/// ordinary case for a scratch directory, and not an error worth a red
-/// message. `Err` is reserved for git being unusable.
-fn repo_root_of(workdir: &Path) -> Result<Option<PathBuf>, String> {
+/// `Ok(None)` when the path is in no repository at all — the ordinary case
+/// for a scratch directory, and not an error worth a red message. `Err` is
+/// reserved for git being unusable.
+///
+/// Asks `--git-common-dir`, not `--show-toplevel`. `--show-toplevel` answers
+/// about the *current* worktree, which is wrong twice over: inside a linked
+/// worktree it names that worktree rather than the repository, so a second
+/// worktree home gets built beside the first; and in a bare repository it
+/// fails outright (`fatal: this operation must be run in a work tree`), which
+/// this function used to swallow into "not a git checkout" for a directory
+/// that is plainly a repository. The common dir is the same answer from every
+/// vantage point — a subdirectory, a linked worktree, or the bare folder.
+///
+/// `--path-format=absolute` is load-bearing: without it git answers relative
+/// to the cwd, and the derived root would be quietly wrong rather than
+/// missing.
+fn resolve_repo(folder: &Path) -> Result<Option<ResolvedRepo>, String> {
     let auth = build_local_git_auth_config()?;
-    match run_git(
-        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
-        Some(workdir),
+    let Ok(output) = run_git(
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        Some(folder),
         &auth,
-    ) {
-        Ok(output) => {
-            let root = output.trim();
-            if root.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(PathBuf::from(root)))
-            }
-        }
+    ) else {
         // `not a git repository` and friends: a fact about the directory,
         // not a failure of the probe.
-        Err(_) => Ok(None),
+        return Ok(None);
+    };
+    let common_dir = output.trim();
+    if common_dir.is_empty() {
+        return Ok(None);
     }
+    let root = buzz_core_pkg::worktree_placement::repo_root_from_common_dir(Path::new(common_dir));
+    // Bareness is a property of the *repository*, and `--is-bare-repository`
+    // answers for the current worktree — from a linked worktree of a bare repo
+    // it says `false`. `worktree list --porcelain`'s first record is always
+    // the main worktree and carries a `bare` line, so ask it instead.
+    let bare = run_git(&["worktree", "list", "--porcelain"], Some(&root), &auth)
+        .ok()
+        .is_some_and(|listing| {
+            listing
+                .lines()
+                .take_while(|line| !line.trim().is_empty())
+                .any(|line| line.trim() == "bare")
+        });
+    Ok(Some(ResolvedRepo { root, bare }))
 }
 
 /// Whether `branch` already exists in `repo_root`.
@@ -257,14 +290,18 @@ fn plan(
             ..Default::default()
         });
     }
-    let Some(repo_root) = repo_root_of(workdir_path)? else {
+    let Some(resolved) = resolve_repo(workdir_path)? else {
         return Ok(CodingSessionWorktreePlan {
+            // Only reached when git says the folder is in no repository at
+            // all. A bare repository resolves like any other now, so it no
+            // longer lands here claiming not to be a checkout.
             problem: Some(
-                "That working directory is not a git checkout, so it has no worktrees.".to_string(),
+                "That folder is not a git repository, so it has no worktrees.".to_string(),
             ),
             ..Default::default()
         });
     };
+    let repo_root = resolved.root;
     let Some(parent) = worktree_parent(&repo_root) else {
         return Ok(CodingSessionWorktreePlan {
             repo_root: Some(repo_root.to_string_lossy().into_owned()),
@@ -313,9 +350,10 @@ fn list_branches(workdir: &str) -> Result<CodingSessionWorktreeBranches, String>
     if !workdir_path.is_dir() {
         return Ok(CodingSessionWorktreeBranches::default());
     }
-    let Some(repo_root) = repo_root_of(workdir_path)? else {
+    let Some(resolved) = resolve_repo(workdir_path)? else {
         return Ok(CodingSessionWorktreeBranches::default());
     };
+    let repo_root = resolved.root;
     let branches = local_branches(&repo_root)?;
     let default_branch = default_source(&branches);
     let head_branch = head_branch(&repo_root);
