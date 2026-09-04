@@ -113,6 +113,7 @@ pub mod verification;
 // pruned, what is held, and what nothing may touch. No filesystem, no `git`.
 /// Worktree lifecycle: what may be done with a coding session's git worktree.
 pub mod worktree_lifecycle;
+pub mod worktree_placement;
 
 pub use error::VerificationError;
 pub use event::StoredEvent;
