@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   listCodingSessionWorktreeBranches,
   planCodingSessionWorktree,
+  setCodingSessionWorktreeParent,
   type CodingSessionWorktreeBranches,
   type CodingSessionWorktreePlan,
 } from "@/shared/api/tauriCodingSessionWorktrees";
@@ -55,6 +56,11 @@ export function NewCodingSessionWorktreeField({
   source: string | null;
   workdir: string;
 }) {
+  // The chosen folder is remembered host-side, keyed by the repository, so it
+  // is local state here only until it is saved. `null` means "no override",
+  // which is not the same as an empty string a person is midway through
+  // typing.
+  const [folderDraft, setFolderDraft] = React.useState<string | null>(null);
   const autoFilledRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const suggestion = codingSessionWorktreeSlug(sessionName);
@@ -128,6 +134,7 @@ export function NewCodingSessionWorktreeField({
         workdir: trimmedWorkdir,
         name: trimmedName,
         source,
+        parent: folderDraft?.trim() ? folderDraft.trim() : null,
       })
         .then((next) => {
           if (!cancelled) setPlan(next);
@@ -142,7 +149,7 @@ export function NewCodingSessionWorktreeField({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [checked, source, trimmedName, trimmedWorkdir]);
+  }, [checked, folderDraft, source, trimmedName, trimmedWorkdir]);
 
   return (
     <div className="flex flex-col gap-2">
@@ -201,6 +208,54 @@ export function NewCodingSessionWorktreeField({
               </select>
             </div>
           ) : null}
+          {folderDraft === null ? (
+            <button
+              className="self-start text-2xs text-muted-foreground underline underline-offset-2 disabled:opacity-50"
+              data-testid="coding-session-worktree-folder-open"
+              disabled={disabled}
+              onClick={() => setFolderDraft(plan?.parent ?? "")}
+              type="button"
+            >
+              Change folder
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label="Worktree folder"
+                className="h-8 min-w-0 flex-1 font-mono text-xs"
+                data-testid="coding-session-worktree-folder"
+                disabled={disabled}
+                onBlur={() => {
+                  // Saved on blur rather than per keystroke: the value is a
+                  // path, and a half-typed one is not a choice.
+                  void setCodingSessionWorktreeParent({
+                    workdir: trimmedWorkdir,
+                    parent: folderDraft.trim() ? folderDraft.trim() : null,
+                  }).catch(() => {
+                    // The preview already shows what the host would refuse;
+                    // failing to remember it is not worth a second error.
+                  });
+                }}
+                onChange={(event) => setFolderDraft(event.target.value)}
+                placeholder="/absolute/path/to/worktrees"
+                value={folderDraft}
+              />
+              <button
+                className="text-2xs text-muted-foreground underline underline-offset-2"
+                data-testid="coding-session-worktree-folder-reset"
+                onClick={() => {
+                  setFolderDraft(null);
+                  void setCodingSessionWorktreeParent({
+                    workdir: trimmedWorkdir,
+                    parent: null,
+                  }).catch(() => {});
+                }}
+                type="button"
+              >
+                Use default
+              </button>
+            </div>
+          )}
           <WorktreePlanNote plan={plan} />
         </>
       ) : (
@@ -219,14 +274,17 @@ export function WorktreePlanNote({
 }: {
   plan: CodingSessionWorktreePlan | null;
 }) {
-  if (plan?.problem) {
+  // A refused folder reads the same way a refused plan does: one sentence,
+  // never raw git output, and never a path the host has not agreed to.
+  const refusal = plan?.problem ?? plan?.parentProblem;
+  if (refusal) {
     return (
       <p
         className="flex items-start gap-1.5 text-xs text-destructive"
         data-testid="coding-session-worktree-problem"
       >
         <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-        {plan.problem}
+        {refusal}
       </p>
     );
   }

@@ -556,6 +556,11 @@ type E2eConfig = {
     // line). Absent/undefined -> null, which the UI discloses as "unknown" —
     // the same fail-open shape `get_relay_self` uses.
     relayBuildCommit?: string | null;
+    /** What `plan_coding_session_worktree` answers, when a spec declares one. */
+    codingSessionWorktreePlan?: unknown;
+    /** What `create_coding_session_worktree` answers. */
+    codingSessionWorktreeCreated?: unknown;
+
     /** NIP-11 `software_commit_count` the mock relay discloses. */
     relayBuildCommitCount?: number | null;
     /** NIP-11 `software` — the repository URL the mock relay names. */
@@ -12935,6 +12940,14 @@ export function maybeInstallE2eTauriMocks() {
           freedLabel: row.reclaimableLabel ?? "unknown",
         };
       }
+      case "plan_coding_session_worktree":
+        // Opt-in: a spec that does not declare a plan gets the field's own
+        // generic note, which is what the app shows before the host answers.
+        return activeConfig?.mock?.codingSessionWorktreePlan ?? null;
+      case "create_coding_session_worktree":
+        return activeConfig?.mock?.codingSessionWorktreeCreated ?? null;
+      case "set_coding_session_worktree_parent":
+        return null;
       case "list_coding_session_worktree_branches": {
         const branches = activeConfig?.mock?.codingSessionWorktreeBranches;
         if (!branches) {

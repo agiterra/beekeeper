@@ -79,6 +79,23 @@ export async function planCodingSessionWorktree(input: {
 }
 
 /**
+ * Remember, or forget, the folder this repository's worktrees go in.
+ *
+ * Keyed host-side by the canonical repository root, so the choice survives
+ * being reached from a subdirectory, a linked worktree, or the bare folder.
+ * `null` forgets it and restores the defaults.
+ */
+export async function setCodingSessionWorktreeParent(input: {
+  workdir: string;
+  parent: string | null;
+}): Promise<void> {
+  await invokeTauri<void>("set_coding_session_worktree_parent", {
+    workdir: input.workdir,
+    parent: input.parent,
+  });
+}
+
+/**
  * The branches a worktree in this working directory could start from, and
  * which of them is the default. An empty list when the directory is not a
  * git checkout.

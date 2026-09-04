@@ -448,6 +448,7 @@ pub(crate) fn invoke_handler(
         coding_sessions::workdir_store::validate_coding_session_workdir,
         coding_sessions::workdir_store::pick_coding_session_workdir,
         coding_sessions::worktree::plan_coding_session_worktree,
+        coding_sessions::worktree::set_coding_session_worktree_parent,
         coding_sessions::worktree::create_coding_session_worktree,
         coding_sessions::worktree::list_coding_session_worktree_branches,
         // L11 (worktree lifecycle) — registration lines only.

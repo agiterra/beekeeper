@@ -480,16 +480,68 @@ fn list_branches(workdir: &str) -> Result<CodingSessionWorktreeBranches, String>
 /// What would happen if this session used a worktree — checked, not guessed.
 #[tauri::command]
 pub async fn plan_coding_session_worktree(
+    app: AppHandle,
     workdir: String,
     name: String,
     source: Option<String>,
     parent: Option<String>,
 ) -> Result<CodingSessionWorktreePlan, String> {
+    let remembered = remembered_parent(&app, &workdir);
     tauri::async_runtime::spawn_blocking(move || {
-        plan(&workdir, &name, parent.as_deref(), source.as_deref())
+        let chosen = parent.or(remembered);
+        plan(&workdir, &name, chosen.as_deref(), source.as_deref())
     })
     .await
     .map_err(|error| format!("worktree plan task failed: {error}"))?
+}
+
+/// The folder this repository's worktrees were last told to go in.
+///
+/// Keyed by the canonical repository root, so the answer is the same whether
+/// the caller named a subdirectory, a linked worktree, or the bare folder.
+/// Every failure here is simply "no memory": a caller that named a folder
+/// explicitly has already overridden this, and one that did not gets the
+/// ordinary defaults rather than an error about a preference.
+fn remembered_parent(app: &AppHandle, workdir: &str) -> Option<String> {
+    let resolved = resolve_repo(Path::new(workdir)).ok().flatten()?;
+    let store = load_workdir_store(app).ok()?;
+    store
+        .worktree_parents
+        .get(resolved.root.to_string_lossy().as_ref())
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Remember, or forget, where this repository's worktrees go.
+///
+/// `parent` of `None` forgets, which restores the defaults rather than
+/// pinning anything — there is no way to store "no folder" as a choice.
+#[tauri::command]
+pub async fn set_coding_session_worktree_parent(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    workdir: String,
+    parent: Option<String>,
+) -> Result<(), String> {
+    let Some(resolved) = resolve_repo(Path::new(&workdir))? else {
+        return Err("That folder is not a git repository.".to_string());
+    };
+    let key = resolved.root.to_string_lossy().into_owned();
+    let mut store = load_workdir_store(&app)?;
+    match parent
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        Some(folder) => {
+            if !folder.is_absolute() {
+                return Err("Use an absolute path for the worktree folder.".to_string());
+            }
+            store.worktree_parents.insert(key, folder);
+        }
+        None => {
+            store.worktree_parents.remove(&key);
+        }
+    }
+    save_workdir_store(&app, &state, &store)
 }
 
 /// The branches a worktree here could start from, and which one is default.
