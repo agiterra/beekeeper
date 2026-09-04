@@ -23,6 +23,7 @@ require_literal "https://buzz.block.xyz/attestations/deployment-eligibility/v1"
 require_literal "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 require_literal "if: matrix.variant == 'release'"
 require_literal "BUZZ_SOURCE_SHA"
+require_literal "BUZZ_SOURCE_COMMIT_COUNT"
 require_literal "BUZZ_BUILD_ID"
 require_literal "BUZZ_BUILD_URL"
 require_literal '- "deploy/charts/buzz/Chart.yaml"'

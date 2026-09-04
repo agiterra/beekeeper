@@ -567,6 +567,35 @@ of anything). Two additive NIP-11 fields fix that:
   guess.
 - **`build_time`** — an RFC 3339 UTC timestamp taken when the binary was
   compiled, second precision (e.g. `2026-09-03T02:51:29Z`), or `unknown`.
+- **`software_commit_count`** *(added 2026-09-04)* — `git rev-list --count`
+  of that same `software_commit`: the number of commits reachable from it,
+  inclusive. A JSON number, or `null` when the build could not determine one.
+  `null` is the disclosed non-answer `unknown` is for the other two — always
+  present in the document, never omitted, never guessed, and never `0`
+  (`rev-list --count` of a real commit is at least 1, so a `0` could only
+  come from a broken pipeline, and unlike `null` it would silently take part
+  in a consumer's subtraction).
+
+  **A count is a set size, not a position.** `count(B) − count(A)` is the
+  number of commits B has that A does not *only when A is an ancestor of B*;
+  on divergent branches it is the difference of two unrelated quantities. Two
+  counts are comparable only when they come from the same linear history, and
+  a consumer that renders a difference must disclose which method it used —
+  see `bee git check`'s `EnforcementCheckMethod`
+  (`crates/buzz-cli/src/commands/git_setup.rs`) for the shape that answer
+  should take.
+
+  **Shallow checkouts disclose `null`, never a number.** In a
+  `fetch-depth: 1` clone `rev-list --count` returns the size of the graft
+  rather than the ordinal, so a client subtracting it would announce a drift
+  of the entire history. `build.rs` refuses to count a shallow checkout, and
+  `.github/workflows/docker.yml`'s ordinal step refuses in the same way.
+
+  The commit and its count are resolved **together** (`resolve_stamp` in
+  `crates/buzz-relay/build.rs`), never independently: a count read from a
+  local checkout while the SHA came from `BUZZ_SOURCE_SHA` would advertise a
+  commit from one history and an ordinal from another, which no consumer
+  could detect.
 
 Resolution (`crates/buzz-relay/build.rs` / `src/build_provenance.rs`, and see
 `src/build_info.rs` for the two compile-time env vars it produces):

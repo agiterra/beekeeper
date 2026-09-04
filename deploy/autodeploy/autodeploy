@@ -243,6 +243,17 @@ if ! mirror_git cat-file -e "$sha^{commit}" 2>/dev/null; then
 fi
 
 # ── 3. export source and build ───────────────────────────────────────────────
+# The commit's ordinal, read from the mirror while its history is still
+# reachable — `git archive` below produces a tree with no `.git` at all, so
+# this is the last point that can answer. Names $sha, never HEAD: the
+# mirror's HEAD is whatever it last fetched, not the commit being deployed.
+# Blanked unless it is a plain positive decimal, so a surprising value
+# discloses `null` rather than a number that would subtract as data.
+count="$(mirror_git rev-list --count "$sha" 2>/dev/null | tr -d '[:space:]' || true)"
+case "$count" in
+  ''|*[!0-9]*|0) count='' ;;
+esac
+
 instance sh -c "rm -rf $BASE/build-incoming && mkdir -p $BASE/build-incoming"
 mirror_git archive --format=tar "$sha" | instance sh -c "tar -x -C $BASE/build-incoming"
 instance test -f "$BASE/build-incoming/Dockerfile"
@@ -255,7 +266,11 @@ log "building $IMAGE_NAME:$short (log: $BASE/build-$short.log in the $INSTANCE i
 # the only place on this path that still knows it. Full $sha, not $short: the
 # relay's `bee git check --ref` ancestry comparison needs the whole object
 # name.
-if ! instance sh -c "docker build --build-arg BUZZ_SOURCE_SHA=$sha -t $IMAGE_NAME:$short $BASE/build-incoming >$BASE/build-$short.log 2>&1"; then
+# BUZZ_SOURCE_COMMIT_COUNT: that same commit's ordinal, for NIP-11
+# `software_commit_count`. Empty when the mirror could not answer — the pair
+# is resolved together in build.rs, so an empty count simply discloses
+# `null` beside a known commit rather than pairing it with a wrong number.
+if ! instance sh -c "docker build --build-arg BUZZ_SOURCE_SHA=$sha --build-arg BUZZ_SOURCE_COMMIT_COUNT=$count -t $IMAGE_NAME:$short $BASE/build-incoming >$BASE/build-$short.log 2>&1"; then
   instance touch "$BASE/autodeploy-failed-$short"
   log "BUILD FAILED for $short — see $BASE/build-$short.log; marker left, remove to retry"
   exit 1

@@ -70,9 +70,14 @@ COPY . .
 # Compile immutable artifact identity into the relay. Defaults preserve local
 # and third-party builds that do not run in provenance-aware CI.
 ARG BUZZ_SOURCE_SHA=unknown
+# Empty, not `unknown`: the count is numeric, and empty is the value
+# `parse_commit_count` refuses to a disclosed `null`. Must describe the same
+# commit as BUZZ_SOURCE_SHA — build.rs pairs them or drops the count.
+ARG BUZZ_SOURCE_COMMIT_COUNT=
 ARG BUZZ_BUILD_ID=local
 ARG BUZZ_BUILD_URL=unknown
 ENV BUZZ_SOURCE_SHA=${BUZZ_SOURCE_SHA} \
+    BUZZ_SOURCE_COMMIT_COUNT=${BUZZ_SOURCE_COMMIT_COUNT} \
     BUZZ_BUILD_ID=${BUZZ_BUILD_ID} \
     BUZZ_BUILD_URL=${BUZZ_BUILD_URL}
 RUN cargo build --release --locked -p buzz-relay --bin buzz-relay \

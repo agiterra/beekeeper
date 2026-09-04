@@ -110,6 +110,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve source commit ordinal
+        id: source_count
+        # `git rev-list --count` of the very commit BUZZ_SOURCE_SHA passes, so
+        # NIP-11's software_commit and software_commit_count always describe
+        # one object. Emits empty rather than a number if this checkout is
+        # ever shallow: there the count is the graft's size, not the ordinal,
+        # and a client subtracting it would announce a drift of the whole
+        # history. The checkout above pins fetch-depth: 0, so this is a guard
+        # against that changing, not against today.
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "count=" >> "$GITHUB_OUTPUT"
+            echo "::warning::shallow checkout — relay will disclose a null commit count"
+          else
+            echo "count=$(git rev-list --count "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Verify tag-bound release source
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
@@ -178,6 +195,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BUZZ_SOURCE_SHA=${{ github.sha }}
+            BUZZ_SOURCE_COMMIT_COUNT=${{ steps.source_count.outputs.count }}
             BUZZ_BUILD_ID=github-actions:${{ github.run_id }}:${{ github.run_attempt }}
             BUZZ_BUILD_URL=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
           # Push by digest, not by tag — the merge job assembles the tags
@@ -200,6 +218,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BUZZ_SOURCE_SHA=${{ github.sha }}
+            BUZZ_SOURCE_COMMIT_COUNT=${{ steps.source_count.outputs.count }}
             BUZZ_BUILD_ID=github-actions:${{ github.run_id }}:${{ github.run_attempt }}
             BUZZ_BUILD_URL=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}

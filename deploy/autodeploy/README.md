@@ -129,7 +129,7 @@ actually is, over the wire, the same way any client would (finding 32,
 host access, just an HTTP GET.
 
 ```bash
-curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/   | jq '{software_commit, build_time}'
+curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/   | jq '{software_commit, software_commit_count, build_time}'
 # or, for the plain-text liveness check (`ok <sha8>`):
 curl -s https://hive.agiterra.org/health
 ```
@@ -139,6 +139,15 @@ build of this image, where it is legitimate) means the deployed image predates
 this lane's `--build-arg BUZZ_SOURCE_SHA=$sha` in step 3 of `autodeploy` below
 — check that the build-arg is actually present in the deployer script running
 on the host, not just in this checkout.
+
+A `null` `software_commit_count` beside a *known* `software_commit` is the
+same signal one level down: the deployed image predates
+`--build-arg BUZZ_SOURCE_COMMIT_COUNT=$count`, or the mirror could not answer
+`rev-list --count` for that commit. It is never a fault in the relay, and it
+is never guessed — the pair is resolved together in `build.rs`, so a missing
+count is disclosed rather than filled in from whatever history happened to be
+lying around. Clients comparing builds simply lose the distance and fall back
+to comparing the commits themselves.
 
 ```bash
 # 1. each unit resolves its own config, and the two REPO_IDs differ.
