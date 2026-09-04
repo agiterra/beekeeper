@@ -6,7 +6,9 @@
 //! will one day write to it.
 
 use super::*;
-use crate::commands::project_git_exec::build_test_git_auth_config;
+use crate::commands::project_git_exec::{
+    build_git_auth_config_for_keys, build_test_git_auth_config,
+};
 use std::path::PathBuf;
 
 fn scratch_root() -> PathBuf {
@@ -52,6 +54,93 @@ fn shipped_packs(root: &Path) -> PathBuf {
     // Not a pack, and not a role: must not be reported as one.
     write(&dir.join("notes/README.md"), "# not a pack\n");
     dir
+}
+
+// --- Finding 66: the packs seed commit has no identity in production ---
+//
+// Red, reproduced outside this suite (a throwaway repo, the exact env this
+// crate's own `configure_git_auth` sets — `GIT_CONFIG_GLOBAL=/dev/null`,
+// `GIT_CONFIG_NOSYSTEM=1`, no author env — and this host's own hostname,
+// which has no dot):
+//
+//   $ git init --quiet --initial-branch main && git add -A
+//   $ env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME \
+//       -u GIT_COMMITTER_EMAIL GIT_CONFIG_GLOBAL=/dev/null \
+//       GIT_CONFIG_NOSYSTEM=1 git commit --quiet -m seed
+//   Author identity unknown
+//
+//   *** Please tell me who you are.
+//   ...
+//   fatal: unable to auto-detect email address (got 'brian@MacBookPro.(none)')
+//
+// verbatim what Brian's screen printed at 21:09. Production's
+// `project_packs_init` ran exactly this shape (`build_git_auth_config_for_keys`,
+// `commit_identity: None`, same as every other production caller before this
+// lane) with no way to name an identity of its own. Green below: the same
+// checkout, the same cleared config, with `set_commit_identity` — no ambient
+// identity of any kind, and the commit still lands, authored as the app.
+
+#[test]
+fn the_display_name_resolves_from_the_kind_0_and_falls_back_to_the_pubkey() {
+    let pubkey = "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66";
+    assert_eq!(
+        app_commit_identity_from_profile(pubkey, Some(r#"{"display_name":"Waggle Bot"}"#)),
+        (
+            "Waggle Bot".to_string(),
+            "aa11bb22@beekeeper.local".to_string()
+        ),
+        "display_name wins when present"
+    );
+    assert_eq!(
+        app_commit_identity_from_profile(pubkey, Some(r#"{"name":"waggle"}"#)),
+        ("waggle".to_string(), "aa11bb22@beekeeper.local".to_string()),
+        "name is the fallback, same order nostr_convert::profile_info_from_event uses"
+    );
+    assert_eq!(
+        app_commit_identity_from_profile(pubkey, Some(r#"{"display_name":"   "}"#)),
+        (
+            "Beekeeper aa11bb22".to_string(),
+            "aa11bb22@beekeeper.local".to_string()
+        ),
+        "a blank display_name is not a name"
+    );
+    assert_eq!(
+        app_commit_identity_from_profile(pubkey, None),
+        (
+            "Beekeeper aa11bb22".to_string(),
+            "aa11bb22@beekeeper.local".to_string()
+        ),
+        "no profile at all falls back the same way"
+    );
+    assert_eq!(
+        app_commit_identity_from_profile(pubkey, Some("not json")),
+        (
+            "Beekeeper aa11bb22".to_string(),
+            "aa11bb22@beekeeper.local".to_string()
+        ),
+        "malformed content must not panic or block the seed"
+    );
+}
+
+#[test]
+fn the_seed_commit_is_authored_as_the_app_identity_with_no_ambient_config_at_all() {
+    let root = scratch_root();
+    let shipped = shipped_packs(&root);
+    let keys = Keys::generate();
+    let mut auth = build_git_auth_config_for_keys(&keys).expect("git auth");
+    auth.set_commit_identity("Waggle Bot", "aa11bb22@beekeeper.local");
+    let checkout = root.join("cache/aa11bb22-beekeeper-packs");
+
+    // The exact conditions the live failure ran under (see the module doc
+    // above): global and system git config cleared, this host's own
+    // hostname (no dot). Only `set_commit_identity` differs.
+    let (commit, _roles) =
+        seed_packs_checkout(&checkout, &shipped, &auth).expect("seed must succeed");
+    assert_eq!(commit.len(), 40, "{commit}");
+    let author =
+        run_git(&["log", "-1", "--format=%an <%ae>"], Some(&checkout), &auth).expect("log");
+    assert_eq!(author.trim(), "Waggle Bot <aa11bb22@beekeeper.local>");
+    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -288,4 +377,246 @@ fn a_custom_repo_id_bypasses_the_project_slug_default() {
         .expect("d tag");
     assert_eq!(d, "shared-org-packs");
     assert!(!d.contains("unrelated-slug"));
+}
+
+// --- Finding 66: rollback — a seed or push failure withdraws the 30617 ---
+//
+// Gated off Windows for the same reason `persona_events::tests::flush_barrier`
+// is: `build_app_state()` pulls native DLLs unavailable on the Windows CI
+// runner. Hermetic otherwise — a localhost axum stand-in for the relay, never
+// the real one.
+#[cfg(not(target_os = "windows"))]
+mod rollback_and_identity {
+    use super::*;
+    use crate::app_state::build_app_state;
+
+    /// Stub relay: `POST /events` accepts everything except a kind this test
+    /// tells it to reject (used to make the tombstone publish itself fail);
+    /// `POST /query` answers a kind:0 lookup with `profile_content` when
+    /// given, and an empty array otherwise (covering both the identity read
+    /// and the kind:30618 push-record read this command also makes). No
+    /// `/git/...` route exists, so a `git push` against this stub always
+    /// fails fast — exactly the "push does not land" half of the rollback
+    /// rule, without a real git smart-HTTP server to stand up.
+    async fn spawn_stub_relay(
+        profile_event_json: Option<String>,
+        reject_kind: Option<u64>,
+    ) -> String {
+        use axum::{http::StatusCode, routing::post, Router};
+
+        let app = Router::new()
+            .route(
+                "/events",
+                post(move |body: String| async move {
+                    let event: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                    if Some(event.get("kind").and_then(serde_json::Value::as_u64).unwrap_or_default())
+                        == reject_kind
+                    {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, String::new());
+                    }
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "event_id": event.get("id").and_then(serde_json::Value::as_str).unwrap_or(""),
+                            "accepted": true,
+                            "message": ""
+                        })
+                        .to_string(),
+                    )
+                }),
+            )
+            .route(
+                "/query",
+                post(move |body: String| {
+                    let profile_event_json = profile_event_json.clone();
+                    async move {
+                        let filters: Vec<serde_json::Value> =
+                            serde_json::from_str(&body).unwrap_or_default();
+                        let wants_profile = filters.iter().any(|filter| {
+                            filter
+                                .get("kinds")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|kinds| {
+                                    kinds.iter().any(|k| k.as_u64() == Some(0))
+                                })
+                        });
+                        let body = match (wants_profile, &profile_event_json) {
+                            (true, Some(event_json)) => format!("[{event_json}]"),
+                            _ => "[]".to_string(),
+                        };
+                        (StatusCode::OK, body)
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stub relay");
+        let addr = listener.local_addr().expect("stub relay addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+        format!("http://{addr}")
+    }
+
+    fn signed_profile_json(keys: &Keys, display_name: &str) -> String {
+        use nostr::JsonUtil;
+        EventBuilder::new(
+            Kind::Metadata,
+            serde_json::json!({ "display_name": display_name }).to_string(),
+        )
+        .sign_with_keys(keys)
+        .expect("sign profile")
+        .as_json()
+    }
+
+    async fn stubbed_state(relay_url: String, keys: Keys) -> AppState {
+        let state = build_app_state();
+        *state.keys.lock().unwrap() = keys;
+        *state.relay_url_override.lock().unwrap() = Some(relay_url);
+        state
+    }
+
+    /// The seed commit is authored as the display name this host's own
+    /// kind:0 carries — read off the stub relay, never fabricated by the
+    /// test and never git config.
+    #[tokio::test]
+    async fn the_seed_commit_carries_the_identity_this_host_read_from_its_own_profile() {
+        let root = scratch_root();
+        let shipped = shipped_packs(&root);
+        let keys = Keys::generate();
+        let profile = signed_profile_json(&keys, "Waggle Bot");
+        let relay_url = spawn_stub_relay(Some(profile), None).await;
+        let state = stubbed_state(relay_url, keys).await;
+
+        let result = project_packs_init_with_paths(
+            &state,
+            "30621:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66:beekeeper"
+                .to_string(),
+            Some("beekeeper-packs".to_string()),
+            None,
+            shipped,
+            root.join("cache"),
+        )
+        .await
+        .expect("project_packs_init_with_paths");
+
+        assert_eq!(result.commit_identity_name, "Waggle Bot");
+        assert!(result.commit_identity_email.ends_with("@beekeeper.local"));
+        assert_eq!(result.seed_commit_sha.as_deref().map(str::len), Some(40));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The push cannot land against a stub with no git route — the rollback
+    /// case: the 30617 already landed, so its withdrawal (kind:5) must be
+    /// published, and reported.
+    #[tokio::test]
+    async fn a_push_that_never_lands_withdraws_the_announcement_it_already_published() {
+        let root = scratch_root();
+        let shipped = shipped_packs(&root);
+        let keys = Keys::generate();
+        let relay_url = spawn_stub_relay(None, None).await;
+        let state = stubbed_state(relay_url, keys).await;
+
+        let result = project_packs_init_with_paths(
+            &state,
+            "30621:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66:beekeeper"
+                .to_string(),
+            Some("beekeeper-packs".to_string()),
+            None,
+            shipped,
+            root.join("cache"),
+        )
+        .await
+        .expect("project_packs_init_with_paths");
+
+        assert!(
+            !result.pushed,
+            "no git route on the stub, so the push fails"
+        );
+        assert!(result.push_error.is_some());
+        assert!(
+            result.source_event_id.is_none(),
+            "no 30624 is published for a repository the push never filled"
+        );
+        assert!(
+            result.announcement_withdrawn_event_id.is_some(),
+            "the 30617 that already landed must be withdrawn: {result:?}"
+        );
+        assert!(result.announcement_withdrawal_error.is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A seed that never produces a commit at all (no role packs to seed
+    /// from) is the same rollback rule, reached the other way in.
+    #[tokio::test]
+    async fn a_seed_that_never_produces_a_commit_also_withdraws_the_announcement() {
+        let root = scratch_root();
+        // No role packs in here at all — `seed_packs_checkout` refuses
+        // before ever reaching git.
+        let empty_shipped = root.join("empty-shipped");
+        std::fs::create_dir_all(&empty_shipped).expect("empty shipped dir");
+        let keys = Keys::generate();
+        let relay_url = spawn_stub_relay(None, None).await;
+        let state = stubbed_state(relay_url, keys).await;
+
+        let result = project_packs_init_with_paths(
+            &state,
+            "30621:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66:beekeeper"
+                .to_string(),
+            Some("beekeeper-packs".to_string()),
+            None,
+            empty_shipped,
+            root.join("cache"),
+        )
+        .await
+        .expect("project_packs_init_with_paths");
+
+        assert!(result.seed_commit_sha.is_none());
+        assert!(result.seed_error.is_some(), "{result:?}");
+        assert!(!result.pushed);
+        assert!(result.announcement_withdrawn_event_id.is_some());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The tombstone publish can itself fail (relay down, refused, …). That
+    /// must be reported — never silently swallowed — and the coordinate the
+    /// function already returns (`repo_ref`) is what a founder deletes by
+    /// hand, per the module docs.
+    #[tokio::test]
+    async fn a_failed_withdrawal_is_reported_with_the_coordinate_still_in_hand() {
+        let root = scratch_root();
+        let shipped = shipped_packs(&root);
+        let keys = Keys::generate();
+        // Reject kind:5 (the tombstone) — the announcement (30617) still
+        // lands, and the push still fails against the git-less stub.
+        let relay_url = spawn_stub_relay(None, Some(5)).await;
+        let state = stubbed_state(relay_url, keys).await;
+
+        let result = project_packs_init_with_paths(
+            &state,
+            "30621:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66:beekeeper"
+                .to_string(),
+            Some("beekeeper-packs".to_string()),
+            None,
+            shipped,
+            root.join("cache"),
+        )
+        .await
+        .expect("project_packs_init_with_paths");
+
+        assert!(!result.pushed);
+        assert!(
+            result.announcement_withdrawn_event_id.is_none(),
+            "the relay refused the tombstone"
+        );
+        assert!(result.announcement_withdrawal_error.is_some());
+        // The coordinate a founder needs to delete it by hand is still
+        // right here, regardless of the tombstone's own failure.
+        assert!(
+            result.repo_ref.starts_with("30617:") && result.repo_ref.ends_with(":beekeeper-packs"),
+            "{}",
+            result.repo_ref
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
 }

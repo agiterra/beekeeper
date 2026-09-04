@@ -135,7 +135,12 @@ test("Create packs repository: the founder-only host action prints every wire fa
     repoRef: `30617:${SELF}:beeline-packs`,
     sourceEventId: "f".repeat(64),
     seedCommitSha: "1".repeat(40),
+    seedError: null,
+    commitIdentityName: "Beeline",
+    commitIdentityEmail: `${SELF.slice(0, 8)}@beekeeper.local`,
     pushRecordEventId: "2".repeat(64),
+    announcementWithdrawnEventId: null,
+    announcementWithdrawalError: null,
   };
   await page.addInitScript(() => {
     window.localStorage.setItem(
@@ -191,7 +196,12 @@ test("Create packs repository: a chosen repository id reaches the host, and the 
     repoRef: `30617:${SELF}:${customId}`,
     sourceEventId: "3".repeat(64),
     seedCommitSha: "4".repeat(40),
+    seedError: null,
+    commitIdentityName: "Hive Mind",
+    commitIdentityEmail: `${SELF.slice(0, 8)}@beekeeper.local`,
     pushRecordEventId: "5".repeat(64),
+    announcementWithdrawnEventId: null,
+    announcementWithdrawalError: null,
   };
   await page.addInitScript(() => {
     window.localStorage.setItem(
@@ -253,4 +263,78 @@ test("Create packs repository: a chosen repository id reaches the host, and the 
   expect(call?.projectRef).toBe(projectRef);
   expect(call?.repoId).toBe(customId);
   expect(call?.name).toBe(customId);
+});
+
+test("Create packs repository: a seed failure reports the sentence, not git's raw stderr, with the withdrawal disclosed (LANE-L31, Finding 66)", async ({
+  page,
+}) => {
+  const projectRef = `30621:${SELF}:waggle-farm`;
+  const rawGitError =
+    "Author identity unknown\n\n*** Please tell me who you are. …\nfatal: unable to auto-detect email address (got 'brian@MacBookPro.(none)')";
+  const initResult = {
+    repoRef: `30617:${SELF}:waggle-farm-packs`,
+    sourceEventId: null,
+    seedCommitSha: null,
+    seedError: rawGitError,
+    commitIdentityName: "Waggle Farm",
+    commitIdentityEmail: `${SELF.slice(0, 8)}@beekeeper.local`,
+    pushRecordEventId: null,
+    announcementWithdrawnEventId: "6".repeat(64),
+    announcementWithdrawalError: null,
+  };
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "buzz-feature-overrides-v1",
+      JSON.stringify({ projects: true, forum: true }),
+    );
+  });
+  await installMockBridge(page, {
+    projectPacksInitByProject: { [projectRef]: initResult },
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByTestId("open-projects-view").click();
+  await expect(page.getByTestId("projects-manage-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("projects-create-menu").click();
+  await page.getByTestId("projects-create-menu-project").click();
+  await page.getByTestId("create-project-container-name").fill("Waggle Farm");
+  await page.getByTestId("create-project-container-submit").click();
+  await expect(page.getByTestId("manage-project-waggle-farm")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  await page.getByTestId("manage-project-actions-waggle-farm").click();
+  await page.getByRole("menuitem", { name: "Project settings" }).click();
+  await page.getByTestId("project-settings-tab-packs").click();
+  await expect(page.getByTestId("project-packs-section")).toBeVisible();
+
+  await page.getByTestId("project-packs-create-repo-open").click();
+  await page.getByTestId("project-packs-create-repo-submit").click();
+
+  // The product sentence: what failed, the identity it would have used, and
+  // that the announcement was withdrawn — never the bridge's returned
+  // `seedError` printed directly.
+  const outcome = page.getByTestId("project-packs-create-repo-seed-outcome");
+  await expect(outcome).toBeVisible({ timeout: 10_000 });
+  await expect(outcome).toContainText("seeding failed as Waggle Farm");
+  await expect(outcome).toContainText("withdrawn");
+  await expect(outcome).not.toContainText("Author identity unknown");
+  await capture(page, "09-packs-create-repo-seed-failed");
+
+  // The raw text is not gone — it is one click away, behind a disclosure.
+  // `<details>` keeps its content in the DOM even collapsed, so the check
+  // is visibility of the raw-text node, not `textContent` (which would see
+  // through the collapse either way).
+  const details = page.getByTestId(
+    "project-packs-create-repo-seed-error-details",
+  );
+  const rawText = details.locator("pre");
+  await expect(details).toBeVisible();
+  await expect(rawText).toBeHidden();
+  await details.locator("summary").click();
+  await expect(rawText).toBeVisible();
+  await expect(rawText).toContainText("Author identity unknown");
+  await capture(page, "10-packs-create-repo-seed-failed-details-open");
 });

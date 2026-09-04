@@ -152,7 +152,12 @@ test("a custom id is what reaches the host, with the name it resolved to", async
     repoRef: `30617:${OWNER}:shared-org-packs`,
     sourceEventId: "b".repeat(64),
     seedCommitSha: "c".repeat(40),
+    seedError: null,
+    commitIdentityName: "agiterra",
+    commitIdentityEmail: `${OWNER.slice(0, 8)}@beekeeper.local`,
     pushRecordEventId: "d".repeat(64),
+    announcementWithdrawnEventId: null,
+    announcementWithdrawalError: null,
   };
   const { screen, fireEvent } = await renderSection();
   fireEvent.change(screen.getByTestId("project-packs-create-repo-id"), {
@@ -211,5 +216,100 @@ test("an id starting with '.' or containing '..' is refused, distinctly from the
   assert.match(
     screen.getByTestId("project-packs-create-repo-id-error").textContent,
     /must not contain '\.\.'/,
+  );
+});
+
+// --- LANE-L31 (Finding 66): the seed outcome as a sentence, not raw stderr ---
+
+test("a successful seed prints 'seeded as <identity>, commit <sha8>' — never a raw error", async () => {
+  answers.project_packs_init = {
+    repoRef: `30617:${OWNER}:agiterra-packs`,
+    sourceEventId: "b".repeat(64),
+    seedCommitSha: "c".repeat(40),
+    seedError: null,
+    commitIdentityName: "Waggle Bot",
+    commitIdentityEmail: "aaaaaaaa@beekeeper.local",
+    pushRecordEventId: "d".repeat(64),
+    announcementWithdrawnEventId: null,
+    announcementWithdrawalError: null,
+  };
+  const { screen, fireEvent } = await renderSection();
+  fireEvent.click(screen.getByTestId("project-packs-create-repo-submit"));
+
+  const sentence = await screen.findByTestId(
+    "project-packs-create-repo-seed-outcome",
+  );
+  assert.equal(
+    sentence.textContent,
+    "Seeded as Waggle Bot <aaaaaaaa@beekeeper.local>, commit cccccccc.",
+  );
+  assert.equal(
+    screen.queryByTestId("project-packs-create-repo-seed-error-details"),
+    null,
+    "no details disclosure when there was nothing to disclose",
+  );
+});
+
+test("a failed seed prints what failed, the identity, and what was withdrawn — raw text stays behind a details disclosure", async () => {
+  const rawError =
+    "Author identity unknown\n\n*** Please tell me who you are. …\nfatal: unable to auto-detect email address (got 'brian@MacBookPro.(none)')";
+  answers.project_packs_init = {
+    repoRef: `30617:${OWNER}:agiterra-packs`,
+    sourceEventId: null,
+    seedCommitSha: null,
+    seedError: rawError,
+    commitIdentityName: "Waggle Bot",
+    commitIdentityEmail: "aaaaaaaa@beekeeper.local",
+    pushRecordEventId: null,
+    announcementWithdrawnEventId: "e".repeat(64),
+    announcementWithdrawalError: null,
+  };
+  const { screen, fireEvent } = await renderSection();
+  fireEvent.click(screen.getByTestId("project-packs-create-repo-submit"));
+
+  const sentence = await screen.findByTestId(
+    "project-packs-create-repo-seed-outcome",
+  );
+  assert.match(sentence.textContent, /seeding failed as Waggle Bot/);
+  assert.match(sentence.textContent, /aaaaaaaa@beekeeper\.local/);
+  assert.match(sentence.textContent, /withdrawn \(eeeeeeee\)/);
+  assert.doesNotMatch(
+    sentence.textContent,
+    /Author identity unknown/,
+    "the product sentence must not carry git's own words",
+  );
+
+  // The raw text this sentence replaces is still reachable, just not thrust
+  // at the viewer by default.
+  const details = screen.getByTestId(
+    "project-packs-create-repo-seed-error-details",
+  );
+  assert.equal(details.tagName, "DETAILS");
+  assert.match(details.textContent, /Author identity unknown/);
+  assert.match(details.textContent, /unable to auto-detect email address/);
+});
+
+test("a failed withdrawal is reported too, with the coordinate to delete by hand", async () => {
+  answers.project_packs_init = {
+    repoRef: `30617:${OWNER}:agiterra-packs`,
+    sourceEventId: null,
+    seedCommitSha: null,
+    seedError: "push failed: connection refused",
+    commitIdentityName: "Waggle Bot",
+    commitIdentityEmail: "aaaaaaaa@beekeeper.local",
+    pushRecordEventId: null,
+    announcementWithdrawnEventId: null,
+    announcementWithdrawalError: "relay rejected the tombstone",
+  };
+  const { screen, fireEvent } = await renderSection();
+  fireEvent.click(screen.getByTestId("project-packs-create-repo-submit"));
+
+  const sentence = await screen.findByTestId(
+    "project-packs-create-repo-seed-outcome",
+  );
+  assert.match(sentence.textContent, /could not be withdrawn/);
+  assert.match(
+    sentence.textContent,
+    new RegExp(`delete 30617:${OWNER}:agiterra-packs by hand`),
   );
 });

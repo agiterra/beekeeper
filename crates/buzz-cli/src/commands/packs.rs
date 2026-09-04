@@ -21,11 +21,12 @@ use std::path::{Path, PathBuf};
 use nostr::{EventBuilder, Kind, Tag};
 use serde_json::{json, Value};
 
-use buzz_core::kind::KIND_PROJECT_PACK_SOURCE;
+use buzz_core::kind::{KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT_PACK_SOURCE};
 use buzz_core::project_pack_source::{
     build_project_pack_source, PackPin, DEFAULT_PACK_PATH, PACK_SOURCE_WORD_CHECKOUT,
     PACK_SOURCE_WORD_REPOSITORY, PACK_SOURCE_WORD_SHIPPED,
 };
+use buzz_sdk::build_delete_addressable;
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
@@ -304,15 +305,35 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
     let seeded = match seed_packs_repository(&seed, &path, &clone_url) {
         Ok(seeded) => seeded,
         Err(error) => {
+            // The announcement promised a repository with packs in it; a
+            // seed or push failure after it landed breaks that promise, so
+            // it is withdrawn rather than left as a stray repository with
+            // nothing in it under this key. Same rule as the desktop host's
+            // `project_packs_init` (LANE-L31) — see that module's docs.
+            let (withdrawn_event_id, withdrawal_error) =
+                withdraw_repo_announcement(client, &owner, &repo_id).await;
+            // `withdraw_repo_announcement` always resolves to exactly one of
+            // the two being `Some`: either the tombstone landed, or it did
+            // not and its own words say why.
+            let note = if withdrawn_event_id.is_some() {
+                "the repository was announced but not seeded; the announcement was withdrawn \
+                 because it would have pointed at an empty repository. Fix the push and re-run \
+                 `bee packs init`."
+            } else {
+                "the repository was announced but not seeded, and withdrawing the announcement \
+                 also failed — delete it by hand: `bee repos delete --id <repo-id>` (the \
+                 coordinate is in `announced` above)."
+            };
             eprintln!(
                 "{}",
                 json!({
                     "step": "seed",
                     "announced": repo_coordinate,
                     "announce_event_id": announce_id,
-                    "note": "the repository was announced but not seeded, and no pack source was \
-                             published — the project still stages the shipped defaults. Fix the \
-                             push and re-run `bee packs init`.",
+                    "seed_error": error.to_string(),
+                    "announcement_withdrawn_event_id": withdrawn_event_id,
+                    "announcement_withdrawal_error": withdrawal_error,
+                    "note": note,
                 })
             );
             return Err(error);
@@ -359,6 +380,44 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
         })
     );
     Ok(())
+}
+
+/// Withdraw a `30617:<owner>:<repo_id>` announcement this process just
+/// published, because the seed or push that was supposed to fill it failed —
+/// see [`cmd_init`]'s rollback step. The same kind:5 shape `bee repos delete`
+/// publishes (`crate::commands::repos::cmd_delete_repo`).
+///
+/// Returns `(withdrawn_event_id, error)`, exactly one `Some`: a failed
+/// withdrawal is reported, not retried, and `cmd_init` already has the
+/// coordinate to hand the operator for a manual `bee repos delete`.
+async fn withdraw_repo_announcement(
+    client: &BuzzClient,
+    owner: &str,
+    repo_id: &str,
+) -> (Option<String>, Option<String>) {
+    let builder = match build_delete_addressable(KIND_GIT_REPO_ANNOUNCEMENT, owner, repo_id) {
+        Ok(builder) => builder,
+        Err(error) => {
+            return (
+                None,
+                Some(format!("could not build the withdrawal: {error}")),
+            )
+        }
+    };
+    let event = match client.sign_event(builder) {
+        Ok(event) => event,
+        Err(error) => {
+            return (
+                None,
+                Some(format!("could not sign the withdrawal: {error}")),
+            )
+        }
+    };
+    let event_id = event.id.to_hex();
+    match client.submit_event(event).await {
+        Ok(_) => (Some(event_id), None),
+        Err(error) => (None, Some(error.to_string())),
+    }
 }
 
 /// What the seed step produced.

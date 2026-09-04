@@ -30,6 +30,24 @@
 //! Every step reports the wire fact it produced — the event ids, the commit,
 //! whether the push went out — because a setup flow that says "done" without
 //! them is exactly the completion report this project does not accept.
+//!
+//! # Identity and rollback (LANE-L31, Finding 66)
+//!
+//! The seed commit is authored as this host's own identity — its `display_name`
+//! read off the kind:0 it already has (falling back to `Beekeeper <pubkey8>`),
+//! and `<pubkey8>@beekeeper.local` for the email — never left to git's own
+//! hostname auto-detection. Production runs every git invocation with global
+//! and system config cleared (`project_git_exec::configure_git_auth`), so
+//! without an identity of its own git either refuses outright ("Author
+//! identity unknown … unable to auto-detect email address") on a host whose
+//! hostname has no dot, or silently authors the commit as `user@hostname`
+//! elsewhere — neither of which is this host's identity.
+//!
+//! If the seed or the push fails *after* the announcement has landed, the
+//! announcement is withdrawn (a kind:5 tombstone, [`withdraw_announcement`])
+//! rather than left as a stray, packless repository under the viewer's key.
+//! A tombstone failure is itself reported, never silently dropped — the
+//! coordinate is still in the result for a founder to delete by hand.
 
 use std::path::Path;
 
@@ -40,6 +58,63 @@ use tauri::{AppHandle, State};
 use crate::app_state::AppState;
 use crate::commands::project_git_exec::{run_git, GitAuthConfig};
 use crate::managed_agents::packs_cache;
+
+/// A viewer's own kind:0, or absence of one, resolved to the name and email
+/// a git commit made on their behalf is authored as.
+///
+/// Reads `display_name`, falling back to `name` (the same fallback
+/// `nostr_convert::profile_info_from_event` uses for every other profile
+/// read in this app), from whatever kind:0 content is passed in; an absent
+/// or empty name falls back to `Beekeeper <pubkey8>`. The email is always
+/// `<pubkey8>@beekeeper.local` — not a real mailbox, an address stable to
+/// the *key* that authored the commit rather than to a display name that can
+/// change. Pure and synchronous so it is testable without a relay; see
+/// [`resolve_app_commit_identity`] for the async wrapper that reads the
+/// profile.
+pub(crate) fn app_commit_identity_from_profile(
+    pubkey_hex: &str,
+    profile_content: Option<&str>,
+) -> (String, String) {
+    let short = pubkey_short(pubkey_hex);
+    let email = format!("{short}@beekeeper.local");
+    let name = profile_content
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(content).ok())
+        .and_then(|value| {
+            value
+                .get("display_name")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| value.get("name").and_then(serde_json::Value::as_str))
+                .map(str::to_string)
+        })
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| format!("Beekeeper {short}"));
+    (name, email)
+}
+
+/// The first 8 characters of a hex pubkey — `""` for anything shorter, which
+/// never happens for a real 64-hex key but keeps this total rather than
+/// panicking on a malformed one.
+fn pubkey_short(pubkey_hex: &str) -> String {
+    pubkey_hex.chars().take(8).collect()
+}
+
+/// [`app_commit_identity_from_profile`], reading this host's own kind:0 off
+/// the relay. A read failure or no profile falls back exactly as an empty
+/// profile would — a git commit must never block on the profile query, and
+/// never has less to say than "the key's own name" when the query fails.
+async fn resolve_app_commit_identity(state: &AppState, pubkey_hex: &str) -> (String, String) {
+    let events = crate::relay::query_relay(
+        state,
+        &[serde_json::json!({ "kinds": [0], "authors": [pubkey_hex], "limit": 1 })],
+    )
+    .await
+    .unwrap_or_default();
+    app_commit_identity_from_profile(
+        pubkey_hex,
+        events.first().map(|event| event.content.as_str()),
+    )
+}
 
 /// Kind of a project's pack-source record — read from the registry in
 /// `buzz-core` rather than restated, so the number cannot drift.
@@ -76,10 +151,24 @@ pub struct ProjectPacksInit {
     /// The repository coordinate, `30617:<viewer-hex>:<id>`.
     pub repo_ref: String,
     /// Event id of the kind:30624 pack source, or `null` when it was withheld
-    /// — which happens exactly when the push did not land.
+    /// — which happens whenever the push did not land, including a seed that
+    /// never reached the push step.
     pub source_event_id: Option<String>,
-    /// The seed commit, lowercase 40-hex.
-    pub seed_commit_sha: String,
+    /// The seed commit, lowercase 40-hex, or `null` when seeding itself
+    /// failed (see [`Self::seed_error`]) — there is no commit to name.
+    pub seed_commit_sha: Option<String>,
+    /// The seed step's own words when it failed before there was anything to
+    /// push. `null` when seeding succeeded (including when the *push*
+    /// afterwards failed — see [`Self::push_error`] for that half).
+    pub seed_error: Option<String>,
+    /// The display name the seed commit was (or would have been) authored
+    /// as — this host's own kind:0 `display_name`/`name`, or `Beekeeper
+    /// <pubkey8>` when neither is set. **Finding 66**: never git's own
+    /// hostname-derived guess.
+    pub commit_identity_name: String,
+    /// The email the seed commit was (or would have been) authored as:
+    /// `<pubkey8>@beekeeper.local`, stable to the signing key.
+    pub commit_identity_email: String,
     /// Event id of the relay-signed kind:30618 ref state that records the
     /// push, read back from the relay after it landed.
     ///
@@ -96,14 +185,39 @@ pub struct ProjectPacksInit {
     pub announcement_event_id: String,
     /// The branch the seed commit is on.
     pub branch: String,
-    /// The role directories seeded, in the order they were written.
+    /// The role directories seeded, in the order they were written. Empty
+    /// when seeding failed before any role was written.
     pub roles: Vec<String>,
-    /// Whether the push reached the relay.
+    /// Whether the push reached the relay. `false` whenever seeding itself
+    /// failed too — there was nothing to push.
     pub pushed: bool,
-    /// The push's own words when it did not. `null` when it did.
+    /// The push's own words when it did not land (seeding having
+    /// succeeded). `null` when it did, or when seeding never got that far
+    /// (see [`Self::seed_error`] instead).
     pub push_error: Option<String>,
     /// The relay's refusal of a published event, when one was refused.
     pub publication_error: Option<String>,
+    /// Event id of the kind:5 tombstone withdrawing the kind:30617
+    /// announcement, published when the seed or push failed *after* the
+    /// announcement had already landed — see the module docs' rollback
+    /// step. `null` when nothing needed withdrawing.
+    pub announcement_withdrawn_event_id: Option<String>,
+    /// The withdrawal's own words when publishing the tombstone itself
+    /// failed. [`Self::repo_ref`] is the coordinate a founder can delete by
+    /// hand in that case (`bee repos delete`).
+    pub announcement_withdrawal_error: Option<String>,
+}
+
+/// What the seed step (git init/copy/commit, then push) produced.
+enum SeedOutcome {
+    /// Seeding wrote a commit; the push may still have failed.
+    Seeded {
+        commit: String,
+        roles: Vec<String>,
+        push_error: Option<String>,
+    },
+    /// Seeding itself never produced a commit to push.
+    SeedFailed { seed_error: String },
 }
 
 /// Split `30621:<owner-hex>:<slug>` into its owner and slug.
@@ -344,6 +458,29 @@ pub async fn project_packs_init(
     // for an attribute that would be a no-op on a fn parameter.
     name: Option<String>,
 ) -> Result<ProjectPacksInit, String> {
+    let shipped = packs_cache::shipped_packs_dir(&app)
+        .ok_or_else(|| "this build ships no role packs to seed a repository with".to_string())?;
+    let packs_root = packs_cache::packs_root(&app)?;
+    project_packs_init_with_paths(&state, project_ref, repo_id, name, shipped, packs_root).await
+}
+
+/// [`project_packs_init`]'s body, taking the shipped-packs directory and the
+/// packs cache root directly instead of an [`AppHandle`] to resolve them.
+///
+/// The split exists for tests: `shipped_packs_dir`/`packs_root` need a real
+/// Tauri app, which this crate's tests do not construct, while everything
+/// below — the announce/seed/push/publish sequence, the identity resolution,
+/// and the rollback this lane adds — needs only [`AppState`] and a relay,
+/// both of which `build_app_state()` plus a stub HTTP server already give
+/// [`crate::managed_agents::persona_events`]'s own tests.
+async fn project_packs_init_with_paths(
+    state: &AppState,
+    project_ref: String,
+    repo_id: Option<String>,
+    name: Option<String>,
+    shipped: std::path::PathBuf,
+    packs_root: std::path::PathBuf,
+) -> Result<ProjectPacksInit, String> {
     let project = project_ref;
     let (_owner, project_slug) = parse_project_coordinate(project.trim())?;
     let repo_id = match repo_id
@@ -358,59 +495,116 @@ pub async fn project_packs_init(
     let keys = state.signing_keys()?;
     let viewer = keys.public_key().to_hex();
     let relay_http =
-        crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(&state));
+        crate::relay::relay_http_base_url(&crate::relay::relay_ws_url_with_override(state));
     let clone_url = packs_cache::packs_clone_url(&relay_http, &viewer, &repo_id);
     let repo = format!("30617:{viewer}:{repo_id}");
     // Refuse before anything is signed if the coordinate we would announce is
     // not one this host would later stage from.
     packs_cache::parse_repo_coordinate(&repo)?;
 
-    let shipped = packs_cache::shipped_packs_dir(&app)
-        .ok_or_else(|| "this build ships no role packs to seed a repository with".to_string())?;
-    let packs_root = packs_cache::packs_root(&app)?;
     let checkout = packs_cache::packs_checkout_dir(&packs_root, &viewer, &repo_id);
+
+    // Finding 66: the seed commit is authored as this host's own identity —
+    // read from the kind:0 it already has, never from git config (production
+    // clears every layer of that before any git invocation runs). Resolved
+    // before the blocking seed step because reading the relay needs the
+    // async runtime the blocking thread does not have.
+    let (commit_identity_name, commit_identity_email) =
+        resolve_app_commit_identity(state, &viewer).await;
 
     let announcement = build_announcement(&keys, &repo_id, project.trim(), &name, &clone_url)?;
     let mut publication_error =
-        crate::relay::submit_signed_event_with_keys(&announcement, &state, &keys, None)
+        crate::relay::submit_signed_event_with_keys(&announcement, state, &keys, None)
             .await
             .err();
+
+    // Nothing landed on the relay to roll back, seed, or push if the
+    // announcement itself was refused — there is no promise yet.
+    if publication_error.is_some() {
+        return Ok(ProjectPacksInit {
+            repo_ref: repo,
+            source_event_id: None,
+            seed_commit_sha: None,
+            seed_error: None,
+            commit_identity_name,
+            commit_identity_email,
+            push_record_event_id: None,
+            repo_id,
+            clone_url,
+            announcement_event_id: announcement.id.to_hex(),
+            branch: SEED_BRANCH.to_string(),
+            roles: Vec::new(),
+            pushed: false,
+            push_error: None,
+            publication_error,
+            announcement_withdrawn_event_id: None,
+            announcement_withdrawal_error: None,
+        });
+    }
 
     let seed_keys = keys.clone();
     let seed_checkout = checkout.clone();
     let seed_clone_url = clone_url.clone();
-    let seeded = tokio::task::spawn_blocking(
-        move || -> Result<(String, Vec<String>, Option<String>), String> {
-            let auth =
+    let identity = (commit_identity_name.clone(), commit_identity_email.clone());
+    let seeded: SeedOutcome =
+        tokio::task::spawn_blocking(move || -> Result<SeedOutcome, String> {
+            let mut auth =
                 crate::commands::project_git_exec::build_git_auth_config_for_keys(&seed_keys)?;
-            let (commit, roles) = seed_packs_checkout(&seed_checkout, &shipped, &auth)?;
-            let push_error = run_git(
-                &[
-                    "push",
-                    "--quiet",
-                    "--",
-                    &seed_clone_url,
-                    &format!("HEAD:refs/heads/{SEED_BRANCH}"),
-                ],
-                Some(&seed_checkout),
-                &auth,
-            )
-            .err();
-            Ok((commit, roles, push_error))
-        },
-    )
-    .await
-    .map_err(|error| format!("seeding the packs repository did not finish: {error}"))??;
-    let (commit, roles, push_error) = seeded;
+            auth.set_commit_identity(identity.0, identity.1);
+            match seed_packs_checkout(&seed_checkout, &shipped, &auth) {
+                Err(seed_error) => Ok(SeedOutcome::SeedFailed { seed_error }),
+                Ok((commit, roles)) => {
+                    let push_error = run_git(
+                        &[
+                            "push",
+                            "--quiet",
+                            "--",
+                            &seed_clone_url,
+                            &format!("HEAD:refs/heads/{SEED_BRANCH}"),
+                        ],
+                        Some(&seed_checkout),
+                        &auth,
+                    )
+                    .err();
+                    Ok(SeedOutcome::Seeded {
+                        commit,
+                        roles,
+                        push_error,
+                    })
+                }
+            }
+        })
+        .await
+        .map_err(|error| format!("seeding the packs repository did not finish: {error}"))??;
+
+    let (seed_commit_sha, roles, seed_error, push_error) = match seeded {
+        SeedOutcome::SeedFailed { seed_error } => (None, Vec::new(), Some(seed_error), None),
+        SeedOutcome::Seeded {
+            commit,
+            roles,
+            push_error,
+        } => (Some(commit), roles, None, push_error),
+    };
+    let seed_or_push_failed = seed_error.is_some() || push_error.is_some();
+
+    // Rollback: the announcement promised a repository with packs in it.
+    // When the seed or the push failed after that promise landed, withdraw
+    // it rather than leave a stray repository with no packs under the
+    // viewer's key — see the module docs' rollback step.
+    let (announcement_withdrawn_event_id, announcement_withdrawal_error) = if seed_or_push_failed {
+        withdraw_announcement(state, &keys, &repo_id).await
+    } else {
+        (None, None)
+    };
 
     // The 30624 is published only when the repository actually holds the
     // packs it names. A source pointing at an empty repository turns every
     // later hire into HIRE_PACK_UNAVAILABLE, which is a promise broken later
     // instead of a failure reported now.
-    let source_event_id = if push_error.is_none() {
+    let source_event_id = if !seed_or_push_failed {
         let source = build_pack_source(&keys, project.trim(), &repo)?;
         if let Some(error) =
-            crate::relay::submit_signed_event_with_keys(&source, &state, &keys, None)
+            crate::relay::submit_signed_event_with_keys(&source, state, &keys, None)
                 .await
                 .err()
         {
@@ -426,8 +620,8 @@ pub async fn project_packs_init(
     // The relay derives a kind:30618 ref state from the push. Read it back
     // rather than assert it: the id belongs to an event the relay signed, and
     // an id we made up would point a reader at nothing.
-    let push_record_event_id = if push_error.is_none() {
-        read_push_record_id(&state, &viewer, &repo_id).await
+    let push_record_event_id = if !seed_or_push_failed {
+        read_push_record_id(state, &viewer, &repo_id).await
     } else {
         None
     };
@@ -435,17 +629,66 @@ pub async fn project_packs_init(
     Ok(ProjectPacksInit {
         repo_ref: repo,
         source_event_id,
-        seed_commit_sha: commit,
+        seed_commit_sha,
+        seed_error,
+        commit_identity_name,
+        commit_identity_email,
         push_record_event_id,
         repo_id,
         clone_url,
         announcement_event_id: announcement.id.to_hex(),
         branch: SEED_BRANCH.to_string(),
         roles,
-        pushed: push_error.is_none(),
+        pushed: !seed_or_push_failed,
         push_error,
         publication_error,
+        announcement_withdrawn_event_id,
+        announcement_withdrawal_error,
     })
+}
+
+/// Withdraw this host's own `30617:<viewer>:<repo_id>` announcement: a kind:5
+/// carrying `["a", "30617:<viewer>:<repo_id>"]`, the same shape `bee repos
+/// delete` publishes (`crates/buzz-cli/src/commands/repos.rs::cmd_delete_repo`).
+///
+/// Called only after the announcement is known to have landed and the seed
+/// or push that was supposed to fill it then failed — see
+/// [`project_packs_init`]. Returns `(withdrawn_event_id, error)`, exactly one
+/// `Some`: a tombstone failure is reported, not retried, and the caller
+/// already has the coordinate (`ProjectPacksInit::repo_ref`) to hand a
+/// founder for a manual `bee repos delete`.
+async fn withdraw_announcement(
+    state: &AppState,
+    keys: &Keys,
+    repo_id: &str,
+) -> (Option<String>, Option<String>) {
+    let owner = keys.public_key().to_hex();
+    let builder = match buzz_sdk_pkg::build_delete_addressable(
+        u32::from(KIND_REPO_ANNOUNCEMENT),
+        &owner,
+        repo_id,
+    ) {
+        Ok(builder) => builder,
+        Err(error) => {
+            return (
+                None,
+                Some(format!("could not build the withdrawal: {error}")),
+            )
+        }
+    };
+    let tombstone = match builder.sign_with_keys(keys) {
+        Ok(event) => event,
+        Err(error) => {
+            return (
+                None,
+                Some(format!("could not sign the withdrawal: {error}")),
+            )
+        }
+    };
+    match crate::relay::submit_signed_event_with_keys(&tombstone, state, keys, None).await {
+        Ok(_) => (Some(tombstone.id.to_hex()), None),
+        Err(error) => (None, Some(error)),
+    }
 }
 
 /// The relay-signed kind:30618 ref state for this repository, if it is there.

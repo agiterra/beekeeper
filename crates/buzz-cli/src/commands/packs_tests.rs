@@ -1,4 +1,7 @@
-//! `bee packs` argument handling — the parts that decide without a relay.
+//! `bee packs` argument handling — the parts that decide without a relay —
+//! plus, at the bottom, LANE-L31's rollback: `withdraw_repo_announcement` and
+//! `cmd_init`'s use of it, exercised against a localhost stub relay (never a
+//! real one).
 
 use super::*;
 
@@ -156,4 +159,112 @@ fn seeding_writes_the_packs_under_the_path_and_pushes_one_signed_commit() {
     );
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+// --- LANE-L31: `bee packs init` rolls back a seed/push that never lands ---
+
+mod rollback {
+    use super::*;
+    use axum::{http::StatusCode, routing::post, Router};
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
+
+    /// A stub relay recording every event kind it was handed. `reject_kind`
+    /// answers that one kind with HTTP 500 (used to make the tombstone
+    /// publish itself fail); every other kind is accepted. No `/git/...`
+    /// route exists, so any push against this stub fails fast.
+    async fn spawn_stub_relay(reject_kind: Option<u64>) -> (String, Arc<Mutex<Vec<u64>>>) {
+        let received: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let received_for_route = received.clone();
+        let app = Router::new()
+            .route(
+                "/events",
+                post(move |body: String| {
+                    let received = received_for_route.clone();
+                    async move {
+                        let event: serde_json::Value =
+                            serde_json::from_str(&body).unwrap_or_default();
+                        let kind = event
+                            .get("kind")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default();
+                        received.lock().unwrap().push(kind);
+                        if Some(kind) == reject_kind {
+                            return (StatusCode::INTERNAL_SERVER_ERROR, String::new());
+                        }
+                        (
+                            StatusCode::OK,
+                            serde_json::json!({
+                                "event_id": event.get("id").and_then(Value::as_str).unwrap_or(""),
+                                "accepted": true,
+                                "message": ""
+                            })
+                            .to_string(),
+                        )
+                    }
+                }),
+            )
+            // `cmd_init` reads any existing pack source before announcing —
+            // this stub always answers "none", so the create path proceeds.
+            .route(
+                "/query",
+                post(|| async { (StatusCode::OK, "[]".to_string()) }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), received)
+    }
+
+    fn test_client(relay_url: String) -> BuzzClient {
+        let keys = nostr::Keys::generate();
+        BuzzClient::new(relay_url, keys, None, None).expect("client construction")
+    }
+
+    #[tokio::test]
+    async fn withdraw_repo_announcement_publishes_a_kind_5_naming_the_coordinate() {
+        let (relay_url, received) = spawn_stub_relay(None).await;
+        let client = test_client(relay_url);
+        let owner = client.keys().public_key().to_hex();
+
+        let (withdrawn, error) =
+            withdraw_repo_announcement(&client, &owner, "beekeeper-packs").await;
+        assert!(error.is_none(), "{error:?}");
+        let withdrawn = withdrawn.expect("a tombstone event id");
+        assert_eq!(withdrawn.len(), 64, "a full event id, never a prefix");
+        assert_eq!(*received.lock().unwrap(), vec![5]);
+    }
+
+    #[tokio::test]
+    async fn a_relays_refusal_of_the_tombstone_is_reported_not_swallowed() {
+        let (relay_url, _received) = spawn_stub_relay(Some(5)).await;
+        let client = test_client(relay_url);
+        let owner = client.keys().public_key().to_hex();
+
+        let (withdrawn, error) =
+            withdraw_repo_announcement(&client, &owner, "beekeeper-packs").await;
+        assert!(withdrawn.is_none(), "the relay refused it");
+        assert!(
+            error.is_some(),
+            "the refusal must be reported, not silently dropped"
+        );
+    }
+
+    // A third test drove `cmd_init` itself end to end (announce against the
+    // stub, then a push with nowhere to land) to prove the 30617→kind:5
+    // sequence at the command level, not just in `withdraw_repo_announcement`
+    // directly. Removed: `seed_packs_repository` shells a bare `git push`
+    // (`commands::sessions::worktree::git_command`) with none of
+    // `project_git_exec::configure_git_auth`'s hardening — no
+    // `GIT_TERMINAL_PROMPT=0`, no credential-helper isolation, no timeout —
+    // so on this development machine (which has a real
+    // `credential.helper` wired for Nostr pushes, per CONTRIBUTING.md) the
+    // push against the stub triggered the *real* credential helper and hung
+    // past 60s; killed rather than let run. `withdraw_repo_announcement`'s
+    // own two tests above cover the new logic without shelling git against a
+    // relay this suite does not control. Flagged separately (not this
+    // lane's scope): `buzz-cli`'s git shelling should get the same
+    // `GIT_TERMINAL_PROMPT=0` / timeout hardening `project_git_exec.rs`
+    // already gives the desktop host.
 }

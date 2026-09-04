@@ -16,6 +16,7 @@ import {
 } from "../lib/projectPackSource";
 import {
   defaultPacksRepoId,
+  describeSeedOutcome,
   packsRepoIdError,
   projectPacksInit,
   type ProjectPacksInitResult,
@@ -367,13 +368,38 @@ function ProjectPacksCreateRepoAction({
           >
             Created <span className="font-mono">{result.repoRef}</span>.
           </p>
+          <p
+            className={
+              result.seedCommitSha === null
+                ? "text-xs text-destructive"
+                : "text-xs"
+            }
+            data-testid="project-packs-create-repo-seed-outcome"
+            role={result.seedCommitSha === null ? "alert" : undefined}
+          >
+            {describeSeedOutcome(result)}
+          </p>
+          {/* The raw text this sentence replaces — never git's stderr on
+              its own, per LANE-L31 (Finding 66) — stays reachable behind a
+              disclosure rather than thrown away. */}
+          {result.seedError !== null ? (
+            <details
+              className="text-2xs text-muted-foreground"
+              data-testid="project-packs-create-repo-seed-error-details"
+            >
+              <summary className="cursor-pointer">Details</summary>
+              <pre className="whitespace-pre-wrap font-mono">
+                {result.seedError}
+              </pre>
+            </details>
+          ) : null}
           <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
             <dt className="text-muted-foreground">Repository</dt>
             <dd className="truncate font-mono">{result.repoRef}</dd>
             <dt className="text-muted-foreground">Source event</dt>
             {result.sourceEventId === null ? (
               <dd className="text-muted-foreground">
-                not published — the seed push did not reach the relay
+                not published — the seed or push did not reach the relay
               </dd>
             ) : (
               <dd className="truncate font-mono">
@@ -381,9 +407,13 @@ function ProjectPacksCreateRepoAction({
               </dd>
             )}
             <dt className="text-muted-foreground">Seed commit</dt>
-            <dd className="truncate font-mono">
-              {result.seedCommitSha.slice(0, 8)}
-            </dd>
+            {result.seedCommitSha === null ? (
+              <dd className="text-muted-foreground">none — seeding failed</dd>
+            ) : (
+              <dd className="truncate font-mono">
+                {result.seedCommitSha.slice(0, 8)}
+              </dd>
+            )}
             <dt className="text-muted-foreground">Push record</dt>
             {result.pushRecordEventId === null ? (
               <dd className="text-muted-foreground">

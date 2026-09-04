@@ -11,7 +11,12 @@ const RESULT = {
   repoRef: `30617:${"a".repeat(64)}:agiterra-packs`,
   sourceEventId: "b".repeat(64),
   seedCommitSha: "c".repeat(40),
+  seedError: null,
+  commitIdentityName: "Beekeeper aaaaaaaa",
+  commitIdentityEmail: "aaaaaaaa@beekeeper.local",
   pushRecordEventId: "d".repeat(64),
+  announcementWithdrawnEventId: null,
+  announcementWithdrawalError: null,
 };
 
 /** What `project_packs_init` really answers with (`packs_repo.rs`). */
@@ -27,18 +32,18 @@ const HOST_RESULT = {
   publicationError: null,
 };
 
-test("decodeProjectPacksInitResult accepts the four keys the panel prints", () => {
+test("decodeProjectPacksInitResult accepts every key the panel prints", () => {
   assert.deepEqual(decodeProjectPacksInitResult(RESULT), RESULT);
 });
 
 test("decodeProjectPacksInitResult reads the host's larger answer, keeping only what it prints", () => {
-  // `packs_repo.rs` returns twelve keys. A reader that refused the response
-  // because it did not recognise `pushError` would break the button every
-  // time the host learned to report one more fact.
+  // `packs_repo.rs` returns more keys than this reader keeps. A reader that
+  // refused the response because it did not recognise `pushError` would
+  // break the button every time the host learned to report one more fact.
   assert.deepEqual(decodeProjectPacksInitResult(HOST_RESULT), RESULT);
 });
 
-test("decodeProjectPacksInitResult keeps the two ids the host may honestly not have", () => {
+test("decodeProjectPacksInitResult keeps the ids the host may honestly not have", () => {
   // A push that did not land withholds the 30624; a relay that has not yet
   // published the 30618 has no push record. Both are `null`, never invented.
   const withheld = {
@@ -52,6 +57,31 @@ test("decodeProjectPacksInitResult keeps the two ids the host may honestly not h
     ...RESULT,
     sourceEventId: null,
     pushRecordEventId: null,
+  });
+});
+
+test("decodeProjectPacksInitResult reads a seed failure: no commit, the reason, and a withdrawal", () => {
+  // LANE-L31 (Finding 66): the seed/push failure path is a normal result now
+  // (the announcement had already landed), not a thrown error carrying git's
+  // raw stderr — see the module doc.
+  const seedFailed = {
+    ...HOST_RESULT,
+    sourceEventId: null,
+    seedCommitSha: null,
+    seedError:
+      "Author identity unknown … fatal: unable to auto-detect email address",
+    pushRecordEventId: null,
+    pushed: false,
+    announcementWithdrawnEventId: "f".repeat(64),
+  };
+  assert.deepEqual(decodeProjectPacksInitResult(seedFailed), {
+    ...RESULT,
+    sourceEventId: null,
+    seedCommitSha: null,
+    seedError:
+      "Author identity unknown … fatal: unable to auto-detect email address",
+    pushRecordEventId: null,
+    announcementWithdrawnEventId: "f".repeat(64),
   });
 });
 

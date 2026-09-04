@@ -77,11 +77,33 @@ pub(crate) struct GitAuthConfig {
     /// its hostname auto-detection — which fails outright on a host whose
     /// name has no dot ("unable to auto-detect email address"), and otherwise
     /// authors the commit as `user@hostname`. Callers that commit say who is
-    /// committing; `None` (every production caller today) leaves git's own
-    /// behaviour untouched. **Finding 64**: the packs-seed tests set this
-    /// rather than depending on whatever identity the machine running them
-    /// happens to have.
+    /// committing; `None` leaves git's own behaviour untouched — still every
+    /// caller here except the one below. **Finding 64**: the packs-seed
+    /// tests set this rather than depending on whatever identity the machine
+    /// running them happens to have. **Finding 66**: production's own packs
+    /// seed commit (`packs_repo::project_packs_init`) depended on the same
+    /// hostname auto-detection the tests were fixed to avoid — set via
+    /// [`GitAuthConfig::set_commit_identity`] with the app's own identity,
+    /// resolved from the kind:0 the host already has, never from git config.
     commit_identity: Option<(String, String)>,
+}
+
+impl GitAuthConfig {
+    /// Name the identity a subsequent `commit` in this config is authored as.
+    ///
+    /// See [`GitAuthConfig::commit_identity`] for why this exists: without
+    /// it, a `git commit` run through this config depends on whatever
+    /// identity the host machine happens to expose (or does not), which is
+    /// never the app's own key. Every caller that writes a commit on the
+    /// app's behalf — as opposed to on behalf of a person, which git prompts
+    /// for — should call this before committing.
+    pub(crate) fn set_commit_identity(
+        &mut self,
+        name: impl Into<String>,
+        email: impl Into<String>,
+    ) {
+        self.commit_identity = Some((name.into(), email.into()));
+    }
 }
 
 fn read_pipe_lossy(pipe: Option<impl Read>) -> String {

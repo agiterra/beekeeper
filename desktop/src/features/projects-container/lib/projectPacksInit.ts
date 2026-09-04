@@ -33,22 +33,59 @@ import { invokeTauri } from "@/shared/api/tauri";
 /** The host command this module calls. */
 export const PROJECT_PACKS_INIT_COMMAND = "project_packs_init";
 
-/** The wire facts the Packs panel prints, out of everything the host returns. */
+/**
+ * The wire facts the Packs panel prints, out of everything the host returns.
+ *
+ * LANE-L31 (2026-09-03, Finding 66): a seed or push failure is no longer a
+ * thrown error with git's raw stderr as the message — the host reports it as
+ * a normal result, because the announcement (`announcementEventId`) had
+ * already landed and there is real data to show. `seedCommitSha` and
+ * `sourceEventId` are `null` in that case; `seedError` names why, and
+ * `announcementWithdrawnEventId` / `announcementWithdrawalError` say whether
+ * the stray announcement was rolled back. The UI composes its own sentence
+ * from these fields rather than printing `seedError` directly — see
+ * `ProjectPacksSettingsSection.tsx`'s result panel.
+ */
 export type ProjectPacksInitResult = {
   /** The new packs repository's `30617:<owner-hex>:<id>` coordinate. */
   repoRef: string;
   /**
    * The published `30624` source event's id, or `null` when the host withheld
-   * it because the seed push did not reach the relay.
+   * it because the seed or push did not land.
    */
   sourceEventId: string | null;
-  /** The commit the shipped packs were seeded as, on the new repository. */
-  seedCommitSha: string;
+  /**
+   * The commit the shipped packs were seeded as, or `null` when seeding
+   * itself never produced one — see {@link seedError}.
+   */
+  seedCommitSha: string | null;
+  /**
+   * The seed step's own words when it failed before there was anything to
+   * push. `null` when seeding succeeded (a push failure afterwards is a
+   * separate fact the host does not surface to this screen's four values).
+   */
+  seedError: string | null;
+  /** Display name the seed commit was (or would have been) authored as. */
+  commitIdentityName: string;
+  /** Email the seed commit was (or would have been) authored as. */
+  commitIdentityEmail: string;
   /**
    * The relay's `30618` push-record event id for that seed commit, or `null`
    * — the push did not land, or the relay had not published the record yet.
    */
   pushRecordEventId: string | null;
+  /**
+   * Event id of the kind:5 withdrawing the announcement, published when the
+   * seed or push failed after the announcement had already landed. `null`
+   * when nothing needed withdrawing.
+   */
+  announcementWithdrawnEventId: string | null;
+  /**
+   * The withdrawal's own words when publishing the tombstone itself failed.
+   * `repoRef` is the coordinate to delete by hand in that case
+   * (`bee repos delete`).
+   */
+  announcementWithdrawalError: string | null;
 };
 
 /** `true` for a string, or for `null` where the host may honestly have none. */
@@ -64,13 +101,18 @@ function isProjectPacksInitResult(
   return (
     typeof record.repoRef === "string" &&
     isOptionalId(record.sourceEventId) &&
-    typeof record.seedCommitSha === "string" &&
-    isOptionalId(record.pushRecordEventId)
+    isOptionalId(record.seedCommitSha) &&
+    isOptionalId(record.seedError) &&
+    typeof record.commitIdentityName === "string" &&
+    typeof record.commitIdentityEmail === "string" &&
+    isOptionalId(record.pushRecordEventId) &&
+    isOptionalId(record.announcementWithdrawnEventId) &&
+    isOptionalId(record.announcementWithdrawalError)
   );
 }
 
 /**
- * Read the four facts this screen prints out of the host's answer.
+ * Read the facts this screen prints out of the host's answer.
  *
  * Every key is required and typed; keys beyond them are the host's business
  * and are dropped here rather than refused, so `packs_repo.rs` can report more
@@ -88,7 +130,12 @@ export function decodeProjectPacksInitResult(
     repoRef: value.repoRef,
     sourceEventId: value.sourceEventId,
     seedCommitSha: value.seedCommitSha,
+    seedError: value.seedError,
+    commitIdentityName: value.commitIdentityName,
+    commitIdentityEmail: value.commitIdentityEmail,
     pushRecordEventId: value.pushRecordEventId,
+    announcementWithdrawnEventId: value.announcementWithdrawnEventId,
+    announcementWithdrawalError: value.announcementWithdrawalError,
   };
 }
 
@@ -117,6 +164,31 @@ export async function projectPacksInit(input: {
       name: input.name,
     }),
   );
+}
+
+/**
+ * The one sentence `ProjectPacksSettingsSection.tsx`'s result panel prints
+ * for what `project_packs_init` actually did — LANE-L31 (Finding 66):
+ * before this, a seed failure threw git's own raw stderr ("Author identity
+ * unknown … fatal: unable to auto-detect email address") straight at the
+ * viewer, with no mention of the identity the host tried to use or of the
+ * stray announcement it had already published. This function says what
+ * failed, which identity it would have used, and what was withdrawn — the
+ * raw `seedError` stays on the result for a "details" disclosure, never
+ * inlined here.
+ */
+export function describeSeedOutcome(result: ProjectPacksInitResult): string {
+  const identity = `${result.commitIdentityName} <${result.commitIdentityEmail}>`;
+  if (result.seedCommitSha !== null) {
+    return `Seeded as ${identity}, commit ${result.seedCommitSha.slice(0, 8)}.`;
+  }
+  const withdrawal =
+    result.announcementWithdrawnEventId !== null
+      ? `the announcement was withdrawn (${result.announcementWithdrawnEventId.slice(0, 8)})`
+      : result.announcementWithdrawalError !== null
+        ? `the announcement could not be withdrawn — delete ${result.repoRef} by hand`
+        : "no announcement needed withdrawing";
+  return `Announced ${result.repoRef}, but seeding failed as ${identity}; ${withdrawal}.`;
 }
 
 /** Longest repository id the relay's git routes and the CLI both accept. */
