@@ -134,23 +134,25 @@ use nostr::Event;
 #[path = "coding_session_verdict_admission_observed.rs"]
 mod observed;
 
-// Finding 56's candidate source, split out for the same reason.
+// Finding 56's candidate source, split out for the same reason — and, since
+// L35 pushed this file past the ceiling again, the prediction-grade seat
+// projection that reads the same kind 44228 page.
 #[path = "coding_session_verdict_admission_source.rs"]
 mod source;
-use observed::{evaluate_observed_gates, gates_observed_green, ObservedGateVerdict};
+use observed::{
+    evaluate_observed_gates, gate_rows_status, gates_observed_green, ObservedGateVerdict,
+};
 pub use observed::{
     mission_gate_policy, mission_observations, mission_provider_pubkeys,
     VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES, VERDICT_ADMISSION_MAX_OBSERVATIONS,
     VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
 };
 pub use source::{
-    VerdictAdmissionCandidateSource, VERDICT_ADMISSION_BOUND_CHANNEL,
-    VERDICT_ADMISSION_MAX_PROJECT_CHANNELS, VERDICT_ADMISSION_MAX_PUSHER_SEATS,
+    active_seats_from_authority_transitions, VerdictAdmissionCandidateSource,
+    VERDICT_ADMISSION_BOUND_CHANNEL, VERDICT_ADMISSION_MAX_PROJECT_CHANNELS,
+    VERDICT_ADMISSION_MAX_PUSHER_SEATS,
 };
 
-use crate::coding_session_authority_transition::{
-    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
-};
 use crate::coding_session_observation::CodingSessionObservationGateEntry;
 use crate::coding_session_team_transaction::{
     fold_coding_session_team_transactions, validate_coding_session_team_transaction_envelope,
@@ -158,7 +160,6 @@ use crate::coding_session_team_transaction::{
     CodingSessionTeamRefutationDecision, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionPayload, CodingSessionTeamVerdict,
 };
-use crate::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
 
 /// Newest genesis events one verdict-gated ref update may search.
 ///
@@ -329,6 +330,25 @@ pub enum VerdictAdmissionEvidence {
     },
 }
 
+/// Arm (B)'s status on one commit, carried inside an arm-(C) refusal.
+///
+/// Finding 75: every arm-(C) refusal that follows an arm-(B) evaluation
+/// reports what arm (B) found, so a pusher is never told to find a verifier
+/// over a mission whose policy never asked for one. `Green` is "every
+/// required gate is observed green on this commit over a clean worktree";
+/// `Short` is arm (B)'s own sentence about what is not, carried whole rather
+/// than paraphrased.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerdictAdmissionGateRows {
+    /// Every required gate was observed green on this commit, by the
+    /// mission's own provider, over a clean worktree.
+    Green,
+    /// Something is short, and this is the sentence arm (B) would have
+    /// refused with — boxed because a refusal that contains a refusal is
+    /// otherwise infinitely sized.
+    Short(Box<VerdictAdmissionRefusal>),
+}
+
 /// Why a verdict-gated update is refused.
 ///
 /// The strings [`VerdictAdmissionRefusal::reason`] returns are frozen copy:
@@ -349,12 +369,29 @@ pub enum VerdictAdmissionRefusal {
     ApprovedReportNamesBranchOnly,
     /// Someone approved a report naming this commit, but nobody who could
     /// stand as its verifier did.
+    ///
+    /// Since finding 75 (live run 6, 2026-09-04) this carries **arm (B)'s
+    /// status on the same commit** and whether the policy closes that arm,
+    /// so the sentence can lead with the route the mission is actually
+    /// running: a mission whose founder never asked for a verifier is owed
+    /// "which gate row is missing", not "find a verifier".
     ApprovedButNotVerified {
         /// The approved object id.
         new_oid: String,
         /// How many approving dispositions named it — disclosed so a reader
         /// can tell "nobody ruled" from "the wrong people ruled".
         approvals: usize,
+        /// Whether the mission's newest founder-signed kind 44245 policy sets
+        /// `gates.verifierRequired`. `false` covers both "set to false" and
+        /// "no policy read" — the two are one fact to arm (B), which is open
+        /// in either case.
+        verifier_required: bool,
+        /// What arm (B) found on this commit, seat aside.
+        rows: VerdictAdmissionGateRows,
+        /// Whether the pusher holds an active seat of the mission. Both
+        /// routes require one, and a pusher told to run the gates without
+        /// being told this would run them for nothing.
+        seated: bool,
     },
     /// The only approving verifier is the key that wrote the report.
     VerifierIsTheReportAuthor {
@@ -516,70 +553,6 @@ pub fn verdict_admission_fold_context(
     }
 }
 
-/// Project active role seats from a session's stored kind 44228 transitions.
-///
-/// **Prediction-grade, and only for a caller that has no better source.** The
-/// relay enforces with its own accepted projection
-/// (`buzz_db::coding_session_acl::session_authority_for_hire`), which is
-/// authoritative because the relay refuses to store a transition it did not
-/// accept. A client reading events off the wire has no such guarantee, so
-/// `bee git check --ref` uses this and says "prediction" rather than
-/// "promise". Transitions that fail signature verification, name another
-/// genesis, or arrive out of sequence are skipped rather than trusted.
-pub fn active_seats_from_authority_transitions(
-    events: &[Event],
-    genesis_ref: &str,
-) -> Vec<CodingSessionTeamActiveSeat> {
-    let mut links: Vec<(
-        u32,
-        CodingSessionAuthorityTransitionType,
-        String,
-        Option<String>,
-    )> = Vec::new();
-    for event in events {
-        if u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_AUTHORITY_TRANSITION {
-            continue;
-        }
-        if crate::verify_event(event).is_err() {
-            continue;
-        }
-        let Ok(payload) = decode_coding_session_authority_transition(&event.content) else {
-            continue;
-        };
-        if payload.genesis_ref != genesis_ref {
-            continue;
-        }
-        links.push((
-            payload.seq,
-            payload.transition_type,
-            payload.grantee_pubkey,
-            payload.role,
-        ));
-    }
-    links.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.cmp(&b.2)));
-
-    let mut seats: Vec<CodingSessionTeamActiveSeat> = Vec::new();
-    for (_, transition_type, grantee, role) in links {
-        match transition_type {
-            CodingSessionAuthorityTransitionType::GrantSeat => {
-                let Some(role) = role else { continue };
-                seats.retain(|seat| seat.actor_pubkey != grantee);
-                seats.push(CodingSessionTeamActiveSeat {
-                    actor_pubkey: grantee,
-                    role,
-                });
-            }
-            CodingSessionAuthorityTransitionType::RevokeSeat => {
-                seats.retain(|seat| {
-                    seat.actor_pubkey != grantee || Some(&seat.role) != role.as_ref()
-                });
-            }
-            _ => {}
-        }
-    }
-    seats
-}
-
 /// The transactions belonging to one mission, out of a page read for a whole
 /// channel.
 ///
@@ -651,6 +624,12 @@ pub fn evaluate_verdict_admission(
     // rather than the most generic one. `NoApprovingVerdict` is the answer
     // only when nothing at all named the commit.
     let mut approvals_naming_the_commit: usize = 0;
+    // Finding 75: the facts `ApprovedButNotVerified` composes with — the
+    // policy's verifier flag, arm (B)'s row status on this commit, and the
+    // pusher's seat — taken from the first mission whose approval nobody
+    // cleared. Recorded where that near-miss happens, so the refusal's
+    // sentence is about the mission the approval came from.
+    let mut approved_but_not_verified: Option<(bool, VerdictAdmissionGateRows, bool)> = None;
     let mut self_approving_verifier: Option<String> = None;
     let mut verified_but_unseated: Option<(String, usize)> = None;
     // The 2026-09-03 follow-up ruling's own near-miss: everything arm (C)
@@ -727,6 +706,16 @@ pub fn evaluate_verdict_admission(
                         {
                             self_approving_verifier.get_or_insert(author);
                         }
+                        approved_but_not_verified.get_or_insert_with(|| {
+                            (
+                                candidate
+                                    .gate_policy
+                                    .as_ref()
+                                    .is_some_and(VerdictAdmissionGatePolicy::requires_a_verifier),
+                                gate_rows_status(candidate, query.new_oid),
+                                is_active_seat(candidate, query.pusher_pubkey),
+                            )
+                        });
                         continue;
                     };
                     // Condition 4: any active seat of that mission may land it.
@@ -802,10 +791,17 @@ pub fn evaluate_verdict_admission(
             approved_branch,
         });
     }
-    if approvals_naming_the_commit > 0 {
+    // Every approval naming the commit that was not returned above as a
+    // nearer miss reached the "nobody cleared it" branch, so the facts are
+    // always recorded when the count is positive; the `if let` is the honest
+    // shape rather than a count with nothing behind it.
+    if let Some((verifier_required, rows, seated)) = approved_but_not_verified {
         return VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedButNotVerified {
             new_oid: query.new_oid.to_ascii_lowercase(),
             approvals: approvals_naming_the_commit,
+            verifier_required,
+            rows,
+            seated,
         });
     }
     // Arm (B)'s near-miss ranks below every arm (C) one that named this exact

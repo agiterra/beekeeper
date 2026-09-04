@@ -172,6 +172,29 @@ mod live {
 
     const HEAD_SHA: &str = "07c470be007c470be007c470be007c470be007c4";
 
+    /// The finding-75 sentence this fixture earns: an approval nobody
+    /// cleared, no kind 44245 policy (so the gate-row route applies), no kind
+    /// 44246 row naming the commit, and a pusher with no seat of the mission.
+    /// Spelled out, not derived: the proof the core's words reach `git
+    /// push`'s stderr unchanged (`arms_tests::c_an_unverified_approval_…`).
+    fn unverified_no_rows_no_seat_reason() -> String {
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)), and no founder-signed \
+             policy of this mission requires a verifier, so the gate-row route is the one that \
+             applies — and it is not open for this commit: gate `cargo fmt` has no observed \
+             green row on {HEAD_SHA}. This mission requires `cargo fmt`, `cargo clippy`, \
+             `cargo test`, each observed green on the commit being pushed and over a clean \
+             worktree. That route wants every required gate published green on this exact \
+             commit, by the mission's own provider, over a clean worktree. Run each gate as its \
+             own command so the host can record it. Or, if this mission seats a verifier, a \
+             `refutation` verdict of `not-refuted` on that report, signed by a verifier seat of \
+             that mission, lands it over those same rows; no active verifier seat has cleared \
+             the report it approves, and a lead's approval is the settlement, not the check. \
+             And this key holds no active seat of that mission, which both routes require of \
+             the pusher."
+        )
+    }
+
     struct Mission {
         state: Arc<AppState>,
         community: buzz_core::CommunityId,
@@ -682,15 +705,10 @@ mod live {
             StatusCode::FORBIDDEN,
             "a seat must not land the trunk on its operator's authority (body: {body})"
         );
+        // Finding 75: no policy, so the gate-row route applies and leads.
         assert_eq!(
             body,
-            format!(
-                "refs/heads/main: commit {HEAD_SHA} is approved (1 approving disposition(s)) \
-                 and no active verifier seat has cleared the report it approves. The gate \
-                 wants a `refutation` verdict of `not-refuted` on that report, signed by a \
-                 verifier seat of that mission — a lead's approval is the settlement, not the \
-                 check. A founder may land this commit by pushing it themselves."
-            ),
+            format!("refs/heads/main: {}", unverified_no_rows_no_seat_reason()),
             "since the 2026-09-03 ruling the missing fact is the verifier's clearance, not a \
              founder-only reservation"
         );
@@ -872,13 +890,7 @@ mod live {
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(
             body,
-            format!(
-                "refs/heads/main: commit {HEAD_SHA} is approved (1 approving disposition(s)) \
-                 and no active verifier seat has cleared the report it approves. The gate \
-                 wants a `refutation` verdict of `not-refuted` on that report, signed by a \
-                 verifier seat of that mission — a lead's approval is the settlement, not the \
-                 check. A founder may land this commit by pushing it themselves."
-            )
+            format!("refs/heads/main: {}", unverified_no_rows_no_seat_reason())
         );
     }
 

@@ -191,6 +191,27 @@ enum Clearing {
 }
 
 fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
+    candidate_with(
+        mission,
+        // L27: arm (C) requires arm (B)'s evidence on top of the clearance, so
+        // an arm-(C) fixture that publishes no gate row now tests the *new*
+        // refusal rather than the verdict it was written for. Both halves are
+        // supplied here; the cases that are about a missing half live in
+        // `super::verified_tests`, which varies them one at a time.
+        super::gate_fixture::observed_green_gates(CHANNEL, SESSION, GENESIS, HEAD_SHA),
+        // And `verifierRequired`, so arm (B) stays silent and the arm that
+        // answers is the one under test.
+        super::gate_fixture::verifier_required_policy(),
+    )
+}
+
+/// The same mission over a chosen set of folded gate rows and a chosen
+/// policy — what the finding-75 cases vary.
+fn candidate_with(
+    mission: &Mission,
+    observed_gates: Vec<crate::coding_session_observation::CodingSessionObservationGateEntry>,
+    gate_policy: Option<VerdictAdmissionGatePolicy>,
+) -> VerdictAdmissionCandidate {
     let context = verdict_admission_fold_context(
         CHANNEL,
         SESSION,
@@ -206,18 +227,28 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         founder_pubkey: mission.founder.public_key().to_hex(),
         canonical,
         active_seats: mission.seats.clone(),
-        // L27: arm (C) requires arm (B)'s evidence on top of the clearance, so
-        // an arm-(C) fixture that publishes no gate row now tests the *new*
-        // refusal rather than the verdict it was written for. Both halves are
-        // supplied here; the cases that are about a missing half live in
-        // `super::verified_tests`, which varies them one at a time.
-        observed_gates: super::gate_fixture::observed_green_gates(
-            CHANNEL, SESSION, GENESIS, HEAD_SHA,
-        ),
-        // And `verifierRequired`, so arm (B) stays silent and the arm that
-        // answers is the one under test.
-        gate_policy: super::gate_fixture::verifier_required_policy(),
+        observed_gates,
+        gate_policy,
     }
+}
+
+/// Provider-observed rows on `HEAD_SHA`, folded, after `edit` has had its way
+/// with the green defaults — a red gate, a dirty tree.
+fn observed_rows(
+    edit: impl FnOnce(&mut Vec<crate::coding_session_observation::CodingSessionObservationGateRow>),
+) -> Vec<crate::coding_session_observation::CodingSessionObservationGateEntry> {
+    let provider = Keys::generate();
+    let mut rows = super::gate_fixture::default_green(HEAD_SHA);
+    edit(&mut rows);
+    let event = super::gate_fixture::signed_observation(
+        &provider,
+        CHANNEL,
+        SESSION,
+        GENESIS,
+        crate::coding_session_observation::CodingSessionObservationSource::Observed,
+        rows,
+    );
+    super::gate_fixture::folded(&provider, SESSION, GENESIS, &[event])
 }
 
 fn query<'a>(
@@ -392,15 +423,273 @@ fn c_an_approval_no_verifier_cleared_does_not_admit_a_seat_push() {
         &[candidate(&mission)],
         &query(&pusher, std::slice::from_ref(&founder), HEAD_SHA),
     );
-    match outcome {
+    match &outcome {
         VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedButNotVerified {
             new_oid,
             approvals,
+            verifier_required,
+            rows,
+            seated,
         }) => {
             assert_eq!(new_oid, HEAD_SHA);
-            assert_eq!(approvals, 1);
+            assert_eq!(*approvals, 1);
+            assert!(*verifier_required, "the fixture's policy closes arm (B)");
+            assert_eq!(rows, &VerdictAdmissionGateRows::Green);
+            assert!(*seated, "the builder holds an active seat");
         }
         other => panic!("expected ApprovedButNotVerified, got {other:?}"),
+    }
+    // Finding 75's fourth shape: the verifier is the one thing missing, the
+    // rows are green, and the sentence says exactly that — and offers no human.
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        unreachable!("matched above")
+    };
+    assert_eq!(
+        refusal.reason(),
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)) and no active verifier \
+             seat has cleared the report it approves. Every required gate is observed green on \
+             it, by the mission's own provider, over a clean worktree, and this mission's \
+             founder-signed policy requires a verifier, so those rows alone cannot land it: the \
+             gate wants a `refutation` verdict of `not-refuted` on that report, signed by a \
+             verifier seat of that mission — a lead's approval is the settlement, not the check."
+        )
+    );
+}
+
+// ── finding 75: the refusal names arm (B)'s status and offers no human ──
+
+/// Live run 6's own shape (2026-09-04): `gates.verifierRequired: false`, the
+/// lead approved a report naming the commit, and **no gate row names it**.
+/// The route that applies is the gate-row route, and the refusal leads with
+/// it — which gate has no observed green row, the whole required list, and
+/// the remedy — and mentions the verifier only as the alternative. It no
+/// longer offers a founder's push: humans never gate a landing.
+#[test]
+fn c_an_unverified_approval_with_no_gate_rows_leads_with_the_gate_row_route() {
+    let mission = mission(None);
+    let founder = mission.founder.public_key().to_hex();
+    let pusher = mission.lead.public_key().to_hex();
+    let outcome = evaluate_verdict_admission(
+        &[candidate_with(&mission, Vec::new(), None)],
+        &query(&pusher, std::slice::from_ref(&founder), HEAD_SHA),
+    );
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        panic!("an approval nobody checked over no gate rows must not land");
+    };
+    assert!(
+        matches!(
+            &refusal,
+            VerdictAdmissionRefusal::ApprovedButNotVerified {
+                verifier_required: false,
+                rows: VerdictAdmissionGateRows::Short(short),
+                seated: true,
+                ..
+            } if matches!(**short, VerdictAdmissionRefusal::RequiredGateNotObserved { .. })
+        ),
+        "the refusal carries arm (B)'s status on the commit: {refusal:?}"
+    );
+    assert_eq!(
+        refusal.reason(),
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)), and no founder-signed \
+             policy of this mission requires a verifier, so the gate-row route is the one that \
+             applies — and it is not open for this commit: gate `cargo fmt` has no observed \
+             green row on {HEAD_SHA}. This mission requires `cargo fmt`, `cargo clippy`, \
+             `cargo test`, each observed green on the commit being pushed and over a clean \
+             worktree. That route wants every required gate published green on this exact \
+             commit, by the mission's own provider, over a clean worktree. Run each gate as its \
+             own command so the host can record it. Or, if this mission seats a verifier, a \
+             `refutation` verdict of `not-refuted` on that report, signed by a verifier seat of \
+             that mission, lands it over those same rows; no active verifier seat has cleared \
+             the report it approves, and a lead's approval is the settlement, not the check."
+        )
+    );
+}
+
+/// The same push under `gates.verifierRequired: true`: the verifier is the
+/// missing check, and the rows are owed as well — named, with the same
+/// remedy, because arm (C) wants them too.
+#[test]
+fn c_an_unverified_approval_with_no_gate_rows_under_a_verifier_policy_names_both() {
+    let mission = mission(None);
+    let founder = mission.founder.public_key().to_hex();
+    let pusher = mission.lead.public_key().to_hex();
+    let outcome = evaluate_verdict_admission(
+        &[candidate_with(
+            &mission,
+            Vec::new(),
+            super::gate_fixture::verifier_required_policy(),
+        )],
+        &query(&pusher, std::slice::from_ref(&founder), HEAD_SHA),
+    );
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        panic!("an approval nobody checked must not land");
+    };
+    assert_eq!(
+        refusal.reason(),
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)) and no active verifier \
+             seat has cleared the report it approves. This mission's founder-signed policy \
+             requires a verifier, so green gate rows alone cannot land it: the gate wants a \
+             `refutation` verdict of `not-refuted` on that report, signed by a verifier seat of \
+             that mission — a lead's approval is the settlement, not the check — and every \
+             required gate observed green on this commit besides. The rows are short too: gate \
+             `cargo fmt` has no observed green row on {HEAD_SHA}. This mission requires `cargo \
+             fmt`, `cargo clippy`, `cargo test`, each observed green on the commit being pushed \
+             and over a clean worktree. The verifier route wants the same rows the gate-row \
+             route does. That route wants every required gate published green on this exact \
+             commit, by the mission's own provider, over a clean worktree. Run each gate as its \
+             own command so the host can record it."
+        )
+    );
+}
+
+/// A gate observed **red** on the commit, no verifier required: the red row
+/// is the fact, arm (B)'s own sentence about it is carried whole, and the
+/// remedy is the same.
+#[test]
+fn c_an_unverified_approval_over_a_red_gate_names_the_red_gate() {
+    let mission = mission(None);
+    let founder = mission.founder.public_key().to_hex();
+    let pusher = mission.lead.public_key().to_hex();
+    let rows = observed_rows(|rows| {
+        rows[2].outcome =
+            crate::coding_session_observation::CodingSessionObservationGateOutcome::Failed;
+    });
+    let outcome = evaluate_verdict_admission(
+        &[candidate_with(&mission, rows, None)],
+        &query(&pusher, std::slice::from_ref(&founder), HEAD_SHA),
+    );
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        panic!("a red gate on the pushed commit must not land");
+    };
+    assert_eq!(
+        refusal.reason(),
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)), and no founder-signed \
+             policy of this mission requires a verifier, so the gate-row route is the one that \
+             applies — and it is not open for this commit: gate `cargo test` was observed red \
+             on {HEAD_SHA}. Fix it and run it again; the next observed row names the commit it \
+             ran at. That route wants every required gate published green on this exact \
+             commit, by the mission's own provider, over a clean worktree. Run each gate as its \
+             own command so the host can record it. Or, if this mission seats a verifier, a \
+             `refutation` verdict of `not-refuted` on that report, signed by a verifier seat of \
+             that mission, lands it over those same rows; no active verifier seat has cleared \
+             the report it approves, and a lead's approval is the settlement, not the check."
+        )
+    );
+}
+
+/// The gates observed over a **dirty** worktree, no verifier required: they
+/// measured something no commit names, and the sentence says so.
+#[test]
+fn c_an_unverified_approval_over_a_dirty_worktree_names_the_dirt() {
+    let mission = mission(None);
+    let founder = mission.founder.public_key().to_hex();
+    let pusher = mission.lead.public_key().to_hex();
+    let rows = observed_rows(|rows| {
+        for row in rows.iter_mut() {
+            row.dirty = Some(true);
+        }
+    });
+    let outcome = evaluate_verdict_admission(
+        &[candidate_with(&mission, rows, None)],
+        &query(&pusher, std::slice::from_ref(&founder), HEAD_SHA),
+    );
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        panic!("gates over a dirty worktree must not land");
+    };
+    assert_eq!(
+        refusal.reason(),
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)), and no founder-signed \
+             policy of this mission requires a verifier, so the gate-row route is the one that \
+             applies — and it is not open for this commit: {HEAD_SHA} was observed dirty: the \
+             gates ran over a worktree with uncommitted changes in it, so they measured \
+             something no commit names. Commit the tree and run them again. That route wants \
+             every required gate published green on this exact commit, by the mission's own \
+             provider, over a clean worktree. Run each gate as its own command so the host can \
+             record it. Or, if this mission seats a verifier, a `refutation` verdict of \
+             `not-refuted` on that report, signed by a verifier seat of that mission, lands it \
+             over those same rows; no active verifier seat has cleared the report it approves, \
+             and a lead's approval is the settlement, not the check."
+        )
+    );
+}
+
+/// A pusher outside the mission is told so, because both routes require a
+/// seat and a stranger told only to run the gates would run them for nothing.
+/// This is also the only way the "rows green, no verifier required" shape is
+/// reached: a seated pusher would have landed on arm (B).
+#[test]
+fn c_an_unverified_approval_pushed_from_outside_the_mission_names_the_seat() {
+    let mission = mission(None);
+    let founder = mission.founder.public_key().to_hex();
+    let stranger = Keys::generate().public_key().to_hex();
+    let outcome = evaluate_verdict_admission(
+        &[candidate_with(
+            &mission,
+            super::gate_fixture::observed_green_gates(CHANNEL, SESSION, GENESIS, HEAD_SHA),
+            None,
+        )],
+        &query(&stranger, std::slice::from_ref(&founder), HEAD_SHA),
+    );
+    let VerdictAdmission::Refused(refusal) = outcome else {
+        panic!("a stranger's push must not land");
+    };
+    assert_eq!(
+        refusal.reason(),
+        format!(
+            "commit {HEAD_SHA} is approved (1 approving disposition(s)), and every required \
+             gate is observed green on it, by the mission's own provider, over a clean \
+             worktree. No founder-signed policy of this mission requires a verifier, so the \
+             gate-row route is the one that applies, and those rows satisfy it; no active \
+             verifier seat has cleared the report it approves either, and a lead's approval is \
+             the settlement, not the check. And this key holds no active seat of that mission, \
+             which both routes require of the pusher."
+        )
+    );
+}
+
+/// No shape of the composed refusal offers a founder's push. Brian's ruling of
+/// 2026-09-03: humans never gate a landing, so a refusal that ends by naming
+/// one is pointing at a route the product does not have.
+#[test]
+fn c_no_shape_of_the_composed_refusal_offers_a_human() {
+    let short = || {
+        VerdictAdmissionGateRows::Short(Box::new(VerdictAdmissionRefusal::ObservedGateRed {
+            gate: "cargo test".into(),
+            new_oid: HEAD_SHA.into(),
+        }))
+    };
+    for (verifier_required, rows, seated) in [
+        (false, short(), true),
+        (false, VerdictAdmissionGateRows::Green, false),
+        (true, short(), true),
+        (true, VerdictAdmissionGateRows::Green, true),
+        (true, VerdictAdmissionGateRows::Green, false),
+    ] {
+        let reason = VerdictAdmissionRefusal::ApprovedButNotVerified {
+            new_oid: HEAD_SHA.into(),
+            approvals: 1,
+            verifier_required,
+            rows,
+            seated,
+        }
+        .reason();
+        assert!(
+            !reason.contains("A founder may land") && !reason.contains("pushing it themselves"),
+            "no shape names a human as the route: {reason}"
+        );
+        assert!(
+            reason.contains("no active verifier seat has cleared the report it approves"),
+            "every shape keeps the clause two other crates assert on: {reason}"
+        );
+        assert!(
+            reason.contains("verifier seat of that mission") || reason.contains("seat"),
+            "{reason}"
+        );
     }
 }
 
@@ -451,6 +740,9 @@ fn the_new_refusals_name_the_arm_and_never_repeat_the_ref() {
         VerdictAdmissionRefusal::ApprovedButNotVerified {
             new_oid: HEAD_SHA.into(),
             approvals: 1,
+            verifier_required: true,
+            rows: VerdictAdmissionGateRows::Green,
+            seated: true,
         },
         VerdictAdmissionRefusal::VerifierIsTheReportAuthor {
             new_oid: HEAD_SHA.into(),

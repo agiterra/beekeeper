@@ -1,13 +1,21 @@
 //! Finding 56 — **where** a verdict-gated push looks for a mission.
 //!
 //! Split out of [`super`] only to keep that file under the repository's
-//! 1,000-line ceiling; it is one enum, its two bounds, and the sentence a
-//! refusal renders from it.
+//! 1,000-line ceiling; it is one enum, its two bounds, the sentence a
+//! refusal renders from it, and (since L35) the prediction-grade seat
+//! projection that reads the same kind 44228 page the seat lookup does.
+
+use nostr::Event;
 
 use super::{
     VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS, VERDICT_ADMISSION_MAX_SESSIONS,
     VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
+use crate::coding_session_authority_transition::{
+    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
+};
+use crate::coding_session_team_transaction::CodingSessionTeamActiveSeat;
+use crate::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
 
 /// Newest missions one push may be judged by when the pusher holds seats.
 ///
@@ -119,4 +127,68 @@ impl VerdictAdmissionCandidateSource {
             }
         }
     }
+}
+
+/// Project active role seats from a session's stored kind 44228 transitions.
+///
+/// **Prediction-grade, and only for a caller that has no better source.** The
+/// relay enforces with its own accepted projection
+/// (`buzz_db::coding_session_acl::session_authority_for_hire`), which is
+/// authoritative because the relay refuses to store a transition it did not
+/// accept. A client reading events off the wire has no such guarantee, so
+/// `bee git check --ref` uses this and says "prediction" rather than
+/// "promise". Transitions that fail signature verification, name another
+/// genesis, or arrive out of sequence are skipped rather than trusted.
+pub fn active_seats_from_authority_transitions(
+    events: &[Event],
+    genesis_ref: &str,
+) -> Vec<CodingSessionTeamActiveSeat> {
+    let mut links: Vec<(
+        u32,
+        CodingSessionAuthorityTransitionType,
+        String,
+        Option<String>,
+    )> = Vec::new();
+    for event in events {
+        if u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_AUTHORITY_TRANSITION {
+            continue;
+        }
+        if crate::verify_event(event).is_err() {
+            continue;
+        }
+        let Ok(payload) = decode_coding_session_authority_transition(&event.content) else {
+            continue;
+        };
+        if payload.genesis_ref != genesis_ref {
+            continue;
+        }
+        links.push((
+            payload.seq,
+            payload.transition_type,
+            payload.grantee_pubkey,
+            payload.role,
+        ));
+    }
+    links.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.cmp(&b.2)));
+
+    let mut seats: Vec<CodingSessionTeamActiveSeat> = Vec::new();
+    for (_, transition_type, grantee, role) in links {
+        match transition_type {
+            CodingSessionAuthorityTransitionType::GrantSeat => {
+                let Some(role) = role else { continue };
+                seats.retain(|seat| seat.actor_pubkey != grantee);
+                seats.push(CodingSessionTeamActiveSeat {
+                    actor_pubkey: grantee,
+                    role,
+                });
+            }
+            CodingSessionAuthorityTransitionType::RevokeSeat => {
+                seats.retain(|seat| {
+                    seat.actor_pubkey != grantee || Some(&seat.role) != role.as_ref()
+                });
+            }
+            _ => {}
+        }
+    }
+    seats
 }

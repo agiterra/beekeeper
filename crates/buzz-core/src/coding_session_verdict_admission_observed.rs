@@ -65,7 +65,10 @@ use crate::coding_session_observation::{
 };
 use crate::coding_session_policy::validate_coding_session_policy_envelope;
 
-use super::{VerdictAdmissionCandidate, VerdictAdmissionEvidence, VerdictAdmissionRefusal};
+use super::{
+    VerdictAdmissionCandidate, VerdictAdmissionEvidence, VerdictAdmissionGateRows,
+    VerdictAdmissionRefusal,
+};
 
 /// Newest kind 44246 observations one verdict-gated ref update may read.
 ///
@@ -223,6 +226,51 @@ pub(super) fn gates_observed_green(
     new_oid: &str,
     pusher_pubkey: &str,
 ) -> Result<ObservedGreenGates, VerdictAdmissionRefusal> {
+    let green = rows_observed_green(candidate, new_oid)?;
+    if !candidate
+        .active_seats
+        .iter()
+        .any(|seat| seat.actor_pubkey.eq_ignore_ascii_case(pusher_pubkey))
+    {
+        return Err(VerdictAdmissionRefusal::PushNotSeated {
+            new_oid: new_oid.to_ascii_lowercase(),
+            session_ref: candidate.session_ref.clone(),
+            seats: candidate.active_seats.len(),
+        });
+    }
+    Ok(green)
+}
+
+/// Arm (B)'s status on one commit, as an arm-(C) refusal carries it.
+///
+/// Finding 75 (live run 6): a refusal that says "no verifier cleared it" over
+/// a mission whose policy never asked for one sends the pusher after the
+/// wrong route. Every arm-(C) refusal that follows an arm-(B) evaluation now
+/// carries what arm (B) found on the pushed commit, so the sentence can lead
+/// with the route the policy actually runs. The seat is deliberately not part
+/// of this: it is a fact about the key, not about the rows, and the composed
+/// refusal names it separately.
+pub(super) fn gate_rows_status(
+    candidate: &VerdictAdmissionCandidate,
+    new_oid: &str,
+) -> VerdictAdmissionGateRows {
+    match rows_observed_green(candidate, new_oid) {
+        Ok(_) => VerdictAdmissionGateRows::Green,
+        Err(refusal) => VerdictAdmissionGateRows::Short(Box::new(refusal)),
+    }
+}
+
+/// The rows half of [`gates_observed_green`]: every required gate observed
+/// green on `new_oid` over a clean worktree, whoever is pushing.
+///
+/// Split from the seat clause so a refusal on another arm can report the row
+/// status truthfully for a pusher who is not seated at all — the seat is
+/// asked separately, and a `PushNotSeated` here would read as "the rows are
+/// fine" to a caller that never asked about the key.
+fn rows_observed_green(
+    candidate: &VerdictAdmissionCandidate,
+    new_oid: &str,
+) -> Result<ObservedGreenGates, VerdictAdmissionRefusal> {
     let required = candidate
         .gate_policy
         .clone()
@@ -286,18 +334,6 @@ pub(super) fn gates_observed_green(
         if let Some(id) = entry.event_ids.last() {
             row_event_ids.push(id.clone());
         }
-    }
-
-    if !candidate
-        .active_seats
-        .iter()
-        .any(|seat| seat.actor_pubkey.eq_ignore_ascii_case(pusher_pubkey))
-    {
-        return Err(VerdictAdmissionRefusal::PushNotSeated {
-            new_oid: new_oid.to_ascii_lowercase(),
-            session_ref: candidate.session_ref.clone(),
-            seats: candidate.active_seats.len(),
-        });
     }
 
     Ok(ObservedGreenGates {
