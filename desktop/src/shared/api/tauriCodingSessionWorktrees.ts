@@ -24,6 +24,12 @@ export type CodingSessionWorktreePlan = {
   slug: string | null;
   /** True when the requested slug was taken and this one differs. */
   disambiguated: boolean;
+  /** The folder the worktree's directory would sit in. */
+  parent: string | null;
+  /** Which rule chose it: "in-repo-holder" | "sibling" | "chosen". */
+  placement: string | null;
+  /** True when the repository has no working tree of its own. */
+  bare: boolean;
   /**
    * Branch the new branch starts from — the requested source, else the
    * repository's default. Null means the checkout's current HEAD.

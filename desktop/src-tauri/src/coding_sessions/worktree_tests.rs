@@ -50,17 +50,40 @@ fn slug_never_starts_with_a_hyphen() {
     }
 }
 
+/// Placement itself now lives in `buzz_core::worktree_placement` and is
+/// tested there against every admissible shape. What belongs here is the one
+/// fact this side establishes: whether the in-repo holder is usable. Both
+/// halves matter, so both are pinned.
 #[test]
-fn worktree_parent_is_a_sibling_of_the_repository() {
-    assert_eq!(
-        worktree_parent(Path::new("/Users/x/Code/beekeeper")),
-        Some(PathBuf::from("/Users/x/Code/beekeeper.worktrees"))
+fn an_absent_holder_is_not_usable() {
+    let root = tempfile::tempdir().expect("tempdir");
+    assert!(
+        !holder_exists_and_is_ignored(root.path()),
+        "a repository without a .worktrees directory has not opted in"
     );
 }
 
 #[test]
-fn worktree_parent_is_absent_for_a_root_path() {
-    assert_eq!(worktree_parent(Path::new("/")), None);
+fn a_holder_that_git_does_not_ignore_is_not_usable() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(checkout.join(".worktrees")).expect("create holder");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    assert!(
+        !holder_exists_and_is_ignored(&checkout),
+        "an unignored holder would put every live worktree in git status"
+    );
+
+    // The trailing slash on the probe is what makes a directory pattern
+    // match; without it this would answer "not ignored" and the rule would
+    // never fire for anyone.
+    std::fs::write(checkout.join(".gitignore"), ".worktrees/\n").expect("write gitignore");
+    assert!(
+        holder_exists_and_is_ignored(&checkout),
+        "an existing, ignored holder is the one case that opts in"
+    );
 }
 
 #[test]
@@ -137,17 +160,16 @@ fn a_worktree_is_planned_created_and_then_disambiguated() {
     );
     assert!(!planned.disambiguated);
     // Anchored at git's own answer for the repository root, which on macOS
-    // resolves the symlinked temp dir (`/var` → `/private/var`).
-    let expected_parent = root
-        .path()
-        .canonicalize()
-        .expect("canonical root")
-        .join("beekeeper.worktrees");
+    // resolves the symlinked temp dir (`/var` → `/private/var`). One sibling
+    // folder per worktree, not a container: this repository has no ignored
+    // `.worktrees` holder, so the sibling rule applies.
+    let expected_parent = root.path().canonicalize().expect("canonical root");
+    assert_eq!(planned.placement.as_deref(), Some("sibling"));
     assert_eq!(
         planned.path.as_deref().map(Path::new),
         Some(
             expected_parent
-                .join("improve-coding-session-creation")
+                .join("beekeeper-wt-improve-coding-session-creation")
                 .as_path()
         )
     );
@@ -303,6 +325,35 @@ fn listing_branches_outside_a_repository_is_empty() {
     assert_eq!(listed.head_branch, None);
 }
 
+/// A repository that has opted in — an existing `.worktrees` directory that
+/// git ignores — keeps its worktrees inside itself rather than scattering
+/// siblings across its parent.
+#[test]
+fn an_existing_ignored_holder_wins_over_the_sibling() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(checkout.join(".worktrees")).expect("create holder");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    std::fs::write(checkout.join(".gitignore"), ".worktrees/\n").expect("write gitignore");
+
+    let planned = plan(&checkout.to_string_lossy(), "fix the timeout", None).expect("plan");
+    assert_eq!(planned.problem, None);
+    assert_eq!(planned.placement.as_deref(), Some("in-repo-holder"));
+    assert_eq!(
+        planned.path.as_deref().map(Path::new),
+        Some(
+            checkout
+                .canonicalize()
+                .expect("canonicalize")
+                .join(".worktrees")
+                .join("fix-the-timeout")
+                .as_path()
+        )
+    );
+}
+
 /// The bug this resolution fix exists for: a *linked worktree* is not its own
 /// repository. Asking `--show-toplevel` from inside one names the worktree,
 /// so a second worktree home gets built beside it — which is exactly what
@@ -391,15 +442,15 @@ fn a_directory_inside_a_repository_plans_against_the_repository_root() {
 
     let planned = plan(&nested.to_string_lossy(), "nested start", None).expect("plan");
     assert_eq!(planned.problem, None);
-    // Not `crates/buzz-core.worktrees` — the worktree belongs to the repo.
+    // Not `crates/buzz-core-wt-…` — the worktree belongs to the repository,
+    // so it is named and placed from the repository's own folder.
     assert_eq!(
         planned.path.as_deref().map(Path::new),
         Some(
             root.path()
                 .canonicalize()
                 .expect("canonical root")
-                .join("beekeeper.worktrees")
-                .join("nested-start")
+                .join("beekeeper-wt-nested-start")
                 .as_path()
         )
     );

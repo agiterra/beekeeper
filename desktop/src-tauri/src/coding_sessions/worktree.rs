@@ -52,6 +52,12 @@ pub struct CodingSessionWorktreePlan {
     /// repository's default (`main`, then `master`). `None` means the
     /// checkout's current `HEAD` — the fallback when neither exists.
     pub source: Option<String>,
+    /// The folder the worktree's directory would sit in.
+    pub parent: Option<String>,
+    /// Which rule chose it: `in-repo-holder`, `sibling`, or `chosen`.
+    pub placement: Option<String>,
+    /// True when the repository has no working tree of its own.
+    pub bare: bool,
     /// The one sentence explaining why no worktree can be planned.
     pub problem: Option<String>,
 }
@@ -114,17 +120,6 @@ pub fn worktree_slug(name: &str) -> Option<String> {
 /// that chose the same name, short enough to keep the branch readable.
 fn disambiguator() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..4].to_string()
-}
-
-/// The directory holding every worktree for `repo_root`.
-fn worktree_parent(repo_root: &Path) -> Option<PathBuf> {
-    // Unchanged behaviour, stated in terms of the shared vocabulary: this is
-    // still the legacy holder, and the next commit is what moves planning off
-    // it. Named here so the one place that composes a path and the three
-    // guards that admit one are visibly the same rule.
-    let file_name = repo_root.file_name()?.to_str()?;
-    let parent = repo_root.parent()?;
-    Some(parent.join(format!("{file_name}.worktrees")))
 }
 
 /// What a folder turns out to belong to.
@@ -254,15 +249,19 @@ fn head_branch(repo_root: &Path) -> Option<String> {
 
 /// The first slug whose directory and branch are both free, starting from
 /// `requested` and falling back to a random suffix.
-fn free_slug(repo_root: &Path, parent: &Path, requested: &str) -> Result<(String, bool), String> {
-    if !parent.join(requested).exists() && !branch_exists(repo_root, requested)? {
+fn free_slug(
+    repo_root: &Path,
+    placement: &buzz_core_pkg::worktree_placement::WorktreeParent,
+    requested: &str,
+) -> Result<(String, bool), String> {
+    if !placement.path_for(requested).exists() && !branch_exists(repo_root, requested)? {
         return Ok((requested.to_string(), false));
     }
     // Bounded: each attempt draws fresh randomness, so exhausting eight is
     // not a collision problem but a signal that something else is wrong.
     for _ in 0..8 {
         let candidate = format!("{requested}-{}", disambiguator());
-        if !parent.join(&candidate).exists() && !branch_exists(repo_root, &candidate)? {
+        if !placement.path_for(&candidate).exists() && !branch_exists(repo_root, &candidate)? {
             return Ok((candidate, true));
         }
     }
@@ -302,9 +301,14 @@ fn plan(
         });
     };
     let repo_root = resolved.root;
-    let Some(parent) = worktree_parent(&repo_root) else {
+    let bare = resolved.bare;
+    let holder_ready = holder_exists_and_is_ignored(&repo_root);
+    let Some(placement) =
+        buzz_core_pkg::worktree_placement::default_worktree_parent(&repo_root, holder_ready)
+    else {
         return Ok(CodingSessionWorktreePlan {
             repo_root: Some(repo_root.to_string_lossy().into_owned()),
+            bare,
             problem: Some("That repository has no parent directory to hold worktrees.".to_string()),
             ..Default::default()
         });
@@ -328,16 +332,52 @@ fn plan(
         }
         None => default_source(&branches),
     };
-    let (slug, disambiguated) = free_slug(&repo_root, &parent, &slug)?;
+    let (slug, disambiguated) = free_slug(&repo_root, &placement, &slug)?;
+    let path = placement.path_for(&slug);
     Ok(CodingSessionWorktreePlan {
         repo_root: Some(repo_root.to_string_lossy().into_owned()),
-        path: Some(parent.join(&slug).to_string_lossy().into_owned()),
+        // The folder the directory sits *in*. For a sibling that is the
+        // repository's own parent, because each sibling is its own folder
+        // rather than a child of a container.
+        parent: path
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned()),
+        placement: Some(placement.kind().to_string()),
+        bare,
+        path: Some(path.to_string_lossy().into_owned()),
         branch: Some(slug.clone()),
         slug: Some(slug),
         disambiguated,
         source,
         problem: None,
     })
+}
+
+/// Whether `<repo_root>/.worktrees` both exists and is ignored by git.
+///
+/// Both halves matter. An unignored holder would put every live worktree in
+/// `git status` and make it committable; an absent one means this repository
+/// has not opted into the convention, so a sibling is the safer default.
+///
+/// The trailing slash on the probe is load-bearing: `.gitignore` directory
+/// patterns like `.claude/worktrees/` only match when the path is asked about
+/// as a directory, and without it `check-ignore` answers "not ignored" and
+/// this rule would never fire. In a bare repository the probe exits non-zero
+/// (there is no work tree to consult), which reads as "not ignored" — correct,
+/// since a bare repo has no `.worktrees` to hold anything.
+fn holder_exists_and_is_ignored(repo_root: &Path) -> bool {
+    if !repo_root.join(".worktrees").is_dir() {
+        return false;
+    }
+    let Ok(auth) = build_local_git_auth_config() else {
+        return false;
+    };
+    run_git(
+        &["check-ignore", "-q", "--", ".worktrees/"],
+        Some(repo_root),
+        &auth,
+    )
+    .is_ok()
 }
 
 /// Branches of the repository containing `workdir`, for the source picker.

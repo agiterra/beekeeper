@@ -358,7 +358,7 @@ test("the worktree note names the exact directory and branch", () => {
     React.createElement(WorktreePlanNote, {
       plan: {
         repoRoot: "/Users/x/Code/beekeeper",
-        path: "/Users/x/Code/beekeeper.worktrees/fix-the-timeout",
+        path: "/Users/x/Code/beekeeper-wt-fix-the-timeout",
         branch: "fix-the-timeout",
         slug: "fix-the-timeout",
         disambiguated: false,
@@ -369,7 +369,7 @@ test("the worktree note names the exact directory and branch", () => {
   );
 
   assert.match(markup, /Creates/);
-  assert.match(markup, /beekeeper.worktrees\/fix-the-timeout/);
+  assert.match(markup, /beekeeper-wt-fix-the-timeout/);
   assert.match(markup, /on branch/);
   assert.match(markup, /from/);
   assert.match(markup, /main/);
@@ -380,7 +380,7 @@ test("a worktree without a trunk says it starts from HEAD, not nothing", () => {
     React.createElement(WorktreePlanNote, {
       plan: {
         repoRoot: "/Users/x/Code/beekeeper",
-        path: "/Users/x/Code/beekeeper.worktrees/fix-the-timeout",
+        path: "/Users/x/Code/beekeeper-wt-fix-the-timeout",
         branch: "fix-the-timeout",
         slug: "fix-the-timeout",
         disambiguated: false,
@@ -399,7 +399,7 @@ test("a disambiguated worktree says the name was taken rather than quietly renam
     React.createElement(WorktreePlanNote, {
       plan: {
         repoRoot: "/Users/x/Code/beekeeper",
-        path: "/Users/x/Code/beekeeper.worktrees/fix-the-timeout-9a3f",
+        path: "/Users/x/Code/beekeeper-wt-fix-the-timeout-9a3f",
         branch: "fix-the-timeout-9a3f",
         slug: "fix-the-timeout-9a3f",
         disambiguated: true,
