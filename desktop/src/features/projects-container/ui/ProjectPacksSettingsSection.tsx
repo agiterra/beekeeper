@@ -15,6 +15,8 @@ import {
   type ProjectPackSource,
 } from "../lib/projectPackSource";
 import {
+  defaultPacksRepoId,
+  packsRepoIdError,
   projectPacksInit,
   type ProjectPacksInitResult,
 } from "../lib/projectPacksInit";
@@ -148,6 +150,7 @@ export function ProjectPacksSettingsSection({
                 invalidateSource();
               }}
               projectRef={project.address}
+              projectSlug={project.dtag}
             />
           ) : null}
           {activeAction === "use-existing" ? (
@@ -231,16 +234,37 @@ function ProjectPackSourceRow({
  * command (announce, seed, publish, all one step) and prints every wire
  * fact it produced, per the addendum's own words: "every step reports the
  * wire fact it produced (event ids, the push record)".
+ *
+ * LANE-L30 (2026-09-03): the repository id and name are no longer implied —
+ * "one packs repository for all of agiterra; every project points at it"
+ * means the person creating it must be able to name the *shared* repository
+ * rather than get a fresh `<project-slug>-packs` every time. Both fields
+ * start from sensible defaults ({@link defaultPacksRepoId}, and the name
+ * defaulting to whatever the id is) and stay editable; the id is validated
+ * with {@link packsRepoIdError} before the button will submit, the same rule
+ * the CLI's `bee repos create --id` applies.
  */
 function ProjectPacksCreateRepoAction({
   onCancel,
   onCreated,
   projectRef,
+  projectSlug,
 }: {
   onCancel: () => void;
   onCreated: () => void;
   projectRef: string;
+  projectSlug: string;
 }) {
+  const [repoId, setRepoId] = React.useState(() =>
+    defaultPacksRepoId(projectSlug),
+  );
+  // The name field shows the id until the viewer types into it directly —
+  // after that, it is theirs, and a later edit to the id must not clobber it.
+  const [nameTouched, setNameTouched] = React.useState(false);
+  const [manualName, setManualName] = React.useState("");
+  const name = nameTouched ? manualName : repoId;
+  const repoIdError = packsRepoIdError(repoId);
+
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<ProjectPacksInitResult | null>(
@@ -248,10 +272,15 @@ function ProjectPacksCreateRepoAction({
   );
 
   async function handleCreate() {
+    if (repoIdError !== null) return;
     setPending(true);
     setError(null);
     try {
-      const created = await projectPacksInit({ projectRef });
+      const created = await projectPacksInit({
+        name: name.trim() || repoId,
+        projectRef,
+        repoId,
+      });
       setResult(created);
       onCreated();
     } catch (thrown) {
@@ -275,6 +304,52 @@ function ProjectPacksCreateRepoAction({
         shipped packs with one signed commit, and sets it as this project&apos;s
         pack source.
       </p>
+      {result ? null : (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="project-packs-create-repo-id"
+            >
+              Repository id
+            </label>
+            <Input
+              data-testid="project-packs-create-repo-id"
+              disabled={pending}
+              id="project-packs-create-repo-id"
+              onChange={(event) => setRepoId(event.target.value)}
+              value={repoId}
+            />
+            {repoIdError ? (
+              <p
+                className="text-2xs text-destructive"
+                data-testid="project-packs-create-repo-id-error"
+                role="alert"
+              >
+                {repoIdError}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-1">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="project-packs-create-repo-name"
+            >
+              Name
+            </label>
+            <Input
+              data-testid="project-packs-create-repo-name"
+              disabled={pending}
+              id="project-packs-create-repo-name"
+              onChange={(event) => {
+                setNameTouched(true);
+                setManualName(event.target.value);
+              }}
+              value={name}
+            />
+          </div>
+        </div>
+      )}
       {error ? (
         <p
           className="text-xs text-destructive"
@@ -285,37 +360,42 @@ function ProjectPacksCreateRepoAction({
         </p>
       ) : null}
       {result ? (
-        <dl
-          className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs"
-          data-testid="project-packs-create-repo-result"
-        >
-          <dt className="text-muted-foreground">Repository</dt>
-          <dd className="truncate font-mono">{result.repoRef}</dd>
-          <dt className="text-muted-foreground">Source event</dt>
-          {result.sourceEventId === null ? (
-            <dd className="text-muted-foreground">
-              not published — the seed push did not reach the relay
-            </dd>
-          ) : (
+        <div data-testid="project-packs-create-repo-result">
+          <p
+            className="text-xs"
+            data-testid="project-packs-create-repo-coordinate"
+          >
+            Created <span className="font-mono">{result.repoRef}</span>.
+          </p>
+          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+            <dt className="text-muted-foreground">Repository</dt>
+            <dd className="truncate font-mono">{result.repoRef}</dd>
+            <dt className="text-muted-foreground">Source event</dt>
+            {result.sourceEventId === null ? (
+              <dd className="text-muted-foreground">
+                not published — the seed push did not reach the relay
+              </dd>
+            ) : (
+              <dd className="truncate font-mono">
+                {truncatePubkey(result.sourceEventId)}
+              </dd>
+            )}
+            <dt className="text-muted-foreground">Seed commit</dt>
             <dd className="truncate font-mono">
-              {truncatePubkey(result.sourceEventId)}
+              {result.seedCommitSha.slice(0, 8)}
             </dd>
-          )}
-          <dt className="text-muted-foreground">Seed commit</dt>
-          <dd className="truncate font-mono">
-            {result.seedCommitSha.slice(0, 8)}
-          </dd>
-          <dt className="text-muted-foreground">Push record</dt>
-          {result.pushRecordEventId === null ? (
-            <dd className="text-muted-foreground">
-              none yet — the relay had published no 30618 when this looked
-            </dd>
-          ) : (
-            <dd className="truncate font-mono">
-              {truncatePubkey(result.pushRecordEventId)}
-            </dd>
-          )}
-        </dl>
+            <dt className="text-muted-foreground">Push record</dt>
+            {result.pushRecordEventId === null ? (
+              <dd className="text-muted-foreground">
+                none yet — the relay had published no 30618 when this looked
+              </dd>
+            ) : (
+              <dd className="truncate font-mono">
+                {truncatePubkey(result.pushRecordEventId)}
+              </dd>
+            )}
+          </dl>
+        </div>
       ) : null}
       <div className="flex justify-end gap-2">
         <Button
@@ -330,7 +410,7 @@ function ProjectPacksCreateRepoAction({
         {result ? null : (
           <Button
             data-testid="project-packs-create-repo-submit"
-            disabled={pending}
+            disabled={pending || repoIdError !== null}
             onClick={handleCreate}
             size="sm"
             type="button"

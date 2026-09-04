@@ -19,6 +19,14 @@
  * `pushRecordEventId` is the relay's own kind:30618, `null` until the relay
  * publishes it. Neither is ever fabricated, so neither is typed as a string
  * this screen could print blindly.
+ *
+ * LANE-L30 (2026-09-03, "one packs repository for all of agiterra; every
+ * project points at it"): the id was previously derived from the project's
+ * slug with no way to choose, which meant every project's "Create packs
+ * repository" made its own repository even when the intent was to share one.
+ * `repoId` and `name` are now caller-chosen — see {@link defaultPacksRepoId}
+ * and {@link packsRepoIdError}, the same default and validation the Packs
+ * settings screen offers before it ever calls this.
  */
 import { invokeTauri } from "@/shared/api/tauri";
 
@@ -90,13 +98,82 @@ export function decodeProjectPacksInitResult(
  * back. Throws on any failure (a push failure, a relay refusal, a build with
  * no host); the caller shows the exact message, never guesses at partial
  * success.
+ *
+ * `repoId` and `name` are both optional — omitted, the host falls back to
+ * `<project-slug>-packs` and, for the name, to whatever the repository id
+ * resolved to (`packs_repo.rs`'s own defaults, mirrored so the two never
+ * drift). The Packs settings screen always sends both explicitly (LANE-L30);
+ * the fields stay optional here for any other caller (tests included).
  */
 export async function projectPacksInit(input: {
   projectRef: string;
+  repoId?: string;
+  name?: string;
 }): Promise<ProjectPacksInitResult> {
   return decodeProjectPacksInitResult(
     await invokeTauri(PROJECT_PACKS_INIT_COMMAND, {
       projectRef: input.projectRef,
+      repoId: input.repoId,
+      name: input.name,
     }),
   );
+}
+
+/** Longest repository id the relay's git routes and the CLI both accept. */
+const REPO_ID_MAX_LENGTH = 64;
+
+/** Suffix this screen's default id appends to a project's slug. */
+const PACKS_REPO_SUFFIX = "-packs";
+
+/**
+ * The repository id a project's packs get by default: `<slug>-packs`,
+ * lowercased and sanitized the same way `packs_repo.rs`'s
+ * `default_packs_repo_id` derives it host-side, so the value this field
+ * starts with is exactly the value the host would have picked on its own —
+ * editable from there, never a guess this screen alone believes in.
+ */
+export function defaultPacksRepoId(projectSlug: string): string {
+  const sanitized = projectSlug
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const room = REPO_ID_MAX_LENGTH - PACKS_REPO_SUFFIX.length;
+  const head = sanitized.slice(0, room).replace(/-+$/g, "");
+  return `${head}${PACKS_REPO_SUFFIX}`;
+}
+
+/**
+ * `null` when `value` is a valid `30617` `d` tag; otherwise the one sentence
+ * explaining why, for the field's own error text.
+ *
+ * Mirrors the CLI's `validate_repo_id`
+ * (`crates/buzz-cli/src/commands/repos.rs` via `crates/buzz-cli/src/validate.rs`)
+ * restricted to the lowercase subset this screen's own default always
+ * produces: lowercase ASCII letters, digits, `.`, `_`, `-`; 1–64 characters;
+ * no leading `.` or `-`; no `..`. A stricter subset of the wire rule can
+ * never be refused by the host that mirrors the wider one — this field would
+ * rather ask for `agiterra-packs` than accept `Agiterra..Packs` and let the
+ * host be the one to say no.
+ */
+export function packsRepoIdError(value: string): string | null {
+  if (value.length === 0) {
+    return "Repository id cannot be empty.";
+  }
+  if (value.length > REPO_ID_MAX_LENGTH) {
+    return `Repository id must be ${REPO_ID_MAX_LENGTH} characters or fewer.`;
+  }
+  if (value.startsWith(".")) {
+    return "Repository id must not start with '.'.";
+  }
+  if (value.startsWith("-")) {
+    return "Repository id must not start with '-'.";
+  }
+  if (value.includes("..")) {
+    return "Repository id must not contain '..'.";
+  }
+  if (!/^[a-z0-9._-]+$/.test(value)) {
+    return "Repository id may only contain lowercase letters, digits, '.', '_', and '-'.";
+  }
+  return null;
 }

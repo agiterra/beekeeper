@@ -14,9 +14,11 @@
 //!
 //! # What it does, in order
 //!
-//! 1. **Announce** a kind:30617 under the viewer's own key, `d` =
-//!    `<project-slug>-packs`, carrying the project coordinate as a back
-//!    reference and the relay's clone URL.
+//! 1. **Announce** a kind:30617 under the viewer's own key, `d` defaulting to
+//!    `<project-slug>-packs` but caller-chosen (LANE-L30: one packs
+//!    repository can serve every project, rather than one per project), the
+//!    `name` tag defaulting to that same id, carrying the project coordinate
+//!    as a back reference and the relay's clone URL.
 //! 2. **Seed** a fresh repository in this host's packs cache from the packs
 //!    this build ships, one commit, and **push** it to the relay over the
 //!    existing `git-credential-nostr` helper.
@@ -154,6 +156,20 @@ pub fn default_packs_repo_id(project_slug: &str) -> Result<String, String> {
     Ok(format!("{}{PACKS_REPO_SUFFIX}", head.trim_end_matches('-')))
 }
 
+/// The name a packs repository's kind:30617 carries: whatever the caller
+/// typed (trimmed), or `repo_id` when they left it blank.
+///
+/// Mirrors the Packs settings screen's own default (LANE-L30: "a short name
+/// field defaulting to the id") so a caller that omits `name` altogether — an
+/// older client, a script — gets the same answer the form would have sent,
+/// rather than a second, undocumented default drifting out of sync with it.
+pub fn resolved_repo_name(name: Option<&str>, repo_id: &str) -> String {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_string(),
+        None => repo_id.to_string(),
+    }
+}
+
 /// Copy `from` into `to`, directories and files, following no symlinks.
 ///
 /// Deliberately not a `cp -R`: a symlink in the shipped packs would otherwise
@@ -245,14 +261,19 @@ pub fn seed_packs_checkout(
 }
 
 /// Build the kind:30617 announcement for a project's packs repository.
+///
+/// `name` is whatever the caller resolved (a viewer-typed name, or its own
+/// default of `repo_id` — see [`project_packs_init`]); this function does not
+/// invent one, so the announcement's `name` tag always says exactly what was
+/// asked for.
 fn build_announcement(
     keys: &Keys,
     repo_id: &str,
     project: &str,
-    project_slug: &str,
+    name: &str,
     clone_url: &str,
 ) -> Result<nostr::Event, String> {
-    let name = format!("{project_slug} role packs");
+    let name = name.to_string();
     let description =
         "Role packs for this project's agent seats. Seeded from Beekeeper's shipped defaults."
             .to_string();
@@ -305,12 +326,23 @@ fn build_pack_source(keys: &Keys, project: &str, repo: &str) -> Result<nostr::Ev
 /// own key signs everything and pushes; the relay decides whether that key may
 /// announce inside this project, and its refusal is returned verbatim rather
 /// than re-worded into something friendlier and less true.
+///
+/// `repo_id` and `name` are both caller-chosen and both optional: an absent
+/// or blank `repo_id` falls back to [`default_packs_repo_id`], and an absent
+/// or blank `name` falls back to whatever `repo_id` resolved to. Passing the
+/// same `repo_id` from more than one project's "Create packs repository" is
+/// exactly how one packs repository ends up serving all of them.
 #[tauri::command]
 pub async fn project_packs_init(
     app: AppHandle,
     state: State<'_, AppState>,
     project_ref: String,
     repo_id: Option<String>,
+    // `#[serde(default)]` has no effect on a bare command parameter (Tauri
+    // already treats a missing key as `None` for an `Option<T>` argument —
+    // see `repo_id` above); documented here so a reader does not go looking
+    // for an attribute that would be a no-op on a fn parameter.
+    name: Option<String>,
 ) -> Result<ProjectPacksInit, String> {
     let project = project_ref;
     let (_owner, project_slug) = parse_project_coordinate(project.trim())?;
@@ -322,6 +354,7 @@ pub async fn project_packs_init(
         Some(id) => id.to_string(),
         None => default_packs_repo_id(&project_slug)?,
     };
+    let name = resolved_repo_name(name.as_deref(), &repo_id);
     let keys = state.signing_keys()?;
     let viewer = keys.public_key().to_hex();
     let relay_http =
@@ -337,8 +370,7 @@ pub async fn project_packs_init(
     let packs_root = packs_cache::packs_root(&app)?;
     let checkout = packs_cache::packs_checkout_dir(&packs_root, &viewer, &repo_id);
 
-    let announcement =
-        build_announcement(&keys, &repo_id, project.trim(), &project_slug, &clone_url)?;
+    let announcement = build_announcement(&keys, &repo_id, project.trim(), &name, &clone_url)?;
     let mut publication_error =
         crate::relay::submit_signed_event_with_keys(&announcement, &state, &keys, None)
             .await

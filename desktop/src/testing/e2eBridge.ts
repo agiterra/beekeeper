@@ -1446,6 +1446,17 @@ declare global {
     __BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__?: number[];
     /** Captured aggregate project-history filters for request-count assertions. */
     __BUZZ_E2E_PROJECT_QUERY_FILTERS__?: MockFilter[];
+    /**
+     * Every `project_packs_init` call this mock has answered (LANE-L30),
+     * payload verbatim — so a spec can assert the repository id and name a
+     * viewer typed are exactly what reached the host, not just that the
+     * screen went on to render whatever the mock was configured to answer.
+     */
+    __BUZZ_E2E_PROJECT_PACKS_INIT_CALLS__?: {
+      projectRef?: string;
+      repoId?: string;
+      name?: string;
+    }[];
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
       local_path: string | null;
       local_branch: string | null;
@@ -12835,7 +12846,13 @@ export function maybeInstallE2eTauriMocks() {
         return result;
       }
       case "project_packs_init": {
-        const input = (payload ?? {}) as { projectRef?: string };
+        const input = (payload ?? {}) as {
+          projectRef?: string;
+          repoId?: string;
+          name?: string;
+        };
+        window.__BUZZ_E2E_PROJECT_PACKS_INIT_CALLS__ ??= [];
+        window.__BUZZ_E2E_PROJECT_PACKS_INIT_CALLS__.push({ ...input });
         const projectRef = input.projectRef;
         const byProject = activeConfig?.mock?.projectPacksInitByProject;
         const result = projectRef ? byProject?.[projectRef] : undefined;

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decodeProjectPacksInitResult } from "./projectPacksInit.ts";
+import {
+  decodeProjectPacksInitResult,
+  defaultPacksRepoId,
+  packsRepoIdError,
+} from "./projectPacksInit.ts";
 
 const RESULT = {
   repoRef: `30617:${"a".repeat(64)}:agiterra-packs`,
@@ -66,4 +70,40 @@ test("decodeProjectPacksInitResult refuses a repoRef that is not a string", () =
   assert.throws(() =>
     decodeProjectPacksInitResult({ ...RESULT, repoRef: null }),
   );
+});
+
+// --- LANE-L30: default id + validation, mirroring packs_repo.rs ---
+
+test("defaultPacksRepoId lowercases, sanitizes, and appends -packs", () => {
+  assert.equal(defaultPacksRepoId("agiterra"), "agiterra-packs");
+  assert.equal(defaultPacksRepoId("  My Project  "), "my-project-packs");
+  assert.equal(defaultPacksRepoId("A_b.c"), "a_b.c-packs");
+});
+
+test("defaultPacksRepoId survives the length bound with the suffix intact", () => {
+  const id = defaultPacksRepoId("a".repeat(120));
+  assert.ok(id.endsWith("-packs"), id);
+  assert.ok(id.length <= 64, `${id.length} chars`);
+});
+
+test("packsRepoIdError accepts the default shape and any valid lowercase slug", () => {
+  assert.equal(packsRepoIdError("agiterra-packs"), null);
+  assert.equal(packsRepoIdError("a"), null);
+  assert.equal(packsRepoIdError("repo_v2.0"), null);
+  assert.equal(packsRepoIdError("a".repeat(64)), null);
+});
+
+test("packsRepoIdError refuses empty, over-length, and reserved-shape ids", () => {
+  assert.match(packsRepoIdError(""), /cannot be empty/);
+  assert.match(packsRepoIdError("a".repeat(65)), /64 characters or fewer/);
+  assert.match(packsRepoIdError(".hidden"), /must not start with '\.'/);
+  assert.match(packsRepoIdError("-leading-dash"), /must not start with '-'/);
+  assert.match(packsRepoIdError("foo..bar"), /must not contain '\.\.'/);
+});
+
+test("packsRepoIdError refuses uppercase and any character outside the class", () => {
+  assert.match(packsRepoIdError("Agiterra-Packs"), /lowercase letters/);
+  assert.match(packsRepoIdError("my repo"), /lowercase letters/);
+  assert.match(packsRepoIdError("foo/bar"), /lowercase letters/);
+  assert.match(packsRepoIdError("a@b"), /lowercase letters/);
 });

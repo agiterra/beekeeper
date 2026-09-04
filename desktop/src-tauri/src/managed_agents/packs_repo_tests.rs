@@ -206,3 +206,86 @@ fn a_symlink_in_the_shipped_packs_is_never_seeded() {
         .exists());
     std::fs::remove_dir_all(&root).ok();
 }
+
+// --- LANE-L30: a caller-chosen repository id and name ---
+
+#[test]
+fn a_typed_name_is_kept_verbatim_but_trimmed() {
+    assert_eq!(
+        resolved_repo_name(Some("Agiterra Shared Packs"), "agiterra-packs"),
+        "Agiterra Shared Packs"
+    );
+    assert_eq!(
+        resolved_repo_name(Some("  Agiterra Shared Packs  "), "agiterra-packs"),
+        "Agiterra Shared Packs"
+    );
+}
+
+#[test]
+fn an_absent_or_blank_name_falls_back_to_the_repo_id() {
+    assert_eq!(resolved_repo_name(None, "agiterra-packs"), "agiterra-packs");
+    assert_eq!(
+        resolved_repo_name(Some(""), "agiterra-packs"),
+        "agiterra-packs"
+    );
+    assert_eq!(
+        resolved_repo_name(Some("   "), "agiterra-packs"),
+        "agiterra-packs"
+    );
+}
+
+#[test]
+fn the_requests_name_reaches_the_announcements_name_tag() {
+    // The Tauri boundary between "what the form sent" and "what the relay
+    // receives" — a request naming a repository "Agiterra Shared Packs" must
+    // not silently arrive as "<project-slug> role packs" (the old, fixed
+    // default) or any other name the caller did not choose.
+    let keys = Keys::generate();
+    let event = build_announcement(
+        &keys,
+        "agiterra-packs",
+        "30621:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66:beekeeper",
+        "Agiterra Shared Packs",
+        "https://hive.example/git/aa11bb22/agiterra-packs",
+    )
+    .expect("announcement");
+
+    fn tag_value<'a>(event: &'a nostr::Event, name: &str) -> Option<&'a str> {
+        event.tags.iter().find_map(|t| {
+            let values: Vec<&str> = t.as_slice().iter().map(|s| s.as_str()).collect();
+            (values.first() == Some(&name))
+                .then(|| values.get(1).copied())
+                .flatten()
+        })
+    }
+
+    assert_eq!(tag_value(&event, "name"), Some("Agiterra Shared Packs"));
+    assert_eq!(tag_value(&event, "d"), Some("agiterra-packs"));
+}
+
+#[test]
+fn a_custom_repo_id_bypasses_the_project_slug_default() {
+    // One packs repository for many projects (LANE-L30) means the id the
+    // announcement carries need not derive from this project's slug at all.
+    let keys = Keys::generate();
+    let event = build_announcement(
+        &keys,
+        "shared-org-packs",
+        "30621:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66:unrelated-slug",
+        "shared-org-packs",
+        "https://hive.example/git/aa11bb22/shared-org-packs",
+    )
+    .expect("announcement");
+    let d = event
+        .tags
+        .iter()
+        .find_map(|t| {
+            let values: Vec<&str> = t.as_slice().iter().map(|s| s.as_str()).collect();
+            (values.first() == Some(&"d"))
+                .then(|| values.get(1).map(|s| s.to_string()))
+                .flatten()
+        })
+        .expect("d tag");
+    assert_eq!(d, "shared-org-packs");
+    assert!(!d.contains("unrelated-slug"));
+}

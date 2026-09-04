@@ -178,3 +178,79 @@ test("Create packs repository: the founder-only host action prints every wire fa
   await expect(resultPanel).toContainText(initResult.seedCommitSha.slice(0, 8));
   await capture(page, "06-packs-create-repo-result");
 });
+
+test("Create packs repository: a chosen repository id reaches the host, and the printed coordinate is the one it made (LANE-L30)", async ({
+  page,
+}) => {
+  // "one packs repository for all of agiterra; every project points at it" —
+  // a founder must be able to name the *shared* repository rather than get a
+  // fresh `<project-slug>-packs` every time.
+  const projectRef = `30621:${SELF}:hive-mind`;
+  const customId = "agiterra-shared-packs";
+  const initResult = {
+    repoRef: `30617:${SELF}:${customId}`,
+    sourceEventId: "3".repeat(64),
+    seedCommitSha: "4".repeat(40),
+    pushRecordEventId: "5".repeat(64),
+  };
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "buzz-feature-overrides-v1",
+      JSON.stringify({ projects: true, forum: true }),
+    );
+  });
+  await installMockBridge(page, {
+    projectPacksInitByProject: { [projectRef]: initResult },
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByTestId("open-projects-view").click();
+  await expect(page.getByTestId("projects-manage-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByTestId("projects-create-menu").click();
+  await page.getByTestId("projects-create-menu-project").click();
+  await page.getByTestId("create-project-container-name").fill("Hive Mind");
+  await page.getByTestId("create-project-container-submit").click();
+  await expect(page.getByTestId("manage-project-hive-mind")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  await page.getByTestId("manage-project-actions-hive-mind").click();
+  await page.getByRole("menuitem", { name: "Project settings" }).click();
+  await page.getByTestId("project-settings-tab-packs").click();
+  await expect(page.getByTestId("project-packs-section")).toBeVisible();
+
+  await page.getByTestId("project-packs-create-repo-open").click();
+  const repoIdField = page.getByTestId("project-packs-create-repo-id");
+  await expect(repoIdField).toHaveValue("hive-mind-packs");
+  // The name field silently followed the default id until now.
+  await expect(page.getByTestId("project-packs-create-repo-name")).toHaveValue(
+    "hive-mind-packs",
+  );
+
+  await repoIdField.fill(customId);
+  // Untouched, the name keeps following the id the viewer is now typing.
+  await expect(page.getByTestId("project-packs-create-repo-name")).toHaveValue(
+    customId,
+  );
+  await capture(page, "07-packs-create-repo-custom-id");
+  await page.getByTestId("project-packs-create-repo-submit").click();
+
+  const resultPanel = page.getByTestId("project-packs-create-repo-result");
+  await expect(resultPanel).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByTestId("project-packs-create-repo-coordinate"),
+  ).toContainText(initResult.repoRef);
+  await capture(page, "08-packs-create-repo-custom-id-result");
+
+  // The chosen id — not a project-derived one — is exactly what reached the
+  // host, and the name defaulted to it exactly as the field showed.
+  const calls = await page.evaluate(
+    () => window.__BUZZ_E2E_PROJECT_PACKS_INIT_CALLS__ ?? [],
+  );
+  const call = calls.at(-1);
+  expect(call?.projectRef).toBe(projectRef);
+  expect(call?.repoId).toBe(customId);
+  expect(call?.name).toBe(customId);
+});
