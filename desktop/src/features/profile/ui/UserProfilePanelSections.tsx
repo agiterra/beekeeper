@@ -7,6 +7,7 @@ import {
   isManagedAgentActive,
 } from "@/features/agents/lib/managedAgentControlActions";
 import { AgentHomeRoleBadges } from "@/features/agents/ui/AgentHomeRoleBadges";
+import { AgentSharedHomeAction } from "@/features/agents/ui/AgentSharedHomeAction";
 import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
 import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
@@ -467,8 +468,15 @@ export function ProfileSummaryView({
           A panel that only showed them on Runtime would let an operator read
           the whole profile of a packless agent and never learn it. */}
       {managedAgent?.homeRole ? (
-        <div className="flex flex-wrap items-start justify-center gap-1 self-center">
-          <AgentHomeRoleBadges agent={managedAgent} />
+        <div className="flex flex-col items-center gap-2 self-center">
+          <div className="flex flex-wrap items-start justify-center gap-1">
+            <AgentHomeRoleBadges agent={managedAgent} />
+          </div>
+          {/* The remedy lives beside the fact. Owner-only: moving another
+              person's agent is not this panel's to do. */}
+          {isOwner === true ? (
+            <AgentSharedHomeAction agent={managedAgent} />
+          ) : null}
         </div>
       ) : null}
 

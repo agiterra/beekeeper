@@ -14,6 +14,10 @@ export type RawManagedAgent = {
   /** Absent on an older backend — mapped to `undefined`, which is "nobody
    *  asked", not "the pack is missing". Absence is not a claim. */
   has_role_pack?: boolean;
+  /** Absent on an older backend — mapped to `undefined`, i.e. "nobody asked";
+   *  the badge that reads it carries a remedy, so a guess in either direction
+   *  is wrong. */
+  pack_refused_shared_home?: boolean;
   relay_url: string;
   acp_command: string;
   agent_command: string;
@@ -65,6 +69,9 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     // turn every agent into one whose role pack is missing, and every seat
     // field would print that as fact.
     hasRolePack: agent.has_role_pack,
+    // Same rule as `hasRolePack`: absence is not a claim. A backend that does
+    // not answer must not turn every agent into one whose pack is refused.
+    packRefusedSharedHome: agent.pack_refused_shared_home,
     relayUrl: agent.relay_url,
     acpCommand: agent.acp_command,
     agentCommand: agent.agent_command,

@@ -149,6 +149,12 @@ export type MockManagedAgentSeed = {
   respondToAllowlist?: string[];
   /** Per-agent env vars seeded into the mock store. */
   envVars?: Record<string, string>;
+  /** The role this agent is, from its pack persona. */
+  homeRole?: string | null;
+  /** Whether this computer holds the pack behind that role. */
+  hasRolePack?: boolean;
+  /** Its pack exists and the shared home refuses it (finding 68). */
+  packRefusedSharedHome?: boolean;
 };
 
 type MockManagedAgentRuntimeSeed = {
@@ -1018,6 +1024,12 @@ type RawManagedAgent = {
   persona_id: string | null;
   /** Record-level harness/runtime pin (`null` when inheriting from the persona). */
   runtime: string | null;
+  /** The role this agent is, from its pack persona. */
+  home_role?: string | null;
+  /** Whether this computer holds the pack behind that role. */
+  has_role_pack?: boolean;
+  /** Its pack exists and the shared home refuses it (finding 68). */
+  pack_refused_shared_home?: boolean;
   relay_url: string;
   acp_command: string;
   agent_command: string;
@@ -1921,6 +1933,9 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
     name: agent.name,
     persona_id: agent.persona_id,
     runtime: agent.runtime ?? null,
+    home_role: agent.home_role ?? null,
+    has_role_pack: agent.has_role_pack ?? false,
+    pack_refused_shared_home: agent.pack_refused_shared_home ?? false,
     relay_url: agent.relay_url,
     acp_command: agent.acp_command,
     agent_command: agent.agent_command,
@@ -2476,6 +2491,10 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     // Native serde always emits this key (`null` when unpinned) — the bridge
     // must mirror the wire shape, not omit the key.
     runtime: seed.runtime ?? null,
+    home_role: seed.homeRole ?? null,
+    has_role_pack: seed.hasRolePack ?? false,
+    // The default a current build mints: its own nest, nothing refused.
+    pack_refused_shared_home: seed.packRefusedSharedHome ?? false,
     relay_url: DEFAULT_RELAY_WS_URL,
     acp_command: "buzz-acp",
     agent_command: agentCommand,
@@ -9220,6 +9239,21 @@ async function handleSetManagedAgentAutoRestart(args: {
   return cloneManagedAgent(agent);
 }
 
+/**
+ * Move a mock agent out of the shared home into a nest of its own.
+ *
+ * Mirrors the host: the nest exists before the shared-home list stops naming
+ * the agent, and the refusal disclosure clears in the same answer.
+ */
+async function handleGiveAgentItsOwnNest(args: {
+  pubkey: string;
+}): Promise<RawManagedAgent> {
+  const agent = getMockManagedAgent(args.pubkey);
+  agent.pack_refused_shared_home = false;
+  agent.updated_at = new Date().toISOString();
+  return cloneManagedAgent(agent);
+}
+
 async function handleGetManagedAgentLog(args: {
   pubkey: string;
   lineCount?: number;
@@ -13438,6 +13472,10 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<
             typeof handleSetManagedAgentStartOnAppLaunch
           >[0],
+        );
+      case "give_agent_its_own_nest":
+        return handleGiveAgentItsOwnNest(
+          payload as Parameters<typeof handleGiveAgentItsOwnNest>[0],
         );
       case "delete_managed_agent":
         return handleDeleteManagedAgent(

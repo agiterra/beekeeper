@@ -278,6 +278,47 @@ pub fn shipped_packs_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     checkout.is_dir().then_some(checkout)
 }
 
+/// The `packRef` for an *installed* pack that turns out to be one of the packs
+/// this build ships, or `None` when it came from somewhere else.
+///
+/// The crew-role installer points an agent's `persona_team_dir` at whatever
+/// folder of role packs the operator chose. On a development build that folder
+/// is very often the checkout's own `personas/roles` — the same directory
+/// [`shipped_packs_dir`] answers with — and then "installed" and "shipped" name
+/// the same bytes. `plan_seat_pack` reached the installed arm first and
+/// published `packRef: null`, so a seat staged from the shipped defaults said
+/// on the wire that nothing vouched for its pack (the `packRef` half of
+/// finding 53, measured on run 5: nine role agents, every `persona_team_dir`
+/// under the shipped directory, no `packRef` on any 44223).
+///
+/// This is a recognition, never a guess: the answer is `Some` only when
+/// `pack_dir` is `<shipped>/<role>`, compared as canonical paths so a symlinked
+/// or `..`-laden route to the same directory is the same directory. A pack from
+/// anywhere else keeps `None`, because no repository — not even this app's own
+/// version — can vouch for it.
+pub fn shipped_pack_ref_for_dir(
+    shipped_root: Option<&Path>,
+    pack_dir: &Path,
+    role: &str,
+    version: &str,
+) -> Option<PackRef> {
+    let role = role.trim();
+    if role.is_empty() {
+        return None;
+    }
+    let expected = shipped_root?.join(role);
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if canonical(&expected) != canonical(pack_dir) {
+        return None;
+    }
+    Some(PackRef {
+        repo: PACK_REF_SHIPPED_REPO.to_string(),
+        sha: version.to_string(),
+        role: role.to_string(),
+        path: format!("{DEFAULT_PACK_PATH}/{role}"),
+    })
+}
+
 /// The `sha` a shipped pack is pinned by: this app's version.
 pub fn shipped_packs_version(app: &tauri::AppHandle) -> String {
     app.package_info().version.to_string()
@@ -915,3 +956,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod shipped_pack_ref_tests;

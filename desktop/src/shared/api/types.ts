@@ -240,6 +240,10 @@ export type ManagedAgent = {
    * is a different fact: render nothing rather than a missing pack.
    */
   hasRolePack?: boolean;
+  /** Its pack exists and the shared home it runs in refuses it, so it runs
+   *  with no role skills (finding 68). `false` for an agent with no pack;
+   *  `undefined` means the backend never answered — neither is a refusal. */
+  packRefusedSharedHome?: boolean;
   relayUrl: string;
   acpCommand: string;
   /** Resolved/effective harness command (persona-wins, override-honored). */

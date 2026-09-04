@@ -518,6 +518,14 @@ pub struct ManagedAgentSummary {
     /// `resolve_seat_pack(record, &teams).is_some()`. `false` means a seat on
     /// this agent runs on its persona prompt alone.
     pub has_role_pack: bool,
+    /// Which directory this agent's process runs in
+    /// (`crate::managed_agents::agent_nest`).
+    pub agent_home: super::AgentHome,
+    /// This agent has a pack and the shared home it runs in refuses it, so it
+    /// runs with no role skills at all (finding 68). Never `true` for an agent
+    /// with no pack: a shared home costs that one nothing, and flagging it
+    /// would claim a harm that is not happening.
+    pub pack_refused_shared_home: bool,
     pub relay_url: String,
     pub acp_command: String,
     pub agent_command: String,

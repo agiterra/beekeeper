@@ -583,7 +583,31 @@ fn plan_seat_pack(
                 }),
             ))
         },
-        |(dir, persona)| Some((dir, persona, SeatPackOrigin::Installed, None)),
+        |(dir, persona)| {
+            // An installed pack that *is* one of this build's shipped packs is
+            // named as such on the wire. The installer points
+            // `persona_team_dir` at the folder the operator chose, and on a
+            // development build that folder is usually the checkout's own
+            // `personas/roles` — the shipped directory under another name. A
+            // seat staged from it published `packRef: null`, which said no one
+            // could vouch for its pack while the app's own version could.
+            // Recognition, not a guess: `shipped_pack_ref_for_dir` answers
+            // `Some` only for `<shipped>/<role>` itself.
+            let pack_ref = role.as_deref().and_then(|role| {
+                packs_cache::shipped_pack_ref_for_dir(
+                    packs_cache::shipped_packs_dir(app).as_deref(),
+                    &dir,
+                    role,
+                    &packs_cache::shipped_packs_version(app),
+                )
+            });
+            let origin = if pack_ref.is_some() {
+                SeatPackOrigin::Shipped
+            } else {
+                SeatPackOrigin::Installed
+            };
+            Some((dir, persona, origin, pack_ref))
+        },
     ) {
         Some((dir, persona, origin, pack_ref)) => SeatPackPreview {
             pack_staged: true,

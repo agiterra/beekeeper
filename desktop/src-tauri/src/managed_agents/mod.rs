@@ -2,6 +2,7 @@ pub(crate) mod access_policy;
 pub(crate) mod actor_seats;
 mod agent_env;
 pub(crate) mod agent_events;
+pub(crate) mod agent_nest;
 pub(crate) mod agent_snapshot;
 pub(crate) mod agent_snapshot_envelope;
 pub(crate) mod team_snapshot;
@@ -57,6 +58,10 @@ pub(crate) fn lock_path_mutex() -> std::sync::MutexGuard<'static, ()> {
     PATH_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+pub use agent_nest::{
+    agent_home, ensure_agent_nest, leave_shared_home, pack_refused_by_shared_home,
+    seed_shared_home, AgentHome,
+};
 pub use backend::*;
 pub(crate) use definition_validation::{
     validate_agent_definition_text, validate_managed_agent_definition_text,

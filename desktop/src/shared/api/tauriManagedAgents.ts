@@ -62,6 +62,24 @@ export async function setManagedAgentAutoRestart(
   return fromRawManagedAgent(response);
 }
 
+/**
+ * Move one agent out of the shared home into a nest of its own.
+ *
+ * The host creates the nest before it records the move, so a failure leaves
+ * the agent exactly where it was. The move takes effect on the agent's next
+ * start — a running process's working directory cannot be changed from
+ * outside it.
+ */
+export async function giveAgentItsOwnNest(
+  pubkey: string,
+): Promise<ManagedAgent> {
+  const response = await invokeTauri<RawManagedAgent>(
+    "give_agent_its_own_nest",
+    { pubkey },
+  );
+  return fromRawManagedAgent(response);
+}
+
 export async function listManagedAgentRuntimes(): Promise<
   ManagedAgentRuntimeStatus[]
 > {

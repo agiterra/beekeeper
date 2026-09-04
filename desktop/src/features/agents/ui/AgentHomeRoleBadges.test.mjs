@@ -62,3 +62,54 @@ test("a backend that never answered about a pack accuses the agent of nothing", 
     "absence is not a claim: an unanswered pack field is not a missing pack",
   );
 });
+
+test("an agent whose shared home refuses its pack says so, and says what to do", () => {
+  // Finding 68: the pack is on this computer and the working directory every
+  // agent shares will not take it, so the agent runs with no role skills.
+  const markup = render({
+    homeRole: "builder",
+    hasRolePack: true,
+    packRefusedSharedHome: true,
+  });
+  assert.match(markup, /data-testid="agent-shared-home"/);
+  assert.match(
+    markup,
+    /Shared home — packs refused — give this agent its own nest, then restart it/,
+  );
+});
+
+test("the shared-home badge displaces the not-installed one", () => {
+  // Both would tell an operator to install a pack they already have. The
+  // shared-home badge is the one with the true remedy.
+  const markup = render({
+    homeRole: "builder",
+    hasRolePack: false,
+    packRefusedSharedHome: true,
+  });
+  assert.match(markup, /data-testid="agent-shared-home"/);
+  assert.doesNotMatch(markup, /data-testid="agent-no-role-pack"/);
+  assert.doesNotMatch(markup, /install team roles/);
+});
+
+test("a card-sized shared-home badge states the fact and drops only the remedy", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentHomeRoleBadges, {
+      agent: { homeRole: "builder", packRefusedSharedHome: true },
+      withRemedy: false,
+    }),
+  );
+  assert.match(markup, /Shared home — packs refused/);
+  assert.doesNotMatch(markup, /give this agent its own nest/);
+});
+
+test("an agent in a nest of its own is accused of nothing", () => {
+  const nested = render({
+    homeRole: "builder",
+    hasRolePack: true,
+    packRefusedSharedHome: false,
+  });
+  assert.doesNotMatch(nested, /data-testid="agent-shared-home"/);
+  // And a backend that never answered is not a refusal either.
+  const unanswered = render({ homeRole: "builder", hasRolePack: true });
+  assert.doesNotMatch(unanswered, /data-testid="agent-shared-home"/);
+});

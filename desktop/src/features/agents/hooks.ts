@@ -44,6 +44,7 @@ import {
 } from "@/shared/api/tauri";
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import {
+  giveAgentItsOwnNest,
   setManagedAgentAutoRestart,
   setManagedAgentStartOnAppLaunch,
   startManagedAgent,
@@ -589,6 +590,24 @@ export function useSetManagedAgentAutoRestartMutation() {
       pubkey: string;
       autoRestartOnConfigChange: boolean;
     }) => setManagedAgentAutoRestart(pubkey, autoRestartOnConfigChange),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+    },
+  });
+}
+
+/**
+ * Give one agent a nest of its own, then re-read the agent list.
+ *
+ * Paired with the "shared home — packs refused" disclosure on the agent card:
+ * the fact and the remedy live next to each other, and the card stops saying
+ * it as soon as the host says the agent has moved.
+ */
+export function useGiveAgentItsOwnNestMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ pubkey }: { pubkey: string }) => giveAgentItsOwnNest(pubkey),
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
     },

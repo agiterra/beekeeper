@@ -259,6 +259,8 @@ pub fn build_managed_agent_summary(
         // computer cannot read: its seats carry no role skills.
         has_role_pack: crate::managed_agents::actor_seats::resolve_seat_pack(record, teams)
             .is_some(),
+        agent_home: crate::managed_agents::agent_home(app, record),
+        pack_refused_shared_home: crate::managed_agents::pack_refused_by_shared_home(app, record),
         relay_url: record.relay_url.clone(),
         acp_command: record.acp_command.clone(),
         agent_command: descriptor.command,
@@ -475,7 +477,11 @@ pub fn spawn_agent_child(
     );
 
     let mut command = std::process::Command::new(&resolved_acp_command);
-    if let Some(home) = super::default_agent_workdir() {
+    // This agent's own nest, or the shared home for an agent minted before
+    // nests existed and never moved (`AgentHome`). The pack write below is
+    // refused in the shared case, which is exactly what the agent card
+    // discloses — it is not a silent failure.
+    if let Some(home) = super::agent_nest::agent_workdir(app, record) {
         // Pack skills, before the child exists. Reported, never fatal — and
         // refused while this workdir is shared rather than one seat's own.
         super::nest::materialize_persona_skills_logged(record, &home, &log_path);

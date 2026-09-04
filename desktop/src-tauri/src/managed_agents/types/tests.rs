@@ -718,6 +718,8 @@ fn summary_fixture(
     super::ManagedAgentSummary {
         pubkey: "aa".repeat(32),
         name: "test".into(),
+        agent_home: Default::default(),
+        pack_refused_shared_home: false,
         persona_id: None,
         runtime: None,
         team_id: None,

@@ -693,7 +693,17 @@ pub(crate) fn materialize_persona_skills_logged(
 ) {
     if let Err(error) = materialize_persona_skills(record, workdir) {
         let _ = super::storage::append_log_marker(log_path, &format!("skills: {error}"));
-        eprintln!("buzz-desktop: {error}");
+        // A structured line, because an operator reading this needs three
+        // things the old bare `eprintln!` left them to infer: which agent it
+        // was, which directory refused the write, and what to do about it.
+        tracing::warn!(
+            agent = %record.name,
+            pubkey = %record.pubkey,
+            workdir = %workdir.display(),
+            remedy = "give this agent its own nest (Agents → the agent → Give it its own nest)",
+            %error,
+            "agent pack skills were not written; this agent runs with no role skills"
+        );
     }
 }
 
@@ -732,13 +742,13 @@ fn is_shared_agent_workdir(workdir: &Path, shared_roots: &[PathBuf]) -> bool {
 ///
 /// A no-op for an agent with no pack behind it (a hand-built agent, or one
 /// whose team was not installed from a directory) — those have no skills to
-/// write and no pack to read. **In current builds that is every managed
-/// agent**: `AgentDefinition::into_agent_record` sets `persona_team_dir` and
-/// `persona_name_in_team` to `None`, no production code assigns them, and
-/// `detach` clears them, so this function returns an empty vec on the one call
-/// site that reaches it. Reviving the agent → pack link is its own change; the
-/// crew path (contract D8-A) stages its pack in the actor-seat entry instead
-/// and materializes in the provider.
+/// write and no pack to read. `AgentDefinition::into_agent_record` sets
+/// `persona_team_dir` and `persona_name_in_team` to `None` and `detach` clears
+/// them, so a hand-built agent reaches this and returns an empty vec. The
+/// crew-role installer is the one production writer that sets them
+/// (`crew_roles.rs:778`), so a role agent it minted *does* have skills to
+/// write here — which is why the shared-workdir refusal below stopped being
+/// theoretical the moment that installer shipped (finding 68).
 ///
 /// Refuses a `workdir` that is shared rather than per-seat. The plan's rule is
 /// "into that seat's own workdir, never into a shared dir" (§4 lane 5A), and
@@ -759,7 +769,7 @@ pub(crate) fn materialize_persona_skills(
 /// The seam exists for the guard's test: the refusal is a property of "this
 /// workdir is one of the shared roots", and a test proves that against roots
 /// it created in a temp directory instead of against the operator's home.
-fn materialize_persona_skills_outside(
+pub(crate) fn materialize_persona_skills_outside(
     record: &ManagedAgentRecord,
     workdir: &std::path::Path,
     shared_roots: &[PathBuf],

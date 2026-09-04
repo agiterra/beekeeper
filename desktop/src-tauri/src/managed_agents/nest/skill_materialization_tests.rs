@@ -218,3 +218,30 @@ fn an_unreadable_pack_is_reported_not_swallowed() {
     assert!(error.contains("builder"), "{error}");
     assert!(error.contains("missing-pack"), "{error}");
 }
+
+#[test]
+fn only_a_shared_home_agent_is_still_sent_to_a_shared_root() {
+    // LANE-L33, green. The red this replaces asserted the whole spawn path:
+    //
+    //   every managed agent spawns in /Users/brian/.beekeeper
+    //     — a shared root, so its pack is refused
+    //
+    // `default_agent_workdir()` still resolves to a shared root, and that is
+    // correct: it is the answer for an agent that predates per-agent nests and
+    // has not been moved (`AgentHome::Shared`). What changed is who reaches it
+    // — `agent_nest::agent_workdir` sends an `AgentHome::Nest` agent to a nest
+    // of its own instead, and every agent minted from now on is one.
+    let roots = shared_agent_workdir_roots();
+    let shared = crate::managed_agents::default_agent_workdir().expect("a workdir");
+    assert!(
+        is_shared_agent_workdir(&shared, &roots),
+        "{} must still be recognised as shared, or the guard stops firing for \
+         the agents that are still in it",
+        shared.display()
+    );
+    assert_eq!(
+        crate::managed_agents::AgentHome::default(),
+        crate::managed_agents::AgentHome::Shared,
+        "while nothing says otherwise, an agent keeps the home it had"
+    );
+}

@@ -436,6 +436,14 @@ pub fn run() {
                 eprintln!("buzz-desktop: failed to create nest: {error}");
             }
 
+            // Record, once, which agents were already living in that shared
+            // nest. Every agent minted after this boot gets a nest of its own
+            // (`managed_agents::agent_nest`); the ones captured here keep the
+            // directory their work is in until the operator moves them. It runs
+            // before the restore below so the first spawn of the launch already
+            // has the answer.
+            managed_agents::seed_shared_home(&app_handle);
+
             // Resolve the REPOS symlink from the persisted repos_dir BEFORE
             // agents are restored below, and decide whether restore is safe.
             // The frontend's apply_workspace runs only after React mounts —

@@ -213,6 +213,7 @@ pub(crate) fn invoke_handler(
         set_agent_managed_profiles,
         set_managed_agent_start_on_app_launch,
         set_managed_agent_auto_restart,
+        give_agent_its_own_nest,
         delete_managed_agent,
         get_managed_agent_log,
         get_agent_models,
