@@ -221,7 +221,7 @@ pub struct ArchivedIdentitiesSnapshot {
     pub archived: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct RelayInformationDocument {
     #[serde(default, rename = "self")]
     self_: Option<String>,
@@ -232,6 +232,68 @@ struct RelayInformationDocument {
     /// as an explicit `unknown` would.
     #[serde(default)]
     software_commit: Option<String>,
+    /// NIP-11 `software_commit_count`: `git rev-list --count` of
+    /// `software_commit`, or `null`/absent when the relay could not
+    /// determine one.
+    ///
+    /// Deserialized leniently on purpose. The whole document is parsed with
+    /// a fallback below, so *any* strict field turns one malformed value
+    /// into a total parse failure and silently blanks `software_commit`
+    /// too — regressing the "Relay build" line that already ships. A relay
+    /// sending a string, a float, or a negative here loses only the count.
+    #[serde(default, deserialize_with = "lenient_commit_count")]
+    software_commit_count: Option<u32>,
+    /// NIP-11 `build_time`, an RFC 3339 UTC stamp or `unknown`.
+    #[serde(default, deserialize_with = "lenient_string")]
+    build_time: Option<String>,
+    /// NIP-11 `software`: the repository this relay was built from. Used to
+    /// refuse comparing ordinals across different repositories.
+    #[serde(default, deserialize_with = "lenient_string")]
+    software: Option<String>,
+}
+
+/// A `u32` that degrades to `None` rather than failing the document.
+///
+/// Also refuses `0`: `rev-list --count` of a real commit is at least 1, so a
+/// `0` could only come from a broken pipeline — and unlike `None` it would
+/// silently take part in a consumer's subtraction and read as agreement.
+fn lenient_commit_count<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)
+        .ok()
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|count| *count >= 1))
+}
+
+/// A string that degrades to `None` rather than failing the document.
+fn lenient_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned)))
+}
+
+/// What a relay discloses about the build serving a request.
+///
+/// Every field is independently optional: a relay predating any of them, or
+/// one that could not determine its own, answers `null` rather than being
+/// treated as unreachable.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayBuildIdentity {
+    /// Full 40-hex `software_commit`, lowercased, or `None`.
+    pub commit: Option<String>,
+    /// `software_commit_count`, or `None`.
+    pub commit_count: Option<u32>,
+    /// `build_time`, or `None`.
+    pub build_time: Option<String>,
+    /// `software` — the repository URL the relay names.
+    pub software: Option<String>,
 }
 
 pub(crate) async fn fetch_relay_self(state: &AppState) -> Result<Option<String>, String> {
@@ -286,6 +348,21 @@ pub async fn get_relay_build_commit(
     relay_url: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
+    Ok(get_relay_build_identity(relay_url, state).await?.commit)
+}
+
+/// The full build identity the relay at `relay_url` discloses over NIP-11.
+///
+/// One fetch and one parse shared with [`get_relay_build_commit`], which is a
+/// projection of this. An unreachable relay, a non-success status, or a
+/// document that cannot be parsed at all yields an all-`None` identity rather
+/// than an error: not knowing is a disclosed answer here, not a failure, and
+/// the caller renders it as "unknown".
+#[tauri::command]
+pub async fn get_relay_build_identity(
+    relay_url: String,
+    state: State<'_, AppState>,
+) -> Result<RelayBuildIdentity, String> {
     let http_url = relay_http_base_url(&relay_url);
     let Ok(response) = state
         .http_client
@@ -294,28 +371,40 @@ pub async fn get_relay_build_commit(
         .send()
         .await
     else {
-        return Ok(None);
+        return Ok(RelayBuildIdentity::default());
     };
     if !response.status().is_success() {
-        return Ok(None);
+        return Ok(RelayBuildIdentity::default());
     }
-    let doc =
-        response
-            .json::<RelayInformationDocument>()
-            .await
-            .unwrap_or(RelayInformationDocument {
-                self_: None,
-                software_commit: None,
-            });
+    let doc = response
+        .json::<RelayInformationDocument>()
+        .await
+        .unwrap_or_default();
+    Ok(relay_build_identity_from_doc(doc))
+}
 
-    let Some(commit) = doc.software_commit.map(|value| value.to_ascii_lowercase()) else {
-        return Ok(None);
-    };
-    let is_full_sha = commit.len() == 40
-        && commit
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    Ok(is_full_sha.then_some(commit))
+/// Validate a parsed NIP-11 document into an identity.
+///
+/// Pure, so the "a malformed count must not cost us the commit" contract is
+/// testable without a live relay.
+fn relay_build_identity_from_doc(doc: RelayInformationDocument) -> RelayBuildIdentity {
+    let commit = doc
+        .software_commit
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|commit| {
+            commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        });
+    RelayBuildIdentity {
+        // A count with no usable commit describes nothing — the same
+        // coupling the relay enforces when it stamps the pair.
+        commit_count: commit.as_ref().and_then(|_| doc.software_commit_count),
+        commit,
+        build_time: doc.build_time,
+        software: doc.software,
+    }
 }
 
 fn archived_pubkeys_from_snapshot(snapshot: &nostr::Event) -> Vec<String> {
@@ -537,5 +626,92 @@ mod tests {
         assert_eq!(minimal.target_pubkey, "abc");
         assert_eq!(minimal.content, "");
         assert!(minimal.reason.is_none());
+    }
+
+    const RELAY_SHA: &str = "42dd921d831c483e6e16111491b39947b4cf1f86";
+
+    fn parse_doc(json: &str) -> RelayBuildIdentity {
+        relay_build_identity_from_doc(
+            serde_json::from_str::<RelayInformationDocument>(json).expect("document parses"),
+        )
+    }
+
+    /// The regression this whole lenient-deserializer shape exists to
+    /// prevent. The document is parsed with a fallback, so one strict field
+    /// would turn a malformed count into a total parse failure and blank
+    /// `software_commit` — silently killing `EditCommunityDialog`'s shipped
+    /// "Relay build" line for anyone whose relay sent something odd.
+    #[test]
+    fn a_malformed_commit_count_never_costs_us_the_commit() {
+        for junk in [
+            r#""40312""#, // a string
+            "1e9",        // a float
+            "-1",
+            "0",
+            "null",
+            "[]",
+            "{}",
+            "true",
+        ] {
+            let identity = parse_doc(&format!(
+                r#"{{"software_commit":"{RELAY_SHA}","software_commit_count":{junk}}}"#
+            ));
+            assert_eq!(
+                identity.commit.as_deref(),
+                Some(RELAY_SHA),
+                "the commit must survive a {junk} count"
+            );
+            assert_eq!(
+                identity.commit_count, None,
+                "and the count is refused: {junk}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_well_formed_document_is_read_whole() {
+        let identity = parse_doc(&format!(
+            r#"{{"software":"https://github.com/agiterra/beekeeper",
+                 "software_commit":"{RELAY_SHA}",
+                 "software_commit_count":3291,
+                 "build_time":"2026-09-03T02:51:29Z"}}"#
+        ));
+        assert_eq!(identity.commit.as_deref(), Some(RELAY_SHA));
+        assert_eq!(identity.commit_count, Some(3291));
+        assert_eq!(identity.build_time.as_deref(), Some("2026-09-03T02:51:29Z"));
+        assert_eq!(
+            identity.software.as_deref(),
+            Some("https://github.com/agiterra/beekeeper")
+        );
+    }
+
+    #[test]
+    fn a_relay_predating_every_field_reads_as_unknown_not_as_unreachable() {
+        let identity = parse_doc(r#"{"name":"Beekeeper Relay"}"#);
+        assert_eq!(identity, RelayBuildIdentity::default());
+    }
+
+    #[test]
+    fn an_unknown_commit_takes_its_count_with_it() {
+        // `unknown` is the relay's disclosed non-answer, not a commit. A
+        // count beside it describes a history we cannot name, so carrying it
+        // would invite a comparison against nothing.
+        let identity = parse_doc(r#"{"software_commit":"unknown","software_commit_count":3291}"#);
+        assert_eq!(identity.commit, None);
+        assert_eq!(identity.commit_count, None);
+    }
+
+    #[test]
+    fn a_short_or_uppercase_commit_is_refused_but_lowercase_is_normalized() {
+        assert_eq!(parse_doc(r#"{"software_commit":"42dd921d8"}"#).commit, None);
+        assert_eq!(
+            parse_doc(&format!(
+                r#"{{"software_commit":"{}"}}"#,
+                RELAY_SHA.to_ascii_uppercase()
+            ))
+            .commit
+            .as_deref(),
+            Some(RELAY_SHA)
+        );
     }
 }

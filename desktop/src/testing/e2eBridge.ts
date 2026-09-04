@@ -556,6 +556,10 @@ type E2eConfig = {
     // line). Absent/undefined -> null, which the UI discloses as "unknown" —
     // the same fail-open shape `get_relay_self` uses.
     relayBuildCommit?: string | null;
+    /** NIP-11 `software_commit_count` the mock relay discloses. */
+    relayBuildCommitCount?: number | null;
+    /** NIP-11 `software` — the repository URL the mock relay names. */
+    relaySoftware?: string | null;
     /**
      * This app's own compiled-in build identity, for
      * `get_app_build_identity`. Absent -> a build that could tell nothing
@@ -14154,6 +14158,13 @@ export function maybeInstallE2eTauriMocks() {
         return activeConfig?.mock?.relaySelf ?? null;
       case "get_relay_build_commit":
         return activeConfig?.mock?.relayBuildCommit ?? null;
+      case "get_relay_build_identity":
+        return {
+          commit: activeConfig?.mock?.relayBuildCommit ?? null,
+          commitCount: activeConfig?.mock?.relayBuildCommitCount ?? null,
+          buildTime: null,
+          software: activeConfig?.mock?.relaySoftware ?? null,
+        };
       case "get_app_build_identity":
         return {
           commit: activeConfig?.mock?.appBuildIdentity?.commit ?? null,

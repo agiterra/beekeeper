@@ -52,6 +52,35 @@ export async function fetchRelayBuildCommit(
   return invokeTauri<string | null>("get_relay_build_commit", { relayUrl });
 }
 
+/** What a relay discloses about the build serving a request (NIP-11). */
+export type RelayBuildIdentity = {
+  /** Full 40-hex commit, or `null` for every case that reads as "unknown". */
+  commit: string | null;
+  /** `git rev-list --count` of {@link commit}, or `null`. */
+  commitCount: number | null;
+  /** RFC 3339 UTC build stamp, or `null`. */
+  buildTime: string | null;
+  /** The repository URL the relay names as its own source. */
+  software: string | null;
+};
+
+/**
+ * Fetch a relay's full disclosed build identity in one round trip.
+ *
+ * {@link fetchRelayBuildCommit} is a projection of this and stays for the
+ * callers that only want the commit. Every field is independently `null`:
+ * a relay predating a field, or one that could not determine it, answers
+ * `null` rather than reading as unreachable — so `null` is a disclosed
+ * non-answer, never an error to retry.
+ */
+export async function fetchRelayBuildIdentity(
+  relayUrl: string,
+): Promise<RelayBuildIdentity> {
+  return invokeTauri<RelayBuildIdentity>("get_relay_build_identity", {
+    relayUrl,
+  });
+}
+
 /**
  * Publish a kind:9033 command setting (or clearing, with "") the community
  * icon on the active relay. Requires relay admin/owner role — the relay
