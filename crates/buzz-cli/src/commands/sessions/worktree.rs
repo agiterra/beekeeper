@@ -195,15 +195,9 @@ pub fn is_protected(repo_root: &Path, path: &Path) -> bool {
     if path == repo_root || repo_root.starts_with(path) {
         return true;
     }
-    let inside = repo_root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .zip(repo_root.parent())
-        .map(|(name, parent)| {
-            let holder = parent.join(format!("{name}.worktrees"));
-            path.is_absolute() && path.starts_with(&holder) && path != holder
-        })
-        .unwrap_or(false);
+    // Shared with the desktop host's record and prune guards, so `bee` and the
+    // app can never disagree about which directories are manageable.
+    let inside = buzz_core::worktree_placement::is_managed_worktree_path(repo_root, path, &[]);
     if !inside {
         return true;
     }

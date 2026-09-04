@@ -109,14 +109,11 @@ pub(crate) fn seat_worktree_key(session_ref: &str, seat_label: &str) -> String {
 /// outside it would give the prune path a licence over somewhere it has no
 /// business, so the write is refused rather than trusted.
 pub(crate) fn is_inside_worktree_parent(repo_root: &Path, path: &Path) -> bool {
-    let Some(file_name) = repo_root.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    let Some(parent) = repo_root.parent() else {
-        return false;
-    };
-    let holder = parent.join(format!("{file_name}.worktrees"));
-    path.is_absolute() && path.starts_with(&holder) && path != holder
+    // The rule itself lives in `buzz_core::worktree_placement`, shared with
+    // the prune guard and with `bee`. Three guards that disagree with where
+    // placement actually cuts is a silent, total failure: the tree lands
+    // somewhere no guard admits, so it can never be recorded or removed.
+    buzz_core_pkg::worktree_placement::is_managed_worktree_path(repo_root, path, &[])
 }
 
 /// A remembered directory choice, with the moment it was last set.

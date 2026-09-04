@@ -25,7 +25,7 @@
 //!   Admitted forever and never chosen again: trees already on disk must stay
 //!   recordable and removable, or the work in them becomes unmanageable.
 //! - `<parent>/<stem>-wt-<tail>` — one sibling directory per worktree.
-//! - a direct child of a folder a person named for this repository.
+//! - anything under a folder a person named for this repository.
 //!
 //! Anything else is refused rather than trusted.
 
@@ -142,18 +142,18 @@ pub fn is_managed_worktree_path(repo_root: &Path, path: &Path, chosen: &[PathBuf
     if !path.is_absolute() || !repo_root.is_absolute() {
         return false;
     }
-    if is_child_of(&repo_root.join(HOLDER_NAME), path) {
+    if is_under(&repo_root.join(HOLDER_NAME), path) {
         return true;
     }
     if let Some(legacy) = legacy_holder(repo_root) {
-        if is_child_of(&legacy, path) {
+        if is_under(&legacy, path) {
             return true;
         }
     }
     if is_sibling_worktree(repo_root, path) {
         return true;
     }
-    chosen.iter().any(|folder| is_child_of(folder, path))
+    chosen.iter().any(|folder| is_under(folder, path))
 }
 
 /// The pre-fix holder: `<repo>.worktrees`, a sibling *container*.
@@ -163,12 +163,17 @@ fn legacy_holder(repo_root: &Path) -> Option<PathBuf> {
     Some(parent.join(format!("{name}{LEGACY_HOLDER_SUFFIX}")))
 }
 
-/// Whether `path` is a direct child of `holder`.
+/// Whether `path` lies under `holder`, and is not the holder itself.
 ///
-/// Direct, not descendant: the licence a record grants must not reach an
-/// arbitrary depth below a folder someone named.
-fn is_child_of(holder: &Path, path: &Path) -> bool {
-    path.parent() == Some(holder) && path.file_name().is_some()
+/// Descendant, not direct child. Worktree names legitimately contain slashes
+/// in this repository — `lane/batch3-l24-relay-build` and friends — so a tree
+/// may sit two levels below the holder. Restricting this to direct children
+/// silently makes every such tree unrecordable and unprunable, which is the
+/// exact failure this shared predicate exists to prevent. Pinned by
+/// `worktree_prune_tests.rs`'s
+/// `the_worktrees_folder_test_accepts_only_children_of_the_holder`.
+fn is_under(holder: &Path, path: &Path) -> bool {
+    path.starts_with(holder) && path != holder
 }
 
 /// Whether `path` is a per-worktree sibling of `repo_root`.

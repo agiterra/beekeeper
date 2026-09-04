@@ -57,7 +57,7 @@ fn a_repository_at_the_filesystem_root_has_nowhere_to_put_a_sibling() {
 }
 
 #[test]
-fn the_in_repo_holder_admits_only_its_own_direct_children() {
+fn the_in_repo_holder_admits_what_lies_under_it_but_not_itself() {
     let repo = p(REPO);
     assert!(is_managed_worktree_path(
         &repo,
@@ -69,12 +69,13 @@ fn the_in_repo_holder_admits_only_its_own_direct_children() {
         "the holder itself is not a worktree"
     );
     assert!(
-        !is_managed_worktree_path(
+        is_managed_worktree_path(
             &repo,
             &p("/Users/andy/Code/beekeeper/.worktrees/one/deeper"),
             &[]
         ),
-        "the licence is direct children, not an arbitrary depth"
+        "worktree names contain slashes here (lane/batch3-…), so a tree may sit \
+         below the holder — see worktree_prune_tests.rs"
     );
 }
 
@@ -150,7 +151,7 @@ fn a_relative_path_is_refused_rather_than_resolved() {
 }
 
 #[test]
-fn a_chosen_folder_admits_only_direct_children() {
+fn a_chosen_folder_admits_what_lies_under_it() {
     let repo = p(REPO);
     let chosen = vec![p("/Volumes/scratch/trees")];
     assert!(is_managed_worktree_path(
@@ -158,7 +159,7 @@ fn a_chosen_folder_admits_only_direct_children() {
         &p("/Volumes/scratch/trees/one"),
         &chosen
     ));
-    assert!(!is_managed_worktree_path(
+    assert!(is_managed_worktree_path(
         &repo,
         &p("/Volumes/scratch/trees/one/deeper"),
         &chosen

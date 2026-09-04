@@ -118,6 +118,10 @@ fn disambiguator() -> String {
 
 /// The directory holding every worktree for `repo_root`.
 fn worktree_parent(repo_root: &Path) -> Option<PathBuf> {
+    // Unchanged behaviour, stated in terms of the shared vocabulary: this is
+    // still the legacy holder, and the next commit is what moves planning off
+    // it. Named here so the one place that composes a path and the three
+    // guards that admit one are visibly the same rule.
     let file_name = repo_root.file_name()?.to_str()?;
     let parent = repo_root.parent()?;
     Some(parent.join(format!("{file_name}.worktrees")))
