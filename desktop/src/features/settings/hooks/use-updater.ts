@@ -20,7 +20,11 @@ export type UpdateStatus =
       releaseUrl: string;
     };
 
-const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/**
+ * Also reused by the relay-build-drift hook, so the two build-currency
+ * checks stay on one cadence instead of drifting apart as literals.
+ */
+export const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "checking",
   "available",

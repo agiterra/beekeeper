@@ -1,5 +1,8 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useUpdaterContext } from "./hooks/UpdaterProvider";
+import { useRelayBuildDrift } from "./hooks/useRelayBuildDrift";
+import { relayBuildDriftDetail } from "./relayBuildDrift";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { Button } from "@/shared/ui/button";
 import {
   SettingsOptionGroup,
@@ -8,6 +11,8 @@ import {
 import { SettingsSectionHeader } from "./ui/SettingsSectionHeader";
 export function UpdateChecker() {
   const { status, checkForUpdate, installAndRelaunch } = useUpdaterContext();
+  const { activeCommunity } = useCommunities();
+  const relayBuildDrift = useRelayBuildDrift(activeCommunity?.relayUrl ?? null);
 
   return (
     <section className="min-w-0" data-testid="settings-updates">
@@ -167,6 +172,28 @@ export function UpdateChecker() {
             </Button>
           </SettingsOptionRow>
         )}
+      </SettingsOptionGroup>
+
+      {/*
+        The relay's build is a different fact from the release channel above:
+        the updater compares semver against a release endpoint, this compares
+        git commits against whatever relay this community actually talks to.
+        Kept adjacent rather than merged, and stated for every outcome —
+        including the ones where no number can honestly be given, because an
+        unexplained silence is what sends someone to go poke at the relay.
+      */}
+      <SettingsOptionGroup title="Relay build">
+        <SettingsOptionRow>
+          <div className="min-w-0">
+            <p
+              className="text-sm font-normal text-muted-foreground/70"
+              data-settings-subcopy
+              data-testid="settings-relay-build-drift"
+            >
+              {relayBuildDriftDetail(relayBuildDrift)}
+            </p>
+          </div>
+        </SettingsOptionRow>
       </SettingsOptionGroup>
     </section>
   );

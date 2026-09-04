@@ -102,6 +102,7 @@ import { useAppDeepLinks } from "@/shared/useAppDeepLinks";
 import { SidebarProvider } from "@/shared/ui/sidebar";
 import { RelayConnectionOverlay } from "@/app/RelayConnectionOverlay";
 import { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
+import { useRelayBuildDrift } from "@/features/settings/hooks/useRelayBuildDrift";
 import { AppShellTrayMenu } from "@/app/useAppShellTrayMenu";
 import { AppProfilePanelProvider } from "@/app/AppProfilePanelProvider";
 import { LazySettingsScreen } from "@/app/LazySettingsScreen";
@@ -251,6 +252,12 @@ export function AppShell() {
     channelsErrorMessage,
     communitiesHook.activeCommunity?.relayUrl,
     `${communitiesHook.activeCommunity?.id ?? "none"}-${communitiesHook.reinitKey}`,
+  );
+  // Owned here rather than in a provider: the relay URL lives on this shell,
+  // and one owner means one fetch feeding both the sidebar card and the
+  // Settings detail — the same shape `relayConnectionCard` already uses.
+  const relayBuildDrift = useRelayBuildDrift(
+    communitiesHook.activeCommunity?.relayUrl ?? null,
   );
   const memberChannels = React.useMemo(
     () => channels.filter((channel) => channel.isMember),
@@ -830,6 +837,7 @@ export function AppShell() {
                         addCommunityPrefill={addCommunityDialog.prefill}
                         isAddCommunityOpen={addCommunityDialog.open}
                         relayConnectionCard={relayConnectionCard}
+                        relayBuildDrift={relayBuildDrift}
                         isCreatingChannel={createChannelMutation.isPending}
                         isCreatingForum={createForumMutation.isPending}
                         isLoading={channelsQuery.isLoading}

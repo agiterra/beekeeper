@@ -259,6 +259,43 @@ simple and testable.
 thread root events. Any code that inserts replies must update these counters —
 check existing reply handlers for the pattern.
 
+**Checking what a relay is actually running**: ask the relay, over NIP-11 —
+it is public, unauthenticated, and answers before any WebSocket handshake.
+
+```bash
+curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \
+  | jq '{software, software_commit, software_commit_count, build_time}'
+curl -s https://hive.agiterra.org/health          # -> "ok <sha8>"
+```
+
+`software_commit` is the full 40-hex commit the binary was built from and
+`software_commit_count` is `git rev-list --count` of that same commit. Both
+are **disclosed non-answers rather than errors** when the build could not
+determine them: `unknown` and `null` respectively. Never read either as a
+failure, and never substitute a guess — that distinction is the whole point
+of the fields (finding 32).
+
+Three things that will mislead you:
+
+- **A count is a set size, not a position.** `count(relay) − count(mine)` is a
+  distance only when your commit is an ancestor of the relay's. On a topic
+  branch, or after a rebase or squash-merge, it understates or changes
+  meaning. If you report a number, report how you got it — see
+  `EnforcementCheckMethod` in `crates/buzz-cli/src/commands/git_setup.rs`.
+- **A shallow clone will lie to you.** `git rev-list --count` in a
+  `fetch-depth: 1` checkout returns the graft's size, and `merge-base` /
+  `rev-list --max-parents=0` will report "no common ancestor" and a false
+  root. Run `git rev-parse --is-shallow-repository` before concluding
+  anything about history; `git fetch --unshallow origin` fixes it.
+- **`/_status` is not reachable.** It carries more build detail, but it is
+  served only on the health port (8080), which compose does not publish and
+  the ingress does not route. NIP-11 and `/health` are the whole public
+  surface.
+
+There is no `bee` subcommand that prints this today; `software_commit` is
+consumed internally by `bee git check`. Full field reference:
+`docs/INTEGRATION.md` § NIP-11.
+
 ---
 
 ## Agent CLI (`buzz-cli`)
