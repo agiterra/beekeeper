@@ -1,0 +1,122 @@
+//! Finding 56 — **where** a verdict-gated push looks for a mission.
+//!
+//! Split out of [`super`] only to keep that file under the repository's
+//! 1,000-line ceiling; it is one enum, its two bounds, and the sentence a
+//! refusal renders from it.
+
+use super::{
+    VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS, VERDICT_ADMISSION_MAX_SESSIONS,
+    VERDICT_ADMISSION_MAX_TRANSACTIONS,
+};
+
+/// Newest missions one push may be judged by when the pusher holds seats.
+///
+/// **Finding 56.** A seat's push is judged by the mission that seated it, not
+/// by whatever lives on the channel the repository happens to be bound to. A
+/// key may hold several seats at once; this is how many of them one push
+/// reads. The bound fails in the refusing direction — a fifth, older seat is
+/// simply not searched, so the worst it can do is deny a push it might have
+/// admitted.
+pub const VERDICT_ADMISSION_MAX_PUSHER_SEATS: usize = 4;
+
+/// Newest session channels of a project one push may search.
+///
+/// The fallback lookup for a push by a key that holds no seat at all. Same
+/// refusing direction as every other bound here.
+pub const VERDICT_ADMISSION_MAX_PROJECT_CHANNELS: usize = 32;
+
+/// **Where** the caller found the missions it is offering this rule.
+///
+/// Live run 4 refused a seat's push of a commit its own mission had watched
+/// three gates pass on, with "Searched 0 mission(s) — the newest 16 on this
+/// channel". Every coding session lives in its own channel and the gate only
+/// ever read the repository's bound channel, so the count was truthful and the
+/// search was pointless. The rule cannot fix a lookup it does not perform;
+/// what it can do is say which one ran, so a reader can tell *"your mission had
+/// nothing to say"* from *"nobody looked at your mission"*.
+///
+/// This is a fact about the caller's I/O, so `buzz-core` never resolves it —
+/// the relay, the CLI prediction and the desktop adapter each say which lookup
+/// they performed, and the sentence a person reads is rendered here from that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerdictAdmissionCandidateSource {
+    /// The missions whose accepted authority chain seats the pusher.
+    SeatOfMission {
+        /// The pusher's key as the refusal names it — 8 hex, which is what a
+        /// person can hold in their head and enough to grep a channel for.
+        seat: String,
+        /// How many of the pusher's seats were resolved — bounded by
+        /// [`VERDICT_ADMISSION_MAX_PUSHER_SEATS`].
+        seats: usize,
+    },
+    /// Every session channel of the project the announcement back-references.
+    ProjectSessions {
+        /// The project coordinate the repository's `project` tag names.
+        project: String,
+        /// How many session channels of it were searched — bounded by
+        /// [`VERDICT_ADMISSION_MAX_PROJECT_CHANNELS`].
+        channels: usize,
+    },
+    /// The one channel the repository's `buzz-channel` tag names — the lookup
+    /// that was the *only* lookup until finding 56, kept as the last fallback
+    /// for a repository in no project whose pusher holds no seat.
+    BoundChannel,
+    /// One named mission, supplied by a caller already looking at it: the
+    /// desktop's Land control asks about the mission on screen and nothing
+    /// else, and must not imply it swept anything wider.
+    ThisMission {
+        /// The umbrella it asked about.
+        session_ref: String,
+    },
+}
+
+/// The bound-channel lookup as a borrowable `'static` value.
+///
+/// [`VerdictAdmissionQuery`](super::VerdictAdmissionQuery) borrows its source
+/// so it can stay `Copy`, and this variant carries nothing — a caller that
+/// searched the repository's bound channel has no value of its own to keep
+/// alive. Const promotion cannot supply the borrow (the enum owns `String`s in
+/// its other variants), so the one shared value lives here.
+pub static VERDICT_ADMISSION_BOUND_CHANNEL: VerdictAdmissionCandidateSource =
+    VerdictAdmissionCandidateSource::BoundChannel;
+
+impl VerdictAdmissionCandidateSource {
+    /// The clause of a refusal that names this lookup and its bound.
+    ///
+    /// `missions` is how many candidates the caller actually assembled, which
+    /// is not the bound: a lookup that found one mission and a lookup that
+    /// could have found sixteen both say so.
+    pub fn searched_clause(&self, missions: usize) -> String {
+        match self {
+            Self::SeatOfMission { seat, seats } => format!(
+                "Searched {missions} mission(s) — the {seats} newest mission(s) that seat \
+                 {seat}, the key this push authenticated as, of the newest \
+                 {VERDICT_ADMISSION_MAX_PUSHER_SEATS} seats it holds — over one shared page of \
+                 the newest {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on their \
+                 channels."
+            ),
+            Self::ProjectSessions { project, channels } => format!(
+                "This key holds no seat in the newest \
+                 {VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS} authority transitions this relay \
+                 could read, so the search fell back to the project this repository names. \
+                 Searched {missions} mission(s) — the newest \
+                 {VERDICT_ADMISSION_MAX_SESSIONS} on the {channels} session channel(s) of \
+                 {project} whose founder is a founder of this repository, of the newest \
+                 {VERDICT_ADMISSION_MAX_PROJECT_CHANNELS} such channels — over one shared page \
+                 of the newest {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on them."
+            ),
+            Self::BoundChannel => format!(
+                "This key holds no seat in the newest \
+                 {VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS} authority transitions this relay \
+                 could read, and this repository names no project, so the search fell back to \
+                 the channel it is bound to. Searched {missions} mission(s) — the newest \
+                 {VERDICT_ADMISSION_MAX_SESSIONS} on that channel whose founder is a founder of \
+                 this repository — over one shared page of the newest \
+                 {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on it."
+            ),
+            Self::ThisMission { session_ref } => {
+                format!("Searched only mission {session_ref}, the one this screen is showing.")
+            }
+        }
+    }
+}

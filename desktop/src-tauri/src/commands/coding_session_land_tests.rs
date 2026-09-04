@@ -408,12 +408,11 @@ fn changes_requested_over_the_same_commit_refuses_with_ss1j_first_string() {
         reason,
         format!(
             "require-verdict is set and no mission verdict names this commit: no approved report \
-             names {HEAD_SHA}. Searched 1 mission(s) — the newest 16 on this channel whose \
-             founder is a founder of this repository — over one shared page of the newest 512 \
-             team transactions on that channel. An older ruling can fall outside both. No \
-             observed gate row names {HEAD_SHA} either, so the gate-row route is not open for \
-             it: that route wants every required gate published green on this exact commit, by \
-             the mission's own provider, over a clean worktree."
+             names {HEAD_SHA}. Searched only mission {SESSION}, the one this screen is showing. \
+             An older ruling can fall outside both. No observed gate row names {HEAD_SHA} \
+             either, so the gate-row route is not open for it: that route wants every required \
+             gate published green on this exact commit, by the mission's own provider, over a \
+             clean worktree. Run each gate as its own command so the host can record it."
         )
     );
     // The newest *disposition* is the one shown; the verifier's refutation is
@@ -531,9 +530,10 @@ fn a_governed_repository_bound_to_no_channel_says_so_to_a_seat() {
     assert_eq!(
         answer.refusal_reason.as_deref(),
         Some(
-            "require-verdict is set and this repository is bound to no channel, so no mission \
-             verdict can be read here. Remove the rule, or bind the repository to the mission's \
-             channel."
+            "require-verdict is set and there is nowhere to look for a mission verdict: this \
+             key holds no seat in the newest 512 authority transitions this relay could read, \
+             this repository names no project, and it is bound to no channel. Remove the rule, \
+             put the repository in a project, or bind it to the mission's channel."
         )
     );
 }

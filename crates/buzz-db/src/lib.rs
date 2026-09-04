@@ -2909,6 +2909,17 @@ impl Db {
         .await
     }
 
+    /// The session (transport) channels of one project, newest first and
+    /// bounded by `limit` — the verdict gate's project fallback (finding 56).
+    pub async fn project_session_channel_ids(
+        &self,
+        community: CommunityId,
+        project_ref: &str,
+        limit: i64,
+    ) -> Result<Vec<uuid::Uuid>> {
+        channel::project_session_channel_ids(&self.pool, community, project_ref, limit).await
+    }
+
     /// Resolve a project's roster (creator, visibility, members with roles)
     /// by coordinate, for the relay-signed kind:39010 projection.
     pub async fn get_project_roster(

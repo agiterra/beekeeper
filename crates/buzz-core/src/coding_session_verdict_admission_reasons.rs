@@ -11,9 +11,10 @@
 //! * it never repeats the ref name — the renderer prefixes `{ref}: `;
 //! * it never invents a remedy the rule cannot deliver.
 
-use super::{
-    VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
-};
+// The mission/transaction caps this file used to name itself now reach the
+// sentence through `VerdictAdmissionCandidateSource::searched_clause`, which
+// words them per lookup (L28).
+use super::{VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS};
 
 impl VerdictAdmissionRefusal {
     /// The exact sentence a pusher sees, without the ref name.
@@ -25,17 +26,15 @@ impl VerdictAdmissionRefusal {
             Self::NoApprovingVerdict {
                 new_oid,
                 searched_sessions,
+                source,
             } => format!(
                 "require-verdict is set and no mission verdict names this commit: no approved \
-                 report names {new_oid}. Searched {searched_sessions} mission(s) — the newest \
-                 {VERDICT_ADMISSION_MAX_SESSIONS} on this channel whose founder is a founder of \
-                 this repository — over one shared page of the newest \
-                 {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on that channel. An \
-                 older ruling can fall outside both. No observed gate row names {new_oid} \
-                 either, so the gate-row route is not open for it: that route wants every \
-                 required gate published green on this exact commit, by the mission's own \
-                 provider, over a clean worktree. Run each gate as its own command so the host \
-                 can record it."
+                 report names {new_oid}. {} An older ruling can fall outside both. No observed \
+                 gate row names {new_oid} either, so the gate-row route is not open for it: \
+                 that route wants every required gate published green on this exact commit, by \
+                 the mission's own provider, over a clean worktree. Run each gate as its own \
+                 command so the host can record it.",
+                source.searched_clause(*searched_sessions)
             ),
             Self::ApprovedReportNamesBranchOnly => "require-verdict is set and no mission verdict \
                  names this commit: the approved report for this work names a branch and no \
@@ -107,10 +106,14 @@ impl VerdictAdmissionRefusal {
                  never for different proof.",
                 gates.reason()
             ),
-            Self::RepositoryUnbound => "require-verdict is set and this repository is bound to no \
-                 channel, so no mission verdict can be read here. Remove the rule, or bind the \
-                 repository to the mission's channel."
-                .to_string(),
+            Self::RepositoryUnbound => format!(
+                "require-verdict is set and there is nowhere to look for a mission verdict: \
+                 this key holds no seat in the newest \
+                 {VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS} authority transitions this relay \
+                 could read, this repository names no project, and it is bound to no channel. \
+                 Remove the rule, put the repository in a project, or bind it to the mission's \
+                 channel."
+            ),
         }
     }
 }

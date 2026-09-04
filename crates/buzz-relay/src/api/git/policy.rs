@@ -805,6 +805,7 @@ async fn decide_push(
             &VerdictSearchRequest {
                 community,
                 channel_id,
+                project_ref: project_ref.as_deref(),
                 founders,
                 ref_name: &update.ref_name,
                 new_oid: &update.new_oid,

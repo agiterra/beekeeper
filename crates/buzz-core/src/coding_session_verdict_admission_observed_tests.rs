@@ -145,6 +145,9 @@ fn query<'a>(pusher: &'a str, founders: &'a [String]) -> VerdictAdmissionQuery<'
         new_oid: HEAD_SHA,
         pusher_pubkey: pusher,
         repo_founders: founders,
+        // These cases are about the rule, not the lookup; the source only
+        // shapes the sentence one refusal renders.
+        candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
     }
 }
 

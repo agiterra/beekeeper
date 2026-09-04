@@ -1106,6 +1106,10 @@ pub struct RefPrediction {
     /// question `--ref` exists to answer, checked against the relay's own
     /// commit rather than assumed from this build.
     pub enforcement: RequireVerdictEnforcement,
+    /// **Which lookup** found the missions this answer stands on — finding 56.
+    /// The same sentence the relay's refusal carries, rendered from the same
+    /// [`VerdictAdmissionCandidateSource`]. Empty until a scope is resolved.
+    pub lookup: String,
 }
 
 /// The commit `require-verdict` enforcement shipped at
@@ -1565,6 +1569,7 @@ async fn predict_ref(
         // Filled in by the caller alongside `serving_relay`, from the same
         // fetched NIP-11 document.
         enforcement: RequireVerdictEnforcement::default(),
+        lookup: String::new(),
     };
     let ProbeTarget::Remote { owner, repo } = target else {
         return prediction;
@@ -1614,20 +1619,41 @@ async fn predict_ref(
     }
 
     // First `buzz-channel` tag wins, and a malformed one is not a binding —
-    // the same fail-closed reading the relay's resolver applies.
+    // the same fail-closed reading the relay's resolver applies. Since finding
+    // 56 this is the *last* place the search looks, so an unbound repository is
+    // no longer a refusal on its own.
     let channel = announcement
         .tags
         .iter()
         .find_map(|tag| match tag.as_slice() {
             [name, value] if name == "buzz-channel" => Some(value.clone()),
             _ => None,
-        });
-    let Some(channel) = channel.filter(|value| uuid::Uuid::parse_str(value).is_ok()) else {
-        prediction.state = RefPredictionState::Refused {
-            reason: VerdictAdmissionRefusal::RepositoryUnbound.reason(),
-        };
-        return prediction;
+        })
+        .filter(|value| uuid::Uuid::parse_str(value).is_ok());
+    let project_ref = buzz_core::kind::repo_project_ref(&announcement);
+    let scope = match crate::commands::git_verdict_scope::resolve_prediction_scope(
+        client,
+        channel.as_deref(),
+        project_ref.as_deref(),
+        pusher_pubkey,
+    )
+    .await
+    {
+        Ok(Some(scope)) => scope,
+        Ok(None) => {
+            prediction.state = RefPredictionState::Refused {
+                reason: VerdictAdmissionRefusal::RepositoryUnbound.reason(),
+            };
+            return prediction;
+        }
+        Err(error) => {
+            prediction.state = RefPredictionState::Unreadable {
+                detail: strip_auth_tag_hint(&error.to_string()),
+            };
+            return prediction;
+        }
     };
+    prediction.lookup = scope.source.searched_clause(0);
 
     // Finding 33: a repository has founders, not an owner. The prediction
     // reads the same set the relay resolves — signer, NIP-34 `maintainers`,
@@ -1636,7 +1662,7 @@ async fn predict_ref(
     // Already resolved on the way to the rules — the same set, read once.
     let founders = rules.founders;
     prediction.founders = founders.rules_sentence();
-    let candidates = match fetch_verdict_candidates(client, &channel, &founders).await {
+    let candidates = match fetch_verdict_candidates(client, &scope, &founders).await {
         Ok(candidates) => candidates,
         Err(error) => {
             prediction.state = RefPredictionState::Unreadable {
@@ -1645,12 +1671,14 @@ async fn predict_ref(
             return prediction;
         }
     };
+    prediction.lookup = scope.source.searched_clause(candidates.len());
 
     let query = VerdictAdmissionQuery {
         ref_name,
         new_oid: &sha_value,
         pusher_pubkey,
         repo_founders: founders.pubkeys(),
+        candidate_source: &scope.source,
     };
     prediction.state = match evaluate_verdict_admission(&candidates, &query) {
         VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush { .. }) => {
@@ -1704,12 +1732,18 @@ async fn fetch_repo_announcement(
     Ok(Some(event))
 }
 
-/// Assemble the missions on `channel` whose founder is `owner`, folded.
+/// Assemble the missions in `scope` whose founder founds the repository, folded.
+///
+/// Finding 56: the scope is a *set* of channels since a mission lives in its
+/// own one, so every page is read across all of them and split per mission by
+/// the channel its genesis was published in — a 44244 signed somewhere else
+/// naming this umbrella's refs is not this mission speaking.
 async fn fetch_verdict_candidates(
     client: &crate::client::BuzzClient,
-    channel: &str,
+    scope: &crate::commands::git_verdict_scope::PredictionScope,
     founders: &buzz_core::repository_founders::RepositoryFounders,
 ) -> Result<Vec<VerdictAdmissionCandidate>, CliError> {
+    let channel = &scope.channels;
     let decode = |rows: Vec<serde_json::Value>| -> Result<Vec<nostr::Event>, CliError> {
         rows.into_iter()
             .map(|row| {
@@ -1719,17 +1753,21 @@ async fn fetch_verdict_candidates(
             })
             .collect()
     };
+    // The author filter is what keeps the seats lookup from becoming a way in:
+    // a mission that seats the pusher but was founded by somebody who founds no
+    // part of this repository is not a candidate at all.
+    let mut genesis_filter = serde_json::json!({
+        // Every founder's missions, not only the signer's.
+        "kinds": [KIND_CODING_SESSION_GENESIS],
+        "#h": channel,
+        "authors": founders.pubkeys(),
+    });
+    if !scope.genesis_ids.is_empty() {
+        genesis_filter["ids"] = serde_json::json!(scope.genesis_ids);
+    }
     let geneses = decode(
         client
-            .query_paginated(
-                serde_json::json!({
-                    // Every founder's missions, not only the signer's.
-                    "kinds": [KIND_CODING_SESSION_GENESIS],
-                    "#h": [channel],
-                    "authors": founders.pubkeys(),
-                }),
-                VERDICT_ADMISSION_MAX_SESSIONS as u32,
-            )
+            .query_paginated(genesis_filter, VERDICT_ADMISSION_MAX_SESSIONS as u32)
             .await?,
     )?;
     let transactions = decode(
@@ -1737,7 +1775,7 @@ async fn fetch_verdict_candidates(
             .query_paginated(
                 serde_json::json!({
                     "kinds": [KIND_CODING_SESSION_TEAM_TRANSACTION],
-                    "#h": [channel],
+                    "#h": channel,
                 }),
                 VERDICT_ADMISSION_MAX_TRANSACTIONS as u32,
             )
@@ -1751,7 +1789,7 @@ async fn fetch_verdict_candidates(
             .query_paginated(
                 serde_json::json!({
                     "kinds": [KIND_CODING_SESSION_AUTHORITY_TRANSITION],
-                    "#h": [channel],
+                    "#h": channel,
                 }),
                 VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS as u32,
             )
@@ -1767,7 +1805,7 @@ async fn fetch_verdict_candidates(
             .query_paginated(
                 serde_json::json!({
                     "kinds": [KIND_CODING_SESSION_OBSERVATION],
-                    "#h": [channel],
+                    "#h": channel,
                 }),
                 VERDICT_ADMISSION_MAX_OBSERVATIONS as u32,
             )
@@ -1778,7 +1816,7 @@ async fn fetch_verdict_candidates(
             .query_paginated(
                 serde_json::json!({
                     "kinds": [KIND_CODING_SESSION_POLICY],
-                    "#h": [channel],
+                    "#h": channel,
                     "authors": founders.pubkeys(),
                 }),
                 VERDICT_ADMISSION_MAX_POLICIES as u32,
@@ -1790,21 +1828,38 @@ async fn fetch_verdict_candidates(
             .query_paginated(
                 serde_json::json!({
                     "kinds": [KIND_CODING_SESSION_METADATA],
-                    "#h": [channel],
+                    "#h": channel,
                 }),
                 VERDICT_ADMISSION_MAX_PROVIDER_METADATA as u32,
             )
             .await?,
     )?;
 
+    // Keep only the events published in one mission's own channel.
+    let in_channel = |page: &[nostr::Event], channel: &str| -> Vec<nostr::Event> {
+        page.iter()
+            .filter(|event| {
+                crate::commands::git_verdict_scope::h_tag(event).as_deref() == Some(channel)
+            })
+            .cloned()
+            .collect()
+    };
     let mut candidates = Vec::new();
     for genesis in &geneses {
         let genesis_ref = genesis.id.to_hex();
+        let Some(mission_channel) = crate::commands::git_verdict_scope::h_tag(genesis) else {
+            continue;
+        };
         let Ok(payload) =
             buzz_core::coding_session_genesis::decode_coding_session_genesis(&genesis.content)
         else {
             continue;
         };
+        let transactions = in_channel(&transactions, &mission_channel);
+        let observations = in_channel(&observations, &mission_channel);
+        let policies = in_channel(&policies, &mission_channel);
+        let session_metadata = in_channel(&session_metadata, &mission_channel);
+        let authority = in_channel(&authority, &mission_channel);
         let events: Vec<nostr::Event> =
             mission_transactions(&payload.session_ref, &genesis_ref, &transactions)
                 .into_iter()
@@ -1815,7 +1870,7 @@ async fn fetch_verdict_candidates(
         // founder set that is no longer always the announcement's signer.
         let founder_pubkey = genesis.pubkey.to_hex();
         let context = verdict_admission_fold_context(
-            channel,
+            &mission_channel,
             payload.session_ref.clone(),
             genesis_ref.clone(),
             founder_pubkey.clone(),
@@ -2098,6 +2153,7 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                 "enforces": prediction.enforcement.enforces,
                 "method": prediction.enforcement.method.as_str(),
             },
+            "lookup": prediction.lookup,
             "ref": prediction.ref_name,
             "sha": prediction.sha,
             "arm": match &prediction.state {
@@ -2380,6 +2436,12 @@ pub fn render_human(report: &CheckReport) -> String {
         let _ = writeln!(out, "  {}", enforcement_line(&prediction.enforcement));
         if !prediction.founders.is_empty() {
             let _ = writeln!(out, "  {}", prediction.founders);
+        }
+        // Finding 56: which lookup found the missions this answer stands on.
+        // An admission says it too — a reader who cannot see the search cannot
+        // tell a real green from a search that never reached their mission.
+        if !prediction.lookup.is_empty() {
+            let _ = writeln!(out, "  {}", prediction.lookup);
         }
     }
 
@@ -3289,6 +3351,8 @@ mod tests {
                 new_oid: sha,
                 pusher_pubkey: &"cd".repeat(32),
                 repo_founders: &["ab".repeat(32)],
+                candidate_source:
+                    &buzz_core::coding_session_verdict_admission::VERDICT_ADMISSION_BOUND_CHANNEL,
             },
         );
         let VerdictAdmission::Refused(refusal) = expected else {
@@ -3303,6 +3367,7 @@ mod tests {
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
+            lookup: String::new(),
         }));
         assert!(
             rendered.contains(PREDICTION_HEADING),
@@ -3334,6 +3399,7 @@ mod tests {
             serving_relay: "serving relay's version unknown".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
+            lookup: String::new(),
         }));
         assert!(
             rendered.contains("the rule as THIS build evaluates it"),
@@ -3360,6 +3426,7 @@ mod tests {
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
+            lookup: String::new(),
         }));
         assert!(
             rendered.contains("no require-verdict rule governs this ref"),
@@ -3384,6 +3451,7 @@ mod tests {
             serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
+            lookup: String::new(),
         }));
         assert!(
             rendered.contains("not predicted — the relay refused the query"),

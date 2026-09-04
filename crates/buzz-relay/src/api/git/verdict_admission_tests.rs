@@ -453,10 +453,13 @@ mod live {
             body,
             format!(
                 "refs/heads/main: require-verdict is set and no mission verdict names this \
-                 commit: no approved report names {HEAD_SHA}. Searched 1 mission(s) — the \
-                 newest 16 on this channel whose founder is a founder of this repository — \
-                 over one shared page of the newest 512 team transactions on that channel. An \
-                 older ruling can fall outside both. No observed gate row names {HEAD_SHA} \
+                 commit: no approved report names {HEAD_SHA}. This key holds no seat in the \
+                 newest 512 authority transitions this relay could read, and this repository \
+                 names no project, so the search fell back to the channel it is bound to. \
+                 Searched 1 mission(s) — the newest 16 on that channel \
+                 whose founder is a founder of this repository — over one shared page of \
+                 the newest 512 team transactions on it. An older ruling can fall outside \
+                 both. No observed gate row names {HEAD_SHA} \
                  either, so the gate-row route is not open for it: that route wants every \
                  required gate published green on this exact commit, by the mission's own \
                  provider, over a clean worktree. Run each gate as its own command so the \

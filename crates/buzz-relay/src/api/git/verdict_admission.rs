@@ -3,8 +3,10 @@
 //!
 //! [`buzz_core::coding_session_verdict_admission`] holds the rule itself and
 //! has no I/O. This module supplies it with candidates: the bounded set of
-//! missions on the repository's bound channel whose founder is **a founder of
-//! the repository**, each folded from stored events.
+//! missions in the scope [`super::verdict_admission_scope`] resolves — the
+//! pusher's own seats first, then the project's session channels, then the
+//! repository's bound channel — whose founder is **a founder of the
+//! repository**, each folded from stored events.
 //!
 //! # Who founds a repository
 //!
@@ -19,14 +21,14 @@
 //!
 //! # Cost
 //!
-//! Two indexed queries, plus one authority lookup per mission that published
-//! anything: kind 44226 by `(community, channel, author)` — the newest
-//! [`VERDICT_ADMISSION_MAX_SESSIONS`] — and kind 44244 by
-//! `(community, channel)` — the newest [`VERDICT_ADMISSION_MAX_TRANSACTIONS`],
-//! split into missions in memory because 44244 is not addressable and its `d`
-//! tag is therefore not a queryable column. A SHA→session projection would
-//! make this O(1); it costs a migration whose numbering collides with
-//! `vanilla/main`, so the cap is disclosed in the refusal instead.
+//! One indexed query per kind over the resolved scope, plus the scope lookup
+//! itself (one page of kind 44228 on `(community, kind, created_at)`), plus one
+//! authority lookup per mission that published anything. Each page is split
+//! into missions in memory because none of these kinds is addressable and the
+//! umbrella label is therefore not a queryable column. A SHA→session
+//! projection would make this O(1); it costs a migration whose numbering
+//! collides with `vanilla/main`, so the caps are disclosed in the refusal
+//! instead.
 //!
 //! **Nothing here runs unless a matching `buzz-protect` rule sets
 //! `require-verdict`.** An ordinary push issues exactly the queries it issued
@@ -49,10 +51,10 @@ use buzz_core::coding_session_team_transaction::CodingSessionTeamActiveSeat;
 use buzz_core::coding_session_verdict_admission::{
     evaluate_verdict_admission, fold_candidate_records, mission_gate_policy, mission_observations,
     mission_provider_pubkeys, mission_transactions, verdict_admission_fold_context,
-    VerdictAdmission, VerdictAdmissionCandidate, VerdictAdmissionQuery, VerdictAdmissionRefusal,
-    VERDICT_ADMISSION_MAX_OBSERVATIONS, VERDICT_ADMISSION_MAX_POLICIES,
-    VERDICT_ADMISSION_MAX_PROVIDER_METADATA, VERDICT_ADMISSION_MAX_SESSIONS,
-    VERDICT_ADMISSION_MAX_TRANSACTIONS,
+    VerdictAdmission, VerdictAdmissionCandidate, VerdictAdmissionCandidateSource,
+    VerdictAdmissionQuery, VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_OBSERVATIONS,
+    VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
+    VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
 use buzz_core::git_perms::{Denial, EffectiveRules, ProtectionRule, RefUpdate};
 use buzz_core::kind::{
@@ -62,6 +64,7 @@ use buzz_core::kind::{
 use buzz_core::repository_founders::RepositoryFounders;
 use buzz_db::EventQuery;
 
+use crate::api::git::verdict_admission_scope::resolve_candidate_scope;
 use crate::state::AppState;
 
 /// Header carrying the structured denial list a machine reader wants.
@@ -92,10 +95,13 @@ pub enum VerdictSearch {
 pub struct VerdictSearchRequest<'a> {
     /// Server-resolved tenant.
     pub community: buzz_core::CommunityId,
-    /// The repository's resolved `buzz-channel` binding. `None` is not an
-    /// error but a refusal, because a rule that cannot read a verdict must
-    /// not silently pass one.
+    /// The repository's resolved `buzz-channel` binding. Since finding 56
+    /// this is the **last** place the gate looks, not the first.
     pub channel_id: Option<Uuid>,
+    /// The repository announcement's `["project", …]` back-reference, already
+    /// normalized by [`buzz_core::kind::repo_project_ref`]. The fallback
+    /// lookup for a pusher who holds no seat.
+    pub project_ref: Option<&'a str>,
     /// Every founder of the repository, resolved once per push by
     /// [`resolve_repository_founders`].
     pub founders: &'a RepositoryFounders,
@@ -180,7 +186,10 @@ pub async fn resolve_repository_founders(
     Ok(founders.with_roster_roles(rows))
 }
 
-/// Search the bound channel's missions for a ruling that admits `new_oid`.
+/// Search for a ruling that admits `new_oid`, in the scope the pusher earns.
+///
+/// The scope itself is [`super::verdict_admission_scope`]'s job (finding 56);
+/// this function turns it into candidates and hands them to the pure rule.
 pub async fn search_verdict_admission(
     state: &Arc<AppState>,
     request: &VerdictSearchRequest<'_>,
@@ -188,10 +197,10 @@ pub async fn search_verdict_admission(
     let VerdictSearchRequest {
         community,
         channel_id,
+        project_ref,
         founders,
-        ref_name,
-        new_oid,
         pusher_pubkey,
+        ..
     } = *request;
     // Arm (A), before anything is fetched. A founder's push is admitted with
     // no verdict, so reading missions for one would be three queries for an
@@ -207,9 +216,15 @@ pub async fn search_verdict_admission(
         return VerdictSearch::Admitted;
     }
 
-    let Some(channel_id) = channel_id else {
-        return VerdictSearch::Refused(VerdictAdmissionRefusal::RepositoryUnbound);
-    };
+    let scope =
+        match resolve_candidate_scope(state, community, channel_id, project_ref, pusher_pubkey)
+            .await
+        {
+            Ok(Some(scope)) => scope,
+            // Nowhere to look at all: no seat, no project, no binding.
+            Ok(None) => return VerdictSearch::Refused(VerdictAdmissionRefusal::RepositoryUnbound),
+            Err(()) => return VerdictSearch::Unavailable,
+        };
 
     // Every founder's geneses, not only the signer's. A founder whose hex the
     // announcement mangled is already absent from the set (counted, not
@@ -223,16 +238,24 @@ pub async fn search_verdict_admission(
         .filter(|bytes| bytes.len() == 32)
         .collect();
     if founder_bytes.is_empty() {
-        return decide(&[], ref_name, new_oid, pusher_pubkey, founders);
+        return decide(&[], request, &scope.source);
     }
 
-    let genesis_query = EventQuery {
+    // The author filter is what keeps the seats lookup from becoming a way
+    // in: a mission that seats the pusher but was founded by somebody who
+    // founds no part of *this* repository is not a candidate at all.
+    let mut genesis_query = EventQuery {
         kinds: Some(vec![KIND_CODING_SESSION_GENESIS as i32]),
         authors: Some(founder_bytes.clone()),
-        channel_id: Some(channel_id),
+        channel_ids: Some(scope.channels.clone()),
+        channel_ids_include_global: false,
         limit: Some(VERDICT_ADMISSION_MAX_SESSIONS as i64),
         ..EventQuery::for_community(community)
     };
+    if !scope.genesis_ids.is_empty() {
+        // The seats lookup already knows exactly which geneses to read.
+        genesis_query.ids = Some(scope.genesis_ids.clone());
+    }
     let geneses = match state.db.query_events(&genesis_query).await {
         Ok(events) => events,
         Err(error) => {
@@ -241,104 +264,82 @@ pub async fn search_verdict_admission(
         }
     };
     if geneses.is_empty() {
-        return decide(&[], ref_name, new_oid, pusher_pubkey, founders);
+        return decide(&[], request, &scope.source);
     }
 
-    // One page of team transactions for the whole channel, not one per
-    // session: kind 44244 is not addressable, so its `d` tag is not a
-    // queryable column and the session split happens in memory. The bound is
-    // therefore "the newest VERDICT_ADMISSION_MAX_TRANSACTIONS on this
-    // channel", which the refusal's mission count discloses.
-    let transaction_query = EventQuery {
-        kinds: Some(vec![KIND_CODING_SESSION_TEAM_TRANSACTION as i32]),
-        channel_id: Some(channel_id),
-        limit: Some(VERDICT_ADMISSION_MAX_TRANSACTIONS as i64),
-        ..EventQuery::for_community(community)
-    };
-    let transactions = match state.db.query_events(&transaction_query).await {
-        Ok(events) => events,
-        Err(error) => {
-            tracing::error!(error = %error, "verdict admission: transaction query failed");
-            return VerdictSearch::Unavailable;
-        }
-    };
-
-    let page: Vec<nostr::Event> = transactions
-        .into_iter()
-        .map(|stored| stored.event)
-        .collect();
-
-    // Arm (B)'s three inputs, each one page across the bound channel. They are
-    // read here rather than per mission for the same reason the transactions
-    // are: none of these kinds is addressable, so the umbrella label is not a
-    // queryable column and the split into missions happens in memory. Every
-    // bound fails in the refusing direction — fewer rows, fewer providers, an
-    // unread policy — so a page that missed something can only deny a push it
-    // might have admitted.
-    let observations = match state
-        .db
-        .query_events(&EventQuery {
-            kinds: Some(vec![KIND_CODING_SESSION_OBSERVATION as i32]),
-            channel_id: Some(channel_id),
-            limit: Some(VERDICT_ADMISSION_MAX_OBSERVATIONS as i64),
-            ..EventQuery::for_community(community)
-        })
-        .await
+    // One page per kind across the whole scope, not one per session: none of
+    // these kinds is addressable, so the umbrella label is not a queryable
+    // column and the split into missions happens in memory. The bound is
+    // therefore "the newest N on these channels", which the refusal's own
+    // sentence discloses. Every bound fails in the refusing direction — fewer
+    // rows, fewer providers, an unread policy — so a page that missed
+    // something can only deny a push it might have admitted.
+    let transactions = match read_page(
+        state,
+        community,
+        &scope.channels,
+        KIND_CODING_SESSION_TEAM_TRANSACTION,
+        None,
+        VERDICT_ADMISSION_MAX_TRANSACTIONS,
+    )
+    .await
     {
-        Ok(events) => events
-            .into_iter()
-            .map(|stored| stored.event)
-            .collect::<Vec<nostr::Event>>(),
-        Err(error) => {
-            tracing::error!(error = %error, "verdict admission: observation query failed");
-            return VerdictSearch::Unavailable;
-        }
+        Ok(events) => events,
+        Err(()) => return VerdictSearch::Unavailable,
+    };
+    let observations = match read_page(
+        state,
+        community,
+        &scope.channels,
+        KIND_CODING_SESSION_OBSERVATION,
+        None,
+        VERDICT_ADMISSION_MAX_OBSERVATIONS,
+    )
+    .await
+    {
+        Ok(events) => events,
+        Err(()) => return VerdictSearch::Unavailable,
     };
     // Founder-signed only: `gates.verifierRequired` decides whether a seat may
     // land its own work, so a policy anyone else signed must not be able to
     // turn the requirement off — or on.
-    let policies = match state
-        .db
-        .query_events(&EventQuery {
-            kinds: Some(vec![KIND_CODING_SESSION_POLICY as i32]),
-            authors: Some(founder_bytes),
-            channel_id: Some(channel_id),
-            limit: Some(VERDICT_ADMISSION_MAX_POLICIES as i64),
-            ..EventQuery::for_community(community)
-        })
-        .await
+    let policies = match read_page(
+        state,
+        community,
+        &scope.channels,
+        KIND_CODING_SESSION_POLICY,
+        Some(founder_bytes),
+        VERDICT_ADMISSION_MAX_POLICIES,
+    )
+    .await
     {
-        Ok(events) => events
-            .into_iter()
-            .map(|stored| stored.event)
-            .collect::<Vec<nostr::Event>>(),
-        Err(error) => {
-            tracing::error!(error = %error, "verdict admission: policy query failed");
-            return VerdictSearch::Unavailable;
-        }
+        Ok(events) => events,
+        Err(()) => return VerdictSearch::Unavailable,
     };
-    let session_metadata = match state
-        .db
-        .query_events(&EventQuery {
-            kinds: Some(vec![KIND_CODING_SESSION_METADATA as i32]),
-            channel_id: Some(channel_id),
-            limit: Some(VERDICT_ADMISSION_MAX_PROVIDER_METADATA as i64),
-            ..EventQuery::for_community(community)
-        })
-        .await
+    let session_metadata = match read_page(
+        state,
+        community,
+        &scope.channels,
+        KIND_CODING_SESSION_METADATA,
+        None,
+        VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
+    )
+    .await
     {
-        Ok(events) => events
-            .into_iter()
-            .map(|stored| stored.event)
-            .collect::<Vec<nostr::Event>>(),
-        Err(error) => {
-            tracing::error!(error = %error, "verdict admission: provider metadata query failed");
-            return VerdictSearch::Unavailable;
-        }
+        Ok(events) => events,
+        Err(()) => return VerdictSearch::Unavailable,
     };
 
     let mut candidates: Vec<VerdictAdmissionCandidate> = Vec::with_capacity(geneses.len());
     for stored in &geneses {
+        // A mission is read in the channel it was founded in, and nowhere
+        // else. With a multi-channel scope the pages carry other missions'
+        // events, and a 44244 published somewhere else naming this umbrella's
+        // refs is not this mission speaking.
+        let Some(mission_channel) = stored.channel_id else {
+            continue;
+        };
+        let page = in_channel(&transactions, mission_channel);
         let genesis_ref = stored.event.id.to_hex();
         // The mission's founder is whoever signed **this** genesis, not the
         // announcement's signer. Before finding 33 the query was scoped to one
@@ -359,10 +360,14 @@ pub async fn search_verdict_admission(
         // gate rows. The observations are therefore resolved before the
         // early-out below, not after it.
         let observed_gates = fold_coding_session_observations(
-            &mission_observations(&payload.session_ref, &genesis_ref, &observations)
-                .into_iter()
-                .cloned()
-                .collect::<Vec<nostr::Event>>(),
+            &mission_observations(
+                &payload.session_ref,
+                &genesis_ref,
+                &in_channel(&observations, mission_channel),
+            )
+            .into_iter()
+            .cloned()
+            .collect::<Vec<nostr::Event>>(),
             &CodingSessionObservationFoldContext {
                 session_ref: payload.session_ref.clone(),
                 genesis_ref: genesis_ref.clone(),
@@ -372,12 +377,16 @@ pub async fn search_verdict_admission(
                 known_assignment_refs: Vec::new(),
                 provider_pubkeys: Some(mission_provider_pubkeys(
                     &payload.session_ref,
-                    &session_metadata,
+                    &in_channel(&session_metadata, mission_channel),
                 )),
             },
         )
         .gates;
-        let gate_policy = mission_gate_policy(&payload.session_ref, &genesis_ref, &policies);
+        let gate_policy = mission_gate_policy(
+            &payload.session_ref,
+            &genesis_ref,
+            &in_channel(&policies, mission_channel),
+        );
 
         if events.is_empty() && observed_gates.is_empty() {
             // Nothing published under this genesis: it admits nothing, and
@@ -396,7 +405,12 @@ pub async fn search_verdict_admission(
 
         let seats = match state
             .db
-            .session_authority_for_hire(community, channel_id, &genesis_ref, &payload.session_ref)
+            .session_authority_for_hire(
+                community,
+                mission_channel,
+                &genesis_ref,
+                &payload.session_ref,
+            )
             .await
         {
             Ok(Some(authority)) => authority
@@ -417,7 +431,7 @@ pub async fn search_verdict_admission(
         };
 
         let context = verdict_admission_fold_context(
-            channel_id.to_string(),
+            mission_channel.to_string(),
             payload.session_ref.clone(),
             genesis_ref.clone(),
             founder_pubkey.clone(),
@@ -448,7 +462,42 @@ pub async fn search_verdict_admission(
         });
     }
 
-    decide(&candidates, ref_name, new_oid, pusher_pubkey, founders)
+    decide(&candidates, request, &scope.source)
+}
+
+/// One bounded page of `kind` across every channel in the scope.
+///
+/// `Err(())` is a storage failure; the caller fails the push closed.
+async fn read_page(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    channels: &[Uuid],
+    kind: u32,
+    authors: Option<Vec<Vec<u8>>>,
+    limit: usize,
+) -> Result<Vec<buzz_core::StoredEvent>, ()> {
+    state
+        .db
+        .query_events(&EventQuery {
+            kinds: Some(vec![kind as i32]),
+            authors,
+            channel_ids: Some(channels.to_vec()),
+            channel_ids_include_global: false,
+            limit: Some(limit as i64),
+            ..EventQuery::for_community(community)
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, kind, "verdict admission: page query failed");
+        })
+}
+
+/// The events of one page that were published in `channel`.
+fn in_channel(page: &[buzz_core::StoredEvent], channel: Uuid) -> Vec<nostr::Event> {
+    page.iter()
+        .filter(|stored| stored.channel_id == Some(channel))
+        .map(|stored| stored.event.clone())
+        .collect()
 }
 
 /// Run the pure rule over the resolved candidates.
@@ -457,16 +506,15 @@ pub async fn search_verdict_admission(
 /// admission is the case where it finds a ruling that says so.
 fn decide(
     candidates: &[VerdictAdmissionCandidate],
-    ref_name: &str,
-    new_oid: &str,
-    pusher_pubkey: &str,
-    founders: &RepositoryFounders,
+    request: &VerdictSearchRequest<'_>,
+    source: &VerdictAdmissionCandidateSource,
 ) -> VerdictSearch {
     let query = VerdictAdmissionQuery {
-        ref_name,
-        new_oid,
-        pusher_pubkey,
-        repo_founders: founders.pubkeys(),
+        ref_name: request.ref_name,
+        new_oid: request.new_oid,
+        pusher_pubkey: request.pusher_pubkey,
+        repo_founders: request.founders.pubkeys(),
+        candidate_source: source,
     };
     match evaluate_verdict_admission(candidates, &query) {
         VerdictAdmission::Admitted(_) => VerdictSearch::Admitted,
@@ -519,3 +567,10 @@ mod observed_tests;
 #[cfg(test)]
 #[path = "verdict_admission_verified_tests.rs"]
 mod verified_tests;
+
+/// Finding 56 — *where* the gate looks for a mission — in its own file, because
+/// every case here binds the repository somewhere other than the mission's
+/// channel and reuses [`observed_tests`]'s watched-mission fixture.
+#[cfg(test)]
+#[path = "verdict_admission_lookup_tests.rs"]
+mod lookup_tests;

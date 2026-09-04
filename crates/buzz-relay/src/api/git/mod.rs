@@ -6,6 +6,7 @@
 //! - `hook` — Pre-receive hook script and injection
 //! - `policy` — Internal policy endpoint (HMAC-authenticated callback from hook)
 //! - `verdict_admission` — the `require-verdict` search and the denial body
+//! - `verdict_admission_scope` — *where* that search looks (finding 56)
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -35,6 +36,7 @@ pub mod protection_layers;
 pub mod store;
 pub mod transport;
 pub mod verdict_admission;
+pub mod verdict_admission_scope;
 
 pub use transport::git_router;
 

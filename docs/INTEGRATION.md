@@ -685,11 +685,20 @@ What this changes for a person landing work:
 
 - `git push` prints the relay's reason, one line per ref, e.g.
   `remote: refs/heads/main: require-verdict is set and no mission verdict names
-  this commit: no approved report names <sha>. Searched 2 mission(s) — the
-  newest 16 on this channel whose founder is a founder of this repository — over
-  one shared
-  page of the newest 512 team transactions on that channel. An older ruling can
-  fall outside both.`
+  this commit: no approved report names <sha>. Searched 2 mission(s) — the 2
+  newest mission(s) that seat 3d3b7169, the key this push authenticated as, of
+  the newest 4 seats it holds — over one shared page of the newest 512 team
+  transactions on their channels. An older ruling can fall outside both.`
+- **The refusal names the lookup that ran** (finding 56, 2026-09-03). A seat's
+  push is judged by the mission that seated it, not by the channel the
+  repository is bound to — every coding session lives in its own channel, so
+  the old bound-channel-only search could never find a real mission and said
+  "Searched 0 mission(s)" for one that was sitting there, green. A pusher
+  holding no seat falls back to the project's session channels, and a
+  repository in no project falls back to its bound channel; the sentence says
+  which of the three it was, and says "no seat **in the newest 512 authority
+  transitions this relay could read**" rather than claiming a seat does not
+  exist.
 - A report that names only a branch does not admit anything — ask for a report
   carrying `headSha`.
 - An approval is scoped to the branch its report named. A commit approved for
@@ -713,7 +722,12 @@ bee git check --push --ref refs/heads/main --sha <oid>
 The answer is printed under `Prediction, not a promise.` — the CLI runs the
 relay's own admission rule over the fold it can read, but the hook decides at
 push time on the commit actually sent, and the CLI reads the authority chain
-off the wire rather than from the relay's accepted projection.
+off the wire rather than from the relay's accepted projection. It runs the same
+three-step lookup and prints the sentence naming which step found the missions
+(`prediction.lookup` in `--format compact`); its project step reads the
+relay-signed kind:39000 channel metadata where the relay reads the `channels`
+table, so it can miss a channel and predict a refusal that does not come — the
+safe direction for a prediction.
 
 ### Seats inherit at most Member on a guarded ref
 

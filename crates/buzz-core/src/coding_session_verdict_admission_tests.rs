@@ -260,6 +260,9 @@ fn query_on<'a>(
         new_oid,
         pusher_pubkey: pusher,
         repo_founders: founders,
+        // These cases are about the rule, not the lookup; the source only
+        // shapes the sentence one refusal renders.
+        candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
     }
 }
 
@@ -349,13 +352,15 @@ fn the_run_three_fixture_refuses_with_the_frozen_copy() {
         refusal.reason(),
         format!(
             "require-verdict is set and no mission verdict names this commit: no approved report \
-             names {HEAD_SHA}. Searched 1 mission(s) — the newest 16 on this channel whose \
-             founder is a founder of this repository — over one shared page of the newest 512 \
-             team transactions on that channel. An older ruling can fall outside both. No \
-             observed gate row names {HEAD_SHA} either, so the gate-row route is not open for \
-             it: that route wants every required gate published green on this exact commit, by \
-             the mission's own provider, over a clean worktree. Run each gate as its own \
-             command so the host can record it."
+             names {HEAD_SHA}. This key holds no seat in the newest 512 authority transitions \
+             this relay could read, and this repository names no project, so the search fell \
+             back to the channel it is bound to. Searched 1 mission(s) — the \
+             newest 16 on that channel whose founder is a founder of this repository — over one \
+             shared page of the newest 512 team transactions on it. An older ruling can fall \
+             outside both. No observed gate row names {HEAD_SHA} either, so the gate-row route \
+             is not open for it: that route wants every required gate published green on this \
+             exact commit, by the mission's own provider, over a clean worktree. Run each gate \
+             as its own command so the host can record it."
         ),
         "both caps are named in words, not just implied by the mission count (fix round 1, F4)"
     );
@@ -580,8 +585,46 @@ fn an_approval_no_verifier_cleared_does_not_admit_a_seat_push() {
 fn an_unbound_repository_says_so_rather_than_searching() {
     assert_eq!(
         VerdictAdmissionRefusal::RepositoryUnbound.reason(),
-        "require-verdict is set and this repository is bound to no channel, so no mission verdict \
-         can be read here. Remove the rule, or bind the repository to the mission's channel."
+        "require-verdict is set and there is nowhere to look for a mission verdict: this key \
+         holds no seat in the newest 512 authority transitions this relay could read, this \
+         repository names no project, and it is bound to no channel. Remove the rule, put the \
+         repository in a project, or bind it to the mission's channel.",
+        "finding 56: three lookups can be empty, and the copy names all three"
+    );
+}
+
+/// The refusal that reports a *count* also reports what was counted. Before
+/// finding 56 the sentence said "the newest 16 on this channel" whatever the
+/// caller had actually searched, which is how live run 4's seat read a
+/// truthful count of a pointless search.
+#[test]
+fn the_refusal_names_the_lookup_that_found_the_missions() {
+    let seat = VerdictAdmissionCandidateSource::SeatOfMission {
+        seat: "0123abcd".to_owned(),
+        seats: 2,
+    };
+    let clause = seat.searched_clause(2);
+    assert!(clause.starts_with("Searched 2 mission(s)"), "{clause}");
+    assert!(clause.contains("that seat 0123abcd"), "{clause}");
+
+    let project = VerdictAdmissionCandidateSource::ProjectSessions {
+        project: "30621:ab:beekeeper".to_owned(),
+        channels: 3,
+    };
+    let clause = project.searched_clause(5);
+    assert!(clause.contains("This key holds no seat"), "{clause}");
+    assert!(
+        clause.contains("3 session channel(s) of 30621:ab:beekeeper"),
+        "{clause}"
+    );
+
+    let mission = VerdictAdmissionCandidateSource::ThisMission {
+        session_ref: "aa58f6a2".to_owned(),
+    };
+    assert_eq!(
+        mission.searched_clause(1),
+        "Searched only mission aa58f6a2, the one this screen is showing.",
+        "a screen looking at one mission must not imply it swept anything wider"
     );
 }
 

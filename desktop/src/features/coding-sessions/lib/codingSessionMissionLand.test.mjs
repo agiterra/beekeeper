@@ -146,14 +146,20 @@ test("L8.2: an approval scoped to another branch is refused, with §1j's own wor
   );
 });
 
-test("L8.2: §1j's no-verdict string discloses both caps", () => {
+test("L28: the no-verdict string says which search produced it", () => {
   const model = codingSessionMissionLandModel({
     result: decodeCodingSessionLandResult(FIXTURE.refused),
     resolveWho,
   });
-  // REVIEW-L8 F2: fix round 1 shipped this sentence without either bound.
-  assert.match(model.sentence, /the newest 16 on this channel/);
-  assert.match(model.sentence, /newest 512 team transactions/);
+  // REVIEW-L8 F2 pinned the relay's two caps here, because this sentence used
+  // to claim the relay's own search. Finding 56: this screen evaluates the ONE
+  // mission it is showing, and the relay sweeps the pusher's seats, the
+  // project's session channels or the bound channel. Repeating the relay's
+  // bounds here would disclose a search this adapter never ran.
+  assert.match(
+    model.sentence,
+    /Searched only mission [0-9a-f-]+, the one this screen is showing\./,
+  );
   assert.match(model.sentence, /An older ruling can fall outside both\./);
 });
 

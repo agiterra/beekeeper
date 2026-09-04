@@ -245,6 +245,10 @@ fn query<'a>(pusher: &'a str, founders: &'a [String]) -> VerdictAdmissionQuery<'
         new_oid: HEAD_SHA,
         pusher_pubkey: pusher,
         repo_founders: founders,
+        // These cases are about arm (C)'s evidence, not about where the
+        // missions were found; the bound channel is the lookup every other
+        // arm's fixtures use (L28).
+        candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
     }
 }
 

@@ -886,6 +886,35 @@ pub async fn get_accessible_channel_ids(
         .collect()
 }
 
+/// The session (transport) channels of one project, newest first.
+///
+/// Finding 56's fallback lookup: a coding session lives in its own transport
+/// channel, so a repository's missions are spread across the channels of the
+/// project it back-references rather than sitting on the one channel the
+/// repository is bound to. `limit` is the caller's disclosed bound; deleted
+/// channels are excluded, and a coordinate no project claims returns an empty
+/// list rather than an error — an unknown project has no sessions.
+pub async fn project_session_channel_ids(
+    pool: &PgPool,
+    community_id: CommunityId,
+    project_ref: &str,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM channels \
+         WHERE community_id = $1 AND project_ref = $2 AND channel_type = 'transport' \
+           AND deleted_at IS NULL \
+         ORDER BY created_at DESC \
+         LIMIT $3",
+    )
+    .bind(community_id.as_uuid())
+    .bind(project_ref)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
 /// Lists channels in a community, optionally filtered by visibility string.
 pub async fn list_channels(
     pool: &PgPool,

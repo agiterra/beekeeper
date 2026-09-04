@@ -42,8 +42,8 @@ use buzz_core_pkg::coding_session_observation::{
 };
 use buzz_core_pkg::coding_session_verdict_admission::{
     evaluate_verdict_admission, VerdictAdmission, VerdictAdmissionCandidate,
-    VerdictAdmissionEvidence, VerdictAdmissionGatePolicy, VerdictAdmissionQuery,
-    VerdictAdmissionRecord, VerdictAdmissionRefusal,
+    VerdictAdmissionCandidateSource, VerdictAdmissionEvidence, VerdictAdmissionGatePolicy,
+    VerdictAdmissionQuery, VerdictAdmissionRecord, VerdictAdmissionRefusal,
 };
 use buzz_core_pkg::git_perms::EffectiveRules;
 use buzz_core_pkg::repository_founders::RepositoryFounders;
@@ -536,11 +536,19 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
                 required_gates: policy.required_gates.clone(),
             }),
     };
+    // This screen is looking at one mission and asks about that one only. The
+    // relay's push gate sweeps the pusher's seats, the project's session
+    // channels or the bound channel (finding 56); saying so here would claim a
+    // search this adapter never performs.
+    let source = VerdictAdmissionCandidateSource::ThisMission {
+        session_ref: request.session_ref.clone(),
+    };
     let query = VerdictAdmissionQuery {
         ref_name: &request.ref_name,
         new_oid: newest_head_sha(&records).unwrap_or_default(),
         pusher_pubkey: &request.pusher_pubkey,
         repo_founders: founders.pubkeys(),
+        candidate_source: &source,
     };
     match evaluate_verdict_admission(std::slice::from_ref(&candidate), &query) {
         // Arm (A). The commit named in the command is the mission's newest

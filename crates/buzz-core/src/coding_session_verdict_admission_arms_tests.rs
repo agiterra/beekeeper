@@ -230,6 +230,9 @@ fn query<'a>(
         new_oid,
         pusher_pubkey: pusher,
         repo_founders: founders,
+        // These cases are about the rule, not the lookup; the source only
+        // shapes the sentence one refusal renders.
+        candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
     }
 }
 

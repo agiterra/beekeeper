@@ -133,11 +133,19 @@ use nostr::Event;
 // Arm (B) lives in a sibling file so no file here passes 1,000 lines.
 #[path = "coding_session_verdict_admission_observed.rs"]
 mod observed;
+
+// Finding 56's candidate source, split out for the same reason.
+#[path = "coding_session_verdict_admission_source.rs"]
+mod source;
 use observed::{evaluate_observed_gates, gates_observed_green, ObservedGateVerdict};
 pub use observed::{
     mission_gate_policy, mission_observations, mission_provider_pubkeys,
     VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES, VERDICT_ADMISSION_MAX_OBSERVATIONS,
     VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
+};
+pub use source::{
+    VerdictAdmissionCandidateSource, VERDICT_ADMISSION_BOUND_CHANNEL,
+    VERDICT_ADMISSION_MAX_PROJECT_CHANNELS, VERDICT_ADMISSION_MAX_PUSHER_SEATS,
 };
 
 use crate::coding_session_authority_transition::{
@@ -166,12 +174,19 @@ pub const VERDICT_ADMISSION_MAX_SESSIONS: usize = 16;
 /// and the split into missions happens after the read.
 pub const VERDICT_ADMISSION_MAX_TRANSACTIONS: usize = 512;
 
-/// Newest kind 44228 authority transitions one prediction may read.
+/// Newest kind 44228 authority transitions one push or prediction may read.
 ///
-/// The relay never reads these — it uses its own accepted projection. This
-/// bound exists so the CLI's prediction has no unbounded read in a rule whose
-/// whole thesis is disclosed bounds; past it, a prediction can only get
-/// *fewer* seats and so predict a refusal it might not get.
+/// Two readers, one bound. The **seat list** of a mission is still the relay's
+/// own accepted projection; only the CLI folds the chain off the wire for
+/// that, and past this bound a prediction can only get *fewer* seats and so
+/// predict a refusal it might not get.
+///
+/// Since finding 56 both sides also read this page to answer a different
+/// question — *which missions seat the pusher* — because that is the
+/// authoritative record of a seat and no coding-session kind carries the
+/// grantee in an indexed `p` tag. Past the bound a seat is simply not found,
+/// and the search falls back to the project or the bound channel: fewer
+/// candidates, never more.
 pub const VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS: usize = 512;
 
 /// The exact update being judged.
@@ -196,6 +211,12 @@ pub struct VerdictAdmissionQuery<'a> {
     /// An empty slice admits nothing: no candidate's founder is in it, and no
     /// pusher is either.
     pub repo_founders: &'a [String],
+    /// Which lookup produced the candidates (finding 56).
+    ///
+    /// Borrowed so this type stays `Copy`. It changes no decision — the rule
+    /// judges the candidates it was handed either way — and exists so the one
+    /// refusal that reports a *count* also reports what was counted.
+    pub candidate_source: &'a VerdictAdmissionCandidateSource,
 }
 
 /// One canonical transaction, decoded once for the search.
@@ -321,6 +342,8 @@ pub enum VerdictAdmissionRefusal {
         new_oid: String,
         /// How many missions were searched — the bound, disclosed.
         searched_sessions: usize,
+        /// Which lookup found them (finding 56), so the count means something.
+        source: VerdictAdmissionCandidateSource,
     },
     /// An approved report exists for this work but names only a branch.
     ApprovedReportNamesBranchOnly,
@@ -797,6 +820,7 @@ pub fn evaluate_verdict_admission(
     VerdictAdmission::Refused(VerdictAdmissionRefusal::NoApprovingVerdict {
         new_oid: query.new_oid.to_ascii_lowercase(),
         searched_sessions: candidates.len(),
+        source: query.candidate_source.clone(),
     })
 }
 

@@ -928,8 +928,8 @@ being ruled on. All of:
    a canonical `report` in the same fold whose **`headSha`** equals the pushed
    object id, compared whole and case-folded. A report naming a 64-hex id names
    a different object and does not admit.
-2. That session's `kind:44226` genesis is on the channel the repository's
-   `buzz-channel` tag binds, and the genesis signer is **a founder of the
+2. That session's `kind:44226` genesis is **in scope** for this push (see
+   *Where the relay looks* below) and its signer is **a founder of the
    repository** (see *Founders* below).
 3. A **second, independent record clears the same report**: a canonical
    `verdict` of subtype **`refutation`** whose `decision` is `not-refuted`,
@@ -1016,10 +1016,10 @@ Refusals this arm gives, each naming the commit:
 | under (C), any of the above | the same sentence, behind `verifier <hex> cleared <sha>, and a landing also needs every required gate observed green on it: ` |
 
 **Bounds, disclosed.** The relay reads one page of the newest 512 `kind:44246`
-events on the bound channel, the newest 64 founder-signed `kind:44245` policies,
-and the newest 256 `kind:44223` session metadata events (whose signers are the
-provider identities). Every bound fails in the refusing direction: a page that
-missed something can only deny a push it might have admitted.
+events across the channels in scope, the newest 64 founder-signed `kind:44245`
+policies, and the newest 256 `kind:44223` session metadata events (whose signers
+are the provider identities). Every bound fails in the refusing direction: a
+page that missed something can only deny a push it might have admitted.
 
 Deleting a gated ref is refused for everyone under arms (B) and (C): the zero
 oid is named by no report and by no gate row. A founder deletes it under arm
@@ -1057,14 +1057,53 @@ a founder set says this out loud. Making a rule change founder-signed needs a
 separate event kind that the gate reads alongside the announcement; it is not
 in this appendix.
 
-**Bounds.** A relay resolves candidates from the newest 16 geneses on the bound
-channel authored by **any founder**, over **one shared page** of the newest
-512 team transactions on that channel — not 512 per mission — and stops at the
-first mission that admits. The refusal names both caps in words, because a
-mission whose records fell outside the page was *named* but not *read*, and on
-a busy channel that is the realistic case rather than a contrived one. Falling
-outside either bound can only produce a refusal, never an admission. There is
-no SHA→session index; adding one costs a migration.
+### Where the relay looks
+
+*Revised 2026-09-03 (lane L28, finding 56).* Until then the relay searched the
+one channel the repository's `buzz-channel` tag binds. Every coding session
+lives in **its own** channel, so live run 4 refused a seat's push of a commit
+its own mission had watched three gates pass on, with a truthful count of a
+pointless search: *"Searched 0 mission(s) — the newest 16 on this channel"*.
+
+Candidates are discovered by **who is pushing**, in three steps, and the relay
+takes the first that yields anything:
+
+1. **The pusher's own seats.** The newest 512 `kind:44228` authority
+   transitions in the community, kept where `granteePubkey` is the pusher,
+   reduced to the newest **4** genesis references whose highest-`seq`
+   transition for that key is a `grant-seat` rather than a `revoke-seat`. Those
+   missions, and the channels they live in, are the scope. A relay MAY use its
+   own accepted seat projection instead; what it MUST NOT do is treat a
+   revoked seat as a seat.
+2. **The project's session channels.** For a pusher holding no seat: the
+   project the announcement's `["project", …]` back-reference names, and the
+   newest **32** transport channels that project owns.
+3. **The bound channel.** For a repository in no project: what the rule always
+   did.
+
+A repository with none of the three — no seated pusher, no project, no binding
+— refuses with `require-verdict is set and there is nowhere to look …`. The
+fallback sentences say *"this key holds no seat in the newest 512 authority
+transitions this relay could read"* rather than *"holds no seat"*: past that
+page a real seat is invisible, and the refusal must not assert what it could
+not see.
+
+The scope only chooses **where to read**. It grants nothing: a mission that
+seats the pusher but whose genesis signer is not a founder of *this* repository
+is not a candidate, so a seat cannot carry another repository's green rows in
+with it.
+
+**Bounds.** Within that scope a relay resolves candidates from the newest 16
+geneses authored by **any founder**, over **one shared page** of the newest 512
+team transactions across those channels — not 512 per mission — and stops at the
+first mission that admits. A mission is read in the channel its genesis was
+published in and nowhere else, so an event signed elsewhere naming its refs is
+not that mission speaking. The refusal names the lookup that ran **and** its
+caps in words, because a mission whose records fell outside the page was
+*named* but not *read*, and because a count of a search that never reached the
+reader's mission is worse than no count at all. Falling outside any bound can
+only produce a refusal, never an admission. There is no SHA→session index;
+adding one costs a migration.
 
 **Forward compatibility, stated plainly.** A relay that predates this rule
 parses `require-verdict` into its unknown-rule list and **ignores it** — the

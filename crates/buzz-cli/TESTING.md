@@ -2255,6 +2255,47 @@ Live checks, on a repository whose `refs/heads/main` carries `require-verdict`:
    exercised, since the difference is the kind that reads as a bug until it is
    read as a rule.
 
+### `bee git check --ref` says which lookup found the missions (batch 3, L28)
+
+Finding 56: a seat's push is judged by the mission that **seated it**, not by
+the channel the repository is bound to — every coding session lives in its own
+channel, which is why live run 4 refused a green commit with "Searched 0
+mission(s) — the newest 16 on this channel". Both the relay's refusal and the
+prediction now name the lookup that ran.
+
+```bash
+bee git check --ref refs/heads/main                    # a `Searched …` line
+bee --format compact git check --ref refs/heads/main   # `prediction.lookup`
+```
+
+Live checks, on a repository whose `refs/heads/main` carries `require-verdict`:
+
+1. **From a seat.** The line reads `Searched N mission(s) — the N newest
+   mission(s) that seat <8hex>, the key this push authenticated as, of the
+   newest 4 seats it holds — …`, and it must say this **even when the
+   repository is bound to a completely different channel**. That is the shape
+   the live run hit; if it still says "fell back to the channel it is bound
+   to", the seat lookup found nothing and the reason is worth chasing (a
+   revoked seat, or a 44228 outside the newest 512 in the community).
+2. **From a key holding no seat, on a repository in a project.** `This key
+   holds no seat, so the search fell back to the project this repository
+   names. Searched N mission(s) — the newest 16 on the M session channel(s) of
+   30621:… …`. The CLI reads those channels from the relay-signed kind:39000
+   metadata where the relay reads its `channels` table, so a channel whose
+   39000 was never emitted is invisible here — the prediction under-promises.
+3. **From a key holding no seat, on a repository in no project.** The old
+   sentence, now explicit that it is a fallback: `This key holds no seat and
+   this repository names no project, so the search fell back to the channel it
+   is bound to.`
+4. **A repository with none of the three.** `require-verdict is set and there
+   is nowhere to look for a mission verdict: this key holds no seat in the
+   newest 512 authority transitions this relay could read, this repository
+   names no project, and it is bound to no channel.`
+
+The Desktop Land control renders the same rule's sentence, and there it reads
+`Searched only mission <uuid>, the one this screen is showing.` — that adapter
+evaluates the mission on screen and must not claim the relay's wider sweep.
+
 The refusal an **arm (B)** would have answered does not exist: no gate-row
 record on the wire names a commit, so `bee git check --ref` has nothing to
 predict from. See NIP-GS's appendix, "The arm that is specified and not

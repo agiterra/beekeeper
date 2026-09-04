@@ -33,24 +33,24 @@ use crate::api::git::policy::tests::{body_string, policy_test_state, push_respon
 use crate::api::git::policy::HookRefUpdate;
 use crate::state::AppState;
 
-const HEAD_SHA: &str = "07c470be007c470be007c470be007c470be007c4";
+pub(super) const HEAD_SHA: &str = "07c470be007c470be007c470be007c470be007c4";
 const OTHER_SHA: &str = "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b";
 
 /// A mission with a genesis, a seated builder, and a provider identity — and
 /// deliberately **no** assignment, report or verdict of any kind. Arm (B) is
 /// the arm that needs none of them.
-struct Watched {
-    state: Arc<AppState>,
-    community: buzz_core::CommunityId,
-    channel_id: Uuid,
-    session_ref: String,
-    genesis_ref: String,
-    founder: Keys,
-    provider: Keys,
-    seat: Keys,
+pub(super) struct Watched {
+    pub(super) state: Arc<AppState>,
+    pub(super) community: buzz_core::CommunityId,
+    pub(super) channel_id: Uuid,
+    pub(super) session_ref: String,
+    pub(super) genesis_ref: String,
+    pub(super) founder: Keys,
+    pub(super) provider: Keys,
+    pub(super) seat: Keys,
 }
 
-async fn watched() -> Watched {
+pub(super) async fn watched() -> Watched {
     let state = policy_test_state().await;
     let host = format!("observed-{}.example", Uuid::new_v4().simple());
     let community = state
@@ -125,7 +125,7 @@ async fn watched() -> Watched {
 impl Watched {
     /// One kind 44223 metadata event, signed by the provider, naming this
     /// umbrella. The shape `mission_provider_pubkeys` reads.
-    async fn publish_provider_metadata(&self) {
+    pub(super) async fn publish_provider_metadata(&self) {
         // Built through the real struct rather than by hand: the decoder is an
         // exact-key contract, and a hand-written body that silently failed to
         // decode would leave this fixture's provider unrecognised — which is
@@ -176,7 +176,7 @@ impl Watched {
 
     /// Seat the pusher as a builder of this mission, and make it a channel
     /// member so the ordinary role check lets it reach the gate at all.
-    async fn grant_the_seat(&self) {
+    pub(super) async fn grant_the_seat(&self) {
         seat_of(&self.state, self.community, &self.seat, &self.founder).await;
         let payload =
             buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_grant_seat(
@@ -201,7 +201,7 @@ impl Watched {
     }
 
     /// Publish one kind 44246 gate observation.
-    async fn observe(
+    pub(super) async fn observe(
         &self,
         signer: &Keys,
         source: CodingSessionObservationSource,
@@ -263,16 +263,31 @@ impl Watched {
 
     /// The seat's own fast-forward of a `require-verdict` `main`.
     async fn seat_push(&self, new_oid: &str) -> (StatusCode, String) {
-        let response = push_response(
-            &self.state,
-            self.community,
-            &self.founder,
-            &format!("repo-{}", Uuid::new_v4().simple()),
+        self.seat_push_announced_as(
+            new_oid,
             vec![
                 Tag::parse(["buzz-channel", &self.channel_id.to_string()]).expect("binding"),
                 Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"])
                     .expect("protect"),
             ],
+        )
+        .await
+    }
+
+    /// The same push against an announcement the caller composes, so a sibling
+    /// module can bind the repository somewhere other than this mission's own
+    /// channel — the live shape finding 56 caught.
+    pub(super) async fn seat_push_announced_as(
+        &self,
+        new_oid: &str,
+        tags: Vec<Tag>,
+    ) -> (StatusCode, String) {
+        let response = push_response(
+            &self.state,
+            self.community,
+            &self.founder,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            tags,
             &self.seat.public_key().to_hex(),
             HookRefUpdate {
                 old_oid: "1".repeat(40),
@@ -299,7 +314,7 @@ fn green(gate: &str, head_sha: &str) -> CodingSessionObservationGateRow {
     }
 }
 
-fn default_green(head_sha: &str) -> Vec<CodingSessionObservationGateRow> {
+pub(super) fn default_green(head_sha: &str) -> Vec<CodingSessionObservationGateRow> {
     DEFAULT_REQUIRED_GATES
         .iter()
         .map(|gate| green(gate, head_sha))
