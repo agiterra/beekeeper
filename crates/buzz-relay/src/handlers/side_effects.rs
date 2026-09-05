@@ -650,11 +650,21 @@ pub async fn validate_standard_deletion_event(
         authorize_coding_session_deletion(tenant, state, &targets, &actor_bytes).await?;
 
     for target_event in &targets {
+        // Is this target part of the session that was just authorized? Both
+        // exemptions below hang off this one answer, and neither may hang off
+        // the kind alone.
+        let in_this_session = whole_session
+            .as_ref()
+            .is_some_and(|session| session_deletion_admits(&target_event.event, session));
+
         // Checked before authorship: being the founder is not permission to
         // stop being the founder, so this refusal must not be reachable by
-        // simply having signed the target. Skipped only when the deletion has
-        // already been authorized as a complete session delete.
-        if whole_session.is_none() {
+        // simply having signed the target. Skipped only for the events of the
+        // session actually being deleted — a genesis or a closure from
+        // *another* session is still a piecemeal deletion of that session,
+        // even inside an event that legitimately deletes this one, and even
+        // when the same person signed both.
+        if !in_this_session {
             refuse_permanent_identity_deletion(event_kind_u32(&target_event.event))?;
         }
 
@@ -673,20 +683,20 @@ pub async fn validate_standard_deletion_event(
         // targets its actor never authored. That is exactly what the
         // whole-session authorization above decided, and re-deciding it by
         // authorship here would make the feature unusable by design.
-        if let Some(session) = &whole_session {
-            if coding_session_scoped_kind(event_kind_u32(&target_event.event)) {
-                if session_deletion_admits(&target_event.event, session) {
-                    continue;
-                }
-                // Named a session event, but not one of *this* session's. Its
-                // own sentence rather than "must be event author", which would
-                // be a true statement about the wrong problem: the actor is
-                // authorized here, they have simply named somebody else's.
-                return Err(anyhow::anyhow!(
-                    "this deletion names a coding-session event that does not belong to the \
-                     session it deletes — a session delete reaches its own events only"
-                ));
-            }
+        if in_this_session {
+            continue;
+        }
+        if whole_session.is_some()
+            && coding_session_scoped_kind(event_kind_u32(&target_event.event))
+        {
+            // Named a session event, but not one of *this* session's. Its own
+            // sentence rather than "must be event author", which would be a
+            // true statement about the wrong problem: the actor is authorized
+            // here, they have simply named somebody else's.
+            return Err(anyhow::anyhow!(
+                "this deletion names a coding-session event that does not belong to the \
+                 session it deletes — a session delete reaches its own events only"
+            ));
         }
         return Err(anyhow::anyhow!("must be event author"));
     }

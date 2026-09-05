@@ -1061,3 +1061,41 @@ async fn the_providers_metadata_and_transcript_go_with_the_session() {
         .expect_err("without a session delete these are somebody else's events");
     assert_eq!(message, "must be event author");
 }
+
+/// Signing both sessions is not a way around the piecemeal refusal.
+///
+/// A founder deleting session A, naming session B's closure alongside it:
+/// the authorship check would happily pass it — they *did* sign it — and
+/// the result would be exactly what `refuse_permanent_identity_deletion`
+/// exists to prevent, a closure gone from a session that still exists. So
+/// the exemption from that refusal is scoped to the session being deleted,
+/// not to the deletion as a whole.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_session_delete_does_not_exempt_another_sessions_closure_from_the_piecemeal_rule() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let mine = f.session(&founder, 1).await;
+    // Same founder, so authorship alone would admit every one of its events.
+    let other = f.session(&founder, 2).await;
+
+    let mut ids = mine.whole_chain();
+    ids.push(other.closure_ids[0].clone());
+    let message = f
+        .verdict_events(&founder, &ids)
+        .await
+        .expect_err("another session's closure must not ride along");
+    assert!(
+        message.contains("cannot be deleted on their own"),
+        "the piecemeal refusal is what must fire, got {message:?}"
+    );
+
+    // And its genesis, which would strand every closure it still has.
+    let mut ids = mine.whole_chain();
+    ids.push(other.genesis_id.clone());
+    let message = f
+        .verdict_events(&founder, &ids)
+        .await
+        .expect_err("a second genesis must not ride along");
+    assert!(message.contains("one session at a time"), "got {message:?}");
+}

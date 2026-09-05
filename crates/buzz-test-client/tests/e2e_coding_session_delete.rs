@@ -112,7 +112,7 @@ fn target(session_id: &str) -> CodingSessionTarget {
 /// authorship-only rule. Six targets in one event is also five more than the
 /// gate this test exists for used to allow.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires running relay"]
 async fn a_founder_deletes_a_whole_session_live() {
     let url = relay_url();
     let founder = Keys::generate();
@@ -233,7 +233,7 @@ async fn a_founder_deletes_a_whole_session_live() {
 /// genesis, so nothing authorized it as a session delete, so the single-target
 /// gate applies exactly as it did before.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires running relay"]
 async fn an_ordinary_deletion_still_names_one_target_live() {
     let url = relay_url();
     let author = Keys::generate();
