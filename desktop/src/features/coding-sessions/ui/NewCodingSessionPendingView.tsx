@@ -32,6 +32,7 @@ export function NewCodingSessionPendingView({
   publishError,
   retryExact,
   seatLabel,
+  seatPackRef = null,
   seatPackStaged,
   signedSeat,
   stalled,
@@ -56,6 +57,8 @@ export function NewCodingSessionPendingView({
   seatLabel: string | null;
   /** Three-valued: `null` is "nobody asked", which is not `false`. */
   seatPackStaged: boolean | null;
+  /** The repository commit that pack came from, when one vouched for it. */
+  seatPackRef?: NonNullable<PendingScreenProps["seat"]>["packRef"];
   /** The seat the *signed* create carries — never the form's current state. */
   signedSeat: { actor: string; role: string } | null;
   stalled: boolean;
@@ -90,6 +93,7 @@ export function NewCodingSessionPendingView({
                 actorLabel: seatLabel,
                 role: signedSeat.role,
                 packStaged: seatPackStaged,
+                packRef: seatPackRef,
               }
             : null
         }

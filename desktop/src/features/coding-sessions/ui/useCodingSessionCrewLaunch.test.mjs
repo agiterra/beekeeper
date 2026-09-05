@@ -78,7 +78,14 @@ const RUNTIME_TARGET = {
  *
  * `goalFailure`, when given, is the message the goal publish answers with.
  */
-async function harness({ goalFailure = null } = {}) {
+async function harness({
+  goalFailure = null,
+  launchInput = LAUNCH_INPUT,
+  /** The project's 30624 the host's reader answers with, by project ref. */
+  packSources = new Map(),
+} = {}) {
+  /** Every custody and pack-source call this host made, in order. */
+  const staging = [];
   const { act, renderHook } = await import("@testing-library/react");
   const { useCodingSessionCrewLaunch } = await import(
     "./useCodingSessionCrewLaunch.ts"
@@ -120,8 +127,26 @@ async function harness({ goalFailure = null } = {}) {
     recordWorkdirUse: async () => {},
     seatDeps: {
       ensureMembership: async () => {},
-      stageSeat: async () => ({ packStaged: true }),
+      stageSeat: async (input) => {
+        staging.push(["stageSeat", input]);
+        return {
+          packStaged: true,
+          packRef:
+            input.packSource === null
+              ? null
+              : {
+                  repo: input.packSource.repo,
+                  sha: "dd935f43".padEnd(40, "0"),
+                  role: input.role,
+                  path: `${input.packSource.path}/${input.role}`,
+                },
+        };
+      },
       clearSeat: async () => {},
+      fetchPackSource: async (projectRef) => {
+        staging.push(["fetchPackSource", projectRef]);
+        return packSources.get(projectRef) ?? null;
+      },
     },
     signer,
     publisher,
@@ -143,7 +168,7 @@ async function harness({ goalFailure = null } = {}) {
 
   let result = null;
   await act(async () => {
-    result = await mounted.result.current.launch(LAUNCH_INPUT, RUNTIME_TARGET);
+    result = await mounted.result.current.launch(launchInput, RUNTIME_TARGET);
   });
 
   return {
@@ -151,6 +176,7 @@ async function harness({ goalFailure = null } = {}) {
     of: (kind) => published.filter((event) => event.kind === kind),
     published,
     result,
+    staging,
     teardown: () => mounted.unmount(),
   };
 }
@@ -205,5 +231,64 @@ test("F1: an unpublished goal always carries a reason, never a blank one", async
   assert.equal(host.result.goal.published, false);
   assert.equal(host.result.goal.reason, "the goal publish did not go out");
   assert.notEqual(host.result.goal.reason.trim(), "");
+  host.teardown();
+});
+
+/**
+ * Finding 84: a team launch staged the lead from this computer's copy of the
+ * role pack. The project names a packs repository (kind:30624), the launch
+ * dialog's preview read it, and the launch's staging call never did.
+ */
+test("finding 84: a team launch stages the lead from the project's pack source", async () => {
+  const OWNER = "3d3b7169".padEnd(64, "0");
+  const PROJECT_REF = `30621:${OWNER}:beekeeper`;
+  const PACK_SOURCE = {
+    repo: `30617:${OWNER}:agiterra-packs`,
+    gitRef: "refs/heads/main",
+    sha: null,
+    path: "personas/roles",
+  };
+  const host = await harness({
+    launchInput: { ...LAUNCH_INPUT, projectRef: PROJECT_REF },
+    packSources: new Map([[PROJECT_REF, PACK_SOURCE]]),
+  });
+
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(
+    host.staging.map(([name]) => name),
+    ["fetchPackSource", "stageSeat"],
+  );
+  assert.deepEqual(host.staging[0], ["fetchPackSource", PROJECT_REF]);
+  const [, staged] = host.staging[1];
+  assert.equal(staged.agentPubkey, LEAD.actor);
+  assert.equal(staged.role, "lead");
+  assert.deepEqual(staged.packSource, PACK_SOURCE);
+
+  // The step list names where the pack came from, on the seat's own row.
+  const leadStep = host.result.steps.find((step) =>
+    step.id.startsWith("create:"),
+  );
+  assert.ok(leadStep, `no seat step in ${JSON.stringify(host.result.steps)}`);
+  assert.equal(
+    leadStep.detail,
+    `staged from 30617:3d3b7169…:agiterra-packs@dd935f43`,
+  );
+  host.teardown();
+});
+
+test("finding 84: a launch with no project stages with no source, as before", async () => {
+  const host = await harness();
+
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(
+    host.staging.map(([name]) => name),
+    ["stageSeat"],
+  );
+  assert.equal(host.staging[0][1].packSource, null);
+  const leadStep = host.result.steps.find((step) =>
+    step.id.startsWith("create:"),
+  );
+  assert.ok(leadStep, "the lead's seat step exists");
+  assert.equal(leadStep.detail, null);
   host.teardown();
 });

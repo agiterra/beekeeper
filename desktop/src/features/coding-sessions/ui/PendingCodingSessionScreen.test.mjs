@@ -199,3 +199,43 @@ test("an unseated create renders exactly as it did before", () => {
   assert.doesNotMatch(markup, /data-testid="coding-session-header-seat"/);
   assert.doesNotMatch(markup, /Seated:/);
 });
+
+/**
+ * Finding 84: a seat staged from the project's packs repository names the
+ * repository and commit on the screen the create was made from, so "seated"
+ * cannot quietly mean "seated with this computer's copy".
+ */
+test("a seat staged from the project's repository says which commit", () => {
+  const markup = render({
+    transaction: makeTransaction({ actor: "d".repeat(64), role: "builder" }),
+    seat: {
+      actorLabel: "Ada",
+      role: "builder",
+      packStaged: true,
+      packRef: {
+        repo: `30617:${"3d3b7169".padEnd(64, "0")}:agiterra-packs`,
+        sha: "dd935f43".padEnd(40, "0"),
+        role: "builder",
+        path: "personas/roles/builder",
+      },
+    },
+  });
+  assert.match(
+    markup,
+    /Seated: Ada · Builder — staged from 30617:3d3b7169…:agiterra-packs@dd935f43/,
+  );
+});
+
+test("a seat whose staging named no repository prints no provenance", () => {
+  const markup = render({
+    transaction: makeTransaction({ actor: "d".repeat(64), role: "builder" }),
+    seat: {
+      actorLabel: "Ada",
+      role: "builder",
+      packStaged: true,
+      packRef: null,
+    },
+  });
+  assert.match(markup, /Seated: Ada · Builder</);
+  assert.doesNotMatch(markup, /staged from/);
+});

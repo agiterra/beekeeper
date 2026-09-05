@@ -113,6 +113,30 @@ export function codingSessionSeatPackLine(packRef: PackRef | null): string {
 }
 
 /**
+ * Where a just-staged seat's pack came from, for the screen the create was
+ * made on (finding 84): `staged from 30617:3d3b7169…:agiterra-packs@dd935f43`
+ * names the project's repository and commit; the shipped fallback is named
+ * as such; `null` when staging reported no repository — a pack this computer
+ * alone vouches for, a packless seat, or a backend that did not say — because
+ * a provenance line with nothing behind it would be the guess this exists to
+ * replace.
+ */
+export function codingSessionSeatStagedFromLine(
+  packRef: PackRef | null,
+): string | null {
+  if (packRef === null) return null;
+  if (isShippedPackRef(packRef)) {
+    return `staged from shipped defaults v${packRef.sha}`;
+  }
+  const [kind, owner, ...id] = packRef.repo.split(":");
+  const repo =
+    kind === "30617" && owner !== undefined && owner.length === 64
+      ? `${kind}:${owner.slice(0, 8)}…:${id.join(":")}`
+      : packRef.repo;
+  return `staged from ${repo}@${packRef.sha.slice(0, 8)}`;
+}
+
+/**
  * The one generation shape {@link derivePackRefs} needs — deliberately not
  * `CodingSessionCatalogRecord` itself, so this selector stays testable with
  * plain fixtures, matching `SeatBeeGenerationSource`'s own reasoning.

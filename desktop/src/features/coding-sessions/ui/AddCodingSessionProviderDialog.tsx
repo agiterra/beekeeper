@@ -4,6 +4,7 @@ import { CircleAlert, LoaderCircle, UserPlus } from "lucide-react";
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { formatCodingSessionExecutionLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import { codingSessionSeatStagedFromLine } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import { useCodingSessionSeatDraft } from "@/features/coding-sessions/lib/useCodingSessionSeatDraft";
 import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
@@ -164,6 +165,7 @@ export function AddCodingSessionProviderForm({
     lifecycleIsLoading,
     retryExact,
     seat: signedSeat,
+    seatPackRef,
     seatPackStaged,
     startFresh,
     submit,
@@ -463,7 +465,12 @@ export function AddCodingSessionProviderForm({
           {seatPackStaged === false
             ? `Seated: ${stagedSeatLabel} — seated with no role skills: this ` +
               `computer has no role pack behind this persona.`
-            : `Seated: ${stagedSeatLabel}`}
+            : (() => {
+                const stagedFrom = codingSessionSeatStagedFromLine(seatPackRef);
+                return stagedFrom === null
+                  ? `Seated: ${stagedSeatLabel}`
+                  : `Seated: ${stagedSeatLabel} — ${stagedFrom}`;
+              })()}
         </p>
       ) : null}
 

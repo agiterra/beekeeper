@@ -35,6 +35,10 @@
  * this function rather than of the hook that calls it.
  */
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
+import {
+  codingSessionSeatStagedFromLine,
+  type PackRef,
+} from "./codingSessionPackRef";
 import { buildCodingSessionTranscriptGenerationId } from "./codingSessionTranscriptPresentation";
 import {
   checkCodingSessionCrewFamilies,
@@ -186,6 +190,11 @@ export type CodingSessionCrewLaunchDeps = {
      * `undefined` from a caller that does not stage seats at all.
      */
     packStaged?: boolean;
+    /**
+     * The repository commit that pack was staged from, when one vouched for
+     * it (finding 84). `null` or `undefined` prints no provenance.
+     */
+    packRef?: PackRef | null;
   }>;
   /**
    * Wait for the provider's 44224 receipt for that exact command. This is the
@@ -785,8 +794,11 @@ export async function launchCodingSessionCrew(
   for (const [index, seat] of created.entries()) {
     const id = codingSessionCrewLaunchSeatStepId(index);
     mark(id, "running");
+    // Said on the step once the seat is confirmed: which repository commit
+    // the pack came from, when one vouched for it (finding 84).
+    let stagedFrom: string | null = null;
     try {
-      const { commandId, packStaged } = await deps.publishSeatCreate({
+      const { commandId, packStaged, packRef } = await deps.publishSeatCreate({
         seat,
         index,
         channelId: launchChannelId,
@@ -797,6 +809,7 @@ export async function launchCodingSessionCrew(
         workdir: leadWorkdir,
       });
       if (packStaged === false) seatsWithoutRolePack.push(seat.actorLabel);
+      stagedFrom = codingSessionSeatStagedFromLine(packRef ?? null);
       // The gate. The next seat's create is not signed until this receipt
       // lands, so a provider that refuses seat two never sees seat three.
       const target = await deps.awaitSeatReceipt({
@@ -821,7 +834,7 @@ export async function launchCodingSessionCrew(
       "done",
       seatsWithoutRolePack.includes(seat.actorLabel)
         ? "seated with no role skills — this computer has no role pack behind this persona"
-        : null,
+        : stagedFrom,
     );
   }
 

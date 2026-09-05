@@ -16,10 +16,12 @@ import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/
 import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
 import { ensureActorChannelMembership } from "@/features/coding-sessions/lib/actorSeatChannelMembership";
 import { publishSeatedCodingSessionCreate } from "@/features/coding-sessions/lib/codingSessionSeatedCreate";
+import { fetchCodingSessionSeatPackSource } from "@/features/coding-sessions/lib/codingSessionSeatPackSource";
 import type { CodingSessionActorSeat } from "@/features/coding-sessions/lib/codingSessionActorSeat";
 import { ensureCodingSessionCreateOperatorGrants } from "@/features/coding-sessions/lib/codingSessionOperatorGrant";
 import {
   clearCodingSessionActorSeat,
+  type CodingSessionSeatPackRef,
   stageCodingSessionActorSeat,
 } from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
 import { useCodingSessionWorktreeRecorder } from "./useCodingSessionWorktreeRecorder";
@@ -124,6 +126,10 @@ export function useNewCodingSessionCreate({
   const [seatPackStaged, setSeatPackStaged] = React.useState<boolean | null>(
     null,
   );
+  // The repository commit the seat's pack was staged from, when one can
+  // vouch for it (finding 84). Null is "no repository named", never a guess.
+  const [seatPackRef, setSeatPackRef] =
+    React.useState<CodingSessionSeatPackRef | null>(null);
   const [hostPhase, setHostPhase] =
     React.useState<NewCodingSessionHostPhase>("idle");
   const [providerStatus, setProviderStatus] =
@@ -154,6 +160,7 @@ export function useNewCodingSessionCreate({
     setIsPublishing(false);
     setHostPhase("idle");
     setSeatPackStaged(null);
+    setSeatPackRef(null);
   }, [scopeId]);
 
   React.useEffect(() => {
@@ -410,6 +417,9 @@ export function useNewCodingSessionCreate({
       }) => ensureActorChannelMembership(seatInput),
       stageSeat: stageCodingSessionActorSeat,
       clearSeat: clearCodingSessionActorSeat,
+      // The project's 30624, read the way the launch dialog's preview reads
+      // it, so the seat is staged from the repository the dialog named.
+      fetchPackSource: fetchCodingSessionSeatPackSource,
     }),
     [],
   );
@@ -544,10 +554,17 @@ export function useNewCodingSessionCreate({
           commandId,
           seat: input.seat ?? null,
           seatLabel: input.seatLabel ?? null,
+          // The same coordinate the create is signed with: the seat's pack is
+          // looked up on the project the session is filed under.
+          projectRef: input.projectRef ?? null,
           deps: seatDeps,
           // What custody actually wrote, so the pending screen can say a seat
-          // is running without its role pack instead of implying it has one.
-          onSeatStaged: ({ packStaged }) => setSeatPackStaged(packStaged),
+          // is running without its role pack instead of implying it has one —
+          // and, when a repository vouches for the pack, which commit.
+          onSeatStaged: ({ packStaged, packRef }) => {
+            setSeatPackStaged(packStaged);
+            setSeatPackRef(packRef);
+          },
           publish: async () => {
             setHostPhase("publishing");
             // Genesis-publishing wrapper (founding publishes a genesis;
@@ -640,6 +657,7 @@ export function useNewCodingSessionCreate({
     setDurabilityError(null);
     setHostPhase("idle");
     setSeatPackStaged(null);
+    setSeatPackRef(null);
     settledCommandRef.current = null;
   }, [scoped, scopeId]);
 
@@ -671,6 +689,8 @@ export function useNewCodingSessionCreate({
     seat,
     /** What staging wrote for {@link seat}, or null when it never ran here. */
     seatPackStaged,
+    /** The repository commit that pack came from, when one vouched for it. */
+    seatPackRef,
     stalled,
     startFresh,
     submit,

@@ -633,3 +633,164 @@ fn the_leads_staged_seat_names_the_shipped_pack_its_installed_copy_is() {
     assert_eq!(origin, SeatPackOrigin::Installed);
     assert_eq!(pack_ref, None);
 }
+
+// ── Finding 84: the project's pack source crosses the command boundary ────
+//
+// `stage_coding_session_actor_seat` takes the webview's decoded kind:30624
+// as `pack_source: Option<ProjectPackSourceInput>` and hands it to
+// `plan_seat_pack`; the plan's `pack_ref` then rides the custody entry
+// `stage_actor_seat` files and the `StagedActorSeat` the webview is told.
+// These pin both halves without an `AppHandle`: the wire shape the TS sends
+// (`codingSessionActorSeatCustody.ts`, `packSource: { repo, gitRef, sha,
+// path }`) and the entry-from-plan step the command runs.
+
+#[test]
+fn the_webviews_pack_source_reaches_the_planner_as_the_cache_reads_it() {
+    // Exactly what `stageCodingSessionActorSeat` sends for a project that
+    // follows a branch: `ref` renamed to `gitRef`, `sha`/`path` explicit nulls.
+    let json = serde_json::json!({
+        "repo": format!("30617:{PUBKEY}:agiterra-packs"),
+        "gitRef": "refs/heads/main",
+        "sha": null,
+        "path": null,
+    });
+    let input: Option<ProjectPackSourceInput> =
+        serde_json::from_value(json).expect("the TS shape deserializes");
+    let source: packs_cache::ProjectPackSource = input.expect("present").into();
+    assert_eq!(source.repo, format!("30617:{PUBKEY}:agiterra-packs"));
+    assert_eq!(source.git_ref.as_deref(), Some("refs/heads/main"));
+    assert_eq!(source.sha, None);
+    assert_eq!(
+        source.path,
+        packs_cache::DEFAULT_PACK_PATH,
+        "a null path is the default, not an empty string"
+    );
+
+    // A pinned source, with an explicit path, rides verbatim.
+    let pinned: ProjectPackSourceInput = serde_json::from_value(serde_json::json!({
+        "repo": format!("30617:{PUBKEY}:agiterra-packs"),
+        "gitRef": null,
+        "sha": "a".repeat(40),
+        "path": "packs",
+    }))
+    .expect("pinned");
+    let pinned: packs_cache::ProjectPackSource = pinned.into();
+    assert_eq!(pinned.git_ref, None);
+    assert_eq!(pinned.sha.as_deref(), Some("a".repeat(40).as_str()));
+    assert_eq!(pinned.path, "packs");
+
+    // No 30624 on the project: the webview sends `null`, the planner gets
+    // `None`, and the local ladder answers — today's behaviour.
+    let none: Option<ProjectPackSourceInput> =
+        serde_json::from_value(serde_json::Value::Null).expect("null is None");
+    assert!(none.is_none());
+}
+
+#[test]
+fn a_planned_project_pack_is_what_stage_actor_seat_files_and_the_webview_is_told() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = role_pack(tmp.path(), "builder");
+    let mut record = agent_record(None, None);
+    record.pubkey = PUBKEY.into();
+    record.private_key_nsec = "nsec1secret".into();
+    let pack_ref = packs_cache::PackRef {
+        repo: format!("30617:{PUBKEY}:agiterra-packs"),
+        sha: "dd935f43".repeat(5),
+        role: "builder".into(),
+        path: "personas/roles/builder".into(),
+    };
+    let plan = SeatPackPreview {
+        pack_staged: true,
+        origin: SeatPackOrigin::Project,
+        role: Some("builder".into()),
+        pack_dir: Some(dir.to_string_lossy().into_owned()),
+        persona_id: Some("builder".into()),
+        pack_ref: Some(pack_ref.clone()),
+        refusal: None,
+        reason: None,
+    };
+
+    let entry = seat_entry_for_plan(&record, "wss://relay.example", plan).expect("entry");
+    let told = StagedActorSeat::of(&entry);
+    let mut file = ActorSeatsFile::default();
+    stage_actor_seat(&mut file, "csl-84", entry).expect("stage");
+
+    // What the provider will read off the custody file…
+    let filed = file
+        .pending
+        .get("csl-84")
+        .expect("filed under the commandId");
+    assert_eq!(filed.pack_dir.as_deref(), Some(dir.as_path()));
+    assert_eq!(filed.pack_ref.as_ref(), Some(&pack_ref));
+    // …is what the webview is told, in the camelCase it reads
+    // (`StagedCodingSessionActorSeat.packRef`), so the screen names the same
+    // commit the seat will actually run.
+    assert!(told.pack_staged);
+    let json = serde_json::to_value(&told).expect("serialize");
+    assert_eq!(
+        json.pointer("/packRef/repo").and_then(|v| v.as_str()),
+        Some(pack_ref.repo.as_str()),
+        "{json}"
+    );
+    assert_eq!(
+        json.pointer("/packRef/sha").and_then(|v| v.as_str()),
+        Some(pack_ref.sha.as_str())
+    );
+    assert_eq!(
+        json.pointer("/packRef/path").and_then(|v| v.as_str()),
+        Some("personas/roles/builder")
+    );
+}
+
+#[test]
+fn a_plan_that_refuses_stages_nothing_and_says_why() {
+    let mut record = agent_record(None, None);
+    record.pubkey = PUBKEY.into();
+    record.private_key_nsec = "nsec1secret".into();
+    let plan = SeatPackPreview {
+        pack_staged: false,
+        origin: SeatPackOrigin::None,
+        role: Some("builder".into()),
+        pack_dir: None,
+        persona_id: None,
+        pack_ref: None,
+        refusal: Some(packs_cache::HIRE_PACK_UNAVAILABLE.to_string()),
+        reason: Some("no builder directory at that commit".into()),
+    };
+    let error = seat_entry_for_plan(&record, "wss://relay.example", plan)
+        .expect_err("a refused plan is not an entry");
+    assert!(
+        error.starts_with(packs_cache::HIRE_PACK_UNAVAILABLE),
+        "{error}"
+    );
+    assert!(
+        error.ends_with("(no builder directory at that commit)"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_local_plan_is_told_with_no_pack_ref() {
+    // The installed/shipped rungs answer with no repository to vouch for the
+    // pack; the webview is told `packStaged` alone and must not invent one.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = role_pack(tmp.path(), "builder");
+    let mut record = agent_record(None, None);
+    record.pubkey = PUBKEY.into();
+    record.private_key_nsec = "nsec1secret".into();
+    let plan = SeatPackPreview {
+        pack_staged: true,
+        origin: SeatPackOrigin::Installed,
+        role: Some("builder".into()),
+        pack_dir: Some(dir.to_string_lossy().into_owned()),
+        persona_id: Some("builder".into()),
+        pack_ref: None,
+        refusal: None,
+        reason: None,
+    };
+    let entry = seat_entry_for_plan(&record, "wss://relay.example", plan).expect("entry");
+    let told = StagedActorSeat::of(&entry);
+    assert!(told.pack_staged);
+    let json = serde_json::to_value(&told).expect("serialize");
+    assert!(json.get("packRef").is_none(), "{json}");
+}

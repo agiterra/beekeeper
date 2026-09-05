@@ -752,41 +752,63 @@ pub async fn stage_coding_session_actor_seat(
                 .filter(|checkout| !checkout.is_empty())
                 .map(Path::new),
         );
-        if let Some(refusal) = plan.refusal {
-            tracing::warn!(
-                agent = %pubkey,
-                role = role.as_deref().unwrap_or("<none>"),
-                reason = plan.reason.as_deref().unwrap_or("<none>"),
-                "refusing to seat an agent without the pack its project promised"
-            );
-            return Err(match plan.reason {
-                Some(reason) => format!("{refusal} ({reason})"),
-                None => refusal,
-            });
-        }
-        build_actor_seat_entry(
-            &record.pubkey,
-            &record.private_key_nsec,
-            record.auth_tag.as_deref(),
-            &relay_url,
-            record
-                .display_name
-                .as_deref()
-                .or(Some(record.name.as_str())),
-            plan.pack_dir
-                .map(PathBuf::from)
-                .zip(plan.persona_id.clone()),
-            plan.pack_ref,
-        )?
+        seat_entry_for_plan(record, &relay_url, plan)?
     };
-    let staged = StagedActorSeat {
-        pack_staged: entry.pack_dir.is_some(),
-        pack_ref: entry.pack_ref.clone(),
-    };
+    let staged = StagedActorSeat::of(&entry);
     let mut file = read_actor_seats(&path)?;
     stage_actor_seat(&mut file, &command_id, entry)?;
     write_actor_seats(&path, &file)?;
     Ok(staged)
+}
+
+impl StagedActorSeat {
+    /// What the webview is told about `entry`: the same `packRef` the
+    /// provider will read off the custody file, never a second opinion.
+    pub(crate) fn of(entry: &ActorSeatEntry) -> Self {
+        Self {
+            pack_staged: entry.pack_dir.is_some(),
+            pack_ref: entry.pack_ref.clone(),
+        }
+    }
+}
+
+/// Turn one seat plan into the custody entry [`stage_actor_seat`] files, or
+/// the refusal the plan carries.
+///
+/// This is the boundary between "what this computer decided to stage"
+/// ([`plan_seat_pack`], project source first) and "what the provider will
+/// read": the plan's `pack_dir`/`persona_id` become the entry's pack and its
+/// `pack_ref` rides the entry verbatim, so a seat staged from the project's
+/// repository is stamped with that repository's commit and nothing else.
+fn seat_entry_for_plan(
+    record: &crate::managed_agents::types::ManagedAgentRecord,
+    relay_url: &str,
+    plan: SeatPackPreview,
+) -> Result<ActorSeatEntry, String> {
+    if let Some(refusal) = plan.refusal {
+        tracing::warn!(
+            agent = %record.pubkey,
+            role = plan.role.as_deref().unwrap_or("<none>"),
+            reason = plan.reason.as_deref().unwrap_or("<none>"),
+            "refusing to seat an agent without the pack its project promised"
+        );
+        return Err(match plan.reason {
+            Some(reason) => format!("{refusal} ({reason})"),
+            None => refusal,
+        });
+    }
+    build_actor_seat_entry(
+        &record.pubkey,
+        &record.private_key_nsec,
+        record.auth_tag.as_deref(),
+        relay_url,
+        record
+            .display_name
+            .as_deref()
+            .or(Some(record.name.as_str())),
+        plan.pack_dir.map(PathBuf::from).zip(plan.persona_id),
+        plan.pack_ref,
+    )
 }
 
 /// Drop a staged seat. Succeeds when the provider already consumed it.

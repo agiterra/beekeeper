@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   codingSessionSeatPackLine,
+  codingSessionSeatStagedFromLine,
   derivePackRefs,
   isShippedPackRef,
   PACK_REF_SHIPPED_REPO,
@@ -165,4 +166,22 @@ test("every execution gets its own entry", () => {
   assert.equal(packs.size, 2);
   assert.deepEqual(packs.get("a"), REAL_PACK_REF);
   assert.equal(packs.get("b"), null);
+});
+
+test("codingSessionSeatStagedFromLine names the repository (owner shortened) and the commit", () => {
+  assert.equal(
+    codingSessionSeatStagedFromLine(REAL_PACK_REF),
+    `staged from 30617:${OWNER.slice(0, 8)}…:agiterra-packs@${SHA40.slice(0, 8)}`,
+  );
+});
+
+test("codingSessionSeatStagedFromLine names the shipped fallback as such", () => {
+  assert.equal(
+    codingSessionSeatStagedFromLine(SHIPPED_PACK_REF),
+    "staged from shipped defaults v0.1.0",
+  );
+});
+
+test("codingSessionSeatStagedFromLine is null for no packRef — no provenance is not a guess", () => {
+  assert.equal(codingSessionSeatStagedFromLine(null), null);
 });

@@ -864,3 +864,25 @@ test("F4: a launch that never founded anything names no orphan", async () => {
   assert.equal(result.failedStep, "genesis");
   assert.doesNotMatch(result.failureReason, /already founded/);
 });
+
+test("finding 84: a seat staged from the project's repository says so on its step", async () => {
+  const deps = recordingDeps({
+    publishSeatCreate: async ({ index }) => ({
+      commandId: `cmd-${index}`,
+      packStaged: true,
+      packRef: {
+        repo: `30617:${"3d3b7169".padEnd(64, "0")}:agiterra-packs`,
+        sha: "dd935f43".padEnd(40, "0"),
+        role: "lead",
+        path: "personas/roles/lead",
+      },
+    }),
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+  const byId = new Map(result.steps.map((entry) => [entry.id, entry]));
+  assert.equal(
+    byId.get(codingSessionCrewLaunchSeatStepId(0)).detail,
+    "staged from 30617:3d3b7169…:agiterra-packs@dd935f43",
+  );
+});

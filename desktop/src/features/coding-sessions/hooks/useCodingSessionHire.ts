@@ -9,8 +9,10 @@ import type { RelayEvent } from "@/shared/api/types";
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
   clearCodingSessionActorSeat,
+  type CodingSessionSeatPackRef,
   stageCodingSessionActorSeat,
 } from "../lib/codingSessionActorSeatCustody";
+import { fetchCodingSessionSeatPackSource } from "../lib/codingSessionSeatPackSource";
 import {
   createCodingSessionCommandId,
   publishCodingSessionCommand,
@@ -162,6 +164,14 @@ export type CodingSessionHireOutcome = {
    */
   wipShare?: CodingSessionHireWipShare;
   /**
+   * The repository commit the seat's role pack was staged from, when one
+   * vouched for it (finding 84) — `30617:<owner>:<id>` at a 40-hex sha, or
+   * the shipped-defaults marker. `null` when staging named no repository (a
+   * pack this computer alone vouches for, a packless seat, or an older
+   * backend). Absent on outcomes that seated nobody.
+   */
+  packRef?: CodingSessionSeatPackRef | null;
+  /**
    * The operator whose key signed the seated create — this computer's own.
    *
    * Carried so a renderer can *require* a prompt's `operatorPubkey` to equal
@@ -255,6 +265,9 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
     ensureMembership: ensureActorChannelMembership,
     stageSeat: stageCodingSessionActorSeat,
     clearSeat: clearCodingSessionActorSeat,
+    // The umbrella's project 30624, read the way the launch dialog's preview
+    // reads it, so a hired seat is staged from the project's repository.
+    fetchPackSource: fetchCodingSessionSeatPackSource,
   },
   signer: signRelayEvent,
   publisher: relayClient,
@@ -724,12 +737,21 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           request.eventId,
         );
       }
+      // What staging put on disk for this seat, for the outcome: null until
+      // the host answers, and still null when no repository vouched for it.
+      let stagedPackRef: CodingSessionSeatPackRef | null = null;
       await publishSeatedCodingSessionCreate({
         channelId: plan.channelId,
         commandId: plan.commandId,
         seat: { actor: plan.actor, role: plan.role },
         seatLabel: plan.seatLabel,
+        // The same coordinate the create is signed with (`projectRef` below),
+        // so the hired seat's pack is the project's own (finding 84).
+        projectRef: plan.projectRef,
         deps: hireDeps.seatDeps,
+        onSeatStaged: ({ packRef }) => {
+          stagedPackRef = packRef;
+        },
         publish: async () => {
           const event = await hireDeps.signer(
             buildCodingSessionCreateEvent({
@@ -813,6 +835,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         seatActor: plan.actor,
         hostPubkey: operator,
         wipShare,
+        packRef: stagedPackRef,
         // Compared with the hire's own signer here, because the relay does not
         // (POLICY.md §5). This is what the seat's first turn is attributed to.
         requesterLabel: codingSessionHireRequesterLabel({

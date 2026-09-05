@@ -180,6 +180,7 @@ export function NewCodingSessionForm({
     retryExact,
     refreshProviderState,
     seat: signedSeat,
+    seatPackRef,
     seatPackStaged,
     stalled,
     startFresh,
@@ -596,6 +597,7 @@ export function NewCodingSessionForm({
                 ?.name ?? null)
             : null
         }
+        seatPackRef={seatPackRef}
         seatPackStaged={seatPackStaged}
         signedSeat={signedSeat}
         stalled={stalled}

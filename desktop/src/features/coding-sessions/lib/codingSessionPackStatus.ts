@@ -19,14 +19,16 @@
  *
  * - **the pack source.** `plan_seat_pack` is given a decoded kind:30624; it
  *   does not query the relay. So this module reads the project's newest 30624
- *   ({@link fetchProjectPackSource}) and hands it over. A project with none
- *   gets `hasSource: false` and the ladder's local rungs.
+ *   ({@link fetchCodingSessionSeatPackSource} — the same reader the create
+ *   stages with, finding 84) and hands it over. A project with none gets
+ *   `hasSource: false` and the ladder's local rungs.
  * - **the seat.** The preview is about one managed agent seated at one role,
  *   so an `agentPubkey` is required. Without a chosen agent there is no seat
  *   to preview, and the form shows nothing rather than a generic answer.
  */
 import { invokeTauri } from "@/shared/api/tauri";
-import { fetchProjectPackSource } from "@/features/projects-container/lib/projectPackSource";
+
+import { fetchCodingSessionSeatPackSource } from "./codingSessionSeatPackSource";
 
 /** The host command this module calls. */
 export const CODING_SESSION_PACK_STATUS_COMMAND =
@@ -226,20 +228,12 @@ export async function codingSessionPackStatus(input: {
   /** The session checkout that may overlay the base pack, when one is known. */
   checkout?: string | null;
 }): Promise<CodingSessionPackStatusResult> {
-  const source = await fetchProjectPackSource(input.projectRef);
+  const packSource = await fetchCodingSessionSeatPackSource(input.projectRef);
   return decodeCodingSessionPackStatusResult(
     await invokeTauri(CODING_SESSION_PACK_STATUS_COMMAND, {
       agentPubkey: input.agentPubkey,
       role: input.role,
-      packSource:
-        source === null
-          ? null
-          : {
-              repo: source.repo,
-              gitRef: source.ref,
-              sha: source.sha,
-              path: source.path,
-            },
+      packSource,
       checkout: input.checkout ?? null,
     }),
     input.role,

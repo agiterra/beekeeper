@@ -4,6 +4,10 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
 import { formatCodingSessionExecutionLabel } from "../lib/codingSessionLabels";
+import {
+  codingSessionSeatStagedFromLine,
+  type PackRef,
+} from "../lib/codingSessionPackRef";
 import type { DurableCodingSessionCreateTransaction } from "../lib/durableCodingSessionCreate";
 import {
   canRetryNewCodingSessionCreate,
@@ -77,6 +81,12 @@ export function PendingCodingSessionScreen({
     actorLabel: string | null;
     role: string;
     packStaged: boolean | null;
+    /**
+     * The repository commit the pack was staged from, when one vouched for
+     * it (finding 84). Read-optional: absent or `null` prints no provenance,
+     * because a line with nothing behind it would be a guess.
+     */
+    packRef?: PackRef | null;
   } | null;
   /** Dismisses the surface this screen sits in — the create dialog, or the
    * pop-out window. Absent in the main window. */
@@ -191,7 +201,14 @@ export function PendingCodingSessionScreen({
               {seat.packStaged === false
                 ? `Seated: ${seatLabel} — seated with no role skills: this ` +
                   `computer has no role pack behind this persona.`
-                : `Seated: ${seatLabel}`}
+                : (() => {
+                    const stagedFrom = codingSessionSeatStagedFromLine(
+                      seat.packRef ?? null,
+                    );
+                    return stagedFrom === null
+                      ? `Seated: ${seatLabel}`
+                      : `Seated: ${seatLabel} — ${stagedFrom}`;
+                  })()}
             </p>
           ) : null}
 

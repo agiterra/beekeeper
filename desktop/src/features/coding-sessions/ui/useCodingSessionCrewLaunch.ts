@@ -10,8 +10,10 @@ import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWork
 import { ensureActorChannelMembership } from "../lib/actorSeatChannelMembership";
 import {
   clearCodingSessionActorSeat,
+  type CodingSessionSeatPackRef,
   stageCodingSessionActorSeat,
 } from "../lib/codingSessionActorSeatCustody";
+import { fetchCodingSessionSeatPackSource } from "../lib/codingSessionSeatPackSource";
 import {
   createCodingSessionCommandId,
   publishCodingSessionCommand,
@@ -120,6 +122,9 @@ export const DEFAULT_CODING_SESSION_CREW_LAUNCH_DEPS: CodingSessionCrewLaunchHos
       ensureMembership: ensureActorChannelMembership,
       stageSeat: stageCodingSessionActorSeat,
       clearSeat: clearCodingSessionActorSeat,
+      // The project's 30624, read the way the launch dialog's preview reads
+      // it, so the lead is staged from the repository the dialog named.
+      fetchPackSource: fetchCodingSessionSeatPackSource,
     },
     signer: signRelayEvent,
     publisher: relayClient,
@@ -334,6 +339,9 @@ export function useCodingSessionCrewLaunch(input: {
             // list can say a seat carries no role skills instead of implying
             // it does.
             let packStaged = false;
+            // The repository commit that pack came from, when one vouched for
+            // it (finding 84); null is "no repository named", never a guess.
+            let packRef: CodingSessionSeatPackRef | null = null;
             // The directory the launch settled on — the lead's worktree when
             // it cut one — not the checkout the form still holds.
             const seatWorkdir = workdir ?? current.workdir;
@@ -352,6 +360,9 @@ export function useCodingSessionCrewLaunch(input: {
               commandId,
               seat: { actor: seat.actor, role: seat.role },
               seatLabel: seat.actorLabel,
+              // The same coordinate the create is signed with, so the seat's
+              // pack source is the project's own (finding 84).
+              projectRef,
               deps: {
                 ensureMembership: deps.seatDeps.ensureMembership,
                 stageSeat: async (staging) => {
@@ -362,9 +373,11 @@ export function useCodingSessionCrewLaunch(input: {
                   // (`codingSessionActorSeatCustody.ts:37-48`), and
                   // `packStaged` was already initialised to false above.
                   packStaged = staged?.packStaged ?? false;
+                  packRef = staged?.packRef ?? null;
                   return staged;
                 },
                 clearSeat: deps.seatDeps.clearSeat,
+                fetchPackSource: deps.seatDeps.fetchPackSource,
               },
               publish: async () => {
                 const event = await deps.signer(
@@ -419,7 +432,7 @@ export function useCodingSessionCrewLaunch(input: {
                 });
               },
             });
-            return { commandId, packStaged };
+            return { commandId, packStaged, packRef };
           },
           awaitSeatReceipt: ({ channelId, commandId }) =>
             deps.awaitSeatReceipt({

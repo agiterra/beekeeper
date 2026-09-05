@@ -152,8 +152,15 @@ async function signedHire() {
  * answered with. The list is consumed per grant *call*, so a retry reads the
  * next entry.
  */
-async function harness({ grantAnswers = [] } = {}) {
+async function harness({
+  grantAnswers = [],
+  umbrellas = [UMBRELLA],
+  /** The project's 30624 the host's reader answers with, by project ref. */
+  packSources = new Map(),
+} = {}) {
   ipcCalls.length = 0;
+  /** Every custody and pack-source call this host made, in order. */
+  const staging = [];
   // A fake wall clock the injected sleep advances, so the grant's 60 s wait
   // budget is measured against the delays this test serves instantly.
   const { act, renderHook } = await import("@testing-library/react");
@@ -189,8 +196,26 @@ async function harness({ grantAnswers = [] } = {}) {
     stageCreateHint: async () => {},
     seatDeps: {
       ensureMembership: async () => {},
-      stageSeat: async () => ({ packStaged: true }),
+      stageSeat: async (input) => {
+        staging.push(["stageSeat", input]);
+        return {
+          packStaged: true,
+          packRef:
+            input.packSource === null
+              ? null
+              : {
+                  repo: input.packSource.repo,
+                  sha: "dd935f43".padEnd(40, "0"),
+                  role: input.role,
+                  path: `${input.packSource.path}/${input.role}`,
+                },
+        };
+      },
       clearSeat: async () => {},
+      fetchPackSource: async (projectRef) => {
+        staging.push(["fetchPackSource", projectRef]);
+        return packSources.get(projectRef) ?? null;
+      },
     },
     signer: async (input) =>
       finalizeEvent({ created_at: HIRE_CREATED_AT, ...input }, OPERATOR_SECRET),
@@ -244,7 +269,7 @@ async function harness({ grantAnswers = [] } = {}) {
         channelId === CHANNEL_ID && actorPubkey === LEAD_PUBKEY
           ? LEAD_TARGET
           : null,
-      umbrellas: [UMBRELLA],
+      umbrellas,
     }),
   );
 
@@ -270,6 +295,7 @@ async function harness({ grantAnswers = [] } = {}) {
     ipcCalls,
     outcomes: () => mounted.result.current.outcomes,
     published,
+    staging,
     teardown: () => mounted.unmount(),
     worktreeCalls,
   };
@@ -789,4 +815,80 @@ test("F2: a seat whose arming failed says so instead of going quiet", async () =
     tauriInternals.invoke = previous;
     console.warn = previousWarn;
   }
+});
+
+/**
+ * Finding 84: the hire staged every seat from this computer's copy of the
+ * role pack. The umbrella's project names a packs repository (kind:30624),
+ * the launch dialog's preview read it, and the hire's staging call never did
+ * — so the repository the project pointed at was never staged from.
+ */
+test("finding 84: a hire stages the seat from the umbrella's project pack source", async () => {
+  const OWNER = "3d3b7169".padEnd(64, "0");
+  const PROJECT_REF = `30621:${OWNER}:beekeeper`;
+  const PACK_SOURCE = {
+    repo: `30617:${OWNER}:agiterra-packs`,
+    gitRef: "refs/heads/main",
+    sha: null,
+    path: "personas/roles",
+  };
+  const host = await harness({
+    umbrellas: [
+      {
+        ...UMBRELLA,
+        executions: [
+          {
+            activeGeneration: {
+              agentRef: LEAD_PUBKEY,
+              role: "lead",
+              status: "running",
+              projectRef: PROJECT_REF,
+            },
+          },
+        ],
+      },
+    ],
+    packSources: new Map([[PROJECT_REF, PACK_SOURCE]]),
+  });
+  await host.deliver(await signedHire());
+
+  // The reader was asked about the umbrella's project, and what it answered
+  // is what the staging call was handed — the same 30624 the preview shows.
+  assert.deepEqual(
+    host.staging.map(([name]) => name),
+    ["fetchPackSource", "stageSeat"],
+  );
+  assert.deepEqual(host.staging[0], ["fetchPackSource", PROJECT_REF]);
+  const [, staged] = host.staging[1];
+  assert.equal(staged.agentPubkey, ADA_PUBKEY);
+  assert.equal(staged.role, "builder");
+  assert.deepEqual(staged.packSource, PACK_SOURCE);
+
+  // And the outcome says which repository commit the seat was staged from,
+  // so the seat card is not left to guess.
+  const [outcome] = host.outcomes();
+  assert.equal(outcome.state, "seated");
+  assert.deepEqual(outcome.packRef, {
+    repo: PACK_SOURCE.repo,
+    sha: "dd935f43".padEnd(40, "0"),
+    role: "builder",
+    path: "personas/roles/builder",
+  });
+  host.teardown();
+});
+
+test("finding 84: a hire into an umbrella with no project stages with no source, as before", async () => {
+  const host = await harness();
+  await host.deliver(await signedHire());
+
+  assert.deepEqual(
+    host.staging.map(([name]) => name),
+    ["stageSeat"],
+    "no project, so no 30624 to read",
+  );
+  assert.equal(host.staging[0][1].packSource, null);
+  const [outcome] = host.outcomes();
+  assert.equal(outcome.state, "seated");
+  assert.equal(outcome.packRef, null);
+  host.teardown();
 });
