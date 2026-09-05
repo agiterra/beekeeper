@@ -1,7 +1,8 @@
 //! Native adapter for the NIP-CSOB observation fold (kind 44246).
 //!
 //! Desktop never folds 44246 itself. This boundary verifies the signatures,
-//! hands the events to `buzz_core::fold_coding_session_observations`, and
+//! hands the events — the relay's page, newest first — to
+//! `buzz_core::fold_coding_session_observation_page` (finding 79), and
 //! flattens **its** answer — every collection, every disclosure, every
 //! truncation count — for a TypeScript decoder that only checks shape. There
 //! is no second implementation of newest-wins, of the `(author, source, gate)`
@@ -14,7 +15,7 @@
 //! and unknown ≠ empty is the distinction the whole kind exists to keep.
 
 use buzz_core_pkg::coding_session_observation::{
-    fold_coding_session_observations, CodingSessionObservationDisposition,
+    fold_coding_session_observation_page, CodingSessionObservationDisposition,
     CodingSessionObservationFold, CodingSessionObservationFoldContext,
     CodingSessionObservationGateOutcome, CodingSessionObservationPhase,
     CodingSessionObservationSource,
@@ -63,6 +64,11 @@ pub struct CodingSessionObservationFoldRequest {
     /// `declared` and listed under `misclaimedObserved`.
     pub provider_pubkeys: Option<Vec<String>>,
     /// Raw signed kind-44246 events, verified here before any is read.
+    ///
+    /// **In the relay's own page order: newest first**, exactly as a `REQ` or
+    /// `POST /query` returned them. The adapter folds them as a relay page,
+    /// which reverses before folding; a caller that reordered them oldest-first
+    /// would get the oldest statement per gate crowned instead (finding 79).
     pub events: Vec<serde_json::Value>,
 }
 
@@ -448,7 +454,13 @@ fn fold_adapter(
     // the difference between this kind and the governance fold, and the whole
     // reason observations are not 44244 subtypes. Nothing here pre-filters,
     // because a filtered event would vanish instead of being disclosed.
-    let fold = fold_coding_session_observations(
+    //
+    // `request.events` is the relay page as the relay returned it — newest
+    // first — so this is the page fold, which reverses before folding. Folded
+    // as read, the newest statement per `(author, gate)` lost to the oldest
+    // (finding 79); the same fold the relay's push gate runs, so Desktop and
+    // the gate cannot crown different rows.
+    let fold = fold_coding_session_observation_page(
         &events,
         &CodingSessionObservationFoldContext {
             session_ref: request.session_ref.clone(),

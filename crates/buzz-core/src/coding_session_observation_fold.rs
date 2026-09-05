@@ -21,6 +21,22 @@
 //! ordering, discovery or dedupe would let an author reorder somebody else's
 //! record by writing a number.
 //!
+//! **The contract, stated once: callers hand
+//! [`fold_coding_session_observations`] a relay page oldest-first; a page read
+//! newest-first must be reversed — finding 79.** The order comes from the
+//! relay's storage, never from a number in the event, and the relay's
+//! canonical page order is newest-first (`created_at DESC, id ASC`, the
+//! `query_events` `ORDER BY` in `buzz-db`). Every reader that folds such a
+//! page as read — the push gate, `bee sessions observations`, `bee git`'s
+//! prediction, Pulse — was crowning the **oldest** row per `(author, gate)`:
+//! a seat's first `cargo fmt` row, red and dirty at the base commit because
+//! hermit was not on `PATH` yet, outranked four later green rows on the pushed
+//! commit, and the relay refused every push with "gate `cargo fmt` has no
+//! observed green row" (finding 79, Andy's machine, 2026-09-04).
+//! [`fold_coding_session_observation_page`] is the entry point for a page in
+//! that canonical order; it reverses before folding so nobody has to remember
+//! to.
+//!
 //! # Provenance never merges
 //!
 //! Dedupe keys carry `source`, so an **observed** gate row and a **declared**
@@ -282,12 +298,47 @@ pub struct CodingSessionObservationFold {
 /// one bad envelope reads a whole session as a broken mission.
 ///
 /// Dedupe is by `(author, gate)` and `(author, findingId)`, newest-wins, where
-/// newest is **last in `events`**. Both event ids stay listed. Checkpoints and
-/// phase timings are never deduped: each is a distinct moment its author
-/// recorded, and collapsing them would delete the history the observer came
-/// for.
+/// newest is **last in `events`** — so `events` is **oldest-first**. A page
+/// read from the relay in its canonical order is newest-first and belongs to
+/// [`fold_coding_session_observation_page`] instead; folding it here as read
+/// crowns the oldest statement per key (finding 79, and this module's header).
+/// Both event ids stay listed. Checkpoints and phase timings are never
+/// deduped: each is a distinct moment its author recorded, and collapsing them
+/// would delete the history the observer came for.
 pub fn fold_coding_session_observations(
     events: &[Event],
+    context: &CodingSessionObservationFoldContext,
+) -> CodingSessionObservationFold {
+    fold_in_order(events.iter(), context)
+}
+
+/// Fold one relay page of kind 44246 events, handed over **as the relay
+/// returned it**: newest first, the canonical `created_at DESC, id ASC` order
+/// `buzz-db`'s `query_events` produces and every `REQ`, `POST /query` and
+/// `bee … query_all` page inherits.
+///
+/// This is [`fold_coding_session_observations`] over the page reversed, and it
+/// exists so the reversal lives in one place with its reason attached rather
+/// than at every reader (finding 79: the relay's push gate, `bee sessions
+/// observations`, `bee git`'s prediction and Pulse each folded the page as
+/// read and crowned the oldest row per `(author, gate)`). Nothing here reads
+/// `created_at`: the page's order is storage's order, and reversing it is the
+/// only thing done with it.
+///
+/// A caller that already holds events oldest-first — a live subscription
+/// appended in arrival order, a fixture built in the order it was written —
+/// wants the plain fold, not this.
+pub fn fold_coding_session_observation_page(
+    page_newest_first: &[Event],
+    context: &CodingSessionObservationFoldContext,
+) -> CodingSessionObservationFold {
+    fold_in_order(page_newest_first.iter().rev(), context)
+}
+
+/// The fold itself, over events in the order they are yielded: last is
+/// newest. Both public entry points are this with an iterator chosen for them.
+fn fold_in_order<'a>(
+    events: impl Iterator<Item = &'a Event>,
     context: &CodingSessionObservationFoldContext,
 ) -> CodingSessionObservationFold {
     let mut fold = CodingSessionObservationFold {

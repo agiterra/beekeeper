@@ -1879,8 +1879,12 @@ async fn fetch_verdict_candidates(
         // A mission that does not fold admits nothing; it must not make the
         // whole prediction unavailable.
         let canonical = fold_candidate_records(&events, &context).unwrap_or_default();
+        // The relay page arrives newest-first and `in_channel` keeps that
+        // order, so this is a page fold — the same one the relay's gate runs,
+        // so the prediction and the gate cannot crown different rows
+        // (finding 79).
         let observed_gates =
-            buzz_core::coding_session_observation::fold_coding_session_observations(
+            buzz_core::coding_session_observation::fold_coding_session_observation_page(
                 &mission_observations(&payload.session_ref, &genesis_ref, &observations)
                     .into_iter()
                     .cloned()

@@ -204,6 +204,11 @@ pub struct PulseMissionSources<'a> {
     pub policy_events: &'a [Event],
     /// Signed kind 44246 events, ascending — the observation fold's
     /// newest-wins is **last in the slice**.
+    ///
+    /// A relay page arrives newest-first, so the caller reverses it before
+    /// building this (the CLI does; Desktop's read sorts ascending). Fed as
+    /// read, the digest showed a seat's first row per gate as its current one
+    /// (finding 79).
     pub observation_events: &'a [Event],
     /// Relay-signed ref state for the repo this umbrella works in.
     pub ref_state: &'a [PulseRefState],

@@ -6,7 +6,7 @@
 //! a refusal a seat gets only after a round trip is a refusal it pays for.
 
 use buzz_core::coding_session_observation::{
-    fold_coding_session_observations, CodingSessionObservationFoldContext,
+    fold_coding_session_observation_page, CodingSessionObservationFoldContext,
     CodingSessionObservationGateOutcome, CODING_SESSION_OBSERVATION_SCHEMA,
 };
 use buzz_core::kind::KIND_CODING_SESSION_OBSERVATION;
@@ -128,9 +128,11 @@ fn observation_from(keys: &Keys, observation_type: &str, source: &str, body: Val
     .expect("sign")
 }
 
-fn folded(events: &[Event]) -> CodingSessionObservationFold {
-    fold_coding_session_observations(
-        events,
+/// Fold `events` the way `cmd_observations` does: as a relay page, newest
+/// first (finding 79). Fixtures below list events in that order.
+fn folded(page_newest_first: &[Event]) -> CodingSessionObservationFold {
+    fold_coding_session_observation_page(
+        page_newest_first,
         &CodingSessionObservationFoldContext {
             session_ref: SESSION.to_owned(),
             genesis_ref: GENESIS.to_owned(),
@@ -217,7 +219,8 @@ fn the_wire_shape_names_both_event_ids_a_replaced_statement_leaves_behind() {
         }),
     );
     let ids = vec![first.id.to_hex(), second.id.to_hex()];
-    let wire = fold_json(&folded(&[first, second]));
+    // The relay page: newest first. The ids come back oldest first.
+    let wire = fold_json(&folded(&[second, first]));
     assert_eq!(wire["findings"].as_array().map(Vec::len), Some(1));
     assert_eq!(wire["findings"][0]["disposition"], json!("fixed"));
     assert_eq!(wire["findings"][0]["eventIds"], json!(ids));
@@ -426,4 +429,82 @@ fn the_reader_says_it_checked_no_provenance() {
     let wire = fold_json(&folded(&[claimed]));
     assert_eq!(wire["provenanceChecked"], json!(false));
     assert_eq!(wire["misclaimedObserved"], json!([]));
+}
+
+// ── Finding 79: the page is newest-first, and the reader must reverse ──────
+
+/// **Finding 79.** `bee sessions observations` folded the relay's page as
+/// read. The relay hands it over newest-first, and the fold's "newest" is
+/// last in the order supplied, so the command rendered a seat's *first* row
+/// per gate as its current one — the same wrong winner the relay's push gate
+/// crowned. Andy's run: `cargo fmt` red and dirty at the base commit, four
+/// later green rows on the pushed commit, and the screen showed the red one.
+///
+/// Both renderings, JSON and compact, now show the newest row, and the JSON
+/// still lists both ids, oldest first.
+#[test]
+fn the_reader_renders_the_newest_row_when_the_page_arrives_newest_first() {
+    let provider = Keys::generate();
+    let row = |outcome: &str, head_sha: &str, dirty: bool| {
+        json!({ "rows": [{
+            "gate": "cargo fmt",
+            "outcome": outcome,
+            "command": "cargo fmt --all --check",
+            "summary": Value::Null,
+            "durationMs": Value::Null,
+            "headSha": head_sha,
+            "dirty": dirty,
+        }] })
+    };
+    let red_at_base = observation_from(
+        &provider,
+        "gate",
+        "observed",
+        row("failed", "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", true),
+    );
+    let green_on_head = observation_from(
+        &provider,
+        "gate",
+        "observed",
+        row("passed", "2f73f558f2f73f558f2f73f558f2f73f558f2f73", false),
+    );
+    let ids = vec![red_at_base.id.to_hex(), green_on_head.id.to_hex()];
+    // The relay's page, newest first — exactly what `query_all` returns.
+    let page = vec![green_on_head, red_at_base];
+
+    let wire = fold_json(&folded(&page));
+    assert_eq!(wire["gates"].as_array().map(Vec::len), Some(1), "{wire}");
+    assert_eq!(
+        wire["gates"][0]["outcome"],
+        json!("passed"),
+        "the newest row is the one rendered: {wire}"
+    );
+    assert_eq!(
+        wire["gates"][0]["headSha"],
+        json!("2f73f558f2f73f558f2f73f558f2f73f558f2f73"),
+        "{wire}"
+    );
+    assert_eq!(
+        wire["gates"][0]["eventIds"],
+        json!(ids),
+        "both ids listed, oldest first: {wire}"
+    );
+    assert_eq!(wire["truncated"]["displacedGates"], json!(1), "{wire}");
+
+    // One gate row, plus the `truncated …` line that says a row was displaced
+    // — the displacement is never silent (REVIEW-L5 F1).
+    let rows = compact_rows(&folded(&page));
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows[0].contains("cargo fmt passed"),
+        "compact shows the newest row: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("cargo fmt failed")),
+        "and not the base-commit one: {rows:?}"
+    );
+    assert!(
+        rows[1].starts_with("truncated ") && rows[1].contains("displacedGates 1"),
+        "the displaced red row is counted on screen: {rows:?}"
+    );
 }

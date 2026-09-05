@@ -138,6 +138,9 @@ pub struct ObservedGateRow {
 /// One recognised gate: a program, its subcommand, and the name a row carries.
 ///
 /// Matched on **argv**, in command position — never on the text of the line.
+/// `program` is compared to the **basename** of `argv[0]` (finding 80: a
+/// path to the program, `bin/cargo` or an absolute one, is the same gate),
+/// and `subcommand` to `argv[1]` exactly.
 /// REVIEW-L5 F1 is why: a `contains`-style matcher answered `Some("cargo test")`
 /// for `grep -rn 'cargo test' docs/` and `echo "cargo test"`, so the provider
 /// signed an `observed` **passed** row for a `grep`, and that false green then
@@ -444,12 +447,26 @@ fn match_gate(command: &str) -> Option<&'static str> {
         }
     }
     let argv = strip_wrappers(words)?;
-    let program = argv.first()?.as_str();
+    let program = program_name(argv.first()?);
     let subcommand = argv.get(1)?.as_str();
     GATE_MATCHERS
         .iter()
         .find(|matcher| matcher.program == program && matcher.subcommand == subcommand)
         .map(|matcher| matcher.gate)
+}
+
+/// The program a command position names: the final path component of
+/// `argv[0]`, so `bin/cargo`, `./bin/cargo` and `/Users/x/.cargo/bin/cargo`
+/// are all `cargo`.
+///
+/// Finding 80: the table compared `argv[0]` to the bare name, so a seat that
+/// ran `bin/cargo fmt --all --check` — the hermit-shim shape this repository's
+/// own instructions produce — minted **no row at all**, and only `env
+/// PATH=bin:$PATH cargo …` did (Andy's seat measured it). The basename is the
+/// same gate; `cargoo`, `mycargo` and a bare `bin/cargo` with no subcommand
+/// still name nothing, because the comparison after this is still exact.
+fn program_name(word: &str) -> &str {
+    word.rsplit('/').next().unwrap_or(word)
 }
 
 /// Which gate(s) a command line names, or none — the composed-command

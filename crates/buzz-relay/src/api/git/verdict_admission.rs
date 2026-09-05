@@ -45,7 +45,7 @@ use uuid::Uuid;
 
 use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use buzz_core::coding_session_observation::{
-    fold_coding_session_observations, CodingSessionObservationFoldContext,
+    fold_coding_session_observation_page, CodingSessionObservationFoldContext,
 };
 use buzz_core::coding_session_team_transaction::CodingSessionTeamActiveSeat;
 use buzz_core::coding_session_verdict_admission::{
@@ -359,7 +359,13 @@ pub async fn search_verdict_admission(
         // published no team transaction at all can still admit a push on its
         // gate rows. The observations are therefore resolved before the
         // early-out below, not after it.
-        let observed_gates = fold_coding_session_observations(
+        //
+        // `read_page` returns storage's canonical order, newest first, and
+        // `mission_observations` keeps it. The page fold reverses it: folding
+        // it as read crowned a seat's *first* row per gate — one red, dirty
+        // `cargo fmt` at the base commit outranked four later green rows on
+        // the pushed commit, and every push was refused (finding 79).
+        let observed_gates = fold_coding_session_observation_page(
             &mission_observations(
                 &payload.session_ref,
                 &genesis_ref,

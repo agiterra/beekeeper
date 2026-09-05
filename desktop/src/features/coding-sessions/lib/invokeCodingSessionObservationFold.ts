@@ -38,9 +38,13 @@ export type CodingSessionObservationFoldResult = {
 /**
  * Fold one umbrella's observations natively.
  *
- * `events` are the signed kind-44246 events as the relay returned them; they
- * are handed over whole, because the fold verifies each signature itself and
- * lists what it cannot read rather than dropping it.
+ * `events` are the signed kind-44246 events as the relay returned them — in
+ * the relay's own page order, **newest first**, and that order is part of the
+ * contract: the native adapter folds them as a relay page, reversing before
+ * it folds, so a caller that sorted them oldest-first would get the oldest
+ * statement per gate crowned instead (finding 79). They are handed over
+ * whole, because the fold verifies each signature itself and lists what it
+ * cannot read rather than dropping it.
  */
 export async function invokeCodingSessionObservationFold(input: {
   sessionRef: string;

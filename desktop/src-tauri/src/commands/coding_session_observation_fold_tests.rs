@@ -347,6 +347,12 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
             phase_body("green"),
         ),
     ];
+    // Written oldest-first above so it reads as a session unfolding; handed
+    // over newest-first, the relay's page order, which is what the adapter
+    // takes (finding 79). The fold reverses back to the order above before
+    // it reads anything, so every folded collection in the stored fixture is
+    // unchanged; only `inputEventIds`, the request echo, follows this order.
+    let events: Vec<Event> = events.into_iter().rev().collect();
     let response =
         fold_adapter(request(&events, vec![assignment.clone()])).expect("canonical fold");
     let generated = serde_json::to_string_pretty(&response).expect("serialize response") + "\n";
@@ -424,14 +430,9 @@ fn an_unresolved_provider_set_checks_nothing_and_says_so() {
 #[test]
 fn a_replaced_gate_row_is_counted_in_the_adapters_truncation() {
     let provider = fixed_keys(0x66);
+    // The relay's page order: newest first. The adapter folds it as a page
+    // (finding 79), so the `passed` row listed first here is the newer one.
     let events = vec![
-        observation(
-            &provider,
-            "gate",
-            "observed",
-            None,
-            gate_body("cargo test", "failed", "cargo test -p buzz-cli", None, None),
-        ),
         observation(
             &provider,
             "gate",
@@ -439,9 +440,69 @@ fn a_replaced_gate_row_is_counted_in_the_adapters_truncation() {
             None,
             gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
         ),
+        observation(
+            &provider,
+            "gate",
+            "observed",
+            None,
+            gate_body("cargo test", "failed", "cargo test -p buzz-cli", None, None),
+        ),
     ];
     let response = fold_adapter(request(&events, Vec::new())).expect("fold");
     assert_eq!(response.gates.len(), 1);
     assert_eq!(response.gates[0].outcome, "passed");
+    assert_eq!(
+        response.gates[0].event_ids,
+        vec![events[1].id.to_hex(), events[0].id.to_hex()],
+        "both ids listed, oldest first"
+    );
     assert_eq!(response.truncated.displaced_gates, 1);
+}
+
+/// **Finding 79** at the adapter. A relay page arrives newest-first; folded
+/// as read, the oldest row per `(author, gate)` was the one Desktop showed.
+/// Handing the same two events over in the other order — as a caller that
+/// sorted them oldest-first would — proves the contract is the relay's order
+/// and nothing else: the answer flips.
+#[test]
+fn the_adapter_takes_the_relay_page_newest_first_and_shows_the_newest_row() {
+    let provider = fixed_keys(0x66);
+    let red_at_base = observation(
+        &provider,
+        "gate",
+        "observed",
+        None,
+        gate_body(
+            "cargo fmt",
+            "failed",
+            "cargo fmt --all --check",
+            Some("exit 127"),
+            Some(("1b".repeat(20).as_str(), true)),
+        ),
+    );
+    let green_on_head = observation(
+        &provider,
+        "gate",
+        "observed",
+        None,
+        gate_body(
+            "cargo fmt",
+            "passed",
+            "cargo fmt --all --check",
+            None,
+            Some(("2f".repeat(20).as_str(), false)),
+        ),
+    );
+
+    let as_the_relay_returns_it = vec![green_on_head.clone(), red_at_base.clone()];
+    let response = fold_adapter(request(&as_the_relay_returns_it, Vec::new())).expect("fold");
+    assert_eq!(response.gates.len(), 1);
+    assert_eq!(response.gates[0].outcome, "passed", "the newest row wins");
+
+    let sorted_oldest_first = vec![red_at_base, green_on_head];
+    let response = fold_adapter(request(&sorted_oldest_first, Vec::new())).expect("fold");
+    assert_eq!(
+        response.gates[0].outcome, "failed",
+        "a caller that reorders the page gets the other answer — the order is the contract"
+    );
 }

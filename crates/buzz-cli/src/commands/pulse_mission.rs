@@ -315,13 +315,19 @@ pub async fn compose_mission_rows(
             &mut errors,
         )
         .await;
-        let observation_events = fetch_signed(
+        // `PulseMissionSources::observation_events` is ascending — the fold's
+        // newest-wins is last in the slice — and `query_all` hands pages over
+        // in the relay's own order, newest first. Reverse here, once, with the
+        // reason attached: fed as read, the digest showed a seat's *first* row
+        // per gate as its current one (finding 79).
+        let mut observation_events = fetch_signed(
             client,
             observation_filter(&target.channel, &target.session_ref),
             &format!("observations:{}", target.channel),
             &mut errors,
         )
         .await;
+        observation_events.reverse();
 
         // `checkpoint.files` is Lane L5's key, so no checkpoint names a path
         // and no overlap side is built. The pairing runs anyway, over an empty

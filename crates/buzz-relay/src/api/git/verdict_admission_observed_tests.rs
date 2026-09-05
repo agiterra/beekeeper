@@ -25,7 +25,7 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION,
     KIND_CODING_SESSION_POLICY,
 };
-use nostr::{EventBuilder, Keys, Kind, Tag};
+use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -200,12 +200,29 @@ impl Watched {
             .expect("insert transition");
     }
 
-    /// Publish one kind 44246 gate observation.
+    /// Publish one kind 44246 gate observation, signed now.
     pub(super) async fn observe(
         &self,
         signer: &Keys,
         source: CodingSessionObservationSource,
         rows: Vec<CodingSessionObservationGateRow>,
+    ) {
+        self.observe_at(signer, source, rows, Timestamp::now())
+            .await;
+    }
+
+    /// Publish one kind 44246 gate observation with a chosen `created_at`.
+    ///
+    /// The relay pages `created_at DESC, id ASC`, so two rows signed in the
+    /// same second come back in id order — which is random. A case about
+    /// which row is *newer* (finding 79) has to pin the seconds, or it would
+    /// pass or fail on a coin toss.
+    pub(super) async fn observe_at(
+        &self,
+        signer: &Keys,
+        source: CodingSessionObservationSource,
+        rows: Vec<CodingSessionObservationGateRow>,
+        created_at: Timestamp,
     ) {
         let payload = CodingSessionObservationPayload {
             schema: CODING_SESSION_OBSERVATION_SCHEMA.into(),
@@ -227,6 +244,7 @@ impl Watched {
             Tag::parse(["csob-genesis", &self.genesis_ref]).expect("genesis"),
             Tag::parse(["csob-type", "gate"]).expect("type"),
         ])
+        .custom_created_at(created_at)
         .sign_with_keys(signer)
         .expect("sign observation");
         self.state
@@ -562,4 +580,65 @@ async fn b_does_not_disturb_a_founder_push() {
     .await;
     let (status, body) = body_string(response).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
+}
+
+// ── finding 79: storage pages newest-first, and the gate must reverse ───
+
+/// **Finding 79**, end to end against Postgres — Andy's run, 2026-09-04.
+///
+/// The seat's first `cargo fmt` row closed red and dirty at the base commit
+/// (exit 127: hermit not on `PATH` yet). Its later rows closed green on the
+/// pushed commit for every required gate, over a clean tree. The pusher
+/// holds a seat; no founder policy asks for a verifier. `query_events` pages
+/// `created_at DESC, id ASC`, so the page reaches the gate newest-first, and
+/// the gate folded it as read: the red row won `(provider, cargo fmt)` and
+/// every push was refused with "gate `cargo fmt` has no observed green row
+/// on …". The page fold reverses first; arm (B) admits.
+///
+/// The seconds are pinned (`observe_at`) so storage's order is the one the
+/// live relay produced and not an id-order coin toss.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_a_seats_first_red_row_does_not_outrank_its_later_green_rows() {
+    let w = watched().await;
+    w.observe_at(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        vec![CodingSessionObservationGateRow {
+            gate: "cargo fmt".to_owned(),
+            outcome: CodingSessionObservationGateOutcome::Failed,
+            command: "cargo fmt --all --check".to_owned(),
+            summary: Some("exit 127: cargo: command not found".to_owned()),
+            duration_ms: Some(12),
+            head_sha: Some(OTHER_SHA.to_owned()),
+            dirty: Some(true),
+        }],
+        Timestamp::from_secs(1_757_000_000),
+    )
+    .await;
+    // Four later rows, each its own event as the provider records them.
+    for (offset, gate) in DEFAULT_REQUIRED_GATES.iter().enumerate() {
+        w.observe_at(
+            &w.provider,
+            CodingSessionObservationSource::Observed,
+            vec![green(gate, HEAD_SHA)],
+            Timestamp::from_secs(1_757_000_060 + offset as u64 * 60),
+        )
+        .await;
+    }
+    w.observe_at(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        vec![green("cargo fmt", HEAD_SHA)],
+        Timestamp::from_secs(1_757_000_600),
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the later green rows are the current ones; the first red row at the base commit \
+         must not outrank them (body: {body})"
+    );
 }

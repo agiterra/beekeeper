@@ -14,10 +14,11 @@
 use super::*;
 
 use crate::coding_session_observation::{
-    fold_coding_session_observations, CodingSessionObservationBody,
-    CodingSessionObservationFoldContext, CodingSessionObservationGate,
-    CodingSessionObservationGateOutcome, CodingSessionObservationGateRow,
-    CodingSessionObservationPayload, CodingSessionObservationSource, CodingSessionObservationType,
+    fold_coding_session_observation_page, fold_coding_session_observations,
+    CodingSessionObservationBody, CodingSessionObservationFoldContext,
+    CodingSessionObservationGate, CodingSessionObservationGateOutcome,
+    CodingSessionObservationGateRow, CodingSessionObservationPayload,
+    CodingSessionObservationSource, CodingSessionObservationType,
     CODING_SESSION_OBSERVATION_SCHEMA,
 };
 use crate::coding_session_team_transaction::CodingSessionTeamActiveSeat;
@@ -463,4 +464,77 @@ fn b_a_row_signed_before_head_sha_existed_admits_nothing() {
         !outcome.is_admitted(),
         "a row naming no commit admits nothing, got {outcome:?}"
     );
+}
+
+// ── finding 79: the gate reads the page newest-first ────────────────────
+
+/// **Finding 79**, at the rule with the relay's real input order. Andy's run:
+/// the seat's first `cargo fmt` row was red and dirty at the base commit
+/// (hermit not on `PATH`, exit 127); four later rows were green on the
+/// pushed commit for every required gate; the pusher held a seat; no policy
+/// asked for a verifier. The relay's page is newest-first, and the gate
+/// folded it as read, so the red row won and every push was refused with
+/// "gate `cargo fmt` has no observed green row on …".
+///
+/// Through [`fold_coding_session_observation_page`] the page is reversed
+/// first and arm (B) admits.
+#[test]
+fn b_a_first_red_row_read_newest_first_does_not_outrank_the_later_green_rows() {
+    let watched = watched();
+    let base_commit_red_and_dirty = observation(
+        &watched.provider,
+        CodingSessionObservationSource::Observed,
+        &[Row {
+            gate: "cargo fmt",
+            outcome: CodingSessionObservationGateOutcome::Failed,
+            head_sha: Some(OTHER_SHA),
+            dirty: Some(true),
+        }],
+    );
+    let rows: Vec<Row<'_>> = DEFAULT_REQUIRED_GATES
+        .iter()
+        .map(|gate| row(gate, Some(HEAD_SHA)))
+        .collect();
+    let pushed_commit_green = observation(
+        &watched.provider,
+        CodingSessionObservationSource::Observed,
+        &rows,
+    );
+    // The relay's page: newest first.
+    let page = vec![pushed_commit_green, base_commit_red_and_dirty];
+    let fold = fold_coding_session_observation_page(
+        &page,
+        &CodingSessionObservationFoldContext {
+            session_ref: SESSION.into(),
+            genesis_ref: GENESIS.into(),
+            known_assignment_refs: Vec::new(),
+            provider_pubkeys: Some(vec![watched.provider.public_key().to_hex()]),
+        },
+    );
+    let candidate = VerdictAdmissionCandidate {
+        session_ref: SESSION.into(),
+        genesis_ref: GENESIS.into(),
+        founder_pubkey: watched.founder.public_key().to_hex(),
+        canonical: Vec::new(),
+        active_seats: watched.seats.clone(),
+        observed_gates: fold.gates,
+        gate_policy: None,
+    };
+    let founder = watched.founder.public_key().to_hex();
+    let pusher = watched.builder.public_key().to_hex();
+    let outcome = evaluate_verdict_admission(
+        &[candidate],
+        &query(&pusher, std::slice::from_ref(&founder)),
+    );
+    match outcome {
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::ObservedGates {
+            head_sha,
+            gates,
+            ..
+        }) => {
+            assert_eq!(head_sha, HEAD_SHA);
+            assert_eq!(gates, DEFAULT_REQUIRED_GATES.to_vec());
+        }
+        other => panic!("the later green rows are the current ones and must admit; got {other:?}"),
+    }
 }

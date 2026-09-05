@@ -11,8 +11,11 @@
 //! excludes nothing and corrects nothing; a mission's state is decided entirely
 //! by kind 44244 and is not readable here. Every duration and `startedAtMs` is
 //! the author's own measurement, printed as the author's claim, and it is never
-//! used for ordering, discovery or dedupe — "newest" here is last in the order
-//! the relay handed the events over.
+//! used for ordering, discovery or dedupe — "newest" here is the relay's own
+//! storage order. The relay hands a page over newest-first, and the reader
+//! reverses it before folding (`fold_coding_session_observation_page`,
+//! finding 79): folded as read, a seat's first row per gate printed as its
+//! current one.
 //!
 //! # Standing
 //!
@@ -24,7 +27,7 @@
 //! It is the reader that says who wrote what.
 
 use buzz_core::coding_session_observation::{
-    fold_coding_session_observations, CodingSessionObservationBody,
+    fold_coding_session_observation_page, CodingSessionObservationBody,
     CodingSessionObservationCheckpoint, CodingSessionObservationFinding,
     CodingSessionObservationFold, CodingSessionObservationFoldContext,
     CodingSessionObservationGate, CodingSessionObservationGateRow, CodingSessionObservationPayload,
@@ -379,7 +382,11 @@ pub async fn cmd_observations(
         .into_iter()
         .filter_map(|value| serde_json::from_value::<Event>(value).ok())
         .collect();
-    let fold = fold_coding_session_observations(
+    // `query_all` concatenates relay pages in the relay's own order — newest
+    // first — so this is a page fold, which reverses before folding. Folding
+    // it as read rendered a seat's *first* row per gate as the current one
+    // (finding 79).
+    let fold = fold_coding_session_observation_page(
         &events,
         &CodingSessionObservationFoldContext {
             session_ref: session_ref.to_owned(),
@@ -567,6 +574,12 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
             "command": entry.row.command,
             "summary": entry.row.summary,
             "durationMs": entry.row.duration_ms,
+            // The commit the row ran at and whether the tree was clean: the
+            // two facts the push gate rules on, and the two this reader did
+            // not print while finding 79 was being diagnosed. `null` when the
+            // row predates the keys or a declared row carried none.
+            "headSha": entry.row.head_sha,
+            "dirty": entry.row.dirty,
         })).collect::<Vec<_>>(),
         "findings": fold.findings.iter().map(|entry| json!({
             "author": entry.author_pubkey,

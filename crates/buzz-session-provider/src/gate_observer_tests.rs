@@ -613,3 +613,59 @@ fn l5s_shape_still_works_alongside_finding_69s() {
         CodingSessionObservationGateOutcome::Failed
     );
 }
+
+// ── finding 80: a path to the program is the same gate ──────────────────
+
+/// **Finding 80.** The matcher compared `argv[0]` to the literal program
+/// name, so `bin/cargo fmt --all --check` — the hermit-shim shape this
+/// repository's own instructions produce — and an absolute
+/// `/Users/x/.cargo/bin/cargo test` minted no row at all; on Andy's seat only
+/// `env PATH=bin:$PATH cargo …` did. The basename of `argv[0]` is what names
+/// the program. Everything the old exact match refused for a *different*
+/// name is still refused: `cargoo`, `mycargo`, and a path to `cargo` with no
+/// subcommand behind it.
+#[test]
+fn finding_80_a_path_to_the_program_names_the_same_gate_as_the_bare_name() {
+    for (command, gate) in [
+        ("bin/cargo fmt --all --check", "cargo fmt"),
+        ("./bin/cargo fmt --all --check", "cargo fmt"),
+        ("/Users/x/.cargo/bin/cargo test -p buzz-core", "cargo test"),
+        (
+            "/opt/homebrew/bin/cargo clippy -- -D warnings",
+            "cargo clippy",
+        ),
+        ("bin/just ci", "just ci"),
+        ("./node_modules/.bin/pnpm test", "pnpm test"),
+        // The wrappers still strip ahead of a path, and `cd`/`echo` still
+        // compose around one.
+        ("env RUST_BACKTRACE=1 bin/cargo test", "cargo test"),
+        ("nice -n 10 ./bin/cargo test -p buzz-cli", "cargo test"),
+        ("cd desktop && ../bin/pnpm typecheck", "pnpm typecheck"),
+        (
+            r#"echo "== fmt =="; bin/cargo fmt --all --check"#,
+            "cargo fmt",
+        ),
+    ] {
+        assert_eq!(single_gate(command), Some(gate), "{command}");
+    }
+
+    for command in [
+        // A different name is a different program, path or no path.
+        "cargoo fmt",
+        "mycargo fmt",
+        "bin/cargoo fmt",
+        "bin/mycargo fmt --all --check",
+        // A path to the program with no subcommand names no gate.
+        "bin/cargo",
+        "/Users/x/.cargo/bin/cargo",
+        // A trailing slash names a directory, not a program.
+        "bin/cargo/ fmt",
+        // The subcommand is still exact.
+        "bin/cargo build",
+        // And the refusals the seam always made stand: a redirect, a pipe.
+        "bin/cargo test > out.txt",
+        "bin/cargo test | tee out.txt",
+    ] {
+        assert_eq!(single_gate(command), None, "{command}");
+    }
+}

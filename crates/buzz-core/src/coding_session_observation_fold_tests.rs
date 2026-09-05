@@ -858,3 +858,125 @@ fn the_check_never_promotes_a_declared_row() {
     );
     assert!(fold.misclaimed_observed.is_empty());
 }
+
+// ── Finding 79: the relay's page is newest-first ───────────────────────────
+
+/// **Finding 79.** The fold defines "newest" as last in the order supplied,
+/// and the relay's push gate fed it a page read in storage's canonical order
+/// — `created_at DESC, id ASC`, newest **first** — so the fold crowned the
+/// *oldest* row per `(author, gate)`. Measured on Andy's machine: a seat's
+/// first `cargo fmt` row was `failed`/dirty at the base commit (exit 127,
+/// hermit not on `PATH` yet); four later rows were green on the pushed
+/// commit; the relay refused every push with "gate `cargo fmt` has no
+/// observed green row".
+///
+/// Two halves. The plain fold's contract is unchanged and is proven here on
+/// purpose — the same newest-first slice handed to it still crowns the red
+/// row, which is exactly why the page entry point exists. The page fold
+/// reverses before folding: green wins, the red row's id stays listed and
+/// first, and the displacement is counted.
+#[test]
+fn a_relay_page_read_newest_first_crowns_the_newest_row_through_the_page_fold() {
+    let provider = Keys::generate();
+    let red_at_base = signed_with_source(
+        &provider,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [{
+            "gate": "cargo fmt",
+            "outcome": "failed",
+            "command": "cargo fmt --all --check",
+            "summary": "exit 127: cargo: command not found",
+            "durationMs": 12,
+            "headSha": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+            "dirty": true,
+        }] }),
+    );
+    let green_on_head = signed_with_source(
+        &provider,
+        "gate",
+        SESSION,
+        GENESIS,
+        "observed",
+        None,
+        json!({ "rows": [{
+            "gate": "cargo fmt",
+            "outcome": "passed",
+            "command": "cargo fmt --all --check",
+            "summary": Value::Null,
+            "durationMs": 900,
+            "headSha": "2f73f558f2f73f558f2f73f558f2f73f558f2f73",
+            "dirty": false,
+        }] }),
+    );
+    // The relay's page: newest first.
+    let page = vec![green_on_head.clone(), red_at_base.clone()];
+    let context = context_with_providers(Vec::new(), Some(vec![provider.public_key().to_hex()]));
+
+    // The plain fold's contract, unchanged: last in the slice is newest, so
+    // a page handed to it as read crowns the base-commit row. This is the
+    // bug, kept as the statement of why the page fold exists.
+    let as_read = fold_coding_session_observations(&page, &context);
+    assert_eq!(as_read.gates.len(), 1);
+    assert_eq!(
+        as_read.gates[0].row.outcome,
+        CodingSessionObservationGateOutcome::Failed,
+        "the plain fold over a newest-first page crowns the oldest row — finding 79's shape"
+    );
+
+    // The page fold reverses first, so the newest statement wins.
+    let fold = fold_coding_session_observation_page(&page, &context);
+    assert_eq!(fold.gates.len(), 1, "one author, one gate: one entry");
+    let entry = &fold.gates[0];
+    assert_eq!(
+        entry.row.outcome,
+        CodingSessionObservationGateOutcome::Passed,
+        "the newest row is the one shown"
+    );
+    assert_eq!(
+        entry.row.head_sha.as_deref(),
+        Some("2f73f558f2f73f558f2f73f558f2f73f558f2f73")
+    );
+    assert_eq!(entry.row.dirty, Some(false));
+    assert_eq!(
+        entry.event_ids,
+        vec![red_at_base.id.to_hex(), green_on_head.id.to_hex()],
+        "both ids stay listed, oldest first, newest last"
+    );
+    assert_eq!(
+        fold.truncated.displaced_gates, 1,
+        "the red row was displaced, and the count says so"
+    );
+    assert!(fold.provenance_checked);
+    assert!(fold.misclaimed_observed.is_empty());
+}
+
+/// The page fold changes only the order; everything else the fold says about
+/// a page is the same whichever entry point read it, and an empty page folds
+/// to nothing either way.
+#[test]
+fn the_page_fold_and_the_plain_fold_agree_on_everything_but_order() {
+    let seat = Keys::generate();
+    let oldest_first = vec![
+        observation(&seat, "checkpoint", None, checkpoint("red")),
+        observation(&seat, "finding", None, finding("16", "found")),
+        observation(&seat, "finding", None, finding("16", "fixed")),
+        observation(&seat, "phase", None, phase("red")),
+    ];
+    let newest_first: Vec<Event> = oldest_first.iter().rev().cloned().collect();
+    let plain = fold_coding_session_observations(&oldest_first, &context(Vec::new()));
+    let page = fold_coding_session_observation_page(&newest_first, &context(Vec::new()));
+    assert_eq!(plain, page);
+    assert_eq!(page.findings.len(), 1);
+    assert_eq!(
+        page.findings[0].body.disposition,
+        CodingSessionObservationDisposition::Fixed
+    );
+    assert_eq!(
+        fold_coding_session_observation_page(&[], &context(Vec::new())),
+        fold_coding_session_observations(&[], &context(Vec::new()))
+    );
+}
