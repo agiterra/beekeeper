@@ -229,6 +229,18 @@ export function useNewCodingSessionLaunchSubmit(input: {
             },
             fresh,
           );
+          if (launched.ok) {
+            // The goal became this session's first turn, so it is no longer a
+            // draft waiting to be sent. The ungoverned path has always cleared
+            // it here; the governed one never did, and left the next dialog
+            // pre-filled with an instruction that had already been carried out.
+            //
+            // Cleared on `ok` rather than on `ok && channelId`, because the
+            // second arm launched too — it just landed somewhere this screen
+            // cannot navigate to. Keeping the text there would invite the
+            // person to launch the same session twice.
+            clearDraft();
+          }
           if (launched.ok && launched.channelId) {
             onDone();
             const destination = codingSessionCrewLeadDestination({

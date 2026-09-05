@@ -159,3 +159,126 @@ test("N2: a click after the previous submit settled launches again", async () =>
 
   mounted.unmount();
 });
+
+/**
+ * The governed path forgot the draft it had just launched.
+ *
+ * `clearDraft` lived on the ungoverned branch only, so a session led by an
+ * agent left its goal sitting in the dialog: reopening it offered to launch
+ * an instruction that had already been carried out.
+ */
+test("N3: a governed launch clears the draft it just sent", async () => {
+  const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
+
+  let cleared = 0;
+  const READY_TARGET = {
+    ...SELECTED_TARGET,
+    signerPubkey: "a".repeat(64),
+    provider: {
+      allowedModels: ["sonnet"],
+      providerInstanceRef: "instance-1",
+    },
+  };
+
+  const mounted = renderHook(() =>
+    useNewCodingSessionLaunchSubmit({
+      canLaunch: true,
+      candidates: [],
+      channelId: SELECTED_TARGET.channelId,
+      clearDraft: () => {
+        cleared += 1;
+      },
+      leadModel: "sonnet",
+      goCodingSession: () => {},
+      goal: "Fix the flaky timeout.",
+      governed: true,
+      launch: async () => ({
+        ok: true,
+        channelId: SELECTED_TARGET.channelId,
+        seats: [],
+        hireableSeats: [],
+      }),
+      lead: {
+        kind: "agent",
+        actor: "b".repeat(64),
+        role: "lead",
+        label: "Lead",
+      },
+      onDone: () => {},
+      policySet: false,
+      projectContext: null,
+      refreshRuntimeTarget: async () => READY_TARGET,
+      selectedTarget: READY_TARGET,
+      setIsPreparingChannel: () => {},
+      setLaunchError: () => {},
+      setSetupError: () => {},
+      submit: async () => {},
+      title: "",
+      useWorktree: false,
+      workdir: "",
+      worktreeName: "",
+      worktreeSource: null,
+    }),
+  );
+
+  await act(async () => {
+    mounted.result.current();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  });
+
+  assert.equal(cleared, 1, "a launched goal is not a draft any more");
+
+  mounted.unmount();
+});
+
+/** And a launch that failed keeps it: the text is still the person's to send. */
+test("N4: a refused governed launch keeps the draft", async () => {
+  const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
+
+  let cleared = 0;
+
+  const mounted = renderHook(() =>
+    useNewCodingSessionLaunchSubmit({
+      canLaunch: true,
+      candidates: [],
+      channelId: SELECTED_TARGET.channelId,
+      clearDraft: () => {
+        cleared += 1;
+      },
+      leadModel: "sonnet",
+      goCodingSession: () => {},
+      goal: "Fix the flaky timeout.",
+      governed: true,
+      launch: async () => ({ ok: false, failureReason: "no runtime" }),
+      lead: {
+        kind: "agent",
+        actor: "b".repeat(64),
+        role: "lead",
+        label: "Lead",
+      },
+      onDone: () => {},
+      policySet: false,
+      projectContext: null,
+      refreshRuntimeTarget: async () => ({ ...SELECTED_TARGET, provider: {} }),
+      selectedTarget: SELECTED_TARGET,
+      setIsPreparingChannel: () => {},
+      setLaunchError: () => {},
+      setSetupError: () => {},
+      submit: async () => {},
+      title: "",
+      useWorktree: false,
+      workdir: "",
+      worktreeName: "",
+      worktreeSource: null,
+    }),
+  );
+
+  await act(async () => {
+    mounted.result.current();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  });
+
+  assert.equal(cleared, 0, "a refused launch must not eat the goal");
+
+  mounted.unmount();
+});
