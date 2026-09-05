@@ -775,17 +775,6 @@ export function NewCodingSessionForm({
           ) : null}
         </div>
 
-        <NewCodingSessionWorkdirField
-          channelId={channelId}
-          disabled={
-            interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
-          }
-          fallbackPath={projectContext?.defaultWorkdir ?? null}
-          onChange={setWorkdir}
-          projectKey={projectContext?.projectRef ?? null}
-          value={workdir}
-        />
-
         <NewCodingSessionWorktreeField
           checked={useWorktree}
           disabled={
@@ -802,6 +791,18 @@ export function NewCodingSessionForm({
           }
           source={worktreeSource}
           workdir={workdir}
+        />
+
+        <NewCodingSessionWorkdirField
+          channelId={channelId}
+          disabled={
+            interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
+          }
+          fallbackPath={projectContext?.defaultWorkdir ?? null}
+          onChange={setWorkdir}
+          projectKey={projectContext?.projectRef ?? null}
+          usesWorktree={useWorktree}
+          value={workdir}
         />
 
         {projectContext ? (

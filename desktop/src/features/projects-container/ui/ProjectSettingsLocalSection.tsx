@@ -173,7 +173,7 @@ function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
         className="text-xs font-medium text-muted-foreground"
         htmlFor="project-settings-workdir"
       >
-        Checkout directory
+        Repository folder
       </label>
       <div className="flex items-center gap-2">
         <Input
@@ -214,7 +214,7 @@ function ProjectWorkdirField({ project }: { project: ProjectContainer }) {
         </Button>
         {savedPath ? (
           <Button
-            aria-label="Clear checkout directory"
+            aria-label="Clear repository folder"
             data-testid="project-settings-workdir-clear"
             disabled={busy}
             onClick={handleClear}

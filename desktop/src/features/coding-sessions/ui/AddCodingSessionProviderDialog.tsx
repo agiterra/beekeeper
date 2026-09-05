@@ -406,6 +406,7 @@ export function AddCodingSessionProviderForm({
           transaction !== null && !isCodingSessionWorkdirFailure(failureCode)
         }
         onChange={setWorkdir}
+        usesWorktree={useWorktree}
         value={workdir}
       />
 

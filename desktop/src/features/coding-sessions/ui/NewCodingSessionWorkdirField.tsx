@@ -51,6 +51,7 @@ export function NewCodingSessionWorkdirField({
   fallbackPath = null,
   onChange,
   projectKey = null,
+  usesWorktree = false,
   value,
 }: {
   channelId: string | null;
@@ -64,6 +65,17 @@ export function NewCodingSessionWorkdirField({
   /** NIP-MP project coordinate whose remembered directory outranks the
    * channel's — a project-scoped session belongs to the project's checkout. */
   projectKey?: string | null;
+  /**
+   * Whether this session will run in a worktree.
+   *
+   * The same stored path does two jobs, and only one of them is "the
+   * repository". With a worktree the session runs somewhere else entirely and
+   * this names the repository the worktree is cut from; without one the agent
+   * runs in this very directory, which is a working directory and should say
+   * so. One label for both would be wrong half the time, so it follows the
+   * answer — which is why the worktree question is asked first.
+   */
+  usesWorktree?: boolean;
   value: string;
 }) {
   const [state, setState] = React.useState<CodingSessionWorkdirState | null>(
@@ -151,7 +163,7 @@ export function NewCodingSessionWorkdirField({
         className="text-xs font-medium text-muted-foreground"
         htmlFor="coding-session-workdir"
       >
-        Working directory
+        {usesWorktree ? "Repository folder" : "Working directory"}
       </label>
       <div className="flex items-center gap-2">
         <Input
