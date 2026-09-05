@@ -112,6 +112,7 @@ pub(crate) fn invoke_handler(
         fetch_link_preview_metadata,
         discover_acp_auth_methods,
         discover_acp_providers,
+        check_acp_runtime_auth_preflight,
         discover_git_bash_prerequisite,
         install_acp_runtime,
         save_custom_harness,

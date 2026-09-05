@@ -670,6 +670,17 @@ function buildResultLifecycleItem(
   const costUsd = typeof item.costUsd === "number" ? item.costUsd : null;
   const usage = buildResultUsage(item.usage);
   const resultText = typeof item.result === "string" ? item.result : "";
+  // A provider that rewrote the raw error into an operator sentence keeps the
+  // raw text under `detail`; it reads as a second paragraph under the
+  // sentence so the remedy comes first and the evidence is still on the row.
+  const detail =
+    typeof item.detail === "string" && item.detail.trim().length > 0
+      ? item.detail.trim()
+      : "";
+  const text =
+    detail && detail !== resultText
+      ? `${resultText}\n\n${detail}`.trim()
+      : resultText;
 
   // Duration, cost and usage travel as structured fields, never baked into
   // `text` — the model reads them directly and the result prose stays clean.
@@ -678,7 +689,7 @@ function buildResultLifecycleItem(
     type: "lifecycle",
     renderClass: isError ? "error" : "status",
     title: "Turn result",
-    text: resultText,
+    text,
     outcome: subtype,
     durationMs,
     costUsd,

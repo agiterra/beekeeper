@@ -18,6 +18,7 @@ import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
 import { resolveAgentParallelism } from "@/features/agents/lib/agentParallelism";
 import type { ConnectionState } from "@/shared/api/relayClientShared";
 import type {
+  AuthPreflightVerdict,
   ChannelTemplate,
   GlobalAgentConfig,
   RelayEvent,
@@ -289,6 +290,13 @@ type E2eConfig = {
     acpAuthMethods?: Record<string, RawAcpAuthMethodsResult>;
     acpAuthMethodsErrors?: Record<string, string>;
     acpAuthMethodsError?: string;
+    /**
+     * Live login pre-flight verdicts by runtime id. Absent runtimes answer
+     * verified-live so the doctor rows stay quiet by default.
+     */
+    acpAuthPreflight?: Record<string, AuthPreflightVerdict>;
+    /** When set, the pre-flight command throws with this message. */
+    acpAuthPreflightError?: string;
     /** When set, workflow updates fail with this message. */
     workflowUpdateError?: string;
     /** When set, the `delete_custom_harness` mock command throws with this message. */
@@ -8186,6 +8194,29 @@ async function handleDiscoverAcpAuthMethods(
   return { methods: [] };
 }
 
+function handleCheckAcpRuntimeAuthPreflight(
+  args: { runtimeId?: string; force?: boolean },
+  config: E2eConfig | undefined,
+): AuthPreflightVerdict {
+  if (config?.mock?.acpAuthPreflightError) {
+    throw new Error(config.mock.acpAuthPreflightError);
+  }
+  const runtimeId = args.runtimeId ?? "";
+  const configured = config?.mock?.acpAuthPreflight?.[runtimeId];
+  if (configured) {
+    return { ...configured, cached: args.force ? false : configured.cached };
+  }
+  return {
+    runtimeId,
+    state: { state: "verified_live" },
+    checkedAtMs: Date.now(),
+    command:
+      'claude -p "reply with the single word ok" --max-turns 1 --output-format text',
+    remedy: null,
+    cached: false,
+  };
+}
+
 async function handleConnectAcpRuntime(
   _args: { request?: { runtimeId?: string; methodId?: string } },
   config: E2eConfig | undefined,
@@ -12850,6 +12881,11 @@ export function maybeInstallE2eTauriMocks() {
       case "delete_custom_harness":
         return handleDeleteCustomHarness(
           payload as Parameters<typeof handleDeleteCustomHarness>[0],
+          activeConfig,
+        );
+      case "check_acp_runtime_auth_preflight":
+        return handleCheckAcpRuntimeAuthPreflight(
+          payload as { runtimeId?: string; force?: boolean },
           activeConfig,
         );
       case "discover_acp_auth_methods":

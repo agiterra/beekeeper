@@ -188,6 +188,40 @@ test("a usage block with nothing readable in it is null, never an empty object",
   assert.equal(item.usage, null);
 });
 
+test("a classified failure leads with the sentence and keeps the raw error under it", () => {
+  const raw =
+    "Agent reported error (code -32603): Failed to authenticate: OAuth session expired and could not be refreshed";
+  const sentence =
+    "Claude's login has expired on this computer. Run `claude auth login` in a terminal, then send the next turn.";
+  const item = buildBaseTranscriptItem(
+    {
+      kind: "result",
+      subtype: "error",
+      isError: true,
+      durationMs: 2500,
+      result: sentence,
+      detail: raw,
+    },
+    IDENTITY,
+  );
+  assert.equal(item.title, "Turn result");
+  assert.equal(item.renderClass, "error");
+  assert.equal(item.text, `${sentence}\n\n${raw}`);
+});
+
+test("a detail equal to the result, or empty, adds nothing", () => {
+  const same = buildBaseTranscriptItem(
+    { kind: "result", subtype: "error", result: "boom", detail: "boom" },
+    IDENTITY,
+  );
+  assert.equal(same.text, "boom");
+  const blank = buildBaseTranscriptItem(
+    { kind: "result", subtype: "error", result: "boom", detail: "   " },
+    IDENTITY,
+  );
+  assert.equal(blank.text, "boom");
+});
+
 test("a result item with no usage block projects exactly as before", () => {
   const item = buildBaseTranscriptItem(
     {

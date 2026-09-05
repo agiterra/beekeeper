@@ -4,11 +4,13 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 import {
   useAcpAuthMethodsQuery,
+  useAcpRuntimeAuthPreflightQuery,
   useConnectAcpRuntimeMutation,
   useDeleteCustomHarnessMutation,
   useInstallAcpRuntimeMutation,
   useManagedAgentsQuery,
   usePersonasQuery,
+  useRecheckAcpRuntimeAuthPreflightMutation,
 } from "@/features/agents/hooks";
 import { useInstallOutputLine } from "@/features/agents/lib/useInstallOutputLine";
 import { RuntimeIcon } from "@/features/onboarding/ui/RuntimeIcon";
@@ -34,6 +36,10 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { Spinner } from "@/shared/ui/spinner";
 
+import {
+  authPreflightPresentation,
+  runtimeHasAuthPreflight,
+} from "./authPreflightLogic";
 import { CustomHarnessForm } from "./CustomHarnessForm";
 import {
   adapterUpdateWarning,
@@ -244,6 +250,91 @@ function RuntimeActions({
           {runtime.availability === "adapter_outdated" ? "Update" : "Install"}
         </Button>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The live login verdict under a Claude row (finding 71).
+ *
+ * The status chip above reads what `claude auth status` *says*; this line
+ * reads what a real `claude -p` call *did*, and says so in one of exactly
+ * three states — verified, expired (with the CLI's own line and the remedy),
+ * or unverified (with why). "Verify login" makes the call again now, which is
+ * what the operator wants right after `claude auth login`.
+ */
+function RuntimeAuthPreflightLine({
+  runtime,
+}: {
+  runtime: AcpRuntimeCatalogEntry;
+}) {
+  const query = useAcpRuntimeAuthPreflightQuery(runtime.id);
+  const recheck = useRecheckAcpRuntimeAuthPreflightMutation();
+  const isChecking = query.isFetching || recheck.isPending;
+  const shown = authPreflightPresentation({
+    verdict: query.data,
+    isFetching: isChecking,
+    error: recheck.error ?? query.error,
+    nowMs: Date.now(),
+  });
+  const toneClass =
+    shown.tone === "bad"
+      ? "border-destructive/30 bg-destructive/10 text-destructive"
+      : shown.tone === "ok"
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+        : "border-border/60 bg-background/60 text-muted-foreground";
+
+  return (
+    <div
+      className={cn(
+        "mt-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-1 rounded-lg border px-3 py-1.5 text-sm",
+        toneClass,
+      )}
+      data-state={
+        query.data?.state.state ?? (isChecking ? "checking" : "failed")
+      }
+      data-testid={`doctor-runtime-preflight-${runtime.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">
+          {shown.label}
+          {shown.checkedLabel ? (
+            <span className="ml-2 text-xs font-normal opacity-80">
+              {shown.checkedLabel}
+              {query.data?.cached ? ", cached" : null}
+            </span>
+          ) : null}
+        </p>
+        {shown.detail ? (
+          <p
+            className="mt-0.5 whitespace-pre-line break-words text-xs opacity-90"
+            data-testid={`doctor-runtime-preflight-detail-${runtime.id}`}
+          >
+            {shown.detail}
+          </p>
+        ) : null}
+        {shown.remedy ? (
+          <p
+            className="mt-0.5 text-xs"
+            data-testid={`doctor-runtime-preflight-remedy-${runtime.id}`}
+          >
+            {shown.remedy}
+          </p>
+        ) : null}
+      </div>
+      <Button
+        aria-label={`Verify ${runtime.label} login now`}
+        className="h-7 shrink-0 px-3 text-xs"
+        data-testid={`doctor-runtime-preflight-recheck-${runtime.id}`}
+        disabled={isChecking}
+        onClick={() => recheck.mutate(runtime.id)}
+        size="sm"
+        title={query.data?.command ?? undefined}
+        type="button"
+        variant="outline"
+      >
+        {isChecking ? "Verifying…" : "Verify login"}
+      </Button>
     </div>
   );
 }
@@ -465,6 +556,10 @@ export function HarnessRow({
           >
             Config error: {runtime.authStatus.diagnostic}
           </p>
+        ) : null}
+
+        {runtimeHasAuthPreflight(runtime) ? (
+          <RuntimeAuthPreflightLine runtime={runtime} />
         ) : null}
 
         {isInstalling && installOutputLine ? (

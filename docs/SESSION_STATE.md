@@ -9162,6 +9162,16 @@ removed from here.
 - **`nightly.yml` in this repo has never run.** The only Woodpecker cron row is
   `id=1, repo_id=1, branch=integrated` — the vanilla relay, on a dead branch.
   Nothing schedules the nightly for `repo_id=2`.
+- **Seat auth: `claude auth status` lies.** It reads the credential file and
+  never exercises the OAuth refresh, so it said `loggedIn: true` through a
+  whole run of seat turns failing "Failed to authenticate: OAuth session
+  expired and could not be refreshed" (finding 71, live run 6, 2026-09-04).
+  The real check is `claude -p "reply with the single word ok" --max-turns 1
+  --output-format text` — the desktop runs exactly that as the runtime's
+  login pre-flight (`discovery/auth_preflight.rs`, 20s bound, cached 10 min,
+  "Verify login" on the runtime row).
+  The fix is `claude auth login` in a terminal, then send the seat a **new**
+  turn; the harness does not retry the failed one on its own.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 

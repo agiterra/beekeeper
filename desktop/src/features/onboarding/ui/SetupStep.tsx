@@ -4,10 +4,12 @@ import { Check, Info } from "lucide-react";
 
 import {
   useAcpAuthMethodsQuery,
+  useAcpRuntimeAuthPreflightQuery,
   useAcpRuntimesQuery,
   useConnectAcpRuntimeMutation,
   useInstallAcpRuntimeMutation,
 } from "@/features/agents/hooks";
+import { runtimeHasAuthPreflight } from "@/features/settings/ui/authPreflightLogic";
 import { useInstallOutputLine } from "@/features/agents/lib/useInstallOutputLine";
 import { describeResolvedCommand } from "@/features/agents/ui/agentUi";
 import type { AcpAuthMethod, AcpRuntimeCatalogEntry } from "@/shared/api/types";
@@ -442,6 +444,24 @@ function getOnboardingAuthMethods(
 }
 
 function RuntimeAuthError({ runtime }: { runtime: AcpRuntimeCatalogEntry }) {
+  // The live login verdict (finding 71): `auth status` said logged in
+  // through a whole run of failed turns, so the card asks a real call and
+  // shows a dead credential with the remedy, exactly like the settings row.
+  const preflight = useAcpRuntimeAuthPreflightQuery(runtime.id, {
+    enabled: runtimeHasAuthPreflight(runtime),
+  });
+  if (preflight.data?.state.state === "credential_dead") {
+    const remedy =
+      preflight.data.remedy ??
+      "Run `claude auth login` in a terminal, then retry.";
+    return (
+      <RuntimeErrorTooltip
+        className="absolute inset-x-3 bottom-2 truncate text-xs leading-4 text-destructive"
+        detail={`${preflight.data.state.sentence} ${remedy}`}
+        label="Login expired"
+      />
+    );
+  }
   if (runtime.authStatus.status === "config_invalid") {
     return (
       <RuntimeErrorTooltip

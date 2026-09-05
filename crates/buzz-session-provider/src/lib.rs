@@ -6077,6 +6077,32 @@ async fn resolve_genesis_founder(
     Err(last_error.unwrap_or_else(|| "referenced genesis was not found".into()))
 }
 
+/// The sentence a failed turn carries when Claude's login has lapsed on the
+/// machine running the seat (finding 71).
+///
+/// The adapter's own words — "Failed to authenticate: OAuth session expired
+/// and could not be refreshed", JSON-RPC -32603 — name the mechanism and not
+/// the fix, and a whole live run failed turn after turn under them while
+/// `claude auth status` said `loggedIn: true`. The operator needs the remedy
+/// first; the raw error travels alongside as `detail`.
+pub const CLAUDE_LOGIN_EXPIRED: &str = "Claude's login has expired on this computer. Run `claude auth login` in a terminal, then send the next turn.";
+
+/// The operator sentence for a failed turn whose cause is recognized, or
+/// `None` when the raw message is the best available sentence.
+///
+/// Matches the Claude CLI's authentication failures only: the ACP adapter's
+/// `Failed to authenticate` (any suffix), the CLI's `OAuth session expired`,
+/// and its interactive `Not logged in · Please run /login`. Anything else
+/// keeps the provider's text verbatim rather than guessing a remedy.
+fn turn_failure_sentence(message: &str) -> Option<&'static str> {
+    let lower = message.to_ascii_lowercase();
+    let claude_login = lower.contains("failed to authenticate")
+        || lower.contains("oauth session expired")
+        || lower.contains("please run /login")
+        || lower.contains("not logged in");
+    claude_login.then_some(CLAUDE_LOGIN_EXPIRED)
+}
+
 /// Map a turn outcome onto its terminal transcript item, the generation's next
 /// status, and whether the session can serve another turn.
 fn turn_result(
@@ -6127,20 +6153,31 @@ fn turn_result(
         TurnOutcome::Failed {
             message,
             agent_gone,
-        } => (
-            payload::result_item(
+        } => {
+            // A recognized cause gets the operator sentence as `result` and
+            // the raw provider text as `detail`; an unrecognized one keeps
+            // the raw text as `result` and carries no `detail`, so a reader
+            // can tell a classified failure from a verbatim one.
+            let sentence = turn_failure_sentence(message);
+            let mut item = payload::result_item(
                 payload::ResultSubtype::Error,
                 duration_ms,
-                message,
+                sentence.unwrap_or(message),
                 cost,
                 usage_report,
-            ),
-            if *agent_gone {
-                SessionStatus::Disconnected
-            } else {
-                SessionStatus::Failed
-            },
-        ),
+            );
+            if let (Some(_), Some(object)) = (sentence, item.as_object_mut()) {
+                object.insert("detail".into(), serde_json::json!(message));
+            }
+            (
+                item,
+                if *agent_gone {
+                    SessionStatus::Disconnected
+                } else {
+                    SessionStatus::Failed
+                },
+            )
+        }
     }
 }
 
@@ -6340,6 +6377,74 @@ fn log_ignored(what: &str, reason: &Ignored) {
 
 #[cfg(test)]
 mod tests {
+    /// Finding 71, verbatim: the adapter's JSON-RPC -32603 as `AcpError::
+    /// AgentError` renders it. The seat's result item leads with the remedy
+    /// sentence, keeps the raw error under `detail`, and the generation is
+    /// `failed` — the process is still there, so the next turn after
+    /// `claude auth login` is serviceable.
+    #[test]
+    fn an_expired_claude_login_fails_the_turn_with_the_remedy_and_keeps_the_raw_error() {
+        let raw = "Agent reported error (code -32603): Failed to authenticate: OAuth session expired and could not be refreshed";
+        let (item, status) = turn_result(
+            &session::TurnOutcome::Failed {
+                message: raw.to_string(),
+                agent_gone: false,
+            },
+            2_500,
+            None,
+            0,
+            None,
+        );
+        assert_eq!(
+            item["result"],
+            "Claude's login has expired on this computer. Run `claude auth login` in a terminal, then send the next turn.",
+            "{item}"
+        );
+        assert_eq!(item["detail"], raw, "{item}");
+        assert_eq!(item["subtype"], "error");
+        assert_eq!(item["isError"], true);
+        assert_eq!(status, SessionStatus::Failed);
+    }
+
+    /// The bare adapter message, without the `AcpError` prefix, classifies
+    /// the same way; so does the CLI's interactive login prompt.
+    #[test]
+    fn every_claude_login_phrasing_maps_to_the_one_sentence() {
+        for raw in [
+            "Failed to authenticate: OAuth session expired and could not be refreshed",
+            "Not logged in · Please run /login",
+            "authentication failed: OAuth session expired",
+        ] {
+            assert_eq!(
+                turn_failure_sentence(raw),
+                Some(CLAUDE_LOGIN_EXPIRED),
+                "{raw}"
+            );
+        }
+    }
+
+    /// An unrecognized failure keeps the provider's own words and carries
+    /// no `detail`, so a reader can tell a classified failure from a
+    /// verbatim one.
+    #[test]
+    fn an_unrecognized_failure_keeps_the_raw_message_and_no_detail() {
+        let raw = "Agent reported error (code -32000): tool 'Bash' is not available";
+        assert_eq!(turn_failure_sentence(raw), None);
+        let (item, status) = turn_result(
+            &session::TurnOutcome::Failed {
+                message: raw.to_string(),
+                agent_gone: true,
+            },
+            10,
+            None,
+            0,
+            None,
+        );
+        assert_eq!(item["result"], raw, "{item}");
+        assert!(item.get("detail").is_none(), "{item}");
+        assert_eq!(status, SessionStatus::Disconnected);
+    }
+
     /// The seam the whole lane exists for: what a driver reported becomes an
     /// additive `usage` block on the turn's terminal item, with the prompt
     /// side split into three disjoint counts.

@@ -116,6 +116,12 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       isError?: boolean;
       durationMs?: number;
       result?: string;
+      /**
+       * The raw provider error when `result` has been rewritten into an
+       * operator sentence (a dead login, say). Absent when `result` already
+       * is the raw text.
+       */
+      detail?: string;
       costUsd?: number;
       /**
        * Per-turn token accounting, when the driver reported any. Additive and

@@ -2,6 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  checkAcpRuntimeAuthPreflight,
   connectAcpRuntime,
   discoverAcpAuthMethods,
 } from "@/shared/api/tauriAgentAuth";
@@ -233,6 +234,51 @@ export function useAcpAuthMethodsQuery(
   });
 }
 
+export const acpAuthPreflightQueryKey = ["acp-auth-preflight"] as const;
+
+/** Mirrors the backend's ten-minute verdict cache. */
+export const ACP_AUTH_PREFLIGHT_STALE_TIME_MS = 10 * 60_000;
+
+/**
+ * The live credential verdict for one runtime (finding 71). The backend
+ * serves its cached verdict inside the ten-minute window, so mounting this on
+ * every row costs at most one real `claude -p` call per window.
+ */
+export function useAcpRuntimeAuthPreflightQuery(
+  runtimeId: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    enabled: (options?.enabled ?? true) && runtimeId.trim().length > 0,
+    queryKey: [...acpAuthPreflightQueryKey, runtimeId],
+    queryFn: () => checkAcpRuntimeAuthPreflight(runtimeId, false),
+    staleTime: ACP_AUTH_PREFLIGHT_STALE_TIME_MS,
+    retry: false,
+  });
+}
+
+/**
+ * Make the call again now, ignoring the cache — what the operator asks for
+ * after `claude auth login`. The fresh verdict replaces the query's data and
+ * the catalog is re-read so a dead credential's "Sign-in needed" clears.
+ */
+export function useRecheckAcpRuntimeAuthPreflightMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runtimeId: string) =>
+      checkAcpRuntimeAuthPreflight(runtimeId, true),
+    onSuccess: (verdict, runtimeId) => {
+      queryClient.setQueryData(
+        [...acpAuthPreflightQueryKey, runtimeId],
+        verdict,
+      );
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+    },
+  });
+}
+
 export function useConnectAcpRuntimeMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -241,6 +287,9 @@ export function useConnectAcpRuntimeMutation() {
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
       void queryClient.invalidateQueries({ queryKey: acpAuthMethodsQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: acpAuthPreflightQueryKey,
+      });
       void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
     },
   });

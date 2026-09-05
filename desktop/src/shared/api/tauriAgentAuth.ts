@@ -1,6 +1,7 @@
 import type {
   AcpAuthMethod,
   AcpAuthMethodsResult,
+  AuthPreflightVerdict,
   ConnectAcpRuntimeResult,
 } from "@/shared/api/types";
 import { invokeTauri } from "@/shared/api/tauri";
@@ -51,5 +52,22 @@ export async function connectAcpRuntime(
 ): Promise<ConnectAcpRuntimeResult> {
   return invokeTauri<RawConnectAcpRuntimeResult>("connect_acp_runtime", {
     request: { runtimeId, methodId },
+  });
+}
+
+/**
+ * Exercise a runtime's credential with a real, bounded call (finding 71:
+ * `claude auth status` stayed green through a run of failed turns).
+ *
+ * The backend caches a verdict for ten minutes; `force` makes the call again
+ * regardless — what "Verify login" does after the operator re-logs in.
+ */
+export async function checkAcpRuntimeAuthPreflight(
+  runtimeId: string,
+  force = false,
+): Promise<AuthPreflightVerdict> {
+  return invokeTauri<AuthPreflightVerdict>("check_acp_runtime_auth_preflight", {
+    runtimeId,
+    force,
   });
 }
