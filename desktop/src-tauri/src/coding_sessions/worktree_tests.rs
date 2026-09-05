@@ -388,6 +388,36 @@ fn a_chosen_folder_is_used_when_it_is_allowed_and_refused_with_a_sentence_when_n
     assert!(swallowing.parent_problem.is_some());
 }
 
+/// The predicate the late record relies on, exercised over the two shapes it
+/// must separate: a directory this host cut, and an ordinary checkout that
+/// merely happens to be a repository. Recording the latter would hand the
+/// prune path a licence over somebody's actual working copy.
+#[test]
+fn a_late_record_admits_a_cut_worktree_and_refuses_a_plain_checkout() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    let created = create(&checkout.to_string_lossy(), "fix the timeout", None, None)
+        .expect("create the worktree");
+
+    let repo_root = Path::new(&created.repo_root);
+    assert!(
+        buzz_core_pkg::worktree_placement::is_managed_worktree_path(
+            repo_root,
+            Path::new(&created.path),
+            &[]
+        ),
+        "a tree this host just cut must be recordable"
+    );
+    assert!(
+        !buzz_core_pkg::worktree_placement::is_managed_worktree_path(repo_root, repo_root, &[]),
+        "the checkout the worktree came from must never be"
+    );
+}
+
 /// A repository that has opted in — an existing `.worktrees` directory that
 /// git ignores — keeps its worktrees inside itself rather than scattering
 /// siblings across its parent.

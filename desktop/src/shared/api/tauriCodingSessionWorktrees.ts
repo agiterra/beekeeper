@@ -79,6 +79,26 @@ export async function planCodingSessionWorktree(input: {
 }
 
 /**
+ * Record a worktree that was cut before its session had a name.
+ *
+ * Safe to call for every settled session: the host resolves the directory to
+ * its repository and records only what it recognises as a worktree it cut, so
+ * a session running in an ordinary checkout records nothing. Resolves to
+ * whether anything was recorded.
+ */
+export async function recordCodingSessionWorktree(input: {
+  sessionRef: string;
+  seatLabel: string;
+  path: string;
+}): Promise<boolean> {
+  return invokeTauri<boolean>("record_coding_session_worktree", {
+    sessionRef: input.sessionRef,
+    seatLabel: input.seatLabel,
+    path: input.path,
+  });
+}
+
+/**
  * Remember, or forget, the folder this repository's worktrees go in.
  *
  * Keyed host-side by the canonical repository root, so the choice survives

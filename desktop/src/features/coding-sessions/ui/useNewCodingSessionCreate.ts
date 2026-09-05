@@ -22,6 +22,7 @@ import {
   clearCodingSessionActorSeat,
   stageCodingSessionActorSeat,
 } from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
+import { recordCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
 import {
   clearCodingSessionCreateHint,
   recordCodingSessionWorkdirUse,
@@ -340,6 +341,13 @@ export function useNewCodingSessionCreate({
   }, [waitKey, stallAnchor]);
 
   const settledCommandRef = React.useRef<string | null>(null);
+  // The directory each in-flight create will run in, keyed by command id.
+  // The transaction record does not carry it — it is host-local and must
+  // never travel in the event — so it is held here between submit and settle,
+  // which is when a worktree can finally be recorded against a session name.
+  // A reload in that window loses it; the tree is then unrecorded exactly as
+  // it is today, which is no worse than before and not worth persisting for.
+  const pendingWorkdirRef = React.useRef(new Map<string, string>());
 
   React.useEffect(() => {
     if (
@@ -355,6 +363,26 @@ export function useNewCodingSessionCreate({
     // must not survive to steer some later command that happens to reuse the
     // id.
     void clearCodingSessionCreateHint(scoped.input.commandId).catch(() => {});
+    // The other half of a worktree create. The tree was cut before this
+    // session had a name, so it could not be recorded then — and a tree the
+    // host never recorded is one it can never name or remove, which is how
+    // trees accumulate. The host verifies the directory really is a worktree
+    // it cut, so this is safe to call for every settled session and records
+    // nothing for one running in an ordinary checkout.
+    const settledWorkdir = pendingWorkdirRef.current.get(
+      scoped.input.commandId,
+    );
+    pendingWorkdirRef.current.delete(scoped.input.commandId);
+    if (settledWorkdir) {
+      void recordCodingSessionWorktree({
+        sessionRef: resolvedGenerationId,
+        seatLabel: "lead",
+        path: settledWorkdir,
+      }).catch(() => {
+        // Best-effort: the session is already established, and failing to
+        // remember its directory must not read as the launch failing.
+      });
+    }
     // The catalog join above is exact signed metadata from this create's
     // provider. Only now may the founder grant that provider durable wake
     // authority, followed by the actor's steering authority on the same
@@ -497,6 +525,11 @@ export function useNewCodingSessionCreate({
       setPublishError(null);
       setDurabilityError(null);
       const commandId = createCodingSessionLifecycleCommandId();
+      // Held for the settle handler, which is the first moment this session
+      // has a name to record a worktree against.
+      if (input.workdir) {
+        pendingWorkdirRef.current.set(commandId, input.workdir);
+      }
       // Set when the durable step refuses. It reports itself in its own
       // field, so the catch below must not repeat it as a publish error.
       let durabilityRefusal: string | null = null;

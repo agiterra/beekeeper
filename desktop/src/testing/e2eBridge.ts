@@ -12948,6 +12948,10 @@ export function maybeInstallE2eTauriMocks() {
         return activeConfig?.mock?.codingSessionWorktreeCreated ?? null;
       case "set_coding_session_worktree_parent":
         return null;
+      case "record_coding_session_worktree":
+        // Nothing recorded, which is what a mock session running in a plain
+        // checkout would truthfully answer.
+        return false;
       case "list_coding_session_worktree_branches": {
         const branches = activeConfig?.mock?.codingSessionWorktreeBranches;
         if (!branches) {

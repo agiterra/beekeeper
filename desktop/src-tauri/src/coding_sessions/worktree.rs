@@ -666,6 +666,73 @@ fn record_created_worktree(
     save_workdir_store(app, state, &store)
 }
 
+/// Record a worktree that was cut before its session had a name.
+///
+/// Three of the four create paths cut a tree *before* the genesis is signed,
+/// so they have no session to record it against and passed none — leaving
+/// trees the host could never name and would never remove. This is the second
+/// half of those creates: called once the session settles, with the directory
+/// the session actually runs in.
+///
+/// Self-verifying rather than trusting the caller. The path is resolved to
+/// its repository and checked against the same placement predicate the record
+/// and prune guards use; a session running in an ordinary checkout records
+/// nothing and says so by returning `false`. That is what makes it safe to
+/// call unconditionally on every settle, without the dialog having to
+/// remember whether it cut a tree.
+#[tauri::command]
+pub async fn record_coding_session_worktree(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_ref: String,
+    seat_label: String,
+    path: String,
+) -> Result<bool, String> {
+    let directory = PathBuf::from(&path);
+    let Some(resolved) = resolve_repo(&directory)? else {
+        return Ok(false);
+    };
+    let chosen: Vec<PathBuf> = load_workdir_store(&app)
+        .ok()
+        .map(|store| store.worktree_parents.values().cloned().collect())
+        .unwrap_or_default();
+    let directory = canonical_enough(&directory);
+    if !buzz_core_pkg::worktree_placement::is_managed_worktree_path(
+        &resolved.root,
+        &directory,
+        &chosen,
+    ) {
+        return Ok(false);
+    }
+    let auth = build_local_git_auth_config()?;
+    let branch = run_git(
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        Some(&directory),
+        &auth,
+    )
+    .map(|out| out.trim().to_string())
+    .unwrap_or_default();
+    if branch.is_empty() || branch == "HEAD" {
+        // A detached worktree has no branch to name, and the record's whole
+        // purpose is naming what may later be removed.
+        return Ok(false);
+    }
+    let mut store = load_workdir_store(&app)?;
+    store.record_seat_worktree(
+        &session_ref,
+        &seat_label,
+        CodingSessionSeatWorktree {
+            path: directory,
+            branch,
+            repo_root: resolved.root,
+            created_at: now_iso(),
+        },
+    )?;
+    store.version = WORKDIR_STORE_VERSION;
+    save_workdir_store(&app, &state, &store)?;
+    Ok(true)
+}
+
 /// Remove one worktree directory and forget its record.
 ///
 /// Never `--force`: git refuses to remove a tree holding modifications, and
