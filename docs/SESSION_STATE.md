@@ -8395,6 +8395,71 @@ installed Beekeeper.app (and the `bee` symlinked out of it) rebuilt from
   path binaries/buzz-acp-aarch64-apple-darwin doesn't exist`. Run `just
   _ensure-sidecar-stubs` in it once; nothing says so.
 
+### Found 2026-09-04 — every worktree the app cut went to a second, parallel home
+
+**Fixed on `main` as `aa64cfc43`…`900eabff2` (nine commits).**
+
+- **The app resolved the wrong repository, and the bug had two faces.**
+  `repo_root_of` asked `git rev-parse --path-format=absolute --show-toplevel`
+  (`desktop/src-tauri/src/coding_sessions/worktree.rs`). Inside a **linked
+  worktree** that answers with *that worktree's* root, so placement composed
+  `<worktree>.worktrees/<slug>` — a second worktree home for the same
+  repository. In a **bare** repository it fails outright (`fatal: this
+  operation must be run in a work tree`), and the caller swallowed the error
+  to `Ok(None)`, which the dialog rendered as the false *"That working
+  directory is not a git checkout, so it has no worktrees."* Both were live on
+  this machine: `agiterra-beekeeper.worktrees/` (empty) **and**
+  `agiterra-beekeeper-relayver.worktrees/refactor-codebase-and-commit-lead`
+  (holding real work). The fix is `--git-common-dir`, which answers with the
+  one canonical repository from a subdir, a linked worktree, or a bare repo
+  alike.
+
+- **The placement rule was written out four times and only one copy decided
+  where trees are cut.** The other three decided whether a directory may be
+  *recorded*, *listed* and *removed*. A tree landing outside them is silently
+  unrecordable and unprunable — the recording failure is only `eprintln!`'d —
+  so the app can never name it and will never remove it. All four now share
+  `crates/buzz-core/src/worktree_placement.rs`, pure path arithmetic with no
+  `fs` and no `Command`, which is what lets `bee` and the desktop host answer
+  identically. Commits 1–2 are a pure refactor: every existing guard test
+  passes untouched.
+
+- **Where trees go now.** An ignored `<repo>/.worktrees/` holder when the
+  repository has opted into one, otherwise a sibling `<repo>-wt-<slug>`
+  beside the checkout — matching the `-relayver` / `-prod` convention already
+  in that folder, with `-wt-` marking machine-cut trees. A person may name a
+  folder instead; the choice is remembered per **canonical** repo root, which
+  is the point of the resolution fix. Refusals are sentences, never raw git
+  stderr.
+
+- **Three flags whose exact spelling is load-bearing.** `--path-format=absolute`
+  — without it `rev-parse` answers relative to cwd and the derivation produces
+  a wrong root rather than a missing one. `git check-ignore -q -- ".worktrees/"`
+  — **with** the trailing slash; without it `check-ignore` exits 1 against the
+  existing directory rule and the holder is never detected. And bareness must
+  come from the first record of `git worktree list --porcelain`, **not**
+  `--is-bare-repository`, which answers about the *current* worktree and
+  returns `false` from a linked worktree of a bare repo.
+
+- **The store field is additive on purpose.** `buzz-cli` hard-errors on
+  `version > 2` (`crates/buzz-cli/src/commands/sessions/worktree.rs`), so
+  bumping `WORKDIR_STORE_VERSION` would kill `bee sessions worktree` on any
+  machine that had opened the app once. The new map is `#[serde(default)]`.
+
+- **Still stranded, by hand only:**
+  `agiterra-beekeeper-relayver.worktrees/refactor-codebase-and-commit-lead` is
+  registered with git and holds real work, but falls outside every admissible
+  shape, so it is permanently protected — safe, but unmanageable by the app.
+  Moving it needs `git worktree move`, never automation. Checked: **zero**
+  recorded worktrees exist in any app instance, so nothing became unprunable.
+
+- **Two tests passed without testing anything.** `worktree_tests.rs`'s suite
+  skips on setup failure (`if …is_err() { return }`); two new tests never
+  created the checkout directory before `git init`, so they failed into that
+  skip and passed in 0.01s. Caught only by reverting the fix and observing
+  they *still* passed. A green test that survives the removal of its subject
+  is not evidence — revert-and-rerun is the cheap check.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
