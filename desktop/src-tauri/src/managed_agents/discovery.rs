@@ -10,6 +10,7 @@ use crate::managed_agents::{
     HarnessSource,
 };
 mod auth_preflight;
+mod auth_settlement;
 mod presets;
 mod runtime_metadata;
 #[macro_use]
@@ -1484,49 +1485,7 @@ pub fn discover_acp_runtimes_from(
         partial.entry.auth_status = status;
     }
 
-    // Phase 2b: `auth status` reads the credential file and never exercises
-    // the token (finding 71: every turn failed "OAuth session expired" while
-    // it said `loggedIn: true`). A live pre-flight verdict reached within the
-    // last ten minutes overrides it; when there is none, one is warmed on a
-    // detached thread so the catalog read itself never waits the 20s bound.
-    for partial in &mut partials {
-        if partial.entry.auth_status != AuthStatus::LoggedIn
-            || auth_preflight::preflight_command_for(partial.runtime.id).is_none()
-        {
-            continue;
-        }
-        match auth_preflight::cached_preflight_verdict(partial.runtime.id) {
-            Some(AuthPreflightVerdict {
-                state: AuthPreflightState::CredentialDead { sentence },
-                ..
-            }) => {
-                partial.entry.auth_status = AuthStatus::LoggedOut;
-                partial.entry.login_hint =
-                    Some(auth_preflight::credential_dead_login_hint(&sentence));
-            }
-            Some(_) => {}
-            None => {
-                let runtime_id = partial.runtime.id;
-                std::thread::spawn(move || {
-                    let _ = auth_preflight::run_runtime_auth_preflight(runtime_id, false);
-                });
-            }
-        }
-    }
-
-    // Fill NotApplicable / Unknown for non-probed entries.
-    for partial in &mut partials {
-        if partial.entry.auth_status == AuthStatus::Unknown {
-            partial.entry.auth_status = if partial.entry.availability
-                == AcpAvailabilityStatus::Available
-                && partial.runtime.auth_probe_args.is_none()
-            {
-                AuthStatus::NotApplicable
-            } else {
-                AuthStatus::Unknown
-            };
-        }
-    }
+    auth_settlement::settle_auth_statuses(&mut partials);
 
     let mut entries: Vec<AcpRuntimeCatalogEntry> = partials.into_iter().map(|p| p.entry).collect();
 

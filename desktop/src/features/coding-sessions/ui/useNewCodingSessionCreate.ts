@@ -14,16 +14,11 @@ import { recordPendingCodingSessionLifecycle } from "@/features/coding-sessions/
 import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
-import { ensureActorChannelMembership } from "@/features/coding-sessions/lib/actorSeatChannelMembership";
 import { publishSeatedCodingSessionCreate } from "@/features/coding-sessions/lib/codingSessionSeatedCreate";
-import { fetchCodingSessionSeatPackSource } from "@/features/coding-sessions/lib/codingSessionSeatPackSource";
+import { codingSessionSeatDeps } from "@/features/coding-sessions/lib/codingSessionSeatDeps";
 import type { CodingSessionActorSeat } from "@/features/coding-sessions/lib/codingSessionActorSeat";
 import { ensureCodingSessionCreateOperatorGrants } from "@/features/coding-sessions/lib/codingSessionOperatorGrant";
-import {
-  clearCodingSessionActorSeat,
-  type CodingSessionSeatPackRef,
-  stageCodingSessionActorSeat,
-} from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
+import type { CodingSessionSeatPackRef } from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
 import { useCodingSessionWorktreeRecorder } from "./useCodingSessionWorktreeRecorder";
 import {
   clearCodingSessionCreateHint,
@@ -375,7 +370,9 @@ export function useNewCodingSessionCreate({
     if (seatActor) {
       // The provider deletes its own copy of the staged seat at spawn, so
       // this is only the cleanup for the paths where it did not.
-      void clearCodingSessionActorSeat(scoped.input.commandId).catch(() => {});
+      void codingSessionSeatDeps
+        .clearSeat(scoped.input.commandId)
+        .catch(() => {});
     }
     void (async () => {
       if (!seatGenesis) {
@@ -406,23 +403,6 @@ export function useNewCodingSessionCreate({
       });
     })();
   }, [lifecycle, onCreated, resolvedGenerationId, scopeId, scoped, settleTree]);
-
-  // Host deps for a seated create, stable so the submit callback is.
-  const seatDeps = React.useMemo(
-    () => ({
-      ensureMembership: (seatInput: {
-        channelId: string;
-        actorPubkey: string;
-        actorLabel: string | null;
-      }) => ensureActorChannelMembership(seatInput),
-      stageSeat: stageCodingSessionActorSeat,
-      clearSeat: clearCodingSessionActorSeat,
-      // The project's 30624, read the way the launch dialog's preview reads
-      // it, so the seat is staged from the repository the dialog named.
-      fetchPackSource: fetchCodingSessionSeatPackSource,
-    }),
-    [],
-  );
 
   const publishTransaction = React.useCallback(
     async (exact: DurableCodingSessionCreateTransaction) => {
@@ -557,7 +537,7 @@ export function useNewCodingSessionCreate({
           // The same coordinate the create is signed with: the seat's pack is
           // looked up on the project the session is filed under.
           projectRef: input.projectRef ?? null,
-          deps: seatDeps,
+          deps: codingSessionSeatDeps,
           // What custody actually wrote, so the pending screen can say a seat
           // is running without its role pack instead of implying it has one —
           // and, when a repository vouches for the pack, which commit.
@@ -628,7 +608,6 @@ export function useNewCodingSessionCreate({
       providerStatus?.providerPubkey,
       publishTransaction,
       scopeId,
-      seatDeps,
       rememberTree,
       transaction,
     ],
@@ -644,7 +623,7 @@ export function useNewCodingSessionCreate({
         commandId: scoped.input.commandId,
         actor: scoped.input.actor ?? null,
         clearHint: clearCodingSessionCreateHint,
-        clearSeat: clearCodingSessionActorSeat,
+        clearSeat: codingSessionSeatDeps.clearSeat,
       });
     }
     const cleared = clearDurableCodingSessionCreate(scopeId);
