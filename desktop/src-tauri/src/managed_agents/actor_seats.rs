@@ -584,28 +584,12 @@ fn plan_seat_pack(
             ))
         },
         |(dir, persona)| {
-            // An installed pack that *is* one of this build's shipped packs is
-            // named as such on the wire. The installer points
-            // `persona_team_dir` at the folder the operator chose, and on a
-            // development build that folder is usually the checkout's own
-            // `personas/roles` — the shipped directory under another name. A
-            // seat staged from it published `packRef: null`, which said no one
-            // could vouch for its pack while the app's own version could.
-            // Recognition, not a guess: `shipped_pack_ref_for_dir` answers
-            // `Some` only for `<shipped>/<role>` itself.
-            let pack_ref = role.as_deref().and_then(|role| {
-                packs_cache::shipped_pack_ref_for_dir(
-                    packs_cache::shipped_packs_dir(app).as_deref(),
-                    &dir,
-                    role,
-                    &packs_cache::shipped_packs_version(app),
-                )
-            });
-            let origin = if pack_ref.is_some() {
-                SeatPackOrigin::Shipped
-            } else {
-                SeatPackOrigin::Installed
-            };
+            let (origin, pack_ref) = installed_seat_pack_ref(
+                packs_cache::shipped_packs_dir(app).as_deref(),
+                &packs_cache::shipped_packs_version(app),
+                &dir,
+                role.as_deref(),
+            );
             Some((dir, persona, origin, pack_ref))
         },
     ) {
@@ -630,6 +614,41 @@ fn plan_seat_pack(
             reason: None,
         },
     }
+}
+
+/// Name an installed pack on the wire, when this build can vouch for it.
+///
+/// An installed pack that *is* one of this build's shipped packs is named as
+/// such: the installer points `persona_team_dir` at the folder the operator
+/// chose, and on a development machine that folder is the checkout's own
+/// `personas/roles` — the very bytes `tauri-build` copied into the target
+/// directory that [`packs_cache::shipped_packs_dir`] answers with. A seat
+/// staged from it published `packRef: null` (finding 72: every lead 44223 on
+/// runs 6 and 7, both machines), which said no one could vouch for its pack
+/// while the app's own version could. Recognition, not a guess:
+/// [`packs_cache::shipped_pack_ref_for_dir`] answers `Some` only for
+/// `<shipped>/<role>` itself, by path or by bytes. Anything else is
+/// [`SeatPackOrigin::Installed`] with nothing on the wire to name it.
+///
+/// The seat file carries whatever this returns, verbatim, and the provider
+/// republishes it on every 44223 of the generation — so this is the one place
+/// the lead's `packRef` is decided, and the status is never re-derived from
+/// it.
+pub(crate) fn installed_seat_pack_ref(
+    shipped_root: Option<&Path>,
+    shipped_version: &str,
+    dir: &Path,
+    role: Option<&str>,
+) -> (SeatPackOrigin, Option<packs_cache::PackRef>) {
+    let pack_ref = role.and_then(|role| {
+        packs_cache::shipped_pack_ref_for_dir(shipped_root, dir, role, shipped_version)
+    });
+    let origin = if pack_ref.is_some() {
+        SeatPackOrigin::Shipped
+    } else {
+        SeatPackOrigin::Installed
+    };
+    (origin, pack_ref)
 }
 
 /// What would be staged for this agent, at this role, in this project.

@@ -10917,6 +10917,48 @@ mod tests {
         );
     }
 
+    /// Finding 72 (runs 6 and 7, 2026-09-04): every lead 44223 carried
+    /// `beeStamp` and never `packRef`. The publisher's half of the contract,
+    /// pinned here with a fake staging result: whatever `packRef` the host
+    /// staged beside the seat's key — the `app:shipped` form included — is on
+    /// every 44223 the create publishes, verbatim, next to the seat's role.
+    /// Nothing here re-derives it; the seat file is the only source.
+    #[tokio::test]
+    async fn the_leads_published_status_carries_the_pack_ref_its_seat_was_staged_with() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let owner = "cd".repeat(32);
+        let staged = serde_json::json!({
+            "repo": "app:shipped",
+            "sha": "0.5.16",
+            "role": "lead",
+            "path": "personas/roles/lead",
+        });
+        let mut extra = serde_json::Map::new();
+        extra.insert("packRef".to_string(), staged.clone());
+        write_actor_seats_with(dir.path(), "create-1", &owner, extra);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event = seated_create_event(&provider, channel_id, "create-1", &owner, "lead");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let published = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert!(!published.is_empty(), "the create published no 44223");
+        for metadata in &published {
+            assert_eq!(metadata["role"], "lead", "{metadata}");
+            assert_eq!(metadata["agentRef"], owner, "{metadata}");
+            assert_eq!(metadata["packRef"], staged, "{metadata}");
+        }
+    }
+
     /// A create whose seat this host does not hold is refused with
     /// `ACTOR_UNAVAILABLE`, and nothing is created: no session record, no
     /// metadata, no adapter.

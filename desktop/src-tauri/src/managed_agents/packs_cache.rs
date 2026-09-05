@@ -282,20 +282,29 @@ pub fn shipped_packs_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// this build ships, or `None` when it came from somewhere else.
 ///
 /// The crew-role installer points an agent's `persona_team_dir` at whatever
-/// folder of role packs the operator chose. On a development build that folder
-/// is very often the checkout's own `personas/roles` — the same directory
-/// [`shipped_packs_dir`] answers with — and then "installed" and "shipped" name
-/// the same bytes. `plan_seat_pack` reached the installed arm first and
-/// published `packRef: null`, so a seat staged from the shipped defaults said
-/// on the wire that nothing vouched for its pack (the `packRef` half of
-/// finding 53, measured on run 5: nine role agents, every `persona_team_dir`
-/// under the shipped directory, no `packRef` on any 44223).
+/// folder of role packs the operator chose — on a development machine, the
+/// checkout's own `personas/roles`. `plan_seat_pack` reaches the installed arm
+/// first, and before L33 that arm hard-coded `packRef: null`, so a seat staged
+/// from the shipped defaults said on the wire that nothing vouched for its
+/// pack (finding 53, run 5).
 ///
-/// This is a recognition, never a guess: the answer is `Some` only when
-/// `pack_dir` is `<shipped>/<role>`, compared as canonical paths so a symlinked
-/// or `..`-laden route to the same directory is the same directory. A pack from
-/// anywhere else keeps `None`, because no repository — not even this app's own
-/// version — can vouch for it.
+/// L33 recognised the shipped pack **by path**: `pack_dir` canonicalises to
+/// `<shipped>/<role>`. That was measured true only at the helper. On the
+/// running dev app it is false: `tauri-build` copies the bundle resources
+/// into the desktop crate's own target directory
+/// (`desktop/src-tauri/target/debug/personas/roles`), [`shipped_packs_dir`]
+/// answers with that copy, and the installed directory is the checkout the
+/// copy was made from — the same bytes at another path. So every installed
+/// role agent on a dev build, the lead included, kept publishing no `packRef`
+/// (finding 72, runs 6 and 7, both machines).
+///
+/// This is therefore a recognition on two facts and a guess on none: the
+/// answer is `Some` when `pack_dir` **is** `<shipped>/<role>` (canonical
+/// paths, so a symlinked or `..`-laden route is the same directory), or when
+/// it holds **byte-for-byte the same files** as `<shipped>/<role>`
+/// ([`pack_bytes::same_pack_bytes`]). A copy the operator has edited since the
+/// build differs in bytes and keeps `None`, because no version of this app can
+/// vouch for what is in it.
 pub fn shipped_pack_ref_for_dir(
     shipped_root: Option<&Path>,
     pack_dir: &Path,
@@ -308,7 +317,9 @@ pub fn shipped_pack_ref_for_dir(
     }
     let expected = shipped_root?.join(role);
     let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if canonical(&expected) != canonical(pack_dir) {
+    if canonical(&expected) != canonical(pack_dir)
+        && !pack_bytes::same_pack_bytes(&expected, pack_dir)
+    {
         return None;
     }
     Some(PackRef {
@@ -956,6 +967,8 @@ mod tests {
         }
     }
 }
+
+mod pack_bytes;
 
 #[cfg(test)]
 mod shipped_pack_ref_tests;

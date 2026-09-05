@@ -76,3 +76,69 @@ fn the_same_directory_by_another_route_is_the_same_directory() {
 
     assert!(shipped_pack_ref_for_dir(Some(&shipped), &roundabout, "builder", "0.5.16").is_some());
 }
+
+/// Write the same small pack under `root`, so two roots hold the same bytes.
+fn write_pack(root: &std::path::Path) {
+    for (relative, bytes) in [
+        (
+            ".plugin/plugin.json",
+            "{\"id\":\"com.beekeeper.crew.lead\"}",
+        ),
+        (
+            "personas/lead.persona.md",
+            "---\nname: lead\nrole: lead\n---\nYou lead.\n",
+        ),
+        ("skills/hire/SKILL.md", "# hire\n"),
+    ] {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+}
+
+#[test]
+fn a_byte_identical_copy_of_the_shipped_pack_is_named_as_one() {
+    // Finding 72 (runs 6 and 7, both machines): the lead's 44223 carried
+    // `beeStamp` but never `packRef`. Its seat was staged from the checkout's
+    // `personas/roles/lead` — but on the running dev app `shipped_packs_dir()`
+    // is not the checkout: `tauri-build` copies the bundle resources into
+    // `desktop/src-tauri/target/debug/personas/roles`, and that copy is what
+    // the resource resolver answers with. Path recognition alone said "not
+    // the shipped pack" about the very bytes the build was made from, so the
+    // installed arm published nothing. The bytes are the fact.
+    let tmp = tempfile::tempdir().unwrap();
+    let shipped = tmp
+        .path()
+        .join("desktop/src-tauri/target/debug/personas/roles");
+    write_pack(&shipped.join("lead"));
+    let checkout = tmp.path().join("checkout/personas/roles/lead");
+    write_pack(&checkout);
+
+    let pack_ref = shipped_pack_ref_for_dir(Some(&shipped), &checkout, "lead", "0.5.16")
+        .expect("the same bytes are the same pack");
+    assert_eq!(pack_ref.repo, PACK_REF_SHIPPED_REPO);
+    assert_eq!(pack_ref.sha, "0.5.16");
+    assert_eq!(pack_ref.role, "lead");
+    assert_eq!(pack_ref.path, "personas/roles/lead");
+}
+
+#[test]
+fn a_copy_edited_since_the_build_has_nothing_vouching_for_it() {
+    // The operator edits the checkout's pack after the build: the seat runs
+    // those edits, and no version of the app can vouch for them. `None`,
+    // not the version of a pack that did not run.
+    let tmp = tempfile::tempdir().unwrap();
+    let shipped = tmp.path().join("target/debug/personas/roles");
+    write_pack(&shipped.join("lead"));
+    let checkout = tmp.path().join("checkout/personas/roles/lead");
+    write_pack(&checkout);
+    std::fs::write(
+        checkout.join("skills/hire/SKILL.md"),
+        "# hire, but louder\n",
+    )
+    .unwrap();
+
+    assert!(shipped_pack_ref_for_dir(Some(&shipped), &checkout, "lead", "0.5.16").is_none());
+    // The right bytes under the wrong role are still not this role's pack.
+    assert!(shipped_pack_ref_for_dir(Some(&shipped), &checkout, "builder", "0.5.16").is_none());
+}

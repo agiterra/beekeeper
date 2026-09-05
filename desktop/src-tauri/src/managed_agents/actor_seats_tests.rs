@@ -554,3 +554,82 @@ fn the_file_round_trips_through_disk_owner_only() {
     assert_eq!(read_actor_seats(&path).expect("read back"), file);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Finding 72: the lead's seat is staged from the pack its agent was installed
+/// from — on a dev machine, the checkout's `personas/roles/lead` — while this
+/// build's shipped copy of the same pack lives under the desktop crate's
+/// target directory. The staged entry must name that pack on the wire as the
+/// shipped one, in the exact `packRef` shape the provider republishes on every
+/// 44223 of the generation. Before this fix the installed arm produced `None`
+/// here and the lead's status said nothing about its pack.
+#[test]
+fn the_leads_staged_seat_names_the_shipped_pack_its_installed_copy_is() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    // What `shipped_packs_dir(app)` answers on a dev build: tauri-build's copy.
+    let shipped = tmp
+        .path()
+        .join("desktop/src-tauri/target/debug/personas/roles");
+    // `named_role_pack` writes `<root>/<role>-pack`; the shipped tree and the
+    // checkout both hold the role at `personas/roles/<role>`.
+    let shipped_lead = shipped.join("lead");
+    std::fs::rename(named_role_pack(&shipped, "lead"), &shipped_lead).expect("rename");
+    // What the crew-role installer pointed the lead agent at: the checkout.
+    let checkout_roles = tmp.path().join("checkout/personas/roles");
+    let checkout_lead = checkout_roles.join("lead");
+    std::fs::rename(named_role_pack(&checkout_roles, "lead"), &checkout_lead).expect("rename");
+    let lead = installed_role_agent("lead", &checkout_lead);
+
+    // The staging rule resolves the installed pack first.
+    let (dir, persona) =
+        resolve_local_seat_pack(&lead, std::slice::from_ref(&lead), &[], Some("lead"))
+            .expect("the lead's own pack");
+    assert_eq!(dir, checkout_lead);
+    assert_eq!(persona, "lead");
+
+    let (origin, pack_ref) = installed_seat_pack_ref(Some(&shipped), "0.5.16", &dir, Some("lead"));
+    assert_eq!(origin, SeatPackOrigin::Shipped);
+    let pack_ref = pack_ref.expect("the checkout copy is byte-for-byte the shipped lead pack");
+    assert_eq!(pack_ref.repo, packs_cache::PACK_REF_SHIPPED_REPO);
+    assert_eq!(pack_ref.sha, "0.5.16");
+    assert_eq!(pack_ref.role, "lead");
+    assert_eq!(pack_ref.path, "personas/roles/lead");
+    assert_ne!(
+        shipped_lead, dir,
+        "the two directories differ by path; the recognition is by bytes"
+    );
+
+    // The entry the provider reads carries it verbatim.
+    let entry = build_actor_seat_entry(
+        PUBKEY,
+        "nsec1secret",
+        None,
+        "wss://relay.example",
+        Some("Keystone"),
+        Some((dir, persona)),
+        Some(pack_ref.clone()),
+    )
+    .expect("seat");
+    let json = serde_json::to_value(&entry).expect("serialize");
+    assert_eq!(
+        json.get("packRef"),
+        Some(&serde_json::json!({
+            "repo": "app:shipped",
+            "sha": "0.5.16",
+            "role": "lead",
+            "path": "personas/roles/lead",
+        })),
+        "{json}"
+    );
+
+    // An edited checkout is a pack nothing vouches for: origin stays
+    // `installed`, and the wire says so by carrying no `packRef`.
+    std::fs::write(
+        checkout_lead.join("personas/lead.persona.md"),
+        "---\nname: lead\nrole: lead\n---\nYou lead, differently.\n",
+    )
+    .expect("edit");
+    let (origin, pack_ref) =
+        installed_seat_pack_ref(Some(&shipped), "0.5.16", &checkout_lead, Some("lead"));
+    assert_eq!(origin, SeatPackOrigin::Installed);
+    assert_eq!(pack_ref, None);
+}
