@@ -360,7 +360,7 @@ export function useNewCodingSessionCreate({
     // must not survive to steer some later command that happens to reuse the
     // id.
     void clearCodingSessionCreateHint(scoped.input.commandId).catch(() => {});
-    settleTree(scoped.input.commandId, resolvedGenerationId);
+    settleTree(scoped.input.commandId, resolvedGenerationId, lifecycle);
     // The catalog join above is exact signed metadata from this create's
     // provider. Only now may the founder grant that provider durable wake
     // authority, followed by the actor's steering authority on the same

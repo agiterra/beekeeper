@@ -13019,6 +13019,34 @@ export function maybeInstallE2eTauriMocks() {
         if (!row) throw new Error("this host has no worktree recorded");
         return row.path ?? "";
       }
+      case "close_coding_session_seat_worktree": {
+        // The host's own disposal on a close. A mock session runs in a plain
+        // checkout, which the real host refuses to adopt, so the honest mock
+        // answer is a refusal naming the record it does not hold — never a
+        // silent success that would let a spec believe a tree was removed.
+        const input = (payload ?? {}) as {
+          sessionRef?: string;
+          seatLabel?: string;
+        };
+        const rows = activeConfig?.mock?.codingSessionSeatWorktrees ?? [];
+        const row = rows.find((entry) => entry.seatLabel === input.seatLabel) as
+          | { path?: string; disposition?: string; detail?: string }
+          | undefined;
+        if (!row) {
+          throw new Error(
+            `this host has no worktree recorded for ${input.sessionRef}/${input.seatLabel}`,
+          );
+        }
+        return {
+          key: `${input.sessionRef}/${input.seatLabel}`,
+          path: row.path ?? "",
+          disposition: row.disposition ?? "within-grace",
+          pruned: false,
+          reclaimedBytes: null,
+          tipOnRelayKnown: false,
+          detail: row.detail ?? "",
+        };
+      }
       case "reclaim_coding_session_seat_worktree": {
         const input = (payload ?? {}) as { seatLabel?: string };
         const rows = activeConfig?.mock?.codingSessionSeatWorktrees ?? [];

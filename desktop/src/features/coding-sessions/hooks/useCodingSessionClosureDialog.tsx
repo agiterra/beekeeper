@@ -13,6 +13,7 @@ import {
   summarizeWorktreeClosure,
 } from "@/features/coding-sessions/lib/codingSessionWorktreeReclaim";
 import {
+  closeCodingSessionSeatWorktree,
   listCodingSessionSeatWorktrees,
   pruneCodingSessionSeatWorktree,
   reclaimCodingSessionSeatWorktree,
@@ -218,8 +219,28 @@ export function useCodingSessionClosureDialog(): {
 
   const confirm = React.useCallback(() => {
     if (!target) return;
+    const lines = summary?.lines ?? [];
     setPublishing(true);
     void publishCodingSessionClosure(target)
+      .then(() => {
+        // SESSION_STATE §3 item 9: the host disposes of its own seat trees on
+        // a close instead of waiting for somebody to run `bee sessions
+        // worktree prune`. It is told nothing about what may go — it decides
+        // with the shared predicate and answers with a sentence either way, so
+        // a tree holding uncommitted work is kept here exactly as it is kept
+        // everywhere else. Best effort and never surfaced as an error: the
+        // closure is already a published fact, and a directory this machine
+        // could not tidy must not read as the close having failed.
+        if (!codingSessionClosureIsClosed(target.action)) return;
+        for (const line of lines) {
+          void closeCodingSessionSeatWorktree({
+            sessionRef: line.sessionRef,
+            seatLabel: line.seatLabel,
+            executionLive: false,
+            settledForSecs: 0,
+          }).catch(() => {});
+        }
+      })
       .catch((error: unknown) => {
         toast.error(
           error instanceof Error ? error.message : COPY[target.action].failed,
@@ -229,7 +250,7 @@ export function useCodingSessionClosureDialog(): {
         setPublishing(false);
         setTarget(null);
       });
-  }, [target]);
+  }, [summary, target]);
 
   const reclaim = React.useCallback((line: WorktreeClosureLine) => {
     setBusyKey(line.key);

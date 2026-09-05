@@ -15,6 +15,8 @@ pub(crate) mod workdir_store;
 pub(crate) mod worktree;
 // L11: what may be done with a worktree once its session is finished.
 pub(crate) mod worktree_prune;
+// P3: what the host itself does with one when the session closes.
+pub(crate) mod worktree_close;
 
 #[cfg(test)]
 mod workdir_store_tests;

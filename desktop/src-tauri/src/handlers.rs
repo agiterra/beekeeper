@@ -457,6 +457,7 @@ pub(crate) fn invoke_handler(
         // L11 (worktree lifecycle) — registration lines only.
         coding_sessions::worktree_prune::list_coding_session_seat_worktrees,
         coding_sessions::worktree_prune::prune_coding_session_seat_worktree,
+        coding_sessions::worktree_close::close_coding_session_seat_worktree,
         coding_sessions::worktree_prune::reclaim_coding_session_seat_worktree,
         coding_sessions::naming::coding_session_naming_settings,
         coding_sessions::naming::set_coding_session_naming_settings,

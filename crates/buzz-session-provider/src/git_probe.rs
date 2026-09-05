@@ -101,6 +101,26 @@ pub(crate) async fn probe(cwd: &Path) -> GitProbe {
     }
 }
 
+/// Look at `cwd` for a **gate row**, refusing rather than degrading.
+///
+/// [`probe`] answers `None` for everything: a missing `git`, a plain
+/// directory, a deleted checkout. That is right for the periodic worktree
+/// observation, where an unknown field is an unknown field — and wrong for a
+/// gate row, where `headSha: null` is published as a fact about a command that
+/// *did* run, and admits nothing anywhere (live-run finding 82).
+///
+/// So the two cases are separated here. A directory that is not there is a
+/// refusal carrying the sentence `cwd missing: <path>`, and the caller mints
+/// no row at all. A directory that is there degrades exactly as before —
+/// a checkout with no commits yet is not a lie, it is a repository without a
+/// `HEAD`.
+pub(crate) async fn probe_for_gate(cwd: &Path) -> Result<GitProbe, String> {
+    if !cwd.is_dir() {
+        return Err(format!("cwd missing: {}", cwd.display()));
+    }
+    Ok(probe(cwd).await)
+}
+
 /// Current `HEAD` commit object id, or `None` if there is not exactly one.
 ///
 /// Works on a detached `HEAD` (unlike [`branch`]) and fails the same way
@@ -372,6 +392,45 @@ mod tests {
         assert_eq!(observed.branch.as_deref(), Some("unborn"));
         assert_eq!(observed.dirty, Some(false));
         assert_eq!(observed.commit, None);
+    }
+
+    /// A gate row's subject is a directory that exists. When it does not, the
+    /// probe refuses by name instead of answering "no commit observed" —
+    /// finding 82, where a relocated worktree minted rows with `headSha: null`
+    /// for two days.
+    #[tokio::test]
+    async fn a_gate_probe_refuses_a_missing_directory_by_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gone = dir.path().join("relocated-away");
+        let refusal = probe_for_gate(&gone).await.expect_err("must refuse");
+        assert_eq!(refusal, format!("cwd missing: {}", gone.display()));
+    }
+
+    /// The directory being present is the whole condition: a real checkout
+    /// still answers with its real commit and its real dirty flag.
+    #[tokio::test]
+    async fn a_gate_probe_of_a_live_checkout_answers_with_its_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        repo(dir.path());
+        let observed = probe_for_gate(dir.path()).await.expect("must observe");
+        assert_eq!(observed.commit.as_deref().map(str::len), Some(40));
+        assert_eq!(observed.dirty, Some(false));
+
+        std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
+        let dirty = probe_for_gate(dir.path()).await.expect("must observe");
+        assert_eq!(dirty.dirty, Some(true));
+        assert_eq!(dirty.commit, observed.commit);
+    }
+
+    /// A directory that exists but is not a repository is *not* a refusal:
+    /// nothing moved, and the row's honest content is "no commit observed".
+    #[tokio::test]
+    async fn a_gate_probe_of_a_plain_directory_still_degrades() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            probe_for_gate(dir.path()).await.expect("must observe"),
+            GitProbe::default()
+        );
     }
 
     /// Proves the bound is real rather than decorative: with the ceiling driven

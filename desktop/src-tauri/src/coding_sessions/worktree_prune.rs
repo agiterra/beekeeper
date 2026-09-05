@@ -326,7 +326,13 @@ pub async fn prune_coding_session_seat_worktree(
     session_ref: String,
     seat_label: String,
 ) -> Result<String, String> {
-    remove_recorded_seat_worktree(&app, &state, &session_ref, &seat_label)
+    remove_recorded_seat_worktree(
+        &app,
+        &state,
+        &session_ref,
+        &seat_label,
+        "removed on a person's own click, after the path and file count were shown",
+    )
 }
 
 /// Remove `target/` and `desktop/node_modules` from one recorded worktree.

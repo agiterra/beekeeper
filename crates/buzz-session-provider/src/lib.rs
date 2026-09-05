@@ -39,6 +39,7 @@ pub mod config;
 pub mod context_projector;
 mod context_store;
 mod context_window;
+mod gate_cwd;
 mod gate_observer;
 mod git_exclude;
 mod git_probe;
@@ -4983,6 +4984,15 @@ impl Provider {
     /// that answered one and not the other yields neither
     /// (`coding_session_observation.rs`'s gate-row validator refuses the half
     /// shape outright).
+    ///
+    /// **A directory that is not there is different from all of those, and is
+    /// no longer one of them** (live-run finding 82). The directory is
+    /// resolved at every gate by [`gate_cwd::resolve`], which prefers the
+    /// host's *current* answer over the one the create recorded; when nothing
+    /// exists at the resolved path the gate is refused with `cwd missing:
+    /// <path>` and **no row is minted at all**. A relocated worktree used to
+    /// publish `headSha: null` rows for every gate it ran, which the push gate
+    /// correctly refused to admit and no operator could interpret.
     fn spawn_gate_head_probe(
         &mut self,
         session_id: &str,
@@ -4991,12 +5001,41 @@ impl Provider {
         let Some(record) = self.state.session(session_id) else {
             return;
         };
-        let cwd = record.cwd.clone();
+        let recorded_cwd = record.cwd.clone();
+        let projects_file = self.config.projects_file.clone();
         let events = self.session_events_tx.clone();
         let session_id = session_id.to_owned();
         tokio::spawn(async move {
-            let probe = git_probe::probe(&cwd).await;
+            let resolved = gate_cwd::resolve(projects_file.as_deref(), &session_id, &recorded_cwd);
+            let Some(cwd) = resolved.present() else {
+                // No row. The sentence is the whole disclosure: an operator
+                // greps for it after a relocation, and the alternative is the
+                // silent `headSha: null` this replaced.
+                if let Some(refusal) = resolved.refusal() {
+                    tracing::warn!(
+                        target: "csp::git",
+                        %session_id,
+                        "refusing to observe a gate: {refusal}"
+                    );
+                }
+                return;
+            };
+            let probe = git_probe::probe_for_gate(cwd).await;
             let mut observed = observed;
+            let probe = match probe {
+                Ok(probe) => probe,
+                Err(refusal) => {
+                    // Unreachable in practice — `present()` already proved the
+                    // directory — but a race that removes it between the two
+                    // refuses rather than minting a null row.
+                    tracing::warn!(
+                        target: "csp::git",
+                        %session_id,
+                        "refusing to observe a gate: {refusal}"
+                    );
+                    return;
+                }
+            };
             if let (Some(commit), Some(dirty)) = (probe.commit, probe.dirty) {
                 observed.row.head_sha = Some(commit);
                 observed.row.dirty = Some(dirty);

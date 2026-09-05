@@ -74,6 +74,21 @@ pub(crate) const MAX_PENDING_HINTS: usize = 64;
 /// because entries are dropped when their tree is removed.
 pub(crate) const MAX_SEAT_WORKTREES: usize = 4096;
 
+/// Upper bound on remembered prunes.
+///
+/// A prune record outlives the directory it names, so unlike the worktree map
+/// nothing ever drops one on its own. The cap is what bounds it.
+pub(crate) const MAX_PRUNED_WORKTREES: usize = 512;
+
+/// The key prefix a hint migrated out of `pending` is filed under.
+///
+/// Deliberately not a session ref, and deliberately not spellable as one: a
+/// migrated hint names a directory this host cut but can no longer attribute
+/// to a session, so it must be *visible* to `bee sessions worktree status`
+/// without ever being matched by a real session's prefix — which is what
+/// keeps it listable and unprunable. See [`migrate_pending_worktrees`].
+pub(crate) const MIGRATED_HINT_PREFIX: &str = "unattributed-hint:";
+
 /// One git worktree this host cut for one seat, recorded when it was created.
 ///
 /// Written **only** by the create path. Nothing that merely observed a
@@ -92,6 +107,45 @@ pub(crate) struct CodingSessionSeatWorktree {
     pub repo_root: PathBuf,
     /// When the host cut it, ISO-8601.
     pub created_at: String,
+    /// The producer-minted session id running in this tree, when the caller
+    /// knew one.
+    ///
+    /// This is the whole of finding 82's fix on the host side. The provider
+    /// resolves a gate row's directory by re-reading its projects file at
+    /// every gate ([`CodingSessionProjectsView::sessions`]); that map is built
+    /// from this field, so the moment the host records a tree at a new path
+    /// the next gate is measured there. Without it the provider can only know
+    /// the path the create resolved, which after a relocation is a directory
+    /// that no longer exists — and every row it minted said
+    /// `headSha: null, dirty: null`.
+    ///
+    /// `#[serde(default)]` and optional: a record written before this field,
+    /// or by a caller that genuinely does not know the session id yet (a tree
+    /// cut before its genesis is signed), reads as `None` and simply
+    /// contributes no override, which is exactly today's behaviour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// One worktree this host removed, and why it was allowed to.
+///
+/// Kept after the directory is gone so a person can find out what happened to
+/// a folder they remember. Bounded by [`MAX_PRUNED_WORKTREES`]; the oldest
+/// entries fall off the end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodingSessionPrunedWorktree {
+    /// Absolute path that was removed.
+    pub path: PathBuf,
+    /// Branch it had checked out.
+    pub branch: String,
+    /// Repository it belonged to.
+    pub repo_root: PathBuf,
+    /// When the host removed it, ISO-8601.
+    pub pruned_at: String,
+    /// The sentence the host would have shown for the disposition that
+    /// admitted the removal — never a bare token.
+    pub reason: String,
 }
 
 /// The key one seat worktree is filed under: `<sessionRef>/<seatLabel>`.
@@ -169,6 +223,14 @@ pub(crate) struct CodingSessionWorkdirStore {
     /// stop working on every machine that opened the app once.
     #[serde(default)]
     pub worktree_parents: BTreeMap<String, PathBuf>,
+    /// Worktrees this host removed, newest last, keyed by the record's key.
+    ///
+    /// Additive and `#[serde(default)]` for the same reason `worktrees` was:
+    /// `bee` hard-errors on a store version above its own maximum, so this is
+    /// **not** a version bump. A build that predates the map reads a file
+    /// carrying one and simply does not show it.
+    #[serde(default)]
+    pub pruned: BTreeMap<String, CodingSessionPrunedWorktree>,
 }
 
 impl Default for CodingSessionWorkdirStore {
@@ -181,6 +243,7 @@ impl Default for CodingSessionWorkdirStore {
             pending: BTreeMap::new(),
             worktrees: BTreeMap::new(),
             worktree_parents: BTreeMap::new(),
+            pruned: BTreeMap::new(),
         }
     }
 }
@@ -205,6 +268,19 @@ pub(crate) struct CodingSessionProjectsView {
     pub pending: BTreeMap<String, PathBuf>,
     pub projects: BTreeMap<String, PathBuf>,
     pub channels: BTreeMap<String, PathBuf>,
+    /// Where each running session's tree is **right now**, by session id.
+    ///
+    /// The one addition the provider's gate probe reads
+    /// (`crates/buzz-session-provider/src/gate_cwd.rs`). Unlike the three maps
+    /// above it is not a resolution input for a *create* — the provider never
+    /// consults it to choose a directory — it is the host telling a session
+    /// that already exists where its tree moved to. Rewritten on every
+    /// mutation of this store, so a relocation reaches a live session at its
+    /// next gate with no restart and no new command.
+    ///
+    /// Additive: a provider that predates it ignores the key, and a host that
+    /// predates it writes no key, which reads as no override at all.
+    pub sessions: BTreeMap<String, PathBuf>,
 }
 
 /// Whether a candidate path is usable as a working directory.
@@ -325,11 +401,48 @@ impl CodingSessionWorkdirStore {
         self.worktrees.remove(key).is_some()
     }
 
+    /// Remember that this host removed one recorded worktree, and why.
+    ///
+    /// Called only after the directory is actually gone, so the record is a
+    /// fact rather than an intention. Over the cap the oldest `prunedAt` is
+    /// dropped — the newest prune is the one somebody is asking about.
+    pub(crate) fn record_prune(
+        &mut self,
+        key: &str,
+        entry: &CodingSessionSeatWorktree,
+        reason: &str,
+    ) {
+        self.pruned.insert(
+            key.to_string(),
+            CodingSessionPrunedWorktree {
+                path: entry.path.clone(),
+                branch: entry.branch.clone(),
+                repo_root: entry.repo_root.clone(),
+                pruned_at: now_iso(),
+                reason: reason.to_string(),
+            },
+        );
+        while self.pruned.len() > MAX_PRUNED_WORKTREES {
+            let Some(oldest) = self
+                .pruned
+                .iter()
+                .min_by(|left, right| left.1.pruned_at.cmp(&right.1.pruned_at))
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.pruned.remove(&oldest);
+        }
+    }
+
     /// Project the desktop record down to what the provider reads.
     ///
-    /// `worktrees` is deliberately **not** here. The provider resolves a cwd;
-    /// it does not reap, and handing it a list of directories it may not touch
-    /// would only invite something to try.
+    /// `worktrees` is deliberately **not** here in full. The provider resolves
+    /// a cwd; it does not reap, and handing it a list of directories it may
+    /// not touch would only invite something to try. What it *does* get is
+    /// [`CodingSessionProjectsView::sessions`]: the path of the tree each
+    /// running session is in, and nothing else about it — no branch, no
+    /// repository, no record it could act on.
     pub(crate) fn projects_view(&self) -> CodingSessionProjectsView {
         CodingSessionProjectsView {
             version: PROJECTS_VIEW_VERSION,
@@ -344,8 +457,118 @@ impl CodingSessionWorkdirStore {
                 .iter()
                 .map(|(key, entry)| (key.clone(), entry.path.clone()))
                 .collect(),
+            sessions: self
+                .worktrees
+                .values()
+                .filter_map(|entry| {
+                    entry
+                        .session_id
+                        .as_ref()
+                        .map(|id| (id.clone(), entry.path.clone()))
+                })
+                .collect(),
         }
     }
+}
+
+/// Repository root implied by a worktree path, from the path alone.
+///
+/// The inverse of the two *holder* shapes in
+/// `buzz_core::worktree_placement`: `<repo>/.worktrees/<slug>` and the legacy
+/// sibling container `<repo>.worktrees/<slug>`. Both name their repository
+/// unambiguously, so no `git` invocation and no `stat` is needed.
+///
+/// The per-worktree sibling shape `<stem>-wt-<slug>` is deliberately **not**
+/// inverted: `a-wt-b-wt-c` has two readings and only a stat could choose
+/// between them, so a hint in that shape is left alone rather than attributed
+/// to a repository that may not be its own. Say so rather than guess.
+fn repo_root_of_holder_path(path: &Path) -> Option<PathBuf> {
+    for ancestor in path.ancestors().skip(1) {
+        let name = ancestor.file_name()?.to_str()?;
+        if name == ".worktrees" {
+            return ancestor.parent().map(Path::to_path_buf);
+        }
+        if let Some(stem) = name.strip_suffix(".worktrees") {
+            if stem.is_empty() {
+                return None;
+            }
+            return Some(ancestor.with_file_name(stem));
+        }
+    }
+    None
+}
+
+/// Move the seat worktrees stranded in `pending` into `worktrees`, once.
+///
+/// # Why anything needs moving (live-run finding 60)
+///
+/// `pending` is a **one-shot create hint**, cleared the moment its receipt
+/// arrives. `worktrees` is the durable record `bee sessions worktree
+/// status/prune/reclaim` and Pulse's disk row read. On the machine that
+/// produced the finding, `pending` held 27 seat worktrees and `worktrees` was
+/// empty: the host staged every seat into the hint map and never promoted one,
+/// so the product's own reclaim was blind to every tree it had cut.
+///
+/// # What is and is not migrated
+///
+/// Only a hint whose path is inside a `.worktrees` holder of the repository
+/// that path itself names, checked with the same shared predicate the record
+/// and prune guards use. That is what keeps a person's ordinary checkout —
+/// which is also staged as a hint, on every non-worktree create — from being
+/// recorded as a seat's disposable tree.
+///
+/// A migrated entry is keyed [`MIGRATED_HINT_PREFIX`]`<commandId>/<basename>`.
+/// The prefix is load-bearing: `bee` reads the whole map so the tree becomes
+/// *visible*, while no real session ref can equal the key's session half, so
+/// no settlement fact ever attaches to it and `classify_seat_worktree` answers
+/// `not-settled` — listable, never removable. Finding 60 asked for the trees
+/// to stop being invisible, not for a sweep to start deleting them.
+///
+/// Idempotent: the key is derived, and an existing key is never overwritten,
+/// so a second load changes nothing. The hint itself is left in `pending` —
+/// it may still be steering an in-flight create, and clearing it here would
+/// break that create for a record it has already made.
+pub(crate) fn migrate_pending_worktrees(store: &mut CodingSessionWorkdirStore) -> usize {
+    let candidates: Vec<(String, PathBuf)> = store
+        .pending
+        .iter()
+        .map(|(command_id, path)| (command_id.clone(), path.clone()))
+        .collect();
+    let mut migrated = 0usize;
+    for (command_id, path) in candidates {
+        let Some(repo_root) = repo_root_of_holder_path(&path) else {
+            continue;
+        };
+        if !is_inside_worktree_parent(&repo_root, &path) {
+            continue;
+        }
+        let Some(label) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let key = format!("{MIGRATED_HINT_PREFIX}{command_id}/{label}");
+        if store.worktrees.contains_key(&key) {
+            continue;
+        }
+        if store.worktrees.len() >= MAX_SEAT_WORKTREES {
+            break;
+        }
+        // The branch is not knowable from a path, and inventing one would put
+        // a name into a record whose purpose is naming what may be removed.
+        // The empty string is the honest answer and reads as "unknown" in
+        // every surface, all of which refuse to remove this entry anyway.
+        store.worktrees.insert(
+            key,
+            CodingSessionSeatWorktree {
+                path,
+                branch: String::new(),
+                repo_root,
+                created_at: now_iso(),
+                session_id: None,
+            },
+        );
+        migrated += 1;
+    }
+    migrated
 }
 
 /// Inspect a candidate directory without touching it.
@@ -400,7 +623,7 @@ pub(crate) fn load_workdir_store_readonly_from(
     {
         return Err("coding-session workdir store exceeds readiness limit".into());
     }
-    let store: CodingSessionWorkdirStore = serde_json::from_reader(file)
+    let mut store: CodingSessionWorkdirStore = serde_json::from_reader(file)
         .map_err(|error| format!("failed to parse coding-session workdir store: {error}"))?;
     // A range, not an equality: a v1 file predates the worktree record and
     // reads with that map empty, which is exactly true of it.
@@ -432,6 +655,10 @@ pub(crate) fn load_workdir_store_readonly_from(
     if paths.into_iter().any(|path| !path.is_absolute()) {
         return Err("coding-session workdir store contains a relative path".into());
     }
+    // In memory only: this reader promises not to touch the filesystem. The
+    // next mutation persists the same derivation, because `mutate` loads
+    // through the writable reader below, which migrates too.
+    migrate_pending_worktrees(&mut store);
     Ok(store)
 }
 
@@ -451,8 +678,13 @@ pub(crate) fn load_workdir_store(app: &AppHandle) -> Result<CodingSessionWorkdir
     }
     let content = std::fs::read_to_string(&path)
         .map_err(|error| format!("failed to read coding-session workdir store: {error}"))?;
-    serde_json::from_str(&content)
-        .map_err(|error| format!("failed to parse coding-session workdir store: {error}"))
+    let mut store: CodingSessionWorkdirStore = serde_json::from_str(&content)
+        .map_err(|error| format!("failed to parse coding-session workdir store: {error}"))?;
+    // Finding 60: the seat worktrees stranded in `pending` become records the
+    // reclaim tool can see. Idempotent, so every load may run it; it is
+    // written back by the next `mutate`.
+    migrate_pending_worktrees(&mut store);
+    Ok(store)
 }
 
 /// Persist the record and re-materialize the provider's view.

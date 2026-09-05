@@ -18,13 +18,11 @@ import {
   publishCodingSessionResume,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  clearCodingSessionActorSeat,
-  stageCodingSessionActorSeat,
-} from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
-import {
   type CodingSessionSeatCustody,
   publishSeatedCodingSessionResume,
 } from "@/features/coding-sessions/lib/codingSessionSeatedCreate";
+import { buildCodingSessionResumeInput } from "@/features/coding-sessions/lib/codingSessionResumeSeat";
+import { codingSessionResumeSeatDeps } from "@/features/coding-sessions/lib/codingSessionResumeSeatDeps";
 import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/useCodingSessionResumeSettle";
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
@@ -142,6 +140,16 @@ type CodingSessionComposerProps = {
    * this a resumed seat would be handed its actor's home-role pack.
    */
   seatRole?: string | null;
+  /**
+   * The project this execution is filed under, from its own 44223.
+   *
+   * A resume stages a fresh custody entry, and the host stages a seat's pack
+   * from the project's kind:30624 when it is told which project (finding 84).
+   * Without this a reconnect quietly restaged this computer's local copy in
+   * place of the repository the project names — finding 85. `null` is a
+   * standalone session, which stages the local copy on purpose.
+   */
+  projectRef?: string | null;
   /** Host-local seat custody seam; production passes nothing. */
   seatCustody?: CodingSessionSeatCustody;
   /** Display name for the stop-execution confirm; falls back to "this session". */
@@ -150,19 +158,18 @@ type CodingSessionComposerProps = {
   variant?: "panel" | "floating";
 };
 
-/**
- * Production custody seam: the real host-local staging calls.
- *
- * Module-level so it is reference-stable — the resume callback depends on it,
- * and a fresh object each render would rebuild that callback every time.
- */
 /** Reference-stable empty default; a fresh `[]` per render would churn effects. */
 const EMPTY_PROMPT_HISTORY: readonly string[] = Object.freeze([]);
 
-const DEFAULT_SEAT_CUSTODY: CodingSessionSeatCustody = {
-  stageSeat: stageCodingSessionActorSeat,
-  clearSeat: clearCodingSessionActorSeat,
-};
+/**
+ * Production custody seam: the real host-local staging calls, and the reader
+ * that resolves the project's pack source
+ * (`lib/codingSessionResumeSeatDeps.ts`). It used to be defined here without the
+ * reader, which is half of finding 85 — a `projectRef` with nothing able to
+ * read a 30624 for it resolves to `null` and stages the local copy anyway.
+ */
+const DEFAULT_SEAT_CUSTODY: CodingSessionSeatCustody =
+  codingSessionResumeSeatDeps;
 
 /** Composer for steering a selected governed coding-session generation. */
 export function CodingSessionComposer({
@@ -194,6 +201,7 @@ export function CodingSessionComposer({
   refusalClient,
   seatActorPubkey = null,
   seatRole = null,
+  projectRef = null,
   seatCustody = DEFAULT_SEAT_CUSTODY,
   sessionLabel = null,
   target,
@@ -628,19 +636,24 @@ export function CodingSessionComposer({
       // A seated execution's identity is staged under this resume's own
       // `commandId` before the 44221 goes out. Unseated executions take the
       // publish path unchanged — no custody write at all.
-      await publishSeatedCodingSessionResume({
-        actorPubkey: seatActorPubkey,
-        actorRole: seatRole,
-        commandId,
-        deps: seatCustody,
-        publish: () =>
-          publishResume({
-            channelId,
-            commandId,
-            target,
-            providerAuthorityPubkey,
-          }),
-      });
+      await publishSeatedCodingSessionResume(
+        buildCodingSessionResumeInput({
+          commandId,
+          seat: {
+            actorPubkey: seatActorPubkey,
+            role: seatRole,
+            projectRef,
+          },
+          deps: seatCustody,
+          publish: () =>
+            publishResume({
+              channelId,
+              commandId,
+              target,
+              providerAuthorityPubkey,
+            }),
+        }),
+      );
     } catch (publishError) {
       failResume(
         publishError instanceof Error
@@ -656,6 +669,7 @@ export function CodingSessionComposer({
     isDisconnected,
     isMember,
     isSending,
+    projectRef,
     providerAuthorityPubkey,
     publishResume,
     seatActorPubkey,

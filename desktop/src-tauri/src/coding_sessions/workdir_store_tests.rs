@@ -3,8 +3,9 @@
 use std::path::PathBuf;
 
 use super::workdir_store::{
-    projects_view_provider_for_relay, validate_workdir, CodingSessionWorkdirScope,
-    CodingSessionWorkdirStore, MAX_MRU_ENTRIES, MAX_PENDING_HINTS, PROJECTS_VIEW_VERSION,
+    migrate_pending_worktrees, projects_view_provider_for_relay, validate_workdir,
+    CodingSessionSeatWorktree, CodingSessionWorkdirScope, CodingSessionWorkdirStore,
+    MAX_MRU_ENTRIES, MAX_PENDING_HINTS, MIGRATED_HINT_PREFIX, PROJECTS_VIEW_VERSION,
     WORKDIR_STORE_VERSION,
 };
 use crate::session_provider::store::{CodingSessionProviderRecord, CodingSessionProviderStore};
@@ -226,10 +227,17 @@ fn the_provider_view_matches_the_key_names_the_provider_parses() {
     let parsed: serde_json::Value = serde_json::from_str(&encoded).expect("json");
     let object = parsed.as_object().expect("object");
 
-    // Exactly the four fields of `buzz_session_provider::commands::ProjectsFile`.
+    // The four fields of `buzz_session_provider::commands::ProjectsFile` — it
+    // ignores anything else it is handed — plus `sessions`, read by that
+    // crate's `gate_cwd` module and by nothing else. Both sides are additive:
+    // a provider that predates the key ignores it, and a host that predates it
+    // writes none, which reads as "no override" rather than as an error.
     let mut keys = object.keys().cloned().collect::<Vec<_>>();
     keys.sort();
-    assert_eq!(keys, vec!["channels", "pending", "projects", "version"]);
+    assert_eq!(
+        keys,
+        vec!["channels", "pending", "projects", "sessions", "version"]
+    );
 }
 
 #[test]
@@ -316,4 +324,164 @@ fn no_workdir_type_is_reachable_from_relay_event_construction() {
         offenders.is_empty(),
         "working-directory state must never reach relay-event construction: {offenders:?}",
     );
+}
+
+// ── P3: the pending hints finding 60 stranded ──────────────────────────────
+
+/// One store with a hint per shape, to migrate.
+fn store_with_hints() -> CodingSessionWorkdirStore {
+    let mut store = CodingSessionWorkdirStore::default();
+    // The legacy sibling container, which is where every tree on the machine
+    // that produced finding 60 actually lives.
+    store.stage_hint("csl-1", PathBuf::from("/src/proj.worktrees/lane-a"));
+    // The in-repo holder.
+    store.stage_hint("csl-2", PathBuf::from("/src/proj/.worktrees/lane-b"));
+    // A person's own checkout — staged as a hint on every ordinary create.
+    store.stage_hint("csl-3", PathBuf::from("/src/proj"));
+    // A per-worktree sibling: real, but not invertible from the path alone.
+    store.stage_hint("csl-4", PathBuf::from("/src/proj-wt-lane-c"));
+    store
+}
+
+/// Finding 60: 27 seat worktrees sat in `pending` while `worktrees` was empty,
+/// so `bee sessions worktree status` and Pulse's disk row had nothing to show.
+#[test]
+fn hints_that_name_a_managed_worktree_become_records_the_reclaim_tool_can_see() {
+    let mut store = store_with_hints();
+    let migrated = migrate_pending_worktrees(&mut store);
+
+    assert_eq!(migrated, 2);
+    let mut paths: Vec<String> = store
+        .worktrees
+        .values()
+        .map(|entry| entry.path.display().to_string())
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec!["/src/proj.worktrees/lane-a", "/src/proj/.worktrees/lane-b"]
+    );
+    for entry in store.worktrees.values() {
+        assert_eq!(entry.repo_root, PathBuf::from("/src/proj"));
+        // A branch is not knowable from a path, and inventing one would put a
+        // name into the record whose whole purpose is naming what may go.
+        assert_eq!(entry.branch, "");
+    }
+}
+
+/// A migrated hint is *listable* and never *removable*: its key can never be
+/// the session half of a real `<sessionRef>/<seatLabel>`, so no settlement fact
+/// attaches to it and every predicate answers `not-settled`.
+#[test]
+fn a_migrated_hint_is_keyed_so_no_session_can_ever_claim_it() {
+    let mut store = store_with_hints();
+    migrate_pending_worktrees(&mut store);
+
+    for key in store.worktrees.keys() {
+        assert!(key.starts_with(MIGRATED_HINT_PREFIX), "{key}");
+        let (session, seat) = key.split_once('/').expect("a two-part key");
+        assert!(!seat.is_empty());
+        // A session ref is a UUID; this can never be parsed as one.
+        assert!(uuid::Uuid::parse_str(session).is_err(), "{session}");
+    }
+}
+
+/// A person's own checkout is staged as a hint on every ordinary create. If
+/// migration adopted it, the host would hold a record giving the prune path a
+/// licence over somebody's working copy.
+#[test]
+fn a_plain_checkout_hint_is_never_adopted_as_a_seat_worktree() {
+    let mut store = CodingSessionWorkdirStore::default();
+    store.stage_hint("csl-3", PathBuf::from("/src/proj"));
+    store.stage_hint("csl-5", PathBuf::from("/Users/someone/src/private-thing"));
+
+    assert_eq!(migrate_pending_worktrees(&mut store), 0);
+    assert!(store.worktrees.is_empty());
+}
+
+/// Run on every load, so it must converge rather than accumulate — and it must
+/// not disturb a record a real create already wrote.
+#[test]
+fn migration_is_idempotent_and_never_overwrites_a_real_record() {
+    let mut store = store_with_hints();
+    assert_eq!(migrate_pending_worktrees(&mut store), 2);
+    let after_first = store.worktrees.clone();
+    assert_eq!(migrate_pending_worktrees(&mut store), 0);
+    assert_eq!(store.worktrees, after_first);
+
+    // The hint stays where it is: it may still be steering an in-flight
+    // create, and a record is not a reason to break one.
+    assert_eq!(store.pending.len(), 4);
+
+    let real_key = format!("{}/builder-1", "11111111-2222-3333-4444-555555555555");
+    store.worktrees.insert(
+        real_key.clone(),
+        CodingSessionSeatWorktree {
+            path: PathBuf::from("/src/proj.worktrees/lane-a"),
+            branch: "lane-a".into(),
+            repo_root: PathBuf::from("/src/proj"),
+            created_at: "2026-09-05T00:00:00Z".into(),
+            session_id: Some("s-1".into()),
+        },
+    );
+    assert_eq!(migrate_pending_worktrees(&mut store), 0);
+    assert_eq!(store.worktrees[&real_key].branch, "lane-a");
+}
+
+/// The store schema stays at 2 whatever this adds, because `bee` hard-errors
+/// on a version above its own maximum and would stop reading the record on
+/// every machine that had opened the app once.
+#[test]
+fn migration_never_moves_the_schema_version() {
+    let mut store = store_with_hints();
+    migrate_pending_worktrees(&mut store);
+    assert_eq!(store.version, WORKDIR_STORE_VERSION);
+    assert_eq!(WORKDIR_STORE_VERSION, 2);
+}
+
+/// A record written before `sessionId` existed must round-trip byte-identically
+/// — `skip_serializing_if` is what keeps a v2 file from growing a `null` the
+/// older reader would have to be taught about.
+#[test]
+fn a_record_without_a_session_id_serializes_exactly_as_it_did_before() {
+    let entry = CodingSessionSeatWorktree {
+        path: PathBuf::from("/src/proj.worktrees/lane"),
+        branch: "lane".into(),
+        repo_root: PathBuf::from("/src/proj"),
+        created_at: "2026-09-05T00:00:00Z".into(),
+        session_id: None,
+    };
+    let encoded = serde_json::to_string(&entry).expect("serialize");
+    assert!(!encoded.contains("sessionId"), "{encoded}");
+    assert_eq!(
+        serde_json::from_str::<CodingSessionSeatWorktree>(&encoded).expect("decode"),
+        entry
+    );
+}
+
+/// A prune is remembered after the directory it names is gone.
+#[test]
+fn a_prune_is_recorded_with_the_sentence_that_admitted_it() {
+    let mut store = CodingSessionWorkdirStore::default();
+    let entry = CodingSessionSeatWorktree {
+        path: PathBuf::from("/src/proj.worktrees/lane"),
+        branch: "lane".into(),
+        repo_root: PathBuf::from("/src/proj"),
+        created_at: "2026-09-05T00:00:00Z".into(),
+        session_id: None,
+    };
+    store.record_prune(
+        "s/builder-1",
+        &entry,
+        "/src/proj.worktrees/lane: clean, will be removed",
+    );
+
+    let recorded = &store.pruned["s/builder-1"];
+    assert_eq!(recorded.path, entry.path);
+    assert_eq!(recorded.branch, "lane");
+    assert_eq!(
+        recorded.reason,
+        "/src/proj.worktrees/lane: clean, will be removed"
+    );
+    assert!(!recorded.pruned_at.is_empty());
 }

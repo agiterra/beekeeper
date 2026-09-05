@@ -627,6 +627,7 @@ pub async fn create_coding_session_worktree(
     parent: Option<String>,
     session_ref: Option<String>,
     seat_label: Option<String>,
+    session_id: Option<String>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
     let created = tauri::async_runtime::spawn_blocking(move || {
         create(&workdir, &name, parent.as_deref(), source.as_deref())
@@ -634,9 +635,14 @@ pub async fn create_coding_session_worktree(
     .await
     .map_err(|error| format!("worktree create task failed: {error}"))??;
     if let (Some(session_ref), Some(seat_label)) = (session_ref, seat_label) {
-        if let Err(error) =
-            record_created_worktree(&app, &state, &session_ref, &seat_label, &created)
-        {
+        if let Err(error) = record_created_worktree(
+            &app,
+            &state,
+            &session_ref,
+            &seat_label,
+            session_id.as_deref(),
+            &created,
+        ) {
             eprintln!("buzz-desktop: failed to record a seat worktree: {error}");
         }
     }
@@ -649,6 +655,7 @@ fn record_created_worktree(
     state: &AppState,
     session_ref: &str,
     seat_label: &str,
+    session_id: Option<&str>,
     created: &CodingSessionWorktreeCreated,
 ) -> Result<(), String> {
     let mut store = load_workdir_store(app)?;
@@ -660,6 +667,7 @@ fn record_created_worktree(
             branch: created.branch.clone(),
             repo_root: PathBuf::from(&created.repo_root),
             created_at: now_iso(),
+            session_id: session_id.map(str::to_owned),
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -687,6 +695,7 @@ pub async fn record_coding_session_worktree(
     session_ref: String,
     seat_label: String,
     path: String,
+    session_id: Option<String>,
 ) -> Result<bool, String> {
     let directory = PathBuf::from(&path);
     let Some(resolved) = resolve_repo(&directory)? else {
@@ -726,6 +735,7 @@ pub async fn record_coding_session_worktree(
             branch,
             repo_root: resolved.root,
             created_at: now_iso(),
+            session_id,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -747,12 +757,18 @@ pub(crate) fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), Strin
     Ok(())
 }
 
-/// Remove a recorded seat worktree and drop the record naming it.
+/// Remove a recorded seat worktree, drop the record, and remember the prune.
+///
+/// `reason` is the sentence that admitted the removal — a person's own click,
+/// or the disposition the shared predicate answered on a session closure. It
+/// is kept in the store's `pruned` map so a folder somebody remembers can be
+/// accounted for after it is gone.
 pub(crate) fn remove_recorded_seat_worktree(
     app: &AppHandle,
     state: &AppState,
     session_ref: &str,
     seat_label: &str,
+    reason: &str,
 ) -> Result<String, String> {
     let key = seat_worktree_key(session_ref, seat_label);
     let mut store = load_workdir_store(app)?;
@@ -760,6 +776,9 @@ pub(crate) fn remove_recorded_seat_worktree(
         return Err(format!("this host has no worktree recorded for {key}"));
     };
     remove_worktree(&entry.repo_root, &entry.path)?;
+    // Recorded only after the directory is actually gone, so the record is a
+    // fact about what happened rather than an intention that may still fail.
+    store.record_prune(&key, &entry, reason);
     store.forget_seat_worktree(&key);
     store.version = WORKDIR_STORE_VERSION;
     save_workdir_store(app, state, &store)?;

@@ -818,6 +818,7 @@ function ReadyCodingSessionWorkspace({
                     providerAuthorityPubkey={session.providerAuthorityPubkey}
                     seatActorPubkey={session.agentRef}
                     seatRole={session.role}
+                    projectRef={session.projectRef}
                     sessionLabel={session.title}
                     target={session.commandTarget}
                     variant="floating"

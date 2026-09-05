@@ -76,6 +76,7 @@ fn seat_record(repo: &Path, path: &Path, branch: &str) -> CodingSessionSeatWorkt
         branch: branch.to_string(),
         repo_root: repo.to_path_buf(),
         created_at: "2026-09-02T19:00:00Z".to_string(),
+        session_id: None,
     }
 }
 
@@ -170,6 +171,41 @@ fn a_v1_file_loads_with_the_map_empty_and_re_saves_as_v2() {
     assert!(reloaded.worktrees.is_empty());
 }
 
+/// The provider is handed a session's *path* and nothing else about the tree.
+///
+/// P3 adds one key to the view — `sessions`, so a relocated worktree reaches a
+/// live session's gate probe (finding 82). Everything the reap path needs, and
+/// the provider must never act on, still stops here: no branch, no repository
+/// root, no created-at, no key it could turn into a removal.
+#[test]
+fn the_projects_view_carries_a_session_path_and_nothing_else_about_a_record() {
+    let mut store = CodingSessionWorkdirStore::default();
+    let mut record = seat_record(
+        Path::new("/src/proj"),
+        Path::new("/src/proj.worktrees/lane"),
+        "lane",
+    );
+    record.session_id = Some("11111111-2222-4333-8444-555555555555".to_string());
+    store
+        .record_seat_worktree(SESSION, "builder-1", record)
+        .expect("record");
+
+    let view = serde_json::to_value(store.projects_view()).expect("serialize");
+    let sessions = view["sessions"].as_object().expect("sessions map");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions["11111111-2222-4333-8444-555555555555"],
+        serde_json::json!("/src/proj.worktrees/lane")
+    );
+    let serialized = view.to_string();
+    for leaked in ["branch", "repoRoot", "createdAt"] {
+        assert!(
+            !serialized.contains(leaked),
+            "the provider must not learn {leaked} from a worktree record: {serialized}"
+        );
+    }
+}
+
 #[test]
 fn the_projects_view_is_byte_identical_to_what_it_was_before_the_record() {
     let mut store = CodingSessionWorkdirStore::default();
@@ -194,7 +230,8 @@ fn the_projects_view_is_byte_identical_to_what_it_was_before_the_record() {
 
     assert_eq!(
         without, with,
-        "the provider resolves a cwd; it does not reap, so it never sees this map"
+        "a record with no session id adds nothing: the provider resolves a cwd, \
+         it does not reap, so it never sees the record itself"
     );
     let parsed: serde_json::Value = serde_json::from_str(&with).expect("json");
     let mut keys: Vec<String> = parsed
@@ -204,7 +241,10 @@ fn the_projects_view_is_byte_identical_to_what_it_was_before_the_record() {
         .cloned()
         .collect();
     keys.sort();
-    assert_eq!(keys, vec!["channels", "pending", "projects", "version"]);
+    assert_eq!(
+        keys,
+        vec!["channels", "pending", "projects", "sessions", "version"]
+    );
 }
 
 #[test]

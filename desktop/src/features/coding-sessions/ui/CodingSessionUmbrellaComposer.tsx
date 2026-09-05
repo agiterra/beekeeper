@@ -370,6 +370,7 @@ function ExecutionComposer({
       recipientControl={recipientControl}
       seatActorPubkey={record.agentRef}
       seatRole={record.role}
+      projectRef={record.projectRef}
       target={target}
       variant="floating"
     />

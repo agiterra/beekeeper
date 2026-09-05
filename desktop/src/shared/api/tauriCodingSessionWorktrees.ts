@@ -90,11 +90,21 @@ export async function recordCodingSessionWorktree(input: {
   sessionRef: string;
   seatLabel: string;
   path: string;
+  /**
+   * The execution's own session id, when the caller knows it.
+   *
+   * The host publishes it to the provider as `sessions[<sessionId>]` in the
+   * projects file, and the provider re-reads that at every gate. That is what
+   * makes a relocated worktree reach a live session instead of leaving it
+   * measuring a directory that no longer exists (finding 82).
+   */
+  sessionId?: string | null;
 }): Promise<boolean> {
   return invokeTauri<boolean>("record_coding_session_worktree", {
     sessionRef: input.sessionRef,
     seatLabel: input.seatLabel,
     path: input.path,
+    sessionId: input.sessionId ?? null,
   });
 }
 
@@ -155,6 +165,8 @@ export async function createCodingSessionWorktree(input: {
   parent?: string | null;
   sessionRef?: string | null;
   seatLabel?: string | null;
+  /** The execution's session id, when it is already known at cut time. */
+  sessionId?: string | null;
 }): Promise<CodingSessionWorktreeCreated> {
   return invokeTauri<CodingSessionWorktreeCreated>(
     "create_coding_session_worktree",
@@ -165,6 +177,7 @@ export async function createCodingSessionWorktree(input: {
       parent: input.parent ?? null,
       sessionRef: input.sessionRef ?? null,
       seatLabel: input.seatLabel ?? null,
+      sessionId: input.sessionId ?? null,
     },
   );
 }
@@ -265,4 +278,49 @@ export async function reclaimCodingSessionSeatWorktree(input: {
   freedLabel: string;
 }> {
   return invokeTauri("reclaim_coding_session_seat_worktree", input);
+}
+
+/** What the host did with one seat's tree when its session closed. */
+export type SeatWorktreeCloseOutcome = {
+  key: string;
+  path: string;
+  disposition: SeatWorktreeDisposition;
+  /** Whether the directory itself was removed. */
+  pruned: boolean;
+  /** Build-output bytes removed, or `null` when they could not be measured. */
+  reclaimedBytes: number | null;
+  tipOnRelayKnown: boolean;
+  /** The one sentence for what happened — a prune as much as a refusal. */
+  detail: string;
+};
+
+/**
+ * Let the host dispose of one seat's worktree, now that its session is closed.
+ *
+ * Safe to call for every seat of a session that just settled: the host decides
+ * with the same predicate `bee sessions worktree prune` uses and refuses with a
+ * sentence for anything it may not remove. Uncommitted work is never removed
+ * here — that stays a person's own click.
+ *
+ * Two things can happen and they are independent: the tree is removed when the
+ * predicate says `prunable`, and the rebuildable build output is reclaimed as
+ * soon as the session is settled and no execution is live, which needs no
+ * grace window at all.
+ */
+export async function closeCodingSessionSeatWorktree(input: {
+  sessionRef: string;
+  seatLabel: string;
+  executionLive: boolean;
+  /** Seconds since the closure revision settled the session. */
+  settledForSecs: number | null;
+}): Promise<SeatWorktreeCloseOutcome> {
+  return invokeTauri<SeatWorktreeCloseOutcome>(
+    "close_coding_session_seat_worktree",
+    {
+      sessionRef: input.sessionRef,
+      seatLabel: input.seatLabel,
+      executionLive: input.executionLive,
+      settledForSecs: input.settledForSecs,
+    },
+  );
 }

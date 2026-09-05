@@ -1,5 +1,9 @@
 import * as React from "react";
 
+import {
+  type CodingSessionLifecycleResolution,
+  establishedCodingSessionTarget,
+} from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import { recordCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
 
 /**
@@ -32,13 +36,25 @@ export function useCodingSessionWorktreeRecorder() {
       /**
        * Record the directory against the session that just settled.
        *
+       * The lifecycle resolution is passed rather than a session id because
+       * the id is on the established target and this is the one place that
+       * needs it. It lets the host tell the provider where this session's
+       * tree is *now*, at every gate, instead of only where it was at create
+       * (finding 82). A lifecycle that establishes no target records the
+       * directory with no session id, which is the honest shape: the tree is
+       * still named, and no session claims it.
+       *
        * Safe to call for every settled session: the host resolves the
        * directory to its repository and records only what it recognises as a
        * worktree it cut, so an ordinary checkout records nothing. Failure is
        * swallowed — the session is already established, and not remembering
        * its directory must not read as the launch having failed.
        */
-      settle(commandId: string, sessionRef: string) {
+      settle(
+        commandId: string,
+        sessionRef: string,
+        lifecycle?: CodingSessionLifecycleResolution | null,
+      ) {
         const workdir = pendingRef.current.get(commandId);
         pendingRef.current.delete(commandId);
         if (!workdir) return;
@@ -46,6 +62,11 @@ export function useCodingSessionWorktreeRecorder() {
           sessionRef,
           seatLabel: "lead",
           path: workdir,
+          // The execution's own session id, which the host republishes to the
+          // provider so a gate row is measured in the tree this session is
+          // actually in — not the path its create resolved (finding 82).
+          sessionId:
+            establishedCodingSessionTarget(lifecycle)?.sessionId ?? null,
         }).catch(() => {});
       },
     }),
