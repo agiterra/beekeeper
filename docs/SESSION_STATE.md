@@ -56,7 +56,60 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-09-01 — **image attachments on a coding-session turn**,
+_Last updated: 2026-09-05 — **Delete Session never worked, and the New
+Coding Session dialog kept the goal it had just launched**. Both from live
+use (Andy, 2026-09-05); branch `fix/session-delete-and-prompt-recall`, not
+yet landed and **the relay half needs a hive deploy before Delete Session
+works in the app**.
+**Delete Session** failed with `invalid: deletion events must reference
+exactly one target via e or a tag (got e=26, a=0)` for every session that
+had ever been used. `bbe8e0234` taught `validate_standard_deletion_event`
+to authorize a whole-session delete but never touched `ingest_event`,
+whose single-target rule sits ~20 lines further down the same function and
+refused the event the moment the validator approved it. Only a
+one-event session could pass, and none exists.
+**The finding worth keeping:** the feature shipped with nine tests that
+call the validator directly (`verdict_events`), so none of them crossed
+ingest. A relay change that adds an *authorization* is not covered by
+authorization tests alone — the gates it has to survive are elsewhere in
+`ingest_event`. `crates/buzz-test-client/tests/e2e_coding_session_delete.rs`
+now puts the event on the wire: it prints `ACCEPTED session deletion over
+5 targets` on the fix and fails with Andy's message verbatim (`got e=5,
+a=0`) on `main` — verified both ways against a local relay on :3010.
+**The gate stays, with one named exception.** kind:5 carries no `h`, so
+ingest derives its channel from the *first* `e` tag and runs membership,
+token-channel and archived checks against that one channel; a blanket
+relaxation would judge targets 2..N against a channel they do not live in.
+The check is skipped only for `DeletionShape::WholeCodingSession`.
+**Second half, same commit — a hole that the gate had been hiding.** The
+authorship exemption a session delete needs is granted by *kind*
+(`coding_session_scoped_kind`), and a kind is not an identity. While
+multi-target deletions were refused this was unreachable; admitting the
+session shape would have let "delete session A" also delete any 44223,
+44225, 44227, 44229, 44230 or 44244 named alongside it — another project's,
+signed by someone else, in a channel the actor has no standing in.
+`session_deletion_admits` binds every target to the session by the same
+linkages both clients select by (channel first; genesis by identity;
+`d`-tagged kinds by `sessionRef`; metadata by its content's `sessionRef`;
+a transcript by a `cs-target` some metadata *in the same deletion*
+attributed here), with its own refusal sentence rather than the misleading
+"must be event author".
+**The dialog** cleared its draft only on the ungoverned branch of
+`useNewCodingSessionLaunchSubmit`, so any launch led by an agent left the
+goal in local storage — surviving an app restart and offering to re-launch
+an instruction already carried out. Cleared on `launched.ok`, not on
+`ok && channelId`. Same success now also records the prompt for **⌘↑/⌘↓
+recall** in that field, reusing the session composer's own
+`matchCodingSessionHistoryKey` and `stepPromptRecall`; the list is scoped
+by the dialog's existing `scopeId`, so one community's prompts never
+surface in another's dialog.
+Gate: `just ci`; relay lib 1009 unit + 27 Postgres-backed deletion tests
+(22 of them pre-existing and assertion-identical), desktop 2206
+coding-session tests, `tsc` and Biome clean.
+**Not exercised against hive** — the desktop talks to the deployed relay,
+so Delete Session stays broken there until `main` redeploys._
+
+_Previously: 2026-09-01 — **image attachments on a coding-session turn**,
 built on `worktree-session-image-attachments`. Drag, paste or pick a
 PNG/JPEG/GIF/WebP in the coding-session composer; it uploads to the relay's
 Blossom store, is referenced inline from the turn text, renders as a picture in
