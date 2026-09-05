@@ -52,13 +52,60 @@ const SEAT_ROLES: &[&str] = &["builder", "runner", "verifier", "designer"];
 /// The verbatim sentence the lead pack must carry about landing `main`.
 ///
 /// Finding 27, live run 2: at 12:00:19 a lead pushed `main` after its own
-/// verifier had reported FAIL, and every layer below it said yes. A seat
-/// inherits the operator's repo role (Owner), there is no `buzz-protect` rule
-/// on `refs/heads/main`, and the push path reads no verdict — so until lane L6
-/// builds that gate, this sentence in the pack is the only thing between a
-/// lead and `main`. Asserted, not merely written, for the same reason the seat
-/// rule is.
-const LEAD_MAIN_RULE: &str = "You never push `main`. A branch is landed by the founder, or by a seat the founder names in the policy's `irreversible` list, after a verifier's report and your verdict are on the wire.";
+/// verifier had reported FAIL, and every layer below it said yes. The
+/// relay's `require-verdict` gate has read the wire since 2026-09-03, so the
+/// sentence no longer says "never push"; it says who admits a landing. Live
+/// run 6 and Andy's run (findings 75 and 79, 2026-09-04) are the other half:
+/// a lead answered the gate's refusal by telling the founder to push the
+/// commit themselves — the remedy Brian ruled out on 2026-09-03 ("humans
+/// never gate a landing"). Asserted, not merely written, for the same reason
+/// the seat rule is.
+const LEAD_MAIN_RULE: &str = "A landing is admitted by the relay's push gate, never by a person. When it refuses, the sentence names the missing fact, and you have two moves: produce that fact, or publish a blocker quoting the sentence verbatim with the row event ids. You never pass a landing to a founder.";
+
+/// The section every pack that runs a gate must carry, by heading.
+///
+/// Finding 77 (live runs 6 and 7, 2026-09-04): the host's gate observer
+/// records a kind 44246 row only for a bare command — a pipe, a redirect, a
+/// `$(…)` or a trailing `; echo` of `$?` records nothing, silently — and a
+/// lead lost two hours to a gate the push gate could not see. The section is
+/// asserted by heading and by its three load-bearing phrases rather than
+/// byte-for-byte, because each pack words the example in its own voice.
+const GATES_SECTION_HEADING: &str = "## Gates the host can see";
+
+/// Phrases every "Gates the host can see" section must carry.
+const GATES_SECTION_PHRASES: &[&str] = &[
+    // The hermit-first step, as its own command.
+    ". ./bin/activate-hermit",
+    // The bare-command rule, and what breaks it.
+    "bare command",
+    // The no-person rule (finding 79).
+    "founder",
+];
+
+/// Phrasings no pack may carry anywhere, in any skill or persona.
+///
+/// The first four hand a landing to a person (findings 75 and 79); the rest
+/// are the wrappers finding 77 proved the observer cannot see. Retired here
+/// rather than merely edited out, for the same reason as [`RETIRED_PHRASINGS`].
+const RETIRED_EVERYWHERE: &[&str] = &[
+    "as founder",
+    "founder push",
+    "land it yourself",
+    "hand the landing",
+    "| tail",
+    "2>&1",
+    "echo \"EXIT",
+    "echo EXIT",
+];
+
+/// Every skill file that instructs a seat how to run a gate.
+const GATE_SKILLS: &[(&str, &str)] = &[
+    ("lead", "beekeeper-project"),
+    ("builder", "push-your-lane"),
+    ("runner", "push-your-lane"),
+    ("verifier", "push-your-lane"),
+    ("designer", "push-your-lane"),
+];
 
 /// The four sentences the lead pack must carry, byte-for-byte (§1k).
 ///
@@ -178,7 +225,7 @@ fn every_seat_pack_carries_the_push_rule_verbatim() {
 }
 
 #[test]
-fn the_lead_pack_says_it_never_pushes_main() {
+fn the_lead_pack_says_no_person_gates_a_landing() {
     let skill = repo_root()
         .join("personas")
         .join("roles")
@@ -190,9 +237,67 @@ fn the_lead_pack_says_it_never_pushes_main() {
         .unwrap_or_else(|error| panic!("reading {}: {error}", skill.display()));
     assert!(
         body.contains(LEAD_MAIN_RULE),
-        "the lead pack does not carry the main-landing rule byte-for-byte. Nothing below the \
-         pack stops a lead landing main: it inherits the operator's repo role, no buzz-protect \
-         rule covers the ref, and the push path reads no verdict (finding 27)."
+        "the lead pack does not carry the landing rule byte-for-byte. The relay's push gate \
+         admits a landing or refuses it with a sentence; a lead that answers the refusal by \
+         asking a founder to push has handed a person the job the gate exists to take away \
+         (findings 27, 75 and 79)."
+    );
+}
+
+/// Finding 77: a gate the host cannot see is a gate the push gate cannot
+/// read, and the only fix is in the seat's hands — so it has to be in the
+/// skill the seat loads while running the gate.
+#[test]
+fn every_gate_skill_carries_the_gates_the_host_can_see_section() {
+    let roles_dir = repo_root().join("personas").join("roles");
+    for (role, skill) in GATE_SKILLS {
+        let path = roles_dir
+            .join(role)
+            .join("skills")
+            .join(skill)
+            .join("SKILL.md");
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        assert!(
+            body.contains(GATES_SECTION_HEADING),
+            "role {role}'s {skill} skill carries no {GATES_SECTION_HEADING:?} section: the \
+             host records a kind 44246 row only for a bare command, and nothing else tells \
+             the seat so (finding 77)"
+        );
+        let section = body.split(GATES_SECTION_HEADING).nth(1).unwrap_or_default();
+        for phrase in GATES_SECTION_PHRASES {
+            assert!(
+                section.contains(phrase),
+                "role {role}'s {skill} gates section does not carry {phrase:?}"
+            );
+        }
+    }
+}
+
+/// Findings 75, 77 and 79: no pack may offer a person as a landing's remedy,
+/// and no pack may show a seat a gate shape the observer cannot record.
+#[test]
+fn no_pack_offers_a_person_or_a_wrapped_gate() {
+    let mut offences: Vec<String> = Vec::new();
+    for path in every_pack_markdown_file() {
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        for (index, line) in body.lines().enumerate() {
+            for retired in RETIRED_EVERYWHERE {
+                if line.contains(retired) {
+                    offences.push(format!(
+                        "{}:{}: {retired:?} in {line:?}",
+                        path.display(),
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        offences.is_empty(),
+        "a pack hands a landing to a person or shows a gate the host cannot see:\n{}",
+        offences.join("\n")
     );
 }
 

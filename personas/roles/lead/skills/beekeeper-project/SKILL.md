@@ -53,19 +53,24 @@ those items and nothing else.
   discovery, so a long hook window expires it. Retry **once** with
   `--no-verify` on the identical SHA — never on a SHA the hooks did not see.
 
-And the one the run of 2026-09-02 made necessary:
+And the one the runs of 2026-09-02 and 2026-09-04 made necessary:
 
 ```
-You never push `main`. A branch is landed by the founder, or by a seat the founder names in the policy's `irreversible` list, after a verifier's report and your verdict are on the wire.
+A landing is admitted by the relay's push gate, never by a person. When it refuses, the sentence names the missing fact, and you have two moves: produce that fact, or publish a blocker quoting the sentence verbatim with the row event ids. You never pass a landing to a founder.
 ```
 
-This is a pack rule because nothing else stops you. A seat inherits the
-operator's repo role — Owner, here — so the relay's git gate will accept your
-push to `main`; there is no `buzz-protect` rule on that ref, and the push path
-reads no verdict. On 2026-09-02 at 12:00:19 a lead landed `main` after its own
-verifier had reported FAIL, and every layer below it said yes. Until the gate
-exists (ledger item 108, lane L6), the rule lives here, and the pack test suite
-asserts this sentence byte-for-byte so it cannot quietly soften.
+This is a pack rule because both failure modes were live. On 2026-09-02 at
+12:00:19 a lead landed `main` after its own verifier had reported FAIL, and
+every layer below it said yes; since 2026-09-03 the relay's `require-verdict`
+gate reads the wire instead, and a push to `main` is admitted by one of three
+arms (`bee sessions explain arm`) or refused with a sentence. On 2026-09-04
+a lead answered that refusal by ending its report with an instruction to the
+founder to push the commit themselves — the one remedy the gate exists to
+remove, and one Brian ruled out on 2026-09-03: humans never gate a landing
+(live-run findings 75 and 79). A refusal is a fact you are short of, not a
+person you have not asked. The pack test suite asserts the sentence
+byte-for-byte so it cannot quietly soften; § Gates the host can see, below,
+is how you produce the fact.
 
 ## Worktrees, and the operator's live checkout
 
@@ -76,9 +81,78 @@ from it and `tauri dev` rebuilds on write. Never edit, rebase or switch
 branches there — a seat that does is editing under a running app. A seat handed
 that cwd stops and says so (ledger item 80a).
 
-Before any `cargo`/`pnpm`/`just`/git-hook command:
-`cd <worktree> && . ./bin/activate-hermit`. Do not rewrite hook commands to
-work around an unconfigured `PATH`.
+Before any `cargo`/`pnpm`/`just`/git-hook command, activate hermit **as its
+own command**: `. ./bin/activate-hermit`, in the worktree, and nothing else on
+the line. Your shell keeps the environment between commands, so it is done
+once; a redirect bolted onto it later poisons every gate on that line (see
+§ Gates the host can see). Do not rewrite hook commands to work around an
+unconfigured `PATH`.
+
+**Your nest is the worktree.** A seat runs with `HOME` set to the operator's
+own home, so `~/.config`, `~/.cargo`, `~/.ssh` and the desktop app's data
+directory are *Brian's*, not yours. Write nothing outside your worktree and
+your seat's own state (live-run finding 73). Say the same in every brief you
+write.
+
+## Gates the host can see
+
+The push gate reads kind 44246 gate rows the host **observed** — rows the
+provider wrote by watching your tool calls — and nothing you *say* about a
+gate. `bee sessions explain arm` defines the three arms it admits by. The
+policy's required gates are, by default, `cargo fmt`, `cargo clippy` and
+`cargo test` (any arguments), each observed green on the pushed commit over a
+clean worktree; `pnpm test`, `pnpm typecheck`, `pnpm lint`, `just check`,
+`just test` and `just ci` are also recognised.
+
+**The host records a row only for a bare command.** A pipe (`|`), a redirect
+(`>`, `2>`, `<`), a `$(…)` or backtick substitution, or a trailing `; echo` of
+`$?` makes it record **nothing, silently** — the gate ran, the tool result
+shows it, and no row exists (live-run finding 77; run 7's lead lost two hours
+to it). A `&&`/`;` chain is split into segments, but one redirect anywhere
+refuses the whole line, and a hermit activation with its output silenced
+followed by `&& cargo fmt …` is exactly that line. A path to the program is
+fine — `bin/cargo fmt …` records a row. Hermit off the `PATH` is not fine:
+Andy's seat's first gate was `cargo: command not found`.
+
+The shape — one command per tool call, in the worktree, at the commit you
+will push:
+
+```
+. ./bin/activate-hermit                     # first, alone; your shell keeps it
+cargo fmt --all --check
+cargo clippy -p buzz-cli -- -D warnings
+cargo test -p buzz-cli --lib
+```
+
+Read the exit code from the tool result — never by appending an `echo`.
+**Scope the test to what changed**: `cargo test -p <touched crate> --lib` for
+a small change. A doc-only lane that ran the whole workspace `cargo test`
+spent seven minutes and hit an unrelated environment-sensitive test (live-run
+finding 78); the pre-push hook runs the full floor anyway.
+
+Before the push, ask the relay what it will do, and read the rows it will
+fold:
+
+```
+bee git check --ref refs/heads/main                                  # `admitted by arm (B)` …, or the refusal
+bee sessions observations --channel <uuid> --session-ref <uuid>     # every row, with headSha and dirty
+```
+
+### What a refusal says, and what you do
+
+| the refusal says | what you do |
+| --- | --- |
+| gate `X` has no observed green row on `<sha>` | run gate X again as a bare command, in the worktree, at that commit |
+| gate `X` was observed red on `<sha>` | fix, commit, run it again — the next row names the new commit |
+| `<sha>` was observed dirty | modified or untracked files were present when the gate ran: commit or remove them, run again (a staged pack under `.agents/` is excluded automatically) |
+| no approved report names `<sha>` … No observed gate row names `<sha>` either | arm (B) applies when the policy requires no verifier: produce the rows |
+| no active verifier seat has cleared the report, with `verifierRequired` true | hire a verifier, or wait for its `not-refuted` refutation — and the rows are owed as well |
+| this key holds no active seat | the seat lapsed: resume the session, then push again |
+
+Every remedy is a command or a hire. **None is a person.** A refusal you
+cannot clear is `bee pulse update --kind blocker` carrying the sentence
+verbatim and the event ids of the rows you read — never a line to the founder
+asking for a push.
 
 ## The wire
 
@@ -118,7 +192,8 @@ work around an unconfigured `PATH`.
 `AGENTS.md` § Quality Gates is the contract — `just ci` before any PR (fmt and
 clippy are separate), `just test` for `buzz-relay`/`buzz-db`/`buzz-auth`, no
 `unsafe`, no new `unwrap()`/`expect()` in production paths, doc comments on new
-public API. Desktop text uses rem tokens only (§ Text sizing & zoom); every
+public API. Each of those is run as a bare command, hermit activated first on
+its own line (§ Gates the host can see), or the push gate never learns it ran. Desktop text uses rem tokens only (§ Text sizing & zoom); every
 file stays under 1000 lines (`just file-size-check`) — split it, never raise
 the limit. Nothing in this file relaxes any of it.
 

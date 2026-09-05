@@ -28,7 +28,11 @@ One hire per lane, one brief per hire.
 runner's, never yours.** A full `just ci`, an e2e suite, a release build, a
 full-workspace `cargo test`: hire a runner, hand it the exact command, end your
 turn. What comes back is one line of exit code and counts, which is the entire
-value those minutes produce.
+value those minutes produce. Hand it the command **bare** — no pipe, no
+redirect, no trailing `; echo` of `$?` — and tell it to activate hermit first
+on its own line: a wrapped gate returns a number to you and no observed row to
+the push gate (live-run finding 77; `skills/beekeeper-project` § Gates the
+host can see).
 
 The reason is cost, not etiquette. Your context is the most expensive on the
 team and the only one a hire cannot replace. On 2026-08-28 a lead spent its own

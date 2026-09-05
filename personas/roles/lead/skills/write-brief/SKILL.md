@@ -51,7 +51,9 @@ Seat: <class> · <fast|standard|deep> (risk I×U×I = <n>) · routed by the host
       | hire: <role> — when no seat holds this lane yet.
       | send: <role> — when a seat in this umbrella already holds it.
 Tests you must add: <named>. Watch each fail before the fix where a defect is claimed.
-Acceptance: <commands with expected counts / exit codes>.
+Acceptance: <bare commands — hermit first on its own line, then one gate per
+      command, scoped to the crate touched — with expected counts / exit codes>.
+Nest: HOME is the operator's; write nowhere outside this worktree and your seat's state.
 Out of scope: <named temptations>.
 Report format: see the write-report skill on the builder pack.
 Dispatch: bee sessions send --channel <channel-uuid> --session-ref <umbrella-uuid> \
@@ -202,5 +204,12 @@ for the wrong verb:
   onto the create — quote that back in the lane's Pulse line.
 - Never brief a lane to run a gate you should have hired a runner for; the lane
   runs the tests its own change needs, and `skills/hire` says who runs the rest.
+- Acceptance commands are bare and scoped. A pipe, a redirect, a `$(…)` or a
+  trailing `; echo` of `$?` earns no observed row, so the push gate cannot read
+  the run (live-run finding 77); `cargo test -p <touched crate> --lib` for a
+  small change, not the workspace (finding 78). The shape with a worked
+  example is `skills/beekeeper-project` § Gates the host can see.
+- The brief never names a founder's push as the way anything lands. A refusal
+  from the push gate is a fact the lane produces or a blocker it publishes.
 - A brief that turns out wrong on the ground is a report back from the lane, not
   a licence for the lane to improvise past it.

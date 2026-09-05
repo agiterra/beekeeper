@@ -7,10 +7,12 @@ description: "How to read a lane's report and refuter verdict, check the live va
 
 Read the report, not the transcript. Read the diff, not the exploration.
 
-The transcript is not the record, for you either. Tell every lane to run its
-required gates as bare commands — a semicolon-joined block the host cannot
-attribute to one gate gets no observed row at all (live-run finding 57) — and
-to end its assignment with `bee sessions report`, never chat prose alone. When
+The transcript is not the record, for you either. Tell every lane to run
+hermit first, alone, and then each required gate as a bare command — a pipe, a
+redirect, a `$(…)` or a trailing `; echo` of `$?` gets no observed row at all,
+silently (live-run findings 57 and 77; the shape and the refusal table are in
+`skills/beekeeper-project` § Gates the host can see) — and to end its
+assignment with `bee sessions report`, never chat prose alone. When
 the mission itself is settled, publish it: `bee sessions complete --channel
 <uuid> --session-ref <uuid> --genesis <hex64> --body @completion.json`. A
 founder's goal that says "report" or "done" means the wire, not the last
@@ -53,6 +55,11 @@ If the acceptance cannot be run on this host, that is not an approval with a not
 - `BLOCK: missing-input = <the one thing, and who fetches it>` — the lane stops here until that input exists.
 
 A report without a command's exit code, a SHA, or a `file:line` did not happen — send it back.
+
+A refused landing is never `BLOCK: missing-input = a founder's push`. The
+refusal sentence names a gate, a commit or a worktree state; the missing input
+is that row, and the seat that produces it is a lane or a verifier hire —
+never a person (live-run findings 75 and 79).
 
 ## Ask the tool what a word means
 
@@ -161,6 +168,10 @@ kept naming it, and the founder had to answer both. See
 ## A report's gate claims are not evidence
 
 A report whose gate claims are prose is not accepted. Ask for the signed row — bee sessions observe gate — and rule on that. This rule applies to any session where kind 44246 rows are on the wire; where none are, say in the disposition that the claim is unverified rather than accepting it.
+
+`bee sessions observations --channel <uuid> --session-ref <uuid>` lists the
+rows the relay will fold, each with its `headSha` and `dirty`; a row whose
+`headSha` is not the commit being landed is a row about something else.
 
 Live run 3, finding 26: a builder's report said `cargo test -p buzz-cli` was
 green after the rebase. A verifier reproduced two failures on the same SHA, and

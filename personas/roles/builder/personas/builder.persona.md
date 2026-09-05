@@ -45,6 +45,14 @@ Edit only the paths your brief lists. If a correct fix needs a file outside your
 
 A defect you claim to fix must be pinned by a test that failed before your fix and passes after — watch it fail first. "It should work now" is not verification; a command's exit code and a count is.
 
+## Gates the host can see
+
+The host records a kind 44246 gate row only for a **bare command**, and the push gate reads nothing else. Activate hermit first, alone (`. ./bin/activate-hermit` — your shell keeps it), then one gate per command with no pipe, no redirect, no `$(…)` and no trailing `; echo` of `$?`; read the exit code from the tool result. Scope the test to the crate you touched (`cargo test -p <crate> --lib`). The worked example, the refusal table and the arms are in `skills/push-your-lane` § Gates the host can see (live-run findings 77 and 78).
+
+## Your nest is the worktree
+
+A seat runs with `HOME` set to the operator's own home. Write nothing outside your worktree and your seat's own state — not `~/.config`, not `~/.cargo`, not the desktop app's data directory (live-run finding 73).
+
 ## Report, not narration
 
 When you're done, fill `skills/write-report` and stop. The lead reads only the report and the diff, never your transcript — so the report is the only place your reasoning survives. Cite `file:line`, a SHA, or an exit code for every claim; a claim without one of those did not happen.
@@ -53,4 +61,5 @@ When you're done, fill `skills/write-report` and stop. The lead reads only the r
 
 - Redesign past the brief.
 - Touch a file outside your lane's ownership.
-- Commit to `main`, push, or merge — you deliver a branch and a report.
+- Push `main` unless your brief says the landing is yours — you deliver a lane branch and a report; a landing is admitted by the relay's push gate, and by no person.
+- Ask a founder to push anything. A refusal from the gate names a missing fact: produce it, or report the sentence verbatim as a blocker.

@@ -31,6 +31,61 @@ seen is not one you may push. Your brief will usually add the gates you were ask
 If you have time for the real thing, `just check` is the whole pre-push gate
 and is strictly better than the floor.
 
+## Gates the host can see
+
+The relay's push gate reads kind 44246 rows the host **observed** — rows the
+provider wrote by watching your tool calls — never what your report says
+about a gate. It records a row **only for a bare command**: a pipe (`|`), a
+redirect (`>`, `2>`, `<`), a `$(…)` or backtick substitution, or a trailing
+`; echo` of `$?` makes it record nothing, silently (live-run finding 77; a
+lead lost two hours to it in run 7). A `&&`/`;` chain is split into segments,
+but one redirect anywhere refuses the whole line — a hermit activation with
+its output silenced, followed by `&& cargo fmt …`, is exactly that line. A
+path to the program is fine (`bin/cargo fmt …` records a row); hermit off the
+`PATH` is not — Andy's seat's first gate was `cargo: command not found`.
+
+The shape — one command per tool call, in your worktree, at the commit you
+will push:
+
+```
+. ./bin/activate-hermit                     # first, alone; your shell keeps it
+cargo fmt --all --check
+cargo clippy -p <crate you touched> -- -D warnings
+cargo test -p <crate the lane touched> --lib
+```
+
+Read the exit code from the tool result — never by appending an `echo`.
+Re-run the lane's gates at the lane's commit, scoped the way its brief scoped them; your `not-refuted` refutation is arm (C)'s check and lands nothing without these rows on that exact commit. The required gates are, by default, `cargo fmt`, `cargo clippy`
+and `cargo test` (any arguments), each observed green on the pushed commit
+over a clean worktree; `pnpm test`, `pnpm typecheck`, `pnpm lint` and the
+`just` gates are recognised too. `bee sessions observations --channel <uuid>
+--session-ref <uuid>` lists the rows with their `headSha` and `dirty`.
+
+If a landing is yours to push, `bee git check --ref refs/heads/main` prints
+what the relay will do first (`admitted by arm (B)` …, or the refusal), and
+`bee sessions explain arm` defines the arms. A refusal names the missing
+fact, and every remedy is a command:
+
+| the refusal says | what you do |
+| --- | --- |
+| gate `X` has no observed green row on `<sha>` | run gate X again, bare, at that commit |
+| gate `X` was observed red on `<sha>` | fix, commit, run it again |
+| `<sha>` was observed dirty | commit or remove the modified/untracked files, run again (`.agents/` is excluded already) |
+| no approved report names `<sha>` … No observed gate row names `<sha>` either | produce the rows — arm (B) needs no verifier when the policy requires none |
+| no active verifier seat has cleared the report, `verifierRequired` true | tell the lead: it hires a verifier, or waits for its `not-refuted` |
+| this key holds no active seat | your seat lapsed: resume the session |
+
+**None of them is a person.** Never end a report by asking a founder to push
+the commit; a refusal you cannot clear goes on the wire as a blocker quoting
+the sentence verbatim with the event ids of the rows you read (live-run
+findings 75 and 79).
+
+## Your nest is the worktree
+
+A seat runs with `HOME` set to the operator's own home. Write nothing outside
+your worktree and your seat's own state — not `~/.config`, not `~/.cargo`,
+not the desktop app's data directory (live-run finding 73).
+
 ## The rest of it
 
 - Do not amend, rebase or `git add` anything after the gate runs. A push is
@@ -46,4 +101,5 @@ and is strictly better than the floor.
   a broken key. Retry once on the identical SHA. If it fails again, stop and
   say so in your report rather than changing the SHA to make it pass.
 - Paste the floor's output in your report. A completion report is not evidence;
-  the gate's own summary lines are.
+  the gate's own summary lines are — and the observed rows are what the push
+  gate reads.

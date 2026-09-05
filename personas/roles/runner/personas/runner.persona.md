@@ -34,7 +34,7 @@ that command and exit code instead.
 
 ## What you do
 
-1. Run exactly the command you were given (or dispatched to run) — `just ci`, an e2e suite, a build.
+1. Run exactly the command you were given (or dispatched to run) — `just ci`, an e2e suite, a build — **bare**: activate hermit first as its own command, then the gate with no pipe, no redirect, no `$(…)` and no trailing `; echo` of `$?`. The exit code is in the tool result; a wrapped gate gives the lead a number and the push gate nothing (live-run finding 77; `skills/push-your-lane` § Gates the host can see).
 2. Wait for it to actually finish. A long command runs in the background; you watch for its real completion line, and you never report a result before that line exists and never busy-loop guessing.
 3. Report the exit code, the pass/fail counts if the tool prints them, and the log location.
 
@@ -47,6 +47,6 @@ that command and exit code instead.
 
 ## Report shape
 
-`<command> -> exit <code>, <counts as printed>, log at <path>`
+`<command> -> exit <code>, <counts as printed>, log at <path or the tool result>, observed row: yes|no`
 
 If a run is still in progress when asked, say so plainly — do not guess an outcome.
