@@ -55,6 +55,13 @@ export function useNewCodingSessionLaunchSubmit(input: {
   policySet: boolean;
   projectContext: NewCodingSessionProjectContext | null;
   refreshRuntimeTarget: () => Promise<NewCodingSessionTarget | null>;
+  /**
+   * Record the goal that was actually launched, for the dialog's ⌘↑/⌘↓ recall.
+   *
+   * Called on the same two success paths that clear the draft, and never on a
+   * failure: the history is what you have launched, not what you have typed.
+   */
+  rememberPrompt: (prompt: string) => void;
   selectedTarget: NewCodingSessionTarget | null;
   setIsPreparingChannel: (value: boolean) => void;
   setLaunchError: (value: string | null) => void;
@@ -81,6 +88,7 @@ export function useNewCodingSessionLaunchSubmit(input: {
     policySet,
     projectContext,
     refreshRuntimeTarget,
+    rememberPrompt,
     selectedTarget,
     setIsPreparingChannel,
     setLaunchError,
@@ -176,6 +184,7 @@ export function useNewCodingSessionLaunchSubmit(input: {
             seat: null,
             seatLabel: null,
           });
+          rememberPrompt(goal);
           clearDraft();
           return;
         }
@@ -239,6 +248,7 @@ export function useNewCodingSessionLaunchSubmit(input: {
             // second arm launched too — it just landed somewhere this screen
             // cannot navigate to. Keeping the text there would invite the
             // person to launch the same session twice.
+            rememberPrompt(goal);
             clearDraft();
           }
           if (launched.ok && launched.channelId) {
@@ -285,6 +295,7 @@ export function useNewCodingSessionLaunchSubmit(input: {
     projectContext,
     publishedModel,
     refreshRuntimeTarget,
+    rememberPrompt,
     selectedTarget,
     setIsPreparingChannel,
     setLaunchError,

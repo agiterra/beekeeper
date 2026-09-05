@@ -72,6 +72,7 @@ test("N1: two clicks before the first submit resolves launch exactly one session
       policySet: false,
       projectContext: null,
       refreshRuntimeTarget: async () => null,
+      rememberPrompt: () => {},
       selectedTarget: SELECTED_TARGET,
       setIsPreparingChannel: () => {},
       setLaunchError: () => {},
@@ -129,6 +130,7 @@ test("N2: a click after the previous submit settled launches again", async () =>
       policySet: false,
       projectContext: null,
       refreshRuntimeTarget: async () => null,
+      rememberPrompt: () => {},
       selectedTarget: SELECTED_TARGET,
       setIsPreparingChannel: () => {},
       setLaunchError: () => {},
@@ -165,12 +167,15 @@ test("N2: a click after the previous submit settled launches again", async () =>
  *
  * `clearDraft` lived on the ungoverned branch only, so a session led by an
  * agent left its goal sitting in the dialog: reopening it offered to launch
- * an instruction that had already been carried out.
+ * an instruction that had already been carried out. The same success is now
+ * also what puts the goal into ⌘↑ recall, so both are asserted together —
+ * they are one act, "this prompt was launched", seen from two sides.
  */
-test("N3: a governed launch clears the draft it just sent", async () => {
+test("N3: a governed launch clears the draft and remembers the prompt", async () => {
   const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
 
   let cleared = 0;
+  const remembered = [];
   const READY_TARGET = {
     ...SELECTED_TARGET,
     signerPubkey: "a".repeat(64),
@@ -208,6 +213,7 @@ test("N3: a governed launch clears the draft it just sent", async () => {
       policySet: false,
       projectContext: null,
       refreshRuntimeTarget: async () => READY_TARGET,
+      rememberPrompt: (prompt) => remembered.push(prompt),
       selectedTarget: READY_TARGET,
       setIsPreparingChannel: () => {},
       setLaunchError: () => {},
@@ -227,15 +233,17 @@ test("N3: a governed launch clears the draft it just sent", async () => {
   });
 
   assert.equal(cleared, 1, "a launched goal is not a draft any more");
+  assert.deepEqual(remembered, ["Fix the flaky timeout."]);
 
   mounted.unmount();
 });
 
-/** And a launch that failed keeps it: the text is still the person's to send. */
-test("N4: a refused governed launch keeps the draft", async () => {
+/** And a launch that failed keeps both: the text is still the person's to send. */
+test("N4: a refused governed launch keeps the draft and remembers nothing", async () => {
   const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
 
   let cleared = 0;
+  const remembered = [];
 
   const mounted = renderHook(() =>
     useNewCodingSessionLaunchSubmit({
@@ -260,6 +268,7 @@ test("N4: a refused governed launch keeps the draft", async () => {
       policySet: false,
       projectContext: null,
       refreshRuntimeTarget: async () => ({ ...SELECTED_TARGET, provider: {} }),
+      rememberPrompt: (prompt) => remembered.push(prompt),
       selectedTarget: SELECTED_TARGET,
       setIsPreparingChannel: () => {},
       setLaunchError: () => {},
@@ -279,6 +288,7 @@ test("N4: a refused governed launch keeps the draft", async () => {
   });
 
   assert.equal(cleared, 0, "a refused launch must not eat the goal");
+  assert.deepEqual(remembered, []);
 
   mounted.unmount();
 });

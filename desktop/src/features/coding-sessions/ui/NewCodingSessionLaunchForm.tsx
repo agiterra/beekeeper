@@ -17,6 +17,7 @@ import {
 } from "./NewCodingSessionDestination";
 import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
 import { useNewCodingSessionDraft } from "../lib/newCodingSessionDraft";
+import { useNewCodingSessionPromptRecall } from "../lib/newCodingSessionPromptHistory";
 import {
   codingSessionGoalOverflow,
   MAX_CODING_SESSION_GOAL_BYTES,
@@ -356,6 +357,14 @@ export function NewCodingSessionForm({
     clear: clearDraft,
     persistence: draftPersistence,
   } = useNewCodingSessionDraft(scopeId);
+  // ⌘↑/⌘↓ walks back through the goals already launched from this dialog —
+  // the session composer's shortcut and stepping, so the two recall surfaces
+  // cannot drift apart under the same keystroke.
+  const promptRecall = useNewCodingSessionPromptRecall({
+    scopeId,
+    text: goal,
+    setText: setGoal,
+  });
 
   const [title, setTitle] = React.useState("");
   const naming = useNewCodingSessionTitleSuggestion({
@@ -548,6 +557,7 @@ export function NewCodingSessionForm({
     policySet,
     projectContext,
     refreshRuntimeTarget,
+    rememberPrompt: promptRecall.remember,
     selectedTarget,
     setIsPreparingChannel,
     setLaunchError,
@@ -650,6 +660,7 @@ export function NewCodingSessionForm({
             maxLength={MAX_CODING_SESSION_GOAL_BYTES}
             onBlur={naming.requestNow}
             onChange={(event) => setGoal(event.target.value)}
+            onKeyDown={promptRecall.onKeyDown}
             placeholder="What is this session for?"
             value={goal}
           />
