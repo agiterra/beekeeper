@@ -20,6 +20,7 @@ import {
   type ProfilePanelTab,
   type ProfilePanelView,
 } from "@/features/profile/ui/UserProfilePanelUtils";
+import { useRolesView } from "@/features/roles/lib/useRolesView";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled, usePreviewFeatureWarning } from "@/shared/features";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
@@ -39,6 +40,11 @@ const AgentProgressScreen = React.lazy(async () => {
     "@/features/agent-progress/ui/AgentProgressScreen"
   );
   return { default: module.AgentProgressScreen };
+});
+
+const RolesScreen = React.lazy(async () => {
+  const module = await import("@/features/roles/ui/RolesScreen");
+  return { default: module.RolesScreen };
 });
 
 const AgentsScreen = React.lazy(async () => {
@@ -122,6 +128,11 @@ function DashboardRouteComponent() {
           <PulseScreen />
         </React.Suspense>
       }
+      roles={
+        <React.Suspense fallback={<ViewLoadingFallback kind="agents" />}>
+          <RolesTab />
+        </React.Suspense>
+      }
       showAgentProgress={showAgentProgress}
       showPulse={showPulse}
     />
@@ -195,6 +206,26 @@ function InboxTab() {
       onOpenContext={(channelId, messageId, threadRootId) => {
         void goChannel(channelId, { messageId, threadRootId });
       }}
+    />
+  );
+}
+
+function RolesTab() {
+  const navigate = useNavigate();
+  const state = useRolesView();
+  return (
+    <RolesScreen
+      onOpenSeat={(seat) => {
+        void navigate({
+          to: "/coding-sessions/$channelId/$generationId",
+          params: {
+            channelId: seat.channelId,
+            generationId: seat.generationId,
+          },
+          search: { surface: "main" },
+        });
+      }}
+      state={state}
     />
   );
 }

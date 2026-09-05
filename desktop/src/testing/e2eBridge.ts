@@ -8810,6 +8810,62 @@ function ensureMockPersonaIdsAreActive(personaIds: string[]) {
   }
 }
 
+/**
+ * `list_project_role_packs` under the mock bridge: two roles from two rungs
+ * of the ladder, each with a skill, so the Roles tab renders every card
+ * section. Shapes follow the wire contract (camelCase `RolePackSummary`).
+ */
+function handleListProjectRolePacks() {
+  return [
+    {
+      role: "lead",
+      displayName: "Lead",
+      description: "Triages findings, briefs lanes, rules on landings.",
+      summary:
+        "You are the lead. You read every finding before any fix lane is opened, and you write the brief the lanes build against.",
+      version: "1.3.0",
+      origin: "project",
+      packDir: "/Users/e2e/checkouts/beekeeper/personas/roles/lead",
+      packRef: {
+        repo: `30617:${"c".repeat(64)}:packs`,
+        sha: "9f2e1d0c7b6a59483726150e4d3c2b1a0f9e8d7c",
+      },
+      skills: [
+        {
+          name: "triage",
+          description: "Sort findings by severity before any lane starts.",
+          shared: false,
+        },
+        {
+          name: "git-hygiene",
+          description: "Rebase onto main, sign off, never merge.",
+          shared: true,
+        },
+      ],
+      refusal: null,
+    },
+    {
+      role: "reviewer",
+      displayName: "Reviewer",
+      description: "Reads a diff against its brief and names what it missed.",
+      summary:
+        "You are the reviewer. You hold the diff to the brief's named constraints and report each miss with file and line.",
+      version: null,
+      origin: "shipped",
+      packDir: "/Applications/Beekeeper.app/Contents/Resources/packs/reviewer",
+      packRef: { repo: "app:shipped", sha: "0.0.0-e2e" },
+      skills: [
+        {
+          name: "adversarial-review",
+          description: "Try to break the change before praising it.",
+          shared: false,
+        },
+      ],
+      refusal: null,
+    },
+  ];
+}
+
 async function handleListTeams(): Promise<RawTeam[]> {
   return mockTeams.map((team) => ({
     ...team,
@@ -13490,6 +13546,8 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "list_managed_agents":
         return handleListManagedAgents(activeConfig);
+      case "list_project_role_packs":
+        return handleListProjectRolePacks();
       case "get_agent_memory":
         return handleGetAgentMemory(
           (payload as Parameters<typeof handleGetAgentMemory>[0]) ?? {},

@@ -77,6 +77,7 @@ mod pulse_mission;
 mod qr_download;
 mod relay_members;
 mod relay_reconnect;
+mod role_packs;
 #[cfg(unix)]
 mod shell_sessions;
 mod social;
@@ -149,6 +150,7 @@ pub use pulse_mission::*;
 pub use qr_download::*;
 pub use relay_members::*;
 pub use relay_reconnect::*;
+pub use role_packs::*;
 #[cfg(unix)]
 pub use shell_sessions::*;
 pub use social::*;

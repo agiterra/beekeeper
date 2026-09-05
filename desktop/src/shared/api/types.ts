@@ -21,6 +21,8 @@ export type {
 
 export type { Identity, IdentityStorage } from "./identityTypes";
 
+export type * from "./types/rolePacks";
+
 export type Profile = {
   pubkey: string;
   displayName: string | null;

@@ -11,6 +11,7 @@ export type DashboardTab =
   | "inbox"
   | "pulse"
   | "agent-progress"
+  | "roles"
   | "agents";
 
 export const DASHBOARD_TABS: readonly DashboardTab[] = [
@@ -18,6 +19,7 @@ export const DASHBOARD_TABS: readonly DashboardTab[] = [
   "inbox",
   "pulse",
   "agent-progress",
+  "roles",
   "agents",
 ];
 

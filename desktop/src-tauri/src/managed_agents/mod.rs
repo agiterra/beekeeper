@@ -36,6 +36,7 @@ mod relay_mesh;
 mod repos;
 mod restore;
 pub mod retention;
+pub(crate) mod role_packs_view;
 mod runtime;
 mod runtime_commands;
 mod runtime_types;

@@ -19,6 +19,7 @@ export function DashboardScreen({
   agents,
   inbox,
   pulse,
+  roles,
   showAgentProgress,
   showPulse,
 }: {
@@ -27,6 +28,7 @@ export function DashboardScreen({
   agents: React.ReactNode;
   inbox: React.ReactNode;
   pulse: React.ReactNode;
+  roles: React.ReactNode;
   showAgentProgress: boolean;
   showPulse: boolean;
 }) {
@@ -56,6 +58,8 @@ export function DashboardScreen({
           pulse
         ) : active === "agent-progress" ? (
           agentProgress
+        ) : active === "roles" ? (
+          roles
         ) : active === "agents" ? (
           agents
         ) : (

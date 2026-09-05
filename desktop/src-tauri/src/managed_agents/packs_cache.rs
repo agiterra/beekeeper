@@ -560,6 +560,13 @@ pub fn role_pack_in_checkout(checkout: &Path, path: &str, role: &str) -> Option<
     Some((dir, persona))
 }
 
+/// The reason a hire is refused when a synced packs repository holds no pack
+/// for `role`: one sentence, written here so the staging path and the Roles
+/// view cannot spell it two ways.
+pub(crate) fn missing_role_pack_reason(sha: &str, path: &str, role: &str) -> String {
+    format!("the packs repository at {sha} holds no {path}/{role} pack for role {role}")
+}
+
 /// Sync a project's packs repository and stage one role out of it.
 ///
 /// The whole wire-driven staging rule in one call: validate the source, put
@@ -581,9 +588,8 @@ pub fn stage_project_role_pack(
     let clone_url = packs_clone_url(relay_http_base, &owner, &id);
     validate_clone_url(&clone_url)?;
     let sha = sync_packs_checkout(&checkout, &clone_url, source, auth)?;
-    let (dir, persona) = role_pack_in_checkout(&checkout, &path, role).ok_or_else(|| {
-        format!("the packs repository at {sha} holds no {path}/{role} pack for role {role}")
-    })?;
+    let (dir, persona) = role_pack_in_checkout(&checkout, &path, role)
+        .ok_or_else(|| missing_role_pack_reason(&sha, &path, role))?;
     Ok(StagedProjectPack {
         pack_ref: PackRef {
             repo: source.repo.clone(),

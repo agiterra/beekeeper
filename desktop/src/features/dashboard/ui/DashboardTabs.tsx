@@ -27,6 +27,7 @@ const ALL_TABS: readonly DashboardTabDescriptor[] = [
     label: "Agent progress",
     testId: "open-agent-progress-view",
   },
+  { id: "roles", label: "Roles", testId: "open-roles-view" },
   { id: "agents", label: "Agents", testId: "open-agents-view" },
 ];
 
