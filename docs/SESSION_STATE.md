@@ -9194,6 +9194,25 @@ removed from here.
   by name; the hex form is not decidable locally, which is why `bee git check`
   asks the relay instead. Hex and nsec are equally acceptable to the helper;
   nsec is preferable only because `npub`/`nsec` are visibly different.
+- **hive's `software_commit` is `unknown`, and the cause is a stale deployer
+  — not a build that could not answer.** AGENTS.md tells you to ask the relay
+  over NIP-11 what it is running; on hive that has been answering `unknown`
+  (and `/health` → `ok unknown`) across every build. Proven on 2026-09-05:
+  `journalctl -u beekeeper-autodeploy` says
+  `DEPLOYED beekeeper-relay:d54f3ebaa (was 96061d4f1)` while NIP-11 on the
+  same relay says `unknown`. The deployer knows the sha — it tags the image
+  with it — and `deploy/autodeploy/autodeploy:273` passes it as
+  `--build-arg BUZZ_SOURCE_SHA`, which is exactly the case
+  `docs/INTEGRATION.md` § NIP-11 describes: the relay's `.dockerignore`
+  excludes `.git/` and the deployer builds from a `git archive`, so without
+  the build-arg the field is `unknown` forever. **The installed copy at
+  `/usr/local/sbin/autodeploy` is dated Aug 22 and contains no
+  `BUZZ_SOURCE_SHA` at all** — the repo's fix was never installed on the
+  host. Remedy is the scp + `sudo install` block in
+  `deploy/autodeploy/README.md` (~line 95); it needs root on agincus and is
+  not something a build can fix from inside the repo. **Until then, do not
+  read hive's `software_commit` as evidence of anything** — the deploy log
+  on agincus is the only place the running sha is actually stated.
 - **The relay's push notification is a Nostr event, not a webhook.** Every
   ref-changing push publishes a relay-signed kind:30618 NIP-34 ref-state event
   (`crates/buzz-relay/src/api/git/manifest_event.rs:70-114`), carrying the refs
