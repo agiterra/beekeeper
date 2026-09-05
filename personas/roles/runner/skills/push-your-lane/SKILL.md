@@ -42,15 +42,17 @@ lead lost two hours to it in run 7). A `&&`/`;` chain is split into segments,
 but one redirect anywhere refuses the whole line — a hermit activation with
 its output silenced, followed by `&& cargo fmt …`, is exactly that line. A
 path to the program is fine (`bin/cargo fmt …` records a row); hermit off the
-`PATH` is not — Andy's seat's first gate was `cargo: command not found`.
+`PATH` is not — Andy's seat's first gate was `cargo: command not found`, and some seats'
+Bash tool refuses `. ./bin/activate-hermit` outright (finding 87) — so run gates as
+`bin/cargo …`, which needs no activation, and run them AFTER `git commit` (finding 86).
 
 The shape — one command per tool call, in your worktree, at the commit you
 will push:
 
 ```
-. ./bin/activate-hermit                     # first, alone; your shell keeps it
-cargo fmt --all --check
-cargo clippy -p <crate you touched> -- -D warnings
+git commit -s -m "<what changed>"        # commit FIRST: a row names HEAD at the moment it runs (finding 86)
+bin/cargo fmt --all --check                 # bin/cargo needs no activation; a path names the same gate (finding 80)
+bin/cargo clippy -p <crate you touched> -- -D warnings
 <the command you were handed, exactly, bare>
 ```
 

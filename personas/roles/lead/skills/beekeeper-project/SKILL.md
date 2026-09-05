@@ -111,17 +111,20 @@ shows it, and no row exists (live-run finding 77; run 7's lead lost two hours
 to it). A `&&`/`;` chain is split into segments, but one redirect anywhere
 refuses the whole line, and a hermit activation with its output silenced
 followed by `&& cargo fmt …` is exactly that line. A path to the program is
-fine — `bin/cargo fmt …` records a row. Hermit off the `PATH` is not fine:
-Andy's seat's first gate was `cargo: command not found`.
+fine — `bin/cargo fmt …` records a row. Hermit off the `PATH` is not fine: Andy's seat's first gate was `cargo: command not
+found`, and some seats' Bash tool refuses `. ./bin/activate-hermit` outright (finding 87) —
+so run gates as `bin/cargo …`, which needs no activation. Run them AFTER `git commit`: a row
+names HEAD at the moment it runs, and rows minted on the uncommitted tree name the previous
+commit, dirty (finding 86).
 
 The shape — one command per tool call, in the worktree, at the commit you
 will push:
 
 ```
-. ./bin/activate-hermit                     # first, alone; your shell keeps it
-cargo fmt --all --check
-cargo clippy -p buzz-cli -- -D warnings
-cargo test -p buzz-cli --lib
+git commit -s -m "<what changed>"        # commit FIRST: a row names HEAD at the moment it runs (finding 86)
+bin/cargo fmt --all --check                 # bin/cargo needs no activation; a path names the same gate (finding 80)
+bin/cargo clippy -p buzz-cli -- -D warnings
+bin/cargo test -p buzz-cli --lib
 ```
 
 Read the exit code from the tool result — never by appending an `echo`.
