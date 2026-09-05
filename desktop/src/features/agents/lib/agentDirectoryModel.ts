@@ -14,7 +14,7 @@
 import { resolveAgentCardModelLabel } from "./agentCardModelLabel";
 import { isManagedAgentActive } from "./managedAgentControlActions";
 import type { SeatRow } from "@/features/roles/lib/seatRows";
-import { normalizePubkey } from "@/shared/lib/pubkey";
+import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
 
 /** The `Model not known here` sentence for a wire-only agent (§A row field 2). */
@@ -154,7 +154,10 @@ export function buildAgentDirectory(
   for (const pubkey of pubkeys) {
     const managed = managedByPubkey.get(pubkey) ?? null;
     const relay = relayByPubkey.get(pubkey) ?? null;
-    const name = managed?.name ?? relay?.name ?? `${pubkey.slice(0, 8)}…`;
+    // A nameless agent falls back to the app's ONE compact pubkey form. Never
+    // a hand-rolled prefix: a short prefix is forgeable by grinding, so the
+    // shape a reader learns to recognise has to be the same everywhere.
+    const name = managed?.name ?? relay?.name ?? truncatePubkey(pubkey);
 
     const rawSeats = seatsByPubkey.get(pubkey) ?? [];
     const directorySeats = orderSeats(

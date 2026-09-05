@@ -18,6 +18,7 @@ import {
   contributorStateAttr,
   contributorsNoticeSentence,
 } from "@/features/contributors/ui/contributorsCopy";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 
 test("every §C string is the exact copy the design specifies", () => {
   assert.equal(CONTRIBUTORS_TITLE, "Contributors");
@@ -89,13 +90,22 @@ test("contributorStateAttr is seated or past, nothing else", () => {
   assert.equal(contributorStateAttr({ isSeatedNow: false }), "past");
 });
 
-test("contributorNameText falls back to the pubkey's first 8 chars", () => {
+test("contributorNameText falls back to the canonical short pubkey", () => {
   assert.equal(
     contributorNameText({ name: "Ada", agentPubkey: "1".repeat(64) }),
     "Ada",
   );
+  // §C says "the pubkey's first 8 chars"; the repo's pubkey-truncation guard
+  // says every display truncation goes through `truncatePubkey`, because a
+  // bare prefix is forgeable by grinding and a reader who has learned one
+  // shape must not meet a second. The guard wins, and this is its shape:
+  // eight, an ellipsis, then the last four.
   assert.equal(
     contributorNameText({ name: null, agentPubkey: "abcdef01".repeat(8) }),
-    "abcdef01",
+    truncatePubkey("abcdef01".repeat(8)),
+  );
+  assert.equal(
+    contributorNameText({ name: null, agentPubkey: "abcdef01".repeat(8) }),
+    "abcdef01…ef01",
   );
 });

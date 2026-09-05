@@ -1,4 +1,5 @@
 import { formatAge } from "@/features/roles/ui/rolesCopy";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 
 import type { ContributorRow } from "../lib/contributorsModel";
 
@@ -78,9 +79,16 @@ export function contributorStateAttr(
   return row.isSeatedNow ? "seated" : "past";
 }
 
-/** The row's display name: the managed agent's name, or its short pubkey. */
+/**
+ * The row's display name: the managed agent's name, or its short pubkey.
+ *
+ * The short form is the app's canonical `abcd1234…wxyz`, not a hand-rolled
+ * prefix. A truncated pubkey is a recognition aid and a ground-out prefix
+ * forges one cheaply, so every surface must truncate the same way — the full
+ * key stays in the cell's `title`.
+ */
 export function contributorNameText(
   row: Pick<ContributorRow, "name" | "agentPubkey">,
 ): string {
-  return row.name ?? row.agentPubkey.slice(0, 8);
+  return row.name ?? truncatePubkey(row.agentPubkey);
 }
