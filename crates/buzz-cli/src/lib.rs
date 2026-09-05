@@ -96,25 +96,49 @@ where
     }
 }
 
-/// This build's own provenance: crate version plus the git commit it was built
-/// from, e.g. `0.1.0 (6a683c9e3)`.
+/// This build's own provenance: crate version, the commit it was built from,
+/// and when it was built.
 ///
-/// The commit is `unknown` when the build had no checkout to ask and no
-/// `BUZZ_CLI_GIT_SHA` in its environment (see `build.rs`). A seat reaches
-/// whichever `bee` its `PATH` finds first — on 2026-09-01 that was the desktop
-/// app's bundled sidecar, so a CLI fix that has landed in the repo may still
-/// not be the one running. This is how a seat says which one it ran.
-pub const VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("BUZZ_CLI_GIT_SHA"),
-    ")"
-);
+/// A seat reaches whichever `bee` its `PATH` finds first — on 2026-09-01 that
+/// was the desktop app's bundled sidecar, so a CLI fix that has landed in the
+/// repo may still not be the one running. This is how a seat says which one it
+/// ran, and since 2026-09-05 *when* it was built, which is the question a
+/// bundle installed by `just app-from` raises and a commit alone cannot answer.
+///
+/// Both come from `buzz_core::build_info`, the same resolution the relay uses
+/// for NIP-11 `software_commit` — so a client stamp and a relay stamp are
+/// comparable field by field, and both disclose `unknown` rather than guess.
+///
+/// Two lines, and the split is load-bearing:
+///
+/// ```text
+/// bee 0.1.0 (f723824d)
+/// built 2026-09-05T14:02:11Z
+/// ```
+///
+/// The first line's shape — `{crate version} ({stamp})`, the stamp being a
+/// short hex commit, `<sha>-dirty`, or the literal `unknown` — is a contract
+/// with `parse_bee_version` (`crates/buzz-session-provider/src/seat_bee.rs`),
+/// which reads `output.lines().next()` and records "unknown" for anything it
+/// does not recognise. Putting the build time inside those parentheses, as the
+/// P1 brief asked, makes that parser return `None` and the beeStamp surface
+/// silently lose the sha it has. So the time goes on its own line, where the
+/// existing parser never looks, and the provider can start reading it whenever
+/// its own lane chooses to.
+pub static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let info = buzz_core::build_info::build_info();
+    format!(
+        "{} ({})\nbuilt {}",
+        env!("CARGO_PKG_VERSION"),
+        info.short_commit(),
+        info.build_time
+    )
+});
 
 #[derive(Parser)]
 #[command(
     name = "bee",
-    version = VERSION,
+    version = VERSION.as_str(),
     about = "Beekeeper CLI — interact with a Beekeeper relay",
     long_about = "\
 Beekeeper CLI — interact with a Beekeeper relay
@@ -4918,12 +4942,17 @@ mod tests {
             .get_version()
             .expect("bee must answer --version")
             .to_owned();
-        assert_eq!(version, VERSION, "--version must print the stamped build");
+        assert_eq!(
+            version,
+            VERSION.as_str(),
+            "--version must print the stamped build"
+        );
+        let first_line = version.lines().next().expect("a first line");
         assert!(
-            version.starts_with(env!("CARGO_PKG_VERSION")),
+            first_line.starts_with(env!("CARGO_PKG_VERSION")),
             "got {version}"
         );
-        let commit = version
+        let commit = first_line
             .rsplit_once(" (")
             .and_then(|(_, tail)| tail.strip_suffix(')'))
             .unwrap_or_else(|| panic!("no commit in {version}"));
@@ -4943,6 +4972,24 @@ mod tests {
             !(commit == "unknown" && dirty),
             "`unknown` names no commit, so there is nothing for `-dirty` to qualify: {commit:?}"
         );
+
+        // The build time is a second line, never inside the parentheses:
+        // `parse_bee_version` (buzz-session-provider) reads the first line and
+        // refuses a stamp that is not a commit, so a time in there would cost
+        // the beeStamp surface the sha it already has.
+        let built = version
+            .lines()
+            .nth(1)
+            .unwrap_or_else(|| panic!("no build time in {version}"));
+        let built = built
+            .strip_prefix("built ")
+            .unwrap_or_else(|| panic!("the second line names the build time: {built:?}"));
+        assert!(
+            built == "unknown"
+                || (built.len() == "2026-09-05T12:00:00Z".len() && built.ends_with('Z')),
+            "an RFC 3339 UTC stamp, or the disclosed `unknown` — never a guess: {built:?}"
+        );
+        assert_eq!(version.lines().count(), 2, "exactly two lines: {version:?}");
     }
 
     /// The seat verbs must exist and must take the flags the seat-repair

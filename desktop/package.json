@@ -12,6 +12,7 @@
     "check:px-text": "node ./scripts/check-px-text.mjs",
     "check:pubkey-truncation": "node ./scripts/check-pubkey-truncation.mjs",
     "check:e2e-registration": "node ./scripts/check-e2e-registration.mjs",
+    "check:sidecars": "node ./scripts/check-sidecar-parity.mjs",
     "lint": "biome lint .",
     "check": "biome check . && pnpm check:px-text && pnpm check:pubkey-truncation && pnpm check:e2e-registration",
     "format": "biome format --write .",

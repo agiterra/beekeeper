@@ -7,6 +7,10 @@
 
 /// NIP-AM: Agent Turn Metric — payload type and encrypt/decrypt helpers.
 pub mod agent_turn_metric;
+/// This build's own commit, its ordinal and its time — the client-side
+/// counterpart of the relay's NIP-11 `software_commit`, with the same
+/// disclosed `unknown`/`null` non-answers.
+pub mod build_info;
 /// Channel and membership enums shared across crates.
 pub mod channel;
 /// NIP-CSAT (draft): append-only coding-session authority-chain transitions

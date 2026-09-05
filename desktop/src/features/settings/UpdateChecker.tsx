@@ -4,6 +4,7 @@ import { useRelayBuildDrift } from "./hooks/useRelayBuildDrift";
 import { relayBuildDriftDetail } from "./relayBuildDrift";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { Button } from "@/shared/ui/button";
+import { AboutBuildRow } from "./ui/AboutBuildRow";
 import {
   SettingsOptionGroup,
   SettingsOptionRow,
@@ -183,6 +184,7 @@ export function UpdateChecker() {
         unexplained silence is what sends someone to go poke at the relay.
       */}
       <SettingsOptionGroup title="Relay build">
+        <AboutBuildRow />
         <SettingsOptionRow>
           <div className="min-w-0">
             <p

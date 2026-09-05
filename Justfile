@@ -183,7 +183,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check autodeploy-test
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check ignore-reasons-check autodeploy-test sidecar-parity-check
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -1282,3 +1282,28 @@ worktrees-prune *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     bash "{{justfile_directory()}}/scripts/worktrees-prune.sh" {{ARGS}}
+
+# ─── Bundle from a landed commit (P1) ─────────────────────────────────────────
+
+# Assert the sidecar set is one set: what the bundle declares (externalBin +
+# the coding-session provider), what `desktop-standalone` builds and copies,
+# what `app-from` builds and copies, and what `_ensure-sidecar-stubs` stubs.
+# A sidecar that drifts out of one list is otherwise invisible until someone
+# dates the files beside the app by hand.
+sidecar-parity-check:
+    node desktop/scripts/check-sidecar-parity.mjs
+
+# Build the founder's `Beekeeper Dev.app` from a commit that has LANDED on
+# origin/main, install it to ~/Applications (keeping the previous as .prev) and
+# relaunch. Debug profile, so the bundle keeps the dev keyring service and the
+# existing dev identity; a throwaway detached worktree, so this never touches a
+# checkout with an app running out of it.
+#
+#   just app-from <sha>                 build, install, relaunch
+#   just app-from <sha> --no-install    build and verify only
+#   just app-from <sha> --fresh         rebuild from cold
+app-from *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{justfile_directory()}}/bin:$PATH"
+    bash "{{justfile_directory()}}/scripts/app-from.sh" {{ARGS}}
