@@ -6,6 +6,8 @@ import {
   CODING_SESSION_OBSERVATION_EMPTY,
   CODING_SESSION_OBSERVATION_NOT_REPORTED,
   type CodingSessionObservationGateView,
+  gateSourceLabel,
+  gateSourceTitle,
 } from "@/features/coding-sessions/lib/codingSessionObservationView";
 import { cn } from "@/shared/lib/cn";
 
@@ -27,9 +29,10 @@ import { cn } from "@/shared/lib/cn";
  *   three 44244's `report.tests[].outcome` uses. Colour never carries it
  *   alone (§8 I9), so the word and an icon glyph go with every tint.
  * * **Provenance is shown, and never merged.** `observed` says a mechanism
- *   watched the command run; `measured` says a bench run produced it;
- *   `declared` says its author reported it. All
- *   appear; neither replaces the other.
+ *   watched the command run; `measured` says a bench run produced it, and
+ *   because nothing on the wire checks who signed such a row it never prints
+ *   bare — see `gateSourceLabel`; `declared` says its author reported it. All
+ *   appear; none replaces the other.
  */
 export function CodingSessionGateRows({
   emptyCopy = CODING_SESSION_OBSERVATION_EMPTY.gates,
@@ -233,26 +236,20 @@ function GateOutcome({
  */
 function GateSource({
   source,
+  signerIsSessionProvider = null,
 }: {
   source: CodingSessionObservationGateView["source"];
+  /**
+   * `false` when the row's signer is known not to be one of the session's
+   * providers, `true` when it is, `null` when nothing asked. Today the fold
+   * publishes no per-row answer for `measured`, so this stays `null` and the
+   * word says `unverified` rather than borrowing `self-reported`'s meaning.
+   */
+  signerIsSessionProvider?: boolean | null;
 }) {
-  if (source === "observed") {
-    return (
-      <span title="Written by the mechanism that watched the command run, not by its subject.">
-        observed
-      </span>
-    );
-  }
-  if (source === "measured") {
-    return (
-      <span title="Produced by a bench run: a scorer executing a fixed task set. Nothing checks who signed it.">
-        measured
-      </span>
-    );
-  }
   return (
-    <span title="Reported by its own author. A claim, not a measurement.">
-      declared
+    <span title={gateSourceTitle(source, signerIsSessionProvider)}>
+      {gateSourceLabel(source, signerIsSessionProvider)}
     </span>
   );
 }

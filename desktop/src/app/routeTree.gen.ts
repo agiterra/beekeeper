@@ -21,6 +21,8 @@ import { Route as codingSessionsDotnewRouteImport } from "./routes/coding-sessio
 import { Route as channelsDotchannelIdRouteImport } from "./routes/channels.$channelId";
 import { Route as projectsDotprojectIdDotindexRouteImport } from "./routes/projects.$projectId.index";
 import { Route as projectsDotprojectIdDotpulseRouteImport } from "./routes/projects.$projectId.pulse";
+import { Route as projectsDotprojectIdDotpacksRouteImport } from "./routes/projects.$projectId.packs";
+import { Route as projectsDotprojectIdDotcontributorsRouteImport } from "./routes/projects.$projectId.contributors";
 import { Route as observeDotownerDotsessionIdRouteImport } from "./routes/observe.$owner.$sessionId";
 import { Route as codingSessionsDotchannelIdDotgenerationIdRouteImport } from "./routes/coding-sessions.$channelId.$generationId";
 import { Route as projectsDotprojectIdDotsessionsDotnewRouteImport } from "./routes/projects.$projectId.sessions.new";
@@ -109,6 +111,18 @@ const projectsDotprojectIdDotpulseRoute =
     path: "/pulse",
     getParentRoute: () => projectsDotprojectIdRoute,
   } as any);
+const projectsDotprojectIdDotpacksRoute =
+  projectsDotprojectIdDotpacksRouteImport.update({
+    id: "/packs",
+    path: "/packs",
+    getParentRoute: () => projectsDotprojectIdRoute,
+  } as any);
+const projectsDotprojectIdDotcontributorsRoute =
+  projectsDotprojectIdDotcontributorsRouteImport.update({
+    id: "/contributors",
+    path: "/contributors",
+    getParentRoute: () => projectsDotprojectIdRoute,
+  } as any);
 const observeDotownerDotsessionIdRoute =
   observeDotownerDotsessionIdRouteImport.update({
     id: "/observe/$owner/$sessionId",
@@ -157,6 +171,8 @@ export interface FileRoutesByFullPath {
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
   "/coding-sessions/$channelId/$generationId": typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
+  "/projects/$projectId/contributors": typeof projectsDotprojectIdDotcontributorsRoute;
+  "/projects/$projectId/packs": typeof projectsDotprojectIdDotpacksRoute;
   "/projects/$projectId/pulse": typeof projectsDotprojectIdDotpulseRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -179,6 +195,8 @@ export interface FileRoutesByTo {
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
   "/coding-sessions/$channelId/$generationId": typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
+  "/projects/$projectId/contributors": typeof projectsDotprojectIdDotcontributorsRoute;
+  "/projects/$projectId/packs": typeof projectsDotprojectIdDotpacksRoute;
   "/projects/$projectId/pulse": typeof projectsDotprojectIdDotpulseRoute;
   "/projects/$projectId": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -203,6 +221,8 @@ export interface FileRoutesById {
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
   "/coding-sessions/$channelId/$generationId": typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
+  "/projects/$projectId/contributors": typeof projectsDotprojectIdDotcontributorsRoute;
+  "/projects/$projectId/packs": typeof projectsDotprojectIdDotpacksRoute;
   "/projects/$projectId/pulse": typeof projectsDotprojectIdDotpulseRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -228,6 +248,8 @@ export interface FileRouteTypes {
     | "/workflows/$workflowId"
     | "/coding-sessions/$channelId/$generationId"
     | "/observe/$owner/$sessionId"
+    | "/projects/$projectId/contributors"
+    | "/projects/$projectId/packs"
     | "/projects/$projectId/pulse"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
@@ -250,6 +272,8 @@ export interface FileRouteTypes {
     | "/workflows/$workflowId"
     | "/coding-sessions/$channelId/$generationId"
     | "/observe/$owner/$sessionId"
+    | "/projects/$projectId/contributors"
+    | "/projects/$projectId/packs"
     | "/projects/$projectId/pulse"
     | "/projects/$projectId"
     | "/channels/$channelId/posts/$postId"
@@ -273,6 +297,8 @@ export interface FileRouteTypes {
     | "/workflows/$workflowId"
     | "/coding-sessions/$channelId/$generationId"
     | "/observe/$owner/$sessionId"
+    | "/projects/$projectId/contributors"
+    | "/projects/$projectId/packs"
     | "/projects/$projectId/pulse"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
@@ -414,6 +440,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof projectsDotprojectIdDotpulseRouteImport;
       parentRoute: typeof projectsDotprojectIdRoute;
     };
+    "/projects/$projectId/packs": {
+      id: "/projects/$projectId/packs";
+      path: "/packs";
+      fullPath: "/projects/$projectId/packs";
+      preLoaderRoute: typeof projectsDotprojectIdDotpacksRouteImport;
+      parentRoute: typeof projectsDotprojectIdRoute;
+    };
+    "/projects/$projectId/contributors": {
+      id: "/projects/$projectId/contributors";
+      path: "/contributors";
+      fullPath: "/projects/$projectId/contributors";
+      preLoaderRoute: typeof projectsDotprojectIdDotcontributorsRouteImport;
+      parentRoute: typeof projectsDotprojectIdRoute;
+    };
     "/observe/$owner/$sessionId": {
       id: "/observe/$owner/$sessionId";
       path: "/observe/$owner/$sessionId";
@@ -453,6 +493,8 @@ declare module "@tanstack/react-router" {
 }
 
 interface projectsDotprojectIdRouteChildren {
+  projectsDotprojectIdDotcontributorsRoute: typeof projectsDotprojectIdDotcontributorsRoute;
+  projectsDotprojectIdDotpacksRoute: typeof projectsDotprojectIdDotpacksRoute;
   projectsDotprojectIdDotpulseRoute: typeof projectsDotprojectIdDotpulseRoute;
   projectsDotprojectIdDotindexRoute: typeof projectsDotprojectIdDotindexRoute;
   projectsDotprojectIdDotcodeDotrepoIdRoute: typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
@@ -460,6 +502,9 @@ interface projectsDotprojectIdRouteChildren {
 }
 
 const projectsDotprojectIdRouteChildren: projectsDotprojectIdRouteChildren = {
+  projectsDotprojectIdDotcontributorsRoute:
+    projectsDotprojectIdDotcontributorsRoute,
+  projectsDotprojectIdDotpacksRoute: projectsDotprojectIdDotpacksRoute,
   projectsDotprojectIdDotpulseRoute: projectsDotprojectIdDotpulseRoute,
   projectsDotprojectIdDotindexRoute: projectsDotprojectIdDotindexRoute,
   projectsDotprojectIdDotcodeDotrepoIdRoute:

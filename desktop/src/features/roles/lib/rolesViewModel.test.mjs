@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildRolesView,
   describePacksSource,
+  roleAgentPackState,
   seatAgeSeconds,
 } from "@/features/roles/lib/rolesViewModel";
 
@@ -300,4 +301,43 @@ test("describePacksSource reports a value only when every role agrees", () => {
   assert.equal(unknown.location, "/packs/personas/roles");
   assert.equal(unknown.sha, null);
   assert.equal(unknown.shasDiffer, false);
+});
+
+test("roleAgentPackState reads the role row first, the agent's own probe last (Fix 2)", () => {
+  // A shared home that refused the pack is a fact about this agent
+  // specifically, so it outranks even a role with no pack at all.
+  assert.equal(
+    roleAgentPackState({
+      roleHasPack: false,
+      roleRefusal: null,
+      agentPackRefusedSharedHome: true,
+    }),
+    "refused",
+  );
+  assert.equal(
+    roleAgentPackState({
+      roleHasPack: false,
+      roleRefusal: null,
+      agentPackRefusedSharedHome: false,
+    }),
+    "missing",
+  );
+  assert.equal(
+    roleAgentPackState({
+      roleHasPack: true,
+      roleRefusal: "The ladder refused this role: duplicate slug.",
+      agentPackRefusedSharedHome: undefined,
+    }),
+    "blocked",
+  );
+  // The role resolved a pack and nothing refuses it — present, even for an
+  // agent whose own `hasRolePack` probe was never asked (`undefined`).
+  assert.equal(
+    roleAgentPackState({
+      roleHasPack: true,
+      roleRefusal: null,
+      agentPackRefusedSharedHome: undefined,
+    }),
+    "present",
+  );
 });

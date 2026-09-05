@@ -8,6 +8,8 @@ import {
   type CodingSessionObservationPhaseView,
   type CodingSessionObservationSeatBlock,
   type CodingSessionObservationView,
+  gateSourceLabel,
+  gateSourceTitle,
 } from "@/features/coding-sessions/lib/codingSessionObservationView";
 import { CodingSessionGateRows } from "./CodingSessionGateRows";
 
@@ -259,7 +261,9 @@ function CheckpointRow({
       <p className="text-2xs text-muted-foreground">
         {row.lastSummary ?? "No summary published."}
         {" · "}
-        {row.source}
+        <span title={gateSourceTitle(row.source)}>
+          {gateSourceLabel(row.source)}
+        </span>
       </p>
       {row.note === null ? null : (
         <p className="mt-0.5 text-2xs whitespace-pre-wrap">{row.note}</p>
@@ -284,7 +288,10 @@ function FindingRow({ row }: { row: CodingSessionObservationFindingView }) {
         </span>
       </p>
       <p className="text-2xs text-muted-foreground">
-        {row.refCount} reference{row.refCount === 1 ? "" : "s"} · {row.source}
+        {row.refCount} reference{row.refCount === 1 ? "" : "s"} ·{" "}
+        <span title={gateSourceTitle(row.source)}>
+          {gateSourceLabel(row.source)}
+        </span>
         {row.decisionShortRef === null
           ? null
           : row.decisionUnresolved
@@ -319,7 +326,9 @@ function PhaseRow({ row }: { row: CodingSessionObservationPhaseView }) {
             in the block is observed, so in a mixed block a phase timing used to
             show no provenance at all. */}
         {" · "}
-        {row.source}
+        <span title={gateSourceTitle(row.source)}>
+          {gateSourceLabel(row.source)}
+        </span>
       </span>
     </li>
   );

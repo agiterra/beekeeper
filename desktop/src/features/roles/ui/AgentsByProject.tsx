@@ -1,3 +1,4 @@
+import { compareSeatsLiveFirst } from "../lib/seatRows";
 import type { ProjectAgentsRow, SeatRow } from "../lib/rolesViewModel";
 import {
   AGENTS_BY_PROJECT_TITLE,
@@ -43,7 +44,7 @@ function ProjectBlock({
         </p>
       ) : (
         <ul className="flex flex-col">
-          {seats.map((seat) => (
+          {[...seats].sort(compareSeatsLiveFirst).map((seat) => (
             <li key={seat.key}>
               <SeatRowButton
                 columns="project-block"

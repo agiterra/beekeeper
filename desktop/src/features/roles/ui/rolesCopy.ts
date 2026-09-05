@@ -31,7 +31,13 @@ export const ROLES_LOADING = "Reading role packs…";
 export const ROLES_SECTION_TITLE = "Roles";
 
 export const ROLES_EMPTY =
-  "No roles: the ladder for this project produced no packs, and no seat or agent on this computer names one.";
+  "No roles resolve for this project, and no seat or agent names one.";
+
+/** A project id the route named that this reader cannot read (§B). */
+export const PROJECT_PACKS_MISSING = "This project is not readable here.";
+
+/** The button that opens the pack installer, moved here from the Agents tab. */
+export const INSTALL_ROLES_BUTTON_LABEL = "Install roles";
 
 export const AGENTS_BY_PROJECT_TITLE = "Agents by project";
 
@@ -41,13 +47,13 @@ export const ROLE_SKILLS_TITLE = "Skills";
 
 export const ROLE_AGENTS_TITLE = "Agents";
 
-export const ROLE_SEATS_TITLE = "Live seats";
+export const ROLE_SEATS_TITLE = "Seats";
 
 export const ROLE_SKILLS_EMPTY = "no skills";
 
 export const ROLE_AGENTS_EMPTY = "no agents carry this role";
 
-export const ROLE_SEATS_EMPTY = "no seats running";
+export const ROLE_SEATS_EMPTY = "no open seats";
 
 export const PROJECT_SEATS_EMPTY = "no agents seated";
 
@@ -114,25 +120,49 @@ export function projectSeatCount(count: number): string {
   return `${count} ${count === 1 ? "agent" : "agents"}`;
 }
 
+function joinWithAnd(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 /**
- * The header sentence: "Packs for <project>: <origin> · <repo or path> · <sha>".
- *
- * A project whose roles come from more than one rung says "mixed origins"
- * and lists them; roles from several places say so; roles with different
- * shas say so rather than showing one of them.
+ * The header sentence (Fix 3): "<n> role packs for <project>, from the
+ * <origin> rung at <location>, pinned to <sha8>." — one sentence naming the
+ * project, the rung(s), the location and an 8-char sha. `shaTitle` carries
+ * the full 40-hex sha for the tooltip; it is `null` whenever the sentence
+ * itself is not naming one known sha (no packs, unknown sha, or shas that
+ * differ by role — showing one of them in the tooltip would misattribute it).
  */
 export function packsSourceSentence(
   projectName: string,
   packCount: number,
   source: PacksSourceSummary,
-): string {
-  if (packCount === 0) return `Packs for ${projectName}: none found`;
-  const origin =
-    source.origins.length === 1
-      ? source.origins[0]
-      : `mixed origins (${source.origins.join(", ")})`;
+): { text: string; shaTitle: string | null } {
+  if (packCount === 0) {
+    return {
+      text: `No role packs resolve for ${projectName}.`,
+      shaTitle: null,
+    };
+  }
+  const countWord = packCount === 1 ? "1 role pack" : `${packCount} role packs`;
+  const rungWord = source.origins.length > 1 ? "rungs" : "rung";
   const location = source.location ?? "several locations";
-  const sha =
-    source.sha ?? (source.shasDiffer ? "shas differ by role" : SHA_UNKNOWN);
-  return `Packs for ${projectName}: ${origin} · ${location} · ${sha}`;
+  const prefix = `${countWord} for ${projectName}, from the ${joinWithAnd(
+    source.origins,
+  )} ${rungWord} at ${location}`;
+  if (source.shasDiffer) {
+    return {
+      text: `${prefix}, pinned to different shas by role.`,
+      shaTitle: null,
+    };
+  }
+  if (source.sha === null) {
+    return { text: `${prefix}, with no sha recorded.`, shaTitle: null };
+  }
+  const isFullSha = /^[0-9a-f]{40}$/i.test(source.sha);
+  return {
+    text: `${prefix}, pinned to ${shaText(source.sha)}.`,
+    shaTitle: isFullSha ? source.sha : null,
+  };
 }

@@ -16,9 +16,11 @@ import {
   INSTALL_CREW_ROLES_REFRESH_NOTE,
   INSTALL_CREW_ROLES_RENAMED_NOTE,
   INSTALL_CREW_ROLES_RENAMED_UNPUBLISHED_NOTE,
+  INSTALL_CREW_ROLES_MENU_LABEL,
   INSTALL_CREW_ROLES_ROSTER_PLAN,
   INSTALL_CREW_ROLES_TEAM_NAMES_HINT,
   INSTALL_CREW_ROLES_TEAM_NAMES_LABEL,
+  INSTALL_CREW_ROLES_TITLE,
   INSTALL_CREW_ROLES_UNSEATED_NOTE,
 } from "./installCrewRolesCopy.ts";
 
@@ -344,7 +346,7 @@ describe("install team roles — empty and failed folders", () => {
   });
 });
 
-describe("install team roles — success toast", () => {
+describe("install role packs — success toast", () => {
   it("names the count, the team and the roles", () => {
     assert.equal(
       crewRolesInstalledToast({
@@ -355,8 +357,38 @@ describe("install team roles — success toast", () => {
         installed: [row("lead"), row("builder")],
         skipped: [],
       }),
-      "Installed 2 team roles into “Team roles”: lead, builder.",
+      "Installed 2 role packs into “Team roles”: lead, builder.",
     );
+  });
+});
+
+// ── The word the installer uses ──────────────────────────────────────────────
+//
+// What this installer writes is role packs. It used to call them "team roles",
+// which named an entity — a team — that the operator can neither see nor use:
+// a team is one owner's local list, and the seats of a launch are the only
+// live thing. The identifiers keep the backend's `crew`/`team` field names;
+// no sentence an operator reads does.
+
+describe("install role packs — the operator-facing words", () => {
+  it("says role packs, never team roles", () => {
+    assert.equal(INSTALL_CREW_ROLES_TITLE, "Install role packs");
+    assert.equal(INSTALL_CREW_ROLES_MENU_LABEL, "Install role packs…");
+    const toast = crewRolesInstalledToast({
+      teamId: "t",
+      teamName: "Team roles",
+      seated: ["lead"],
+      dropped: [],
+      installed: [row("lead")],
+      skipped: [],
+    });
+    for (const sentence of [
+      INSTALL_CREW_ROLES_TITLE,
+      INSTALL_CREW_ROLES_MENU_LABEL,
+      toast.replace("“Team roles”", "“…”"),
+    ]) {
+      assert.doesNotMatch(sentence, /team roles/i);
+    }
   });
 });
 

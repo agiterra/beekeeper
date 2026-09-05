@@ -58,6 +58,69 @@ export const CODING_SESSION_OBSERVATION_EMPTY = Object.freeze({
  */
 export const CODING_SESSION_OBSERVATION_NOT_REPORTED = "not reported";
 
+/**
+ * The word a gate row prints for its provenance, and the tooltip under it.
+ *
+ * `observed` and `declared` are two *authors*, not two strengths, so each
+ * says who wrote it. `measured` is the third, and the one that used to lie by
+ * omission: the token was widened onto the enum for the registry bench and
+ * **nothing on the wire checks who signed a `measured` row**
+ * (`codingSessionObservationWire.ts:28-38` says so in as many words). Printed
+ * bare, beside `observed`, it read as a stronger claim than `declared` — the
+ * exact merge this row exists to prevent.
+ *
+ * So `measured` is never bare. When the row model can say the signer is not
+ * one of the session's provider instances, it reads
+ * {@link GATE_SOURCE_MEASURED_SELF_REPORTED}; with no such fact on the row —
+ * which is every row today, because the fold publishes no per-row provider
+ * check for `measured` — it reads {@link GATE_SOURCE_MEASURED_UNVERIFIED}.
+ * "Unverified" is the absence of a check; "self-reported" is a check that came
+ * back negative. They are different sentences and must not be swapped.
+ */
+export const GATE_SOURCE_OBSERVED = "observed";
+export const GATE_SOURCE_DECLARED = "declared";
+export const GATE_SOURCE_MEASURED_SELF_REPORTED = "measured (self-reported)";
+export const GATE_SOURCE_MEASURED_UNVERIFIED = "measured (unverified)";
+
+export const GATE_SOURCE_TITLES = Object.freeze({
+  observed:
+    "Written by the mechanism that watched the command run, not by its subject.",
+  declared: "Reported by its own author. A claim, not a measurement.",
+  measuredSelfReported:
+    "Produced by a bench run, and signed by a key that is not one of this session's providers — so its author measured itself.",
+  measuredUnverified:
+    "Produced by a bench run: a scorer executing a fixed task set. Nothing here checks who signed it.",
+});
+
+/**
+ * The provenance word for one gate row.
+ *
+ * `signerIsSessionProvider` is a tri-state on purpose: `null` means nobody
+ * asked, and that is not the same answer as `false`.
+ */
+export function gateSourceLabel(
+  source: CodingSessionObservationSource,
+  signerIsSessionProvider?: boolean | null,
+): string {
+  if (source === "observed") return GATE_SOURCE_OBSERVED;
+  if (source === "declared") return GATE_SOURCE_DECLARED;
+  return signerIsSessionProvider === false
+    ? GATE_SOURCE_MEASURED_SELF_REPORTED
+    : GATE_SOURCE_MEASURED_UNVERIFIED;
+}
+
+/** The tooltip that belongs to {@link gateSourceLabel}'s answer. */
+export function gateSourceTitle(
+  source: CodingSessionObservationSource,
+  signerIsSessionProvider?: boolean | null,
+): string {
+  if (source === "observed") return GATE_SOURCE_TITLES.observed;
+  if (source === "declared") return GATE_SOURCE_TITLES.declared;
+  return signerIsSessionProvider === false
+    ? GATE_SOURCE_TITLES.measuredSelfReported
+    : GATE_SOURCE_TITLES.measuredUnverified;
+}
+
 export type CodingSessionObservationCheckpointView = {
   readonly key: string;
   readonly eventId: string;

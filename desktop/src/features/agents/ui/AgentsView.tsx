@@ -1,14 +1,16 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
 import { EllipsisVertical, OctagonX, Settings2 } from "lucide-react";
 import {
   consumePendingSnapshotImport,
   subscribeSnapshotImport,
 } from "@/features/agents/openSnapshotImportFromUrlEvent";
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { AddAgentToChannelDialog } from "./AddAgentToChannelDialog";
 import { AddTeamToChannelDialog } from "./AddTeamToChannelDialog";
 import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentDialog } from "./AgentDialog";
+import { AgentDirectoryDetail } from "./AgentDirectoryDetail";
+import { AgentDirectoryList } from "./AgentDirectoryList";
 import { PersonaCatalogDialog } from "./PersonaCatalogDialog";
 import { PersonaDeleteDialog } from "./PersonaDeleteDialog";
 import { PersonaShareDialog } from "./PersonaShareDialog";
@@ -23,16 +25,18 @@ import { InstallCrewRolesDialog } from "./InstallCrewRolesDialog";
 import { RolePacksProjectSelector } from "./RolePacksProjectSelector";
 import { TeamsSection } from "./TeamsSection";
 import { useRolePacksProject } from "./useRolePacksProject";
-import { UnifiedAgentsSection } from "./UnifiedAgentsSection";
 import { useManagedAgentActions } from "./useManagedAgentActions";
 import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
-import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
+import {
+  agentDirectoryFilter,
+  type AgentDirectoryFilters,
+} from "@/features/agents/lib/agentDirectoryModel";
+import { useAgentDirectory } from "@/features/agents/lib/useAgentDirectory";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
-import { resolveRegistryStaleness } from "@/features/agents/lib/registryStaleness";
-import { readModelRegistryRows } from "@/features/coding-sessions/lib/codingSessionRegistrySource";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
+import { normalizePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
@@ -41,14 +45,18 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { PageHeader } from "@/shared/ui/PageHeader";
-import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
 import { crewRolesInstalledToast } from "./installCrewRolesCopy";
 
+const DEFAULT_AGENT_DIRECTORY_FILTERS: AgentDirectoryFilters = {
+  role: null,
+  status: "any",
+  projectId: null,
+  installedOnly: true,
+};
+
 export function AgentsView() {
-  const { openPersonaProfilePanel, openProfilePanel } = useProfilePanel();
+  const { openPersonaProfilePanel } = useProfilePanel();
   const { globalConfig } = useGlobalAgentConfig();
-  const { data: bakedEnv } = useBakedBuildEnvQuery({ enabled: true });
-  const inheritedDefaults = getInheritedAgentDefaults(globalConfig, bakedEnv);
   const agents = useManagedAgentActions();
   const personas = usePersonaActions();
   const teamImportInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -65,57 +73,43 @@ export function AgentsView() {
   // With no project at all nothing is resolved and the dialog is unchanged.
   const rolePacksProject = useRolePacksProject();
   const activeProject = rolePacksProject.project;
-  // The team's model registry, read from the project checkout this tab already
-  // resolved.
-  //
-  // Brian's routing ruling of 2026-08-30 moved the question: stale now means
-  // *a live offered execution target with no registry row*, and a row this
-  // host does not offer today is dormant rather than stale.
-  //
-  // Ledger 97(C) gave the app a reader (`read_project_file`, allowlisted to
-  // `team/model-registry.yaml`), so this badge stops describing a permanent
-  // gap and starts reporting a real read: how many rows were found, or the
-  // reader's own sentence for why there were none.
-  //
-  // `offered` stays null here on purpose. The 44222 catalog arrives on a
-  // per-channel relay subscription (`useCodingSessionProviderCatalog`), and
-  // the Agents tab is a Dashboard tab that subscribes to no channel. Rather
-  // than open one for a badge, the badge says what it read and says that it
-  // has nothing to check it against — which is true, and is not the same
-  // sentence as "not readable".
-  const registryProjectRef = activeProject?.address ?? null;
-  const registryRows = useQuery({
-    queryKey: ["model-registry-rows", registryProjectRef],
-    queryFn: () => readModelRegistryRows(registryProjectRef),
-    staleTime: 60_000,
-  });
-  const registryStaleness = React.useMemo(() => {
-    const result = registryRows.data;
-    if (!result) {
-      return resolveRegistryStaleness({
-        rows: null,
-        unreadableBecause: registryRows.isPending
-          ? "Reading team/model-registry.yaml from this project's checkout."
-          : (registryRows.error?.message ??
-            "team/model-registry.yaml could not be read from this project's checkout."),
-        offered: null,
-      });
-    }
-    if (result.kind === "unreadable") {
-      return resolveRegistryStaleness({
-        rows: null,
-        unreadableBecause: result.reason,
-        offered: null,
-      });
-    }
-    return resolveRegistryStaleness({
-      rows: result.rows,
-      version: result.version,
-      offered: null,
-    });
-  }, [registryRows.data, registryRows.error, registryRows.isPending]);
+  const { goCodingSession } = useAppNavigation();
+  const directory = useAgentDirectory();
+  const [selectedPubkey, setSelectedPubkey] = React.useState<string | null>(
+    null,
+  );
+  const [directoryFilters, setDirectoryFilters] =
+    React.useState<AgentDirectoryFilters>(DEFAULT_AGENT_DIRECTORY_FILTERS);
+  const filteredDirectoryRows = React.useMemo(
+    () => agentDirectoryFilter(directory.rows, directoryFilters),
+    [directory.rows, directoryFilters],
+  );
+  const selectedDirectoryRow = React.useMemo(
+    () => directory.rows.find((row) => row.pubkey === selectedPubkey) ?? null,
+    [directory.rows, selectedPubkey],
+  );
+  const selectedManagedAgent = React.useMemo(() => {
+    if (!selectedDirectoryRow) return null;
+    return (
+      agents.managedAgents.find(
+        (agent) =>
+          normalizePubkey(agent.pubkey) === selectedDirectoryRow.pubkey,
+      ) ?? null
+    );
+  }, [agents.managedAgents, selectedDirectoryRow]);
+  const selectedEditablePersona = React.useMemo(() => {
+    if (!selectedManagedAgent?.personaId) return null;
+    return (
+      personas.libraryPersonas.find(
+        (persona) => persona.id === selectedManagedAgent.personaId,
+      ) ?? null
+    );
+  }, [personas.libraryPersonas, selectedManagedAgent]);
 
-  function openUnifiedCatalog() {
+  // The directory's "Add agent" button opens exactly what the old agents
+  // section opened: the catalog dialog, whose create tab is `AgentDialog` in
+  // `mode="definition"`. No new dialog was introduced for it.
+  function openAgentCatalog() {
     personas.prepareCreate();
     personas.openCatalog();
   }
@@ -193,191 +187,176 @@ export function AgentsView() {
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-7 sm:px-6 sm:py-8">
-        <div
-          className="mx-auto w-full max-w-6xl space-y-8 [container-type:inline-size]"
-          data-testid="agents-page-content"
-        >
-          <PageHeader
-            action={
-              <>
-                <div className="flex flex-wrap justify-end gap-2 [@container(max-width:40rem)]:hidden">
-                  <Button
-                    data-testid="agent-defaults-button"
-                    ref={fullAiDefaultsTriggerRef}
-                    onClick={(event) => openAiDefaults(event.currentTarget)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <Settings2 />
-                    {hasSavedAgentDefaults
-                      ? "Agent defaults"
-                      : "Set agent defaults"}
-                  </Button>
-                  {runningAgentCount > 0 ? (
+      <div
+        className="relative flex min-h-0 flex-1 overflow-hidden"
+        data-testid="agents-view"
+      >
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-7 sm:px-6 sm:py-8">
+          <div
+            className="mx-auto w-full max-w-6xl space-y-8 [container-type:inline-size]"
+            data-testid="agents-page-content"
+          >
+            <PageHeader
+              action={
+                <>
+                  <div className="flex flex-wrap justify-end gap-2 [@container(max-width:40rem)]:hidden">
                     <Button
-                      disabled={isActionPending}
-                      onClick={() => {
-                        void agents.handleBulkStopRunning();
-                      }}
+                      data-testid="agent-defaults-button"
+                      ref={fullAiDefaultsTriggerRef}
+                      onClick={(event) => openAiDefaults(event.currentTarget)}
                       size="sm"
                       variant="outline"
-                    >
-                      <OctagonX />
-                      Stop running agents
-                    </Button>
-                  ) : null}
-                </div>
-
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      aria-label="Agent actions"
-                      className="hidden [@container(max-width:40rem)]:inline-flex"
-                      data-testid="agent-actions-menu-trigger"
-                      ref={compactActionsTriggerRef}
-                      size="icon"
-                      type="button"
-                      variant="outline"
-                    >
-                      <EllipsisVertical />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        openAiDefaults(compactActionsTriggerRef.current);
-                      }}
                     >
                       <Settings2 />
                       {hasSavedAgentDefaults
                         ? "Agent defaults"
                         : "Set agent defaults"}
-                    </DropdownMenuItem>
+                    </Button>
                     {runningAgentCount > 0 ? (
-                      <DropdownMenuItem
+                      <Button
                         disabled={isActionPending}
-                        onSelect={() => {
+                        onClick={() => {
                           void agents.handleBulkStopRunning();
                         }}
+                        size="sm"
+                        variant="outline"
                       >
                         <OctagonX />
                         Stop running agents
-                      </DropdownMenuItem>
+                      </Button>
                     ) : null}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            }
-            description={
-              <>
-                Set up and manage your agents.{" "}
-                <span
-                  className="ml-1 inline-block whitespace-nowrap rounded border border-border px-1.5 py-0.5 align-middle text-2xs"
-                  data-registry-state={registryStaleness.state}
-                  data-testid="registry-stale-badge"
-                  title={registryStaleness.detail}
-                >
-                  {registryStaleness.label}
-                </span>
-              </>
-            }
-            title="Agents"
-          />
-          <div className="flex flex-col gap-8">
-            <UnifiedAgentsSection
-              defaultModel={inheritedDefaults.model.value}
-              actionErrorMessage={agents.actionErrorMessage}
-              actionNoticeMessage={agents.actionNoticeMessage}
-              agents={agents.managedAgents}
-              agentsError={
-                agents.managedAgentsQuery.error instanceof Error
-                  ? agents.managedAgentsQuery.error
-                  : null
-              }
-              isActionPending={isActionPending}
-              isAgentsLoading={agents.managedAgentsQuery.isLoading}
-              startingAgentPubkey={agents.startingAgentPubkey}
-              restartingAgentPubkey={agents.restartingAgentPubkey}
-              startingPersonaIds={agents.startingPersonaIds}
-              onOpenAgentProfile={(pubkey, options) => {
-                openProfilePanel?.(pubkey, options);
-              }}
-              onOpenPersonaProfile={(persona) => {
-                openPersonaProfilePanel?.(persona);
-              }}
-              onStartAgent={(pubkey) => {
-                void agents.handleStart(pubkey);
-              }}
-              onRestartAgent={(pubkey) => {
-                void agents.handleRestart(pubkey);
-              }}
-              onStartPersona={(persona) => {
-                void agents.handleStartPersona(persona);
-              }}
-              // Persona props
-              personas={personas.libraryPersonas}
-              personasError={
-                personas.personasQuery.error instanceof Error
-                  ? personas.personasQuery.error
-                  : null
-              }
-              personaFeedbackErrorMessage={
-                personas.personaFeedbackSurface === "library"
-                  ? personas.personaErrorMessage
-                  : null
-              }
-              personaFeedbackNoticeMessage={
-                personas.personaFeedbackSurface === "library"
-                  ? personas.personaNoticeMessage
-                  : null
-              }
-              isPersonasLoading={personas.personasQuery.isLoading}
-              isPersonasPending={personas.isPending}
-              onOpenCatalog={openUnifiedCatalog}
-              onDuplicatePersona={personas.openDuplicate}
-              onEditPersona={personas.openEdit}
-              onSharePersona={personas.openShare}
-              onDeactivatePersona={(persona) => {
-                void personas.handleSetActive(persona, false, "library");
-              }}
-              onDeletePersona={personas.openDelete}
-            />
+                  </div>
 
-            <TeamsSection
-              error={
-                teamActions.teamsQuery.error instanceof Error
-                  ? teamActions.teamsQuery.error
-                  : null
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="Agent actions"
+                        className="hidden [@container(max-width:40rem)]:inline-flex"
+                        data-testid="agent-actions-menu-trigger"
+                        ref={compactActionsTriggerRef}
+                        size="icon"
+                        type="button"
+                        variant="outline"
+                      >
+                        <EllipsisVertical />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          openAiDefaults(compactActionsTriggerRef.current);
+                        }}
+                      >
+                        <Settings2 />
+                        {hasSavedAgentDefaults
+                          ? "Agent defaults"
+                          : "Set agent defaults"}
+                      </DropdownMenuItem>
+                      {runningAgentCount > 0 ? (
+                        <DropdownMenuItem
+                          disabled={isActionPending}
+                          onSelect={() => {
+                            void agents.handleBulkStopRunning();
+                          }}
+                        >
+                          <OctagonX />
+                          Stop running agents
+                        </DropdownMenuItem>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
               }
-              isLoading={teamActions.teamsQuery.isLoading}
-              isPending={
-                teamActions.createTeamMutation.isPending ||
-                teamActions.updateTeamMutation.isPending ||
-                teamActions.deleteTeamMutation.isPending
-              }
-              onCreate={teamActions.openCreateDialog}
-              onDelete={teamActions.setTeamToDelete}
-              onDuplicate={teamActions.openDuplicateDialog}
-              onEdit={teamActions.openEditDialog}
-              onAddToChannel={teamActions.setTeamToAddToChannel}
-              onShare={teamActions.openShare}
-              onImport={() => {
-                teamImportInputRef.current?.click();
-              }}
-              onInstallCrewRoles={() => setIsInstallCrewRolesOpen(true)}
-              personas={personas.libraryPersonas}
-              projectSelector={
-                <RolePacksProjectSelector
-                  onSelect={rolePacksProject.chooseProject}
-                  project={activeProject}
-                  projects={rolePacksProject.projects}
-                />
-              }
-              teams={teamActions.teams}
+              description="Set up and manage your agents."
+              title="Agents"
             />
+            <div className="flex flex-col gap-8">
+              <AgentDirectoryList
+                allRows={directory.rows}
+                error={directory.error}
+                filters={directoryFilters}
+                isLoading={directory.isLoading}
+                onAddAgent={openAgentCatalog}
+                onFiltersChange={setDirectoryFilters}
+                onSelectRow={setSelectedPubkey}
+                projects={directory.projects}
+                rows={filteredDirectoryRows}
+                seatNotice={directory.seatNotice}
+                selectedPubkey={selectedPubkey}
+              />
+
+              <TeamsSection
+                error={
+                  teamActions.teamsQuery.error instanceof Error
+                    ? teamActions.teamsQuery.error
+                    : null
+                }
+                isLoading={teamActions.teamsQuery.isLoading}
+                isPending={
+                  teamActions.createTeamMutation.isPending ||
+                  teamActions.updateTeamMutation.isPending ||
+                  teamActions.deleteTeamMutation.isPending
+                }
+                onCreate={teamActions.openCreateDialog}
+                onDelete={teamActions.setTeamToDelete}
+                onDuplicate={teamActions.openDuplicateDialog}
+                onEdit={teamActions.openEditDialog}
+                onAddToChannel={teamActions.setTeamToAddToChannel}
+                onShare={teamActions.openShare}
+                onImport={() => {
+                  teamImportInputRef.current?.click();
+                }}
+                onInstallCrewRoles={() => setIsInstallCrewRolesOpen(true)}
+                personas={personas.libraryPersonas}
+                projectSelector={
+                  <RolePacksProjectSelector
+                    onSelect={rolePacksProject.chooseProject}
+                    project={activeProject}
+                    projects={rolePacksProject.projects}
+                  />
+                }
+                teams={teamActions.teams}
+              />
+            </div>
           </div>
         </div>
+
+        {selectedDirectoryRow ? (
+          <div
+            className="w-[400px] shrink-0 py-7 pr-4 sm:pr-6"
+            key={selectedPubkey}
+          >
+            <AgentDirectoryDetail
+              canEdit={selectedEditablePersona !== null}
+              isPending={agents.isPending}
+              isRestartPending={
+                agents.restartingAgentPubkey === selectedDirectoryRow.pubkey
+              }
+              isStartPending={
+                agents.startingAgentPubkey === selectedDirectoryRow.pubkey
+              }
+              onClose={() => setSelectedPubkey(null)}
+              onEdit={() => {
+                if (selectedEditablePersona) {
+                  personas.openEdit(selectedEditablePersona);
+                }
+              }}
+              onRestart={() => {
+                void agents.handleRestart(selectedDirectoryRow.pubkey);
+              }}
+              onSelectSeat={(channelId, generationId) => {
+                void goCodingSession(channelId, generationId);
+              }}
+              onStart={() => {
+                void agents.handleStart(selectedDirectoryRow.pubkey);
+              }}
+              onStop={() => {
+                void agents.handleStop(selectedDirectoryRow.pubkey);
+              }}
+              row={selectedDirectoryRow}
+            />
+          </div>
+        ) : null}
       </div>
 
       <InstallCrewRolesDialog

@@ -265,26 +265,27 @@ export function NewCodingSessionForm({
     () => managedAgentsQuery.data ?? [],
     [managedAgentsQuery.data],
   );
-  // Teams are read only for their crew blocks: the roles an identity carries
-  // are what make it seatable, and the launch never creates a whole crew.
-  const crewTeamsQuery = useQuery({
+  // Read only to learn which role each identity carries: a role assignment
+  // record names what an identity is *for* in this project, and the launch
+  // never creates more than the lead's own seat.
+  const roleHintsQuery = useQuery({
     queryKey: codingSessionCrewTeamsQueryKey,
     queryFn: listCodingSessionCrewTeams,
     staleTime: 30_000,
   });
-  const crewTeams = React.useMemo<CodingSessionCrewTeam[]>(
-    () => crewTeamsQuery.data ?? [],
-    [crewTeamsQuery.data],
+  const roleHintRecords = React.useMemo<CodingSessionCrewTeam[]>(
+    () => roleHintsQuery.data ?? [],
+    [roleHintsQuery.data],
   );
   const candidates = React.useMemo<NewCodingSessionLeadCandidate[]>(
     () =>
       managedAgents.map((agent) => ({
         pubkey: agent.pubkey,
         name: agent.name,
-        // Read, never typed. The crew block wins over the home role because a
-        // team declares what the identity is *for* in this project.
+        // Read, never typed. A role record wins over the home role because it
+        // names what the identity is *for* in this project.
         role:
-          crewTeams
+          roleHintRecords
             .flatMap((team) => team.crew.seats)
             .find((seat) => seat.personaId === agent.personaId)?.role ??
           agent.homeRole ??
@@ -294,7 +295,7 @@ export function NewCodingSessionForm({
           ? {}
           : { hasRolePack: agent.hasRolePack }),
       })),
-    [crewTeams, managedAgents],
+    [roleHintRecords, managedAgents],
   );
 
   const [leadActor, setLeadActor] = React.useState<string | null>(
@@ -469,7 +470,7 @@ export function NewCodingSessionForm({
           : teamReadiness.isLaunchPreflighting
             ? "Re-checking readiness before launching…"
             : teamReadiness.isPreparing
-              ? "Preparing the project's team…"
+              ? "Preparing the project's roles…"
               : teamReadiness.isScanning
                 ? "Scanning the project's role packs…"
                 : null;

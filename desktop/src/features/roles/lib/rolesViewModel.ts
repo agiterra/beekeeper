@@ -11,7 +11,6 @@
  * here keeps its pubkey and no name; an agent whose pack is missing carries
  * that fact onto its chip; a seat with no `packRef` has no sha.
  */
-import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import type { ProjectContainer } from "@/features/projects-container/lib/projectContainerModel";
 import type {
@@ -22,30 +21,14 @@ import type {
   RolePackSummary,
 } from "@/shared/api/types";
 
-/** One seat — a session generation — as the view reads it. */
-export type SeatRow = {
-  /** `<channelId>/<generationId>`, unique per shelf row. */
-  key: string;
-  channelId: string;
-  generationId: string;
-  /** The session's own label, for the row tooltip. */
-  label: string;
-  /** Lowercased `session.agentRef`, or `null` for a person's session. */
-  agentPubkey: string | null;
-  /** The managed agent's name, or `null` when no managed agent has that pubkey. */
-  agentName: string | null;
-  /** The seat's role slug, or `null` when the session carries none. */
-  role: string | null;
-  projectId: string | null;
-  /** The project's name, or `null` when unplaced or the project is not in the list. */
-  projectName: string | null;
-  /** The catalog record's status word, verbatim. */
-  status: CodingSessionStatus;
-  /** Seconds since the catalog's `statusAt`, or `null` when no status was observed. */
-  ageSeconds: number | null;
-  /** The staged pack's sha, or `null` when this generation carried no `packRef`. */
-  packSha: string | null;
-};
+import type { SeatRow } from "./seatRows";
+import { buildSeatRows } from "./seatRows";
+
+// Re-exported so existing imports (`SeatRowButton.tsx`, tests) keep working
+// after the seat-row join moved to `seatRows.ts`, which U3's Contributors
+// view also builds on.
+export type { SeatRow } from "./seatRows";
+export { seatAgeSeconds } from "./seatRows";
 
 /** A managed agent whose home role is the row's role. */
 export type RoleAgentChip = {
@@ -105,69 +88,13 @@ export type BuildRolesViewInput = {
   nowSeconds: number;
 };
 
-/**
- * Seconds since a catalog `statusAt`, which is in milliseconds (the newest
- * 44223's `created_at`). `null` stays `null`; a clock that runs ahead of
- * the relay clamps to zero rather than reporting a negative age.
- */
-export function seatAgeSeconds(
-  statusAtMs: number | null | undefined,
-  nowSeconds: number,
-): number | null {
-  if (
-    statusAtMs === null ||
-    statusAtMs === undefined ||
-    !Number.isFinite(statusAtMs)
-  ) {
-    return null;
-  }
-  return Math.max(0, nowSeconds - Math.floor(statusAtMs / 1_000));
-}
-
 function homeRoleOf(agent: ManagedAgent): string | null {
   const role = agent.homeRole?.trim();
   return role ? role : null;
 }
 
-function seatRow(
-  entry: ProjectCodingSessionShelfEntry,
-  agentsByPubkey: ReadonlyMap<string, ManagedAgent>,
-  projectsById: ReadonlyMap<string, ProjectContainer>,
-  nowSeconds: number,
-): SeatRow {
-  const session = entry.session;
-  const agentPubkey = session.agentRef ? session.agentRef.toLowerCase() : null;
-  const agent = agentPubkey ? (agentsByPubkey.get(agentPubkey) ?? null) : null;
-  const project = entry.projectId
-    ? (projectsById.get(entry.projectId) ?? null)
-    : null;
-  const role = session.role?.trim();
-  return {
-    key: `${entry.channelId}/${entry.generationId}`,
-    channelId: entry.channelId,
-    generationId: entry.generationId,
-    label: entry.label,
-    agentPubkey,
-    agentName: agent?.name ?? null,
-    role: role ? role : null,
-    projectId: entry.projectId,
-    projectName: project?.name ?? null,
-    status: session.status,
-    ageSeconds: seatAgeSeconds(session.statusAt, nowSeconds),
-    packSha: session.packRef?.sha ?? null,
-  };
-}
-
 function compareStrings(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** Freshest status first; no observed status last; ties by key, so the order is stable. */
-function compareSeats(a: SeatRow, b: SeatRow): number {
-  const ageA = a.ageSeconds ?? Number.POSITIVE_INFINITY;
-  const ageB = b.ageSeconds ?? Number.POSITIVE_INFINITY;
-  if (ageA !== ageB) return ageA < ageB ? -1 : 1;
-  return compareStrings(a.key, b.key);
 }
 
 function agentChip(agent: ManagedAgent): RoleAgentChip {
@@ -227,18 +154,13 @@ function roleRow(
 /** Join packs, agents, shelf and projects into the three lists the tab draws. */
 export function buildRolesView(input: BuildRolesViewInput): RolesView {
   const { rolePacks, agents, shelfEntries, projects, nowSeconds } = input;
-  const agentsByPubkey = new Map(
-    agents.map((agent) => [agent.pubkey.toLowerCase(), agent] as const),
-  );
   const projectsById = new Map(
     projects.map((project) => [project.id, project] as const),
   );
   // A closed or archived session is filed away by a shared closure fact; it
-  // holds no seat, in any role or any project.
-  const seats = shelfEntries
-    .filter((entry) => !entry.isClosed)
-    .map((entry) => seatRow(entry, agentsByPubkey, projectsById, nowSeconds))
-    .sort(compareSeats);
+  // holds no seat, in any role or any project (`includeClosed` defaults to
+  // `false`). Sorted live-first, then freshest-first (Fix 1).
+  const seats = buildSeatRows({ shelfEntries, agents, projects, nowSeconds });
 
   const packsByRole = new Map(rolePacks.map((pack) => [pack.role, pack]));
   const slugs = new Set<string>(packsByRole.keys());
@@ -331,4 +253,28 @@ export function describePacksSource(
       ? firstSha
       : null;
   return { origins, location, sha, shasDiffer: knownShas.size > 1 };
+}
+
+/** What an agent chip on a role card discloses about that agent's pack (Fix 2). */
+export type RolePackChipState = "refused" | "missing" | "blocked" | "present";
+
+/**
+ * The chip's pack disclosure comes from the *role row*, not the per-agent
+ * probe (`agent.hasRolePack`): a role whose pack resolved should not print
+ * "pack missing" on an agent just because nobody asked that agent's own
+ * probe yet. In order: a shared home that refused the pack outranks
+ * everything (it is a fact about this agent specifically); then a role with
+ * no pack at all; then a role whose pack exists but is refused for another
+ * reason (the row's own refusal sentence); otherwise the pack is present and
+ * will be staged.
+ */
+export function roleAgentPackState(input: {
+  roleHasPack: boolean;
+  roleRefusal: string | null;
+  agentPackRefusedSharedHome: boolean | undefined;
+}): RolePackChipState {
+  if (input.agentPackRefusedSharedHome === true) return "refused";
+  if (input.roleHasPack === false) return "missing";
+  if (input.roleRefusal !== null) return "blocked";
+  return "present";
 }

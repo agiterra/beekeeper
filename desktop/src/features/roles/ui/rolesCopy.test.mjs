@@ -12,13 +12,17 @@ import {
   AGENT_CHIP_NO_PACK_TITLE,
   AGENT_CHIP_SHARED_HOME_TITLE,
   formatAge,
+  INSTALL_ROLES_BUTTON_LABEL,
   packsSourceSentence,
+  PROJECT_PACKS_MISSING,
   PROJECT_SEATS_EMPTY,
   projectSeatCount,
   ROLE_AGENTS_EMPTY,
   ROLE_NO_PACK,
   ROLE_SEATS_EMPTY,
+  ROLE_SEATS_TITLE,
   ROLE_SKILLS_EMPTY,
+  ROLES_EMPTY,
   ROLES_TITLE,
   rolesErrorSentence,
   SEAT_NO_AGENT,
@@ -34,11 +38,20 @@ test("the empty states are the brief's exact words", () => {
   assert.equal(ROLES_TITLE, "Roles");
   assert.equal(ROLE_SKILLS_EMPTY, "no skills");
   assert.equal(ROLE_AGENTS_EMPTY, "no agents carry this role");
-  assert.equal(ROLE_SEATS_EMPTY, "no seats running");
+  // Fix 1: a seat is authorization and assignment, not proof of work — the
+  // heading and its empty state stop claiming liveness.
+  assert.equal(ROLE_SEATS_TITLE, "Seats");
+  assert.equal(ROLE_SEATS_EMPTY, "no open seats");
   assert.equal(PROJECT_SEATS_EMPTY, "no agents seated");
   assert.equal(UNPLACED_TITLE, "Unplaced");
   assert.equal(SHA_UNKNOWN, "sha unknown");
   assert.equal(SHARED_SKILL_MARK, "(shared)");
+  assert.equal(
+    ROLES_EMPTY,
+    "No roles resolve for this project, and no seat or agent names one.",
+  );
+  assert.equal(PROJECT_PACKS_MISSING, "This project is not readable here.");
+  assert.equal(INSTALL_ROLES_BUTTON_LABEL, "Install roles");
 });
 
 test("the agent chip tooltips are the Agents tab's own badge copy, unchanged", () => {
@@ -99,42 +112,77 @@ test("rolesErrorSentence attributes the backend's words", () => {
   );
 });
 
-test("packsSourceSentence follows the brief's shape and refuses to average", () => {
+test("packsSourceSentence follows the brief's shape and refuses to average (Fix 3)", () => {
   const sha = "c".repeat(40);
-  assert.equal(
+  assert.deepEqual(
     packsSourceSentence("Beekeeper", 2, {
       origins: ["project"],
       location: "30617:owner:packs",
       sha,
       shasDiffer: false,
     }),
-    `Packs for Beekeeper: project · 30617:owner:packs · ${sha}`,
+    {
+      text: `2 role packs for Beekeeper, from the project rung at 30617:owner:packs, pinned to ${sha.slice(0, 8)}.`,
+      shaTitle: sha,
+    },
   );
-  assert.equal(
+  assert.deepEqual(
     packsSourceSentence("Beekeeper", 1, {
       origins: ["shipped"],
       location: "/app/shipped",
       sha: null,
       shasDiffer: false,
     }),
-    "Packs for Beekeeper: shipped · /app/shipped · sha unknown",
+    {
+      text: "1 role pack for Beekeeper, from the shipped rung at /app/shipped, with no sha recorded.",
+      shaTitle: null,
+    },
   );
-  assert.equal(
+  assert.deepEqual(
     packsSourceSentence("Beekeeper", 2, {
       origins: ["project", "shipped"],
       location: null,
       sha: null,
       shasDiffer: true,
     }),
-    "Packs for Beekeeper: mixed origins (project, shipped) · several locations · shas differ by role",
+    {
+      text: "2 role packs for Beekeeper, from the project and shipped rungs at several locations, pinned to different shas by role.",
+      shaTitle: null,
+    },
   );
-  assert.equal(
+  assert.deepEqual(
+    packsSourceSentence("Beekeeper", 3, {
+      origins: ["project", "shipped", "user"],
+      location: "/packs",
+      sha: null,
+      shasDiffer: false,
+    }),
+    {
+      text: "3 role packs for Beekeeper, from the project, shipped and user rungs at /packs, with no sha recorded.",
+      shaTitle: null,
+    },
+  );
+  assert.deepEqual(
     packsSourceSentence("Beekeeper", 0, {
       origins: [],
       location: null,
       sha: null,
       shasDiffer: false,
     }),
-    "Packs for Beekeeper: none found",
+    { text: "No role packs resolve for Beekeeper.", shaTitle: null },
+  );
+  // A non-hex "sha" (a shipped pack's version string) is shown verbatim in
+  // the text but never offered as a tooltip's full sha.
+  assert.deepEqual(
+    packsSourceSentence("Beekeeper", 1, {
+      origins: ["shipped"],
+      location: "/app/shipped",
+      sha: "0.4.2-block",
+      shasDiffer: false,
+    }),
+    {
+      text: "1 role pack for Beekeeper, from the shipped rung at /app/shipped, pinned to 0.4.2-block.",
+      shaTitle: null,
+    },
   );
 });

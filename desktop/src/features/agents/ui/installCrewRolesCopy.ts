@@ -7,14 +7,18 @@ import type {
 } from "@/shared/api/tauriTeams";
 
 /**
- * Copy and result derivations for the team-role installer dialog.
+ * Copy and result derivations for the role-pack installer dialog.
+ *
+ * The operator-facing sentences say "role packs" — the identifiers keep their
+ * `crew`/`team` names because they are the backend's own field names, and
+ * renaming them would rename wire shapes this file only reads.
  *
  * Kept out of the component so every sentence the operator reads is a value a
  * test can assert. The strings are verbatim from the front-door spec — a lane
  * that invents copy invents a comfortable version.
  */
 
-export const INSTALL_CREW_ROLES_TITLE = "Install team roles";
+export const INSTALL_CREW_ROLES_TITLE = "Install role packs";
 
 export const INSTALL_CREW_ROLES_BODY =
   "Pick a folder of role packs. Every pack whose persona declares a role becomes one agent on this computer — carrying that role and that pack — and they all join one team you can launch.";
@@ -210,7 +214,7 @@ export const INSTALL_CREW_ROLES_NOTHING_FOUND =
   "No role packs in that folder. A role pack is a directory holding .plugin/plugin.json whose persona declares “role:” in its frontmatter.";
 
 /** The menu entry that opens this dialog. */
-export const INSTALL_CREW_ROLES_MENU_LABEL = "Install team roles…";
+export const INSTALL_CREW_ROLES_MENU_LABEL = "Install role packs…";
 
 /** A folder that could not be read, rendered verbatim with its cause. */
 export function crewRolesUnreadableFolder(error: string): string {
@@ -322,7 +326,7 @@ export function crewRolesInstalledToast(
   result: InstallCrewRolePacksResponse,
 ): string {
   const roles = result.installed.map((row) => row.role).join(", ");
-  return `Installed ${result.installed.length} team roles into “${result.teamName}”: ${roles}.`;
+  return `Installed ${result.installed.length} role packs into “${result.teamName}”: ${roles}.`;
 }
 
 /** One line of the result list. */

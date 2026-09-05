@@ -14,19 +14,24 @@ export type DashboardTab =
   | "roles"
   | "agents";
 
+// "roles" is deliberately absent: no tab strip trigger renders it anymore
+// (§F — the content is entirely project-scoped, and `/projects/$projectId/packs`
+// is where it lives now). It stays in `DashboardTab` and is still accepted by
+// `isDashboardTab` below, so an old `?tab=roles` URL still parses as "roles"
+// and reaches the redirect in `app/routes/index.tsx` instead of silently
+// falling back to the overview.
 export const DASHBOARD_TABS: readonly DashboardTab[] = [
   "overview",
   "inbox",
   "pulse",
   "agent-progress",
-  "roles",
   "agents",
 ];
 
 export function isDashboardTab(value: unknown): value is DashboardTab {
   return (
     typeof value === "string" &&
-    (DASHBOARD_TABS as readonly string[]).includes(value)
+    ((DASHBOARD_TABS as readonly string[]).includes(value) || value === "roles")
   );
 }
 

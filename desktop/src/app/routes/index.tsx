@@ -1,8 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { useAgentProgress } from "@/app/agentProgressComposition";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { resolveRolePacksProject } from "@/features/agents/lib/rolePacksProject";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import {
   type DashboardTab,
@@ -20,7 +22,9 @@ import {
   type ProfilePanelTab,
   type ProfilePanelView,
 } from "@/features/profile/ui/UserProfilePanelUtils";
-import { useRolesView } from "@/features/roles/lib/useRolesView";
+import { displayProjectsWithGeneral } from "@/features/projects-container/lib/projectContainerModel";
+import { useProjectContainers } from "@/features/projects-container/hooks";
+import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled, usePreviewFeatureWarning } from "@/shared/features";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
@@ -40,11 +44,6 @@ const AgentProgressScreen = React.lazy(async () => {
     "@/features/agent-progress/ui/AgentProgressScreen"
   );
   return { default: module.AgentProgressScreen };
-});
-
-const RolesScreen = React.lazy(async () => {
-  const module = await import("@/features/roles/ui/RolesScreen");
-  return { default: module.RolesScreen };
 });
 
 const AgentsScreen = React.lazy(async () => {
@@ -105,6 +104,15 @@ function DashboardRouteComponent() {
   usePreviewFeatureWarning(requested);
   useWelcomeChannelRedirect();
 
+  // §F: the Roles tab is gone — its content is entirely project-scoped, and
+  // the only way a Dashboard tab could show it was the project picker that
+  // went with it. An old `?tab=roles` URL still parses (dashboardTabs.ts
+  // keeps it out of `DASHBOARD_TABS` but in the union), so it lands here
+  // instead of silently falling back to the overview.
+  if (active === "roles") {
+    return <RolesTabRedirect />;
+  }
+
   return (
     <DashboardScreen
       active={active}
@@ -128,15 +136,64 @@ function DashboardRouteComponent() {
           <PulseScreen />
         </React.Suspense>
       }
-      roles={
-        <React.Suspense fallback={<ViewLoadingFallback kind="agents" />}>
-          <RolesTab />
-        </React.Suspense>
-      }
+      // `active` can never be "roles" here — the redirect above already
+      // returned. Nothing renders this; `DashboardScreen`'s prop is required.
+      roles={null}
       showAgentProgress={showAgentProgress}
       showPulse={showPulse}
     />
   );
+}
+
+/** Cache key shared with `useRolePacksProject` (Agents tab) and
+ * `useProjectPacksView` (Packs tab), so all three read one cached answer. */
+const WORKDIR_STATE_QUERY_KEY = ["coding-session-workdir-state"] as const;
+
+/**
+ * `?tab=roles` used to render the Roles tab body; it now resolves a project
+ * the same way that tab's picker used to fall back (`resolveRolePacksProject`
+ * with no route project and no operator pick) and redirects to that
+ * project's Packs tab. No project at all redirects to `/projects` — nothing
+ * here invents one.
+ */
+function RolesTabRedirect() {
+  const navigate = useNavigate();
+  const { projects: rawProjects, isLoading } = useProjectContainers();
+  const projects = React.useMemo(
+    () => displayProjectsWithGeneral(rawProjects),
+    [rawProjects],
+  );
+  const workdirs = useQuery({
+    enabled: projects.length > 1,
+    queryKey: WORKDIR_STATE_QUERY_KEY,
+    queryFn: getCodingSessionWorkdirState,
+    staleTime: 60_000,
+  });
+  React.useEffect(() => {
+    // Wait for the project list itself before deciding "no project" — a
+    // list that has not answered yet is not the same fact as an empty one.
+    if (isLoading) return;
+    const resolution = resolveRolePacksProject({
+      routeProject: null,
+      chosenId: null,
+      projects,
+      workdirsByProject: workdirs.data?.byProject,
+    });
+    if (resolution.project) {
+      void navigate({
+        to: "/projects/$projectId/packs",
+        params: { projectId: resolution.project.id },
+        replace: true,
+      });
+    } else {
+      void navigate({
+        to: "/projects",
+        search: { filter: undefined },
+        replace: true,
+      });
+    }
+  }, [isLoading, navigate, projects, workdirs.data]);
+  return <ViewLoadingFallback kind="projects" />;
 }
 
 function useAvailableChannelIds() {
@@ -206,26 +263,6 @@ function InboxTab() {
       onOpenContext={(channelId, messageId, threadRootId) => {
         void goChannel(channelId, { messageId, threadRootId });
       }}
-    />
-  );
-}
-
-function RolesTab() {
-  const navigate = useNavigate();
-  const state = useRolesView();
-  return (
-    <RolesScreen
-      onOpenSeat={(seat) => {
-        void navigate({
-          to: "/coding-sessions/$channelId/$generationId",
-          params: {
-            channelId: seat.channelId,
-            generationId: seat.generationId,
-          },
-          search: { surface: "main" },
-        });
-      }}
-      state={state}
     />
   );
 }

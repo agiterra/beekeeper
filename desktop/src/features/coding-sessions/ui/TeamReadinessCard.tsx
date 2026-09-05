@@ -102,7 +102,7 @@ export function TeamReadinessCard(props: {
           )}
           <div className="min-w-0">
             <h3 className="text-sm font-medium" id="team-readiness-title">
-              Team Readiness
+              Project roles
             </h3>
             <p className="text-2xs text-muted-foreground">
               {props.loading

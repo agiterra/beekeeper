@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DASHBOARD_TABS,
   dashboardTabSearch,
   parseDashboardTab,
   resolveDashboardTab,
@@ -40,4 +41,14 @@ test("resolveDashboardTab_gatedTabsFallBackToOverview", () => {
 test("dashboardTabSearch_overviewClearsParam", () => {
   assert.deepEqual(dashboardTabSearch("overview"), {});
   assert.deepEqual(dashboardTabSearch("inbox"), { tab: "inbox" });
+});
+
+// §F: no tab strip trigger names "roles" anymore (DASHBOARD_TABS drives the
+// strip), but a URL that still names it must parse as "roles" — never fall
+// back to the overview — so `app/routes/index.tsx` can redirect it to the
+// project it names, per the ruling that this content is entirely
+// project-scoped now.
+test("parseDashboardTab_rolesStillParsesButHasNoStripEntry", () => {
+  assert.equal(parseDashboardTab({ tab: "roles" }), "roles");
+  assert.equal(DASHBOARD_TABS.includes("roles"), false);
 });

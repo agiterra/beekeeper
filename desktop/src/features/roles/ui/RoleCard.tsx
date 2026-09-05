@@ -3,6 +3,7 @@ import type * as React from "react";
 import { cn } from "@/shared/lib/cn";
 import { Badge } from "@/shared/ui/badge";
 
+import { roleAgentPackState } from "../lib/rolesViewModel";
 import type { RoleAgentChip, RoleRow, SeatRow } from "../lib/rolesViewModel";
 import {
   AGENT_CHIP_NO_PACK_TITLE,
@@ -53,37 +54,42 @@ function CardSection({
 /**
  * A managed agent whose home role is this card's role.
  *
- * The muted, dashed chip is the disclosure `hasRolePack === false` exists
- * for: this computer holds no pack behind the role, so a seat on the agent
- * runs on its persona prompt alone. The tooltip is the Agents tab's exact
- * badge copy. A refused shared home is the other claim and displaces it, as
- * `AgentHomeRoleBadges` does. An agent whose pack was never looked for
- * (`undefined`) gets a plain chip — an unanswered question is not a
- * missing pack.
+ * The chip's disclosure comes from the *role row*, not the agent's own probe
+ * (Fix 2, `roleAgentPackState`): a role whose pack resolved shows its agents
+ * as plain chips, even for an agent whose own `hasRolePack` was never asked.
+ * A refused shared home is the one claim that is about this agent
+ * specifically, so it outranks the role's own state. Every state but
+ * "present" is muted and dashed, with the tooltip naming why.
  */
-function AgentChip({ agent }: { agent: RoleAgentChip }) {
-  const refused = agent.packRefusedSharedHome === true;
-  const missing = !refused && agent.hasRolePack === false;
-  const title = refused
-    ? AGENT_CHIP_SHARED_HOME_TITLE
-    : missing
-      ? AGENT_CHIP_NO_PACK_TITLE
-      : undefined;
+function AgentChip({
+  agent,
+  roleHasPack,
+  roleRefusal,
+}: {
+  agent: RoleAgentChip;
+  roleHasPack: boolean;
+  roleRefusal: string | null;
+}) {
+  const state = roleAgentPackState({
+    roleHasPack,
+    roleRefusal,
+    agentPackRefusedSharedHome: agent.packRefusedSharedHome,
+  });
+  const title =
+    state === "refused"
+      ? AGENT_CHIP_SHARED_HOME_TITLE
+      : state === "missing"
+        ? AGENT_CHIP_NO_PACK_TITLE
+        : state === "blocked"
+          ? (roleRefusal ?? undefined)
+          : undefined;
   return (
     <li
       className={cn(
         "rounded-full border border-border px-2 py-0.5 text-xs text-foreground",
-        (missing || refused) && "border-dashed text-muted-foreground",
+        state !== "present" && "border-dashed text-muted-foreground",
       )}
-      data-agent-pack={
-        refused
-          ? "refused"
-          : missing
-            ? "missing"
-            : agent.hasRolePack === true
-              ? "present"
-              : "unasked"
-      }
+      data-agent-pack={state}
       data-agent-pubkey={agent.pubkey}
       data-testid="role-agent-chip"
       title={title}
@@ -198,7 +204,12 @@ export function RoleCard({
       >
         <ul className="flex flex-wrap gap-1">
           {role.agents.map((agent) => (
-            <AgentChip agent={agent} key={agent.pubkey} />
+            <AgentChip
+              agent={agent}
+              key={agent.pubkey}
+              roleHasPack={role.hasPack}
+              roleRefusal={role.refusal}
+            />
           ))}
         </ul>
       </CardSection>
