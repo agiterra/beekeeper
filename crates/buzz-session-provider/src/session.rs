@@ -1132,6 +1132,29 @@ async fn start_agent(
         None => None,
     };
 
+    // Finding 73: a seat's file tools reach everything the operator's `HOME`
+    // can, and this sidecar auto-approves every permission ask. For the Claude
+    // driver the provider writes a deny list the harness itself enforces — see
+    // `crate::agent_fence::WRITE_FENCE_SETTINGS_FILE` for the mechanism, its
+    // measurements and its gap. Before the child exists, because the SDK reads
+    // the file once, at `session/new`. Other drivers have no equivalent and are
+    // held to the same boundary by the briefing sentence alone.
+    if let Some(seat) = request
+        .seat
+        .as_ref()
+        .filter(|_| request.target.driver == crate::agent_fence::CLAUDE_DRIVER)
+    {
+        crate::agent_fence::install_seat_write_fence(&request.cwd, &seat.actor_pubkey).map_err(
+            |error| CreateFailure {
+                code: PROVIDER_UNAVAILABLE,
+                message: format!(
+                    "could not fence the seat's file tools out of the operator's directories: \
+                     {error}"
+                ),
+            },
+        )?;
+    }
+
     // The adapter inherits this process's environment plus the descriptor's
     // per-runtime `agent_env` — that is how a runtime-specific CLI override
     // (e.g. `CLAUDE_CODE_EXECUTABLE`) reaches the adapter: the desktop host

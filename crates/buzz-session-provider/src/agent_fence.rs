@@ -43,7 +43,13 @@
 //! execution that should speak to Buzz gets its **own** identity through
 //! `agent_ref`; it does not borrow the provider's.
 
+use std::io::Write as _;
+use std::path::{Component, Path, PathBuf};
+
 use buzz_acp::acp::EnvFence;
+
+use crate::git_exclude::ExcludeOutcome;
+use crate::git_probe::GIT_REPO_SELECTION_VARS;
 
 /// The namespace Buzz owns end to end.
 ///
@@ -205,8 +211,637 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 pub(crate) fn actor_seat_briefing(actor_pubkey: &str, role: &str, relay_url: &str) -> String {
     let out_of_bounds = SEAT_OUT_OF_BOUNDS_TOOLS.join(", ");
     format!(
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Local subagent and cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Local subagent and cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nWrite files only inside your working directory and your own nest. Everything else on this computer - the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' nests - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. On Claude Code the file tools refuse those paths by permission rule; on any other harness this sentence is the whole fence, so hold to it.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
     )
+}
+
+// ---------------------------------------------------------------------------
+// The write fence: where a seat's file tools may not reach.
+// ---------------------------------------------------------------------------
+
+/// The runtime whose file tools honour the write fence.
+///
+/// The desktop's runtime table names the Claude driver exactly this
+/// (`desktop/src-tauri/src/session_provider/runtimes.rs:46`), and it arrives
+/// on every create as `CodingSessionTarget::driver`. `codex-acp` is the other
+/// driver and gets nothing here, by design: it has no settings file of this
+/// shape, so a codex seat is held to the write boundary by
+/// [`actor_seat_briefing`] alone, exactly as it is held to
+/// [`SEAT_OUT_OF_BOUNDS_TOOLS`].
+pub(crate) const CLAUDE_DRIVER: &str = "claude-agent-acp";
+
+/// The file the fence is written to, relative to the seat's working directory.
+///
+/// # Why a fence at all
+///
+/// Finding 73 (live run 6, 2026-09-04 10:29): a seated lead running under
+/// claude-agent-acp edited a file under the operator's
+/// `~/.claude/projects/…/memory/` — the orchestrator's own notes — and asserted
+/// a false conclusion there. A seat runs with the operator's `HOME`, so its
+/// file tools reach whatever the operator can, and the sidecar auto-approves
+/// every `session/request_permission` with `allow_once`
+/// (`buzz-acp/src/acp.rs`, the `session/request_permission` arm). Nothing
+/// stood between the tool call and the write.
+///
+/// # What stands there now
+///
+/// Claude Code's own permission rules. A `permissions.deny` entry of the form
+/// `Edit(//absolute/path/**)` is evaluated by the CLI before any
+/// `canUseTool` callback, so the sidecar's auto-approval never sees the call:
+/// the tool returns `File is in a directory that is denied by your permission
+/// settings.` and nothing is written. Measured on 2026-09-05 against `claude`
+/// 2.1.232 — the binary `@anthropic-ai/claude-agent-sdk` 0.3.232 bundles
+/// under `@agentclientprotocol/claude-agent-acp` 0.70.0, which is what the
+/// adapter runs unless the desktop names another — under
+/// `--dangerously-skip-permissions`, so a denial could not be mistaken for a
+/// prompt nobody answered. What the measurements settled:
+///
+/// - `Edit(//root/**)` denies `Write` and `Edit` alike, dotfiles included,
+///   and files in subdirectories that did not exist yet. `NotebookEdit` hit
+///   its read-first precondition before the permission check and is unproven.
+/// - `Write(//root/**)` on its own denies **nothing**. The CLI routes every
+///   file-editing tool through the `Edit` rules, so `Edit(...)` is the only
+///   rule shape emitted here; a `Write(...)` rule would be decoration.
+/// - `Edit(//root/*)` denies `root/deep/x.txt` too: a single `*` is not
+///   bounded to one path segment. So there is no rule that denies a
+///   directory's direct children while leaving a grandchild alone, and an
+///   exemption *below* a denied root has to be spelled as rules for the root's
+///   other entries ([`write_fence_rules`]). There is no negation either, which
+///   is why the fence names concrete roots rather than "outside the worktree".
+/// - `//` is the absolute-path prefix; a pattern with no prefix is relative to
+///   the project, and a glob segment (`io.agiterra.*/**`) matches.
+///
+/// # Why this file, and not `_meta`
+///
+/// The adapter offers two ways in. `_meta.claudeCode.options.settings` is
+/// forwarded to the SDK's `settings` option (`dist/acp-agent.js:4829`,
+/// `:4839`, `:4871` in 0.70.0) — the flag-settings layer, which the seat cannot
+/// reach at all. That transport is measured working and is the better one, but
+/// `buzz-acp`'s `AcpClient` has no setter for it (only `set_disallowed_tools`),
+/// and that crate is outside this change. The project-local settings file is
+/// the other way in: the adapter loads `settingSources: ["user", "project",
+/// "local"]` (`dist/acp-agent.js:4868`), the SDK reads `local` as
+/// `<cwd>/.claude/settings.local.json` (`sdk.d.ts:1983`; the adapter's own
+/// `dist/settings.js:80` reads the same path), and a deny list in that file
+/// was measured refusing the same writes the flag layer refused. So the
+/// provider writes the file before the child exists.
+///
+/// # What the file cannot do
+///
+/// It lives inside the worktree, so the seat can reach it. The file tools are
+/// refused by a rule in the file itself (`Edit(.claude/settings.local.json)`,
+/// measured), and every spawn rewrites the fence, but `Bash` can edit or
+/// delete it — and `Bash` can write anywhere regardless of any of this. The
+/// fence governs the file tools, which is where finding 73 happened; the shell
+/// is the named gap. Moving the same rules onto `_meta` closes the first half
+/// of it and is the intended next step; [`write_fence_rules`] is written so
+/// that only the transport changes.
+pub(crate) const WRITE_FENCE_SETTINGS_FILE: &str = ".claude/settings.local.json";
+
+/// The line that keeps [`WRITE_FENCE_SETTINGS_FILE`] out of `git status`.
+///
+/// Same reason [`crate::git_exclude`] exists (finding 76): an untracked file
+/// in a seated worktree makes every gate row read `dirty`, and the relay
+/// refuses an observed-dirty push. Claude Code does not exclude the file
+/// itself — measured: `info/exclude` was untouched after a run that read it.
+pub(crate) const WRITE_FENCE_EXCLUDE_LINE: &str = ".claude/settings.local.json";
+
+/// The tool every fence rule is written against; see
+/// [`WRITE_FENCE_SETTINGS_FILE`] for why it is the only one that works.
+const WRITE_FENCE_RULE_TOOL: &str = "Edit";
+
+/// The file-editing tools whose stale rules are pruned when they would fence
+/// the seat out of its own tree. Claude Code applies `Edit` rules to all four.
+const FILE_EDIT_TOOLS: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit"];
+
+/// Directories under the operator's home that no seat may write into.
+///
+/// The concrete dangerous roots, because "everything outside the worktree"
+/// has no rule shape. `~/.claude` is where finding 73 happened; `~/.codex`
+/// and `~/.config` are the other harness's home and `bee`'s; `~/.nostr` and
+/// `~/.ssh` hold keys; `~/.beekeeper` and `~/.beekeeper-dev` are the shared
+/// nests every managed agent used to run in.
+const HOME_DENIED_ROOTS: &[&str] = &[
+    ".claude",
+    ".codex",
+    ".config",
+    ".nostr",
+    ".ssh",
+    ".beekeeper",
+    ".beekeeper-dev",
+];
+
+/// macOS application-support directory, relative to the home.
+const APP_SUPPORT_DIR: &str = "Library/Application Support";
+
+/// The identifier prefix of every data directory this app has had —
+/// `io.agiterra.beekeeper.app`, its `.dev` sibling, and the renamed copies
+/// beside them. Denied as a glob unless the seat's own tree is under one of
+/// them, in which case the matching directories are enumerated instead.
+const APP_IDENTIFIER_PREFIX: &str = "io.agiterra.";
+
+/// The app-support directory the desktop keeps its node tools and runtimes
+/// in — the adapter this very fence is read by lives there.
+const APP_SUPPORT_TOOLS_DIR: &str = "Beekeeper";
+
+/// `<app data dir>/agents/nests` — kept byte-for-byte in step with
+/// `AGENT_NESTS_DIR` in `desktop/src-tauri/src/managed_agents/agent_nest.rs`.
+const AGENT_NESTS_DIR: &str = "agents/nests";
+
+/// A nest is named by the first 8 hex of the agent's pubkey
+/// (`agent_nest.rs`, `NEST_KEY_PREFIX_LEN`).
+const NEST_NAME_LEN: usize = 8;
+
+/// The state directory's parent, as the desktop lays it out:
+/// `<app data dir>/session-provider/<provider pubkey>` is `BUZZ_CSP_STATE_DIR`
+/// (`desktop/src-tauri/src/session_provider/mod.rs`, "Layout on disk").
+const SESSION_PROVIDER_DIR: &str = "session-provider";
+
+/// What the fence is computed from: the seat's own directories, and the
+/// operator's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WriteFenceLayout {
+    /// The seat's working directory. Never denied, in whole or in part.
+    pub cwd: PathBuf,
+    /// The operator's home.
+    pub home: PathBuf,
+    /// `<app data dir>`, when `BUZZ_CSP_STATE_DIR` had the shape the desktop
+    /// gives it; `None` when the provider was launched some other way.
+    pub app_data_dir: Option<PathBuf>,
+    /// The seat's own nest, `<app data dir>/agents/nests/<first 8 hex>`. Never
+    /// denied, whether or not it exists yet.
+    pub nest: Option<PathBuf>,
+}
+
+impl WriteFenceLayout {
+    /// The layout for this host: `HOME` and `BUZZ_CSP_STATE_DIR` from the
+    /// environment, exactly the way [`crate::session::shared_workdir_roots`]
+    /// reads the home.
+    ///
+    /// Errors when `HOME` is unset — a fence that cannot name the operator's
+    /// directories is not a fence, and the seat must not launch as if it had
+    /// one.
+    pub(crate) fn from_host(cwd: &Path, actor_pubkey: &str) -> std::io::Result<Self> {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .filter(|home| !home.as_os_str().is_empty())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "HOME is not set, so the operator's directories cannot be named",
+                )
+            })?;
+        let state_dir = std::env::var_os("BUZZ_CSP_STATE_DIR").map(PathBuf::from);
+        Ok(Self::new(cwd, &home, state_dir.as_deref(), actor_pubkey))
+    }
+
+    /// The layout as data, so it can be proved against directories a test
+    /// owns.
+    pub(crate) fn new(
+        cwd: &Path,
+        home: &Path,
+        state_dir: Option<&Path>,
+        actor_pubkey: &str,
+    ) -> Self {
+        let app_data_dir = state_dir.and_then(app_data_dir_from_state_dir);
+        let nest = app_data_dir.as_ref().and_then(|app| {
+            nest_name(actor_pubkey).map(|name| app.join(AGENT_NESTS_DIR).join(name))
+        });
+        Self {
+            cwd: cwd.to_path_buf(),
+            home: home.to_path_buf(),
+            app_data_dir,
+            nest,
+        }
+    }
+
+    /// The directories no rule may cover: the seat's own.
+    fn protected(&self) -> Vec<&Path> {
+        let mut protected = vec![self.cwd.as_path()];
+        if let Some(nest) = &self.nest {
+            protected.push(nest.as_path());
+        }
+        protected
+    }
+}
+
+/// `<app data dir>` from `BUZZ_CSP_STATE_DIR`, or `None` when the directory
+/// is not shaped `<app data dir>/session-provider/<pubkey>`.
+fn app_data_dir_from_state_dir(state_dir: &Path) -> Option<PathBuf> {
+    let provider_root = state_dir.parent()?;
+    (provider_root.file_name()? == SESSION_PROVIDER_DIR)
+        .then(|| provider_root.parent().map(Path::to_path_buf))
+        .flatten()
+}
+
+/// The nest directory name for a pubkey, or `None` when it is not a
+/// 64-character lowercase hex key.
+fn nest_name(pubkey: &str) -> Option<&str> {
+    (pubkey.len() == 64
+        && pubkey
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    .then(|| &pubkey[..NEST_NAME_LEN])
+}
+
+/// The deny rules for a layout, in a stable order, deduplicated.
+///
+/// Every root in [`HOME_DENIED_ROOTS`], the app-support directories, and the
+/// app data dir is denied whole — unless the seat's working directory or nest
+/// lies under it, in which case the root's other entries are denied one by
+/// one and the root itself is never named. That is the only exemption shape
+/// Claude Code's rules can express (see [`WRITE_FENCE_SETTINGS_FILE`]), and
+/// it is a snapshot: an entry created beside the nest after this ran is not
+/// covered until the next spawn.
+///
+/// Reads the filesystem only when an exemption forces the enumeration; a root
+/// that is absent is denied anyway, so it stays denied when it appears.
+pub(crate) fn write_fence_rules(layout: &WriteFenceLayout) -> std::io::Result<Vec<String>> {
+    let protected = layout.protected();
+    let mut rules = Vec::new();
+    for name in HOME_DENIED_ROOTS {
+        deny_root(&layout.home.join(name), &protected, &mut rules)?;
+    }
+    let support = layout.home.join(APP_SUPPORT_DIR);
+    deny_root(&support.join(APP_SUPPORT_TOOLS_DIR), &protected, &mut rules)?;
+    let seat_under_an_app_home = protected.iter().any(|path| {
+        path.strip_prefix(&support)
+            .ok()
+            .and_then(|rest| rest.components().next())
+            .is_some_and(|first| {
+                first
+                    .as_os_str()
+                    .to_string_lossy()
+                    .starts_with(APP_IDENTIFIER_PREFIX)
+            })
+    });
+    if seat_under_an_app_home {
+        for (entry, _) in read_dir_sorted(&support)? {
+            let is_app_home = entry
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(APP_IDENTIFIER_PREFIX));
+            if is_app_home {
+                deny_root(&entry, &protected, &mut rules)?;
+            }
+        }
+    } else {
+        push_rule(
+            &mut rules,
+            format!(
+                "{WRITE_FENCE_RULE_TOOL}(//{}/{APP_IDENTIFIER_PREFIX}*/**)",
+                absolute_pattern_path(&support)
+            ),
+        );
+    }
+    if let Some(app_data_dir) = &layout.app_data_dir {
+        deny_root(app_data_dir, &protected, &mut rules)?;
+    }
+    Ok(rules)
+}
+
+/// Deny `root`, or — when a protected directory lies under it — its other
+/// entries, recursively. A protected directory itself yields nothing.
+fn deny_root(root: &Path, protected: &[&Path], rules: &mut Vec<String>) -> std::io::Result<()> {
+    if protected.contains(&root) {
+        return Ok(());
+    }
+    if protected.iter().any(|path| path.starts_with(root)) {
+        for (entry, is_dir) in read_dir_sorted(root)? {
+            if is_dir {
+                deny_root(&entry, protected, rules)?;
+            } else {
+                push_rule(rules, rule_for(&entry, false));
+            }
+        }
+        return Ok(());
+    }
+    push_rule(rules, rule_for(root, true));
+    Ok(())
+}
+
+/// The entries of `dir` with whether each is a directory, sorted by path so
+/// the rule list is stable. An absent `dir` has no entries; a symlink counts
+/// as a file, so it is denied by name rather than followed.
+fn read_dir_sorted(dir: &Path) -> std::io::Result<Vec<(PathBuf, bool)>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut listed = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let is_dir = entry.file_type()?.is_dir();
+        listed.push((entry.path(), is_dir));
+    }
+    listed.sort();
+    Ok(listed)
+}
+
+/// `Edit(//path/**)` for a directory, `Edit(//path)` for a file.
+fn rule_for(path: &Path, is_dir: bool) -> String {
+    let suffix = if is_dir { "/**" } else { "" };
+    format!(
+        "{WRITE_FENCE_RULE_TOOL}(//{}{suffix})",
+        absolute_pattern_path(path)
+    )
+}
+
+/// The path as it appears after the `//` prefix: no leading separator.
+fn absolute_pattern_path(path: &Path) -> String {
+    path.to_string_lossy().trim_start_matches('/').to_owned()
+}
+
+fn push_rule(rules: &mut Vec<String>, rule: String) {
+    if !rules.contains(&rule) {
+        rules.push(rule);
+    }
+}
+
+/// The absolute pattern inside a file-tool rule, or `None` for any other rule
+/// (another tool, or a project-relative pattern).
+fn file_tool_absolute_pattern(rule: &str) -> Option<&str> {
+    FILE_EDIT_TOOLS.iter().find_map(|tool| {
+        rule.strip_prefix(tool)?
+            .strip_prefix("(//")?
+            .strip_suffix(')')
+    })
+}
+
+/// Does this rule deny `path` — the path itself, or a directory above it?
+///
+/// A rule for something *under* `path` does not cover it. Glob segments are
+/// matched conservatively (a `*` matches any run of characters within one
+/// segment), so a stale `io.agiterra.*/**` is recognized as covering a nest
+/// under `io.agiterra.beekeeper.app`. Used for the two things that must never
+/// happen: emitting such a rule, and leaving one behind from an earlier seat.
+pub(crate) fn rule_covers(rule: &str, path: &Path) -> bool {
+    let Some(pattern) = file_tool_absolute_pattern(rule) else {
+        return false;
+    };
+    let pattern = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix("/*"))
+        .unwrap_or(pattern);
+    let pattern_segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+    let path_segments: Vec<String> = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(segment) => Some(segment.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if pattern_segments.len() > path_segments.len() {
+        return false;
+    }
+    pattern_segments
+        .iter()
+        .zip(&path_segments)
+        .all(|(pattern, segment)| segment_matches(pattern, segment))
+}
+
+/// One path segment against one pattern segment.
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == segment,
+        Some((prefix, rest)) => {
+            let Some(after) = segment.strip_prefix(prefix) else {
+                return false;
+            };
+            if rest.contains('*') {
+                // More than one wildcard: assume it matches. Conservative in
+                // the only direction that matters — a rule is *pruned* or
+                // *refused* on a match, never admitted.
+                true
+            } else {
+                after.ends_with(rest)
+            }
+        }
+    }
+}
+
+/// What [`install_write_fence`] did to the settings file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriteFenceOutcome {
+    /// The file already said exactly this; nothing was written.
+    Unchanged,
+    /// The file was created or rewritten.
+    Written,
+}
+
+/// Write `rules` into `<cwd>/.claude/settings.local.json`.
+///
+/// Idempotent, and never a clobber: the file's other keys, `permissions`'s
+/// other keys, and every existing `deny` entry survive — except a file-tool
+/// rule that covers the seat's working directory or nest, which is dropped.
+/// (A worktree handed from one seat to another carries the first seat's
+/// fence, and that fence denied the second seat's nest.) The self-protection
+/// rule for the file itself is added alongside. A file that is not a JSON
+/// object, or whose `permissions` / `permissions.deny` are not an object /
+/// an array, is refused rather than overwritten.
+///
+/// The rewrite is a temp file and a rename; a file whose rendered content is
+/// already identical is not touched at all.
+pub(crate) fn install_write_fence(
+    layout: &WriteFenceLayout,
+    rules: &[String],
+) -> std::io::Result<WriteFenceOutcome> {
+    use serde_json::{Map, Value};
+
+    let settings_file = layout.cwd.join(WRITE_FENCE_SETTINGS_FILE);
+    let existing = match std::fs::read_to_string(&settings_file) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    let malformed = |what: &str| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "{} {what}; refusing to overwrite it",
+                settings_file.display()
+            ),
+        )
+    };
+    let mut root: Map<String, Value> = match &existing {
+        None => Map::new(),
+        Some(content) => match serde_json::from_str::<Value>(content) {
+            Ok(Value::Object(map)) => map,
+            Ok(_) => return Err(malformed("is not a JSON object")),
+            Err(error) => return Err(malformed(&format!("is not JSON ({error})"))),
+        },
+    };
+    let mut permissions = match root.remove("permissions") {
+        None | Some(Value::Null) => Map::new(),
+        Some(Value::Object(map)) => map,
+        Some(_) => return Err(malformed("has a `permissions` that is not an object")),
+    };
+    let existing_deny = match permissions.remove("deny") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => items,
+        Some(_) => return Err(malformed("has a `permissions.deny` that is not an array")),
+    };
+
+    let protected = layout.protected();
+    let mut deny: Vec<Value> = existing_deny
+        .into_iter()
+        .filter(|item| {
+            !item
+                .as_str()
+                .is_some_and(|rule| protected.iter().any(|path| rule_covers(rule, path)))
+        })
+        .collect();
+    let self_protection = format!("{WRITE_FENCE_RULE_TOOL}({WRITE_FENCE_SETTINGS_FILE})");
+    for rule in rules.iter().chain(std::iter::once(&self_protection)) {
+        let value = Value::String(rule.clone());
+        if !deny.contains(&value) {
+            deny.push(value);
+        }
+    }
+    permissions.insert("deny".to_owned(), Value::Array(deny));
+    root.insert("permissions".to_owned(), Value::Object(permissions));
+
+    let mut rendered = serde_json::to_string_pretty(&Value::Object(root))
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    rendered.push('\n');
+    if existing.as_deref() == Some(rendered.as_str()) {
+        return Ok(WriteFenceOutcome::Unchanged);
+    }
+    let dir = settings_file
+        .parent()
+        .ok_or_else(|| std::io::Error::other("settings file has no parent directory"))?;
+    std::fs::create_dir_all(dir)?;
+    let temp = dir.join(format!(".settings.local.json.{}.tmp", std::process::id()));
+    std::fs::write(&temp, rendered.as_bytes())?;
+    std::fs::rename(&temp, &settings_file)?;
+    Ok(WriteFenceOutcome::Written)
+}
+
+/// Keep [`WRITE_FENCE_SETTINGS_FILE`] out of `git status` in `cwd`.
+///
+/// The twin of [`crate::git_exclude::exclude_materialized_pack`] for a second
+/// line; the git-path resolution is repeated here rather than generalized
+/// there because that module is not part of this change. Fold the two
+/// together when it is.
+pub(crate) fn exclude_write_fence_file(cwd: &Path) -> std::io::Result<ExcludeOutcome> {
+    let Some(exclude_file) = git_exclude_path(cwd) else {
+        return Ok(ExcludeOutcome::NotARepository);
+    };
+    let existing = match std::fs::read_to_string(&exclude_file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error),
+    };
+    if existing
+        .lines()
+        .any(|line| line.trim() == WRITE_FENCE_EXCLUDE_LINE)
+    {
+        return Ok(ExcludeOutcome::AlreadyExcluded { exclude_file });
+    }
+    if let Some(parent) = exclude_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude_file)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    file.write_all(WRITE_FENCE_EXCLUDE_LINE.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(ExcludeOutcome::Added { exclude_file })
+}
+
+/// `git rev-parse --git-path info/exclude` for `cwd`, or `None` outside a
+/// repository. Repo-selection variables cleared for the reason
+/// [`GIT_REPO_SELECTION_VARS`] documents.
+fn git_exclude_path(cwd: &Path) -> Option<PathBuf> {
+    let mut command = std::process::Command::new("git");
+    for var in GIT_REPO_SELECTION_VARS {
+        command.env_remove(var);
+    }
+    let output = command
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--git-path", "info/exclude"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let printed = String::from_utf8(output.stdout).ok()?;
+    let printed = printed.trim();
+    if printed.is_empty() {
+        return None;
+    }
+    let path = Path::new(printed);
+    Some(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    })
+}
+
+/// What installing a seat's write fence produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InstalledWriteFence {
+    /// The settings file the rules were written to.
+    pub settings_file: PathBuf,
+    /// The rules, in the order written.
+    pub rules: Vec<String>,
+    /// Whether the file changed.
+    pub outcome: WriteFenceOutcome,
+    /// What happened to the worktree's git exclude.
+    pub exclude: ExcludeOutcome,
+}
+
+/// Install the write fence for a Claude seat in `cwd`, and say what was done.
+///
+/// The one call the session path makes: layout from the host, rules from the
+/// layout, the settings file written, the file excluded from `git status`.
+/// An exclude failure is logged, not fatal — the fence is on disk regardless,
+/// and a seat whose pushes are refused with a reason is not a seat that lies.
+pub(crate) fn install_seat_write_fence(
+    cwd: &Path,
+    actor_pubkey: &str,
+) -> std::io::Result<InstalledWriteFence> {
+    let layout = WriteFenceLayout::from_host(cwd, actor_pubkey)?;
+    let rules = write_fence_rules(&layout)?;
+    let outcome = install_write_fence(&layout, &rules)?;
+    let settings_file = layout.cwd.join(WRITE_FENCE_SETTINGS_FILE);
+    let exclude = match exclude_write_fence_file(cwd) {
+        Ok(exclude) => exclude,
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::session",
+                cwd = %cwd.display(),
+                "could not add `{WRITE_FENCE_EXCLUDE_LINE}` to the worktree's git exclude — \
+                 every gate row for this seat will read dirty: {error}"
+            );
+            ExcludeOutcome::NotARepository
+        }
+    };
+    tracing::info!(
+        target: "csp::session",
+        settings_file = %settings_file.display(),
+        rules = rules.len(),
+        written = outcome == WriteFenceOutcome::Written,
+        nest = ?layout.nest,
+        app_data_dir = ?layout.app_data_dir,
+        excluded = ?exclude,
+        "seat write fence installed"
+    );
+    Ok(InstalledWriteFence {
+        settings_file,
+        rules,
+        outcome,
+        exclude,
+    })
 }
 
 #[cfg(test)]
@@ -539,5 +1174,464 @@ mod tests {
                 "{key} was fenced but the agent needs it"
             );
         }
+    }
+
+    // ----------------------------------------------------------------------
+    // The write fence (finding 73).
+    // ----------------------------------------------------------------------
+
+    /// A pubkey whose nest is `aaaaaaaa`.
+    fn seat_pubkey() -> String {
+        "aa".repeat(32)
+    }
+
+    /// The rule that denies `path` whole, as the fence spells it.
+    fn dir_rule(path: &Path) -> String {
+        rule_for(path, true)
+    }
+
+    /// Every rule must leave the seat's own directories alone: nothing may
+    /// cover them, and nothing may name them.
+    fn assert_seat_tree_untouched(rules: &[String], protected: &[&Path]) {
+        for rule in rules {
+            for path in protected {
+                assert!(
+                    !rule_covers(rule, path),
+                    "rule `{rule}` covers the seat's own {}",
+                    path.display()
+                );
+                assert!(
+                    !rule.contains(&path.to_string_lossy().into_owned()),
+                    "rule `{rule}` names the seat's own {}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// The operator's home as finding 73 found it, plus the app's data dir,
+    /// with two nests in it: this seat's and a sibling's.
+    fn operator_layout(dir: &Path) -> (WriteFenceLayout, PathBuf) {
+        let home = dir.join("home");
+        for path in [".claude/projects/x/memory", ".config/buzz", ".ssh"] {
+            std::fs::create_dir_all(home.join(path)).expect("home dir");
+        }
+        let app = home.join(APP_SUPPORT_DIR).join("io.agiterra.beekeeper.app");
+        for path in [
+            "agents/nests/aaaaaaaa",
+            "agents/nests/bbbbbbbb",
+            "agents/logs",
+            "session-provider/provider-pk",
+            "shell-sessions",
+        ] {
+            std::fs::create_dir_all(app.join(path)).expect("app dir");
+        }
+        std::fs::write(app.join("agents/managed-agents.json"), "{}").expect("store");
+        std::fs::write(app.join("coding-session-workdirs.json"), "{}").expect("workdirs");
+        std::fs::create_dir_all(
+            home.join(APP_SUPPORT_DIR)
+                .join("io.agiterra.beekeeper.app.dev"),
+        )
+        .expect("dev app dir");
+        let cwd = dir.join("work");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        let state_dir = app.join("session-provider/provider-pk");
+        let layout = WriteFenceLayout::new(&cwd, &home, Some(&state_dir), &seat_pubkey());
+        (layout, app)
+    }
+
+    /// Finding 73's own path is denied, every other operator root with it,
+    /// and the seat's worktree and nest are never covered — the nest by
+    /// enumerating what sits beside it rather than by naming its parents.
+    #[test]
+    fn the_write_fence_denies_the_operator_roots_and_never_the_seat_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (layout, app) = operator_layout(dir.path());
+        assert_eq!(layout.app_data_dir.as_deref(), Some(app.as_path()));
+        assert_eq!(
+            layout.nest.as_deref(),
+            Some(app.join("agents/nests/aaaaaaaa").as_path())
+        );
+
+        let rules = write_fence_rules(&layout).expect("rules");
+        let home = &layout.home;
+
+        // Where the lead wrote on 2026-09-04, and the rest of the named roots
+        // — present on disk or not.
+        for root in HOME_DENIED_ROOTS {
+            assert!(
+                rules.contains(&dir_rule(&home.join(root))),
+                "`{root}` is not denied: {rules:#?}"
+            );
+        }
+        assert!(
+            rules.contains(&dir_rule(&home.join(APP_SUPPORT_DIR).join("Beekeeper"))),
+            "the node-tools directory is not denied: {rules:#?}"
+        );
+        // The seat's nest is under `io.agiterra.beekeeper.app`, so the glob is
+        // replaced by the app homes one by one: the `.dev` sibling whole, this
+        // one by its entries.
+        assert!(
+            !rules.iter().any(|rule| rule.contains("io.agiterra.*")),
+            "the app-home glob would deny the nest: {rules:#?}"
+        );
+        assert!(rules.contains(&dir_rule(
+            &home
+                .join(APP_SUPPORT_DIR)
+                .join("io.agiterra.beekeeper.app.dev")
+        )));
+        for entry in [
+            "session-provider",
+            "shell-sessions",
+            "agents/logs",
+            "agents/nests/bbbbbbbb",
+        ] {
+            assert!(
+                rules.contains(&dir_rule(&app.join(entry))),
+                "`{entry}` beside the nest is not denied: {rules:#?}"
+            );
+        }
+        for file in ["coding-session-workdirs.json", "agents/managed-agents.json"] {
+            assert!(
+                rules.contains(&rule_for(&app.join(file), false)),
+                "the store file `{file}` is not denied: {rules:#?}"
+            );
+        }
+        // Never the parents of the nest, and never the nest.
+        for parent in ["", "agents", "agents/nests"] {
+            assert!(
+                !rules.contains(&dir_rule(&app.join(parent))),
+                "`{parent}` above the nest is denied whole: {rules:#?}"
+            );
+        }
+        assert_seat_tree_untouched(&rules, &layout.protected());
+
+        // Stable and duplicate-free, so two spawns write the same file.
+        let again = write_fence_rules(&layout).expect("rules again");
+        assert_eq!(rules, again);
+        let mut deduped = rules.clone();
+        deduped.dedup();
+        assert_eq!(rules, deduped);
+    }
+
+    /// Mutation test: a seat whose worktree sits *inside* a denied root is
+    /// fenced around, never out. No rule names the worktree, its parents, or
+    /// the root above it; the root's other entries are what gets denied.
+    #[test]
+    fn a_seat_working_inside_a_denied_root_is_fenced_around_not_out() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join("home");
+        let cwd = home.join(".config/checkouts/feature");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(home.join(".config/checkouts/other")).expect("sibling");
+        std::fs::create_dir_all(home.join(".config/buzz")).expect("buzz");
+        std::fs::write(home.join(".config/checkouts/notes.md"), "").expect("file");
+        let layout = WriteFenceLayout::new(&cwd, &home, None, &seat_pubkey());
+
+        let rules = write_fence_rules(&layout).expect("rules");
+        assert_seat_tree_untouched(&rules, &[cwd.as_path()]);
+        for never in [
+            dir_rule(&cwd),
+            dir_rule(&home.join(".config/checkouts")),
+            dir_rule(&home.join(".config")),
+            dir_rule(&home),
+        ] {
+            assert!(!rules.contains(&never), "`{never}` was emitted: {rules:#?}");
+        }
+        for still in [
+            dir_rule(&home.join(".config/buzz")),
+            dir_rule(&home.join(".config/checkouts/other")),
+            rule_for(&home.join(".config/checkouts/notes.md"), false),
+            dir_rule(&home.join(".claude")),
+        ] {
+            assert!(rules.contains(&still), "`{still}` is missing: {rules:#?}");
+        }
+        // No state dir: no app data dir, no nest, and the app-home glob is
+        // safe to emit whole.
+        assert_eq!(layout.app_data_dir, None);
+        assert_eq!(layout.nest, None);
+        assert!(rules.iter().any(|rule| rule.contains("io.agiterra.*/**")));
+    }
+
+    /// The layout's derivation from what the desktop hands the provider.
+    #[test]
+    fn the_app_data_dir_and_nest_are_derived_from_the_state_dir() {
+        let app = Path::new("/data/io.agiterra.beekeeper.app");
+        let layout = WriteFenceLayout::new(
+            Path::new("/work"),
+            Path::new("/home/op"),
+            Some(&app.join("session-provider/3728312c")),
+            &seat_pubkey(),
+        );
+        assert_eq!(layout.app_data_dir.as_deref(), Some(app));
+        assert_eq!(
+            layout.nest.as_deref(),
+            Some(app.join("agents/nests/aaaaaaaa").as_path())
+        );
+        // A state dir laid out some other way names no app data dir, and a
+        // pubkey that is not one names no nest.
+        let odd = WriteFenceLayout::new(
+            Path::new("/work"),
+            Path::new("/home/op"),
+            Some(Path::new("/var/lib/csp/state")),
+            &seat_pubkey(),
+        );
+        assert_eq!(
+            odd,
+            WriteFenceLayout::new(Path::new("/work"), Path::new("/home/op"), None, "x")
+        );
+        let not_hex = WriteFenceLayout::new(
+            Path::new("/work"),
+            Path::new("/home/op"),
+            Some(&app.join("session-provider/pk")),
+            "not-a-pubkey",
+        );
+        assert_eq!(not_hex.app_data_dir.as_deref(), Some(app));
+        assert_eq!(not_hex.nest, None);
+    }
+
+    /// `rule_covers` is the guard both the emitter and the pruner rely on.
+    #[test]
+    fn rule_covers_reads_claude_code_patterns_the_way_the_fence_needs() {
+        let nest = Path::new(
+            "/h/Library/Application Support/io.agiterra.beekeeper.app/agents/nests/aaaaaaaa",
+        );
+        for (rule, covers) in [
+            ("Edit(//h/Library/Application Support/io.agiterra.*/**)", true),
+            ("Edit(//h/Library/Application Support/io.agiterra.beekeeper.app/**)", true),
+            ("Write(//h/Library/Application Support/io.agiterra.beekeeper.app/agents/*)", true),
+            ("Edit(//h/Library/Application Support/io.agiterra.beekeeper.app/agents/nests/aaaaaaaa/**)", true),
+            ("Edit(//h/Library/Application Support/io.agiterra.beekeeper.app/agents/nests/aaaaaaaa)", true),
+            ("Edit(//)", true),
+            ("Edit(//h/Library/Application Support/io.agiterra.beekeeper.app/agents/nests/bbbbbbbb/**)", false),
+            ("Edit(//h/Library/Application Support/io.agiterra.beekeeper.app/agents/nests/aaaaaaaa/sub/**)", false),
+            ("Edit(//h/Library/Application Support/io.agiterra.beekeeper.app.dev/**)", false),
+            ("Bash(rm:*)", false),
+            ("Edit(.claude/settings.local.json)", false),
+            ("Read(//h/**)", false),
+        ] {
+            assert_eq!(rule_covers(rule, nest), covers, "{rule}");
+        }
+    }
+
+    /// The settings file is well-formed JSON, keeps every key it had, drops
+    /// only a stale rule that would fence this seat out of its own tree, and
+    /// is byte-identical after a second install.
+    #[test]
+    fn the_settings_file_is_well_formed_idempotent_and_keeps_other_keys() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (layout, _app) = operator_layout(dir.path());
+        let settings_file = layout.cwd.join(WRITE_FENCE_SETTINGS_FILE);
+        std::fs::create_dir_all(settings_file.parent().expect("parent")).expect(".claude");
+        let stale_nest_rule = dir_rule(layout.nest.as_deref().expect("nest"));
+        let stale_cwd_rule = format!("Write(//{}/**)", absolute_pattern_path(&layout.cwd));
+        std::fs::write(
+            &settings_file,
+            format!(
+                r#"{{"other": "kept", "permissions": {{"allow": ["Bash(ls:*)"], "deny": ["Bash(rm:*)", "{stale_nest_rule}", "{stale_cwd_rule}", "Edit(//{home}/.claude/**)"]}}}}"#,
+                home = absolute_pattern_path(&layout.home)
+            ),
+        )
+        .expect("seed");
+
+        let rules = write_fence_rules(&layout).expect("rules");
+        assert_eq!(
+            install_write_fence(&layout, &rules).expect("install"),
+            WriteFenceOutcome::Written
+        );
+        let first = std::fs::read_to_string(&settings_file).expect("read");
+        let parsed: serde_json::Value = serde_json::from_str(&first).expect("well-formed JSON");
+        assert_eq!(parsed["other"], "kept");
+        assert_eq!(
+            parsed["permissions"]["allow"],
+            serde_json::json!(["Bash(ls:*)"])
+        );
+        let deny: Vec<&str> = parsed["permissions"]["deny"]
+            .as_array()
+            .expect("deny array")
+            .iter()
+            .map(|v| v.as_str().expect("string rule"))
+            .collect();
+        assert_eq!(deny[0], "Bash(rm:*)", "a foreign rule must keep its place");
+        assert!(
+            !deny.contains(&stale_nest_rule.as_str()),
+            "stale nest rule kept: {deny:?}"
+        );
+        assert!(
+            !deny.contains(&stale_cwd_rule.as_str()),
+            "stale cwd rule kept: {deny:?}"
+        );
+        for rule in &rules {
+            assert!(deny.contains(&rule.as_str()), "`{rule}` missing: {deny:?}");
+        }
+        assert_eq!(
+            deny.iter().filter(|r| r.ends_with(".claude/**)")).count(),
+            1,
+            "a rule already present must not be duplicated: {deny:?}"
+        );
+        assert!(
+            deny.contains(&"Edit(.claude/settings.local.json)"),
+            "the file must protect itself from the file tools: {deny:?}"
+        );
+        assert!(first.ends_with('\n'));
+
+        assert_eq!(
+            install_write_fence(&layout, &rules).expect("install again"),
+            WriteFenceOutcome::Unchanged
+        );
+        assert_eq!(
+            std::fs::read_to_string(&settings_file).expect("read"),
+            first
+        );
+        assert!(
+            !std::fs::read_dir(settings_file.parent().expect("parent"))
+                .expect("dir")
+                .any(|entry| entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")),
+            "no temp file may be left behind"
+        );
+    }
+
+    /// A file the fence cannot read as settings is refused, not replaced.
+    #[test]
+    fn a_malformed_settings_file_is_refused_not_overwritten() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (layout, _app) = operator_layout(dir.path());
+        let settings_file = layout.cwd.join(WRITE_FENCE_SETTINGS_FILE);
+        std::fs::create_dir_all(settings_file.parent().expect("parent")).expect(".claude");
+        let rules = write_fence_rules(&layout).expect("rules");
+        for (content, why) in [
+            ("{not json", "is not JSON"),
+            ("[]", "is not a JSON object"),
+            (r#"{"permissions": "deny all"}"#, "not an object"),
+            (r#"{"permissions": {"deny": "Edit(**)"}}"#, "not an array"),
+        ] {
+            std::fs::write(&settings_file, content).expect("seed");
+            let error = install_write_fence(&layout, &rules).expect_err(why);
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{content}");
+            assert!(error.to_string().contains(why), "{error}");
+            assert_eq!(
+                std::fs::read_to_string(&settings_file).expect("read"),
+                content,
+                "the malformed file was overwritten"
+            );
+        }
+    }
+
+    /// `git` in `cwd`, identity forced and the repo-selection variables
+    /// cleared, so a test never touches the developer's own repository.
+    fn git(cwd: &Path, args: &[&str]) -> String {
+        let mut command = std::process::Command::new("git");
+        for var in GIT_REPO_SELECTION_VARS {
+            command.env_remove(var);
+        }
+        let output = command
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "fence")
+            .env("GIT_AUTHOR_EMAIL", "fence@example.invalid")
+            .env("GIT_COMMITTER_NAME", "fence")
+            .env("GIT_COMMITTER_EMAIL", "fence@example.invalid")
+            // A developer's global ignore may already hide the file (this
+            // machine's `~/.config/git/ignore` does), which would make the
+            // "reads dirty first" precondition vacuous here and the fence
+            // untested for the seat's machine. Git reads that file with or
+            // without `core.excludesFile`, so both are pointed away.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("XDG_CONFIG_HOME", cwd.join(".no-xdg-config"))
+            .output()
+            .expect("git");
+        assert!(output.status.success(), "git {args:?} failed");
+        String::from_utf8(output.stdout).expect("utf-8")
+    }
+
+    /// Finding 76 must not come back through this file: after the fence is
+    /// installed the worktree is still clean by `git status --porcelain`.
+    #[test]
+    fn the_fence_file_is_kept_out_of_git_status() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (layout, _app) = operator_layout(dir.path());
+        git(&layout.cwd, &["init", "-q"]);
+        std::fs::write(layout.cwd.join("README"), "x").expect("tracked file");
+        git(&layout.cwd, &["add", "README"]);
+        git(&layout.cwd, &["commit", "-q", "-m", "seed"]);
+
+        let rules = write_fence_rules(&layout).expect("rules");
+        install_write_fence(&layout, &rules).expect("install");
+        assert!(
+            git(&layout.cwd, &["status", "--porcelain"]).contains(".claude/"),
+            "the unexcluded file must read dirty for this test to mean anything"
+        );
+        let outcome = exclude_write_fence_file(&layout.cwd).expect("exclude");
+        assert!(
+            matches!(outcome, ExcludeOutcome::Added { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(git(&layout.cwd, &["status", "--porcelain"]), "");
+        assert!(matches!(
+            exclude_write_fence_file(&layout.cwd).expect("exclude again"),
+            ExcludeOutcome::AlreadyExcluded { .. }
+        ));
+        // Outside any repository there is nothing to exclude and no error.
+        assert_eq!(
+            exclude_write_fence_file(dir.path().join("home").as_path()).expect("no repo"),
+            ExcludeOutcome::NotARepository
+        );
+    }
+
+    /// What the fence would be on *this* machine — a diagnostic, not a gate.
+    ///
+    /// Ignored, so it runs only when asked:
+    ///
+    /// ```text
+    /// FENCE_DEMO_CWD=/tmp/demo-worktree BUZZ_CSP_STATE_DIR=<app data>/session-provider/<pk> \
+    ///   cargo test -p buzz-session-provider print_the_write_fence -- --ignored --nocapture
+    /// ```
+    ///
+    /// Prints the rules for the real `HOME` and `BUZZ_CSP_STATE_DIR`, with a
+    /// tempdir as the working directory. With `FENCE_DEMO_CWD` set it also
+    /// installs the fence there, which is how the mechanism was proved against
+    /// the real `claude` binary. Never writes anywhere else.
+    #[test]
+    #[ignore = "reads the real HOME; run by hand to see this host's fence"]
+    fn print_the_write_fence_for_this_host() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = std::env::var_os("FENCE_DEMO_CWD")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| dir.path().join("work"));
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        let installed = install_seat_write_fence(&cwd, &seat_pubkey()).expect("install");
+        println!("settings file: {}", installed.settings_file.display());
+        println!(
+            "outcome: {:?}, exclude: {:?}",
+            installed.outcome, installed.exclude
+        );
+        for rule in &installed.rules {
+            println!("{rule}");
+        }
+    }
+
+    /// The seated briefing states the boundary in words too: on codex it is
+    /// the whole fence, and on claude a named rule beats a bare refusal.
+    #[test]
+    fn the_seat_briefing_states_the_write_boundary() {
+        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        assert!(
+            briefing.contains("Write files only inside your working directory and your own nest"),
+            "the seated briefing does not state the write boundary"
+        );
+        for root in ["~/.claude", "~/.codex", "~/.config", "~/.nostr", "~/.ssh"] {
+            assert!(briefing.contains(root), "the briefing does not name {root}");
+        }
+        assert!(
+            briefing.contains("on any other harness this sentence is the whole fence"),
+            "the briefing must say where the words are the only mechanism"
+        );
+        assert_eq!(CLAUDE_DRIVER, "claude-agent-acp");
     }
 }
