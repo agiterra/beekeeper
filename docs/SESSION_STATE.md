@@ -94,6 +94,13 @@ linkages both clients select by (channel first; genesis by identity;
 a transcript by a `cs-target` some metadata *in the same deletion*
 attributed here), with its own refusal sentence rather than the misleading
 "must be event author".
+**A third hole, found re-reading the change rather than by a test:** the
+authorship check runs *before* the membership check, and
+`refuse_permanent_identity_deletion` was being skipped for every target of
+an authorized session delete — so a founder deleting session A could name
+session B's closure alongside it and have it pass on "you signed this",
+leaving a closure gone from a session that still exists. That exemption now
+hangs off `session_deletion_admits`, not off the deletion as a whole.
 **The dialog** cleared its draft only on the ungoverned branch of
 `useNewCodingSessionLaunchSubmit`, so any launch led by an agent left the
 goal in local storage — surviving an app restart and offering to re-launch
