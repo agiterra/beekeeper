@@ -146,12 +146,17 @@ impl DeletionFixture {
     }
 
     async fn verdict(&self, actor: &Keys, coordinate: &str) -> Result<(), String> {
+        // `.map(|_| ())` throughout: the validator now reports which shape it
+        // admitted, and every assertion in this file is about the verdict, not
+        // the shape. Keeping them byte-identical is the point — a refactor
+        // that changed what they assert would prove nothing.
         validate_standard_deletion_event(
             &self.tenant,
             &self.tombstone(actor, coordinate),
             &self.state,
         )
         .await
+        .map(|_| ())
         .map_err(|error| error.to_string())
     }
 
@@ -555,6 +560,14 @@ struct SessionFixture {
     session_ref: String,
     genesis_id: Vec<u8>,
     closure_ids: Vec<Vec<u8>>,
+    /// 44227, `d`-tagged like the closures and signed by the founder.
+    goal_id: Vec<u8>,
+    /// 44223, signed by the **provider** — not the founder, and not the
+    /// person deleting. The authorship exemption exists for exactly these.
+    metadata_id: Vec<u8>,
+    /// 44225, also the provider's, and reachable only through the metadata
+    /// above: it names an execution, never the umbrella.
+    transcript_id: Vec<u8>,
 }
 
 impl DeletionFixture {
@@ -630,11 +643,69 @@ impl DeletionFixture {
             closure_ids.push(closure.id.to_bytes().to_vec());
         }
 
+        // A goal, `d`-tagged onto the umbrella the way a closure is.
+        let goal = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_GOAL as u16),
+            "Fix the flaky timeout.",
+        )
+        .tags(vec![
+            Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
+            Tag::parse(["d", session_ref.as_str()]).expect("d tag"),
+        ])
+        .sign_with_keys(founder)
+        .expect("sign goal");
+        self.state
+            .db
+            .insert_event(self.tenant.community(), &goal, Some(channel.id))
+            .await
+            .expect("store goal");
+
+        // The provider's two. A session's metadata and transcript are signed
+        // by the host that ran it, so a founder deleting their own session
+        // reaches them by the exemption and by nothing else — which is what
+        // makes them the interesting half of every case below.
+        let provider = Keys::generate();
+        let target_key = format!("cs-target-{}", uuid::Uuid::new_v4().simple());
+        let metadata = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_METADATA as u16),
+            serde_json::json!({ "sessionRef": session_ref, "v": 1 }).to_string(),
+        )
+        .tags(vec![
+            Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
+            Tag::parse(["cs-target", target_key.as_str()]).expect("cs-target tag"),
+        ])
+        .sign_with_keys(&provider)
+        .expect("sign metadata");
+        self.state
+            .db
+            .insert_event(self.tenant.community(), &metadata, Some(channel.id))
+            .await
+            .expect("store metadata");
+
+        let transcript = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT as u16),
+            "{}",
+        )
+        .tags(vec![
+            Tag::parse(["h", &channel.id.to_string()]).expect("h tag"),
+            Tag::parse(["cs-target", target_key.as_str()]).expect("cs-target tag"),
+        ])
+        .sign_with_keys(&provider)
+        .expect("sign transcript");
+        self.state
+            .db
+            .insert_event(self.tenant.community(), &transcript, Some(channel.id))
+            .await
+            .expect("store transcript");
+
         SessionFixture {
             channel_id: channel.id,
             session_ref,
             genesis_id: genesis.id.to_bytes().to_vec(),
             closure_ids,
+            goal_id: goal.id.to_bytes().to_vec(),
+            metadata_id: metadata.id.to_bytes().to_vec(),
+            transcript_id: transcript.id.to_bytes().to_vec(),
         }
     }
 
@@ -651,6 +722,11 @@ impl DeletionFixture {
     }
 
     async fn verdict_events(&self, actor: &Keys, ids: &[Vec<u8>]) -> Result<(), String> {
+        self.shape_events(actor, ids).await.map(|_| ())
+    }
+
+    /// The same verdict, keeping the shape the validator reported.
+    async fn shape_events(&self, actor: &Keys, ids: &[Vec<u8>]) -> Result<DeletionShape, String> {
         validate_standard_deletion_event(&self.tenant, &self.delete_events(actor, ids), &self.state)
             .await
             .map_err(|error| error.to_string())
@@ -658,11 +734,24 @@ impl DeletionFixture {
 }
 
 impl SessionFixture {
-    /// The genesis plus every closure — a complete authority chain.
+    /// Everything one session owns: the genesis, every closure, the goal,
+    /// and the provider-signed metadata and transcript — the set both the
+    /// desktop and `bee sessions delete` assemble.
     fn whole_chain(&self) -> Vec<Vec<u8>> {
         let mut ids = vec![self.genesis_id.clone()];
         ids.extend(self.closure_ids.iter().cloned());
+        ids.push(self.goal_id.clone());
+        ids.push(self.metadata_id.clone());
+        ids.push(self.transcript_id.clone());
         ids
+    }
+
+    /// The same, without the metadata that binds the transcript to it.
+    fn chain_without_metadata(&self) -> Vec<Vec<u8>> {
+        self.whole_chain()
+            .into_iter()
+            .filter(|id| id != &self.metadata_id)
+            .collect()
     }
 }
 
@@ -850,4 +939,125 @@ async fn a_session_delete_cannot_smuggle_in_someone_elses_message() {
         Err(DENIAL.to_string()),
         "a genesis in the same deletion must not launder authorship over an unrelated event"
     );
+}
+
+// ── What a session delete may reach, and what it may not ─────────────────
+//
+// The authorship exemption is granted by *kind*, and a kind is not an
+// identity. These pin the second half of the admission: the target has to
+// belong to the session actually being deleted. Until the ingest gate
+// admitted a multi-target `kind:5` at all this was unreachable — a deletion
+// naming a genesis and anything else was refused before it got here — so
+// the two changes are one change, and this is the half that keeps it safe.
+
+/// The shape ingest needs, and the reason it needs it: a real session is
+/// many events, and there is no version of it that fits in one `e` tag.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_whole_session_delete_reports_its_shape_and_names_more_than_one_target() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 2).await;
+    let chain = session.whole_chain();
+
+    assert!(
+        chain.len() > 1,
+        "a session delete is many targets by construction, got {}",
+        chain.len()
+    );
+    assert_eq!(
+        f.shape_events(&founder, &chain).await,
+        Ok(DeletionShape::WholeCodingSession),
+        "ingest reads this to know the single-target rule does not apply"
+    );
+}
+
+/// And an ordinary deletion still reports the shape that keeps the rule.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn an_ordinary_self_authored_deletion_is_still_a_single_target() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 0).await;
+    assert_eq!(
+        f.shape_events(&founder, std::slice::from_ref(&session.goal_id))
+            .await,
+        Ok(DeletionShape::SingleTarget),
+    );
+}
+
+/// The headline protection. Deleting your session must not be a way to
+/// delete somebody else's session's events by naming them alongside it —
+/// same kinds, different umbrella, and the actor authored none of them.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_session_delete_cannot_reach_another_sessions_events() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let mine = f.session(&founder, 1).await;
+    let theirs = f.session(&Keys::generate(), 1).await;
+
+    for (label, smuggled) in [
+        ("goal", theirs.goal_id.clone()),
+        ("metadata", theirs.metadata_id.clone()),
+        ("transcript", theirs.transcript_id.clone()),
+    ] {
+        let mut ids = mine.whole_chain();
+        ids.push(smuggled);
+        let message = f
+            .verdict_events(&founder, &ids)
+            .await
+            .expect_err("another session's events must not be reachable");
+        assert!(
+            message.contains("does not belong to the session it deletes"),
+            "the refusal must say which problem it is — {label} gave {message:?}"
+        );
+    }
+}
+
+/// A transcript reaches its umbrella through the metadata that names both.
+/// Drop the metadata from the deletion and the transcript is no longer
+/// attributable to this session by anything on the wire, so it stays.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_transcript_whose_metadata_is_not_named_is_refused() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 0).await;
+
+    let message = f
+        .verdict_events(&founder, &session.chain_without_metadata())
+        .await
+        .expect_err("an unattributable transcript must not be swept in");
+    assert!(
+        message.contains("does not belong to the session it deletes"),
+        "got {message:?}"
+    );
+}
+
+/// The positive case for the same rule: with the metadata named, the
+/// provider-signed transcript goes too — by the exemption, since the founder
+/// signed neither.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn the_providers_metadata_and_transcript_go_with_the_session() {
+    let f = DeletionFixture::new().await;
+    let founder = Keys::generate();
+    let session = f.session(&founder, 1).await;
+
+    assert_eq!(
+        f.verdict_events(&founder, &session.whole_chain()).await,
+        Ok(())
+    );
+
+    // Named on their own, with no genesis to authorize anything, the same two
+    // events are refused — the exemption is a property of the whole act.
+    let message = f
+        .verdict_events(
+            &founder,
+            &[session.metadata_id.clone(), session.transcript_id.clone()],
+        )
+        .await
+        .expect_err("without a session delete these are somebody else's events");
+    assert_eq!(message, "must be event author");
 }

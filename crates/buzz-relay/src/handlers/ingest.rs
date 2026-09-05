@@ -3885,11 +3885,17 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
-    if kind_u32 == KIND_DELETION {
-        crate::handlers::side_effects::validate_standard_deletion_event(tenant, &event, state)
-            .await
-            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
-    }
+    // What the deletion turned out to be, kept for the single-target gate
+    // further down. `None` for kind:9005, which never reaches this validator.
+    let deletion_shape = if kind_u32 == KIND_DELETION {
+        Some(
+            crate::handlers::side_effects::validate_standard_deletion_event(tenant, &event, state)
+                .await
+                .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?,
+        )
+    } else {
+        None
+    };
 
     if channel_id.is_some() {
         // Allow kind:9002 with archived=false (unarchive operation)
@@ -3910,7 +3916,23 @@ async fn ingest_event_inner(
 
     // NIP-09: kind:5 may reference targets via `e` tag (regular events) OR
     // `a` tag (addressable/parameterized-replaceable events like kind:30620).
-    if kind_u32 == KIND_NIP29_DELETE_EVENT || kind_u32 == KIND_DELETION {
+    //
+    // One target, with exactly one exception. Deleting a coding session is a
+    // single act over many events — the relay refuses a genesis or a closure
+    // deleted on its own, and refuses a chain that leaves a live closure
+    // behind, so a session goes whole or not at all and there is no shape of
+    // it that fits in one `e` tag. `validate_standard_deletion_event` above
+    // has already decided that this is such a deletion, that the chain is
+    // complete, that the actor may perform it and that every target belongs
+    // to the session named; the count is the only thing left to say, and for
+    // that shape it has nothing to say. Both clients have always built this
+    // event, and until now every real session was refused here with
+    // "must reference exactly one target ... (got e=26, a=0)" — the feature's
+    // own tests exercised the validator directly and never crossed ingest.
+    let whole_session_deletion =
+        deletion_shape == Some(crate::handlers::side_effects::DeletionShape::WholeCodingSession);
+    if (kind_u32 == KIND_NIP29_DELETE_EVENT || kind_u32 == KIND_DELETION) && !whole_session_deletion
+    {
         let e_count = count_e_tags(&event);
         let a_count = event
             .tags

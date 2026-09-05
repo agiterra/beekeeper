@@ -370,10 +370,11 @@ async fn live_closure_ids(
 
 /// Authorize a whole-session deletion, or refuse it as piecemeal.
 ///
-/// Returns `Ok(true)` when this deletion is a complete session delete that
-/// the actor may perform — the caller then skips
-/// [`refuse_permanent_identity_deletion`] for its targets. Returns
-/// `Ok(false)` when no genesis is targeted at all, which is every ordinary
+/// Returns `Ok(Some(session))` when this deletion is a complete session
+/// delete that the actor may perform — the caller then skips
+/// [`refuse_permanent_identity_deletion`] for its targets, and uses the
+/// returned session to check that each one actually belongs to it. Returns
+/// `Ok(None)` when no genesis is targeted at all, which is every ordinary
 /// deletion and costs one pass over an already-loaded list.
 ///
 /// Three conditions, all required:
@@ -396,13 +397,13 @@ async fn authorize_coding_session_deletion(
     state: &Arc<AppState>,
     targets: &[StoredEvent],
     actor_bytes: &[u8],
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<AuthorizedSessionDeletion>> {
     let geneses: Vec<&StoredEvent> = targets
         .iter()
         .filter(|stored| event_kind_u32(&stored.event) == KIND_CODING_SESSION_GENESIS)
         .collect();
     let Some(genesis) = geneses.first().copied() else {
-        return Ok(false);
+        return Ok(None);
     };
     if geneses.len() > 1 {
         return Err(anyhow::anyhow!(
@@ -433,10 +434,30 @@ async fn authorize_coding_session_deletion(
         ));
     }
 
+    // The executions this deletion's own metadata attributes to the umbrella.
+    // Drawn from the named targets, never from a channel scan: a transcript is
+    // deletable here because the metadata that binds it to this session is
+    // going too, and one that is not named binds nothing.
+    let execution_targets: std::collections::HashSet<String> = targets
+        .iter()
+        .filter(|stored| {
+            event_kind_u32(&stored.event) == buzz_core::kind::KIND_CODING_SESSION_METADATA
+                && content_session_ref(&stored.event.content).as_deref()
+                    == Some(payload.session_ref.as_str())
+        })
+        .filter_map(|stored| extract_tag_value(&stored.event, "cs-target"))
+        .collect();
+    let session = AuthorizedSessionDeletion {
+        session_ref: payload.session_ref.clone(),
+        channel_id,
+        genesis_id: genesis.event.id.to_bytes().to_vec(),
+        execution_targets,
+    };
+
     // Condition 3: founder, or an Owner of the containing project.
     let founder = effective_message_author(&genesis.event, &state.relay_keypair.public_key());
     if founder == actor_bytes {
-        return Ok(true);
+        return Ok(Some(session));
     }
     let channel = state.db.get_channel(tenant.community(), channel_id).await?;
     if let Some(coordinate) = channel.project_ref.as_deref() {
@@ -445,7 +466,7 @@ async fn authorize_coding_session_deletion(
             .get_project_role_by_coordinate(tenant.community(), coordinate, actor_bytes)
             .await?;
         if role == Some(ProjectRole::Owner) {
-            return Ok(true);
+            return Ok(Some(session));
         }
     }
     Err(anyhow::anyhow!(
@@ -532,6 +553,21 @@ async fn project_owner_admits_deletion(
     Ok(role == Some(ProjectRole::Owner))
 }
 
+/// What a `kind:5` turned out to be, once it was allowed through.
+///
+/// The distinction exists for exactly one caller: ingest enforces NIP-09's
+/// single target, and a complete coding-session delete is many targets by
+/// construction. Reporting the shape here rather than re-deriving it there
+/// keeps one answer to "is this a session delete?" instead of two that can
+/// disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeletionShape {
+    /// The ordinary case: one event, or one addressable coordinate.
+    SingleTarget,
+    /// A session's genesis and everything under it, in one event.
+    WholeCodingSession,
+}
+
 /// Validate a standard NIP-09 deletion event before it is stored.
 ///
 /// Buzz accepts standard deletions for self-authored events, plus the owning
@@ -543,7 +579,7 @@ pub async fn validate_standard_deletion_event(
     tenant: &TenantContext,
     event: &Event,
     state: &Arc<AppState>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<DeletionShape> {
     let actor_bytes = effective_message_author(event, &state.relay_keypair.public_key());
     let target_ids = extract_target_event_ids(event);
 
@@ -567,7 +603,7 @@ pub async fn validate_standard_deletion_event(
                 .is_agent_owner(tenant.community(), &target_pubkey_bytes, &actor_bytes)
                 .await?
         {
-            return Ok(());
+            return Ok(DeletionShape::SingleTarget);
         }
         // Third arm: an Owner of the project that contains this target. The
         // kind is parsed only here — the two arms above never needed it, and
@@ -585,7 +621,7 @@ pub async fn validate_standard_deletion_event(
         )
         .await?
         {
-            return Ok(());
+            return Ok(DeletionShape::SingleTarget);
         }
         return Err(anyhow::anyhow!("must be event author"));
     }
@@ -618,7 +654,7 @@ pub async fn validate_standard_deletion_event(
         // stop being the founder, so this refusal must not be reachable by
         // simply having signed the target. Skipped only when the deletion has
         // already been authorized as a complete session delete.
-        if !whole_session {
+        if whole_session.is_none() {
             refuse_permanent_identity_deletion(event_kind_u32(&target_event.event))?;
         }
 
@@ -637,13 +673,28 @@ pub async fn validate_standard_deletion_event(
         // targets its actor never authored. That is exactly what the
         // whole-session authorization above decided, and re-deciding it by
         // authorship here would make the feature unusable by design.
-        if whole_session && coding_session_scoped_kind(event_kind_u32(&target_event.event)) {
-            continue;
+        if let Some(session) = &whole_session {
+            if coding_session_scoped_kind(event_kind_u32(&target_event.event)) {
+                if session_deletion_admits(&target_event.event, session) {
+                    continue;
+                }
+                // Named a session event, but not one of *this* session's. Its
+                // own sentence rather than "must be event author", which would
+                // be a true statement about the wrong problem: the actor is
+                // authorized here, they have simply named somebody else's.
+                return Err(anyhow::anyhow!(
+                    "this deletion names a coding-session event that does not belong to the \
+                     session it deletes — a session delete reaches its own events only"
+                ));
+            }
         }
         return Err(anyhow::anyhow!("must be event author"));
     }
 
-    Ok(())
+    Ok(match whole_session {
+        Some(_) => DeletionShape::WholeCodingSession,
+        None => DeletionShape::SingleTarget,
+    })
 }
 
 /// Kinds a complete session deletion is allowed to reach without authorship.
@@ -651,6 +702,10 @@ pub async fn validate_standard_deletion_event(
 /// Deliberately a closed list rather than "anything in the session's channel":
 /// a session delete must not become a way to delete a teammate's chat messages
 /// by naming them alongside a genesis.
+///
+/// The kind is only half the admission. Being a 44227 does not make an event
+/// *this* session's 44227, and [`session_deletion_admits`] settles that half —
+/// see the note there for why both halves are load-bearing.
 fn coding_session_scoped_kind(kind: u32) -> bool {
     matches!(
         kind,
@@ -663,6 +718,103 @@ fn coding_session_scoped_kind(kind: u32) -> bool {
             | buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION
             | buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT
     )
+}
+
+/// Kinds that carry their umbrella in a plain `d` tag.
+const SESSION_D_TAG_KINDS: &[u32] = &[
+    KIND_CODING_SESSION_CLOSURE,
+    buzz_core::kind::KIND_CODING_SESSION_GOAL,
+    buzz_core::kind::KIND_CODING_SESSION_NAME,
+    buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION,
+];
+
+/// The `sessionRef` an event's JSON content claims, if any.
+///
+/// A deliberately loose read rather than the strict decoders: this asks which
+/// umbrella an event belongs to, not whether the payload is well-formed. A
+/// metadata event written by a newer build, with a key this relay has never
+/// heard of, still belongs to the session it names — refusing to see that
+/// would turn a legitimate delete into a refusal nobody could act on.
+fn content_session_ref(content: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+    parsed.get("sessionRef")?.as_str().map(str::to_string)
+}
+
+/// One session a deletion has been authorized to remove, and everything
+/// needed to tell that session's events from anybody else's.
+struct AuthorizedSessionDeletion {
+    session_ref: String,
+    channel_id: Uuid,
+    genesis_id: Vec<u8>,
+    /// `cs-target` keys of the executions the *named* metadata attributed to
+    /// this umbrella. A transcript reaches its session in two hops and this
+    /// is the first one; an execution whose metadata is not in the same
+    /// deletion contributes no transcript, which is correct — nothing in this
+    /// event ties one to this session.
+    execution_targets: std::collections::HashSet<String>,
+}
+
+/// Does this target actually belong to the session being deleted?
+///
+/// The exemption above is by kind, and a kind is not an identity. Without
+/// this, "delete session A" would also delete any 44227, 44229, 44230,
+/// 44223, 44225 or 44244 named alongside it — including another project's,
+/// signed by someone else, in a channel the actor has no standing in. That
+/// was unreachable only for as long as the ingest gate refused every
+/// multi-target `kind:5`; admitting the session shape is what makes it
+/// reachable, so the two changes belong together.
+///
+/// The linkages are the ones both clients select by, and there is no single
+/// grouping tag:
+///
+/// | Kind | Belongs by |
+/// |---|---|
+/// | 44226 genesis | being *the* genesis this deletion was authorized against |
+/// | 44230, 44227, 44229, 44244 | `["d", sessionRef]` |
+/// | 44223 metadata | `sessionRef` in its content |
+/// | 44225 transcript | a `cs-target` some named metadata attributed here |
+/// | 44224 lifecycle receipt | the target key in its payload, same set |
+///
+/// The channel is checked first and for every kind. `kind:5` derives its
+/// channel from its *first* `e` tag, so the membership, token and archived
+/// gates upstream only ever see one channel; a target outside it would be
+/// judged against a channel it does not live in.
+fn session_deletion_admits(event: &Event, session: &AuthorizedSessionDeletion) -> bool {
+    if extract_h_tag_channel(event) != Some(session.channel_id) {
+        return false;
+    }
+    let kind = event_kind_u32(event);
+    if kind == KIND_CODING_SESSION_GENESIS {
+        return event.id.to_bytes().as_slice() == session.genesis_id.as_slice();
+    }
+    if SESSION_D_TAG_KINDS.contains(&kind) {
+        return extract_tag_value(event, "d").as_deref() == Some(session.session_ref.as_str());
+    }
+    if kind == buzz_core::kind::KIND_CODING_SESSION_METADATA {
+        return content_session_ref(&event.content).as_deref()
+            == Some(session.session_ref.as_str());
+    }
+    if kind == buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT {
+        return extract_tag_value(event, "cs-target")
+            .is_some_and(|target| session.execution_targets.contains(&target));
+    }
+    if kind == buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT {
+        // The only one of these kinds with no `cs-target` tag: a receipt
+        // names its execution inside the payload instead.
+        let Ok(receipt) =
+            buzz_core::coding_session_payload::decode_coding_session_lifecycle_receipt(
+                &event.content,
+            )
+        else {
+            return false;
+        };
+        return receipt.session.is_some_and(|target| {
+            session
+                .execution_targets
+                .contains(&buzz_core::coding_session_command::coding_session_target_key(&target))
+        });
+    }
+    false
 }
 
 /// Returns `true` if `actor_bytes` is the NIP-OA owner of **any** active owner-role
