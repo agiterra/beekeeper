@@ -535,9 +535,9 @@ fn any_active_seat_lands_what_a_verifier_cleared_and_a_stranger_does_not() {
     assert_eq!(
         refusal.reason(),
         format!(
-            "commit {HEAD_SHA} carries a verifier's verdict on mission {SESSION}, and this key \
-             is not an active seat of it (3 seat(s)). A founder of this repository may land it, \
-             or a seat of that mission may."
+            "commit {HEAD_SHA} is cleared on mission {SESSION}, and this key is not an active \
+             seat of it (3 seat(s)). Both routes require the pusher to hold an active seat of \
+             that mission: resume the session so the host re-stages the seat, then push again."
         )
     );
 }

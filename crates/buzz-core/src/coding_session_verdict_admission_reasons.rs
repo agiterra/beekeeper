@@ -146,9 +146,10 @@ impl VerdictAdmissionRefusal {
                 session_ref,
                 seats,
             } => format!(
-                "commit {new_oid} carries a verifier's verdict on mission {session_ref}, and \
-                 this key is not an active seat of it ({seats} seat(s)). A founder of this \
-                 repository may land it, or a seat of that mission may."
+                "commit {new_oid} is cleared on mission {session_ref}, and this key is not an \
+                 active seat of it ({seats} seat(s)). Both routes require the pusher to hold an \
+                 active seat of that mission: resume the session so the host re-stages the seat, \
+                 then push again."
             ),
             Self::ApprovedForAnotherRef {
                 new_oid,

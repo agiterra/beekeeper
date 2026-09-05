@@ -606,9 +606,10 @@ fn a_pusher_who_is_neither_founder_nor_seat_gets_the_unseated_string() {
         answer.refusal_reason.as_deref(),
         Some(
             format!(
-                "commit {HEAD_SHA} carries a verifier's verdict on mission {SESSION}, and this \
-                 key is not an active seat of it (2 seat(s)). A founder of this repository may \
-                 land it, or a seat of that mission may."
+                "commit {HEAD_SHA} is cleared on mission {SESSION}, and this key is not an \
+                 active seat of it (2 seat(s)). Both routes require the pusher to hold an active \
+                 seat of that mission: resume the session so the host re-stages the seat, then \
+                 push again."
             )
             .as_str()
         )
