@@ -907,20 +907,6 @@ export function NewCodingSessionForm({
           />
         ) : null}
 
-        {[setupError, launchError].map((message) =>
-          message ? (
-            <p
-              className="flex items-start gap-2 text-sm text-destructive"
-              data-testid="new-coding-session-setup-error"
-              key={message}
-              role="alert"
-            >
-              <CircleAlert className="mt-0.5 size-4 shrink-0" />
-              {message}
-            </p>
-          ) : null,
-        )}
-
         {status ? (
           <p
             className={cn(
@@ -944,7 +930,20 @@ export function NewCodingSessionForm({
 
       {/* Outside the scroll box: a launch button that scrolls away with the
           fields is a launch button a short window hides entirely. */}
-      <div className="flex shrink-0 items-center justify-end gap-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        {[setupError, launchError].map((message) =>
+          message ? (
+            <p
+              className="flex max-h-32 basis-full items-start gap-2 overflow-y-auto break-words text-sm text-destructive"
+              data-testid="new-coding-session-setup-error"
+              key={message}
+              role="alert"
+            >
+              <CircleAlert className="mt-0.5 size-4 shrink-0" />
+              {message}
+            </p>
+          ) : null,
+        )}
         {transaction ? (
           <>
             <Button

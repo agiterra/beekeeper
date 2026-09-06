@@ -241,9 +241,13 @@ fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credent
 /// Format a path for git `credential.helper`.
 ///
 /// Git for Windows invokes helpers via MinGW bash, which treats `\` as
-/// escapes. Forward slashes work on every platform git supports.
+/// escapes. Forward slashes work on every platform git supports. Git evaluates
+/// the value as shell code: use an explicit shell helper and single-quote the
+/// complete path so spaces and shell metacharacters remain literal. Without
+/// `!`, Git would prefix a quoted path with `git credential-`.
 fn credential_helper_config_value(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    format!("!'{}'", normalized.replace('\'', "'\\''"))
 }
 
 fn apply_git_config(command: &mut Command, entries: &[(&str, String)]) {
@@ -487,8 +491,58 @@ mod tests {
             std::path::PathBuf::from(r"C:\Users\x\AppData\Local\Buzz\git-credential-nostr.exe");
         assert_eq!(
             credential_helper_config_value(&path),
-            "C:/Users/x/AppData/Local/Buzz/git-credential-nostr.exe",
+            "!'C:/Users/x/AppData/Local/Buzz/git-credential-nostr.exe'",
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credential_helper_runs_from_bundle_path_with_shell_characters() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::{Command, Stdio};
+
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Beekeeper Dev's $HOME `literal`.app");
+        std::fs::create_dir(&bundle).unwrap();
+        let helper = bundle.join("git-credential-nostr");
+        std::fs::write(
+            &helper,
+            "#!/bin/sh\n[ \"$1\" = get ] || exit 1\ncat >/dev/null\nprintf 'username=test-user\\npassword=test-token\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .current_dir(root.path())
+            .args(["-c", "credential.helper=", "-c"])
+            .arg(format!(
+                "credential.helper={}",
+                credential_helper_config_value(&helper)
+            ))
+            .args(["credential", "fill"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"protocol=https\nhost=example.invalid\n\n")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("password=test-token"));
     }
 
     #[test]

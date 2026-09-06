@@ -7,6 +7,22 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
+Live launch finding after opening the test bundle: at 23:21:16 and 23:22:02 UTC,
+`actor_seats` refused the lead pack fetch because Git evaluated the unquoted
+`/Users/brian/Applications/Beekeeper Dev.app/Contents/MacOS/git-credential-nostr`
+as shell code and tried to execute `/Users/brian/Applications/Beekeeper`.
+Evidence: `~/Library/Logs/io.agiterra.beekeeper.app/beekeeper.2026-09-06.log`.
+`project_git_exec::credential_helper_config_value` now uses an explicit shell
+helper with a fully single-quoted path and escaped apostrophes. An actual
+`git credential fill` test with a fake helper under spaces, apostrophe, dollar
+and backtick characters failed before the fix and passes afterward; all ten
+project Git tests and native all-target Clippy pass. Logs are
+`helper-path-red.log`, `helper-path-green.log`, `helper-path-clippy.log` in the
+September 6 validation directory. Launch refusals also move outside the form's
+scroll area beside Start; focused E2E verifies visible failure at 1000×600,
+retained goal, reenabled Start, and no create publication after seat refusal
+(`launch-error-visible-e2e.log`). These repairs are being packaged for retry.
+
 Desktop test bundle is now built from `3ac49a2e9` and installed at
 `/Users/brian/Applications/Beekeeper Dev.app`. It uses the debug profile and
 `io.agiterra.beekeeper.app.dev` identifier to retain the founder's existing
@@ -16,9 +32,8 @@ bundled role packs were checked, and both the built and installed bundles
 passed `codesign --verify --deep --strict`. The installed CLI reports
 `bee 0.1.0 (3ac49a2e)`, built `2026-09-06T21:49:00Z`. Build evidence:
 `/Users/brian/Projects/beekeeper/review-2026-09-06-validation/desktop-test-bundle.log`.
-The existing running development app was not stopped or replaced; the new
-bundle has not yet been launched. Quit the old app before opening this bundle
-because they share the dev profile. First manual acceptance: open New coding
+The original development process was subsequently closed on Brian's request
+and the installed bundle launched (PID 59974). First manual acceptance: open New coding
 session, inspect the saved setup with Advanced closed, and start a read-only
 project-summary task. Packaging success is not live workflow acceptance.
 

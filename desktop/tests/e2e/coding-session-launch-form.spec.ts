@@ -80,6 +80,7 @@ const ROLES: RoleFixture[] = [
 function launchInvokeInitScript(config: {
   roles: RoleFixture[];
   teamId: string;
+  seatFailure?: string;
 }) {
   return (input: typeof config) => {
     type Invoke = (
@@ -226,6 +227,7 @@ function launchInvokeInitScript(config: {
                 pending: {},
               };
             case "stage_coding_session_actor_seat":
+              if (input.seatFailure) throw new Error(input.seatFailure);
               return { packStaged: true };
             case "clear_coding_session_actor_seat":
               return null;
@@ -272,7 +274,7 @@ function runtimeFixture() {
   };
 }
 
-async function openApp(page: Page) {
+async function openApp(page: Page, seatFailure?: string) {
   await page.addInitScript((identity) => {
     window.localStorage.setItem(
       "buzz:e2e-identity-override.v1",
@@ -296,7 +298,7 @@ async function openApp(page: Page) {
     },
     codingSessionProviderRuntimes: [runtimeFixture()],
   });
-  const config = { roles: ROLES, teamId: TEAM_ID };
+  const config = { roles: ROLES, teamId: TEAM_ID, seatFailure };
   await page.addInitScript(launchInvokeInitScript(config), config);
   await page.goto("/", { waitUntil: "domcontentloaded" });
 }
@@ -452,6 +454,35 @@ test.describe("the one launch form", () => {
     ).not.toHaveAttribute("open");
     await waitForAnimations(page);
     await page.screenshot({ path: `${SHOTS}/launch-form.png`, fullPage: true });
+  });
+
+  test("seat setup refusal stays visible beside Start in a short window", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1000, height: 600 });
+    await openApp(
+      page,
+      "Could not fetch the lead role pack: credential helper failed.",
+    );
+    await openDialog(page);
+    await page
+      .getByTestId("new-coding-session-goal")
+      .fill("Inspect this project.");
+    await page.getByTestId("new-coding-session-edit-setup").click();
+    await page
+      .getByTestId("new-coding-session-lead-select")
+      .selectOption(ROLES[0].pubkey);
+    await page.getByTestId("new-coding-session-submit").click();
+    const failure = page.getByTestId("new-coding-session-setup-error");
+    await expect(failure).toContainText("credential helper failed");
+    await expect(failure).toBeInViewport();
+    await expect(page.getByTestId("new-coding-session-submit")).toBeEnabled();
+    await expect(page.getByTestId("new-coding-session-goal")).toHaveValue(
+      "Inspect this project.",
+    );
+    expect(
+      (await signedEvents(page)).filter((event) => event.kind === 44221),
+    ).toHaveLength(0);
   });
 
   test("02 — a governed launch signs 44226, 44227, 44245 and one 44221, and waits for its receipt", async ({
