@@ -7,6 +7,21 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
+Desktop test bundle is now built from `3ac49a2e9` and installed at
+`/Users/brian/Applications/Beekeeper Dev.app`. It uses the debug profile and
+`io.agiterra.beekeeper.app.dev` identifier to retain the founder's existing
+dev profile. This is an unlanded branch test build, assembled directly with
+Tauri; the landed-only `app-from` recipe was not used. All eight sidecars and
+bundled role packs were checked, and both the built and installed bundles
+passed `codesign --verify --deep --strict`. The installed CLI reports
+`bee 0.1.0 (3ac49a2e)`, built `2026-09-06T21:49:00Z`. Build evidence:
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/desktop-test-bundle.log`.
+The existing running development app was not stopped or replaced; the new
+bundle has not yet been launched. Quit the old app before opening this bundle
+because they share the dev profile. First manual acceptance: open New coding
+session, inspect the saved setup with Advanced closed, and start a read-only
+project-summary task. Packaging success is not live workflow acceptance.
+
 Upstream release review: GitHub's release page lists Desktop v0.5.23
 (September 5) and v0.5.22 (September 4). Relevant candidates and source links
 are recorded in the execution plan's upstream reuse checkpoint. Read-only
