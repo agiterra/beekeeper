@@ -505,7 +505,10 @@ function processLiveObserverEvents(
       void putAgentSessionConfig(agentPubkey, parsed.payload);
       onSessionConfigCaptured?.(agentPubkey);
     } else if (parsed.kind === "control_result") {
-      dispatchControlResult(agentPubkey, parsed.payload);
+      // Control results are channel-scoped by their signed observer envelope.
+      // Keep that authoritative scope when dispatching to the request waiter;
+      // the encrypted payload is not allowed to replace it.
+      dispatchControlResult(agentPubkey, parsed.payload, parsed.channelId);
     } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
       void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
         (error) => {
@@ -644,7 +647,11 @@ function isControlResultFrame(payload: unknown): payload is ControlResultFrame {
   );
 }
 
-function dispatchControlResult(agentPubkey: string, payload: unknown) {
+function dispatchControlResult(
+  agentPubkey: string,
+  payload: unknown,
+  channelId: string | null,
+) {
   if (!isControlResultFrame(payload)) {
     return;
   }
@@ -653,7 +660,7 @@ function dispatchControlResult(agentPubkey: string, payload: unknown) {
     return;
   }
   for (const subscriber of subscribers) {
-    subscriber(payload);
+    subscriber({ ...payload, channelId });
   }
 }
 

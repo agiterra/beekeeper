@@ -5,6 +5,139 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## 2026-09-06 — collaborative workspace foundation validated locally
+
+Upstream release review: GitHub's release page lists Desktop v0.5.23
+(September 5) and v0.5.22 (September 4). Relevant candidates and source links
+are recorded in the execution plan's upstream reuse checkpoint. Read-only
+inspection initially found the seven examined release commit objects absent
+locally. Subsequent audit fetched `block/main` into shared refs; no upstream
+merge was performed. Selective ACP and desktop imports were adapted in
+separate worktrees, with the dependency/ownership record at
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/upstream-import-spec.md`.
+Those three lane patches are now assembled in the isolated foundation
+checkout, including the CLI receipt wait. Existing
+mention/invitation flows overlap, so integrate the dependency stack against
+those consumers rather than build a second implementation. This is an
+inclusion audit, not runtime validation of upstream's reported behavior.
+
+First full `just ci` attempt stopped at a new relay test helper's
+`too_many_arguments` Clippy failure; the admission lane repaired the helper
+with a parameter structure. A second attempt found the launch form over the
+file-size limit; extracting the setup disclosure repaired that failure.
+The third full run passed in `just-ci-round3.log` (including 8,240 desktop
+unit tests). This run precedes the final role-claim disclosure correction and
+the added delayed-start mock seam; subsequent focused checks are recorded
+below. Initial log:
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/just-ci.log`
+(not a file checked into this repository).
+
+Validation environment finding: `just test` first runs isolated genesis and
+push-gate proofs, then invokes `scripts/run-tests.sh all`. With no `.env`, that
+script sets `DATABASE_URL`/`PGDATABASE` to the shared development database and
+its integration phase runs migrations/seeding. The first run was stopped
+during workspace unit tests, before that integration phase. The root worktree
+now has an ignored task-local `.env` pointing at scratch database
+`astra_validation_1788705430` (and Redis database 14); the isolated rerun log is
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/just-test-isolated.log`.
+Do not run the all-tests recipe in another worktree without an isolated
+environment; passing a shell `DATABASE_URL` alone is insufficient because the
+script's no-file fallback overwrites it.
+
+The first isolated run exposed a setup ordering issue: workspace unit tests
+that read relay audit tables ran before the scratch database was migrated.
+The integration phase populated that scratch schema. The subsequent complete
+`just test` passed, including the genesis/push-gate proofs and all four test
+sections, in `just-test-isolated-round2.log` in the same validation directory.
+
+Review correction: open catalog ingress verifies event signatures, but does
+not prove a 44223 author was commissioned as that execution's provider. The
+new Packs comparison therefore labels every open-ingress row as unverified
+metadata, names its signer and says “Claims same/different version.” It does
+not claim execution adoption. The forged-member regression and renderer
+assertions pass in `rolePackSnapshots.test.mjs` and `RolePackSnapshots.test.mjs`.
+
+Channel entry implementation now includes opt-in thread scope, publish-before-
+wake with captured community/identity, bounded startup replay, and
+`bee sessions create --wait` returning a provider-confirmed target and
+`sessionUrl`. The new chat navigation link opens the existing session route
+without inventing a transcript sequence. The source instructions describe
+unseated execution with the conversation agent retaining coordination.
+These are assembled changes under validation, not a live Keystone acceptance
+claim. Thread scope remains default-off in this import; offline catch-up,
+cross-machine work recovery and automatic role adoption remain undelivered.
+
+Final foundation E2E ran 11 cases: launch/role cases passed, two access cases
+failed on obsolete test navigation and were corrected. Subsequent imported UI
+and session-link results against the assembled build are recorded below.
+
+The channel-link E2E now passes (`channel-session-link-e2e-round5.log`). It
+uses the real target-key builder and opens the existing workspace. Earlier
+runs caught that a catalog generation is qualified by channel **and provider
+signer**, not just the command target; `sessionUrl` now carries all three.
+The assembled CLI recording-relay suite passes 16 tests, including an
+uppercase channel input matching the builder's canonical UUID tag
+(`cli-assembled-tests-final.log`).
+
+Imported UI validation exposed two real missing connections, now repaired:
+the detached-wake toast scope had no producer/reset connection,
+silencing all failures, and observer control dispatch discarded the envelope
+channel, so scoped Stop results were never recognized. The bridge must retain
+the actual wire shape; the production observer boundary must supply the
+envelope's channel after payload validation. Identity changes without a
+community remount now refresh the toast scope through the existing identity
+query lifecycle. Final focused runs in `foundation-focused-ui-acceptance.log`
+pass access 5/5, experiments 1/1, Stop 4/4 and wake 6/6. The observer-store
+regression crosses the live-event/subscriber seam with matching, foreign and
+conflicting payload scope. These are mock-bridge UI checks, not proof of live
+native or cross-machine execution. The aggregate run in
+`just-ci-assembled.log` passed workspace Rust, 8,281 desktop unit tests and the
+desktop build, then stopped at native fixture parity: the deployed launch now
+includes `BUZZ_ACP_SESSION_POLICY=channel`, but the shared provider fixture
+still omitted it (3,119 native tests passed, one failed). The shared fixture
+now includes that intentional default. Its desktop equality test and all four
+provider wire-fixture tests pass. The complete native stage rerun passed in
+`just-ci-assembled-native-repaired.log`; remaining web tests/build and all
+1,734 mobile tests passed in `just-ci-assembled-remaining.log`. Together these
+runs pass every `just ci` stage; the original assembled invocation itself
+exited nonzero at the repaired fixture. No production code changed for that
+repair. Full desktop smoke and live Keystone/native acceptance have not run
+for this batch; they remain required before claiming the integrated workflow
+or landing on main.
+
+Product direction is now [VISION_COLLABORATION.md](../VISION_COLLABORATION.md),
+with the ordered delivery and acceptance in
+[COLLABORATIVE_WORKSPACE_PLAN.md](COLLABORATIVE_WORKSPACE_PLAN.md).
+One subscription is a supported complete configuration; cross-provider review
+is optional. Routine authorized work follows consult/decide/continue/notify.
+Deterministic software owns mechanical waiting and coordination.
+
+Work is isolated on `work/2030-workspace-foundation` in
+`/Users/brian/Projects/beekeeper/review-agents-chat-astra`, based on
+`059e81794b10bdf5860c8852cfc26d7c239c8d3d`. The running checkout is preserved.
+These are locally validated branch changes, **not deployment evidence**. The September 6
+handoff's live-state measurements remain historical observations, not a fresh
+verification by this batch.
+
+Brian's September 6 new-session screenshot establishes a usability finding:
+the start flow exposes identity/public-key lists, provider choices, challenger
+rate, posture, limits and raw verdict semantics alongside a disabled Launch
+action. Users must understand orchestration before starting ordinary work.
+Source attachment:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-14784fb8-3bc3-48a5-b778-34ab8491354c.png`.
+The intended correction is objective + contextual project + saved setup +
+start, with optional advanced settings and actionable missing prerequisites.
+The screenshot alone does not establish which prerequisite disabled Launch;
+source tracing and runtime validation must identify that before changing it.
+
+Single-subscription routing already has a fallback: desktop
+`codingSessionRouting.ts` retains same-provider candidates when no eligible
+cross-provider target exists, with regression coverage in
+`codingSessionHireAnswer.test.mjs`. The hard family helper still serves initial
+lead commissioning; ordinary hire fallback is distinct. `CREW_ROLES.md` and
+`CREW_SESSIONS_PLAN.md` now disclose that distinction without adding a
+mandatory cross-provider review policy.
+
 > **2026-08-26 — the relay is canonical; GitHub is a bridge-fed follower.**
 > Verification first: nothing server-side ever pushed to GitHub — Woodpecker's
 > forge *is* GitHub (`WOODPECKER_GITHUB=true`), so GitHub pushes trigger CI,
@@ -8547,6 +8680,21 @@ items keep their numbers under a heading of their own so the citations that
 point at them still resolve.**
 
 ### The ordered track
+
+**2026-09-06:** the active delivery order is the numbered sequence in
+[COLLABORATIVE_WORKSPACE_PLAN.md](COLLABORATIVE_WORKSPACE_PLAN.md): repair
+admission evidence; simplify session start alongside observable role snapshots;
+deliver deterministic operational completion; coordinate intent and decisions;
+support fenced continuation; complete chat participation and configuration
+migration; exercise the whole two-machine workflow. The first build batch is
+in progress in an isolated worktree, not landed or deployed.
+
+The list below is retained as the **September 3 historical track**, including
+its outstanding live-test requirements. Its old build instructions and claims
+about which actions require Brian are not fresh current-state findings. Recheck
+each against the later September 5 landings before treating it as pending.
+
+### Historical September 3 track
 
 **Batches 2 and 3 are complete.** Their landings are §2 items 104 (A1–A3),
 105 (B1, B1b, B1c), 106 (A4), 107 (B2, B3), 108 (L1, L2, L3) and **109 (L4–L16,

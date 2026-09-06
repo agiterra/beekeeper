@@ -32,6 +32,17 @@ export type RolePackRef = {
   repo: string;
   /** The 40-hex commit, or the app's own version string for shipped packs. */
   sha: string;
+  /**
+   * The role whose directory was resolved. Older host fixtures did not carry
+   * this field, so a consumer needing a complete portable coordinate must
+   * treat its absence as unknown rather than borrow the enclosing row's role.
+   */
+  role?: string;
+  /**
+   * Repository-relative directory staged for the role. As with `role`, this
+   * is read-optional for older producers and fixtures.
+   */
+  path?: string;
 };
 
 /** One role, from the rung staging would pick for the project. */

@@ -6,9 +6,13 @@
       "name": "Workflows",
       "description": "YAML-defined automations with approval gates",
       "defaultEnabled": true,
-      "platforms": [
-        "desktop"
-      ]
+      "platforms": ["desktop"]
+    },
+    {
+      "id": "threadScopedAcpSessions",
+      "name": "Thread Scoped ACP Sessions",
+      "description": "Give each channel thread isolated agent context. Applies when managed agents next start; DMs stay conversation-scoped.",
+      "platforms": ["desktop"]
     },
     {
       "id": "projects",
@@ -22,18 +26,14 @@
       "name": "Pulse",
       "description": "Activity feed with notes, social posts, and agent activity",
       "defaultEnabled": true,
-      "platforms": [
-        "desktop"
-      ]
+      "platforms": ["desktop"]
     },
     {
       "id": "forum",
       "name": "Forum Channels",
       "description": "Forum-style threaded channels for long-form discussions",
       "defaultEnabled": true,
-      "platforms": [
-        "desktop"
-      ]
+      "platforms": ["desktop"]
     },
     {
       "id": "agentManagedProfiles",

@@ -70,6 +70,12 @@ pub fn effective_agent_relay_url(_record_relay: &str, workspace_relay: &str) -> 
     workspace_relay.to_string()
 }
 
+mod scope;
+pub use scope::{
+    assert_expected_relay_scope, assert_expected_signer, bind_expected_relay_scope,
+    bind_expected_signer,
+};
+
 pub fn relay_http_base_url(relay_url: &str) -> String {
     let trimmed = relay_url.trim().trim_end_matches('/');
 

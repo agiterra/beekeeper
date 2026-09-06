@@ -13,7 +13,7 @@ import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { requestOpenSnapshotImport } from "@/features/agents/openSnapshotImportFromUrlEvent";
-import { parseChannelLink } from "@/features/messages/lib/channelLink";
+import { renderWorkspaceDeepLink } from "./markdown/WorkspaceDeepLink";
 import {
   parseMessageLink,
   resolveMessageLinkRenderTarget,
@@ -60,7 +60,6 @@ import {
 import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
 import {
-  ChannelDeepLinkAnchor,
   MarkdownChannelDeepLink,
   MarkdownChannelReference,
 } from "./markdown/ChannelDeepLink";
@@ -1311,17 +1310,13 @@ export function createMarkdownComponents(
     // Intercept `beekeeper://channel/<uuid>` and `beekeeper://message?...` links so
     // clicks navigate in-app instead of opening the URL in the OS browser.
     if (href) {
-      if (parseChannelLink(href).ok) {
-        return (
-          <ChannelDeepLinkAnchor
-            {...props}
-            href={href}
-            interactive={interactive}
-          >
-            {children}
-          </ChannelDeepLinkAnchor>
-        );
-      }
+      const workspaceLink = renderWorkspaceDeepLink({
+        ...props,
+        href,
+        children,
+        interactive,
+      });
+      if (workspaceLink) return workspaceLink;
       const messageLinkTarget = resolveMessageLinkRenderTarget({
         href,
         label,

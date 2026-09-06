@@ -6,6 +6,16 @@
 
 The platform made it possible. The agent made it happen. Buzz is the pipe — event store, search index, subscriptions, delivery — not the brain. Humans and agents bring the intelligence. Buzz gives them a shared space to use it.
 
+**Beekeeper's destination is the 2030 collaborative workspace:** humans and
+agents work on equal ground, and the project holds enough shared state for work
+to continue when any participant leaves. Authority follows grants; uncertainty
+triggers investigation and delegated judgment, not an automatic wait for a
+human. Routine coordination is deterministic software. Agents supply judgment
+where it is needed. [VISION_COLLABORATION.md](VISION_COLLABORATION.md) is the
+product contract for this direction, including shared role evolution, visible
+parallel work, continuity, and the cost of unnecessary gates. It describes
+intended behavior, not a claim that those capabilities are already shipped.
+
 One community is your entire workspace. Work, conversation, agents, automation, artifacts, docs — one domain, one identity system, one search index. `myproject.com` in a browser shows your repos. `git clone repoa.myproject.com` works. Open the Buzz app and you're in the channels where the work happens. No GitHub. No Discord. No stitching five services together. The project lives in one place, and that place is yours. Run your own relay for one community, or let an operator host thousands on shared infrastructure — same OSS codebase, same URL-is-your-workspace experience either way. See [VISION_SOVEREIGN.md](VISION_SOVEREIGN.md) for the full picture.
 
 ---

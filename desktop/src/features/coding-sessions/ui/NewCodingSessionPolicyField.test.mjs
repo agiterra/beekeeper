@@ -46,18 +46,13 @@ test("L21: the selected state is the draft's, not a default", () => {
   assert.match(render(), /<option value="unset" selected="">/);
 });
 
-test("L21: the copy says what it enforces, and does not claim the push gate", () => {
+test("the copy says the completion and push effects of the verifier setting", () => {
   const html = render();
-  // What `gates.verifierRequired` actually gates is the 44244 fold's
-  // completion check (`coding_session_completion_verification.rs:42`) — the
-  // mission cannot complete while a settled report has no verifier's ruling.
-  // It is NOT read by the verdict-gated push rule
-  // (`coding_session_verdict_admission.rs`, `verdict_admission_fold_context`
-  // passes `verifier_required: false` and says so), and a label promising
-  // otherwise would be a control lying about what it enforces.
+  // `gates.verifierRequired` affects the 44244 completion fold and the
+  // relay's verdict-gated push path; the precise scope remains in the control
+  // copy while the summary labels it as an effective review setting.
   assert.match(html, /complet/i);
-  assert.ok(
-    !/lands? this mission's work/i.test(html),
-    "the switch does not decide who may land a commit; the repository's rule does",
-  );
+  assert.match(html, /lands? this mission[’']s work/i);
+  assert.match(html, /effective review setting/i);
+  assert.match(html, /advisory guidance/i);
 });

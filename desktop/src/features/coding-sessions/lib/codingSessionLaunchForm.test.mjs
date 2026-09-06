@@ -115,7 +115,7 @@ test("an unknown is disclosed and never blocks", () => {
   assert.deepEqual(ids, ["policy", "project-readiness", "role-pack-missing"]);
   assert.match(
     readiness.unknowns.find((entry) => entry.id === "policy").sentence,
-    /nothing in this build enforces it yet/,
+    /Turn budgets and verifier\/required-gate settings have scoped consumers/,
   );
 });
 
@@ -151,7 +151,7 @@ test("the plan names the kinds a governed launch publishes, in order", () => {
   );
   assert.match(
     plan.find((line) => line.id === "policy").sentence,
-    /stated, not enforced/,
+    /turn budgets and verifier gates have scoped effects/i,
   );
   assert.match(
     plan.find((line) => line.id === "turn").sentence,

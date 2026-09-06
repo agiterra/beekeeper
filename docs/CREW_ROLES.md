@@ -67,20 +67,24 @@ finishes reading is a skill that does not apply.
 
 ## Family check (vendor diversity)
 
-Contract D8 refuses a team launch when the verifier's model vendor equals any
-builder's — a launch check the desktop performs from the seat roster (declared
-per seat, read off the seat's ACP runtime when that runtime can run only one
-vendor, or derived unambiguously from the model id), not something a pack or
-its prompt can express or enforce. A pack has no vendor opinion; two seats
-running this same `verifier` pack on different vendors are a valid team, and
-the same pack on the same vendor as a builder seat is refused at launch.
+The normal hire router prefers a verifier from another provider when one is
+eligible. If none is available, it permits a fresh same-provider execution and
+discloses `no eligible cross-provider target`. This is covered by
+`codingSessionHireAnswer.test.mjs`; Rust and desktop routing preserve the same
+fallback. One subscription is a supported configuration under
+[VISION_COLLABORATION.md](../VISION_COLLABORATION.md).
 
-**This is why the installer seats no verifier.** Every seat of one launch is
-created against the single `providerInstanceRef` the dialog selected, so every
-seat runs on that runtime's vendor — a verifier seated beside a builder there
-can only ever share its vendor, and the launch would refuse the roster it just
-installed (SESSION_STATE item 77, F7). The pack installs unseated; seat it by
-hand in a roster launched across two providers.
+The older D8 family helper still rejects a roster containing a verifier and
+builder from the same vendor (`codingSessionCrew.ts`). Its current launch
+caller checks the initially created lead; later verifier hires use the router
+above. Do not describe that older helper as a universal same-provider review
+ban, or require users to arrange a second subscription. This discrepancy
+remains implementation work, not evidence that every path has been unified.
+
+A pack supplies role procedure, not proof of provider diversity or review
+independence. Report the actual reviewer and review basis. Cross-provider
+scrutiny is an optional improvement; deterministic checks and fresh-context
+review remain useful without it.
 
 ## Prompt size and where the craft lives
 

@@ -37,7 +37,7 @@ use super::{
     readiness::EffectiveHarnessDescriptor,
     runtime::{resolve_session_title, SESSION_TITLE_ENV_VAR},
     types::{AgentDefinition, ManagedAgentRecord, TeamRecord},
-    GlobalAgentConfig,
+    AcpSessionPolicy, GlobalAgentConfig,
 };
 
 pub(crate) mod diff;
@@ -75,6 +75,8 @@ pub(crate) struct SpawnConfigInputs<'a> {
     /// Compile-time distribution capability projected at this runtime boundary.
     /// The stored record remains portable; only effective spawned access is stamped.
     pub enforced_owner_only: bool,
+    /// The policy applied at launch and shown in restart-required comparisons.
+    pub session_policy: AcpSessionPolicy,
 }
 
 /// The effective spawn configuration of one managed-agent process.
@@ -126,6 +128,8 @@ pub(crate) struct SpawnConfigSnapshot {
     pub idle_timeout_seconds: Option<u64>,
     pub max_turn_duration_seconds: Option<u64>,
     pub parallelism: u32,
+    /// The effective ACP session policy set directly on the launch command.
+    pub session_policy: String,
 }
 
 impl SpawnConfigSnapshot {
@@ -140,6 +144,7 @@ impl SpawnConfigSnapshot {
             model,
             provider,
             enforced_owner_only,
+            session_policy,
         } = inputs;
         let (respond_to, respond_to_allowlist) =
             super::projected_access_with_policy(record, enforced_owner_only);
@@ -178,6 +183,7 @@ impl SpawnConfigSnapshot {
             // pool and must badge. The diff surface consequently displays the
             // effective value — that is correct, it is what actually runs.
             parallelism: super::effective_parallelism(&descriptor.command, record.parallelism),
+            session_policy: session_policy.as_str().to_string(),
         }
     }
 
@@ -218,6 +224,7 @@ pub(crate) fn prospective_spawn_config_snapshot(
     workspace_relay: &str,
     global: &GlobalAgentConfig,
     enforced_owner_only: bool,
+    session_policy: AcpSessionPolicy,
 ) -> SpawnConfigSnapshot {
     // Prospective re-snapshot: apply the same `apply_persona_snapshot` the
     // start/restore paths run right before spawning, so this describes what a
@@ -268,6 +275,7 @@ pub(crate) fn prospective_spawn_config_snapshot(
         model: model.as_deref(),
         provider: provider.as_deref(),
         enforced_owner_only,
+        session_policy,
     })
 }
 

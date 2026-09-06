@@ -2925,7 +2925,7 @@ pub enum SessionsCmd {
     /// are refused here: an actor's key material is host-local custody the
     /// CLI does not hold — see `--actor`.
     #[command(
-        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -"
+        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --brief 'start' --wait --timeout-secs 60\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -\n\nWith --wait, the command publishes once and waits for the named provider's signed create receipt. A confirmed receipt adds the exact cs-target; timeout preserves the commandId and never retries."
     )]
     Create {
         /// Channel UUID to publish the create into
@@ -2967,6 +2967,12 @@ pub enum SessionsCmd {
         /// Refused: the driver slug is minted by the provider (see the error text)
         #[arg(long)]
         driver: Option<String>,
+        /// Wait for the named provider to confirm this create and return its target.
+        #[arg(long)]
+        wait: bool,
+        /// Maximum seconds to wait after relay acceptance (1..=300).
+        #[arg(long = "timeout-secs")]
+        timeout_secs: Option<u64>,
     },
     /// Ask an umbrella's host to seat a new agent on a role (kind 44221
     /// `session.hire`).

@@ -153,18 +153,26 @@ impl Watched {
         .await;
     }
 
-    /// The accepted lifecycle signed by a key of the caller's choosing, so a
-    /// case can ask what happens when the *command's* signer is not entitled
-    /// to steer the mission (2026-09-05 refuter, B1).
-    pub(super) async fn commission_signed_by(&self, commissioner: &Keys, provider: &Keys) {
-        commission_provider(
+    /// A create carrying the public hire attribution, signed by a chosen key.
+    /// Admission tests use this to prove that `hireRef` grants that signer no
+    /// authority beyond whatever the mission already gave it.
+    pub(super) async fn commission_answering_hire_signed_by(
+        &self,
+        hire_ref: &str,
+        commissioner: &Keys,
+        provider: &Keys,
+    ) {
+        commission_provider_with_hire(
             &self.state,
             self.community,
             self.channel_id,
             &self.session_ref,
             &self.genesis_ref,
             commissioner,
-            provider,
+            CommissionedProvider {
+                provider,
+                hire_ref: Some(hire_ref),
+            },
         )
         .await;
     }
@@ -387,6 +395,36 @@ pub(super) async fn commission_provider(
     founder: &Keys,
     provider: &Keys,
 ) {
+    commission_provider_with_hire(
+        state,
+        community,
+        channel_id,
+        session_ref,
+        genesis_ref,
+        founder,
+        CommissionedProvider {
+            provider,
+            hire_ref: None,
+        },
+    )
+    .await;
+}
+
+struct CommissionedProvider<'a> {
+    provider: &'a Keys,
+    hire_ref: Option<&'a str>,
+}
+
+async fn commission_provider_with_hire(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    channel_id: Uuid,
+    session_ref: &str,
+    genesis_ref: &str,
+    founder: &Keys,
+    commissioned: CommissionedProvider<'_>,
+) {
+    let CommissionedProvider { provider, hire_ref } = commissioned;
     let command_id = format!("cmd-{}", Uuid::new_v4().simple());
     let session_id = format!("s-{}", Uuid::new_v4().simple());
     let target = serde_json::json!({
@@ -395,21 +433,25 @@ pub(super) async fn commission_provider(
         "sessionId": session_id,
         "generation": 1,
     });
+    let mut action = serde_json::json!({
+        "type": "session.create",
+        "projectRef": serde_json::Value::Null,
+        "repoRef": serde_json::Value::Null,
+        "sessionRef": session_ref,
+        "genesisRef": genesis_ref,
+        "providerInstanceRef": "claude-primary",
+        "providerAuthorityPubkey": provider.public_key().to_hex(),
+        "model": serde_json::Value::Null,
+        "title": serde_json::Value::Null,
+        "initialTurn": serde_json::Value::Null,
+    });
+    if let Some(hire_ref) = hire_ref {
+        action["hireRef"] = serde_json::Value::String(hire_ref.to_owned());
+    }
     let command = serde_json::json!({
         "schema": buzz_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
         "commandId": command_id,
-        "action": {
-            "type": "session.create",
-            "projectRef": serde_json::Value::Null,
-            "repoRef": serde_json::Value::Null,
-            "sessionRef": session_ref,
-            "genesisRef": genesis_ref,
-            "providerInstanceRef": "claude-primary",
-            "providerAuthorityPubkey": provider.public_key().to_hex(),
-            "model": serde_json::Value::Null,
-            "title": serde_json::Value::Null,
-            "initialTurn": serde_json::Value::Null,
-        },
+        "action": action,
     })
     .to_string();
     buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(&command)

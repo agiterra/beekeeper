@@ -3,12 +3,14 @@ import * as React from "react";
 
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import {
   type ProjectContainer,
   useDisplayProjectContainers,
   useProjectCodingSessionBuckets,
 } from "@/features/projects-container/hooks";
 import type { ProjectCodingSessionShelfState } from "@/features/projects-container/lib/projectCodingSessionShelf";
+import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { listProjectRolePacks } from "@/shared/api/tauriRolePacks";
 import type { RolePackSummary } from "@/shared/api/types";
 
@@ -18,6 +20,10 @@ import {
   type PacksSourceSummary,
   type RolesView,
 } from "./rolesViewModel";
+import {
+  buildRolePackSnapshots,
+  type RolePackSnapshots,
+} from "./rolePackSnapshots";
 
 const NO_PROJECT_BUCKETS: ReadonlyMap<string, never[]> = new Map();
 
@@ -25,6 +31,7 @@ const NO_PROJECT_BUCKETS: ReadonlyMap<string, never[]> = new Map();
 const AGE_TICK_MS = 30_000;
 
 const NO_PACKS: readonly RolePackSummary[] = [];
+const NO_CHANNEL_IDS: readonly string[] = [];
 
 /** React Query key for one project's packs; `null` is the no-project read. */
 export function rolePacksQueryKey(projectRef: string | null) {
@@ -69,6 +76,19 @@ export type ProjectPacksViewState = {
   error: string | null;
   /** What the sessions shelf could and could not read — surfaced, not hidden. */
   shelfState: ProjectCodingSessionShelfState;
+  /**
+   * This machine's local pack-resolution snapshot compared with unverified
+   * signed metadata claims from the project's readable channels.
+   */
+  rolePackSnapshots: RolePackSnapshots;
+  /** When the most recent resolver refetch failed after a prior answer. */
+  packsResolutionIsStale: boolean;
+  /** The open metadata-claim read's disclosed state. */
+  executionReports: {
+    isLoading: boolean;
+    error: string | null;
+    authorityError: string | null;
+  };
   view: RolesView;
   /** Refetch after an install writes new packs or agents. */
   refetchPacks: () => void;
@@ -83,8 +103,9 @@ export type ProjectPacksViewState = {
  * Adapted from the old Dashboard Roles tab's `useRolesView` — the only
  * change is the project itself, which this surface's route names outright
  * instead of falling back through `resolveRolePacksProject` (there is no
- * picker here to hand a fallback to). Everything downstream of `project` is
- * unchanged: the packs read, the managed agents, the shelf, and the join.
+ * picker here to hand a fallback to). The packs read, managed agents, and
+ * shelf stay project-scoped; revision reporting additionally keeps each raw
+ * visible metadata generation before the shelf folds them into umbrellas.
  */
 export function useProjectPacksView(projectId: string): ProjectPacksViewState {
   const projects = useDisplayProjectContainers();
@@ -94,6 +115,29 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
   );
   const projectRef = project?.address ?? null;
 
+  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
+
+  // A project can name an ordinary channel itself, while its session transport
+  // names the project from the channel side. Include both shapes, using the
+  // same readable-member rule as the shelf. The second project-ref check in
+  // buildRolePackSnapshots prevents a shared channel from lending another
+  // project's metadata claim.
+  const projectChannelIds = React.useMemo(() => {
+    if (!project) return NO_CHANNEL_IDS;
+    const declared = new Set(project.channelIds);
+    return (channelsQuery.data ?? [])
+      .filter(
+        (channel) =>
+          (channel.isMember || isSessionTransportChannel(channel)) &&
+          (declared.has(channel.id) || channel.projectRef === project.address),
+      )
+      .map((channel) => channel.id)
+      .sort();
+  }, [channelsQuery.data, project]);
+  const executionCatalog = useGlobalCodingSessionCatalog(projectChannelIds, {
+    authorityMode: "open",
+  });
+
   const packsQuery = useRolePacksQuery(projectRef);
   const packs = packsQuery.data ?? NO_PACKS;
   const packsError = errorSentence(packsQuery.error);
@@ -102,7 +146,6 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
   const agentsQuery = useManagedAgentsQuery();
   const agents = agentsQuery.data;
 
-  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const buckets = useProjectCodingSessionBuckets(
     channelsQuery.data,
     NO_PROJECT_BUCKETS,
@@ -126,6 +169,26 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     [agents, nowSeconds, packs, projects, shelfEntries],
   );
   const packsSource = React.useMemo(() => describePacksSource(packs), [packs]);
+  const rolePackSnapshots = React.useMemo(
+    () =>
+      buildRolePackSnapshots({
+        projectRef: projectRef ?? "",
+        resolvedAt: packsQuery.dataUpdatedAt || null,
+        resolvedPacks: packs,
+        catalogEntries: executionCatalog.entries,
+      }),
+    [executionCatalog.entries, packs, packsQuery.dataUpdatedAt, projectRef],
+  );
+  // The session catalog is scoped by channelsQuery.data. If that prerequisite
+  // has not completed or fails, an empty catalog is not evidence that this
+  // project has no metadata claims.
+  const executionReportsError = React.useMemo(() => {
+    const errors = [
+      errorSentence(channelsQuery.error),
+      executionCatalog.errorMessage,
+    ].filter((error): error is string => error !== null);
+    return errors.length > 0 ? errors.join(" ") : null;
+  }, [channelsQuery.error, executionCatalog.errorMessage]);
 
   return {
     project,
@@ -134,6 +197,13 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     isLoading: packsPending,
     error: packsError,
     shelfState: buckets.state,
+    rolePackSnapshots,
+    packsResolutionIsStale: packsQuery.isError && packsQuery.dataUpdatedAt > 0,
+    executionReports: {
+      isLoading: channelsQuery.isPending || executionCatalog.isLoading,
+      error: executionReportsError,
+      authorityError: executionCatalog.authorityErrorMessage,
+    },
     view,
     refetchPacks: () => void packsQuery.refetch(),
     refetchAgents: () => void agentsQuery.refetch(),

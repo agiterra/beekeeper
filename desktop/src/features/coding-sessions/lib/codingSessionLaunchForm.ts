@@ -331,7 +331,7 @@ export function codingSessionLaunchReadiness(input: {
     unknowns.push({
       id: "policy",
       sentence:
-        "The policy below is published as a signed record and nothing in this build enforces it yet.",
+        "The policy below is published as a signed record. Turn budgets and verifier/required-gate settings have scoped consumers; the other fields are read and shown as guidance.",
     });
   }
   if (!input.governed) {
@@ -394,7 +394,8 @@ export function codingSessionLaunchPlan(input: {
     lines.push({
       id: "policy",
       kind: KIND_CODING_SESSION_POLICY,
-      sentence: "Publish the policy — stated, not enforced.",
+      sentence:
+        "Publish the policy — turn budgets and verifier gates have scoped effects; other fields guide the lead.",
     });
   }
   lines.push({

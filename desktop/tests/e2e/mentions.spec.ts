@@ -1579,7 +1579,7 @@ test("shared agents wait for initial directory authorization", async ({
   });
 });
 
-test("mentioning an in-channel stopped managed agent starts it before sending", async ({
+test("mentioning an in-channel stopped managed agent publishes first and starts it detached", async ({
   page,
 }) => {
   await installMockBridge(page, {
@@ -1591,6 +1591,9 @@ test("mentioning an in-channel stopped managed agent starts it before sending", 
         channelNames: ["general"],
       },
     ],
+    // Far longer than the test runs: the publish landing below proves the
+    // send no longer waits for start_managed_agent to resolve.
+    startManagedAgentDelayMs: 45_000,
   });
   await page.goto("/");
   await page.getByTestId("channel-general").click();
@@ -1605,23 +1608,518 @@ test("mentioning an in-channel stopped managed agent starts it before sending", 
   await input.press("Enter");
   await page.keyboard.type(" can you help?");
 
+  const baselineCommands = await readCommandLog(page);
   const baselineStartCount = commandCount(
-    await readCommandLog(page),
+    baselineCommands,
     "start_managed_agent",
   );
+  const baselineSignCount = commandCount(baselineCommands, "sign_event");
+  const baselinePayloadCount = (await readCommandPayloadLog(page)).length;
   await page.getByTestId("send-message").click();
 
+  // Publish-first: the message signs and renders while start_managed_agent
+  // is still pending behind the injected delay.
+  await expect
+    .poll(async () => commandCount(await readCommandLog(page), "sign_event"))
+    .toBeGreaterThan(baselineSignCount);
   await expect
     .poll(async () =>
       commandCount(await readCommandLog(page), "start_managed_agent"),
     )
     .toBeGreaterThan(baselineStartCount);
 
+  // The detached start carries a replay floor so the spawned harness's first
+  // REQ replays past the just-published message.
+  const startCall = (await readCommandPayloadLog(page))
+    .slice(baselinePayloadCount)
+    .find((entry) => entry.command === "start_managed_agent");
+  expect(
+    (startCall?.payload as { replayFloorUnix?: number } | undefined)
+      ?.replayFloorUnix,
+  ).toBeGreaterThan(0);
+  // It also carries the tenant scope active at the send. The start now
+  // outlives the send, and a community switch only remounts the React
+  // subtree, so an unscoped wake would spawn against whichever relay/identity
+  // is current when it lands; the backend fails closed on these instead.
+  const activeRelayUrl = await page.evaluate(() => {
+    const communities = JSON.parse(
+      window.localStorage.getItem("buzz-communities") ?? "[]",
+    ) as { id: string; relayUrl: string }[];
+    const activeId = window.localStorage.getItem("buzz-active-community-id");
+    return (
+      communities.find((community) => community.id === activeId)?.relayUrl ?? ""
+    );
+  });
+  expect(activeRelayUrl).not.toBe("");
+  expect(startCall?.payload).toMatchObject({
+    expectedRelayUrl: activeRelayUrl,
+    expectedSignerPubkey: MOCK_VIEWER_PUBKEY,
+  });
+  // The wake is queued during send preparation and flushed only after the
+  // relay accepts the publish, so the sign always precedes the start — a
+  // wake can never exist (nor its failure toast "your message was sent"
+  // appear) for a message whose publish outcome is still unknown.
+  const commandsAfterSend = (await readCommandLog(page)).slice(
+    baselineCommands.length,
+  );
+  expect(commandsAfterSend.indexOf("sign_event")).toBeLessThan(
+    commandsAfterSend.indexOf("start_managed_agent"),
+  );
+
   const mentionChip = page
     .getByTestId("message-row")
     .last()
     .locator("[data-mention].agent-mention-highlight", { hasText: "fizz" });
   await expect(mentionChip).toBeVisible();
+});
+
+test("a second mention while the first wake is in flight does not start the agent twice", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: IN_CHANNEL_MANAGED_AGENT_PUBKEY,
+        name: "fizz",
+        status: "stopped",
+        channelNames: ["general"],
+      },
+    ],
+    // Held open for the whole test. Awaiting the start used to make a
+    // duplicate unreachable — the composer refused to send while one was
+    // pending, and by the time it lifted the success handler had cached a
+    // running record. Detached, the record keeps reading "stopped" for the
+    // whole spawn, which is precisely when a second send re-fires.
+    startManagedAgentDelayMs: 45_000,
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  const dropdown = autocomplete(page);
+  const baselineCommands = await readCommandLog(page);
+  const baselineStartCount = commandCount(
+    baselineCommands,
+    "start_managed_agent",
+  );
+
+  await input.fill("Hey @fizz");
+  await expect(dropdown.getByText("fizz")).toBeVisible();
+  await input.press("Enter");
+  await page.keyboard.type(" do X");
+  await page.getByTestId("send-message").click();
+  await expect(
+    page.getByTestId("message-row").filter({ hasText: "do X" }),
+  ).toBeVisible();
+  await expect
+    .poll(async () =>
+      commandCount(await readCommandLog(page), "start_managed_agent"),
+    )
+    .toBe(baselineStartCount + 1);
+
+  await input.fill("Hey @fizz");
+  await expect(dropdown.getByText("fizz")).toBeVisible();
+  await input.press("Enter");
+  await page.keyboard.type(" also Y");
+  await page.getByTestId("send-message").click();
+
+  // The second message publishes on its own — suppression is of the wake, not
+  // of the send; the composer is never gated on a pending start again.
+  await expect(
+    page.getByTestId("message-row").filter({ hasText: "also Y" }),
+  ).toBeVisible();
+  // One wake serves both messages: its replay floor predates the first
+  // message, and the floor is a lower bound, so one harness boot covers both.
+  expect(commandCount(await readCommandLog(page), "start_managed_agent")).toBe(
+    baselineStartCount + 1,
+  );
+});
+
+test("a detached agent start failure surfaces as a toast after the message sends", async ({
+  page,
+}) => {
+  const startError = "Mock agent startup failed.";
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: IN_CHANNEL_MANAGED_AGENT_PUBKEY,
+        name: "fizz",
+        status: "stopped",
+        channelNames: ["general"],
+      },
+    ],
+    startManagedAgentErrors: [startError],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.fill("Hey @fizz");
+
+  const dropdown = autocomplete(page);
+  await expect(dropdown.getByText("fizz")).toBeVisible();
+  await input.press("Enter");
+  await page.keyboard.type(" can you help?");
+
+  await page.getByTestId("send-message").click();
+
+  // The message still publishes — the start runs off the critical path.
+  const mentionChip = page
+    .getByTestId("message-row")
+    .last()
+    .locator("[data-mention].agent-mention-highlight", { hasText: "fizz" });
+  await expect(mentionChip).toBeVisible();
+
+  // The failed start surfaces as a post-send toast instead of blocking the
+  // send, and the sent text is not restored into the composer. (The
+  // persistent agent audience may legitimately re-seed an "@fizz"
+  // auto-mention, so only the message body proves there was no
+  // failed-send restore.)
+  await expect(page.getByText(startError, { exact: false })).toBeVisible();
+  await expect(input).not.toContainText("can you help");
+});
+
+test("a failed publish drops the queued agent wake and never claims the message was sent", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: IN_CHANNEL_MANAGED_AGENT_PUBKEY,
+        name: "fizz",
+        status: "stopped",
+        channelNames: ["general"],
+      },
+    ],
+    // Reject the publish itself. The wake is queued behind it, so a publish
+    // that never lands must fire no wake at all — before this ordering, the
+    // wake fired during send preparation, rejected fast (the injected start
+    // error below), and toasted "your message was sent" while the publish
+    // went on to fail with no corrective message.
+    sendMessageErrors: ["Mock relay rejected the event."],
+    // Armed so that IF a wake still fired it would reject immediately and
+    // raise the false-success toast whose absence this spec pins.
+    startManagedAgentErrors: ["Mock agent startup failed."],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.fill("Hey @fizz");
+  await expect(autocomplete(page).getByText("fizz")).toBeVisible();
+  await input.press("Enter");
+  await page.keyboard.type(" do X");
+
+  const baselineStartCount = commandCount(
+    await readCommandLog(page),
+    "start_managed_agent",
+  );
+  await page.getByTestId("send-message").click();
+
+  // Deterministic completion signal: the failed send restores the draft into
+  // the composer. On the pre-fix ordering the wake had already fired — and
+  // toasted — before this point, so the assertions below need no timing games.
+  await expect(input).toContainText("do X");
+
+  // The message never landed: the optimistic row was rolled back...
+  await expect(
+    page.getByTestId("message-row").filter({ hasText: "do X" }),
+  ).toHaveCount(0);
+  // ...so the queued wake was dropped rather than flushed...
+  expect(commandCount(await readCommandLog(page), "start_managed_agent")).toBe(
+    baselineStartCount,
+  );
+  // ...and nothing on screen claims the message was sent.
+  await expect(
+    page.getByText("your message was sent", { exact: false }),
+  ).toHaveCount(0);
+});
+
+test("a detached start fired before a real community switch fails closed and keeps its warning out of the new community", async ({
+  page,
+}) => {
+  // Two seeded communities and a real rail-button switch: the click drives
+  // the actual provider → remount → resetCommunityState path (which clears
+  // and repoints the toast-scope mirror), and persists the active community
+  // id the mock's scope check reads — so the held start is refused exactly
+  // as the real backend would refuse it. The predecessor of this spec moved
+  // localStorage directly, which exercised the fail-closed refusal but never
+  // the switch itself, and pinned the stale toast's *presence* — the outcome
+  // the delivery fence now forbids.
+  const COMMUNITY_A = {
+    id: "ws-a",
+    name: "Alpha",
+    relayUrl: "ws://localhost:3000",
+    addedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const COMMUNITY_B = {
+    id: "ws-b",
+    name: "Bravo",
+    relayUrl: "ws://localhost:3001",
+    addedAt: "2026-01-02T00:00:00.000Z",
+  };
+  await installMockBridge(
+    page,
+    {
+      managedAgents: [
+        {
+          pubkey: IN_CHANNEL_MANAGED_AGENT_PUBKEY,
+          name: "fizz",
+          status: "stopped",
+          channelNames: ["general"],
+        },
+      ],
+      // Holds the start open long enough for the real switch below to
+      // complete under it — the window the detached (publish-first) wake
+      // opened.
+      startManagedAgentDelayMs: 3_000,
+    },
+    { skipCommunitySeed: true },
+  );
+  await page.addInitScript(
+    ({ list, active }) => {
+      window.localStorage.setItem("buzz-communities", JSON.stringify(list));
+      window.localStorage.setItem("buzz-active-community-id", active);
+    },
+    { list: [COMMUNITY_A, COMMUNITY_B], active: COMMUNITY_A.id },
+  );
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const input = page.getByTestId("message-input");
+  await input.fill("Hey @fizz");
+  await expect(autocomplete(page).getByText("fizz")).toBeVisible();
+  await input.press("Enter");
+  await page.keyboard.type(" can you help?");
+
+  const baselineCommands = await readCommandLog(page);
+  const baselineStartCount = commandCount(
+    baselineCommands,
+    "start_managed_agent",
+  );
+  const baselineSettledCount = commandCount(
+    baselineCommands,
+    "start_managed_agent:settled",
+  );
+  const baselinePayloadCount = (await readCommandPayloadLog(page)).length;
+  await page.getByTestId("send-message").click();
+
+  // The message published in A — only the wake is at stake from here on.
+  const mentionChip = page
+    .getByTestId("message-row")
+    .last()
+    .locator("[data-mention].agent-mention-highlight", { hasText: "fizz" });
+  await expect(mentionChip).toBeVisible();
+  await expect
+    .poll(async () =>
+      commandCount(await readCommandLog(page), "start_managed_agent"),
+    )
+    .toBeGreaterThan(baselineStartCount);
+  // The wake carries A's scope, so the backend fails it closed once B is
+  // active — the unit tests can't pin the real invoke payload.
+  const startCall = (await readCommandPayloadLog(page))
+    .slice(baselinePayloadCount)
+    .find((entry) => entry.command === "start_managed_agent");
+  expect(startCall?.payload).toMatchObject({
+    expectedRelayUrl: COMMUNITY_A.relayUrl,
+    expectedSignerPubkey: MOCK_VIEWER_PUBKEY,
+  });
+
+  // The real switch, while the start is still held.
+  await page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`).click();
+  await expect(
+    page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`),
+  ).toHaveAttribute("aria-current", "true");
+
+  // Wait for the held start to actually settle (the scope refusal fires
+  // after the injected delay), then give the rejection a beat to reach the
+  // hook's catch. Only past this point is the negative assertion below
+  // falsifiable: pre-fence, the stale toast appeared at settlement and stayed
+  // on screen for seconds.
+  await expect
+    .poll(
+      async () =>
+        commandCount(await readCommandLog(page), "start_managed_agent:settled"),
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(baselineSettledCount);
+  await page.waitForTimeout(500);
+
+  // B is on screen and community A's failure never toasts over it. The
+  // suppression is logged to the console instead; an A→B→A round-trip would
+  // re-arm delivery (pinned at the unit level). These counts are immediate
+  // snapshots, not retrying toHaveCount(0) assertions — a retry would simply
+  // wait out the toast's auto-dismiss and pass against the very toast it
+  // forbids.
+  await expect(page.getByTestId("channel-general")).toBeVisible();
+  expect(
+    await page.getByText("Could not start fizz", { exact: false }).count(),
+  ).toBe(0);
+  expect(
+    await page.getByText("your message was sent", { exact: false }).count(),
+  ).toBe(0);
+});
+
+test("a deploy held across an A→B→A community round-trip is not fired twice", async ({
+  page,
+}) => {
+  // The in-flight detached-start map used to be cleared by every community
+  // switch, and the backend's scope assertion is a current-state check — so a
+  // deploy still held from community A became valid again the moment A was
+  // re-applied, and a second mention back in A deployed the agent a second
+  // time (carrying the second message's replay floor, past the first
+  // message). The entries are tenant-keyed and self-cleaning, so they now
+  // survive the switch. This drives the real rail-switch path (provider →
+  // remount → resetCommunityState) that did the clearing; the map contract
+  // itself is pinned at the unit level.
+  const COMMUNITY_A = {
+    id: "ws-a",
+    name: "Alpha",
+    relayUrl: "ws://localhost:3000",
+    addedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const COMMUNITY_B = {
+    id: "ws-b",
+    name: "Bravo",
+    relayUrl: "ws://localhost:3001",
+    addedAt: "2026-01-02T00:00:00.000Z",
+  };
+  await installMockBridge(
+    page,
+    {
+      managedAgents: [
+        {
+          pubkey: OUT_OF_CHANNEL_PROVIDER_AGENT_PUBKEY,
+          name: "portal",
+          status: "not_deployed",
+          channelNames: ["general"],
+          backend: {
+            type: "provider",
+            id: "portal",
+            config: { region: "test" },
+          },
+        },
+      ],
+      // Far longer than the round-trip below ever takes, so the first deploy
+      // is deterministically still in flight when the second send fires;
+      // settled on demand via the release seam for the retry leg.
+      startManagedAgentDelayMs: 45_000,
+      // Arms the first settlement to reject. A successful mock settle writes
+      // `deployed` into the record, and the third send below would then skip
+      // the wake on status alone — the retry leg has to prove the *map entry*
+      // self-cleaned, so the record must still read `not_deployed`.
+      startManagedAgentErrors: ["Mock provider deploy failed."],
+    },
+    { skipCommunitySeed: true },
+  );
+  await page.addInitScript(
+    ({ list, active }) => {
+      window.localStorage.setItem("buzz-communities", JSON.stringify(list));
+      window.localStorage.setItem("buzz-active-community-id", active);
+    },
+    { list: [COMMUNITY_A, COMMUNITY_B], active: COMMUNITY_A.id },
+  );
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const sendMention = async (text: string) => {
+    const input = page.getByTestId("message-input");
+    await input.fill("Hey @portal");
+    await expect(autocomplete(page).getByText("portal")).toBeVisible();
+    await input.press("Enter");
+    await page.keyboard.type(` ${text}`);
+    // Enter rather than the send button: the third send happens while the
+    // first deploy's failure toast is on screen, and the toast overlay
+    // intercepts pointer events aimed at the composer's corner.
+    await input.press("Enter");
+    await expect(
+      page.getByTestId("message-row").filter({ hasText: text }),
+    ).toBeVisible();
+  };
+
+  const baselineCommands = await readCommandLog(page);
+  const baselineStartCount = commandCount(
+    baselineCommands,
+    "start_managed_agent",
+  );
+  const baselineSettledCount = commandCount(
+    baselineCommands,
+    "start_managed_agent:settled",
+  );
+  const baselinePayloadCount = (await readCommandPayloadLog(page)).length;
+
+  await sendMention("do X");
+  await expect
+    .poll(async () =>
+      commandCount(await readCommandLog(page), "start_managed_agent"),
+    )
+    .toBe(baselineStartCount + 1);
+  const startCall = (await readCommandPayloadLog(page))
+    .slice(baselinePayloadCount)
+    .find((entry) => entry.command === "start_managed_agent");
+  expect(startCall?.payload).toMatchObject({
+    expectedRelayUrl: COMMUNITY_A.relayUrl,
+    expectedSignerPubkey: MOCK_VIEWER_PUBKEY,
+  });
+
+  // The round trip, while the deploy is still held.
+  await page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`).click();
+  await expect(
+    page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`),
+  ).toHaveAttribute("aria-current", "true");
+  await page.getByTestId(`community-rail-button-${COMMUNITY_A.id}`).click();
+  await expect(
+    page.getByTestId(`community-rail-button-${COMMUNITY_A.id}`),
+  ).toHaveAttribute("aria-current", "true");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  // Back in A, the held deploy's scope is valid again and the record still
+  // reads `not_deployed`, so this send queues a wake — the retained map entry
+  // is the only thing standing between it and a duplicate deploy. A
+  // suppressed wake makes no call, so give the post-publish flush a moment
+  // before snapshotting: pre-fix the duplicate invoke landed well inside it.
+  await sendMention("also Y");
+  await page.waitForTimeout(500);
+  expect(commandCount(await readCommandLog(page), "start_managed_agent")).toBe(
+    baselineStartCount + 1,
+  );
+
+  // Settle the held deploy on demand (the armed rejection). Retention must
+  // end at settlement rather than latching the agent for the session.
+  const released = await page.evaluate(
+    () =>
+      (
+        window as {
+          __BUZZ_E2E_RELEASE_MANAGED_AGENT_STARTS__?: () => number;
+        }
+      ).__BUZZ_E2E_RELEASE_MANAGED_AGENT_STARTS__?.() ?? 0,
+  );
+  expect(released).toBe(1);
+  await expect
+    .poll(async () =>
+      commandCount(await readCommandLog(page), "start_managed_agent:settled"),
+    )
+    .toBe(baselineSettledCount + 1);
+  // The failure settled with A on screen, so its warning delivers here — the
+  // round-trip kept it out of B without dropping it.
+  await expect(
+    page.getByText("Could not start portal", { exact: false }),
+  ).toBeVisible();
+
+  // The map entry self-cleaned at settlement, so a third mention of the
+  // still-undeployed agent re-fires the wake.
+  await sendMention("try again");
+  await expect
+    .poll(async () =>
+      commandCount(await readCommandLog(page), "start_managed_agent"),
+    )
+    .toBe(baselineStartCount + 2);
 });
 
 test("mentioning an in-channel provider managed agent deploys it before sending", async ({

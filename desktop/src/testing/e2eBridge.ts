@@ -27,6 +27,8 @@ import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
 import { syncAgentTurnsFromEvents } from "@/features/agents/activeAgentTurnsStore";
 import { recordTimeoutFromRejection } from "@/features/moderation/lib/timeoutStore";
 import {
+  _testRegisterKnownAgents,
+  ensureRelayObserverSubscription,
   injectObserverEventsForE2E,
   syncAgentObserverEvents,
 } from "@/features/agents/observerRelayStore";
@@ -470,6 +472,8 @@ type E2eConfig = {
     clearPendingNavigationDeepLinksError?: string;
     openDmDelayMs?: number;
     sendMessageDelayMs?: number;
+    /** Hold agent startup so tests can switch scope before side effects. */
+    startManagedAgentDelayMs?: number;
     /** Hold the media proxy at port 0 until the E2E release seam is invoked. */
     mediaProxyInitiallyUnavailable?: boolean;
     /** Hold mock send live echoes until the E2E release seam is invoked. */
@@ -478,6 +482,14 @@ type E2eConfig = {
     closeChannelLiveSubscriptionOnce?: boolean;
     /** Reject successive kind-9 sends with these messages, then resume. */
     sendMessageErrors?: string[];
+    /** Test-only observer control requests captured after mock publish. */
+    observerControlResults?: Array<{
+      type: "cancel_turn" | "switch_model";
+      status: string;
+      channelId?: string | null;
+      requestId?: string;
+      modelId?: string;
+    }>;
     /** Reject successive managed-agent starts, then resume. */
     startManagedAgentErrors?: string[];
     /** Delay (ms) after snapshotting a thread-replies page so E2E tests can
@@ -1311,6 +1323,11 @@ declare global {
       command: string;
       payload: unknown;
     }>;
+    /** Observer controls accepted by the mock relay. */
+    __BUZZ_E2E_OBSERVER_CONTROLS__?: Array<{
+      agentPubkey: string;
+      payload: unknown;
+    }>;
     /** Release a mock media proxy held at port 0 and return its ready port. */
     __BUZZ_E2E_RELEASE_MEDIA_PROXY__?: () => number;
     /** Release mock send events that were stored but withheld from live subscribers. */
@@ -1565,7 +1582,7 @@ declare global {
       channelId: string;
       turnId: string;
       kind?: "turn_started" | "turn_completed";
-    }) => void;
+    }) => void | Promise<void>;
     __BUZZ_E2E_SEED_OBSERVER_EVENTS__?: (input: {
       agentPubkey: string;
       events: Array<{
@@ -1633,6 +1650,7 @@ declare global {
     /** Count of `get_event` invocations for the current defer-target ID since
      *  the last time `__BUZZ_E2E_DEFER_GET_EVENT__` was set. */
     __BUZZ_E2E_GET_EVENT_CALL_COUNT__?: number;
+    __BUZZ_E2E_RELEASE_MANAGED_AGENT_STARTS__?: () => number;
     /** Hold the next channel read until released. */
     __BUZZ_E2E_DEFER_NEXT_CHANNELS_READ__?: () => void;
     /** Disarm the latch and release the held channel read, if any. */
@@ -1761,6 +1779,7 @@ type DeferredGetEvent = {
 let deferredGetEventQueue: DeferredGetEvent[] = [];
 let deferredLinkPreviewMetadataQueue: Array<() => void> = [];
 let deferredLinkPreviewUploadQueue: Array<() => void> = [];
+let heldManagedAgentStartReleases: Array<() => void> = [];
 let cancelledMediaUploadIds = new Set<string>();
 let deferNextChannelsRead = false;
 let deferredChannelsReadResolve: (() => void) | null = null;
@@ -4671,6 +4690,62 @@ function emitMockLiveEvent(channelId: string, event: RelayEvent) {
       }
     }
   }
+}
+
+let mockObserverControlSeq = 0;
+
+function emitMockObserverControlResult(
+  agentPubkey: string,
+  request: {
+    type: "cancel_turn" | "switch_model";
+    channelId?: string | null;
+    requestId?: string;
+    modelId?: string;
+  },
+  result: {
+    type: "cancel_turn" | "switch_model";
+    status: string;
+    channelId?: string | null;
+    requestId?: string;
+    modelId?: string;
+  },
+) {
+  const channelId = result.channelId ?? request.channelId ?? null;
+  const payload = {
+    type: result.type,
+    status: result.status,
+    ...(result.requestId !== undefined
+      ? { requestId: result.requestId }
+      : request.requestId !== undefined
+        ? { requestId: request.requestId }
+        : {}),
+    ...(result.modelId !== undefined
+      ? { modelId: result.modelId }
+      : request.modelId !== undefined
+        ? { modelId: request.modelId }
+        : {}),
+  };
+  mockObserverControlSeq += 1;
+  const observerEvent = createMockEvent(
+    KIND_AGENT_OBSERVER_FRAME,
+    JSON.stringify({
+      seq: mockObserverControlSeq,
+      timestamp: new Date().toISOString(),
+      kind: "control_result",
+      agentIndex: null,
+      channelId,
+      sessionId: null,
+      turnId: null,
+      payload,
+    }),
+    [
+      ["p", MOCK_IDENTITY_PUBKEY],
+      ["agent", agentPubkey],
+      ["frame", "telemetry"],
+    ],
+    agentPubkey,
+  );
+  emitMockLiveEvent(GLOBAL_MOCK_SUBSCRIPTION, observerEvent);
 }
 
 function emitOrDeferMockSendMessageLiveEcho(
@@ -8829,6 +8904,8 @@ function handleListProjectRolePacks() {
       packRef: {
         repo: `30617:${"c".repeat(64)}:packs`,
         sha: "9f2e1d0c7b6a59483726150e4d3c2b1a0f9e8d7c",
+        role: "lead",
+        path: "personas/roles/lead",
       },
       skills: [
         {
@@ -8853,7 +8930,12 @@ function handleListProjectRolePacks() {
       version: null,
       origin: "shipped",
       packDir: "/Applications/Beekeeper.app/Contents/Resources/packs/reviewer",
-      packRef: { repo: "app:shipped", sha: "0.0.0-e2e" },
+      packRef: {
+        repo: "app:shipped",
+        sha: "0.0.0-e2e",
+        role: "reviewer",
+        path: "roles/reviewer",
+      },
       skills: [
         {
           name: "adversarial-review",
@@ -9228,9 +9310,65 @@ function isRelayMeshManagedAgent(agent: MockManagedAgent): boolean {
 async function handleStartManagedAgent(
   args: {
     pubkey: string;
+    expectedRelayUrl?: string | null;
+    expectedSignerPubkey?: string | null;
+    replayFloorUnix?: number | null;
   },
   config?: E2eConfig,
 ): Promise<RawManagedAgent> {
+  const delayMs = config?.mock?.startManagedAgentDelayMs ?? 0;
+  if (delayMs > 0) {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const release = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        heldManagedAgentStartReleases = heldManagedAgentStartReleases.filter(
+          (held) => held !== release,
+        );
+        resolve();
+      };
+      const timer = window.setTimeout(release, delayMs);
+      heldManagedAgentStartReleases.push(release);
+    });
+  }
+  // Match the native boundary: re-read active scope after the delayed work,
+  // before mutating the agent. A queued wake carries its original scope.
+  const expectedRelay = args.expectedRelayUrl?.trim();
+  if (expectedRelay) {
+    let activeRelay = getRelayWsUrl(config);
+    try {
+      const activeId = window.localStorage.getItem("buzz-active-community-id");
+      const communities = JSON.parse(
+        window.localStorage.getItem("buzz-communities") ?? "[]",
+      ) as { id: string; relayUrl: string }[];
+      activeRelay =
+        communities.find((row) => row.id === activeId)?.relayUrl ?? activeRelay;
+    } catch {
+      // The configured mock relay remains the fallback for malformed storage.
+    }
+    const normalize = (url: string) =>
+      url
+        .trim()
+        .replace(/\/+$/, "")
+        .replace(/^wss:/, "https:")
+        .replace(/^ws:/, "http:");
+    if (normalize(activeRelay) !== normalize(expectedRelay)) {
+      throw new Error(
+        "active community changed before agent startup; not started",
+      );
+    }
+  }
+  const expectedSigner = args.expectedSignerPubkey?.trim();
+  if (
+    expectedSigner &&
+    expectedSigner.toLowerCase() !== getMockMemberPubkey(config).toLowerCase()
+  ) {
+    throw new Error(
+      "active identity changed before agent startup; not started",
+    );
+  }
   const startError = config?.mock?.startManagedAgentErrors?.shift();
   if (startError) {
     throw new Error(startError);
@@ -10641,6 +10779,49 @@ function sendToMockSocket(args: {
       return;
     }
 
+    if (event.kind === KIND_AGENT_OBSERVER_FRAME) {
+      const frame = event.tags.find((tag) => tag[0] === "frame")?.[1];
+      if (frame === "control") {
+        let payload: {
+          type: "cancel_turn" | "switch_model";
+          channelId?: string | null;
+          requestId?: string;
+          modelId?: string;
+        };
+        try {
+          payload = JSON.parse(event.content);
+        } catch {
+          sendWsText(socket.handler, [
+            "OK",
+            event.id,
+            false,
+            "mock observer control payload is not JSON",
+          ]);
+          return;
+        }
+        const agentPubkey =
+          event.tags.find((tag) => tag[0] === "agent")?.[1] ?? "";
+        window.__BUZZ_E2E_OBSERVER_CONTROLS__?.push({
+          agentPubkey,
+          payload,
+        });
+        const configured = getConfig()?.mock?.observerControlResults ?? [];
+        const resultIndex = configured.findIndex(
+          (candidate) => candidate.type === payload.type,
+        );
+        const result =
+          resultIndex >= 0
+            ? configured.splice(resultIndex, 1)[0]
+            : {
+                type: payload.type,
+                status: payload.type === "cancel_turn" ? "sent" : "switched",
+              };
+        emitMockObserverControlResult(agentPubkey, payload, result);
+        sendWsText(socket.handler, ["OK", event.id, true, ""]);
+        return;
+      }
+    }
+
     if (event.kind === 28936) {
       sendWsText(socket.handler, ["OK", event.id, true, ""]);
       return;
@@ -10937,6 +11118,7 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_COMMANDS__ = [];
   window.__BUZZ_E2E_COMMAND_PAYLOADS__ = [];
   window.__BUZZ_E2E_COMMAND_LOG__ = [];
+  window.__BUZZ_E2E_OBSERVER_CONTROLS__ = [];
   mockMediaProxyPort = config.mock?.mediaProxyInitiallyUnavailable
     ? 0
     : MOCK_MEDIA_PROXY_PORT;
@@ -11118,6 +11300,12 @@ export function maybeInstallE2eTauriMocks() {
   };
   // get_event defer/release seam — reset counter and queue on each install.
   window.__BUZZ_E2E_GET_EVENT_CALL_COUNT__ = 0;
+  heldManagedAgentStartReleases = [];
+  window.__BUZZ_E2E_RELEASE_MANAGED_AGENT_STARTS__ = () => {
+    const held = heldManagedAgentStartReleases.splice(0);
+    for (const release of held) release();
+    return held.length;
+  };
   window.__BUZZ_E2E_DEFER_GET_EVENT__ = null;
   deferredGetEventQueue = [];
   deferNextChannelsRead = false;
@@ -11266,12 +11454,17 @@ export function maybeInstallE2eTauriMocks() {
       };
   };
   let seedTurnSeq = Date.now();
-  window.__BUZZ_E2E_SEED_ACTIVE_TURNS__ = ({
+  window.__BUZZ_E2E_SEED_ACTIVE_TURNS__ = async ({
     agentPubkey,
     channelId,
     turnId,
     kind = "turn_started",
   }) => {
+    // The synthetic turn is also the mock's proof that this agent is a trusted
+    // local session owner, so a later relay-delivered control_result traverses
+    // the same observer-store authorization gate as a real agent frame.
+    _testRegisterKnownAgents("e2e-active-turn", [agentPubkey]);
+    await ensureRelayObserverSubscription();
     seedTurnSeq += 1;
     const event = {
       seq: seedTurnSeq,
@@ -12014,6 +12207,32 @@ export function maybeInstallE2eTauriMocks() {
         mockMeshState.nodeMode = null;
         mockMeshState.activeModel = null;
         return meshNodeStatus("off", null);
+      /** Build a test-only signed-looking observer control event. */
+      case "build_observer_control_event": {
+        const input = payload as { agentPubkey: string; payload: unknown };
+        return JSON.stringify(
+          createMockEvent(
+            KIND_AGENT_OBSERVER_FRAME,
+            JSON.stringify(input.payload),
+            [
+              ["p", input.agentPubkey],
+              ["agent", input.agentPubkey],
+              ["frame", "control"],
+            ],
+            DEFAULT_MOCK_IDENTITY.pubkey,
+          ),
+        );
+      }
+      case "decrypt_observer_event": {
+        const event = JSON.parse(
+          (payload as { eventJson: string }).eventJson,
+        ) as RelayEvent;
+        try {
+          return JSON.parse(event.content);
+        } catch {
+          throw new Error("mock observer event content is not JSON");
+        }
+      }
       case "get_identity": {
         const isLost =
           !mockIdentityLostCleared && activeConfig?.mock?.identityLost === true;
@@ -13590,7 +13809,9 @@ export function maybeInstallE2eTauriMocks() {
         return handleStartManagedAgent(
           payload as Parameters<typeof handleStartManagedAgent>[0],
           activeConfig,
-        );
+        ).finally(() => {
+          window.__BUZZ_E2E_COMMANDS__?.push("start_managed_agent:settled");
+        });
       case "stop_managed_agent":
         return handleStopManagedAgent(
           payload as Parameters<typeof handleStopManagedAgent>[0],

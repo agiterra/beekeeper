@@ -68,6 +68,7 @@ export function EditRespondToDialog({
           <DialogTitle>Manage agent access</DialogTitle>
           <DialogDescription>
             Choose who can send instructions to {agent?.name ?? "this agent"}.
+            This setting applies everywhere this agent is added.
           </DialogDescription>
         </DialogHeader>
         <CreateAgentRespondToField

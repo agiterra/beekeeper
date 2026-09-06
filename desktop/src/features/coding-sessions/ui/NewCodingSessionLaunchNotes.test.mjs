@@ -47,7 +47,7 @@ test("the step list marks the failed step and leaves the untouched ones untouche
   assert.match(html, /data-testid="crew-step-create:1"/);
 });
 
-test("the goal field counts the bytes the cap is measured in", () => {
+test("ordinary goals need no encoding explanation; near-limit feedback uses bytes", () => {
   const html = renderToStaticMarkup(
     React.createElement(CodingSessionLaunchGoalNotes, {
       // Four UTF-8 bytes from two characters: the character count the field
@@ -57,8 +57,17 @@ test("the goal field counts the bytes the cap is measured in", () => {
       overflow: null,
     }),
   );
-  assert.match(html, /4 of 4,096 UTF-8 bytes\./);
+  assert.equal(html, "");
   assert.doesNotMatch(html, /text-destructive/);
+  const nearLimit = renderToStaticMarkup(
+    React.createElement(CodingSessionLaunchGoalNotes, {
+      bytes: 3600,
+      goalOutcome: null,
+      overflow: null,
+    }),
+  );
+  assert.match(nearLimit, /88% of the description limit used/);
+  assert.match(nearLimit, /title="3,600 of 4,096 UTF-8 bytes\."/);
 });
 
 test("at the cap the counter becomes the launch block's own refusal", () => {

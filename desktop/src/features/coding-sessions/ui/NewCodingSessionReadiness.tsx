@@ -16,8 +16,9 @@ import type {
  * "this computer could not check" and "it is fine" are different facts and
  * only the first one is ever an excuse.
  *
- * The plan lines under them name the events pressing the button will publish,
- * with their kind integers, so the sentence and the wire cannot drift.
+ * The launch plan remains available behind its own disclosure: it names the
+ * events pressing the button will publish, with kind integers, without making
+ * the primary goal-and-start path read like a wire trace.
  */
 export function NewCodingSessionReadiness({
   plan,
@@ -65,21 +66,28 @@ export function NewCodingSessionReadiness({
         </details>
       )}
 
-      <ol
-        className="flex flex-col gap-1"
-        data-testid="new-coding-session-launch-plan"
-      >
-        {plan.map((line) => (
-          <li
-            className="text-2xs text-muted-foreground"
-            data-kind={line.kind}
-            data-testid={`new-coding-session-plan-${line.id}`}
-            key={line.id}
+      {plan.length === 0 ? null : (
+        <details data-testid="new-coding-session-launch-details">
+          <summary className="cursor-pointer text-2xs text-muted-foreground">
+            Launch details
+          </summary>
+          <ol
+            className="mt-2 flex flex-col gap-1"
+            data-testid="new-coding-session-launch-plan"
           >
-            {line.sentence}
-          </li>
-        ))}
-      </ol>
+            {plan.map((line) => (
+              <li
+                className="text-2xs text-muted-foreground"
+                data-kind={line.kind}
+                data-testid={`new-coding-session-plan-${line.id}`}
+                key={line.id}
+              >
+                {line.sentence}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
     </div>
   );
 }

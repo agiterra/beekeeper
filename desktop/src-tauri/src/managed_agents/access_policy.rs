@@ -187,4 +187,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn default_build_preserves_an_explicit_selected_people_grant() {
+        let mut record = record(BackendKind::Local);
+        record.respond_to = RespondTo::Allowlist;
+        let selected_person = "b".repeat(64);
+        record.respond_to_allowlist = vec![selected_person.clone()];
+
+        let (set, remove) =
+            build_respond_to_env_with_policy(&record, Some("owner"), false).unwrap();
+        let set: std::collections::HashMap<_, _> = set.into_iter().collect();
+        assert_eq!(
+            set.get("BUZZ_ACP_RESPOND_TO").map(String::as_str),
+            Some("allowlist"),
+        );
+        assert_eq!(
+            set.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").map(String::as_str),
+            Some(selected_person.as_str()),
+        );
+        assert!(
+            !set.contains_key("BUZZ_ACP_ALLOWED_RESPOND_TO"),
+            "the default build must not add a broader or narrower mode guard",
+        );
+        assert!(remove.contains(&"BUZZ_ACP_ALLOWED_RESPOND_TO"));
+
+        let (respond_to, allowlist) = projected_access_with_policy(&record, false);
+        assert_eq!(respond_to, RespondTo::Allowlist);
+        assert_eq!(allowlist, vec![selected_person]);
+    }
 }

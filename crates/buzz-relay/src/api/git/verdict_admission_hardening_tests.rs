@@ -32,6 +32,47 @@ use uuid::Uuid;
 
 use super::observed_tests::{default_green, watched, Watched, HEAD_SHA};
 
+/// Publish one genuine hire for this mission. The admission resolver reads the
+/// same stored kind-44221 page production uses, so the regression proves that
+/// possessing this public event id cannot authorize a different create signer.
+async fn publish_hire(w: &Watched, signer: &Keys) -> nostr::Event {
+    let command_id = format!("hire-{}", Uuid::new_v4().simple());
+    let content = serde_json::json!({
+        "schema": buzz_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
+        "commandId": command_id,
+        "action": {
+            "type": "session.hire",
+            "sessionRef": w.session_ref,
+            "genesisRef": w.genesis_ref,
+            "role": "builder",
+            "providerInstanceRef": serde_json::Value::Null,
+            "model": serde_json::Value::Null,
+            "brief": "run the gate",
+            "requestedBy": signer.public_key().to_hex(),
+        },
+    })
+    .to_string();
+    buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(&content)
+        .expect("hire fixture decodes");
+    let event = EventBuilder::new(
+        Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
+        content,
+    )
+    .tags([
+        Tag::parse(["h", &w.channel_id.to_string()]).expect("h"),
+        Tag::parse(["csl-v", "csl1-1"]).expect("v"),
+        Tag::parse(["csl-command", &command_id]).expect("command"),
+    ])
+    .sign_with_keys(signer)
+    .expect("sign hire");
+    w.state
+        .db
+        .insert_event(w.community, &event, Some(w.channel_id))
+        .await
+        .expect("insert hire");
+    event
+}
+
 /// Publish one kind 44245 record for this mission with a chosen body, signer
 /// and time.
 ///
@@ -459,12 +500,13 @@ async fn flood_the_missions_policies(w: &Watched, signer: &Keys, count: usize, a
     }
 }
 
-/// **The 2026-09-05 refuter's B1, end to end.** A seat publishes its own
-/// kind 44221 `session.create` naming **itself** as `providerAuthorityPubkey`,
-/// answers it with its own kind 44224 receipt, and signs `observed` green rows
-/// for the pushed commit. Nothing in that chain was issued by a key entitled
-/// to steer the mission, so it commissions nobody: the rows fold to
-/// `declared` and the push is refused.
+/// **The 2026-09-06 counterexample, end to end.** After the founder publishes
+/// a genuine hire, a seat borrows its event id in a self-signed kind-44221
+/// `session.create`, names itself as `providerAuthorityPubkey`, answers it with
+/// its own kind-44224 receipt, and signs `observed` green rows for the pushed
+/// commit. The hire is attribution, so nothing in the create/receipt pair was
+/// issued by a key entitled to steer the mission: the rows fold to `declared`
+/// and the push is refused.
 ///
 /// Then the founder signs a create for the *same* provider and the *same*
 /// rows admit it — so the refusal is about who commissioned the execution,
@@ -474,8 +516,11 @@ async fn flood_the_missions_policies(w: &Watched, signer: &Keys, count: usize, a
 async fn a_seat_cannot_commission_itself_as_this_missions_provider() {
     let w = watched().await;
     let impostor = Keys::generate();
-    // The impostor signs both halves of its own lifecycle proof.
-    w.commission_signed_by(&impostor, &impostor).await;
+    let hire = publish_hire(&w, &w.founder).await;
+    // The impostor signs both halves of its own lifecycle proof and cites the
+    // genuine hire. The public reference changes attribution, not authority.
+    w.commission_answering_hire_signed_by(&hire.id.to_hex(), &impostor, &impostor)
+        .await;
     w.observe(
         &impostor,
         CodingSessionObservationSource::Observed,
@@ -490,8 +535,10 @@ async fn a_seat_cannot_commission_itself_as_this_missions_provider() {
         "a create its own subject signed commissions nobody (body: {body})"
     );
 
-    // The founder commissions the same key, over the same rows.
-    w.commission(&impostor).await;
+    // The current valid fulfillment path: the founder signs the create naming
+    // a distinct provider, and that provider signs its own receipt.
+    w.commission_answering_hire_signed_by(&hire.id.to_hex(), &w.founder, &impostor)
+        .await;
     let (status, body) = w.seat_push(HEAD_SHA).await;
     assert_eq!(
         status,

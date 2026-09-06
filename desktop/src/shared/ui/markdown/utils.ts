@@ -1,5 +1,6 @@
 import * as React from "react";
 import { defaultUrlTransform } from "react-markdown";
+import { parseCodingSessionLink } from "@/features/coding-sessions/lib/codingSessionLink";
 
 import { isChannelLink } from "@/features/messages/lib/channelLink";
 import { isMessageLink } from "@/features/messages/lib/messageLink";
@@ -184,6 +185,7 @@ export function isInsideHiddenSpoiler(element: Element): boolean {
 export function buzzDeepLinkUrlTransform(value: string, key: string): string {
   if (key !== "href") return defaultUrlTransform(value);
   if (isMessageLink(value) || isChannelLink(value)) return value;
+  if (parseCodingSessionLink(value)) return value;
   if (parseEntityLink(value).ok) return value;
   return defaultUrlTransform(value);
 }

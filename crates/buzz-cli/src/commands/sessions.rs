@@ -2665,6 +2665,8 @@ pub async fn dispatch(
             actor,
             role,
             driver,
+            wait,
+            timeout_secs,
         } => {
             crew_cmds::cmd_create(
                 client,
@@ -2681,6 +2683,8 @@ pub async fn dispatch(
                 actor.as_deref(),
                 role.as_deref(),
                 driver.as_deref(),
+                wait,
+                timeout_secs,
             )
             .await
         }

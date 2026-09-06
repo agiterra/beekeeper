@@ -364,6 +364,7 @@ pub async fn restore_managed_agents_on_launch(
                                                 &key.relay_url,
                                                 true,
                                                 owner_hex_ref,
+                                                None,
                                             )
                                         }) {
                                         Ok(process) => {
@@ -506,7 +507,7 @@ fn profile_reconcile_completed(outcome: crate::commands::ProfileReconcileOutcome
 pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, workspace_relay: &str) {
     let state = app.state::<AppState>();
     if !state
-        .managed_agent_profile_reconcile_enabled
+        .managed_agent_profile_reconcile_enabled()
         .load(Ordering::Acquire)
     {
         return;

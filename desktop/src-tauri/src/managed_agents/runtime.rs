@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use super::agent_env::{build_buzz_agent_provider_defaults, idle_pool_sleep_env};
 
@@ -29,8 +29,8 @@ pub(crate) use super::access_policy::{build_respond_to_env_with_policy, RespondT
 
 mod metadata;
 pub(crate) use metadata::{
-    apply_agent_display_env, resolve_session_title, runtime_metadata_env_vars,
-    DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
+    apply_agent_display_env, apply_replay_floor_env, child_rust_log_filter, resolve_session_title,
+    runtime_metadata_env_vars, DISPLAY_NAME_ENV_VAR, REPLAY_FLOOR_ENV_VAR, SESSION_TITLE_ENV_VAR,
 };
 
 mod stop;
@@ -203,6 +203,7 @@ pub fn build_managed_agent_summary(
             &key.relay_url,
             global_config,
             super::owner_only_access_build(),
+            super::acp_session_policy(app.state::<crate::app_state::AppState>().inner()),
         );
         (runtime, current)
     });
@@ -366,6 +367,7 @@ pub fn spawn_agent_child(
     relay_url: &str,
     lazy: bool,
     owner_hex: Option<&str>,
+    replay_floor_unix: Option<u64>,
 ) -> Result<crate::managed_agents::ManagedAgentProcess, String> {
     if let Some(error) = spawn_key_refusal(record) {
         return Err(error);
@@ -498,6 +500,9 @@ pub fn spawn_agent_child(
     command.env("BUZZ_RELAY_URL", &effective_relay_url);
     command.env("BUZZ_ACP_LAZY_POOL", if lazy { "true" } else { "false" });
     command.env("BUZZ_ACP_IDLE_POOL_SLEEP", idle_pool_sleep_env(lazy));
+    // A floor belongs only to a publish-first invocation. Clear any inherited
+    // parent value before descriptor env is applied below.
+    command.env_remove(REPLAY_FLOOR_ENV_VAR);
     command.env("BUZZ_ACP_AGENT_COMMAND", &resolved_agent_command);
     command.env("BUZZ_ACP_AGENT_ARGS", agent_args.join(","));
     match &resolved_mcp_command {
@@ -788,6 +793,13 @@ pub fn spawn_agent_child(
     for (key, value) in &descriptor.env {
         command.env(key, value);
     }
+    // This is a Desktop policy, not a user environment preference. It is
+    // reserved before descriptor layering and written after it so local and
+    // provider launches cannot disagree about the harness session boundary.
+    let acp_session_policy = super::apply_app_acp_session_policy_env(app, &mut command);
+    // The one-shot publish timestamp is invocation state, so it wins over
+    // descriptor env after all saved layers have been applied.
+    apply_replay_floor_env(&mut command, replay_floor_unix);
     configure_runtime_cli(&mut command, runtime_meta);
 
     // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
@@ -824,6 +836,7 @@ pub fn spawn_agent_child(
             model: effective_model.as_deref(),
             provider: effective_provider.as_deref(),
             enforced_owner_only: super::owner_only_access_build(),
+            session_policy: acp_session_policy,
         },
     );
 
@@ -891,20 +904,13 @@ pub fn spawn_agent_child(
     })
 }
 
-fn child_rust_log_filter() -> String {
-    match std::env::var("RUST_LOG") {
-        Ok(existing) if existing.contains("buzz_acp") => existing,
-        Ok(existing) if !existing.trim().is_empty() => format!("{existing},buzz_acp=info"),
-        _ => "buzz_acp=info".to_string(),
-    }
-}
-
 pub fn start_managed_agent_process(
     app: &AppHandle,
     record: &mut ManagedAgentRecord,
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     owner_hex: Option<&str>,
     pinned_relay_url: Option<&str>,
+    replay_floor_unix: Option<u64>,
 ) -> Result<(), String> {
     let active_relay_url = {
         use tauri::Manager;
@@ -930,7 +936,14 @@ pub fn start_managed_agent_process(
     // Scalar PIDs are migration-only and never establish pair liveness.
     record.runtime_pid = None;
 
-    let mut process = spawn_agent_child(app, record, &key.relay_url, false, owner_hex)?;
+    let mut process = spawn_agent_child(
+        app,
+        record,
+        &key.relay_url,
+        false,
+        owner_hex,
+        replay_floor_unix,
+    )?;
     let now = now_iso();
     let receipt = super::ManagedAgentRuntimeReceipt {
         key: key.clone(),

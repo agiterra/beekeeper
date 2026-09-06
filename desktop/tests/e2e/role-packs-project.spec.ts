@@ -5,6 +5,7 @@ import { KIND_PROJECT } from "@/shared/constants/kinds";
 
 import { installMockBridge } from "../helpers/bridge";
 import { openDashboardTab } from "../helpers/dashboard";
+import { waitForAnimations } from "../helpers/animations";
 
 /**
  * The Agents tab says which project's role packs it will install.
@@ -23,6 +24,9 @@ const IDENTITY = {
   pubkey: "e5ebc6cdb579be112e336cc319b5989b4bb6af11786ea90dbe52b5f08d741b34",
   username: "tyler",
 };
+
+const PROJECT_FEATURES = JSON.stringify({ projects: true });
+const SNAPSHOTS = "test-results/role-pack-snapshots";
 
 /** Kind:30621 is not signature-checked by the client, like the other mock
  * fixtures, so a hand-built head is enough to give this viewer projects. */
@@ -112,4 +116,44 @@ test("the resolved project is named on the tab and in the installer, and switchi
   await expect(page.getByTestId("install-crew-roles-folder-label")).toHaveText(
     `The project's role packs — ${otherName}`,
   );
+});
+
+test("the Packs tab explains local versions and unverified metadata claims", async ({
+  page,
+}) => {
+  await page.addInitScript((features) => {
+    window.localStorage.setItem("buzz-feature-overrides-v1", features);
+  }, PROJECT_FEATURES);
+  await installMockBridge(page, {});
+  await page.setViewportSize({ width: 1280, height: 850 });
+  await page.goto("/");
+  const general = page.getByTestId("project-group-general");
+  await expect(general).toBeVisible({ timeout: 15_000 });
+  await general.hover();
+  await page.getByTestId("project-open-general").click();
+  await expect(page.getByTestId("project-page-tabs")).toBeVisible();
+  await page.getByTestId("project-tab-packs").click();
+
+  const snapshots = page.getByTestId("role-pack-snapshots");
+  await expect(snapshots).toBeVisible({ timeout: 15_000 });
+  await expect(snapshots).toContainText(
+    "Versions found on this machine and signed metadata claims visible in this project’s channels.",
+  );
+  await expect(snapshots).toContainText(
+    "Beekeeper has not verified that a commissioned provider authored these claims.",
+  );
+  await expect(snapshots.getByText("Available here")).toBeVisible();
+  await expect(
+    snapshots.getByText("Unverified channel metadata"),
+  ).toBeVisible();
+  await expect(page.getByTestId("role-pack-resolved-row")).toHaveCount(2);
+  await expect(snapshots).toContainText("lead · 9f2e1d0c");
+  await expect(snapshots).toContainText("reviewer · 0.0.0-e");
+  await expect(page.getByTestId("role-pack-reports-empty")).toHaveText(
+    "No role-version metadata claims are visible for this project.",
+  );
+  await expect(snapshots).not.toContainText("44223");
+
+  await waitForAnimations(page);
+  await snapshots.screenshot({ path: `${SNAPSHOTS}/available-and-empty.png` });
 });

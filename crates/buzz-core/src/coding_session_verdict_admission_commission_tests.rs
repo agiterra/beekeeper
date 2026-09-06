@@ -11,9 +11,9 @@
 //! exactly that end to end.
 //!
 //! The rule these cases hold to: a create or a resume commissions a provider
-//! only when a key entitled to **steer** the mission signed it, or when it
-//! answers an accepted `session.hire` — the host's door, since a host answering
-//! a hire signs the create itself.
+//! only when a key entitled to **steer** the mission signed it. A `hireRef`
+//! attributes why a create exists; it is not a bearer capability that lets an
+//! unrelated signer commission itself.
 
 use super::*;
 
@@ -201,37 +201,53 @@ fn b1_the_founder_signed_create_commissions_the_same_provider() {
     }
 }
 
-/// The host's door: the founder asks for a seat with a `session.hire`, and the
-/// **host** signs the create that answers it. The host is not a steering key,
-/// so only the `hireRef` makes that create count — and a create answering a
-/// hire nobody entitled to steer signed still counts for nothing.
+/// The executed counterexample from 2026-09-06: a genuine founder-signed hire
+/// is public, so a seated builder borrows its id in a self-signed create, signs
+/// the matching receipt, and signs its own green rows. `hireRef` attributes the
+/// create to the request; it cannot commission the create's signer.
 #[test]
-fn b1_a_create_answering_an_accepted_hire_commissions_its_provider() {
+fn a_genuine_hire_cannot_be_borrowed_to_self_commission() {
     let watched = watched();
-    let host = Keys::generate();
+    let seat = &watched.builder;
     let asked = hire("hire-1", &watched.founder);
     let commands = vec![
         asked.clone(),
-        create_answering("create-1", &asked.id.to_hex(), &host, &host),
+        create_answering("create-1", &asked.id.to_hex(), seat, seat),
     ];
-    let receipts = vec![receipt("create-1", "created", "session-1", 1, &host)];
-    let providers = mission_provider_pubkeys_from_lifecycle(
-        SESSION,
-        GENESIS,
+    let receipts = vec![receipt("create-1", "created", "session-1", 1, seat)];
+    let (providers, candidate) = candidate_over(
+        &watched,
+        seat,
         &watched.commissioners(),
         &commands,
         &receipts,
     );
-    assert_eq!(providers, vec![host.public_key().to_hex()]);
+    assert!(
+        providers.is_empty(),
+        "borrowed hire commissioned {providers:?}"
+    );
+    let founders = watched.founders();
+    let pusher = seat.public_key().to_hex();
+    assert!(matches!(
+        evaluate_verdict_admission(&[candidate], &query(&pusher, &founders, TEST_REPOSITORY)),
+        VerdictAdmission::Refused(VerdictAdmissionRefusal::ObservedRowsAreDeclared { .. })
+    ));
+}
 
-    // The same create, answering a hire the *seat* signed: the hire authorizes
-    // nothing, so neither does the create that names it.
-    let self_asked = hire("hire-2", &watched.builder);
+/// Two unrelated keys do not improve the borrowed-hire claim: one signing the
+/// create and a distinct named provider signing its receipt still leaves no
+/// mission authority behind the create.
+#[test]
+fn a_genuine_hire_does_not_authorize_an_unrelated_host_provider_pair() {
+    let watched = watched();
+    let host = Keys::generate();
+    let provider = Keys::generate();
+    let asked = hire("hire-1", &watched.founder);
     let commands = vec![
-        self_asked.clone(),
-        create_answering("create-2", &self_asked.id.to_hex(), &host, &host),
+        asked.clone(),
+        create_answering("create-1", &asked.id.to_hex(), &provider, &host),
     ];
-    let receipts = vec![receipt("create-2", "created", "session-2", 1, &host)];
+    let receipts = vec![receipt("create-1", "created", "session-1", 1, &provider)];
     assert!(mission_provider_pubkeys_from_lifecycle(
         SESSION,
         GENESIS,
@@ -240,24 +256,48 @@ fn b1_a_create_answering_an_accepted_hire_commissions_its_provider() {
         &receipts,
     )
     .is_empty());
+}
 
-    // And a `hireRef` naming a hire that is not on this page resolves to
-    // nothing rather than to "accepted".
-    let commands = vec![create_answering(
-        "create-3",
-        &asked.id.to_hex(),
-        &host,
-        &host,
+/// R3 composition control: relay ingest separately proves an active lead may
+/// ask for a non-lead seat; this pure resolver cannot read that seat roster.
+/// Given the accepted hire, the current founder-serviced host may fulfil it:
+/// the founder signs the create and the distinct selected provider signs the
+/// receipt, without turning the public hire id into authority.
+#[test]
+fn founder_fulfilment_of_an_ingest_authorized_hire_commissions_the_external_provider() {
+    let watched = watched();
+    let lead = Keys::generate();
+    let asked = hire("hire-1", &lead);
+    let commands = vec![
+        asked.clone(),
+        create_answering(
+            "create-1",
+            &asked.id.to_hex(),
+            &watched.provider,
+            &watched.founder,
+        ),
+    ];
+    let receipts = vec![receipt(
+        "create-1",
+        "created",
+        "session-1",
+        1,
+        &watched.provider,
     )];
-    let receipts = vec![receipt("create-3", "created", "session-3", 1, &host)];
-    assert!(mission_provider_pubkeys_from_lifecycle(
-        SESSION,
-        GENESIS,
+    let (providers, candidate) = candidate_over(
+        &watched,
+        &watched.provider,
         &watched.commissioners(),
         &commands,
         &receipts,
-    )
-    .is_empty());
+    );
+    assert_eq!(providers, vec![watched.provider.public_key().to_hex()]);
+    let founders = watched.founders();
+    let pusher = watched.builder.public_key().to_hex();
+    assert!(matches!(
+        evaluate_verdict_admission(&[candidate], &query(&pusher, &founders, TEST_REPOSITORY)),
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::ObservedGates { .. })
+    ));
 }
 
 /// An operator the mission's own authority chain granted may commission, and a

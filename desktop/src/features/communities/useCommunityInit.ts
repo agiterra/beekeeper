@@ -6,11 +6,12 @@ import { isMacPlatform } from "@/shared/lib/platform";
 import { relayClient } from "@/shared/api/relayClient";
 import { resetRateLimitGate } from "@/shared/api/relayRateLimitGate";
 import {
-  applyCommunity,
   autoConnectDefaultRelayEnabled,
   getDefaultRelayUrl,
 } from "@/shared/api/tauri";
+import { applyCommunity } from "@/shared/api/tauriWorkspace";
 import { getIdentity } from "@/shared/api/tauriIdentity";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { clearTrayAgentActivity } from "@/shared/api/trayMenu";
 import { getOverrides } from "@/shared/features";
 import { resetMediaCaches } from "@/shared/lib/mediaUrl";
@@ -21,6 +22,10 @@ import {
   clearAllDrafts,
   initDraftStore,
 } from "@/features/messages/lib/useDrafts";
+import {
+  resetDetachedToastScope,
+  setDetachedToastScope,
+} from "@/features/messages/lib/detachedToastScope";
 import { resetCodingSessionLaneVisibility } from "@/features/messages/lib/codingSessionLaneVisibility";
 import { resetNewCodingSessionDialog } from "@/features/coding-sessions/newCodingSessionDialogStore";
 import { resetRenderScopedReactionHydration } from "@/features/messages/lib/renderScopedReactions";
@@ -76,7 +81,11 @@ async function resetCommunityState({
   await resetNavigationDeepLinkDrain();
   resetRateLimitGate();
   clearAllDrafts();
+  resetDetachedToastScope();
   resetAgentObserverStore();
+  // Detached agent wakes remain in their module-level, relay+signer-keyed map:
+  // clearing it on A→B→A would allow a still-running A wake to deploy twice.
+  // The toast-scope mirror is community-owned and updates with the remount.
   resetActiveAgentTurnsStore();
   resetAgentWorkingSignal();
   if (isTauri() && isMacPlatform()) {
@@ -196,11 +205,33 @@ export function useCommunityInit(
   // `updateCommunity` is re-created whenever the active community id changes,
   // and the QueryClient identity is stable but not guaranteed to be.
   const queryClient = useQueryClient();
+  const identityQuery = useIdentityQuery();
   const queryClientRef = useRef(queryClient);
   queryClientRef.current = queryClient;
   const { updateCommunity } = useCommunities();
   const updateCommunityRef = useRef(updateCommunity);
   updateCommunityRef.current = updateCommunity;
+  const activeRelayUrl = activeCommunity?.relayUrl ?? null;
+
+  // Identity import updates the existing identity-query cache without changing
+  // the active community. Keep the notification fence aligned with that same
+  // lifecycle: an old signer's delayed wake must not warn over the newly
+  // imported identity. Pending and failed applies remain fail-closed.
+  useEffect(() => {
+    if (
+      !activeRelayUrl ||
+      !result.isReady ||
+      result.appliedKey !== communityKey ||
+      !identityQuery.data?.pubkey
+    ) {
+      resetDetachedToastScope();
+      return;
+    }
+    setDetachedToastScope({
+      relayUrl: activeRelayUrl,
+      signerPubkey: identityQuery.data.pubkey,
+    });
+  }, [activeRelayUrl, communityKey, identityQuery.data?.pubkey, result]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: we intentionally depend on specific properties (id/relayUrl/token/reposDir) — depending on the whole object would trigger resets on name-only changes
   useEffect(() => {
@@ -352,6 +383,7 @@ export function useCommunityInit(
           activeCommunity.token,
           activeCommunity.reposDir,
           getOverrides().agentManagedProfiles === true,
+          getOverrides().threadScopedAcpSessions === true,
         );
       } catch (error) {
         // A bad `repos_dir` no longer reaches here — `apply_workspace` treats
@@ -417,6 +449,10 @@ export function useCommunityInit(
         try {
           const identity = await getIdentity();
           if (cancelled) return;
+          setDetachedToastScope({
+            relayUrl: activeCommunity.relayUrl,
+            signerPubkey: identity.pubkey,
+          });
           initDraftStore(identity.pubkey, activeCommunity.relayUrl);
         } catch (err) {
           if (cancelled) return;

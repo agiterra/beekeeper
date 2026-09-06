@@ -122,6 +122,10 @@ export function AddAgentToChannelDialog({
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            <p className="text-xs text-muted-foreground">
+              Who can send this agent instructions is set for the agent, not
+              this channel. It applies everywhere this agent is added.
+            </p>
             <div className="space-y-1.5">
               <label className="text-sm font-medium" htmlFor="agent-channel-id">
                 Channel

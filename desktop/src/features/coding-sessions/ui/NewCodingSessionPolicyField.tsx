@@ -25,11 +25,11 @@ function readPositiveInteger(raw: string): number | null | undefined {
 /**
  * Posture, budget, attention, irreversible acts and stop — the 44245 record.
  *
- * All of it is *stated*, and the disclosure under it says so in the same
- * words `docs/design/portable-team-loop/POLICY.md` §4 uses: until a consumer
- * exists, a published policy is an intention, not a limit. That sentence is
- * the price of showing a budget field at all; a number in a box with nothing
- * counting it is a promise the app cannot keep, and it would be believed.
+ * This is advanced configuration. Turns and verifier settings have current
+ * consumers with scoped effects; the other fields are recorded as guidance
+ * until a consumer exists. The precise field-by-field statement stays below
+ * the controls so the default launcher does not make protocol readers parse
+ * enforcement prose before they have chosen to configure a policy.
  *
  * Nothing here validates a bound. The draft goes to `buzz-core` through the
  * native boundary, which refuses a zero limit, an unknown word, an empty
@@ -53,10 +53,18 @@ export function NewCodingSessionPolicyField({
       data-testid="new-coding-session-policy"
     >
       <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-        Posture, budget and limits
+        Optional guardrails and review
         {setsAnything ? " — set" : " — none set"}
       </summary>
       <div className="mt-3 flex flex-col gap-3">
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-policy-summary"
+        >
+          Turn budgets and verifier choices can affect execution and review.
+          Posture, context, stop rules and action preferences are advisory
+          guidance for the lead.
+        </p>
         <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-2xs text-muted-foreground"
@@ -124,7 +132,7 @@ export function NewCodingSessionPolicyField({
             className="text-2xs text-muted-foreground"
             htmlFor="policy-turns"
           >
-            Turns
+            Turn budget · checked on the next create or resume
           </label>
           <Input
             className="w-28"
@@ -143,7 +151,7 @@ export function NewCodingSessionPolicyField({
             className="text-2xs text-muted-foreground"
             htmlFor="policy-timebox"
           >
-            Stop after (hours)
+            Stop after (hours) · advisory
           </label>
           <Input
             className="w-28"
@@ -168,7 +176,7 @@ export function NewCodingSessionPolicyField({
             className="text-2xs text-muted-foreground"
             htmlFor="policy-context"
           >
-            Context
+            Context · advisory
           </label>
           <select
             className="h-8 rounded-md border border-input bg-transparent px-2 text-sm disabled:opacity-50"
@@ -197,7 +205,7 @@ export function NewCodingSessionPolicyField({
 
         <div className="flex flex-col gap-1">
           <span className="text-2xs text-muted-foreground">
-            Needs your word before it happens
+            Needs your word before it happens · advisory
           </span>
           <div className="flex flex-wrap gap-3">
             {CODING_SESSION_POLICY_IRREVERSIBLE_ACTS.map((act) => (
@@ -241,7 +249,7 @@ export function NewCodingSessionPolicyField({
               className="text-2xs text-muted-foreground"
               htmlFor="policy-verifier-required"
             >
-              Completing this mission
+              Completing this mission · effective review setting
             </label>
             <select
               className="h-8 rounded-md border border-input bg-transparent px-2 text-sm disabled:opacity-50"
@@ -292,7 +300,7 @@ export function NewCodingSessionPolicyField({
             className="text-2xs text-muted-foreground"
             htmlFor="policy-milestone"
           >
-            Stop on
+            Stop on · advisory
           </label>
           <Input
             data-testid="new-coding-session-policy-milestone"

@@ -87,8 +87,9 @@ export type LifecycleHireFacts = {
  * One kind 44221 `session.hire`, for the commissioning rule below.
  *
  * A hire names no `providerAuthorityPubkey` — it asks a host to choose one —
- * so the fold's `readLifecycleCommand` refuses it and always will. It is read here
- * only to answer "did somebody other than this provider ask for this seat?".
+ * so the fold's `readLifecycleCommand` refuses it and always will. It is kept
+ * as a separate attribution fact for the fold's stable wire model; admission
+ * deliberately does not derive authority from it.
  */
 export function readLifecycleHire(
   event: CoordinationEvent,
@@ -98,8 +99,8 @@ export function readLifecycleHire(
   // Deliberately not `hasStrictLifecycleCommandValues`: that validator
   // requires `action.providerAuthorityPubkey`, which a hire has none of — a
   // hire asks a host to *choose* the provider. The envelope is checked here
-  // instead, and the hire is read for exactly two facts: who signed it, and
-  // which session it asked about.
+  // instead. These attribution facts do not authorize the signer of a create
+  // that cites the hire.
   if (
     !isPlainObject(content) ||
     content.schema !== "buzz-coding-session-lifecycle-command/v1" ||
@@ -131,34 +132,26 @@ export function readLifecycleHire(
  * naming **itself** as `providerAuthorityPubkey`, answer it with its own
  * receipt, and appear here as a proven generation of somebody else's mission.
  *
- * Two forms of the same question, and the caller decides which by supplying
+ * Two evidence levels remain, and the caller decides which by supplying
  * `commissioners` or not:
  *
  * - **with** a steering set (founder ∪ accepted `operator` grants) the rule is
- *   the relay's: the signer is in it, or the create answers a `session.hire`
- *   somebody in it signed;
- * - **without** one — every surface that reads coordination without an
- *   authority projection — the weaker but still self-certification-proof rule:
- *   the signer is not the provider it names, or the create answers a hire
- *   somebody else signed. A host answering a hire signs its own create, which
- *   is why the hire door exists in both forms.
+ *   the relay's: the command signer is in it. A public `hireRef` attributes
+ *   why the create exists and grants the signer nothing;
+ * - **without** one — currently Project Pulse and Agent Progress — the weaker
+ *   rule remains signer ≠ provider. This closes the one-key self-certification
+ *   case but is still defeatable by two keys (R4). Their visible `Unverified`
+ *   wording describes liveness only; the authority weakness is not yet
+ *   disclosed. R4 remains: supply the accepted authority projection to both
+ *   callers, or add a separate authority-evidence label.
  */
 export function commissioned(
   command: CommissionableCommand,
   commissioners: readonly string[] | null,
-  hires: readonly LifecycleHireFacts[],
+  _hires: readonly LifecycleHireFacts[],
 ): boolean {
   const signer = command.event.pubkey;
-  const mayCommission = (pubkey: string) =>
-    commissioners === null
-      ? pubkey !== command.providerAuthorityPubkey
-      : commissioners.includes(pubkey);
-  if (mayCommission(signer)) return true;
-  if (command.hireRef === null) return false;
-  return hires.some(
-    (hire) =>
-      hire.event.id === command.hireRef &&
-      hire.channelId === command.channelId &&
-      mayCommission(hire.event.pubkey),
-  );
+  return commissioners === null
+    ? signer !== command.providerAuthorityPubkey
+    : commissioners.includes(signer);
 }

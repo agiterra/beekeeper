@@ -25,9 +25,6 @@ enum InboundRuntimeRefresh {
     },
     Provider {
         pubkey: String,
-        provider_id: String,
-        config: serde_json::Value,
-        cached_binary_path: Option<String>,
         agent_json: Result<serde_json::Value, String>,
     },
 }
@@ -96,34 +93,24 @@ pub async fn reconcile_inbound_persona_event(
             })?;
         }
         Some(InboundRuntimeRefresh::Provider {
-            pubkey,
-            provider_id,
-            config,
-            cached_binary_path,
-            agent_json,
+            pubkey, agent_json, ..
         }) => {
             let state = app.state::<AppState>();
-            let agent_json = match agent_json {
-                Ok(agent_json) => agent_json,
-                Err(error) => {
-                    let message = format!(
-                        "Inbound agent access was saved, but its provider deployment could not be refreshed safely: {error}"
-                    );
-                    super::super::agents::provider_access::persist_failure(
-                        &app, &state, &pubkey, &message,
-                    )?;
-                    let _ = app.emit("agents-data-changed", ());
-                    return Err(message);
-                }
-            };
+            if let Err(error) = agent_json {
+                let message = format!(
+                    "Inbound agent access was saved, but its provider deployment could not be refreshed safely: {error}"
+                );
+                super::super::agents::provider_access::persist_failure(
+                    &app, &state, &pubkey, &message,
+                )?;
+                let _ = app.emit("agents-data-changed", ());
+                return Err(message);
+            }
             super::super::agents::deploy_to_provider(
                 &app,
                 &state,
                 &pubkey,
-                &provider_id,
-                &config,
-                agent_json,
-                cached_binary_path.as_deref(),
+                super::super::agents::ProviderDeployOptions::default(),
             )
             .await
             .map_err(|error| {
@@ -304,7 +291,7 @@ fn reconcile_inbound_persona_event_blocking(
                             });
                         }
                     }
-                    crate::managed_agents::BackendKind::Provider { id, config }
+                    crate::managed_agents::BackendKind::Provider { .. }
                         if record.backend_agent_id.is_some() =>
                     {
                         // Persist the unacknowledged policy transition in the
@@ -314,9 +301,6 @@ fn reconcile_inbound_persona_event_blocking(
                         record.provider_policy_pending = true;
                         runtime_refresh = Some(InboundRuntimeRefresh::Provider {
                             pubkey: d_tag.clone(),
-                            provider_id: id.clone(),
-                            config: config.clone(),
-                            cached_binary_path: record.provider_binary_path.clone(),
                             agent_json: super::super::agents::build_deploy_payload(
                                 &app, &state, record,
                             ),

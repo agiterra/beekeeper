@@ -433,8 +433,11 @@ commit. Only then does D10 reopen.
 
 1. **Agent-to-agent `steer` in v1** — allowed with the honest downgrade (the
    plan's default), or boundary-only until adapters expose native steering?
-2. **Verifier family check** — a hard launch refusal (plan default, D8) or
-   advisory like amas ended up with?
+2. **Verifier family check — direction settled 2026-09-06.** Prefer a
+   different provider when available; one subscription and fresh same-provider
+   review remain supported. See [VISION_COLLABORATION.md](../VISION_COLLABORATION.md)
+   and [CREW_ROLES.md](CREW_ROLES.md) for the distinction between the current
+   hire-router fallback and the older roster family helper.
 3. **Where actor seats run** — the founder's provider on the founder's
    machine (plan default, D6), or may a seat be created on another member's
    provider that advertises the actor?

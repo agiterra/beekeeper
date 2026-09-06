@@ -125,7 +125,8 @@ export function NewCodingSessionDialog({
               : "New coding session"}
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Describe the goal, choose who leads it, and say how it runs.
+            Describe the goal and destination. Saved setup starts the session;
+            optional advanced settings are available when needed.
           </DialogDescription>
         </DialogHeader>
         <NewCodingSessionForm

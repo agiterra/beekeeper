@@ -17,7 +17,9 @@ import {
 import { startManagedAgent } from "@/shared/api/tauriManagedAgents";
 import type {
   AcpRuntime,
+  AgentPersona,
   ChannelRole,
+  CreateManagedAgentInput,
   ManagedAgent,
   ManagedAgentBackend,
   RespondToMode,
@@ -32,6 +34,8 @@ export type AttachManagedAgentToChannelInput = {
   agent: ManagedAgent;
   role?: Exclude<ChannelRole, "owner">;
   ensureRunning?: boolean;
+  /** Queue a needed start after the caller's relay write has been accepted. */
+  detachedStart?: (agent: ManagedAgent) => void;
 };
 
 export type AttachManagedAgentToChannelResult = {
@@ -78,6 +82,8 @@ export type CreateChannelManagedAgentInput = {
   respondToAllowlist?: string[];
   /** Skip reuse logic and always create a fresh agent instance. */
   forceNewInstance?: boolean;
+  /** Passed through when the caller must publish before waking this agent. */
+  detachedStart?: (agent: ManagedAgent) => void;
 };
 
 export type CreateChannelManagedAgentResult =
@@ -103,6 +109,41 @@ export type CreateChannelManagedAgentsResult = {
   successes: CreateChannelManagedAgentResult[];
   failures: CreateChannelManagedAgentBatchFailure[];
 };
+
+export type ApplyReusableAgentAccessPolicyResult = {
+  agent: ManagedAgent;
+  wrote: boolean;
+};
+
+/**
+ * Preserve an existing owner choice unless the caller supplied an explicit
+ * replacement. A channel membership operation is never an implicit access
+ * grant; when it does carry an explicit policy, report whether it wrote so
+ * the caller can retain an honest publish boundary.
+ */
+export async function applyReusableAgentAccessPolicy(
+  agent: ManagedAgent,
+  request: Pick<CreateManagedAgentInput, "respondTo" | "respondToAllowlist">,
+  _persona?: Pick<AgentPersona, "respondTo" | "respondToAllowlist">,
+): Promise<ApplyReusableAgentAccessPolicyResult> {
+  if (!request.respondTo) return { agent, wrote: false };
+  const allowlist =
+    request.respondTo === "allowlist" ? (request.respondToAllowlist ?? []) : [];
+  const matches =
+    agent.respondTo === request.respondTo &&
+    agent.respondToAllowlist.length === allowlist.length &&
+    agent.respondToAllowlist.every(
+      (pubkey, index) => pubkey === allowlist[index],
+    );
+  if (matches) return { agent, wrote: false };
+  const updated = await updateManagedAgent({
+    pubkey: agent.pubkey,
+    respondTo: request.respondTo,
+    respondToAllowlist:
+      request.respondTo === "allowlist" ? allowlist : undefined,
+  });
+  return { agent: updated.agent, wrote: true };
+}
 
 export async function attachManagedAgentToChannel(
   channelId: string,
@@ -139,16 +180,16 @@ export async function attachManagedAgentToChannel(
     // pair — so this ensures the pair the caller is attaching to, never
     // another community's.
     const isRemote = input.agent.backend.type === "provider";
-    if (isRemote && input.agent.status !== "deployed") {
-      agent = await startManagedAgent(input.agent.pubkey);
-      started = true;
-    } else if (
-      !isRemote &&
-      input.agent.status !== "running" &&
-      input.agent.status !== "deployed"
-    ) {
-      agent = await startManagedAgent(input.agent.pubkey);
-      started = true;
+    const needsStart = isRemote
+      ? input.agent.status !== "deployed"
+      : input.agent.status !== "running" && input.agent.status !== "deployed";
+    if (needsStart) {
+      if (input.detachedStart) {
+        input.detachedStart(input.agent);
+      } else {
+        agent = await startManagedAgent(input.agent.pubkey);
+        started = true;
+      }
     }
   }
 
@@ -397,6 +438,7 @@ export async function createChannelManagedAgent(
     agent: provisioned.agent,
     role: input.role ?? "bot",
     ensureRunning: input.ensureRunning ?? true,
+    detachedStart: input.detachedStart,
   });
 
   return {

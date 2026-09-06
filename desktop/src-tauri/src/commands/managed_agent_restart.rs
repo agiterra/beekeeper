@@ -1,6 +1,6 @@
 use tauri::{AppHandle, State};
 
-use super::agents::{start_local_agent_with_preflight, stop_managed_agent, workspace_owner_hex};
+use super::agents::{start_local_agent_with_preflight, stop_managed_agent};
 use crate::{
     app_state::AppState, managed_agents::ManagedAgentSummary, relay::relay_ws_url_with_override,
 };
@@ -24,14 +24,14 @@ pub async fn restart_managed_agent(
     // community switch during that wait can never redirect the subsequent
     // start to another relay.
     restart_relay_for_active(&relay_ws_url_with_override(&state), &pinned_relay)?;
-    let owner_hex = workspace_owner_hex(&state)?;
     start_local_agent_with_preflight(
         &app,
         &state,
         &pubkey,
-        &owner_hex,
         false,
         Some(&pinned_relay),
+        None,
+        None,
     )
     .await
 }

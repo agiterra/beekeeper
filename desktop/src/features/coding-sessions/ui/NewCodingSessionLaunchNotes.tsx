@@ -20,12 +20,11 @@ import {
  */
 
 /**
- * Everything the goal field owes the person: its size, its cap, and what the
- * launch did about it.
+ * Show size feedback near the limit and disclose a failed goal publication.
  *
- * Three sentences that used to be missing. The cap is in UTF-8 bytes and the
- * field counts characters, so without a byte counter a person can type a goal
- * the signer will refuse and see nothing until the button goes dead — and an
+ * The cap is in UTF-8 bytes and the field counts characters, so feedback uses
+ * the actual wire size. Ordinary short goals need no encoding explanation;
+ * approaching the cap shows usage, and exceeding it names the refusal. An
  * over-cap goal used to launch a whole team and quietly publish no kind:44227
  * (item 103 finding 5; batch 2 review A2 F1). At the cap the counter *becomes*
  * the refusal, in the launch block's own words, so the two cannot drift. After
@@ -47,14 +46,15 @@ export function CodingSessionLaunchGoalNotes({
   return (
     <>
       {overflow === null ? (
-        <p
-          className="text-2xs text-muted-foreground"
-          data-testid="new-coding-session-crew-goal-bytes"
-        >
-          {`${bytes.toLocaleString()} of ${MAX_CODING_SESSION_GOAL_BYTES.toLocaleString()} UTF-8 bytes.`}{" "}
-          The lead's first turn carries this goal, and the launch publishes it
-          as the session's own goal.
-        </p>
+        bytes >= MAX_CODING_SESSION_GOAL_BYTES * 0.8 ? (
+          <p
+            className="text-2xs text-muted-foreground"
+            data-testid="new-coding-session-crew-goal-bytes"
+            title={`${bytes.toLocaleString()} of ${MAX_CODING_SESSION_GOAL_BYTES.toLocaleString()} UTF-8 bytes.`}
+          >
+            {`${Math.round((bytes / MAX_CODING_SESSION_GOAL_BYTES) * 100)}% of the description limit used.`}
+          </p>
+        ) : null
       ) : (
         <p
           className="text-2xs text-destructive"

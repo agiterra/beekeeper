@@ -13,6 +13,7 @@ import { useProjectPacksView } from "../lib/useProjectPacksView";
 import type { SeatRow } from "../lib/rolesViewModel";
 import { AgentsByProject } from "./AgentsByProject";
 import { RoleCard } from "./RoleCard";
+import { RolePackSnapshots } from "./RolePackSnapshots";
 import {
   INSTALL_ROLES_BUTTON_LABEL,
   packsSourceSentence,
@@ -61,8 +62,18 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const [installOpen, setInstallOpen] = React.useState(false);
 
-  const { project, view, isLoading, error, shelfState, packs, packsSource } =
-    state;
+  const {
+    project,
+    view,
+    isLoading,
+    error,
+    shelfState,
+    packs,
+    packsSource,
+    rolePackSnapshots,
+    packsResolutionIsStale,
+    executionReports,
+  } = state;
 
   const onOpenSeat = React.useCallback(
     (seat: SeatRow) => {
@@ -151,6 +162,12 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
             {shelfState.detail ? ` — ${shelfState.detail}` : null}
           </p>
         ) : null}
+        <RolePackSnapshots
+          reports={executionReports}
+          resolvedError={error}
+          resolvedIsStale={packsResolutionIsStale}
+          snapshots={rolePackSnapshots}
+        />
         <section className="flex flex-col gap-2" data-testid="roles-section">
           <h2 className="text-sm font-medium text-foreground">
             {ROLES_SECTION_TITLE}

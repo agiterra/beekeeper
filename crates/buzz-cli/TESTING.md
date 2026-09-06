@@ -888,6 +888,29 @@ echo 'stand up the fixture harness' | bee sessions create \
   --model claude-opus --title 'fixture harness' --brief - | jq .
 # → {"event_id":"...","accepted":true,"message":"","commandId":"<uuid>","seated":false}
 
+# `--wait` keeps the same one-publish create, then waits for the named
+# provider authority to publish a signed kind 44224 create receipt. It returns
+# the provider-minted `cs-target` rather than inferring a status from a model
+# or from an unrelated session row:
+bee sessions create --channel "$CHANNEL_ID" \
+  --provider-instance "$PROVIDER_INSTANCE_REF" \
+  --provider-authority "$PROVIDER_AUTHORITY_HEX" \
+  --brief 'start the requested work' --wait --timeout-secs 60 | jq .
+# → {"accepted":true,"commandId":"<uuid>","seated":false,"waited":true,
+#    "outcome":"created","receiptEventId":"…","target":"<cs-target>",
+#    "sessionUrl":"beekeeper://coding-session?channel=<uuid>&provider=<url-encoded-provider-authority>&target=<url-encoded-cs-target>",
+#    "receiptError":null}
+# `sessionUrl` is emitted only after a signed create receipt supplies the
+# provider-minted target and receipt signer. It is client navigation metadata;
+# it is not another event or a claim that a transcript fact sequence exists yet.
+# --timeout-secs is valid only with --wait and is bounded to 1..=300 seconds.
+# A timeout exits 5, reports outcome=unconfirmed and the original commandId;
+# it never silently publishes a second create. A signed provider refusal exits
+# 1 with outcome=failed and its disclosed receiptError.
+# The receipt signer must be the exact pubkey supplied by --provider-authority;
+# wrong-signer, wrong-channel, unrelated-command, duplicate, malformed and
+# turn-stage receipts do not confirm this create.
+
 # Three flags are REFUSED here, each naming the mechanism rather than a policy:
 bee sessions create --channel "$CHANNEL_ID" --provider-instance x \
   --provider-authority "$PROVIDER_AUTHORITY_HEX" --actor "$AGENT_HEX" 2>&1; echo "exit: $?"

@@ -13,12 +13,12 @@
 //! * **finding 90** — a provider is named by an accepted kind 44221 command
 //!   and confirmed by the kind 44224 receipt **that key** signed. Publishing
 //!   kind 44223 metadata about a mission makes nobody its provider;
-//! * **the 2026-09-05 refuter's B1** — and the command itself only counts when
-//!   somebody entitled to steer the mission signed it, or when it answers an
-//!   accepted `session.hire`. A receipt proves who answered a command; it says
-//!   nothing about who was entitled to issue one, and without this half a seat
-//!   could commission *itself* as its own mission's provider and then sign the
-//!   `observed` rows arm (B) lands.
+//! * **the 2026-09-05 refuter's B1, completed 2026-09-06** — and the command
+//!   itself only counts when somebody entitled to steer the mission signed it.
+//!   A receipt proves who answered a command; it says nothing about who was
+//!   entitled to issue one. A public `hireRef` attributes why a create exists;
+//!   it is not authority an unrelated seat can borrow to commission itself and
+//!   then sign the `observed` rows arm (B) lands.
 
 use nostr::Event;
 
@@ -68,9 +68,9 @@ struct LifecyclePair<'a> {
 ///   create (or an accepted earlier resume) of this mission produced, at
 ///   exactly that execution's accepted generation, and its receipt reports
 ///   `resumed` or `resumed_without_context` for the next generation;
-/// * a `session.hire` names no provider — it asks a host to choose one — and
-///   the create answering it (`hireRef`) is what names the key; a hire
-///   therefore contributes through its create and never directly;
+/// * a `session.hire` names no provider and contributes no provider authority;
+///   a create's `hireRef` is attribution only. The create still needs a signer
+///   entitled to steer the mission, and it is that create which names the key;
 /// * a `session.stop` confirms nothing.
 ///
 /// # Who may commission (2026-09-05 refuter, B1)
@@ -87,11 +87,10 @@ struct LifecyclePair<'a> {
 /// mission**: `commissioners` is the mission's founder together with the keys
 /// its accepted authority chain grants `operator` (NIP-CSP § Validation
 /// boundary), resolved by the caller because this crate cannot read that
-/// chain. The one other door is the hire loop: a host answering an accepted
-/// `session.hire` signs the create itself, so a create whose `hireRef` names a
-/// kind 44221 `session.hire` **for this mission, in the same channel, signed
-/// by a commissioner** counts as well. That is the whole rule; a create signed
-/// by anybody else names no provider.
+/// chain. A create signed by anybody else names no provider, even when its
+/// public `hireRef` names a genuine hire. In the current hire path a lead may
+/// request a seat and the founder's host signs the fulfillment create, so lead
+/// hiring remains valid without making the hire event id a bearer capability.
 ///
 /// An empty `commissioners` therefore yields an empty provider set, and an
 /// empty provider set folds every `observed` claim down to `declared` — the
@@ -115,10 +114,9 @@ pub fn mission_provider_pubkeys_from_lifecycle(
     commands: &[Event],
     receipts: &[Event],
 ) -> Vec<String> {
-    let hires = accepted_hires(session_ref, genesis_ref, commissioners, commands);
     let pairs: Vec<LifecyclePair<'_>> = accepted_lifecycle_pairs(commands, receipts)
         .into_iter()
-        .filter(|pair| commissioned(pair, commissioners, &hires))
+        .filter(|pair| commissioned(pair, commissioners))
         .collect();
     let mut providers: Vec<String> = Vec::new();
     // (channel, driver, instance, session) → the accepted generation.
@@ -267,71 +265,13 @@ fn accepted_lifecycle_pairs<'a>(
     pairs
 }
 
-/// The kind 44221 `session.hire` events of this mission that a key entitled to
-/// steer it signed, as `(event id, channel)` (2026-09-05 refuter, B1).
-///
-/// A hire names no provider, so it never adds one directly. What it does is
-/// authorize the **host's** answer: the create carrying `hireRef` of one of
-/// these is a commissioned create even though the host, not a steering key,
-/// signed it. A hire signed by anyone else authorizes nothing, which is why
-/// the signer test is here and not only on the create.
-fn accepted_hires(
-    session_ref: &str,
-    genesis_ref: &str,
-    commissioners: &[String],
-    commands: &[Event],
-) -> Vec<(String, String)> {
-    let mut hires: Vec<(String, String)> = Vec::new();
-    for event in commands {
-        if !may_commission(&event.pubkey.to_hex(), commissioners) {
-            continue;
-        }
-        let Some(channel) = tag_value(event, "h") else {
-            continue;
-        };
-        let Ok(payload) = decode_coding_session_lifecycle_command(&event.content) else {
-            continue;
-        };
-        let CodingSessionLifecycleAction::SessionHire {
-            session_ref: named_session,
-            genesis_ref: named_genesis,
-            ..
-        } = &payload.action
-        else {
-            continue;
-        };
-        if named_session != session_ref || named_genesis != genesis_ref {
-            continue;
-        }
-        hires.push((event.id.to_hex().to_ascii_lowercase(), channel.to_owned()));
-    }
-    hires
-}
-
 /// Whether this pair's **command** was issued by someone entitled to issue it.
 ///
-/// Two ways, and no third: the command's signer may steer the mission, or the
-/// command is a create answering one of `hires` — an accepted `session.hire`
-/// in the same channel — which is how a host commissions the seat a steering
-/// key asked for.
-fn commissioned(
-    pair: &LifecyclePair<'_>,
-    commissioners: &[String],
-    hires: &[(String, String)],
-) -> bool {
-    if may_commission(&pair.command.pubkey.to_hex(), commissioners) {
-        return true;
-    }
-    let CodingSessionLifecycleAction::SessionCreate { hire_ref, .. } = &pair.action else {
-        return false;
-    };
-    let Some(hire_ref) = hire_ref else {
-        return false;
-    };
-    let channel = tag_value(pair.command, "h").unwrap_or_default();
-    hires
-        .iter()
-        .any(|(id, hire_channel)| id.eq_ignore_ascii_case(hire_ref) && hire_channel == channel)
+/// One way only: the command's signer may steer the mission. `hireRef` is a
+/// public attribution link, not an authorization token. The named provider's
+/// distinct receipt signature is still required by [`accepted_lifecycle_pairs`].
+fn commissioned(pair: &LifecyclePair<'_>, commissioners: &[String]) -> bool {
+    may_commission(&pair.command.pubkey.to_hex(), commissioners)
 }
 
 /// Whether `signer` is one of the keys that may steer this mission.

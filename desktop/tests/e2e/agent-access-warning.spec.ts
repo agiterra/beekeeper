@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
-import { openDashboardTab } from "../helpers/dashboard";
 
 const SHOTS = "test-results/agent-access-warning";
 
@@ -60,6 +59,10 @@ test("open agent access explains the available access before save", async ({
   await expect(accessBadge).toBeVisible();
   await expect(accessBadge).toHaveText("Anyone");
   await openAgentAccessDialog(page, agent.pubkey);
+
+  await expect(
+    page.getByRole("dialog", { name: "Manage agent access" }),
+  ).toContainText("This setting applies everywhere this agent is added.");
 
   const accessSelect = page.getByTestId("agent-respond-to-select");
   await expect(accessSelect).toHaveValue("anyone");
@@ -127,6 +130,40 @@ test("open agent access explains the available access before save", async ({
   // Only me shares nothing, so the warning goes away entirely.
   await accessSelect.selectOption("owner-only");
   await expect(warning).toHaveCount(0);
+});
+
+test("adding an agent to a channel keeps its instruction access global", async ({
+  page,
+}) => {
+  const agent = TEST_IDENTITIES.charlie;
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: agent.pubkey,
+        name: "Hack Day Helper",
+        status: "running",
+        channelNames: ["general"],
+        respondTo: "allowlist",
+        respondToAllowlist: [TEST_IDENTITIES.tyler.pubkey],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("channel-members-trigger").click();
+  await page.getByTestId(`sidebar-member-${agent.pubkey}`).click();
+  await expect(page.getByTestId("user-profile-panel")).toBeVisible();
+
+  // Adding belongs to the profile's Channels section, not its initial Info
+  // section. Keep the test on the user-visible path rather than reaching into
+  // the dialog state directly.
+  await page.getByTestId("user-profile-tab-channels").click();
+  await page.getByTestId("user-profile-agent-add-channel").click();
+  const dialog = page.getByRole("dialog", { name: "Add agent to channel" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(
+    "Who can send this agent instructions is set for the agent, not this channel. It applies everywhere this agent is added.",
+  );
 });
 
 test("full agent editor tightens the exact sidebar agent instance", async ({
@@ -285,7 +322,7 @@ test("a provider-backed agent's warning names the server, not this computer", as
   await expect(warning).not.toContainText("your computer");
 });
 
-test("persona-backed edit warns before saving open access", async ({
+test("existing agent edit warns before saving open access", async ({
   page,
 }) => {
   const agent = TEST_IDENTITIES.tyler;
@@ -295,14 +332,16 @@ test("persona-backed edit warns before saving open access", async ({
         pubkey: agent.pubkey,
         name: "Tyler Agent",
         status: "stopped",
-        channelNames: ["agents"],
+        channelNames: ["general"],
         respondTo: "owner-only",
       },
     ],
   });
   await page.goto("/");
-  await openDashboardTab(page, "agents");
-  await page.getByRole("button", { name: "Tyler Agent agent profile" }).click();
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("channel-members-trigger").click();
+  await page.getByTestId(`sidebar-member-${agent.pubkey}`).click();
+  await expect(page.getByTestId("user-profile-panel")).toBeVisible();
   await page.getByTestId("user-profile-edit-agent").click();
 
   const dialog = page.getByTestId("edit-agent-dialog");

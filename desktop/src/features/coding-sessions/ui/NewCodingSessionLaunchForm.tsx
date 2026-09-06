@@ -69,6 +69,10 @@ import {
   type NewCodingSessionLeadCandidate,
 } from "./NewCodingSessionLeadField";
 import { NewCodingSessionPolicyField } from "./NewCodingSessionPolicyField";
+import {
+  formatNewCodingSessionSetupProvider,
+  NewCodingSessionSetupDisclosure,
+} from "./NewCodingSessionSetupDisclosure";
 import { useNewCodingSessionTitleSuggestion } from "./useNewCodingSessionTitleSuggestion";
 import { NewCodingSessionReadiness } from "./NewCodingSessionReadiness";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
@@ -87,8 +91,7 @@ import type { NewCodingSessionProjectContext } from "./NewCodingSessionDialog";
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 
 /**
- * One form: goal · who leads · governed · bench · budget/posture · working
- * directory · access.
+ * One form: goal · destination · saved setup · optional advanced settings.
  *
  * It replaced two tabs, and the two tabs are why it exists. *One session* and
  * *Team* were two answers to "what am I starting?", and each was missing what
@@ -520,6 +523,21 @@ export function NewCodingSessionForm({
     unresolvedBenchIdentities,
     busySentence,
   });
+  const configurationBlocker = readiness.blockers.some(
+    (blocker) =>
+      (blocker.id === "provider" &&
+        providerStatus !== null &&
+        selectedTarget === null) ||
+      blocker.id === "provider-refusal" ||
+      blocker.id === "model" ||
+      blocker.id === "override-reason" ||
+      blocker.id === "project-readiness" ||
+      blocker.id.startsWith("bench:"),
+  );
+  const [configurationOpen, setConfigurationOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (configurationBlocker) setConfigurationOpen(true);
+  }, [configurationBlocker]);
   const plan = codingSessionLaunchPlan({
     governed,
     lead,
@@ -677,148 +695,6 @@ export function NewCodingSessionForm({
           ) : null}
         </div>
 
-        <NewCodingSessionLeadField
-          candidates={candidates}
-          disabled={interactionLocked}
-          lead={lead}
-          onLeadChange={setLeadActor}
-        />
-
-        <div className="flex flex-col gap-2">
-          <NewCodingSessionProviderPicker
-            disabled={interactionLocked}
-            model={effectiveModel}
-            onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
-            onModelChange={(value) =>
-              setModelSelection({ value, explicit: true })
-            }
-            onTargetChange={(key) => {
-              setTargetSelection({ key, explicit: true });
-              setModelSelection({ value: null, explicit: false });
-            }}
-            selectedTarget={selectedTarget}
-            targets={targets}
-          />
-          <NewCodingSessionModelDisclosure
-            catalog={modelCatalog}
-            model={effectiveModel}
-            note={seatedModel.note}
-          />
-          {modelOverridden ? (
-            <div className="flex flex-col gap-1">
-              <label
-                className="text-2xs text-muted-foreground"
-                htmlFor="coding-session-model-override"
-              >
-                Why this model, and not the one {lead.label} carries?
-              </label>
-              <Input
-                data-testid="new-coding-session-model-override"
-                disabled={interactionLocked}
-                id="coding-session-model-override"
-                onChange={(event) => setOverrideReason(event.target.value)}
-                placeholder="Because…"
-                value={overrideReason}
-              />
-            </div>
-          ) : null}
-        </div>
-
-        {governed ? (
-          <NewCodingSessionBenchField
-            challengerRate={challengerRate}
-            disabled={interactionLocked}
-            identities={benchIdentityOptions}
-            onChallengerRateChange={setChallengerRate}
-            onToggleIdentity={(value, selected) =>
-              setBenchIdentities((previous) =>
-                selected
-                  ? [...new Set([...previous, value])]
-                  : previous.filter((entry) => entry !== value),
-              )
-            }
-            onToggleProvider={(value, selected) =>
-              setBenchProviders((previous) =>
-                selected
-                  ? [...new Set([...previous, value])]
-                  : previous.filter((entry) => entry !== value),
-              )
-            }
-            providers={benchProviderOptions}
-            selectedIdentities={benchIdentities}
-            selectedProviders={benchProviders}
-          />
-        ) : null}
-
-        {governed ? (
-          <NewCodingSessionPolicyField
-            disabled={interactionLocked}
-            draft={policyDraft}
-            onDraftChange={setPolicyDraft}
-          />
-        ) : null}
-
-        <div className="flex flex-col gap-2">
-          <label
-            className="text-xs font-medium text-muted-foreground"
-            htmlFor="coding-session-title"
-          >
-            Name <span className="font-normal">(optional)</span>
-          </label>
-          <Input
-            data-testid="new-coding-session-title"
-            disabled={interactionLocked}
-            id="coding-session-title"
-            maxLength={MAX_CODING_SESSION_NAME_BYTES}
-            onChange={(event) => naming.setTitleByHand(event.target.value)}
-            placeholder="What is this session for?"
-            value={title}
-          />
-          {naming.status.message ? (
-            <p
-              className={cn(
-                "text-2xs",
-                naming.status.state === "failed"
-                  ? "text-destructive"
-                  : "text-muted-foreground",
-              )}
-              data-testid="new-coding-session-title-suggestion"
-            >
-              {naming.status.message}
-            </p>
-          ) : null}
-        </div>
-
-        <NewCodingSessionWorktreeField
-          checked={useWorktree}
-          disabled={
-            interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
-          }
-          name={worktreeName}
-          onCheckedChange={setUseWorktree}
-          onNameChange={setWorktreeName}
-          onSourceChange={setWorktreeSource}
-          sessionName={
-            governed
-              ? codingSessionLeadWorktreeName(title.trim() || "session")
-              : title
-          }
-          source={worktreeSource}
-          workdir={workdir}
-        />
-
-        <NewCodingSessionWorkdirField
-          channelId={channelId}
-          disabled={
-            interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
-          }
-          fallbackPath={projectContext?.defaultWorkdir ?? null}
-          onChange={setWorkdir}
-          projectKey={projectContext?.projectRef ?? null}
-          usesWorktree={useWorktree}
-          value={workdir}
-        />
-
         {projectContext ? (
           <NewCodingSessionProjectDestination
             projectName={projectContext.projectName}
@@ -836,27 +712,182 @@ export function NewCodingSessionForm({
           />
         )}
 
-        {projectContext?.projectRef ? (
-          <TeamReadinessCard
-            loading={teamReadiness.isLoading}
-            externalBusy={interactionLocked}
-            names={teamReadiness.names}
-            onBeginPrepare={() => void teamReadiness.beginPrepare()}
-            onCancelPrepare={teamReadiness.cancelPrepare}
-            onConfirmPrepare={() => void teamReadiness.confirmPrepare()}
-            onNameChange={teamReadiness.setName}
-            prepareError={teamReadiness.prepareError}
-            prepareWarning={teamReadiness.prepareWarning}
-            prepareSteps={teamReadiness.prepareSteps}
-            preparing={teamReadiness.isPreparing}
-            readError={teamReadiness.readError}
-            readiness={teamReadiness.readiness}
-            scan={teamReadiness.scan}
-            scanning={teamReadiness.isScanning}
-            selectedRoles={launchRoles}
-            runtimeTarget={selectedTarget}
+        <NewCodingSessionSetupDisclosure
+          configurationOpen={configurationOpen}
+          governed={governed}
+          onConfigurationOpenChange={setConfigurationOpen}
+          setupLead={
+            lead.kind === "agent" ? `${lead.label} · ${lead.role}` : lead.label
+          }
+          setupModel={
+            leadModel ?? effectiveModel ?? "Model will be chosen at runtime"
+          }
+          setupProvider={formatNewCodingSessionSetupProvider(selectedTarget)}
+        >
+          <NewCodingSessionLeadField
+            candidates={candidates}
+            disabled={interactionLocked}
+            lead={lead}
+            onLeadChange={setLeadActor}
           />
-        ) : null}
+
+          <div className="flex flex-col gap-2">
+            <NewCodingSessionProviderPicker
+              disabled={interactionLocked}
+              model={effectiveModel}
+              onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
+              onModelChange={(value) =>
+                setModelSelection({ value, explicit: true })
+              }
+              onTargetChange={(key) => {
+                setTargetSelection({ key, explicit: true });
+                setModelSelection({ value: null, explicit: false });
+              }}
+              selectedTarget={selectedTarget}
+              targets={targets}
+            />
+            <NewCodingSessionModelDisclosure
+              catalog={modelCatalog}
+              model={effectiveModel}
+              note={seatedModel.note}
+            />
+            {modelOverridden ? (
+              <div className="flex flex-col gap-1">
+                <label
+                  className="text-2xs text-muted-foreground"
+                  htmlFor="coding-session-model-override"
+                >
+                  Why this model, and not the one {lead.label} carries?
+                </label>
+                <Input
+                  data-testid="new-coding-session-model-override"
+                  disabled={interactionLocked}
+                  id="coding-session-model-override"
+                  onChange={(event) => setOverrideReason(event.target.value)}
+                  placeholder="Because…"
+                  value={overrideReason}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          {governed ? (
+            <NewCodingSessionBenchField
+              challengerRate={challengerRate}
+              disabled={interactionLocked}
+              identities={benchIdentityOptions}
+              onChallengerRateChange={setChallengerRate}
+              onToggleIdentity={(value, selected) =>
+                setBenchIdentities((previous) =>
+                  selected
+                    ? [...new Set([...previous, value])]
+                    : previous.filter((entry) => entry !== value),
+                )
+              }
+              onToggleProvider={(value, selected) =>
+                setBenchProviders((previous) =>
+                  selected
+                    ? [...new Set([...previous, value])]
+                    : previous.filter((entry) => entry !== value),
+                )
+              }
+              providers={benchProviderOptions}
+              selectedIdentities={benchIdentities}
+              selectedProviders={benchProviders}
+            />
+          ) : null}
+
+          {governed ? (
+            <NewCodingSessionPolicyField
+              disabled={interactionLocked}
+              draft={policyDraft}
+              onDraftChange={setPolicyDraft}
+            />
+          ) : null}
+
+          <div className="flex flex-col gap-2">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="coding-session-title"
+            >
+              Name <span className="font-normal">(optional)</span>
+            </label>
+            <Input
+              data-testid="new-coding-session-title"
+              disabled={interactionLocked}
+              id="coding-session-title"
+              maxLength={MAX_CODING_SESSION_NAME_BYTES}
+              onChange={(event) => naming.setTitleByHand(event.target.value)}
+              placeholder="What is this session for?"
+              value={title}
+            />
+            {naming.status.message ? (
+              <p
+                className={cn(
+                  "text-2xs",
+                  naming.status.state === "failed"
+                    ? "text-destructive"
+                    : "text-muted-foreground",
+                )}
+                data-testid="new-coding-session-title-suggestion"
+              >
+                {naming.status.message}
+              </p>
+            ) : null}
+          </div>
+
+          <NewCodingSessionWorktreeField
+            checked={useWorktree}
+            disabled={
+              interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
+            }
+            name={worktreeName}
+            onCheckedChange={setUseWorktree}
+            onNameChange={setWorktreeName}
+            onSourceChange={setWorktreeSource}
+            sessionName={
+              governed
+                ? codingSessionLeadWorktreeName(title.trim() || "session")
+                : title
+            }
+            source={worktreeSource}
+            workdir={workdir}
+          />
+
+          <NewCodingSessionWorkdirField
+            channelId={channelId}
+            disabled={
+              interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
+            }
+            fallbackPath={projectContext?.defaultWorkdir ?? null}
+            onChange={setWorkdir}
+            projectKey={projectContext?.projectRef ?? null}
+            usesWorktree={useWorktree}
+            value={workdir}
+          />
+
+          {projectContext?.projectRef ? (
+            <TeamReadinessCard
+              loading={teamReadiness.isLoading}
+              externalBusy={interactionLocked}
+              names={teamReadiness.names}
+              onBeginPrepare={() => void teamReadiness.beginPrepare()}
+              onCancelPrepare={teamReadiness.cancelPrepare}
+              onConfirmPrepare={() => void teamReadiness.confirmPrepare()}
+              onNameChange={teamReadiness.setName}
+              prepareError={teamReadiness.prepareError}
+              prepareWarning={teamReadiness.prepareWarning}
+              prepareSteps={teamReadiness.prepareSteps}
+              preparing={teamReadiness.isPreparing}
+              readError={teamReadiness.readError}
+              readiness={teamReadiness.readiness}
+              scan={teamReadiness.scan}
+              scanning={teamReadiness.isScanning}
+              selectedRoles={launchRoles}
+              runtimeTarget={selectedTarget}
+            />
+          ) : null}
+        </NewCodingSessionSetupDisclosure>
 
         {steps.length > 0 ? <CodingSessionLaunchSteps steps={steps} /> : null}
 
@@ -955,7 +986,7 @@ export function NewCodingSessionForm({
           ) : (
             <Rocket />
           )}
-          {governed ? "Launch" : "Start session"}
+          Start
         </Button>
       </div>
     </>

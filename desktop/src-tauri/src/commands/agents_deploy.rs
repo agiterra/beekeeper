@@ -46,6 +46,7 @@ pub(crate) fn resolve_deploy_model_provider(
 /// `descriptor.env` is the authoritative six-layer environment. Policy values
 /// are deliberately separate because providers apply them below that layered
 /// environment, preserving the local spawn's power-user override semantics.
+#[cfg(test)]
 pub(super) fn build_launch_block(
     record: &ManagedAgentRecord,
     descriptor: &crate::managed_agents::readiness::EffectiveHarnessDescriptor,
@@ -53,6 +54,29 @@ pub(super) fn build_launch_block(
     effective_prompt: Option<&str>,
     effective_model: Option<&str>,
     owner_pubkey: &str,
+) -> serde_json::Value {
+    build_launch_block_with_session_policy(
+        record,
+        descriptor,
+        teams,
+        effective_prompt,
+        effective_model,
+        owner_pubkey,
+        crate::managed_agents::AcpSessionPolicy::Channel,
+    )
+}
+
+/// Build a provider launch block using the same Desktop-owned session policy
+/// as the local child process. The policy is a reserved launch value, so a
+/// descriptor environment cannot shadow it.
+pub(super) fn build_launch_block_with_session_policy(
+    record: &ManagedAgentRecord,
+    descriptor: &crate::managed_agents::readiness::EffectiveHarnessDescriptor,
+    teams: &[crate::managed_agents::TeamRecord],
+    effective_prompt: Option<&str>,
+    effective_model: Option<&str>,
+    owner_pubkey: &str,
+    session_policy: crate::managed_agents::AcpSessionPolicy,
 ) -> serde_json::Value {
     use crate::managed_agents::{
         known_acp_runtime, resolve_session_title, DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
@@ -78,6 +102,7 @@ pub(super) fn build_launch_block(
         "BUZZ_ACP_AGENTS".into(),
         crate::managed_agents::acp_agents_value(&descriptor.command, record.parallelism),
     );
+    crate::managed_agents::insert_acp_session_policy_env(&mut policy_env, session_policy);
 
     if let Some(value) = effective_prompt {
         policy_env.insert("BUZZ_ACP_SYSTEM_PROMPT".into(), value.to_string());
@@ -101,10 +126,19 @@ pub(super) fn build_launch_block(
         policy_env.insert("BUZZ_ACP_TEAM_INSTRUCTIONS".into(), value);
     }
 
+    let launch_env: BTreeMap<_, _> = descriptor
+        .env
+        .iter()
+        .filter(|(key, _)| {
+            !key.eq_ignore_ascii_case(crate::managed_agents::ACP_SESSION_POLICY_ENV_VAR)
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+
     serde_json::json!({
         "command": descriptor.command,
         "args": descriptor.args,
-        "env": descriptor.env,
+        "env": launch_env,
         "policy_env": policy_env,
         "owner_pubkey": owner_pubkey,
     })
@@ -149,13 +183,14 @@ pub(crate) fn build_deploy_payload(
         crate::managed_agents::resolve_effective_harness_descriptor(record, &personas, &global)
             .map_err(|error| crate::managed_agents::user_facing_harness_error(&error))?;
     let owner_pubkey = super::workspace_owner_hex(state)?;
-    let launch = build_launch_block(
+    let launch = build_launch_block_with_session_policy(
         record,
         &descriptor,
         &teams,
         effective.system_prompt.value.as_deref(),
         effective.model.value.as_deref(),
         &owner_pubkey,
+        crate::managed_agents::acp_session_policy(state),
     );
 
     let effective_parallelism =
@@ -277,6 +312,7 @@ mod tests {
         assert_eq!(launch["policy_env"]["GOOSE_MODE"], "auto");
         assert_eq!(launch["policy_env"]["BUZZ_ACP_LAZY_POOL"], "true");
         assert_eq!(launch["policy_env"]["BUZZ_ACP_RELAY_OBSERVER"], "true");
+        assert_eq!(launch["policy_env"]["BUZZ_ACP_SESSION_POLICY"], "channel");
         assert_eq!(
             launch["policy_env"]["BUZZ_ACP_TEAM_INSTRUCTIONS"],
             "Coordinate"
@@ -289,6 +325,33 @@ mod tests {
         assert_eq!(launch["policy_env"]["BUZZ_ACP_MAX_TURN_DURATION"], "23");
         assert_eq!(launch["policy_env"]["BUZZ_ACP_AGENTS"], "4");
         assert_eq!(launch["owner_pubkey"], "owner-hex");
+    }
+
+    #[test]
+    fn provider_session_policy_overrides_descriptor_environment() {
+        let record = record();
+        let descriptor = EffectiveHarnessDescriptor {
+            command: "goose".into(),
+            args: vec![],
+            env: BTreeMap::from([
+                ("BUZZ_ACP_SESSION_POLICY".into(), "channel".into()),
+                ("KEEP_ME".into(), "yes".into()),
+            ]),
+        };
+
+        let launch = build_launch_block_with_session_policy(
+            &record,
+            &descriptor,
+            &[],
+            None,
+            None,
+            "owner-hex",
+            crate::managed_agents::AcpSessionPolicy::Thread,
+        );
+
+        assert_eq!(launch["policy_env"]["BUZZ_ACP_SESSION_POLICY"], "thread");
+        assert!(launch["env"]["BUZZ_ACP_SESSION_POLICY"].is_null());
+        assert_eq!(launch["env"]["KEEP_ME"], "yes");
     }
 
     /// OpenClaw descriptor: `launch.policy_env["BUZZ_ACP_AGENTS"]` must be "5"

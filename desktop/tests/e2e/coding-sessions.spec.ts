@@ -6,6 +6,10 @@ import {
 } from "nostr-tools/pure";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  buildCodingSessionLink,
+  codingSessionLinkGenerationId,
+} from "@/features/coding-sessions/lib/codingSessionLink";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import { buildCodingSessionGoalEvent } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
@@ -731,6 +735,41 @@ test("a resumed session renders every earlier generation, not just the newest", 
   await workspace.screenshot({
     path: "test-results/screenshots/session-resumed-history.png",
   });
+});
+
+test("a session link in channel chat opens the exact execution without a transcript coordinate", async ({
+  page,
+}) => {
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await seedCodingSession(page);
+  const link = buildCodingSessionLink({
+    channelId: CHANNEL_ID,
+    providerPubkey: PROVIDER_PUBKEY,
+    targetKey: TARGET_KEY,
+  });
+  await page
+    .getByTestId("message-input")
+    .fill(`[Open the started session](${link})`);
+  await page.getByTestId("message-input").press("Enter");
+  await page
+    .getByRole("button", { name: "Open coding session", exact: true })
+    .click();
+  await expect(page.getByTestId("coding-session-workspace")).toBeVisible({
+    timeout: 15_000,
+  });
+  const generationId = codingSessionLinkGenerationId({
+    channelId: CHANNEL_ID,
+    providerPubkey: PROVIDER_PUBKEY,
+    targetKey: TARGET_KEY,
+  });
+  await expect(page).toHaveURL(
+    (url) =>
+      decodeURIComponent(url.hash.split("?")[0]) ===
+      `#/coding-sessions/${CHANNEL_ID}/${generationId}`,
+  );
+  await expect(page.getByTestId("coding-session-workspace")).toContainText(
+    "Reconnect now recovers cleanly.",
+  );
 });
 
 test("the channel timeline never renders coding-session kinds", async ({

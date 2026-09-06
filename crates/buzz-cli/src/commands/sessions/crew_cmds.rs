@@ -30,13 +30,17 @@ use buzz_core::coding_session_lifecycle_command::{
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
 use buzz_core::coding_session_payload::{
-    context_window_usage, ReceiptStatus, TurnUsageReport, ACTOR_ROLE_PAIR,
+    context_window_usage, decode_coding_session_lifecycle_receipt, ReceiptStatus, TurnUsageReport,
+    ACTOR_ROLE_PAIR,
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
 };
 use buzz_sdk::builders::{build_coding_session_command, build_coding_session_lifecycle_command};
+use buzz_sdk::coding_session::{
+    coding_session_lifecycle_receipt_semantic_key, CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+};
 use buzz_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_TRANSCRIPT,
@@ -193,11 +197,6 @@ async fn fetch_crew_facts(client: &BuzzClient, channel_id: &str) -> Result<CrewF
 
 /// Publish one signed coding-session event and return the write response,
 /// merged with the crew fields the caller needs to follow it up.
-///
-/// Separate from [`publish_with`] because `bee sessions send` has one more
-/// fact to gather — what the provider did with the turn — *after* the relay
-/// has answered and *before* anything is printed. Printing twice would make a
-/// scripted reader parse two JSON documents for one command.
 async fn submit_with(
     client: &BuzzClient,
     event: nostr::Event,
@@ -318,19 +317,6 @@ fn team_operation_wake_text(operation_id: &str, operation_type: &str) -> Result<
         "type": operation_type,
     }))
     .map_err(|error| CliError::Other(format!("operation wake serialization failed: {error}")))
-}
-
-/// Publish one signed coding-session event and print the write response,
-/// merged with the crew fields the caller needs to follow it up.
-async fn publish_with(
-    client: &BuzzClient,
-    event: nostr::Event,
-    conflict: &str,
-    extra: Value,
-) -> Result<(), CliError> {
-    let merged = submit_with(client, event, conflict, extra).await?;
-    println!("{merged}");
-    Ok(())
 }
 
 /// How often the delivery wait re-asks the relay for a receipt.
@@ -589,9 +575,25 @@ pub async fn cmd_create(
     actor: Option<&str>,
     role: Option<&str>,
     driver: Option<&str>,
+    wait: bool,
+    timeout_secs: Option<u64>,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     refuse_unsupported_create_flags(actor, role, driver)?;
+    let timeout_secs = if wait {
+        let timeout = timeout_secs.unwrap_or(CREATE_WAIT_DEFAULT_SECONDS);
+        if !(1..=CREATE_WAIT_MAX_SECONDS).contains(&timeout) {
+            return Err(CliError::Usage(format!(
+                "--timeout-secs must be between 1 and {CREATE_WAIT_MAX_SECONDS} seconds"
+            )));
+        }
+        timeout
+    } else {
+        if timeout_secs.is_some() {
+            return Err(CliError::Usage("--timeout-secs requires --wait".to_owned()));
+        }
+        0
+    };
     let channel = Uuid::parse_str(channel_id)
         .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
     if let Some(session_ref) = session_ref {
@@ -635,13 +637,304 @@ pub async fn cmd_create(
     };
     let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
     let event = client.sign_event_unchecked(builder)?;
-    publish_with(
+    let mut merged = submit_with(
         client,
         event,
         "lifecycle command already accepted",
         json!({ "commandId": command_id, "seated": false }),
     )
-    .await
+    .await?;
+    if !wait {
+        println!("{merged}");
+        return Ok(());
+    }
+
+    // The signed event builder canonicalizes the UUID. Query that same h tag,
+    // even when the caller pasted an uppercase spelling.
+    let canonical_channel = channel.to_string();
+    let channel_id = canonical_channel.as_str();
+    let outcome = await_create_receipt(
+        client,
+        channel_id,
+        &command_id,
+        provider_authority,
+        timeout_secs,
+    )
+    .await;
+    let (exit, detail) = match outcome {
+        CreateWaitOutcome::Confirmed {
+            status,
+            receipt_event_id,
+            target,
+            error,
+        } => {
+            if let Some(object) = merged.as_object_mut() {
+                object.insert("waited".into(), json!(true));
+                object.insert("outcome".into(), json!(status.as_str()));
+                object.insert("receiptEventId".into(), json!(receipt_event_id));
+                object.insert("target".into(), json!(coding_session_target_key(&target)));
+                object.insert(
+                    "receiptError".into(),
+                    error.map_or(Value::Null, |e| json!(e)),
+                );
+                object.insert(
+                    "sessionUrl".into(),
+                    json!(coding_session_navigation_url(
+                        channel_id,
+                        provider_authority,
+                        &coding_session_target_key(&target),
+                    )),
+                );
+            }
+            let exit = if matches!(status, ReceiptStatus::Created) {
+                0
+            } else {
+                1
+            };
+            (exit, format!("provider receipt says {}", status.as_str()))
+        }
+        CreateWaitOutcome::Refused {
+            receipt_event_id,
+            error,
+        } => {
+            if let Some(object) = merged.as_object_mut() {
+                object.insert("waited".into(), json!(true));
+                object.insert("outcome".into(), json!("failed"));
+                object.insert("receiptEventId".into(), json!(receipt_event_id));
+                object.insert("target".into(), Value::Null);
+                object.insert("receiptError".into(), json!(error));
+            }
+            (1, format!("provider refused the create: {}", error.message))
+        }
+        CreateWaitOutcome::Unconfirmed { query_failed } => {
+            if let Some(object) = merged.as_object_mut() {
+                object.insert("waited".into(), json!(true));
+                object.insert("outcome".into(), json!("unconfirmed"));
+                object.insert("receiptEventId".into(), Value::Null);
+                object.insert("target".into(), Value::Null);
+                object.insert("receiptError".into(), Value::Null);
+            }
+            (
+                5,
+                format!(
+                    "relay accepted command {command_id}, but {} within {timeout_secs}s; no second create was attempted",
+                    if query_failed {
+                        "receipt queries failed or did not complete"
+                    } else {
+                        "no signed receipt arrived"
+                    }
+                ),
+            )
+        }
+        CreateWaitOutcome::Conflicted { detail } => {
+            if let Some(object) = merged.as_object_mut() {
+                object.insert("waited".into(), json!(true));
+                object.insert("outcome".into(), json!("conflicted"));
+                object.insert("receiptEventId".into(), Value::Null);
+                object.insert("target".into(), Value::Null);
+                object.insert("receiptError".into(), json!(detail));
+            }
+            (1, detail)
+        }
+    };
+    println!("{merged}");
+    match exit {
+        0 => Ok(()),
+        1 => Err(CliError::Refused(detail)),
+        _ => Err(CliError::Unconfirmed(detail)),
+    }
+}
+
+const CREATE_WAIT_DEFAULT_SECONDS: u64 = 120;
+const CREATE_WAIT_MAX_SECONDS: u64 = 300;
+
+/// Link to an execution qualified by its receipt signer, without a transcript coordinate.
+pub(super) fn coding_session_navigation_url(
+    channel_id: &str,
+    provider_authority: &str,
+    target_key: &str,
+) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("channel", channel_id)
+        .append_pair("provider", &provider_authority.to_ascii_lowercase())
+        .append_pair("target", target_key)
+        .finish();
+    format!("beekeeper://coding-session?{query}")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CreateWaitOutcome {
+    Confirmed {
+        status: ReceiptStatus,
+        receipt_event_id: String,
+        target: buzz_core::coding_session_command::CodingSessionTarget,
+        error: Option<buzz_core::coding_session_payload::ReceiptError>,
+    },
+    Refused {
+        receipt_event_id: String,
+        error: buzz_core::coding_session_payload::ReceiptError,
+    },
+    Unconfirmed {
+        query_failed: bool,
+    },
+    Conflicted {
+        detail: String,
+    },
+}
+
+fn same_create_answer(left: &CreateWaitOutcome, right: &CreateWaitOutcome) -> bool {
+    match (left, right) {
+        (
+            CreateWaitOutcome::Confirmed {
+                status: left_status,
+                target: left_target,
+                error: left_error,
+                ..
+            },
+            CreateWaitOutcome::Confirmed {
+                status: right_status,
+                target: right_target,
+                error: right_error,
+                ..
+            },
+        ) => {
+            left_status == right_status && left_target == right_target && left_error == right_error
+        }
+        (
+            CreateWaitOutcome::Refused {
+                error: left_error, ..
+            },
+            CreateWaitOutcome::Refused {
+                error: right_error, ..
+            },
+        ) => left_error == right_error,
+        _ => false,
+    }
+}
+
+/// Select the provider's signed answer to one create. Unrelated commands,
+/// wrong signers, malformed events, and turn receipts are ignored. Two
+/// different answers are a contradiction and never get resolved by time.
+pub(super) fn classify_create_receipts(
+    events: &[Value],
+    channel_id: &str,
+    command_id: &str,
+    provider_authority: &str,
+) -> Result<Option<CreateWaitOutcome>, String> {
+    let mut answer: Option<CreateWaitOutcome> = None;
+    for raw in events {
+        let Ok(event) = serde_json::from_value::<nostr::Event>(raw.clone()) else {
+            continue;
+        };
+        if u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+            || !event.tags.iter().any(|tag| {
+                tag.as_slice().len() == 2
+                    && tag.as_slice()[0] == "h"
+                    && tag.as_slice()[1] == channel_id
+            })
+            || !event
+                .pubkey
+                .to_hex()
+                .eq_ignore_ascii_case(provider_authority)
+        {
+            continue;
+        }
+        if buzz_core::verify_event(&event).is_err() {
+            continue;
+        }
+        let expected_key = coding_session_lifecycle_receipt_semantic_key(command_id);
+        let expected = [
+            ["h", channel_id],
+            ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+            ["csl-command", command_id],
+            ["csl-key", expected_key.as_str()],
+        ];
+        if event.tags.len() != expected.len()
+            || event.tags.iter().zip(expected).any(|(got, want)| {
+                got.as_slice().len() != 2
+                    || got.as_slice()[0] != want[0]
+                    || got.as_slice()[1] != want[1]
+            })
+        {
+            continue;
+        }
+        let Ok(receipt) = decode_coding_session_lifecycle_receipt(&event.content) else {
+            continue;
+        };
+        if receipt.command_id != command_id {
+            continue;
+        }
+        let candidate = match receipt.status {
+            ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn => {
+                let Some(target) = receipt.session.clone() else {
+                    continue;
+                };
+                CreateWaitOutcome::Confirmed {
+                    status: receipt.status,
+                    receipt_event_id: event.id.to_hex(),
+                    target,
+                    error: receipt.error.clone(),
+                }
+            }
+            ReceiptStatus::Failed => {
+                let Some(error) = receipt.error.clone() else {
+                    continue;
+                };
+                CreateWaitOutcome::Refused {
+                    receipt_event_id: event.id.to_hex(),
+                    error,
+                }
+            }
+            _ => continue,
+        };
+        if let Some(existing) = &answer {
+            if !same_create_answer(existing, &candidate) {
+                return Err(format!(
+                    "provider published conflicting lifecycle receipts for create {command_id}"
+                ));
+            }
+        } else {
+            answer = Some(candidate);
+        }
+    }
+    Ok(answer)
+}
+
+async fn await_create_receipt(
+    client: &BuzzClient,
+    channel_id: &str,
+    command_id: &str,
+    provider_authority: &str,
+    timeout_secs: u64,
+) -> CreateWaitOutcome {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    let mut query_failed = false;
+    let filter = json!({
+        "kinds": [KIND_CODING_SESSION_LIFECYCLE_RECEIPT],
+        "#h": [channel_id],
+        "#csl-command": [command_id],
+    });
+    loop {
+        let query = tokio::time::timeout_at(deadline, client.query_all(filter.clone())).await;
+        match query {
+            Ok(Ok(events)) => {
+                match classify_create_receipts(&events, channel_id, command_id, provider_authority)
+                {
+                    Ok(Some(outcome)) => return outcome,
+                    Ok(None) => {}
+                    Err(detail) => return CreateWaitOutcome::Conflicted { detail },
+                }
+            }
+            Ok(Err(_)) => query_failed = true,
+            Err(_) => return CreateWaitOutcome::Unconfirmed { query_failed: true },
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return CreateWaitOutcome::Unconfirmed { query_failed };
+        }
+        let next_poll = std::cmp::min(deadline, now + std::time::Duration::from_millis(500));
+        tokio::time::sleep_until(next_poll).await;
+    }
 }
 
 /// Refuse the three create flags this surface cannot honestly publish.

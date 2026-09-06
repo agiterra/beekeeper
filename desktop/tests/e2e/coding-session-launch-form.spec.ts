@@ -316,8 +316,8 @@ async function signedEvents(page: Page) {
 }
 
 test.describe("the one launch form", () => {
-  // Tall enough that a single shot evidences the whole form — the ruling's
-  // field list, the readiness split and all five plan lines. At 900 px both
+  // Tall enough that a single shot evidences the primary form — the ruling's
+  // field list, the readiness split and the visible blockers. At 900 px both
   // shots were clipped and neither showed the policy controls open
   // (REVIEW-B3 F12).
   test.use({ viewport: { width: 1280, height: 1600 } });
@@ -337,6 +337,17 @@ test.describe("the one launch form", () => {
       0,
     );
 
+    // The primary path keeps setup details out of view while preserving the
+    // mounted controls behind the disclosure for saved setups and edits.
+    await expect(
+      page.getByTestId("new-coding-session-setup-summary"),
+    ).toContainText("Current setup");
+    await expect(
+      page.getByTestId("new-coding-session-configuration"),
+    ).not.toHaveAttribute("open");
+    await expect(page.getByTestId("new-coding-session-bench")).toBeHidden();
+    await expect(page.getByTestId("new-coding-session-policy")).toBeHidden();
+
     // Leading it yourself: not governed, and the switch says why rather than
     // pretending to be a decision.
     await expect(page.getByTestId("new-coding-session-governed")).toContainText(
@@ -350,6 +361,8 @@ test.describe("the one launch form", () => {
     await expect(
       page.getByTestId("new-coding-session-blocker-goal"),
     ).toContainText("Write the goal");
+
+    await page.getByTestId("new-coding-session-edit-setup").click();
 
     await page
       .getByTestId("new-coding-session-goal")
@@ -394,6 +407,19 @@ test.describe("the one launch form", () => {
       page.getByTestId("new-coding-session-policy-disclosure"),
     ).toContainText(CODING_SESSION_POLICY_STATED_NOT_ENFORCED);
 
+    // The technical plan stays collapsed on the primary path, but remains
+    // available without changing what Start will publish.
+    await expect(
+      page.getByTestId("new-coding-session-launch-details"),
+    ).not.toHaveAttribute("open");
+    await expect(
+      page.getByTestId("new-coding-session-plan-genesis"),
+    ).toBeHidden();
+    await page
+      .getByTestId("new-coding-session-launch-details")
+      .locator("summary")
+      .click();
+
     // The plan names the events pressing the button publishes, with kinds.
     await expect(
       page.getByTestId("new-coding-session-plan-genesis"),
@@ -403,12 +429,27 @@ test.describe("the one launch form", () => {
     ).toContainText("the only seat this launch creates");
     await expect(page.getByTestId("new-coding-session-submit")).toBeEnabled();
 
-    // All five plan lines, so the shot shows the plan rather than a truncation.
+    // All five plan lines remain available, so the disclosure cannot truncate
+    // the actual launch behavior when a person asks to inspect it.
     for (const id of ["genesis", "goal", "create", "grants", "turn"]) {
       await expect(
         page.getByTestId(`new-coding-session-plan-${id}`),
       ).toBeVisible();
     }
+    await page
+      .getByTestId("new-coding-session-launch-details")
+      .locator("summary")
+      .click();
+    await page
+      .getByTestId("new-coding-session-configuration")
+      .locator(":scope > summary")
+      .click();
+    await page
+      .getByTestId("new-coding-session-form")
+      .evaluate((node) => node.scrollTo(0, 0));
+    await expect(
+      page.getByTestId("new-coding-session-configuration"),
+    ).not.toHaveAttribute("open");
     await waitForAnimations(page);
     await page.screenshot({ path: `${SHOTS}/launch-form.png`, fullPage: true });
   });
@@ -418,6 +459,7 @@ test.describe("the one launch form", () => {
   }) => {
     await openApp(page);
     await openDialog(page);
+    await page.getByTestId("new-coding-session-edit-setup").click();
 
     await page
       .getByTestId("new-coding-session-goal")
@@ -539,6 +581,7 @@ test.describe("the one launch form", () => {
     // fire because the model was never null.
     await openApp(page);
     await openDialog(page);
+    await page.getByTestId("new-coding-session-edit-setup").click();
     await page
       .getByTestId("new-coding-session-goal")
       .fill("Prove the model comes from the identity.");
@@ -580,6 +623,7 @@ test.describe("the one launch form", () => {
   }) => {
     await openApp(page);
     await openDialog(page);
+    await page.getByTestId("new-coding-session-edit-setup").click();
     await page.setViewportSize({ width: 720, height: 1600 });
     await page
       .getByTestId("new-coding-session-goal")
@@ -599,6 +643,10 @@ test.describe("the one launch form", () => {
     await expect(
       page.getByTestId("new-coding-session-blocker-model"),
     ).toBeVisible();
+    await page
+      .getByTestId("new-coding-session-launch-details")
+      .locator("summary")
+      .click();
     await page.getByTestId("coding-session-model-picker").click();
     await page
       .getByTestId("coding-session-model-row")

@@ -214,6 +214,7 @@ pub(crate) fn invoke_handler(
         stop_managed_agent,
         restart_managed_agent,
         set_agent_managed_profiles,
+        set_thread_scoped_acp_sessions,
         set_managed_agent_start_on_app_launch,
         set_managed_agent_auto_restart,
         give_agent_its_own_nest,
