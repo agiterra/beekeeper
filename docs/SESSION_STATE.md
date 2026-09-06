@@ -21,7 +21,16 @@ project Git tests and native all-target Clippy pass. Logs are
 September 6 validation directory. Launch refusals also move outside the form's
 scroll area beside Start; focused E2E verifies visible failure at 1000×600,
 retained goal, reenabled Start, and no create publication after seat refusal
-(`launch-error-visible-e2e.log`). These repairs are being packaged for retry.
+(`launch-error-visible-e2e.log`). Repair commit `aa9cbc0af` is built and
+installed at the same Beekeeper Dev.app path; installed CLI reports
+`aa9cbc0a`, built `2026-09-06T23:27:35Z`, and bundle signature verification
+passes (`desktop-launch-fix-bundle.log`). Prior bundle is retained as
+`~/Applications/Beekeeper Dev.app.before-launch-fix`. New process PID 82331
+launched, but startup is waiting in `SecretStore::read_blob_raw_keyring` /
+`keyring::Entry::get_password`; SecurityAgent is running. Stack evidence is
+`launch-fix-startup-sample.txt` in the validation directory. Computer Use
+refused access to SecurityAgent. Brian must complete the local Keychain prompt
+before live session retry; successful role-pack fetch is not yet verified.
 
 Desktop test bundle is now built from `3ac49a2e9` and installed at
 `/Users/brian/Applications/Beekeeper Dev.app`. It uses the debug profile and
