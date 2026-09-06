@@ -201,23 +201,37 @@ fn persona_declared_role(dir: &Path, persona: &str) -> Option<String> {
 
 /// The pack this computer would stage for a seat **created with `seat_role`**.
 ///
-/// The seat's role picks the pack. The actor's home role is not consulted:
-/// identity is who signs, role is what the seat is for, and a `builder`
+/// The seat's role picks the pack, and the pack's own persona has the last
+/// word. **Home roles order the search; the declared role decides.** An
+/// agent's record says what it was installed as; its pack says what it is
+/// today, read through `persona_declared_role` from the persona's frontmatter.
+/// A candidate is staged only when that declared role is the seat's role (or,
+/// on the last step, when the persona declares none). Before this rule, a
+/// `verifier`-labelled agent whose pack now declared `builder` staged that
+/// pack into a verifier seat on the strength of its label alone
+/// (finding 94, `review-2026-09-01/LIVE-RUN-TeamRolesV1.md`).
+///
+/// Identity is who signs, role is what the seat is for, and a `builder`
 /// identity seated as `architect` is an architect for that execution. Staging
-/// the builder's pack there handed the seat the wrong craft while every screen
-/// said `architect` — the staging bug this function exists to close
+/// the builder's pack there handed the seat the wrong craft while every
+/// screen said `architect` — the staging bug this function exists to close
 /// (`docs/CREW_FRONT_DOOR.md`, *Rules from the lead*).
 ///
 /// Resolution, in order, and each step is a fact rather than a guess:
 ///
-/// 1. The actor's own pack, when the actor's home role **is** the seat's role.
-/// 2. Any pack installed on this computer whose agent declares the seat's
-///    role — the crew-role installer mints one agent per role pack, so a
-///    machine that has the roles has the packs.
+/// 1. The actor's own pack, when the actor's home role is the seat's role
+///    **and** its persona declares that role.
+/// 2. Any pack installed on this computer whose agent's home role is the
+///    seat's role **and** whose persona declares it — the crew-role installer
+///    mints one agent per role pack, so a machine that has the roles has the
+///    packs.
 /// 3. The actor's own pack when that pack claims no role at all. A persona
 ///    with no `role:` makes no claim this could contradict; a persona that
 ///    declares a *different* role is refused, because staging it would be the
 ///    original bug by another route.
+///
+/// A candidate that fails the declared-role check on step 1 or 2 falls
+/// through to the next step; it is never returned on its label.
 ///
 /// `None` — never another role's pack — when none of those hold. A seat with
 /// no pack is a legal seat that carries no role skills, and the screen says so.
@@ -232,14 +246,14 @@ pub(crate) fn resolve_local_seat_pack(
         return resolve_seat_pack(record, teams);
     };
     if record.home_role.as_deref().map(str::trim) == Some(role) {
-        if let Some(pack) = resolve_seat_pack(record, teams) {
+        if let Some(pack) = resolve_pack_declaring_role(record, teams, role) {
             return Some(pack);
         }
     }
     if let Some(pack) = records
         .iter()
         .filter(|other| other.home_role.as_deref().map(str::trim) == Some(role))
-        .find_map(|other| resolve_seat_pack(other, teams))
+        .find_map(|other| resolve_pack_declaring_role(other, teams, role))
     {
         return Some(pack);
     }
@@ -247,17 +261,53 @@ pub(crate) fn resolve_local_seat_pack(
     match persona_declared_role(&dir, &persona) {
         // The pack claims a different role: not this seat's pack.
         Some(declared) if declared != role => {
-            tracing::debug!(
-                pack = %dir.display(),
-                persona = %persona,
-                %declared,
-                seat_role = %role,
-                "seat stages no role pack: the agent's pack is another role's"
-            );
+            refuse_another_roles_pack(&dir, &persona, &declared, role);
             None
         }
         _ => Some((dir, persona)),
     }
+}
+
+/// `resolve_seat_pack`, accepted only when the persona **declares** `role`.
+///
+/// The home-role steps of `resolve_local_seat_pack` go through here, so a
+/// label on an agent's record is never enough on its own: a readable pack
+/// whose persona declares another role is refused with the same debug line
+/// the final step uses, and one whose persona declares no role is left for
+/// that final step to judge.
+fn resolve_pack_declaring_role(
+    record: &crate::managed_agents::types::ManagedAgentRecord,
+    teams: &[crate::managed_agents::types::TeamRecord],
+    role: &str,
+) -> Option<(PathBuf, String)> {
+    let (dir, persona) = resolve_seat_pack(record, teams)?;
+    match persona_declared_role(&dir, &persona) {
+        Some(declared) if declared == role => Some((dir, persona)),
+        Some(declared) => {
+            refuse_another_roles_pack(&dir, &persona, &declared, role);
+            None
+        }
+        None => {
+            tracing::debug!(
+                pack = %dir.display(),
+                persona = %persona,
+                seat_role = %role,
+                "home role alone stages no role pack: the persona declares no role"
+            );
+            None
+        }
+    }
+}
+
+/// The one debug line every refusal of another role's pack emits.
+fn refuse_another_roles_pack(dir: &Path, persona: &str, declared: &str, role: &str) {
+    tracing::debug!(
+        pack = %dir.display(),
+        persona = %persona,
+        %declared,
+        seat_role = %role,
+        "seat stages no role pack: the agent's pack is another role's"
+    );
 }
 
 /// The whole file: pending seats keyed by the create's `commandId`.

@@ -52,6 +52,15 @@ import {
   type SessionReachability,
 } from "./sessionCoordinationTypes.ts";
 import {
+  commissioned,
+  hasExactOrderedTwoFieldTags,
+  isPlainObject,
+  type LifecycleHireFacts,
+  parseObjectContent,
+  readLifecycleHire,
+  tagValue,
+} from "./sessionCoordinationCommissioning.ts";
+import {
   hasStrictClosureJson,
   hasStrictLeaseJson,
   hasStrictLeaseValues,
@@ -94,6 +103,8 @@ type LifecycleCommandFacts = {
   projectRef: string | null;
   sessionRef: string | null;
   previousTarget: CodingSessionTarget | null;
+  /** The kind 44221 `session.hire` a create answers, or null. */
+  hireRef: string | null;
 };
 
 type LifecycleReceiptFacts = {
@@ -123,28 +134,6 @@ type LeaseFacts = {
   sequence: number;
 };
 
-function tagValue(event: CoordinationEvent, key: string): string | null {
-  const tag = event.tags.find((candidate) => candidate[0] === key);
-  return tag?.[1] ?? null;
-}
-
-function hasExactOrderedTwoFieldTags(
-  event: CoordinationEvent,
-  expected: ReadonlyArray<readonly [string, string | null]>,
-): boolean {
-  return (
-    event.tags.length === expected.length &&
-    event.tags.every((tag, index) => {
-      const [key, value] = expected[index];
-      return (
-        tag.length === 2 &&
-        tag[0] === key &&
-        (value === null ? tag[1].length > 0 : tag[1] === value)
-      );
-    })
-  );
-}
-
 /** Byte-wise order matching Rust `Ord`; never substitute ICU collation. */
 export function coordinationByteOrder(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -159,10 +148,6 @@ function isNewer(
     return candidate.created_at > incumbent.created_at;
   }
   return candidate.id > incumbent.id;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function nullableString(value: unknown): string | null {
@@ -274,17 +259,6 @@ export function sessionCommitConfirmation(
   return SESSION_COMMIT_NOT_CHECKED;
 }
 
-function parseObjectContent(
-  event: CoordinationEvent,
-): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(event.content);
-    return isPlainObject(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 function isLowerHexPubkey(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
@@ -322,6 +296,7 @@ function readLifecycleCommand(
       projectRef: nullableString(action.projectRef),
       sessionRef: nullableString(action.sessionRef),
       previousTarget: null,
+      hireRef: nullableString(action.hireRef),
     };
   }
   if (action.type === "session.resume") {
@@ -336,6 +311,7 @@ function readLifecycleCommand(
       projectRef: null,
       sessionRef: null,
       previousTarget,
+      hireRef: null,
     };
   }
   return null;
@@ -470,10 +446,14 @@ function acceptedGenerations(
   events: readonly CoordinationEvent[],
   acceptProjectRef: (projectRef: string | null) => boolean,
   ambiguities: SessionCoordinationAmbiguity[],
+  commissioners: readonly string[] | null,
 ): Map<string, AcceptedGeneration> {
   const commands = new Map<string, LifecycleCommandFacts[]>();
   const receipts = new Map<string, LifecycleReceiptFacts[]>();
+  const hires: LifecycleHireFacts[] = [];
   for (const event of events) {
+    const hire = readLifecycleHire(event);
+    if (hire) hires.push(hire);
     const command = readLifecycleCommand(event);
     if (command) {
       const key = channelFactKey(command.channelId, command.commandId);
@@ -516,6 +496,16 @@ function acceptedGenerations(
       receipt.event.pubkey !== command.providerAuthorityPubkey ||
       !lifecycleSucceeded(command, receipt.status)
     ) {
+      continue;
+    }
+    // B1: and the command itself must have been issued by someone entitled to
+    // issue it. Reported rather than swallowed — a self-signed create is
+    // exactly the "evidence the fold refused to resolve" this list is for.
+    if (!commissioned(command, commissioners, hires)) {
+      ambiguities.push({
+        scope: "authority",
+        message: `command ${command.commandId} was signed by ${command.event.pubkey}, which may not commission an execution of this session and answers no accepted hire; no generation was accepted`,
+      });
       continue;
     }
     pairs.push({ command, receipt });
@@ -650,6 +640,7 @@ export function foldSessionCoordination(
     events,
     acceptProjectRef,
     rawAmbiguities,
+    input.commissioners ?? null,
   );
 
   const metadata = new Map<

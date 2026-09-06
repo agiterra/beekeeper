@@ -57,6 +57,27 @@ pub enum VerdictAdmissionCandidateSource {
         /// [`VERDICT_ADMISSION_MAX_PUSHER_SEATS`].
         seats: usize,
     },
+    /// The pusher's seats, **narrowed to the missions this repository's own
+    /// channels hold** (finding 91).
+    ///
+    /// [`Self::SeatOfMission`] is the same lookup before that narrowing: it
+    /// returned every mission the key is seated on anywhere in the community,
+    /// so a seat on one repository's mission offered its green rows to a push
+    /// of another repository the same founder owns. A caller that narrows
+    /// says so with this variant, because the count it reports is then a
+    /// count of *some* of the key's seats and a reader must not read it as
+    /// all of them.
+    SeatOfMissionInScope {
+        /// The pusher's key as the refusal names it — 8 hex.
+        seat: String,
+        /// How many of the pusher's seats survived the narrowing.
+        seats: usize,
+        /// How many seats the lookup held before it narrowed.
+        held: usize,
+        /// What the seats were narrowed to, as a person reads it — e.g.
+        /// `the 3 session channel(s) of 30621:<owner>:beekeeper`.
+        within: String,
+    },
     /// Every session channel of the project the announcement back-references.
     ProjectSessions {
         /// The project coordinate the repository's `project` tag names.
@@ -102,6 +123,35 @@ impl VerdictAdmissionCandidateSource {
                  {VERDICT_ADMISSION_MAX_PUSHER_SEATS} seats it holds — over one shared page of \
                  the newest {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on their \
                  channels."
+            ),
+            Self::SeatOfMissionInScope {
+                seat,
+                seats,
+                held,
+                within,
+            } if *seats == 0 => format!(
+                "{seat}, the key this push authenticated as, holds {held} seat(s) in the newest \
+                 {VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS} authority transitions this relay \
+                 could read, and none of them is on a mission of this repository's own channels \
+                 — a seat on another repository's mission proves nothing about this one \
+                 (finding 91). The search therefore read {within}. Searched {missions} \
+                 mission(s) — the newest {VERDICT_ADMISSION_MAX_SESSIONS} on those channels \
+                 whose founder is a founder of this repository, over one shared page of the \
+                 newest {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on them."
+            ),
+            Self::SeatOfMissionInScope {
+                seat,
+                seats,
+                held,
+                within,
+            } => format!(
+                "Searched {missions} mission(s) — the {seats} of the {held} seat(s) held by \
+                 {seat}, the key this push authenticated as, that lie in {within}. A seat on a \
+                 mission of some other repository is not searched here and proves nothing about \
+                 this one (finding 91). Of the newest \
+                 {VERDICT_ADMISSION_MAX_PUSHER_SEATS} seats this key holds, over one shared \
+                 page of the newest {VERDICT_ADMISSION_MAX_TRANSACTIONS} team transactions on \
+                 their channels."
             ),
             Self::ProjectSessions { project, channels } => format!(
                 "This key holds no seat in the newest \

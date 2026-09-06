@@ -266,4 +266,11 @@ pub struct PulseMissionFacts {
     pub seat_claims_refused: Vec<String>,
     /// Whether any 30618 ref state at all was supplied for this repo.
     pub ref_state_present: bool,
+    /// Whether the observation fold was handed a provider set and so could
+    /// check who signed each `observed` and `measured` row.
+    ///
+    /// `false` is the fold's own `provenance_checked: false`, carried rather
+    /// than hidden: every gate row's source word is then the row's own word
+    /// for itself, and the rendered line says `unverified` beside it (§8 I9).
+    pub gate_provenance_checked: bool,
 }

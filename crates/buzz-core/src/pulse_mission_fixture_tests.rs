@@ -157,6 +157,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
         ],
         seat_claims_refused: Vec::new(),
         ref_state_present: true,
+        gate_provenance_checked: true,
     };
     running
         .moved
@@ -183,6 +184,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
         timing: Vec::new(),
         seat_claims_refused: vec![format!("ee11ff22{}", "99".repeat(28))],
         ref_state_present: false,
+        gate_provenance_checked: true,
     };
 
     let unreadable = PulseMissionFacts {
@@ -203,6 +205,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
         timing: Vec::new(),
         seat_claims_refused: Vec::new(),
         ref_state_present: false,
+        gate_provenance_checked: true,
     };
 
     let open = vec![

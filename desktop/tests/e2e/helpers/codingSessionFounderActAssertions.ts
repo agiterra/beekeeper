@@ -768,6 +768,12 @@ export function landReadyResponse(mission: FounderActMission) {
       // carries an empty list. A mock that kept one would be exercising a
       // response the adapter cannot produce.
       observedGates: ["cargo fmt", "cargo clippy", "cargo test"],
+      // Finding 89: which policy record the arm stood on, and how it
+      // resolved. Arm (C) reads one for its gate list, so `absent` here would
+      // be a different fixture, not a shorter one.
+      policyResolution: "present",
+      policyEventId: POLICY_EVENT_ID,
+      policyNotEvaluated: null,
     },
     refusalReason: null,
     newestVerdict: {
@@ -807,6 +813,12 @@ export function landFounderPushResponse(mission: FounderActMission) {
       reportEventId: "",
       headSha: HEAD_SHA,
       observedGates: [],
+      // Arm (A) reads no policy at all, and says which exception it took —
+      // the 2026-09-05 audit's ask, so a founder's landing can never be read
+      // as verifier-approved.
+      policyResolution: "",
+      policyEventId: null,
+      policyNotEvaluated: "founder_exception",
     },
     refusalReason: null,
     newestVerdict: {
@@ -864,6 +876,9 @@ export const CO_FOUNDER =
  */
 export const VERIFIER =
   "7c1d5e9b2a4f6083bd15c7e4902a3f8615d0b47ce93a6f28104b5d7e83c9a061";
+/** The kind 44245 record the admitting arm-(C) fixture stood on. */
+export const POLICY_EVENT_ID =
+  "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a";
 export const REFUTATION_EVENT_ID =
   "441a97330c5e28b6f31d70a94e6c82b5137fa0de95c4813627ab0e9d5f31c8a4";
 
@@ -892,6 +907,11 @@ export function landFounders(viewerIsFounder: boolean) {
     // here would make every refusal in these fixtures carry the "this view
     // read no gate rows" disclosure.
     gateRowsRead: true,
+    // Finding 91: the mission's repository binding reached the rule, so the
+    // answer is not an assumption about the repository on screen. The
+    // decoder's key set is exact — a fixture missing this key throws
+    // "malformed response" before anything renders.
+    boundRepositoriesRead: true,
   };
 }
 

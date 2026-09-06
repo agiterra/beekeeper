@@ -16,6 +16,7 @@ use buzz_core_pkg::coding_session_policy::CodingSessionPolicyGrant;
 use buzz_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamFoldContext,
 };
+use buzz_core_pkg::coding_session_verdict_admission::mission_provider_pubkeys_from_lifecycle;
 use buzz_core_pkg::pulse_mission::{
     fold_pulse_mission_row, open_rulings, pulse_mission_cap_disclosure, render_pulse_mission_lines,
     rulings_waiting_on_viewer, PulseMissionError, PulseMissionFacts, PulseMissionNames,
@@ -101,6 +102,23 @@ pub struct PulseMissionSessionInput {
     pub policy_events: Vec<Event>,
     /// Signed kind 44246 events, ascending.
     pub observation_events: Vec<Event>,
+    /// Signed kind 44221 lifecycle commands from this umbrella's channel.
+    ///
+    /// With [`lifecycle_receipts`](Self::lifecycle_receipts), what proves who
+    /// provides this mission (finding 90 and the 2026-09-05 refuter's S4). No
+    /// `#d` filter is possible on the read: a command carries `csl-command`,
+    /// not the umbrella's `d`, so the caller hands over the channel's page and
+    /// the split happens here.
+    ///
+    /// `#[serde(default)]` deliberately: a caller that has not been updated
+    /// sends neither field, resolves no provider, and every gate line then
+    /// reads `(observed, unverified)` — the honest answer for a read that
+    /// checked nobody, and the behaviour of every caller before S4.
+    #[serde(default)]
+    pub lifecycle_commands: Vec<Event>,
+    /// Signed kind 44224 lifecycle receipts from the same channel.
+    #[serde(default)]
+    pub lifecycle_receipts: Vec<Event>,
     /// Relay-signed 30618 ref state for this umbrella's repo.
     pub ref_state: Vec<PulseMissionRefStateInput>,
     /// Paths the newest wip checkpoint named, for the overlap row.
@@ -223,6 +241,26 @@ fn context(session: &PulseMissionSessionInput) -> CodingSessionTeamFoldContext {
     }
 }
 
+/// Who may commission an execution of this umbrella (2026-09-05 refuter, B1
+/// and S4): its founder, and the keys the projection still grants steering.
+///
+/// The same rule the relay's push gate applies, read here from the authority
+/// projection the caller already sends. A grant this read could not see simply
+/// resolves no provider, which can only make a row *less* verified.
+fn steering_signers(session: &PulseMissionSessionInput) -> Vec<String> {
+    let mut signers = vec![session.founder_pubkey.to_ascii_lowercase()];
+    for grant in &session.active_grants {
+        if !(grant.granted && grant.may_steer) {
+            continue;
+        }
+        let grantee = grant.actor_pubkey.to_ascii_lowercase();
+        if !signers.contains(&grantee) {
+            signers.push(grantee);
+        }
+    }
+    signers
+}
+
 fn policy_grants(session: &PulseMissionSessionInput) -> Vec<CodingSessionPolicyGrant> {
     use buzz_core_pkg::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
     session
@@ -276,6 +314,13 @@ fn mission_rows(request: PulseMissionRowsRequest) -> Result<PulseMissionRows, St
     for session in &request.sessions {
         let context = context(session);
         let grants = policy_grants(session);
+        let providers = mission_provider_pubkeys_from_lifecycle(
+            &session.session_ref,
+            &session.genesis_ref,
+            &steering_signers(session),
+            &session.lifecycle_commands,
+            &session.lifecycle_receipts,
+        );
         let ref_state: Vec<PulseRefState> = session
             .ref_state
             .iter()
@@ -298,7 +343,11 @@ fn mission_rows(request: PulseMissionRowsRequest) -> Result<PulseMissionRows, St
             observation_events: &session.observation_events,
             ref_state: &ref_state,
             claimed_seats: &session.claimed_seats,
-            gate_source: None,
+            // Finding 93's other half (S4): the provider set this umbrella's
+            // own accepted lifecycle proves. An empty set is "this read proved
+            // no provider" and the fold then calls every `measured` row
+            // self-reported — never a claim that one was verified.
+            provider_pubkeys: Some(&providers),
         };
         let row = fold_pulse_mission_row(&sources, request.now_unix);
         // A failed read is one row's failure, disclosed by name, and the rest

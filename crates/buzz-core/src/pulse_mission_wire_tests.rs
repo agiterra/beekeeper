@@ -170,6 +170,7 @@ fn a_record_setting_nothing_is_the_withdrawal_and_names_who_withdrew_it() {
         timing: Vec::new(),
         seat_claims_refused: Vec::new(),
         ref_state_present: true,
+        gate_provenance_checked: true,
     };
     facts.policy.author = Some(id("77"));
     facts.policy.withdrawn = true;
@@ -454,6 +455,7 @@ fn a_landing_never_claims_the_missions_verdict_covers_that_commit() {
         timing: Vec::new(),
         seat_claims_refused: Vec::new(),
         ref_state_present: true,
+        gate_provenance_checked: true,
     };
     let row = render_pulse_mission_lines(&facts, &PulseMissionNames::default(), 10_000);
     let text = &row.moved[0].lines[0].text;
@@ -519,37 +521,38 @@ fn an_observed_row_replacing_an_observed_row_keeps_the_disclosure() {
     let assignment = signed(&assignment(&actor), &founder, 1);
     let assignment_ref = assignment.id.to_hex();
 
-    let declared = observation(
+    let declared = observation_with_source(
         &actor,
         "gate",
+        "declared",
         Some(&assignment_ref),
         gate_body("cargo test", "passed", "cargo test -p buzz-core"),
         2,
     );
-    let observed_first = observation(
+    let observed_first = observation_with_source(
         &provider_a,
         "gate",
+        "observed",
         Some(&assignment_ref),
         gate_body("cargo test", "failed", "cargo test -p buzz-core"),
         3,
     );
-    let observed_second = observation(
+    let observed_second = observation_with_source(
         &provider_b,
         "gate",
+        "observed",
         Some(&assignment_ref),
         gate_body("cargo test", "failed", "cargo test -p buzz-core --lib"),
         4,
     );
-    let first_id = observed_first.id.to_hex();
-    let second_id = observed_second.id.to_hex();
-    let lookup = move |event: &Event, _gate: &str| -> Option<String> {
-        let id = event.id.to_hex();
-        (id == first_id || id == second_id).then(|| "observed".to_owned())
-    };
+    let providers = vec![
+        provider_a.public_key().to_hex(),
+        provider_b.public_key().to_hex(),
+    ];
     let team = vec![assignment];
     let observations = vec![declared, observed_first, observed_second];
     let mut sources = sources(&context, &team, &observations, &[]);
-    sources.gate_source = Some(&lookup);
+    sources.provider_pubkeys = Some(&providers);
     let facts = fold_pulse_mission_row(&sources, 10_000);
 
     let names = names(vec![(&actor.public_key().to_hex(), "Bob")], None);
@@ -576,10 +579,23 @@ fn the_two_provenance_words_are_documented_as_what_they_are() {
     // of a provenance type.
     assert_eq!(PulseGateSource::Declared.as_str(), "declared");
     assert_eq!(PulseGateSource::Observed.as_str(), "observed");
+    assert_eq!(PulseGateSource::Measured.as_str(), "measured");
+    assert_eq!(
+        PulseGateSource::MeasuredSelfReported.as_str(),
+        "self-reported measurement",
+        "finding 95: a measured row nobody independent signed is rendered as the claim it is"
+    );
     assert!(
-        PulseGateSource::Declared < PulseGateSource::Observed,
+        PulseGateSource::Declared.precedence() < PulseGateSource::Observed.precedence(),
         "a claim never outranks a measurement"
     );
+    assert_eq!(
+        PulseGateSource::MeasuredSelfReported.precedence(),
+        PulseGateSource::Declared.precedence(),
+        "a self-reported measurement ranks as the claim it is"
+    );
+    assert!(PulseGateSource::MeasuredSelfReported.is_claim());
+    assert!(!PulseGateSource::Measured.is_claim());
     let source = include_str!("pulse_mission.rs");
     let declared_doc = source
         .split("pub enum PulseGateSource {")

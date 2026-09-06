@@ -66,14 +66,73 @@ async fn the_bound_channel_is_the_last_fallback() {
     );
 }
 
-/// The refusal sentence names the seat lookup and the key it ran for.
+/// The refusal sentence names the seat lookup, the key it ran for, and — since
+/// finding 91 — what the seats were narrowed to.
 #[test]
-fn the_seat_lookup_names_itself_in_the_refusal() {
-    let source = VerdictAdmissionCandidateSource::SeatOfMission {
+fn the_seat_lookup_names_itself_and_its_narrowing_in_the_refusal() {
+    let source = VerdictAdmissionCandidateSource::SeatOfMissionInScope {
         seat: "0123abcd".to_owned(),
         seats: 2,
+        held: 3,
+        within: "the 4 session channel(s) of 30621:aa:beekeeper".to_owned(),
     };
     let clause = source.searched_clause(2);
-    assert!(clause.contains("that seat 0123abcd"), "{clause}");
+    assert!(
+        clause.contains("the 2 of the 3 seat(s) held by 0123abcd"),
+        "{clause}"
+    );
+    assert!(
+        clause.contains("the 4 session channel(s) of 30621:aa:beekeeper"),
+        "a narrowed count must say what it was narrowed to: {clause}"
+    );
     assert!(clause.starts_with("Searched 2 mission(s)"), "{clause}");
+}
+
+/// A key seated only on other repositories' missions is not told it holds no
+/// seat — it is told which of its seats this repository grants, which is none.
+#[test]
+fn a_key_seated_elsewhere_is_not_told_it_holds_no_seat() {
+    let source = VerdictAdmissionCandidateSource::SeatOfMissionInScope {
+        seat: "0123abcd".to_owned(),
+        seats: 0,
+        held: 2,
+        within: "the channel this repository binds (c-1)".to_owned(),
+    };
+    let clause = source.searched_clause(1);
+    assert!(clause.contains("holds 2 seat(s)"), "{clause}");
+    assert!(
+        clause.contains("none of them is on a mission of this repository's own channels"),
+        "{clause}"
+    );
+    assert!(
+        !clause.contains("holds no seat in the newest"),
+        "the fall-back sentence would be false for a key that is seated elsewhere: {clause}"
+    );
+}
+
+/// A repository that grants no channel at all has nowhere to look, whatever
+/// seats the pusher holds elsewhere (finding 91).
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_repository_that_grants_no_channel_has_nowhere_to_look() {
+    let state = policy_test_state().await;
+    let community = state
+        .db
+        .ensure_configured_community(&format!("scope-{}.example", Uuid::new_v4().simple()))
+        .await
+        .expect("community")
+        .id;
+    let scope = resolve_candidate_scope(
+        &state,
+        community,
+        None,
+        None,
+        &Keys::generate().public_key().to_hex(),
+    )
+    .await
+    .expect("scope");
+    assert!(
+        scope.is_none(),
+        "no project and no binding is nowhere to look, and never the community"
+    );
 }

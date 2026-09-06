@@ -26,7 +26,35 @@ use crate::coding_session_observation::{
 };
 use crate::kind::KIND_CODING_SESSION_OBSERVATION;
 
-use super::{VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES};
+use super::{GatePolicyResolution, VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES};
+
+/// The repository every fixture here pushes to, as a kind:30617 coordinate.
+///
+/// Finding 91: a candidate must be **bound** to the repository being pushed,
+/// so every fixture binds its mission here and every query names it. A case
+/// about the binding itself varies one side.
+pub(super) const TEST_REPOSITORY: &str =
+    "30617:f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0:whoami-cli";
+
+/// The binding every fixture mission carries: [`TEST_REPOSITORY`] alone.
+pub(super) fn bound() -> Vec<String> {
+    vec![TEST_REPOSITORY.to_owned()]
+}
+
+/// A fixture's `Option<policy>` as the resolution the candidate now carries.
+///
+/// `None` was "the caller read no policy" and is `Absent`; `Some` is a
+/// `Present` record under a fixed id, since the cases that pass one care
+/// about its gate half and not about which event it came from.
+pub(super) fn resolved(policy: Option<VerdictAdmissionGatePolicy>) -> GatePolicyResolution {
+    match policy {
+        Some(policy) => GatePolicyResolution::Present {
+            policy,
+            event_id: "9011ce9011ce9011ce9011ce9011ce9011ce9011ce9011ce9011ce9011ce9011".into(),
+        },
+        None => GatePolicyResolution::Absent,
+    }
+}
 
 /// One gate row as a provider signs it: green on `head_sha`, clean tree.
 pub(super) fn green_row(gate: &str, head_sha: &str) -> CodingSessionObservationGateRow {

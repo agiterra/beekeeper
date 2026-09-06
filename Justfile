@@ -499,6 +499,7 @@ test-git-push-gate: _ensure-services
         api::git::verdict_admission::verified_tests \
         handlers::repo_protection::tests \
         api::git::verdict_admission::lookup_tests \
+        api::git::verdict_admission::hardening_tests \
         api::git::verdict_admission_scope::tests \
         --ignored --test-threads=1
 

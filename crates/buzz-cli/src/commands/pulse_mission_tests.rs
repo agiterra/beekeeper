@@ -196,3 +196,54 @@ fn the_two_fixtures_differ_only_by_who_is_reading() {
         assert_eq!(known_ids, unknown_ids, "{}", known_row.session_key);
     }
 }
+
+/// **S4.** Who may commission an execution, as this reader resolves it: the
+/// founder always, an operator the accepted chain still grants, and nobody
+/// else. The set is what makes a `measured` row's signer checkable at all —
+/// with it empty every gate line prints `(observed, unverified)`.
+#[test]
+fn the_steering_set_is_the_founder_and_the_grants_that_still_stand() {
+    use crate::commands::sessions::operations_reads::SessionAuthority;
+    use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
+    use buzz_core::coding_session_policy::CodingSessionPolicyGrant;
+    use buzz_core::coding_session_team_transaction::CodingSessionTeamFoldContext;
+
+    let founder = "aa".repeat(32);
+    let operator = "bb".repeat(32);
+    let revoked = "cc".repeat(32);
+    let authority = SessionAuthority {
+        context: CodingSessionTeamFoldContext {
+            channel_ref: "c0066ddd-8214-4baf-81d2-3046fead0d32".to_owned(),
+            session_ref: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned(),
+            genesis_ref: "dd".repeat(32),
+            founder_pubkey: founder.clone(),
+            active_seats: Vec::new(),
+            active_grants: Vec::new(),
+            verifier_required: false,
+        },
+        policy_grants: vec![
+            CodingSessionPolicyGrant {
+                grantee: operator.clone(),
+                accepted_at: 1_000,
+                transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
+            },
+            CodingSessionPolicyGrant {
+                grantee: revoked.clone(),
+                accepted_at: 1_000,
+                transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
+            },
+            CodingSessionPolicyGrant {
+                grantee: revoked.clone(),
+                accepted_at: 2_000,
+                transition_type: CodingSessionAuthorityTransitionType::Revoke,
+            },
+        ],
+    };
+
+    let signers = steering_signers(&authority, 3_000);
+    assert_eq!(signers, vec![founder, operator]);
+    assert!(
+        !signers.contains(&revoked),
+        "a revoked operator commissions nothing: {signers:?}"
+    );
+}

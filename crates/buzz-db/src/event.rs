@@ -93,6 +93,25 @@ pub struct EventQuery {
     /// starved off the page by unrelated global events before post-filtering.
     /// Matching is byte-exact, so callers must pass canonical coordinates.
     pub a_tags: Option<Vec<String>>,
+    /// Restrict results to events carrying **every** one of these literal
+    /// `[name, value]` tags, matched by JSONB containment.
+    ///
+    /// The generic form of [`EventQuery::a_tags`], for the tag names that are
+    /// not single-letter and therefore have no indexed column: the coding
+    /// session kinds label their records with `d` (the umbrella) and a
+    /// `cs*-genesis` tag, and neither is addressable, so `d_tag` is NULL for
+    /// all of them ([`extract_d_tag`] returns `None` outside 30000–39999).
+    ///
+    /// Added for finding 89: the verdict gate must read **one mission's**
+    /// kind 44245 policy records rather than one page of a whole channel, or
+    /// a mission whose policy fell below the bound is judged as though its
+    /// founder set no flag. Served by the same GIN index on `tags`
+    /// (migration 0004, `jsonb_path_ops`) the `a`/`e` clauses use.
+    ///
+    /// Matching is byte-exact and the conditions are AND-ed, so callers pass
+    /// canonical values. An empty vector matches everything and is treated as
+    /// "no filter".
+    pub tags_containing: Option<Vec<(String, String)>>,
     /// Restrict results to events in any of these channels. By default,
     /// channel-less global events are retained so this can enforce a viewer's
     /// accessible-channel scope without hiding global events. Set
@@ -211,6 +230,7 @@ impl EventQuery {
             ids: None,
             e_tags: None,
             a_tags: None,
+            tags_containing: None,
             channel_ids: None,
             channel_ids_include_global: true,
             max_limit: None,
@@ -600,6 +620,18 @@ pub(crate) async fn query_events_on(
                 qb.push_bind(containment);
             }
             qb.push(")");
+        }
+    }
+
+    // Literal `[name, value]` tag pushdown via JSONB containment, AND-ed.
+    // The `a`/`e` clauses above are the single-letter special cases; this is
+    // the general one, and the only way to filter on a coding-session `d` or
+    // `cs*-genesis` tag, which have no indexed column (finding 89).
+    if let Some(ref pairs) = q.tags_containing {
+        for (name, value) in pairs {
+            let containment = serde_json::json!([[name, value]]);
+            qb.push(format!(" AND {col_prefix}tags @> "));
+            qb.push_bind(containment);
         }
     }
 
@@ -1001,6 +1033,15 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
                 qb.push_bind(containment);
             }
             qb.push(")");
+        }
+    }
+
+    // Literal `[name, value]` containment — mirrors `query_events`.
+    if let Some(ref pairs) = q.tags_containing {
+        for (name, value) in pairs {
+            let containment = serde_json::json!([[name, value]]);
+            qb.push(format!(" AND {col_prefix}tags @> "));
+            qb.push_bind(containment);
         }
     }
 

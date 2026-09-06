@@ -233,7 +233,7 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         let event_auth_tag = crate::handlers::auth::extract_auth_tag_json(&event);
         let header_auth_tag = crate::api::relay_members::extract_auth_tag_header(&parts.headers);
         let auth_tag = event_auth_tag.as_deref().or(header_auth_tag);
-        if crate::api::relay_members::enforce_relay_membership(
+        let admitted_via_owner = match crate::api::relay_members::enforce_relay_membership(
             state,
             tenant.community(),
             pubkey.as_bytes(),
@@ -241,11 +241,17 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
             Some(signed_auth_created_at),
         )
         .await
-        .is_err()
         {
-            warn!(pubkey = %pubkey.to_hex(), "git: relay membership denied");
-            return Err((StatusCode::FORBIDDEN, "restricted: not a relay member").into_response());
-        }
+            // `Some(owner)` means this key is not a member and was admitted
+            // **through** that owner — the case NIP-AA:113 says must retain it.
+            Ok(owner) => owner,
+            Err(_) => {
+                warn!(pubkey = %pubkey.to_hex(), "git: relay membership denied");
+                return Err(
+                    (StatusCode::FORBIDDEN, "restricted: not a relay member").into_response()
+                );
+            }
+        };
 
         // Verify the attestation once, here, and carry the result. The NIP-OA
         // signature is self-proving, so this holds on open relays too — the
@@ -265,9 +271,31 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         // a hook callback that carries only the pusher pubkey — it cannot see
         // this request's attestation — so the mapping is how a seat's push
         // reaches its owner's grant.
+        //
+        // Finding 92 and the 2026-09-05 refuter's F1: this used to drop the
+        // outcome, so a clone or push admitted *through* an owner proceeded
+        // with that relationship unrecorded — the pre-receive hook then saw a
+        // pusher with no owner and judged it against no grant. The same table
+        // the WebSocket AUTH path uses decides, so the three surfaces cannot
+        // disagree about what "admitted through an owner" obliges.
         if let Some(owner) = attested_owner {
-            crate::api::relay_members::materialize_nip_oa_owner(state, &tenant, &pubkey, &owner)
-                .await;
+            if let Err((reason, message)) = crate::api::relay_members::retain_nip_oa_owner(
+                state,
+                &tenant,
+                &pubkey,
+                &owner,
+                admitted_via_owner.is_some(),
+            )
+            .await
+            {
+                warn!(
+                    pubkey = %pubkey.to_hex(),
+                    owner = %owner.to_hex(),
+                    reason,
+                    "git: refusing a login admitted through an owner it cannot retain"
+                );
+                return Err((StatusCode::FORBIDDEN, message).into_response());
+            }
         }
 
         Ok(GitAuth {

@@ -24,7 +24,9 @@
 //! mission is read, no report is resolved, and a repository whose missions are
 //! unreadable does not stop them. Founders are trusted humans; the gate is not
 //! for them. The push record (30618) is what makes the landing observable
-//! afterwards, and revocation stays a founder's power at every moment.
+//! afterwards, and revocation stays a founder's power at every moment. The
+//! evidence says so out loud — `policy_not_evaluated: founder_exception` —
+//! so a founder's landing is never mistaken for a verifier-approved one.
 //!
 //! ## (C) A verifier's verdict names the commit, over gates observed green
 //!
@@ -40,7 +42,12 @@
 //!    names a different object and does not admit;
 //! 2. that session's genesis is on the channel the repository is bound to and
 //!    its founder is a founder of the repository — the caller resolves both
-//!    and supplies only candidates that pass;
+//!    and supplies only candidates that pass — **and the mission is bound to
+//!    the repository being pushed** (finding 91): its
+//!    [`VerdictAdmissionCandidate::bound_repositories`] names
+//!    [`VerdictAdmissionQuery::repository`]. Two repositories of one founder
+//!    are two repositories; a seat and green rows on one prove nothing about
+//!    the other, and the rule refuses before either arm reads the mission;
 //! 3. a **second, independent record clears the same report**: a canonical
 //!    `verdict` of subtype **`refutation`** whose `decision` is `not-refuted`,
 //!    whose `reportRef` is that report, signed by a key holding an active
@@ -98,11 +105,16 @@
 //! separate rule: what (B) drops is the second seat, never the gates. A
 //! seat's push lands with **no second seat** when the
 //! mission's newest founder-signed kind 44245 policy does not set
-//! `gates.verifierRequired`, and every gate the policy requires — or
+//! `gates.verifierRequired` — resolved, not guessed: a withdrawal or an
+//! absent policy applies the defaults and the evidence says which, and a
+//! newest record this build cannot read refuses rather than reading an older
+//! one (finding 89) — and every gate the policy requires — or
 //! [`DEFAULT_REQUIRED_GATES`] when it names none — has a folded kind 44246
 //! row that is `source: observed`, names **this commit** in `headSha`, was
-//! measured over a clean worktree, and says `passed`. The pusher must hold an
-//! active seat, exactly as in (C).
+//! measured over a clean worktree, and says `passed`. `observed` means the
+//! signer is a provider the mission's **lifecycle** proves (finding 90:
+//! [`mission_provider_pubkeys_from_lifecycle`]), never merely a key that
+//! published metadata. The pusher must hold an active seat, exactly as in (C).
 //!
 //! `headSha` is what makes it safe. Binding a mission's gate rows to a push by
 //! anything weaker — "this mission has green rows *somewhere*" — would let a
@@ -134,17 +146,33 @@ use nostr::Event;
 #[path = "coding_session_verdict_admission_observed.rs"]
 mod observed;
 
+// What an admission stood on, in a file of its own — same ceiling.
+#[path = "coding_session_verdict_admission_evidence.rs"]
+mod evidence;
+pub use evidence::VerdictAdmissionEvidence;
+
+// Who provides a mission (finding 90 + B1), in a third file, same reason.
+#[path = "coding_session_verdict_admission_lifecycle.rs"]
+mod lifecycle;
+
 // Finding 56's candidate source, split out for the same reason — and, since
 // L35 pushed this file past the ceiling again, the prediction-grade seat
 // projection that reads the same kind 44228 page.
 #[path = "coding_session_verdict_admission_source.rs"]
 mod source;
+pub use lifecycle::{
+    mission_provider_pubkeys_from_lifecycle, VERDICT_ADMISSION_MAX_LIFECYCLE_RECORDS,
+};
+#[allow(deprecated)]
+pub use observed::metadata_signers;
 use observed::{
-    evaluate_observed_gates, gate_rows_status, gates_observed_green, ObservedGateVerdict,
+    evaluate_observed_gates, gate_rows_status, gates_observed_green, policy_unreadable,
+    ObservedGateVerdict,
 };
 pub use observed::{
-    mission_gate_policy, mission_observations, mission_provider_pubkeys,
-    VerdictAdmissionGatePolicy, DEFAULT_REQUIRED_GATES, VERDICT_ADMISSION_MAX_OBSERVATIONS,
+    mission_observations, resolve_mission_gate_policy, GatePolicyResolution,
+    VerdictAdmissionGatePolicy, VerdictAdmissionPolicyEvidence, VerdictAdmissionPolicyNotEvaluated,
+    VerdictAdmissionPolicyResolution, DEFAULT_REQUIRED_GATES, VERDICT_ADMISSION_MAX_OBSERVATIONS,
     VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
 };
 pub use source::{
@@ -218,6 +246,14 @@ pub struct VerdictAdmissionQuery<'a> {
     /// judges the candidates it was handed either way — and exists so the one
     /// refusal that reports a *count* also reports what was counted.
     pub candidate_source: &'a VerdictAdmissionCandidateSource,
+    /// The kind:30617 coordinate (`30617:<owner-hex>:<d>`) of the repository
+    /// being pushed (finding 91).
+    ///
+    /// A candidate whose [`VerdictAdmissionCandidate::bound_repositories`]
+    /// does not name it is refused before arms (B) and (C) look at it, with
+    /// [`VerdictAdmissionRefusal::MissionNotBoundToRepository`]. Founder
+    /// overlap is no longer a binding.
+    pub repository: &'a str,
 }
 
 /// One canonical transaction, decoded once for the search.
@@ -265,69 +301,28 @@ pub struct VerdictAdmissionCandidate {
     /// arm is then silent, and the push is judged by arm (C) exactly as
     /// before.
     pub observed_gates: Vec<CodingSessionObservationGateEntry>,
-    /// The gate half of this mission's newest founder-signed kind 44245
-    /// policy, when the caller read one.
+    /// What this mission's newest kind 44245 record resolved to (finding 89).
     ///
-    /// `None` is "the caller read no policy", which this rule treats the same
-    /// as a policy setting no flag: arm (B) is available and the default gate
-    /// list applies. That is deliberate and it is the direction that only ever
-    /// *subtracts* nothing — it never turns a verifier requirement off, since
-    /// a `Some(true)` is the only thing that could have been read.
-    pub gate_policy: Option<VerdictAdmissionGatePolicy>,
-}
-
-/// What admitted a commit — **which arm**, and the facts it stood on.
-///
-/// An enum rather than a struct because the two arms stand on different
-/// evidence and a struct would have to carry empty strings for the half that
-/// does not apply. A founder push has no disposition and no report; saying so
-/// with `None`s would invite a renderer to print "approved by" over nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VerdictAdmissionEvidence {
-    /// Arm (A): a founder of the repository pushed. No mission was read.
-    FounderPush {
-        /// The founder's hex pubkey, as the push authenticated.
-        pusher_pubkey: String,
-    },
-    /// Arm (B): every required gate was observed green on this commit.
-    ObservedGates {
-        /// Umbrella whose observations admitted it.
-        session_ref: String,
-        /// The commit every one of those rows named.
-        head_sha: String,
-        /// The gates that had to be green, in the order they were required.
-        gates: Vec<String>,
-        /// The newest observation event id behind each of those gates, in the
-        /// same order — so a reader can go and read the rows themselves.
-        row_event_ids: Vec<String>,
-    },
-    /// Arm (C): a verifier seat cleared a report naming this commit, **and**
-    /// every required gate was observed green on it.
-    VerifierVerdict {
-        /// Umbrella whose fold admitted it.
-        session_ref: String,
-        /// The approving disposition that settled the assignment.
-        disposition_event_id: String,
-        /// The verifier's `not-refuted` refutation of the same report.
-        refutation_event_id: String,
-        /// The report both records govern.
-        report_event_id: String,
-        /// That report's `headSha`, as published.
-        head_sha: String,
-        /// The verifier seat that signed the refutation.
-        verifier_pubkey: String,
-        /// The gates that also had to be green on this commit, in the order
-        /// they were required.
-        ///
-        /// Present since the 2026-09-03 follow-up ruling, and never empty: a
-        /// surface that says "a verifier cleared it" over an arm that also
-        /// checked three gates is telling half the truth, and this project
-        /// treats a comfortable half-truth as a defect.
-        gates: Vec<String>,
-        /// The newest observation event id behind each of those gates, in the
-        /// same order — so a reader can go and read the rows themselves.
-        row_event_ids: Vec<String>,
-    },
+    /// A **resolution**, never an `Option`: `Absent` and `Withdrawn` both
+    /// apply the defaults and say which of the two happened, `Present`
+    /// carries the record's gate half, and `Unreadable` refuses on every arm
+    /// — the one direction the old `None` could not express, and the one
+    /// that opened arm (B) on a `verifierRequired: true` the page missed.
+    /// Callers resolve it with [`resolve_mission_gate_policy`].
+    pub gate_policy: GatePolicyResolution,
+    /// The kind:30617 coordinates this mission may prove commits for
+    /// (finding 91): the repository its genesis or metadata `repoRef` names,
+    /// and every repository of its project.
+    ///
+    /// Empty binds the mission to nothing, and nothing it holds admits a
+    /// push anywhere. The caller populates it; the rule only requires it.
+    pub bound_repositories: Vec<String>,
+    /// Kind 44245 records naming this mission that the signer rule **excluded**
+    /// (2026-09-05 refuter, S2). Disclosure, never a decision: the rule reads
+    /// the newest *authorized* record either way, and the silence this
+    /// replaces is what a flood against the per-mission read is made of. A
+    /// caller that cannot count them says `0` rather than guessing.
+    pub excluded_unauthorized_policies: u32,
 }
 
 /// Arm (B)'s status on one commit, carried inside an arm-(C) refusal.
@@ -349,132 +344,11 @@ pub enum VerdictAdmissionGateRows {
     Short(Box<VerdictAdmissionRefusal>),
 }
 
-/// Why a verdict-gated update is refused.
-///
-/// The strings [`VerdictAdmissionRefusal::reason`] returns are frozen copy:
-/// they reach a person through `git push`'s own stderr, so they never repeat
-/// the ref (the renderer prefixes it) and never invent a remedy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VerdictAdmissionRefusal {
-    /// Nothing canonical names this commit.
-    NoApprovingVerdict {
-        /// The object id that was searched for.
-        new_oid: String,
-        /// How many missions were searched — the bound, disclosed.
-        searched_sessions: usize,
-        /// Which lookup found them (finding 56), so the count means something.
-        source: VerdictAdmissionCandidateSource,
-    },
-    /// An approved report exists for this work but names only a branch.
-    ApprovedReportNamesBranchOnly,
-    /// Someone approved a report naming this commit, but nobody who could
-    /// stand as its verifier did.
-    ///
-    /// Since finding 75 (live run 6, 2026-09-04) this carries **arm (B)'s
-    /// status on the same commit** and whether the policy closes that arm,
-    /// so the sentence can lead with the route the mission is actually
-    /// running: a mission whose founder never asked for a verifier is owed
-    /// "which gate row is missing", not "find a verifier".
-    ApprovedButNotVerified {
-        /// The approved object id.
-        new_oid: String,
-        /// How many approving dispositions named it — disclosed so a reader
-        /// can tell "nobody ruled" from "the wrong people ruled".
-        approvals: usize,
-        /// Whether the mission's newest founder-signed kind 44245 policy sets
-        /// `gates.verifierRequired`. `false` covers both "set to false" and
-        /// "no policy read" — the two are one fact to arm (B), which is open
-        /// in either case.
-        verifier_required: bool,
-        /// What arm (B) found on this commit, seat aside.
-        rows: VerdictAdmissionGateRows,
-        /// Whether the pusher holds an active seat of the mission. Both
-        /// routes require one, and a pusher told to run the gates without
-        /// being told this would run them for nothing.
-        seated: bool,
-    },
-    /// The only approving verifier is the key that wrote the report.
-    VerifierIsTheReportAuthor {
-        /// The approved object id.
-        new_oid: String,
-        /// The key holding both the `verifier` seat and the report.
-        verifier: String,
-    },
-    /// A verifier cleared this commit and the pusher is not of that mission.
-    PushNotSeated {
-        /// The verified object id.
-        new_oid: String,
-        /// The umbrella whose verifier cleared it.
-        session_ref: String,
-        /// How many active seats that mission has — disclosed so a seat whose
-        /// grant was revoked can tell that from "this mission seats nobody".
-        seats: usize,
-    },
-    /// The commit is approved, but for a different branch than this ref.
-    ApprovedForAnotherRef {
-        /// The approved object id.
-        new_oid: String,
-        /// The branch the approved report named.
-        approved_branch: String,
-    },
-    /// Rows name this commit, and every one of them is its subject's own
-    /// claim.
-    ObservedRowsAreDeclared {
-        /// The pushed object id.
-        new_oid: String,
-        /// How many rows named it — disclosed so a reader can tell "one seat
-        /// said so" from "nobody said anything".
-        rows: usize,
-    },
-    /// A gate was observed red on this very commit.
-    ObservedGateRed {
-        /// The gate's own name, as the row carries it.
-        gate: String,
-        /// The pushed object id.
-        new_oid: String,
-    },
-    /// The gates were observed over a worktree the commit does not name.
-    ObservedDirty {
-        /// The pushed object id.
-        new_oid: String,
-    },
-    /// A required gate has no observed green row on this commit.
-    RequiredGateNotObserved {
-        /// The first required gate with no such row.
-        gate: String,
-        /// The pushed object id.
-        new_oid: String,
-        /// Every gate this mission requires, so the refusal names the whole
-        /// list rather than one item of it.
-        required: Vec<String>,
-    },
-    /// A verifier cleared this commit and its gates were not observed green
-    /// on it.
-    ///
-    /// The refusal that carries the 2026-09-03 follow-up ruling. It names
-    /// **both** halves — the one that is satisfied and the one that is not —
-    /// because a pusher told only "the gates are not green" would go looking
-    /// for a verifier they already have, and one told only "cleared" would not
-    /// understand why the push stopped.
-    VerifiedButGatesNotGreen {
-        /// The cleared object id.
-        new_oid: String,
-        /// The verifier seat that cleared it.
-        verifier: String,
-        /// Arm (B)'s own sentence about the rows, boxed because a refusal that
-        /// contains a refusal is otherwise infinitely sized. Carried whole
-        /// rather than paraphrased: the words a pusher reads here are the same
-        /// words the gate-row route would have given them.
-        gates: Box<VerdictAdmissionRefusal>,
-    },
-    /// The rule is set on a repository bound to no channel at all.
-    RepositoryUnbound,
-}
-
-/// The frozen refusal copy lives in a sibling file so no file here passes
-/// 1,000 lines; it is `impl VerdictAdmissionRefusal` and adds no new name.
+/// The refusal type and its frozen copy live in a sibling file so no file
+/// here passes 1,000 lines; the enum is re-exported under its old path.
 #[path = "coding_session_verdict_admission_reasons.rs"]
 mod reasons;
+pub use reasons::VerdictAdmissionRefusal;
 
 /// The answer, for one ref update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -614,8 +488,13 @@ pub fn evaluate_verdict_admission(
     if is_founder(query.repo_founders, query.pusher_pubkey) {
         return VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush {
             pusher_pubkey: query.pusher_pubkey.to_ascii_lowercase(),
+            policy_not_evaluated: VerdictAdmissionPolicyNotEvaluated::FounderException,
         });
     }
+    // The two guards every candidate passes before either arm reads it
+    // (findings 91 and 89), and the nearest miss each produced.
+    let mut unbound_mission: Option<VerdictAdmissionRefusal> = None;
+    let mut unreadable_policy: Option<VerdictAdmissionRefusal> = None;
 
     // ── Arm (C) ──────────────────────────────────────────────────────────
     let mut approved_branch_only = false;
@@ -643,7 +522,12 @@ pub fn evaluate_verdict_admission(
     // handed a gate-row sentence about a route it is not taking.
     let mut observed_refusal: Option<VerdictAdmissionRefusal> = None;
     for candidate in candidates {
-        if !is_founder(query.repo_founders, &candidate.founder_pubkey) {
+        if !candidate_stands(
+            candidate,
+            query,
+            &mut unbound_mission,
+            &mut unreadable_policy,
+        ) {
             continue;
         }
         match evaluate_observed_gates(candidate, query.new_oid, query.pusher_pubkey) {
@@ -656,13 +540,12 @@ pub fn evaluate_verdict_admission(
     }
 
     for candidate in candidates {
-        // A mission counts only when its founder founded the repository.
-        // Since finding 33 that is a **set** — signer, maintainers, project
-        // owners — not the announcement's signer alone. The relay's genesis
-        // query is scoped to the same set, so this cannot fail for it; it is
-        // the whole check for the desktop and CLI callers, which assemble a
-        // single candidate themselves.
-        if !is_founder(query.repo_founders, &candidate.founder_pubkey) {
+        if !candidate_stands(
+            candidate,
+            query,
+            &mut unbound_mission,
+            &mut unreadable_policy,
+        ) {
             continue;
         }
         for record in &candidate.canonical {
@@ -708,10 +591,7 @@ pub fn evaluate_verdict_admission(
                         }
                         approved_but_not_verified.get_or_insert_with(|| {
                             (
-                                candidate
-                                    .gate_policy
-                                    .as_ref()
-                                    .is_some_and(VerdictAdmissionGatePolicy::requires_a_verifier),
+                                candidate.gate_policy.requires_a_verifier(),
                                 gate_rows_status(candidate, query.new_oid),
                                 is_active_seat(candidate, query.pusher_pubkey),
                             )
@@ -749,6 +629,17 @@ pub fn evaluate_verdict_admission(
                         verifier_pubkey: cleared.author_pubkey.to_ascii_lowercase(),
                         gates: green.gates,
                         row_event_ids: green.row_event_ids,
+                        // `candidate_stands` refused an unreadable policy
+                        // above; `Absent` is the honest fallback for a
+                        // resolution that somehow carries no evidence.
+                        policy: candidate
+                            .gate_policy
+                            .evidence(candidate.excluded_unauthorized_policies)
+                            .unwrap_or(VerdictAdmissionPolicyEvidence {
+                                event_id: None,
+                                resolution: VerdictAdmissionPolicyResolution::Absent,
+                                excluded_unauthorized: candidate.excluded_unauthorized_policies,
+                            }),
                     });
                 }
                 Some(_) => {}
@@ -759,6 +650,13 @@ pub fn evaluate_verdict_admission(
         }
     }
 
+    // A policy nobody could read outranks every other refusal: it is not a
+    // fact about this push but a condition on the mission that someone must
+    // fix before any push can be judged, and a sentence about rows or seats
+    // would send the pusher to work on the wrong thing (finding 89).
+    if let Some(refusal) = unreadable_policy {
+        return VerdictAdmission::Refused(refusal);
+    }
     // Nearest missing fact first, and this is the nearest of all: a commit a
     // verifier cleared, pushed by a seat of that very mission, short only of
     // the gate rows. Every other refusal below is about a fact further from
@@ -813,11 +711,83 @@ pub fn evaluate_verdict_admission(
     if approved_branch_only {
         return VerdictAdmission::Refused(VerdictAdmissionRefusal::ApprovedReportNamesBranchOnly);
     }
+    // A mission the pusher holds that is bound elsewhere (finding 91) ranks
+    // below every sentence a bound mission produced about this commit, and
+    // above "nothing named it": the pusher has proof, on the wrong repository.
+    if let Some(refusal) = unbound_mission {
+        return VerdictAdmission::Refused(refusal);
+    }
     VerdictAdmission::Refused(VerdictAdmissionRefusal::NoApprovingVerdict {
         new_oid: query.new_oid.to_ascii_lowercase(),
         searched_sessions: candidates.len(),
         source: query.candidate_source.clone(),
     })
+}
+
+/// Whether a candidate may be read by either arm, and if not, which miss it
+/// records.
+///
+/// Three questions in order. The founder check is the one from finding 33 —
+/// a mission counts only when its founder founded the repository — and is
+/// silent, because the relay's genesis query is scoped to the same set and
+/// the desktop and CLI assemble a single candidate that already passed it.
+/// The binding check (finding 91) refuses a mission bound to some other
+/// repository, founder overlap notwithstanding. The policy check (finding
+/// 89) refuses a mission whose newest policy nobody could read. Both misses
+/// are kept, not returned, so a *second* candidate that stands may still
+/// admit.
+fn candidate_stands(
+    candidate: &VerdictAdmissionCandidate,
+    query: &VerdictAdmissionQuery<'_>,
+    unbound_mission: &mut Option<VerdictAdmissionRefusal>,
+    unreadable_policy: &mut Option<VerdictAdmissionRefusal>,
+) -> bool {
+    if !is_founder(query.repo_founders, &candidate.founder_pubkey) {
+        return false;
+    }
+    if !candidate
+        .bound_repositories
+        .iter()
+        .any(|bound| same_repository(bound, query.repository))
+    {
+        unbound_mission.get_or_insert_with(|| {
+            VerdictAdmissionRefusal::MissionNotBoundToRepository {
+                session_ref: candidate.session_ref.clone(),
+                repository: query.repository.to_owned(),
+            }
+        });
+        return false;
+    }
+    if let Some(refusal) = policy_unreadable(candidate) {
+        unreadable_policy.get_or_insert(refusal);
+        return false;
+    }
+    true
+}
+
+/// Whether two `30617:<owner-hex>:<d>` coordinates name one repository.
+///
+/// The kind and the owner's hex are compared case-folded; the `d`
+/// identifier is compared exactly, because it is the repository's own name
+/// and `Repo` and `repo` are two names. A string that is not a three-part
+/// coordinate is compared whole, so a caller passing something else gets
+/// exact matching rather than a guess.
+fn same_repository(left: &str, right: &str) -> bool {
+    let parts = |coordinate: &str| -> Option<(String, String, String)> {
+        let mut split = coordinate.splitn(3, ':');
+        let kind = split.next()?;
+        let owner = split.next()?;
+        let d = split.next()?;
+        Some((
+            kind.to_ascii_lowercase(),
+            owner.to_ascii_lowercase(),
+            d.to_owned(),
+        ))
+    };
+    match (parts(left), parts(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => left == right,
+    }
 }
 
 /// The canonical `not-refuted` refutation of `report_ref` signed by an active
@@ -971,3 +941,15 @@ mod observed_tests;
 #[cfg(test)]
 #[path = "coding_session_verdict_admission_verified_tests.rs"]
 mod verified_tests;
+
+/// Findings 89, 90 and 91 (2026-09-05 admission audit), in their own file:
+/// policy resolution, lifecycle-proven providers, and the repository binding.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_hardening_tests.rs"]
+mod hardening_tests;
+
+/// Who may commission an execution (2026-09-05 refuter, B1), in its own file:
+/// the impostor-signed create, the hire a host answers, the operator grant.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_commission_tests.rs"]
+mod commission_tests;

@@ -208,6 +208,8 @@ test("one session's input carries whole signed events, ascending, and no overlap
     teamEvents: [],
     policyEvents: [],
     observationEvents: [newer, older],
+    lifecycleCommands: [],
+    lifecycleReceipts: [],
   });
   assert.equal(built.ok, true);
   const value = built.value;
@@ -231,6 +233,29 @@ test("one session's input carries whole signed events, ascending, and no overlap
   // verifies these signatures, so a reshaped event is an unverifiable one.
   assert.equal(value.observationEvents[0], older);
   assert.equal(value.observationEvents[1], newer);
+  // S4: the provider proof travels too. Empty here means this read proved no
+  // provider, which is what makes the row's gate lines say `unverified`.
+  assert.deepEqual(value.lifecycleCommands, []);
+  assert.deepEqual(value.lifecycleReceipts, []);
+});
+
+test("the read asks for the lifecycle pages that prove who provides a mission", async () => {
+  const { asked, fetchEvents } = reader();
+  await readPulseMissionSessions(
+    { channelIds: [CHANNEL], openSessions: [session("s-1", 20)] },
+    { fetchEvents, relaySelf: async () => RELAY_SELF },
+  );
+  const lifecycle = asked.filter(
+    (filter) => filter.kinds[0] === 44221 || filter.kinds[0] === 44224,
+  );
+  assert.equal(lifecycle.length, 2, JSON.stringify(asked));
+  for (const filter of lifecycle) {
+    assert.deepEqual(filter["#h"], [CHANNEL]);
+    // A lifecycle command is tagged `csl-command`, never the umbrella's `d`:
+    // a `#d` filter here would match nothing while looking as though it had
+    // asked, and every mission would silently resolve no provider.
+    assert.equal(filter["#d"], undefined);
+  }
 });
 
 // ── The read itself ──────────────────────────────────────────────────────────

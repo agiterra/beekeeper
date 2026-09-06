@@ -34,6 +34,8 @@ import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_GENESIS,
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_OBSERVATION,
   KIND_CODING_SESSION_POLICY,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -269,6 +271,8 @@ export function buildPulseMissionSessionInput(input: {
   teamEvents: readonly RelayEvent[];
   policyEvents: readonly RelayEvent[];
   observationEvents: readonly RelayEvent[];
+  lifecycleCommands: readonly RelayEvent[];
+  lifecycleReceipts: readonly RelayEvent[];
 }):
   | { ok: true; value: PulseMissionSessionInput }
   | { ok: false; error: string } {
@@ -312,6 +316,11 @@ export function buildPulseMissionSessionInput(input: {
       teamEvents: ascending(input.teamEvents),
       policyEvents: ascending(input.policyEvents),
       observationEvents: ascending(input.observationEvents),
+      // The provider proof (S4). Ascending like everything else here; the
+      // pairing rule is order-independent, and one order for every list is one
+      // fewer thing for a later reader to have to check.
+      lifecycleCommands: ascending(input.lifecycleCommands),
+      lifecycleReceipts: ascending(input.lifecycleReceipts),
       // Kind 30618 is addressable by repo id, and an umbrella carries no repo
       // id on this surface — the digest never reads one. An empty list is the
       // honest answer; a guessed one would move refs nobody pushed.
@@ -525,6 +534,33 @@ export async function readPulseMissionSessions(
     }
     if (recordsFailed) continue;
 
+    // The provider proof (S4): kind 44221 and 44224 of this umbrella's
+    // channel. **No `#d`** — a lifecycle command is tagged `csl-command`, not
+    // with the umbrella's `d`, so a `#d` filter here would match nothing and
+    // every mission would resolve no provider while looking as though it had
+    // been asked. The native adapter splits the page by session and genesis.
+    for (const [kind, what] of [
+      [KIND_CODING_SESSION_LIFECYCLE_COMMAND, "lifecycle command"],
+      [KIND_CODING_SESSION_LIFECYCLE_RECEIPT, "lifecycle receipt"],
+    ] as const) {
+      const read = await readBounded(
+        dependencies.fetchEvents,
+        {
+          kinds: [kind],
+          "#h": [genesis.channelRef],
+          limit: PULSE_MISSION_RECORD_QUERY_LIMIT,
+        },
+        what,
+      );
+      if (!read.ok) {
+        readErrors.push({ scope, message: read.error });
+        recordsFailed = true;
+        break;
+      }
+      records[String(kind)] = read.events;
+    }
+    if (recordsFailed) continue;
+
     const built = buildPulseMissionSessionInput({
       session,
       genesis,
@@ -534,6 +570,10 @@ export async function readPulseMissionSessions(
       teamEvents: records[String(KIND_CODING_SESSION_TEAM_TRANSACTION)] ?? [],
       policyEvents: records[String(KIND_CODING_SESSION_POLICY)] ?? [],
       observationEvents: records[String(KIND_CODING_SESSION_OBSERVATION)] ?? [],
+      lifecycleCommands:
+        records[String(KIND_CODING_SESSION_LIFECYCLE_COMMAND)] ?? [],
+      lifecycleReceipts:
+        records[String(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)] ?? [],
     });
     if (!built.ok) {
       readErrors.push({

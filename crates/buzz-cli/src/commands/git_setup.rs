@@ -30,17 +30,19 @@ use nostr::{Keys, ToBech32};
 
 use buzz_core::coding_session_verdict_admission::{
     active_seats_from_authority_transitions, evaluate_verdict_admission, fold_candidate_records,
-    mission_gate_policy, mission_observations, mission_provider_pubkeys, mission_transactions,
-    verdict_admission_fold_context, VerdictAdmission, VerdictAdmissionCandidate,
-    VerdictAdmissionEvidence, VerdictAdmissionQuery, VerdictAdmissionRefusal,
-    VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS, VERDICT_ADMISSION_MAX_OBSERVATIONS,
+    mission_observations, mission_provider_pubkeys_from_lifecycle, mission_transactions,
+    resolve_mission_gate_policy, verdict_admission_fold_context, VerdictAdmission,
+    VerdictAdmissionCandidate, VerdictAdmissionEvidence, VerdictAdmissionPolicyEvidence,
+    VerdictAdmissionQuery, VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
+    VERDICT_ADMISSION_MAX_LIFECYCLE_RECORDS, VERDICT_ADMISSION_MAX_OBSERVATIONS,
     VERDICT_ADMISSION_MAX_POLICIES, VERDICT_ADMISSION_MAX_PROVIDER_METADATA,
     VERDICT_ADMISSION_MAX_SESSIONS, VERDICT_ADMISSION_MAX_TRANSACTIONS,
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
-    KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_GIT_REPO_ANNOUNCEMENT,
 };
 
 use crate::error::CliError;
@@ -1195,7 +1197,14 @@ pub enum RefPredictionState {
     /// The same rule the hook runs admits this commit for this key, by arm
     /// **(A)**: the pusher is a founder of the repository, and no mission was
     /// read at all.
-    AdmittedAsFounder,
+    AdmittedAsFounder {
+        /// Why no mission policy was consulted — `founder_exception`.
+        ///
+        /// The audit's Q1: a founder's landing must never read as though a
+        /// verifier approved it. The prediction says which exception applied,
+        /// exactly as the relay's own admission receipt does.
+        policy_not_evaluated: String,
+    },
     /// Admitted by arm **(C)**: a lead's approving disposition over a report
     /// naming this commit, cleared by an independent verifier seat, **and**
     /// every required gate observed green on that same commit.
@@ -1216,6 +1225,9 @@ pub enum RefPredictionState {
         /// three gates would leave a reader unable to tell why the same
         /// clearance stops admitting the moment a gate goes red.
         gates: Vec<String>,
+        /// How the mission's kind 44245 policy resolved, and which record
+        /// said so (finding 89).
+        policy: String,
     },
     /// Admitted by arm **(B)**: every gate this mission requires was observed
     /// green on this exact commit, over a clean worktree, by the mission's own
@@ -1225,6 +1237,13 @@ pub enum RefPredictionState {
         session_ref: String,
         /// The gates that had to be green, in the order they were required.
         gates: Vec<String>,
+        /// How the mission's kind 44245 policy resolved, and which record
+        /// said so (finding 89).
+        ///
+        /// This arm is the one a missing policy used to open silently: the
+        /// gate list it ran was the default, and nothing said whether the
+        /// founder chose it, withdrew it, or was never read.
+        policy: String,
     },
     /// The same rule refuses it, with the sentence the hook would return.
     Refused {
@@ -1662,7 +1681,11 @@ async fn predict_ref(
     // Already resolved on the way to the rules — the same set, read once.
     let founders = rules.founders;
     prediction.founders = founders.rules_sentence();
-    let candidates = match fetch_verdict_candidates(client, &scope, &founders).await {
+    // Finding 91: the coordinate every candidate must be bound to. Built from
+    // the announcement's own `d` tag and signer, so the prediction judges
+    // against the coordinate the signed record addresses.
+    let repository = repository_coordinate(&announcement);
+    let candidates = match fetch_verdict_candidates(client, &scope, &founders, &repository).await {
         Ok(candidates) => candidates,
         Err(error) => {
             prediction.state = RefPredictionState::Unreadable {
@@ -1679,17 +1702,22 @@ async fn predict_ref(
         pusher_pubkey,
         repo_founders: founders.pubkeys(),
         candidate_source: &scope.source,
+        repository: &repository,
     };
     prediction.state = match evaluate_verdict_admission(&candidates, &query) {
-        VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush { .. }) => {
-            RefPredictionState::AdmittedAsFounder
-        }
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush {
+            policy_not_evaluated,
+            ..
+        }) => RefPredictionState::AdmittedAsFounder {
+            policy_not_evaluated: policy_not_evaluated.as_str().to_owned(),
+        },
         VerdictAdmission::Admitted(VerdictAdmissionEvidence::VerifierVerdict {
             session_ref,
             disposition_event_id,
             refutation_event_id,
             verifier_pubkey,
             gates,
+            policy,
             ..
         }) => RefPredictionState::AdmittedByVerdict {
             session_ref,
@@ -1697,12 +1725,18 @@ async fn predict_ref(
             refutation_event_id,
             verifier_pubkey,
             gates,
+            policy: policy_sentence(&policy),
         },
         VerdictAdmission::Admitted(VerdictAdmissionEvidence::ObservedGates {
             session_ref,
             gates,
+            policy,
             ..
-        }) => RefPredictionState::AdmittedByObservedGates { session_ref, gates },
+        }) => RefPredictionState::AdmittedByObservedGates {
+            session_ref,
+            gates,
+            policy: policy_sentence(&policy),
+        },
         VerdictAdmission::Refused(refusal) => RefPredictionState::Refused {
             reason: refusal.reason(),
         },
@@ -1732,6 +1766,67 @@ async fn fetch_repo_announcement(
     Ok(Some(event))
 }
 
+/// The `30617:<owner-hex>:<d>` coordinate an announcement addresses.
+///
+/// Finding 91: the coordinate is what binds a mission to a repository, so the
+/// prediction builds it from the announcement's own signer and `d` tag rather
+/// than from the name typed on the command line. An announcement with no `d`
+/// addresses nothing, and the empty string it yields is bound to by no
+/// mission — the refusing direction.
+fn repository_coordinate(announcement: &nostr::Event) -> String {
+    let name = announcement
+        .tags
+        .iter()
+        .find_map(|tag| match tag.as_slice() {
+            [key, value] if key == "d" => Some(value.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    if name.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{KIND_GIT_REPO_ANNOUNCEMENT}:{}:{name}",
+        announcement.pubkey.to_hex()
+    )
+}
+
+/// What an admission says about the policy it stood on (finding 89).
+///
+/// Three different facts, and a prediction that printed none of them left a
+/// reader unable to tell a founder's deliberate `verifierRequired: false`
+/// from a policy the search never reached.
+fn policy_sentence(policy: &VerdictAdmissionPolicyEvidence) -> String {
+    let sentence = match (policy.resolution.as_str(), policy.event_id.as_deref()) {
+        ("present", Some(event_id)) => {
+            format!("policy present ({})", short_hex(event_id))
+        }
+        ("withdrawn", Some(event_id)) => format!(
+            "policy withdrawn ({}) — the defaults apply because somebody took it back",
+            short_hex(event_id)
+        ),
+        ("absent", _) => {
+            "no policy record names this mission — the defaults apply because nobody set one"
+                .to_owned()
+        }
+        (resolution, Some(event_id)) => format!("policy {resolution} ({})", short_hex(event_id)),
+        (resolution, None) => format!("policy {resolution}"),
+    };
+    // 2026-09-05 refuter, S2: a record naming this mission that nobody
+    // entitled to set its policy signed is *excluded*, and until this sentence
+    // it was excluded in silence — which is the difference between "no policy"
+    // and "somebody is publishing policies for this mission and none of them
+    // counts". The count changes no decision; it says what the read dropped.
+    if policy.excluded_unauthorized == 0 {
+        return sentence;
+    }
+    format!(
+        "{sentence}; {} record(s) naming this mission were excluded because no key entitled to \
+         set its policy signed them",
+        policy.excluded_unauthorized
+    )
+}
+
 /// Assemble the missions in `scope` whose founder founds the repository, folded.
 ///
 /// Finding 56: the scope is a *set* of channels since a mission lives in its
@@ -1742,6 +1837,7 @@ async fn fetch_verdict_candidates(
     client: &crate::client::BuzzClient,
     scope: &crate::commands::git_verdict_scope::PredictionScope,
     founders: &buzz_core::repository_founders::RepositoryFounders,
+    repository: &str,
 ) -> Result<Vec<VerdictAdmissionCandidate>, CliError> {
     let channel = &scope.channels;
     let decode = |rows: Vec<serde_json::Value>| -> Result<Vec<nostr::Event>, CliError> {
@@ -1811,15 +1907,27 @@ async fn fetch_verdict_candidates(
             )
             .await?,
     )?;
-    let policies = decode(
+    // Finding 90: the provider set is proven by the accepted lifecycle, never
+    // by who published metadata.
+    let lifecycle_commands = decode(
         client
             .query_paginated(
                 serde_json::json!({
-                    "kinds": [KIND_CODING_SESSION_POLICY],
+                    "kinds": [KIND_CODING_SESSION_LIFECYCLE_COMMAND],
                     "#h": channel,
-                    "authors": founders.pubkeys(),
                 }),
-                VERDICT_ADMISSION_MAX_POLICIES as u32,
+                VERDICT_ADMISSION_MAX_LIFECYCLE_RECORDS as u32,
+            )
+            .await?,
+    )?;
+    let lifecycle_receipts = decode(
+        client
+            .query_paginated(
+                serde_json::json!({
+                    "kinds": [KIND_CODING_SESSION_LIFECYCLE_RECEIPT],
+                    "#h": channel,
+                }),
+                VERDICT_ADMISSION_MAX_LIFECYCLE_RECORDS as u32,
             )
             .await?,
     )?;
@@ -1857,8 +1965,9 @@ async fn fetch_verdict_candidates(
         };
         let transactions = in_channel(&transactions, &mission_channel);
         let observations = in_channel(&observations, &mission_channel);
-        let policies = in_channel(&policies, &mission_channel);
         let session_metadata = in_channel(&session_metadata, &mission_channel);
+        let lifecycle_commands = in_channel(&lifecycle_commands, &mission_channel);
+        let lifecycle_receipts = in_channel(&lifecycle_receipts, &mission_channel);
         let authority = in_channel(&authority, &mission_channel);
         let events: Vec<nostr::Event> =
             mission_transactions(&payload.session_ref, &genesis_ref, &transactions)
@@ -1879,6 +1988,25 @@ async fn fetch_verdict_candidates(
         // A mission that does not fold admits nothing; it must not make the
         // whole prediction unavailable.
         let canonical = fold_candidate_records(&events, &context).unwrap_or_default();
+        // NIP-CSP § Validation boundary, prediction-grade: the founder, or a
+        // key the transitions this prediction could read grant `operator`.
+        // The relay applies the same rule against its own accepted chain.
+        // Resolved here, before the lifecycle is read, because since the
+        // 2026-09-05 refuter's B1 this set decides two things at once — who
+        // may commission an execution, and who may set the policy.
+        let mut steering_signers: Vec<String> = vec![founder_pubkey.to_ascii_lowercase()];
+        steering_signers.extend(prediction_operators(&authority, &genesis_ref));
+        // Finding 90: metadata names who spoke; the lifecycle names who was
+        // commissioned. Only the second is provider authority. B1: and a
+        // create signed by a key that may not steer this mission commissions
+        // nobody, however well its own receipt answers it.
+        let providers = mission_provider_pubkeys_from_lifecycle(
+            &payload.session_ref,
+            &genesis_ref,
+            &steering_signers,
+            &lifecycle_commands,
+            &lifecycle_receipts,
+        );
         // The relay page arrives newest-first and `in_channel` keeps that
         // order, so this is a page fold — the same one the relay's gate runs,
         // so the prediction and the gate cannot crown different rows
@@ -1893,14 +2021,52 @@ async fn fetch_verdict_candidates(
                     session_ref: payload.session_ref.clone(),
                     genesis_ref: genesis_ref.clone(),
                     known_assignment_refs: Vec::new(),
-                    provider_pubkeys: Some(mission_provider_pubkeys(
-                        &payload.session_ref,
-                        &session_metadata,
-                    )),
+                    provider_pubkeys: Some(providers.clone()),
                 },
             )
             .gates;
-        let gate_policy = mission_gate_policy(&payload.session_ref, &genesis_ref, &policies);
+        let (policies, excluded_unauthorized_policies) = fetch_mission_policies(
+            client,
+            &mission_channel,
+            &payload.session_ref,
+            &steering_signers,
+        )
+        .await?;
+        let gate_policy =
+            resolve_mission_gate_policy(&payload.session_ref, &genesis_ref, &policies);
+        // Finding 91: the repository being pushed is bound to this mission
+        // when the mission was founded in a channel the repository grants,
+        // and the mission's own founder or provider may also name one
+        // explicitly on its metadata.
+        let mut bound_repositories: Vec<String> = Vec::new();
+        for event in &session_metadata {
+            let signer = event.pubkey.to_hex();
+            let may_speak = signer.eq_ignore_ascii_case(&founder_pubkey)
+                || providers
+                    .iter()
+                    .any(|provider| provider.eq_ignore_ascii_case(&signer));
+            if !may_speak {
+                continue;
+            }
+            let Ok(metadata) =
+                buzz_core::coding_session_payload::decode_coding_session_metadata(&event.content)
+            else {
+                continue;
+            };
+            if metadata.session_ref.as_deref() != Some(payload.session_ref.as_str()) {
+                continue;
+            }
+            if let Some(repo_ref) = metadata.repo_ref {
+                if !bound_repositories.iter().any(|held| held == &repo_ref) {
+                    bound_repositories.push(repo_ref);
+                }
+            }
+        }
+        if scope.granted_channels.contains(&mission_channel)
+            && !bound_repositories.iter().any(|held| held == repository)
+        {
+            bound_repositories.push(repository.to_owned());
+        }
         candidates.push(VerdictAdmissionCandidate {
             session_ref: payload.session_ref,
             genesis_ref,
@@ -1909,9 +2075,145 @@ async fn fetch_verdict_candidates(
             active_seats: seats,
             observed_gates,
             gate_policy,
+            bound_repositories,
+            excluded_unauthorized_policies,
         });
     }
     Ok(candidates)
+}
+
+/// One mission's kind 44245 policy filter, as the prediction sends it.
+///
+/// `signers` is the whole point (2026-09-05 refuter ride-along R1). Until it
+/// was in the *query*, the prediction read one 64-record page of the channel
+/// and applied the standing rule afterwards — so a flood of structurally valid
+/// records naming this mission, signed by anybody, evicted the founder's
+/// policy from the page, the prediction resolved `Absent`, and `bee git check
+/// --ref` promised an admission the relay's own per-mission read refuses. A
+/// prediction may under-promise; over-promising is the one thing it may not
+/// do. `None` asks for the same page without the rule, which is used **only**
+/// to count what the rule excluded.
+fn mission_policy_filter(
+    channel: &str,
+    session_ref: &str,
+    signers: Option<&[String]>,
+) -> serde_json::Value {
+    let mut filter = serde_json::json!({
+        "kinds": [KIND_CODING_SESSION_POLICY],
+        "#h": [channel],
+        "#d": [session_ref],
+    });
+    if let (Some(signers), Some(object)) = (signers, filter.as_object_mut()) {
+        object.insert("authors".to_owned(), serde_json::json!(signers));
+    }
+    filter
+}
+
+/// This mission's authorized policy records, and how many records naming it
+/// the signer rule excluded.
+///
+/// Two reads, and only the first decides: the authorized one is the policy,
+/// and the unfiltered one is counted rather than consulted — the disclosure
+/// the audit's policy-signer parity asked for (S2). The count is a floor, like
+/// every other bound here: it can only see the records its own page held.
+async fn fetch_mission_policies(
+    client: &crate::client::BuzzClient,
+    channel: &str,
+    session_ref: &str,
+    signers: &[String],
+) -> Result<(Vec<nostr::Event>, u32), CliError> {
+    let decode = |rows: Vec<serde_json::Value>| -> Result<Vec<nostr::Event>, CliError> {
+        rows.into_iter()
+            .map(|row| {
+                serde_json::from_value(row).map_err(|error| {
+                    CliError::Other(format!("relay returned a malformed event: {error}"))
+                })
+            })
+            .collect()
+    };
+    let authorized = decode(
+        client
+            .query_paginated(
+                mission_policy_filter(channel, session_ref, Some(signers)),
+                VERDICT_ADMISSION_MAX_POLICIES as u32,
+            )
+            .await?,
+    )?;
+    // The in-memory rule stays beside the query's, so the disclosure and the
+    // decision cannot come from two different rules.
+    let authorized: Vec<nostr::Event> = authorized
+        .into_iter()
+        .filter(|event| policy_signer_stands(event, signers))
+        .collect();
+    let named = decode(
+        client
+            .query_paginated(
+                mission_policy_filter(channel, session_ref, None),
+                VERDICT_ADMISSION_MAX_POLICIES as u32,
+            )
+            .await?,
+    )?;
+    let excluded = named
+        .iter()
+        .filter(|event| !policy_signer_stands(event, signers))
+        .count();
+    Ok((authorized, u32::try_from(excluded).unwrap_or(u32::MAX)))
+}
+
+/// Whether this record's signer may set the mission's policy.
+fn policy_signer_stands(event: &nostr::Event, signers: &[String]) -> bool {
+    let signer = event.pubkey.to_hex();
+    signers
+        .iter()
+        .any(|held| held.eq_ignore_ascii_case(&signer))
+}
+
+/// The keys a mission's readable kind 44228 transitions currently grant
+/// `operator`, prediction-grade.
+///
+/// The relay reads its own accepted projection; a client reads events off the
+/// wire and can only say what it saw, so a grant outside the page it read is
+/// simply not found — which excludes a policy and can only make the
+/// prediction stricter than the gate, never looser.
+fn prediction_operators(authority: &[nostr::Event], genesis_ref: &str) -> Vec<String> {
+    use buzz_core::coding_session_authority_transition::{
+        decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
+    };
+    let mut links: Vec<(u32, CodingSessionAuthorityTransitionType, String)> = Vec::new();
+    for event in authority {
+        if buzz_core::verify_event(event).is_err() {
+            continue;
+        }
+        let Ok(payload) = decode_coding_session_authority_transition(&event.content) else {
+            continue;
+        };
+        if payload.genesis_ref != genesis_ref {
+            continue;
+        }
+        links.push((
+            payload.seq,
+            payload.transition_type,
+            payload.grantee_pubkey.to_ascii_lowercase(),
+        ));
+    }
+    links.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.cmp(&b.2)));
+    let mut operators: Vec<String> = Vec::new();
+    for (_, transition_type, grantee) in links {
+        match transition_type {
+            CodingSessionAuthorityTransitionType::GrantOperator => {
+                if !operators.contains(&grantee) {
+                    operators.push(grantee);
+                }
+            }
+            CodingSessionAuthorityTransitionType::GrantViewer
+            | CodingSessionAuthorityTransitionType::Revoke => {
+                operators.retain(|held| held != &grantee);
+            }
+            CodingSessionAuthorityTransitionType::GrantSeat
+            | CodingSessionAuthorityTransitionType::RevokeSeat => {}
+        }
+    }
+    operators
 }
 
 /// What the serving relay says about itself, for the enforcement disclosure.
@@ -2161,7 +2463,7 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
             "ref": prediction.ref_name,
             "sha": prediction.sha,
             "arm": match &prediction.state {
-                RefPredictionState::AdmittedAsFounder => Some("founder"),
+                RefPredictionState::AdmittedAsFounder { .. } => Some("founder"),
                 RefPredictionState::AdmittedByVerdict { .. } => Some("verifier-verdict"),
                 RefPredictionState::AdmittedByObservedGates { .. } => Some("observed-gates"),
                 _ => None,
@@ -2170,7 +2472,7 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                 RefPredictionState::Ungoverned => "ungoverned",
                 RefPredictionState::NoRepository => "no_repository",
                 RefPredictionState::Unreadable { .. } => "unreadable",
-                RefPredictionState::AdmittedAsFounder => "admitted",
+                RefPredictionState::AdmittedAsFounder { .. } => "admitted",
                 RefPredictionState::AdmittedByVerdict { .. } => "admitted",
                 RefPredictionState::AdmittedByObservedGates { .. } => "admitted",
                 RefPredictionState::Refused { .. } => "refused",
@@ -2182,26 +2484,36 @@ pub fn render_json(report: &CheckReport) -> serde_json::Value {
                     Some("no relay remote in this checkout".to_string()),
                 RefPredictionState::Unreadable { detail } => Some(detail.clone()),
                 RefPredictionState::Refused { reason } => Some(reason.clone()),
-                RefPredictionState::AdmittedAsFounder => Some(
-                    "you are a founder of this repository; a founder's push needs no verdict"
-                        .to_string()
-                ),
+                RefPredictionState::AdmittedAsFounder { policy_not_evaluated } => Some(format!(
+                    "you are a founder of this repository; a founder's push needs no verdict, \
+                     and no mission policy was evaluated ({policy_not_evaluated})"
+                )),
                 RefPredictionState::AdmittedByVerdict {
                     session_ref, disposition_event_id, refutation_event_id, verifier_pubkey,
-                    gates,
+                    gates, policy,
                 } => Some(format!(
                     "mission {session_ref} approved it (disposition {disposition_event_id}) and \
                      verifier {verifier_pubkey} did not refute it (refutation \
-                     {refutation_event_id}), over {} observed green on this commit",
+                     {refutation_event_id}), over {} observed green on this commit; {policy}",
                     gates.join(", ")
                 )),
-                RefPredictionState::AdmittedByObservedGates { session_ref, gates } => {
+                RefPredictionState::AdmittedByObservedGates { session_ref, gates, policy } => {
                     Some(format!(
                         "mission {session_ref} observed {} green on this commit, over a clean \
-                         worktree, and requires no verifier",
+                         worktree, and requires no verifier; {policy}",
                         gates.join(", ")
                     ))
                 }
+            },
+            // Finding 89 and the audit's Q1: what the admission stood on, as
+            // its own field, so a machine reader does not have to parse prose.
+            "policy": match &prediction.state {
+                RefPredictionState::AdmittedAsFounder { policy_not_evaluated } =>
+                    Some(serde_json::json!({ "notEvaluated": policy_not_evaluated })),
+                RefPredictionState::AdmittedByVerdict { policy, .. }
+                | RefPredictionState::AdmittedByObservedGates { policy, .. } =>
+                    Some(serde_json::json!({ "resolution": policy })),
+                _ => None,
             },
         })),
         "relay": report.relay,
@@ -2407,29 +2719,35 @@ pub fn render_human(report: &CheckReport) -> String {
                 "  no relay remote in this checkout, so no repository rules to read".to_string()
             }
             RefPredictionState::Unreadable { detail } => format!("  not predicted — {detail}"),
-            RefPredictionState::AdmittedAsFounder => {
+            RefPredictionState::AdmittedAsFounder {
+                policy_not_evaluated,
+            } => format!(
                 "  admitted by arm (A) — you are a founder of this repository, and a founder's \
-                 push needs no verdict"
-                    .to_string()
-            }
+                 push needs no verdict; policy not evaluated: {policy_not_evaluated}"
+            ),
             RefPredictionState::AdmittedByVerdict {
                 session_ref,
                 disposition_event_id,
                 refutation_event_id,
                 verifier_pubkey,
                 gates,
+                policy,
             } => format!(
                 "  admitted by arm (C) — mission {session_ref} approved it (disposition {}), \
                  verifier {} did not refute it (refutation {}), and {} were observed green on \
-                 this exact commit",
+                 this exact commit; {policy}",
                 short_hex(disposition_event_id),
                 short_hex(verifier_pubkey),
                 short_hex(refutation_event_id),
                 gates.join(", ")
             ),
-            RefPredictionState::AdmittedByObservedGates { session_ref, gates } => format!(
+            RefPredictionState::AdmittedByObservedGates {
+                session_ref,
+                gates,
+                policy,
+            } => format!(
                 "  admitted by arm (B) — mission {session_ref} observed {} green on this exact \
-                 commit over a clean worktree, and requires no verifier",
+                 commit over a clean worktree, and requires no verifier; {policy}",
                 gates.join(", ")
             ),
             RefPredictionState::Refused { reason } => format!("  refused — {reason}"),
@@ -3357,6 +3675,7 @@ mod tests {
                 repo_founders: &["ab".repeat(32)],
                 candidate_source:
                     &buzz_core::coding_session_verdict_admission::VERDICT_ADMISSION_BOUND_CHANNEL,
+                repository: &format!("30617:{}:beekeeper", "ab".repeat(32)),
             },
         );
         let VerdictAdmission::Refused(refusal) = expected else {
@@ -3384,6 +3703,238 @@ mod tests {
         assert!(
             !rendered.contains("will be accepted") && !rendered.contains("your push will"),
             "nothing here may promise an outcome:\n{rendered}"
+        );
+    }
+
+    /// **Finding 89 and the audit's Q1, on the line a person reads.** Every
+    /// admitted arm says what it stood on: (B) and (C) name the policy record
+    /// and how it resolved, and (A) says that no policy was evaluated at all.
+    ///
+    /// Before this, arm (B)'s sentence was identical whether the founder had
+    /// deliberately set `verifierRequired: false`, withdrawn the policy, or
+    /// never had one read — three different facts under one word, "ready".
+    #[test]
+    fn every_admitted_arm_names_the_policy_it_stood_on() {
+        let base = RefPrediction {
+            ref_name: "refs/heads/main".to_string(),
+            sha: "07c470be007c470be007c470be007c470be007c4".to_string(),
+            state: RefPredictionState::Ungoverned,
+            serving_relay: String::new(),
+            founders: String::new(),
+            enforcement: RequireVerdictEnforcement::default(),
+            lookup: String::new(),
+        };
+
+        let founder = render_human(&report_with(RefPrediction {
+            state: RefPredictionState::AdmittedAsFounder {
+                policy_not_evaluated: "founder_exception".to_string(),
+            },
+            ..base.clone()
+        }));
+        assert!(
+            founder.contains("policy not evaluated: founder_exception"),
+            "a founder's landing must never read as verifier-approved:\n{founder}"
+        );
+
+        let observed = render_human(&report_with(RefPrediction {
+            state: RefPredictionState::AdmittedByObservedGates {
+                session_ref: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_string(),
+                gates: vec!["cargo fmt".to_string()],
+                policy: policy_sentence(&VerdictAdmissionPolicyEvidence {
+                    event_id: None,
+                    resolution: buzz_core::coding_session_verdict_admission::
+                        VerdictAdmissionPolicyResolution::Absent,
+                    excluded_unauthorized: 0,
+                }),
+            },
+            ..base.clone()
+        }));
+        assert!(
+            observed.contains("no policy record names this mission"),
+            "arm (B) on defaults must say nobody set a policy:\n{observed}"
+        );
+
+        let withdrawn = render_human(&report_with(RefPrediction {
+            state: RefPredictionState::AdmittedByObservedGates {
+                session_ref: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_string(),
+                gates: vec!["cargo fmt".to_string()],
+                policy: policy_sentence(&VerdictAdmissionPolicyEvidence {
+                    event_id: Some("ab".repeat(32)),
+                    resolution: buzz_core::coding_session_verdict_admission::
+                        VerdictAdmissionPolicyResolution::Withdrawn,
+                    excluded_unauthorized: 0,
+                }),
+            },
+            ..base
+        }));
+        assert!(
+            withdrawn.contains("policy withdrawn"),
+            "a withdrawal is a decision somebody made, not an absence:\n{withdrawn}"
+        );
+        assert!(
+            withdrawn.contains("abababab"),
+            "and the record that says so is named:\n{withdrawn}"
+        );
+    }
+
+    /// **R1 (2026-09-05 refuter ride-along).** The prediction's policy read
+    /// carries the signer set, so a flood of unauthorized records naming this
+    /// mission cannot evict the founder's policy from the page it reads.
+    ///
+    /// The relay is simulated from the filter this module actually builds —
+    /// authors, newest first, bounded — rather than described in prose, so a
+    /// change to the filter changes the simulation with it. The second half is
+    /// what makes the first half mean anything: with the signer set dropped
+    /// from the query, the *same* records resolve `Absent`, which is exactly
+    /// the over-promise (`verifierRequired: true` predicted as admitted) the
+    /// gate would then refuse.
+    #[test]
+    fn a_flood_of_unauthorized_policies_does_not_change_the_prediction() {
+        use nostr::{EventBuilder, Kind, Tag, Timestamp};
+
+        const CHANNEL: &str = "c0066ddd-8214-4baf-81d2-3046fead0d32";
+        const SESSION: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        const GENESIS: &str = "c3b8ae79c3b8ae79c3b8ae79c3b8ae79c3b8ae79c3b8ae79c3b8ae79c3b8ae79";
+        let schema = buzz_core::coding_session_policy::CODING_SESSION_POLICY_SCHEMA;
+
+        let policy = |gates: serde_json::Value, keys: &Keys, at: u64| -> nostr::Event {
+            let mut content = serde_json::json!({
+                "schema": schema,
+                "sessionRef": SESSION,
+                "genesisRef": GENESIS,
+            });
+            if let (Some(target), Some(extra)) = (content.as_object_mut(), gates.as_object()) {
+                for (key, value) in extra {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            EventBuilder::new(
+                Kind::Custom(KIND_CODING_SESSION_POLICY as u16),
+                content.to_string(),
+            )
+            .tags([
+                Tag::parse(["h", CHANNEL]).expect("h"),
+                Tag::parse(["d", SESSION]).expect("d"),
+                Tag::parse(["csp-v", schema]).expect("v"),
+                Tag::parse(["csp-genesis", GENESIS]).expect("genesis"),
+            ])
+            .custom_created_at(Timestamp::from_secs(at))
+            .sign_with_keys(keys)
+            .expect("sign policy")
+        };
+
+        let founder = Keys::generate();
+        let stranger = Keys::generate();
+        let signers = vec![founder.public_key().to_hex()];
+        let mut stored = vec![policy(
+            serde_json::json!({ "gates": { "verifierRequired": true } }),
+            &founder,
+            1_900_000_000,
+        )];
+        // Strictly more than the bound, all newer, all naming this mission.
+        for index in 0..(VERDICT_ADMISSION_MAX_POLICIES + 8) {
+            stored.push(policy(
+                serde_json::json!({ "gates": { "verifierRequired": false } }),
+                &stranger,
+                2_000_000_000 + index as u64,
+            ));
+        }
+
+        /// What a relay returns for one of this module's filters: the events
+        /// it matches, newest first, cut to the page bound.
+        fn served(filter: &serde_json::Value, stored: &[nostr::Event]) -> Vec<nostr::Event> {
+            let authors: Option<Vec<String>> = filter.get("authors").map(|value| {
+                value
+                    .as_array()
+                    .expect("authors is a list")
+                    .iter()
+                    .map(|author| author.as_str().expect("hex").to_owned())
+                    .collect()
+            });
+            let mut page: Vec<nostr::Event> = stored
+                .iter()
+                .filter(|event| {
+                    filter["#d"][0] == serde_json::json!(SESSION)
+                        && authors
+                            .as_ref()
+                            .is_none_or(|authors| authors.contains(&event.pubkey.to_hex()))
+                })
+                .cloned()
+                .collect();
+            page.sort_by_key(|event| std::cmp::Reverse(event.created_at));
+            page.truncate(VERDICT_ADMISSION_MAX_POLICIES);
+            page
+        }
+
+        let with_signers = mission_policy_filter(CHANNEL, SESSION, Some(&signers));
+        assert_eq!(with_signers["authors"], serde_json::json!(signers));
+        assert_eq!(with_signers["#d"], serde_json::json!([SESSION]));
+        let authorized: Vec<nostr::Event> = served(&with_signers, &stored)
+            .into_iter()
+            .filter(|event| policy_signer_stands(event, &signers))
+            .collect();
+        let resolution = resolve_mission_gate_policy(SESSION, GENESIS, &authorized);
+        assert!(
+            resolution.requires_a_verifier(),
+            "the founder's policy survives the flood: {resolution:?}"
+        );
+
+        // The old read, for contrast: no `authors`, and the flood is the page.
+        let unfiltered = mission_policy_filter(CHANNEL, SESSION, None);
+        assert!(unfiltered.get("authors").is_none());
+        let page = served(&unfiltered, &stored);
+        let excluded = page
+            .iter()
+            .filter(|event| !policy_signer_stands(event, &signers))
+            .count();
+        assert_eq!(excluded, VERDICT_ADMISSION_MAX_POLICIES);
+        let after_the_filter: Vec<nostr::Event> = page
+            .into_iter()
+            .filter(|event| policy_signer_stands(event, &signers))
+            .collect();
+        assert_eq!(
+            resolve_mission_gate_policy(SESSION, GENESIS, &after_the_filter),
+            buzz_core::coding_session_verdict_admission::GatePolicyResolution::Absent,
+            "without the signer set in the query the flood is the whole page, the prediction \
+             resolves Absent, and `bee git check` promises what the gate refuses"
+        );
+    }
+
+    /// **S2 (2026-09-05 refuter).** Records naming a mission that nobody
+    /// entitled to set its policy signed are excluded — and the prediction
+    /// says how many, because "no policy" and "three policies, none of them
+    /// authorized" are different states of the same mission and the second one
+    /// is what a flood against the per-mission read looks like.
+    #[test]
+    fn the_policy_sentence_discloses_the_records_the_signer_rule_excluded() {
+        use buzz_core::coding_session_verdict_admission::VerdictAdmissionPolicyResolution;
+
+        let quiet = policy_sentence(&VerdictAdmissionPolicyEvidence {
+            event_id: None,
+            resolution: VerdictAdmissionPolicyResolution::Absent,
+            excluded_unauthorized: 0,
+        });
+        assert!(
+            !quiet.contains("excluded"),
+            "the ordinary case says nothing extra:\n{quiet}"
+        );
+
+        let flooded = policy_sentence(&VerdictAdmissionPolicyEvidence {
+            event_id: None,
+            resolution: VerdictAdmissionPolicyResolution::Absent,
+            excluded_unauthorized: 72,
+        });
+        assert!(
+            flooded.contains("no policy record names this mission"),
+            "{flooded}"
+        );
+        assert!(
+            flooded.contains("72 record(s) naming this mission were excluded"),
+            "the count is named, not implied:\n{flooded}"
+        );
+        assert!(
+            flooded.contains("no key entitled to set its policy signed them"),
+            "and the sentence says the rule it applied:\n{flooded}"
         );
     }
 

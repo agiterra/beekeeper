@@ -31,6 +31,8 @@ fn session(session_key: &str, founder: &str) -> PulseMissionSessionInput {
         team_events: Vec::new(),
         policy_events: Vec::new(),
         observation_events: Vec::new(),
+        lifecycle_commands: Vec::new(),
+        lifecycle_receipts: Vec::new(),
         ref_state: Vec::new(),
         overlap_files: Vec::new(),
         overlap_sha: None,
@@ -194,4 +196,83 @@ fn a_read_that_gathered_every_session_discloses_nothing() {
         "{:?}",
         response.mission_errors
     );
+}
+
+/// **S4.** The steering set this adapter resolves from the authority
+/// projection the caller already sends: the founder, plus every grant that
+/// still confers steering. A revoked or view-only grant commissions nothing.
+#[test]
+fn the_steering_set_is_the_founder_and_the_grants_that_still_steer() {
+    let founder = "11".repeat(32);
+    let operator = "22".repeat(32);
+    let viewer = "33".repeat(32);
+    let revoked = "44".repeat(32);
+    let mut session = session("session-1", &founder);
+    session.active_grants = vec![
+        PulseMissionGrantInput {
+            actor_pubkey: operator.clone(),
+            grant_event_ref: "aa".repeat(32),
+            may_steer: true,
+            accepted_at: 1_000,
+            granted: true,
+        },
+        PulseMissionGrantInput {
+            actor_pubkey: viewer.clone(),
+            grant_event_ref: "bb".repeat(32),
+            may_steer: false,
+            accepted_at: 1_000,
+            granted: true,
+        },
+        PulseMissionGrantInput {
+            actor_pubkey: revoked.clone(),
+            grant_event_ref: "cc".repeat(32),
+            may_steer: true,
+            accepted_at: 2_000,
+            granted: false,
+        },
+    ];
+
+    let signers = steering_signers(&session);
+    assert_eq!(signers, vec![founder, operator]);
+    assert!(!signers.contains(&viewer), "{signers:?}");
+    assert!(!signers.contains(&revoked), "{signers:?}");
+}
+
+/// **S4, the older caller.** `lifecycleCommands` and `lifecycleReceipts` are
+/// `#[serde(default)]`, so a caller that predates them still decodes — and
+/// resolves no provider, which is what makes its gate lines read
+/// `(observed, unverified)` rather than crediting a set nobody proved.
+#[test]
+fn a_caller_that_sends_no_lifecycle_still_decodes_and_proves_no_provider() {
+    let session: PulseMissionSessionInput = serde_json::from_value(serde_json::json!({
+        "sessionKey": "session-1",
+        "channelRef": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        "genesisRef": "ab".repeat(32),
+        "founderPubkey": "11".repeat(32),
+        "name": null,
+        "latestObservationAt": null,
+        "activeSeats": [],
+        "activeGrants": [],
+        "claimedSeats": [],
+        "teamEvents": [],
+        "policyEvents": [],
+        "observationEvents": [],
+        "refState": [],
+        "overlapFiles": [],
+        "overlapSha": null,
+        "overlapAsOf": null,
+        "overlapAuthor": null,
+    }))
+    .expect("a request written before S4 must still decode");
+    assert!(session.lifecycle_commands.is_empty());
+    assert!(session.lifecycle_receipts.is_empty());
+    assert!(mission_provider_pubkeys_from_lifecycle(
+        &session.session_ref,
+        &session.genesis_ref,
+        &steering_signers(&session),
+        &session.lifecycle_commands,
+        &session.lifecycle_receipts,
+    )
+    .is_empty());
 }

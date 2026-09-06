@@ -77,6 +77,26 @@ export function CodingSessionMissionLandControl({
           >
             {land.approvalSentence}
           </p>
+          {/* What the admission stood on, in the step where a person is about
+              to run the command: which policy record the arm read (finding
+              89), and whether the mission's repository binding was read or
+              assumed (finding 91). Both were on the wire and on no screen. */}
+          {land.policyLine === null ? null : (
+            <p
+              className={cn(missionRowMetaClass(), "mt-1")}
+              data-testid="land-policy-line"
+            >
+              {land.policyLine}
+            </p>
+          )}
+          {land.bindingLine === null ? null : (
+            <p
+              className={cn(missionRowMetaClass(), "mt-1")}
+              data-testid="land-binding-line"
+            >
+              {land.bindingLine}
+            </p>
+          )}
           <p
             className={cn(missionRowBodyClass(), "mt-1")}
             data-testid="mission-land-not-run"

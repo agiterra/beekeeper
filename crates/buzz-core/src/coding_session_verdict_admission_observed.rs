@@ -13,9 +13,13 @@
 //! # What it requires, all of it
 //!
 //! 1. The mission's policy does **not** require a verifier: the newest
-//!    founder-signed kind 44245 sets `gates.verifierRequired` false, or sets
-//!    no policy at all. A founder who asked for a second seat gets one; green
-//!    gates are not one.
+//!    founder-signed kind 44245 sets `gates.verifierRequired` false, sets no
+//!    gate half, was withdrawn, or was never published — each a **resolved**
+//!    fact ([`GatePolicyResolution`]) the admission evidence discloses. A
+//!    newest record this build cannot read closes the arm (finding 89): the
+//!    rule refuses with [`VerdictAdmissionRefusal::PolicyUnreadable`] rather
+//!    than reading an older record in its place. A founder who asked for a
+//!    second seat gets one; green gates are not one.
 //! 2. Every **required** gate — the policy's own `gates.requiredGates` when it
 //!    names any, else [`DEFAULT_REQUIRED_GATES`] — has a folded row that:
 //!    * is `source: observed`, which after
@@ -79,24 +83,24 @@ use super::{
 /// have been admitted — the direction a gate must fail in.
 pub const VERDICT_ADMISSION_MAX_OBSERVATIONS: usize = 512;
 
-/// Newest kind 44245 policies one verdict-gated ref update may read.
+/// Newest kind 44245 policies one verdict-gated ref update may read **per
+/// mission**.
 ///
-/// Scoped to the repository's founders, so this is "the newest 64 policies
-/// the founders published on this channel". A mission whose policy falls
-/// outside it is judged as though the founder set no flag — which can only
-/// *open* arm (B), never close it, so the bound is disclosed in the refusal
-/// rather than hidden: a founder who set `verifierRequired` and finds it
-/// unread has a stale page, not a lost ruling.
+/// Finding 89: this used to bound one page across a whole channel, and a
+/// mission whose policy fell outside it was judged as though the founder set
+/// no flag — a `verifierRequired: true` the page missed opened arm (B). The
+/// page is now read per mission (filtered by `d` and `csp-genesis`), newest
+/// first, so the authoritative record is always the first one and the bound
+/// only limits how many superseded records travel with it.
+/// [`resolve_mission_gate_policy`] classifies that newest record and never
+/// skips past it.
 pub const VERDICT_ADMISSION_MAX_POLICIES: usize = 64;
 
-/// Newest kind 44223 session metadata events one verdict-gated ref update may
-/// read, to learn which keys are this mission's providers.
+/// Newest kind 44223 session metadata events one reader may page through.
 ///
-/// The signer of an execution's metadata is the provider authority behind that
-/// execution — the same set the desktop honours an `observed` claim from. A
-/// provider whose metadata falls outside this page is not in the set, so its
-/// rows fold down to `declared` and admit nothing: the failure direction is
-/// again a refusal, never a wrong admission.
+/// Kept for callers that still render metadata; **not an admission input**
+/// since finding 90. A page of 44223 proves who published metadata, which is
+/// not who provides the mission — see [`metadata_signers`].
 pub const VERDICT_ADMISSION_MAX_PROVIDER_METADATA: usize = 256;
 
 /// The gates a mission must have green when its policy names none.
@@ -142,6 +146,173 @@ impl VerdictAdmissionGatePolicy {
     }
 }
 
+/// What the mission's newest kind 44245 record resolved to (finding 89).
+///
+/// The rule reads **one** record — the newest that belongs to this mission by
+/// both `d` and `csp-genesis` — and says what it is. It never skips to an
+/// older one: under NIP-CSP's newest-wins fold the newest record *is* the
+/// policy, so an older record standing in for it would be exactly the
+/// resurrection finding 89 caught (a valid withdrawal read past to the
+/// restrictive policy it withdrew, or an unreadable record read past to a
+/// weaker one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatePolicyResolution {
+    /// The newest record decodes and this is its gate half — possibly empty,
+    /// when the record sets a budget or bench and no gate.
+    Present {
+        /// The gate half of that record.
+        policy: VerdictAdmissionGatePolicy,
+        /// The record it was read from.
+        event_id: String,
+    },
+    /// The newest record is a valid withdrawal (`{schema, sessionRef,
+    /// genesisRef}`, NIP-CSP rule 3): somebody took the policy back, and the
+    /// defaults apply because they chose that.
+    Withdrawn {
+        /// The withdrawal record.
+        event_id: String,
+    },
+    /// No record names this mission. The defaults apply because nothing was
+    /// ever set — disclosed as such, since "nobody set a policy" and "the
+    /// founder withdrew it" are different facts.
+    Absent,
+    /// The newest record exists and this build cannot read it. Nothing is
+    /// known about the policy, and the rule refuses rather than guessing.
+    Unreadable {
+        /// The record that could not be read.
+        event_id: String,
+        /// The validator's own sentence about why.
+        reason: String,
+    },
+}
+
+impl GatePolicyResolution {
+    /// Whether the resolved policy forbids arm (B) outright.
+    ///
+    /// `Unreadable` answers `false` here **and is never asked**: every caller
+    /// checks [`GatePolicyResolution::unreadable`] first, because an
+    /// unreadable policy closes both arms rather than opening one.
+    pub fn requires_a_verifier(&self) -> bool {
+        matches!(self, Self::Present { policy, .. } if policy.requires_a_verifier())
+    }
+
+    /// The gates a push under this resolution must have green, in order.
+    ///
+    /// Defaults for `Withdrawn` and `Absent`; the record's own list for
+    /// `Present`. `Unreadable` also answers defaults, and again is never
+    /// asked — see [`GatePolicyResolution::requires_a_verifier`].
+    pub fn required_gates(&self) -> Vec<String> {
+        match self {
+            Self::Present { policy, .. } => policy.required_gates(),
+            Self::Withdrawn { .. } | Self::Absent | Self::Unreadable { .. } => {
+                VerdictAdmissionGatePolicy::default().required_gates()
+            }
+        }
+    }
+
+    /// The record id and reason when the newest record could not be read.
+    pub fn unreadable(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Unreadable { event_id, reason } => Some((event_id, reason)),
+            _ => None,
+        }
+    }
+
+    /// What an admission discloses about the policy it consulted.
+    ///
+    /// `None` for `Unreadable`: nothing admits under a policy nobody read, so
+    /// there is no admission to carry it.
+    ///
+    /// `excluded_unauthorized` is the caller's own count of records naming
+    /// this mission that the signer rule dropped (S2). It is a parameter and
+    /// not a field of the resolution because a resolution is what **one**
+    /// record said, while what other records were discarded is a fact about
+    /// the read that produced it.
+    pub fn evidence(&self, excluded_unauthorized: u32) -> Option<VerdictAdmissionPolicyEvidence> {
+        match self {
+            Self::Present { event_id, .. } => Some(VerdictAdmissionPolicyEvidence {
+                event_id: Some(event_id.clone()),
+                resolution: VerdictAdmissionPolicyResolution::Present,
+                excluded_unauthorized,
+            }),
+            Self::Withdrawn { event_id } => Some(VerdictAdmissionPolicyEvidence {
+                event_id: Some(event_id.clone()),
+                resolution: VerdictAdmissionPolicyResolution::Withdrawn,
+                excluded_unauthorized,
+            }),
+            Self::Absent => Some(VerdictAdmissionPolicyEvidence {
+                event_id: None,
+                resolution: VerdictAdmissionPolicyResolution::Absent,
+                excluded_unauthorized,
+            }),
+            Self::Unreadable { .. } => None,
+        }
+    }
+}
+
+/// The policy an admission stood on, as its evidence carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerdictAdmissionPolicyEvidence {
+    /// The kind 44245 record that was read, or `None` when none named the
+    /// mission.
+    pub event_id: Option<String>,
+    /// How that record resolved.
+    pub resolution: VerdictAdmissionPolicyResolution,
+    /// How many records naming this mission the signer rule excluded
+    /// (`excludedUnauthorized` on the wire; 2026-09-05 refuter, S2).
+    ///
+    /// An admission that consulted a policy says how many *other* records
+    /// claimed to be that policy and were not signed by anyone entitled to
+    /// set it. Zero is the ordinary case; a non-zero count is worth a
+    /// sentence, and the silence it replaces is what the audit's policy-signer
+    /// parity test asked to end.
+    pub excluded_unauthorized: u32,
+}
+
+/// The three resolutions an admission can stand on. `Unreadable` is absent by
+/// construction: it admits nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerdictAdmissionPolicyResolution {
+    /// The newest record set a policy.
+    Present,
+    /// The newest record withdrew the policy; defaults applied by choice.
+    Withdrawn,
+    /// No record named the mission; defaults applied by default.
+    Absent,
+}
+
+impl VerdictAdmissionPolicyResolution {
+    /// The wire token for this resolution.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::Withdrawn => "withdrawn",
+            Self::Absent => "absent",
+        }
+    }
+}
+
+/// Why arm (A)'s evidence carries no policy at all.
+///
+/// The founder exception is deliberate (Brian, 2026-09-03: humans never gate
+/// a landing), and the audit's ask was that a founder's landing never read as
+/// verifier-approved. This token is that disclosure: the policy was not
+/// evaluated, and the evidence says which exception skipped it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerdictAdmissionPolicyNotEvaluated {
+    /// The pusher is a founder of the repository; no mission was read.
+    FounderException,
+}
+
+impl VerdictAdmissionPolicyNotEvaluated {
+    /// The wire token for this exception.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FounderException => "founder_exception",
+        }
+    }
+}
+
 /// What arm (B) concluded for one candidate.
 #[derive(Debug, Clone)]
 pub(super) enum ObservedGateVerdict {
@@ -178,25 +349,56 @@ pub(super) fn evaluate_observed_gates(
     new_oid: &str,
     pusher_pubkey: &str,
 ) -> ObservedGateVerdict {
-    if candidate
-        .gate_policy
-        .as_ref()
-        .is_some_and(VerdictAdmissionGatePolicy::requires_a_verifier)
-    {
+    // Finding 89: a policy this build cannot read is refused, never read
+    // past. It is asked before anything else because every later question
+    // — does it require a verifier, which gates does it name — is about the
+    // record nobody could read.
+    if let Some(refusal) = policy_unreadable(candidate) {
+        return ObservedGateVerdict::Refuses(refusal);
+    }
+    if candidate.gate_policy.requires_a_verifier() {
         return ObservedGateVerdict::Silent;
     }
     if rows_naming(candidate, new_oid).is_empty() {
         return ObservedGateVerdict::Silent;
     }
+    // Resolved above: an unreadable policy already returned.
+    let Some(policy) = candidate
+        .gate_policy
+        .evidence(candidate.excluded_unauthorized_policies)
+    else {
+        return ObservedGateVerdict::Silent;
+    };
     match gates_observed_green(candidate, new_oid, pusher_pubkey) {
         Ok(green) => ObservedGateVerdict::Admits(VerdictAdmissionEvidence::ObservedGates {
             session_ref: candidate.session_ref.clone(),
             head_sha: new_oid.to_ascii_lowercase(),
             gates: green.gates,
             row_event_ids: green.row_event_ids,
+            policy,
         }),
         Err(refusal) => ObservedGateVerdict::Refuses(refusal),
     }
+}
+
+/// The refusal an unreadable policy earns, on any arm.
+///
+/// Both arms read the policy — (B) for its verifier flag and its gate list,
+/// (C) for the gate list alone — so a record nobody can read closes both.
+/// Reading an older record instead is what finding 89 caught.
+pub(super) fn policy_unreadable(
+    candidate: &VerdictAdmissionCandidate,
+) -> Option<VerdictAdmissionRefusal> {
+    candidate
+        .gate_policy
+        .unreadable()
+        .map(
+            |(event_id, reason)| VerdictAdmissionRefusal::PolicyUnreadable {
+                session_ref: candidate.session_ref.clone(),
+                event_id: event_id.to_owned(),
+                reason: reason.to_owned(),
+            },
+        )
 }
 
 /// Arm (B)'s whole rule **minus the "policy must not require a verifier"
@@ -271,11 +473,10 @@ fn rows_observed_green(
     candidate: &VerdictAdmissionCandidate,
     new_oid: &str,
 ) -> Result<ObservedGreenGates, VerdictAdmissionRefusal> {
-    let required = candidate
-        .gate_policy
-        .clone()
-        .unwrap_or_default()
-        .required_gates();
+    if let Some(refusal) = policy_unreadable(candidate) {
+        return Err(refusal);
+    }
+    let required = candidate.gate_policy.required_gates();
 
     // Rows this mission holds for this exact commit, whoever signed them.
     // Kept apart from the observed set so the refusal can tell "nobody
@@ -401,53 +602,80 @@ pub fn mission_observations<'a>(
         .collect()
 }
 
-/// The gate half of the newest founder-signed kind 44245 policy for one
-/// mission.
+/// Resolve the newest kind 44245 record of one mission (finding 89).
 ///
-/// `policies` is the caller's page, **newest first**; the first event that
-/// belongs to this mission and decodes is the answer, and one that does not
-/// decode is skipped rather than treated as an empty policy — a policy this
-/// build cannot read must not silently become "no verifier required".
+/// `policies` is the caller's page in any order; the newest record that
+/// belongs to this mission — by `d` **and** `csp-genesis`, the same both-tags
+/// rule every other kind here applies — is chosen by `created_at`, ties by
+/// the larger event id (the desktop fold's `isNewer`). That one record is
+/// classified and returned; an older one is never consulted.
 ///
-/// `None` means no readable policy, which arm (B) treats as "the founder set
-/// no flag". Callers that read no policies at all pass an empty slice and get
-/// the same answer, which is why every refusal here names the gate list it
-/// used rather than implying the founder chose it.
-pub fn mission_gate_policy(
+/// Who may sign a policy (the founder, or a seat holding an operator grant
+/// at the record's `created_at` — NIP-CSP § Validation boundary) is the
+/// caller's filter, applied before the page reaches here: this crate cannot
+/// read the authority chain, and a rule that pretended to would be asserting
+/// standing it cannot verify.
+pub fn resolve_mission_gate_policy(
     session_ref: &str,
     genesis_ref: &str,
     policies: &[Event],
-) -> Option<VerdictAdmissionGatePolicy> {
-    policies
+) -> GatePolicyResolution {
+    let newest = policies
         .iter()
         .filter(|event| {
             super::has_exact_tag(event, "d", session_ref)
                 && super::has_exact_tag(event, "csp-genesis", genesis_ref)
         })
-        .find_map(|event| {
-            let payload = validate_coding_session_policy_envelope(event).ok()?;
-            let gates = payload.gates?;
-            Some(VerdictAdmissionGatePolicy {
-                verifier_required: gates.verifier_required,
-                required_gates: gates.required_gates,
-            })
-        })
+        .max_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
+        });
+    let Some(event) = newest else {
+        return GatePolicyResolution::Absent;
+    };
+    let event_id = event.id.to_hex();
+    match validate_coding_session_policy_envelope(event) {
+        Err(reason) => GatePolicyResolution::Unreadable { event_id, reason },
+        Ok(payload) => match payload.gates {
+            Some(gates) => GatePolicyResolution::Present {
+                policy: VerdictAdmissionGatePolicy {
+                    verifier_required: gates.verifier_required,
+                    required_gates: gates.required_gates,
+                },
+                event_id,
+            },
+            // A record that sets a budget or a bench and no gate half is a
+            // policy whose gate half is unset — present, with the defaults.
+            None if payload.sets_any_policy() => GatePolicyResolution::Present {
+                policy: VerdictAdmissionGatePolicy::default(),
+                event_id,
+            },
+            None => GatePolicyResolution::Withdrawn { event_id },
+        },
+    }
 }
 
-/// The provider identities behind one mission, from a page of kind 44223
-/// session metadata.
+/// The keys that signed kind 44223 metadata naming one mission.
 ///
-/// The **signer** of an execution's metadata is that execution's provider
-/// authority, which is exactly the set whose `observed` claim a mission
-/// honours (REVIEW-L5 F2; the desktop resolves the same set from
-/// `execution.signerPubkey`). A metadata event that does not decode, or that
-/// claims no umbrella, contributes nothing rather than being guessed at.
+/// **Not authority, and nothing in this crate may feed it to admission**
+/// (finding 90). This used to be `mission_provider_pubkeys`: the signer of a
+/// decodable metadata event naming mission M joined M's trusted provider set,
+/// so any channel member could publish a 44223 for M, sign `observed` green
+/// rows, and have arm (B) consume them. Publishing metadata proves who spoke;
+/// it does not prove the speaker was commissioned to run the mission. The
+/// provider set is [`mission_provider_pubkeys_from_lifecycle`] now, proven by
+/// the accepted lifecycle command and the receipt its named provider signed.
 ///
-/// The answer is deliberately a `Vec` and never an `Option`: an empty set is
-/// "no provider of this mission published metadata on this page", and folding
-/// with `Some(empty)` folds every `observed` claim down to `declared`. That is
-/// the fail-closed direction — a push is refused, never wrongly admitted.
-pub fn mission_provider_pubkeys(session_ref: &str, metadata: &[Event]) -> Vec<String> {
+/// Kept, renamed and deprecated, so a reader who needs "who published
+/// metadata" still has it and a reader who needs "who provides this mission"
+/// cannot reach for it by the old name.
+#[deprecated(
+    since = "0.1.0",
+    note = "metadata signers are not mission providers (finding 90); use \
+            `mission_provider_pubkeys_from_lifecycle` for admission"
+)]
+pub fn metadata_signers(session_ref: &str, metadata: &[Event]) -> Vec<String> {
     let mut pubkeys: Vec<String> = Vec::new();
     for event in metadata {
         let Ok(payload) =

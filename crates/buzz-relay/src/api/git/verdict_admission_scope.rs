@@ -11,6 +11,23 @@
 //! The gate now discovers candidates by **who is pushing**, in three steps,
 //! and says in the refusal which one ran.
 //!
+//! # 0. The channels this repository grants (finding 91)
+//!
+//! Every step below is intersected with one set first: the transport channels
+//! of the project the announcement back-references, plus the channel its
+//! `buzz-channel` tag binds. That set is what this repository has explicitly
+//! granted, and a mission outside it is not this repository's mission however
+//! green it is. Before finding 91 step 1 returned the pusher's seats
+//! **community-wide**, so a key seated on a mission of R1 offered that
+//! mission's rows to a push of R2 whenever one founder founded both. The
+//! narrowing is disclosed in the scope's own `source` sentence
+//! ([`VerdictAdmissionCandidateSource::SeatOfMissionInScope`]), because a
+//! seat count that has been narrowed must not read as every seat the key
+//! holds.
+//!
+//! A repository that grants no channel at all — no project, no binding — has
+//! nowhere to look, and the search returns `None` rather than the community.
+//!
 //! # 1. The pusher's own seats
 //!
 //! The authoritative record that a key is seated is the kind:44228
@@ -69,8 +86,18 @@ use crate::state::AppState;
 /// The missions one gated ref update may be judged by, and how they were found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerdictSearchScope {
-    /// Channels whose stored events the search may read. Never empty.
+    /// Channels whose stored events the search may read. Never empty, and
+    /// always a subset of [`VerdictSearchScope::granted_channels`].
     pub channels: Vec<Uuid>,
+    /// Every channel this repository grants: its project's transport
+    /// channels, plus the channel its `buzz-channel` tag binds (finding 91).
+    ///
+    /// Resolved once per push and carried out of here because the candidate
+    /// binding needs the same set: a mission published in one of these
+    /// channels is a mission of this repository's own project, and that is
+    /// half of what [`buzz_core::coding_session_verdict_admission::VerdictAdmissionCandidate::bound_repositories`]
+    /// means. Never empty when the scope is `Some`.
+    pub granted_channels: Vec<Uuid>,
     /// The exact genesis event ids to consider, when the seats lookup found
     /// them. Empty means "every genesis on `channels` a founder signed" — the
     /// project and bound-channel lookups, which have no id list of their own.
@@ -90,27 +117,10 @@ pub async fn resolve_candidate_scope(
     project_ref: Option<&str>,
     pusher_pubkey: &str,
 ) -> Result<Option<VerdictSearchScope>, ()> {
-    let seated = pusher_seat_missions(state, community, pusher_pubkey).await?;
-    if !seated.is_empty() {
-        let seats = seated.len();
-        let mut channels: Vec<Uuid> = Vec::with_capacity(seats);
-        for (channel, _) in &seated {
-            if !channels.contains(channel) {
-                channels.push(*channel);
-            }
-        }
-        return Ok(Some(VerdictSearchScope {
-            channels,
-            genesis_ids: seated.into_iter().map(|(_, genesis)| genesis).collect(),
-            source: VerdictAdmissionCandidateSource::SeatOfMission {
-                seat: short_key(pusher_pubkey),
-                seats,
-            },
-        }));
-    }
-
-    if let Some(project) = project_ref {
-        let channels = match state
+    // Step 0 (finding 91). Everything below is intersected with this set, so
+    // no branch can return the community.
+    let project_channels = match project_ref {
+        Some(project) => match state
             .db
             .project_session_channel_ids(
                 community,
@@ -124,14 +134,74 @@ pub async fn resolve_candidate_scope(
                 tracing::error!(error = %error, "verdict admission: project session channels failed");
                 return Err(());
             }
-        };
-        if !channels.is_empty() {
+        },
+        None => Vec::new(),
+    };
+    let mut granted: Vec<Uuid> = project_channels.clone();
+    if let Some(bound) = channel_id {
+        if !granted.contains(&bound) {
+            granted.push(bound);
+        }
+    }
+    if granted.is_empty() {
+        // No project and no binding: this repository has granted no channel,
+        // so there is nowhere a mission of *this* repository could live.
+        return Ok(None);
+    }
+
+    let seated = pusher_seat_missions(state, community, pusher_pubkey).await?;
+    let held = seated.len();
+    let seated: Vec<(Uuid, Vec<u8>)> = seated
+        .into_iter()
+        .filter(|(channel, _)| granted.contains(channel))
+        .collect();
+    if !seated.is_empty() {
+        let seats = seated.len();
+        let mut channels: Vec<Uuid> = Vec::with_capacity(seats);
+        for (channel, _) in &seated {
+            if !channels.contains(channel) {
+                channels.push(*channel);
+            }
+        }
+        return Ok(Some(VerdictSearchScope {
+            channels,
+            granted_channels: granted,
+            genesis_ids: seated.into_iter().map(|(_, genesis)| genesis).collect(),
+            source: VerdictAdmissionCandidateSource::SeatOfMissionInScope {
+                seat: short_key(pusher_pubkey),
+                seats,
+                held,
+                within: narrowing_clause(project_ref, project_channels.len(), channel_id),
+            },
+        }));
+    }
+    if held > 0 {
+        // The key is seated — somewhere else. The two fall-backs below say
+        // "this key holds no seat", which would be false here, so the search
+        // reads this repository's own channels under the narrowed source and
+        // the sentence says exactly what happened.
+        return Ok(Some(VerdictSearchScope {
+            channels: granted.clone(),
+            granted_channels: granted,
+            genesis_ids: Vec::new(),
+            source: VerdictAdmissionCandidateSource::SeatOfMissionInScope {
+                seat: short_key(pusher_pubkey),
+                seats: 0,
+                held,
+                within: narrowing_clause(project_ref, project_channels.len(), channel_id),
+            },
+        }));
+    }
+
+    if let Some(project) = project_ref {
+        if !project_channels.is_empty() {
             return Ok(Some(VerdictSearchScope {
                 source: VerdictAdmissionCandidateSource::ProjectSessions {
                     project: project.to_owned(),
-                    channels: channels.len(),
+                    channels: project_channels.len(),
                 },
-                channels,
+                channels: project_channels,
+                granted_channels: granted,
                 genesis_ids: Vec::new(),
             }));
         }
@@ -139,9 +209,36 @@ pub async fn resolve_candidate_scope(
 
     Ok(channel_id.map(|channel| VerdictSearchScope {
         channels: vec![channel],
+        granted_channels: granted,
         genesis_ids: Vec::new(),
         source: VerdictAdmissionCandidateSource::BoundChannel,
     }))
+}
+
+/// How the seat lookup was narrowed, as the refusal sentence prints it.
+///
+/// Names both halves of the grant when both exist, because a reader who is
+/// told only about the project cannot tell whether the bound channel was
+/// searched.
+fn narrowing_clause(
+    project_ref: Option<&str>,
+    project_channels: usize,
+    channel_id: Option<Uuid>,
+) -> String {
+    match (project_ref, channel_id) {
+        (Some(project), Some(channel)) => format!(
+            "the {project_channels} session channel(s) of {project} and the channel this \
+             repository binds ({channel})"
+        ),
+        (Some(project), None) => {
+            format!("the {project_channels} session channel(s) of {project}")
+        }
+        (None, Some(channel)) => {
+            format!("the channel this repository binds ({channel})")
+        }
+        // Unreachable: an empty grant returned `None` above.
+        (None, None) => "no channel this repository grants".to_owned(),
+    }
 }
 
 /// The missions whose accepted authority chain currently seats `pusher`,

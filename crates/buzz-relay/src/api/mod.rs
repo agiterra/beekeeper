@@ -208,17 +208,88 @@ pub mod relay_members {
         }
     }
 
+    /// What became of an attempt to put a NIP-OA agent→owner relationship on
+    /// record. Callers that admitted a login *through* that owner (NIP-AA
+    /// step 6) must retain the owner and therefore need to know the difference
+    /// between "the store refused" and "the store could not answer" — the
+    /// first is a rule, the second is a transient — instead of one `false`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum OwnerMaterialization {
+        /// The relationship is on record: written now, or already present
+        /// naming this same owner.
+        Recorded,
+        /// The agent is already bound to a *different* owner. The mapping is
+        /// first-write-wins, so this credential's owner cannot be recorded
+        /// and retrying with the same credential will not change that.
+        Conflict,
+        /// The store could not say: `ensure_user`, the mapping write, or the
+        /// mapping read errored. Nothing is known about the relationship.
+        Unavailable,
+    }
+
     /// Persist a cryptographically verified NIP-OA agent→owner relationship.
     ///
     /// Both principals are ensured first because `agent_owner_pubkey` has a
     /// community-scoped foreign key. The mapping is first-write-wins; an
     /// existing mapping is accepted only when it names the same owner.
+    ///
+    /// Collapses [`materialize_nip_oa_owner_outcome`] to a bool for callers
+    /// that only record the owner opportunistically (HTTP bridge, git
+    /// transport). The WebSocket AUTH path, which may have admitted the
+    /// login *because of* this owner, uses the outcome directly so it can
+    /// refuse with the right sentence.
     pub async fn materialize_nip_oa_owner(
         state: &AppState,
         tenant: &TenantContext,
         agent: &nostr::PublicKey,
         owner: &nostr::PublicKey,
     ) -> bool {
+        materialize_nip_oa_owner_outcome(state, tenant, agent, owner).await
+            == OwnerMaterialization::Recorded
+    }
+
+    /// Record a NIP-OA owner and **fail closed** when a login that depended on
+    /// it cannot keep it (finding 92; 2026-09-05 refuter, F1).
+    ///
+    /// The one step `POST /events` and git smart-HTTP share with the WebSocket
+    /// AUTH path, so the three surfaces cannot disagree about what NIP-AA:113's
+    /// "retain O" obliges. `admitted_via_owner` is the whole question: a login
+    /// the membership gate admitted *because* this owner is a member must not
+    /// proceed with the relationship unrecorded, while on an open relay the
+    /// same credential would be admitted with no tag at all, so refusing there
+    /// would enforce nothing.
+    ///
+    /// `Err` carries the sentence to return — the same two
+    /// [`crate::handlers::auth`] prints, since a person hitting the transient
+    /// and a person hitting the conflict need different next steps.
+    pub async fn retain_nip_oa_owner(
+        state: &AppState,
+        tenant: &TenantContext,
+        agent: &nostr::PublicKey,
+        owner: &nostr::PublicKey,
+        admitted_via_owner: bool,
+    ) -> Result<(), (&'static str, &'static str)> {
+        let admission = if admitted_via_owner {
+            crate::handlers::auth::LoginAdmission::ViaOwner(*owner)
+        } else {
+            crate::handlers::auth::LoginAdmission::OpenRelayCredential(*owner)
+        };
+        let outcome = materialize_nip_oa_owner_outcome(state, tenant, agent, owner).await;
+        match crate::handlers::auth::decide_owner_retention(&admission, Some(outcome)) {
+            crate::handlers::auth::OwnerRetention::Authenticate { .. } => Ok(()),
+            crate::handlers::auth::OwnerRetention::Refuse { reason, message } => {
+                Err((reason, message))
+            }
+        }
+    }
+
+    /// [`materialize_nip_oa_owner`] with the failure kind preserved.
+    pub async fn materialize_nip_oa_owner_outcome(
+        state: &AppState,
+        tenant: &TenantContext,
+        agent: &nostr::PublicKey,
+        owner: &nostr::PublicKey,
+    ) -> OwnerMaterialization {
         for (role, pubkey) in [("agent", agent), ("owner", owner)] {
             match state
                 .db
@@ -235,29 +306,36 @@ pub mod relay_members {
                 Ok(false) => {}
                 Err(e) => {
                     tracing::warn!(%role, error = %e, "ensure_user failed during NIP-OA backfill");
-                    return false;
+                    return OwnerMaterialization::Unavailable;
                 }
             }
         }
 
-        let materialized = match state
+        let outcome = match state
             .db
             .set_agent_owner(tenant.community(), agent.as_bytes(), owner.as_bytes())
             .await
         {
-            Ok(true) => true,
-            Ok(false) => state
+            Ok(true) => OwnerMaterialization::Recorded,
+            Ok(false) => match state
                 .db
                 .is_agent_owner(tenant.community(), agent.as_bytes(), owner.as_bytes())
                 .await
-                .unwrap_or(false),
+            {
+                Ok(true) => OwnerMaterialization::Recorded,
+                Ok(false) => OwnerMaterialization::Conflict,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to read back agent_owner_pubkey");
+                    OwnerMaterialization::Unavailable
+                }
+            },
             Err(e) => {
                 tracing::warn!(error = %e, "failed to backfill agent_owner_pubkey");
-                false
+                OwnerMaterialization::Unavailable
             }
         };
 
-        if materialized {
+        if outcome == OwnerMaterialization::Recorded {
             state
                 .author_type_cache
                 .insert((tenant.community(), agent.to_bytes().to_vec()), true);
@@ -270,7 +348,7 @@ pub mod relay_members {
                 true,
             );
         }
-        materialized
+        outcome
     }
 
     #[cfg(test)]
@@ -279,6 +357,111 @@ pub mod relay_members {
         use axum::http::{HeaderMap, HeaderValue};
         use buzz_sdk::nip_oa::compute_auth_tag;
         use nostr::Keys;
+        use std::sync::Arc;
+
+        /// A relay state whose Postgres is a lazy pool at a port nothing
+        /// listens on, so the first `ensure_user` errors without any live
+        /// infrastructure. Mirrors `crate::state::tests::test_state`, which
+        /// points at the real `DATABASE_URL` and so cannot stand in here.
+        async fn unreachable_db_state() -> Arc<AppState> {
+            let mut config = crate::config::Config::from_env().expect("default config loads");
+            config.require_relay_membership = true;
+            config.allow_nip_oa_auth = true;
+            config.redis_url = "redis://127.0.0.1:1".to_string();
+            config.database_url = "postgres://buzz:unreachable@127.0.0.1:1/buzz".to_string(); // sadscan:disable np.postgres.1
+
+            // A refused connect is retried until `acquire_timeout` (30s by
+            // default); cap it so the unit gate does not stall on a port
+            // nothing listens on.
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_lazy(&config.database_url)
+                .expect("lazy pg pool");
+            let db = buzz_db::Db::from_pool(pool.clone());
+            let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+                .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+                .expect("redis pool");
+            let pubsub = Arc::new(
+                buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                    .await
+                    .expect("pubsub manager"),
+            );
+            let audit = buzz_audit::AuditService::new(pool.clone());
+            let auth = buzz_auth::AuthService::new(config.auth.clone());
+            let search = buzz_search::SearchService::new(pool.clone());
+            let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+                db.clone(),
+                buzz_workflow::WorkflowConfig::default(),
+            ));
+            let media_storage =
+                buzz_media::MediaStorage::new(&config.media).expect("media storage");
+            let (state, _audit_shutdown) = AppState::new(
+                config,
+                db,
+                redis_pool,
+                audit,
+                pubsub,
+                auth,
+                search,
+                workflow_engine,
+                nostr::Keys::generate(),
+                media_storage,
+            );
+            Arc::new(state)
+        }
+
+        /// F1: the same injected failure, through the step `POST /events` and
+        /// git smart-HTTP now share. A login admitted **through** its owner is
+        /// refused with the transient's own sentence; a login that carried the
+        /// credential but did not need it proceeds, because dropping the tag
+        /// would have admitted it anyway.
+        #[tokio::test]
+        async fn a_login_admitted_through_its_owner_is_refused_when_the_store_cannot_answer() {
+            let state = unreachable_db_state().await;
+            let tenant = buzz_core::TenantContext::resolved(
+                buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::new_v4()),
+                "adm-f1.example",
+            );
+            let agent = Keys::generate().public_key();
+            let owner = Keys::generate().public_key();
+
+            assert_eq!(
+                retain_nip_oa_owner(&state, &tenant, &agent, &owner, true).await,
+                Err((
+                    crate::handlers::auth::NIP_OA_OWNER_UNRECORDED_REASON,
+                    crate::handlers::auth::NIP_OA_OWNER_UNRECORDED_MESSAGE,
+                ))
+            );
+            assert_eq!(
+                retain_nip_oa_owner(&state, &tenant, &agent, &owner, false).await,
+                Ok(()),
+                "an open-relay credential enforces nothing, so an unrecordable owner is not fatal"
+            );
+        }
+
+        /// Finding 92, the injected failure: when `ensure_user` cannot reach
+        /// the store, the outcome is `Unavailable` — and the bool wrapper the
+        /// opportunistic callers use reads it as "not recorded". This is the
+        /// `false` that used to authenticate an ownerless virtual login.
+        #[tokio::test]
+        async fn unreachable_store_is_unavailable_not_recorded() {
+            let state = unreachable_db_state().await;
+            let tenant = buzz_core::TenantContext::resolved(
+                buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::new_v4()),
+                "adm-c.example",
+            );
+            let agent = Keys::generate().public_key();
+            let owner = Keys::generate().public_key();
+
+            assert_eq!(
+                materialize_nip_oa_owner_outcome(&state, &tenant, &agent, &owner).await,
+                OwnerMaterialization::Unavailable
+            );
+            assert!(
+                !materialize_nip_oa_owner(&state, &tenant, &agent, &owner).await,
+                "the bool wrapper must not read an unreachable store as recorded"
+            );
+        }
 
         #[test]
         fn auth_tag_header_must_be_unique() {

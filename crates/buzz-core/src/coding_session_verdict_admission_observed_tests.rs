@@ -136,7 +136,9 @@ fn candidate(
         canonical: Vec::new(),
         active_seats: watched.seats.clone(),
         observed_gates: fold.gates,
-        gate_policy,
+        gate_policy: super::gate_fixture::resolved(gate_policy),
+        bound_repositories: super::gate_fixture::bound(),
+        excluded_unauthorized_policies: 0,
     }
 }
 
@@ -149,6 +151,7 @@ fn query<'a>(pusher: &'a str, founders: &'a [String]) -> VerdictAdmissionQuery<'
         // These cases are about the rule, not the lookup; the source only
         // shapes the sentence one refusal renders.
         candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
+        repository: super::gate_fixture::TEST_REPOSITORY,
     }
 }
 
@@ -518,7 +521,9 @@ fn b_a_first_red_row_read_newest_first_does_not_outrank_the_later_green_rows() {
         canonical: Vec::new(),
         active_seats: watched.seats.clone(),
         observed_gates: fold.gates,
-        gate_policy: None,
+        gate_policy: GatePolicyResolution::Absent,
+        bound_repositories: super::gate_fixture::bound(),
+        excluded_unauthorized_policies: 0,
     };
     let founder = watched.founder.public_key().to_hex();
     let pusher = watched.builder.public_key().to_hex();

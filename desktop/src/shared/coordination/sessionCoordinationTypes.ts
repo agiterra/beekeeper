@@ -147,6 +147,18 @@ export type SessionCoordinationFoldInput = {
    * those whose `projectRef` is null.
    */
   acceptProjectRef?: (projectRef: string | null) => boolean;
+  /**
+   * The keys that may **commission** an execution of these sessions — a
+   * mission's founder together with the keys its accepted authority chain
+   * grants `operator` (2026-09-05 refuter, B1).
+   *
+   * Omit it and the fold applies the weaker rule it can apply without an
+   * authority projection: a create signed by the very provider it names, and
+   * answering no hire anybody else signed, proves no generation. Supply it and
+   * the rule is the relay's own. Either way a refused command is reported in
+   * {@link SessionCoordinationFold.ambiguities} rather than dropped in silence.
+   */
+  commissioners?: readonly string[];
 };
 
 /** The fold's complete answer about coordination. */

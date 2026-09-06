@@ -795,9 +795,25 @@ async fn decide_push(
             Err(()) => return PolicyOutcome::Refused("internal error"),
         }
     };
+    // The coordinate every candidate mission must be bound to (finding 91).
+    // Resolved once per push, from the announcement's own `d` tag rather than
+    // the requested repo id, so the gate judges against the coordinate the
+    // signed record addresses. An announcement with no `d` addresses nothing
+    // and fails the gated push closed.
+    let repository = if gated.is_empty() {
+        None
+    } else {
+        match crate::api::git::verdict_admission::repository_coordinate(&repo_event.event) {
+            Some(coordinate) => Some(coordinate),
+            None => {
+                warn!(repo = %req.repo_id, "hook callback: announcement addresses no coordinate");
+                return PolicyOutcome::Refused("internal error");
+            }
+        }
+    };
     for update in &gated {
-        let Some(founders) = founders.as_ref() else {
-            // Unreachable: `founders` is `Some` whenever `gated` is non-empty.
+        let (Some(founders), Some(repository)) = (founders.as_ref(), repository.as_deref()) else {
+            // Unreachable: both are `Some` whenever `gated` is non-empty.
             return PolicyOutcome::Refused("internal error");
         };
         match crate::api::git::verdict_admission::search_verdict_admission(
@@ -810,11 +826,25 @@ async fn decide_push(
                 ref_name: &update.ref_name,
                 new_oid: &update.new_oid,
                 pusher_pubkey: &req.pusher_pubkey,
+                repository,
             },
         )
         .await
         {
-            VerdictSearch::Admitted => {}
+            // The push audit: which arm admitted this ref update, and what it
+            // stood on. Dropping it is the audit's Q1 disclosure finding —
+            // a founder's exception and a verifier's clearance left the same
+            // trace, which was none.
+            VerdictSearch::Admitted(evidence) => {
+                crate::api::git::verdict_admission::record_admission(
+                    repository,
+                    &update.ref_name,
+                    &update.new_oid,
+                    &req.pusher_pubkey,
+                    founders,
+                    &evidence,
+                );
+            }
             VerdictSearch::Refused(refusal) => denials.push(Denial {
                 ref_name: update.ref_name.clone(),
                 reason: refusal.reason(),

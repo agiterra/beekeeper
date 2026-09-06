@@ -152,6 +152,10 @@ fn signed(payload: &CodingSessionTeamTransactionPayload, keys: &Keys, created_at
     .expect("sign")
 }
 
+/// An observation in the **legacy** shape: no top-level `source` key, which
+/// the reader accepts and reads as `declared`. Every fixture that does not
+/// care about provenance signs this shape, because it is what every 44246
+/// signed before 2026-09-02 looks like.
 fn observation(
     keys: &Keys,
     observation_type: &str,
@@ -159,15 +163,56 @@ fn observation(
     body: Value,
     created_at: u64,
 ) -> Event {
-    let content = json!({
+    observation_shaped(
+        keys,
+        observation_type,
+        None,
+        assignment_ref,
+        body,
+        created_at,
+    )
+}
+
+/// An observation carrying the top-level `source` the schema places there —
+/// the only location the fold reads it from (finding 93).
+fn observation_with_source(
+    keys: &Keys,
+    observation_type: &str,
+    source: &str,
+    assignment_ref: Option<&str>,
+    body: Value,
+    created_at: u64,
+) -> Event {
+    observation_shaped(
+        keys,
+        observation_type,
+        Some(source),
+        assignment_ref,
+        body,
+        created_at,
+    )
+}
+
+fn observation_shaped(
+    keys: &Keys,
+    observation_type: &str,
+    source: Option<&str>,
+    assignment_ref: Option<&str>,
+    body: Value,
+    created_at: u64,
+) -> Event {
+    let mut content = json!({
         "schema": CODING_SESSION_OBSERVATION_SCHEMA,
         "sessionRef": SESSION,
         "genesisRef": genesis(),
         "type": observation_type,
         "assignmentRef": assignment_ref.map_or(Value::Null, |value| json!(value)),
         "body": body,
-    })
-    .to_string();
+    });
+    if let Some(source) = source {
+        content["source"] = json!(source);
+    }
+    let content = content.to_string();
     EventBuilder::new(
         Kind::Custom(KIND_CODING_SESSION_OBSERVATION as u16),
         content,
@@ -224,7 +269,7 @@ fn sources<'a>(
         observation_events: observations,
         ref_state,
         claimed_seats: &[],
-        gate_source: None,
+        provider_pubkeys: None,
     }
 }
 
@@ -482,32 +527,30 @@ fn an_observed_row_beats_a_declared_row_and_says_which_source_it_shows() {
     let context = context(&founder, vec![(&actor, "builder")]);
     let assignment = signed(&assignment(&actor), &founder, 1);
     let assignment_ref = assignment.id.to_hex();
-    let declared = observation(
+    let declared = observation_with_source(
         &actor,
         "gate",
+        "declared",
         Some(&assignment_ref),
         gate_body("cargo test", "passed", "cargo test -p buzz-core"),
         2,
     );
-    let observed = observation(
+    let observed = observation_with_source(
         &provider,
         "gate",
+        "observed",
         Some(&assignment_ref),
         gate_body("cargo test", "failed", "cargo test -p buzz-core"),
         3,
     );
     let team = vec![assignment];
-    let observations = vec![declared, observed.clone()];
+    let observations = vec![declared, observed];
 
-    // The `source` key is Lane L5's to land; until it does, every row on the
-    // wire reads `declared`. The precedence rule is exercised through the same
-    // adapter the wire will feed, so the day L5 lands it nothing here changes.
-    let observed_id = observed.id.to_hex();
-    let lookup = move |event: &Event, _gate: &str| -> Option<String> {
-        (event.id.to_hex() == observed_id).then(|| "observed".to_owned())
-    };
+    // The wire's own top-level `source`, read through the fold with the
+    // provider set known — the path production takes (finding 93).
+    let providers = vec![provider.public_key().to_hex()];
     let mut sources = sources(&context, &team, &observations, &[]);
-    sources.gate_source = Some(&lookup);
+    sources.provider_pubkeys = Some(&providers);
     let facts = fold_pulse_mission_row(&sources, 10_000);
     let names = names(
         vec![
@@ -546,17 +589,23 @@ fn the_source_adapter_reads_the_wire_token_and_defaults_to_declared() {
         PulseGateSource::from_wire_token(Some("declared")),
         PulseGateSource::Declared
     );
-    // Absent — every row on today's wire, since L5 has not landed the key.
+    // Absent — the legacy shape every 44246 signed before 2026-09-02 has.
     assert_eq!(
         PulseGateSource::from_wire_token(None),
         PulseGateSource::Declared
+    );
+    // A token alone cannot say who signed it, so it never reads as
+    // self-reported; that verdict needs the provider set (`from_fold_entry`).
+    assert_eq!(
+        PulseGateSource::from_wire_token(Some("measured")),
+        PulseGateSource::Measured
     );
     // An unknown token never buys the stronger claim.
     assert_eq!(
         PulseGateSource::from_wire_token(Some("machine")),
         PulseGateSource::Declared
     );
-    assert!(PulseGateSource::Declared < PulseGateSource::Observed);
+    assert!(PulseGateSource::Declared.precedence() < PulseGateSource::Observed.precedence());
 }
 
 #[test]
@@ -686,12 +735,16 @@ mod wire_tests;
 #[path = "pulse_mission_fixture_tests.rs"]
 mod fixture_tests;
 
+#[path = "pulse_mission_provenance_tests.rs"]
+mod provenance_tests;
+
 /// L22 / finding 31: Pulse reads a gate row signed before `headSha` existed,
 /// and one signed after, and renders both.
 ///
 /// Pulse's strict gate for kind 44246 is `buzz-core`'s own decoder — it holds
-/// no second schema of its own (`pulse_mission.rs`'s `pulse_gate_source_token`
-/// reads the raw content for one key and nothing else). So the read-optional
+/// no second schema of its own (`pulse_mission.rs` reads the raw content for
+/// a checkpoint's `sha`/`subject` and nothing else; provenance comes from the
+/// fold, finding 93). So the read-optional
 /// exemption is what keeps every row already on the wire renderable, and this
 /// test is the claim rather than the coincidence: `gate_body` above writes the
 /// five-key shape on purpose.

@@ -329,3 +329,91 @@ test("L27: a clearance with no gate rows is refused, naming both halves", () => 
   assert.match(model.sentence, /also needs every required gate observed green/);
   assert.match(model.sentence, /cargo fmt/);
 });
+
+/**
+ * F4 (2026-09-05 refuter): the two facts finding 89 and finding 91 put on the
+ * wire, on the screen. They were decoded, typed, and referenced by no UI file
+ * at all — the wire fact shipped without its surface.
+ */
+test("F4: the confirm step names the policy the arm stood on", () => {
+  const present = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.admitted),
+    resolveWho,
+  });
+  assert.equal(
+    present.policyLine,
+    `Policy: present (${FIXTURE.admitted.evidence.policyEventId.slice(0, 8)}). The mission's own gate policy applied.`,
+  );
+
+  // Arm (A) reads no policy at all, and the line says which exception it is
+  // rather than falling back to "absent" — the audit's whole point.
+  const founder = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.founderPush),
+    resolveWho,
+  });
+  assert.equal(
+    founder.policyLine,
+    "Policy: not evaluated — founder_exception. A founder's landing is the deliberate exception; nothing here ruled on this commit.",
+  );
+
+  // Absent and withdrawn are different facts and read differently.
+  const absent = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult({
+      ...FIXTURE.admitted,
+      evidence: {
+        ...FIXTURE.admitted.evidence,
+        policyResolution: "absent",
+        policyEventId: null,
+      },
+    }),
+    resolveWho,
+  });
+  assert.equal(
+    absent.policyLine,
+    "Policy: absent. The defaults apply because nobody set one.",
+  );
+  const withdrawn = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult({
+      ...FIXTURE.admitted,
+      evidence: {
+        ...FIXTURE.admitted.evidence,
+        policyResolution: "withdrawn",
+      },
+    }),
+    resolveWho,
+  });
+  assert.match(withdrawn.policyLine, /^Policy: withdrawn \(/);
+  assert.match(withdrawn.policyLine, /somebody took the policy back/);
+});
+
+test("F4: the confirm step says whether the binding was read or assumed", () => {
+  const read = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult(FIXTURE.admitted),
+    resolveWho,
+  });
+  assert.equal(
+    read.bindingLine,
+    "Bound repositories: read. The rule checked this mission's own binding.",
+  );
+
+  const assumed = codingSessionMissionLandModel({
+    result: decodeCodingSessionLandResult({
+      ...FIXTURE.admitted,
+      boundRepositoriesRead: false,
+    }),
+    resolveWho,
+  });
+  assert.match(assumed.bindingLine, /^Bound repositories: assumed\./);
+  assert.match(assumed.bindingLine, /the relay checks the real one/);
+});
+
+test("F4: a state with no admission carries neither line", () => {
+  for (const key of ["refused", "ungoverned", "unknown"]) {
+    const model = codingSessionMissionLandModel({
+      result: decodeCodingSessionLandResult(FIXTURE[key]),
+      resolveWho,
+    });
+    assert.equal(model.policyLine, null, key);
+    assert.equal(model.bindingLine, null, key);
+  }
+});

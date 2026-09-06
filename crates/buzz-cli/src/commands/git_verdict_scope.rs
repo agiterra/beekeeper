@@ -48,6 +48,14 @@ const KIND_CHANNEL_METADATA: u32 = 39000;
 pub(crate) struct PredictionScope {
     /// Channel ids to search, as the `#h` filter wants them.
     pub(crate) channels: Vec<String>,
+    /// Every channel this repository grants — its project's session channels
+    /// plus the channel it binds (finding 91).
+    ///
+    /// The prediction narrows the seat lookup to this set exactly as the
+    /// relay does, and reuses it to decide whether a mission is bound to the
+    /// repository being pushed. A prediction that skipped the narrowing would
+    /// promise an admission the gate refuses.
+    pub(crate) granted_channels: Vec<String>,
     /// Exact genesis event ids, when the seats lookup found them; empty for
     /// the two channel-shaped lookups.
     pub(crate) genesis_ids: Vec<String>,
@@ -62,7 +70,28 @@ pub(crate) async fn resolve_prediction_scope(
     project_ref: Option<&str>,
     pusher_pubkey: &str,
 ) -> Result<Option<PredictionScope>, CliError> {
+    // Step 0, finding 91: the channels this repository grants. Every lookup
+    // below is intersected with it, so no branch predicts from the community.
+    let project_channels = match project_ref {
+        Some(project) => project_session_channels(client, project).await?,
+        None => Vec::new(),
+    };
+    let mut granted = project_channels.clone();
+    if let Some(bound) = bound_channel {
+        if !granted.iter().any(|held| held == bound) {
+            granted.push(bound.to_owned());
+        }
+    }
+    if granted.is_empty() {
+        return Ok(None);
+    }
+
     let seated = pusher_seat_missions(client, pusher_pubkey).await?;
+    let held = seated.len();
+    let seated: Vec<(String, String)> = seated
+        .into_iter()
+        .filter(|(channel, _)| granted.contains(channel))
+        .collect();
     if !seated.is_empty() {
         let seats = seated.len();
         let mut channels: Vec<String> = Vec::with_capacity(seats);
@@ -73,23 +102,42 @@ pub(crate) async fn resolve_prediction_scope(
         }
         return Ok(Some(PredictionScope {
             channels,
+            granted_channels: granted,
             genesis_ids: seated.into_iter().map(|(_, genesis)| genesis).collect(),
-            source: VerdictAdmissionCandidateSource::SeatOfMission {
+            source: VerdictAdmissionCandidateSource::SeatOfMissionInScope {
                 seat: short_key(pusher_pubkey),
                 seats,
+                held,
+                within: narrowing_clause(project_ref, project_channels.len(), bound_channel),
+            },
+        }));
+    }
+
+    if held > 0 {
+        // Seated elsewhere: the two fall-backs below claim this key holds no
+        // seat, and the prediction must not say something the gate would not.
+        return Ok(Some(PredictionScope {
+            channels: granted.clone(),
+            granted_channels: granted,
+            genesis_ids: Vec::new(),
+            source: VerdictAdmissionCandidateSource::SeatOfMissionInScope {
+                seat: short_key(pusher_pubkey),
+                seats: 0,
+                held,
+                within: narrowing_clause(project_ref, project_channels.len(), bound_channel),
             },
         }));
     }
 
     if let Some(project) = project_ref {
-        let channels = project_session_channels(client, project).await?;
-        if !channels.is_empty() {
+        if !project_channels.is_empty() {
             return Ok(Some(PredictionScope {
                 source: VerdictAdmissionCandidateSource::ProjectSessions {
                     project: project.to_owned(),
-                    channels: channels.len(),
+                    channels: project_channels.len(),
                 },
-                channels,
+                channels: project_channels,
+                granted_channels: granted,
                 genesis_ids: Vec::new(),
             }));
         }
@@ -97,9 +145,29 @@ pub(crate) async fn resolve_prediction_scope(
 
     Ok(bound_channel.map(|channel| PredictionScope {
         channels: vec![channel.to_owned()],
+        granted_channels: granted,
         genesis_ids: Vec::new(),
         source: VerdictAdmissionCandidateSource::BoundChannel,
     }))
+}
+
+/// How the seat lookup was narrowed, in the same words the relay uses.
+fn narrowing_clause(
+    project_ref: Option<&str>,
+    project_channels: usize,
+    bound_channel: Option<&str>,
+) -> String {
+    match (project_ref, bound_channel) {
+        (Some(project), Some(channel)) => format!(
+            "the {project_channels} session channel(s) of {project} and the channel this \
+             repository binds ({channel})"
+        ),
+        (Some(project), None) => {
+            format!("the {project_channels} session channel(s) of {project}")
+        }
+        (None, Some(channel)) => format!("the channel this repository binds ({channel})"),
+        (None, None) => "no channel this repository grants".to_owned(),
+    }
 }
 
 /// `(channel, genesis event id)` for each mission that currently seats

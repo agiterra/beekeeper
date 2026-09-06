@@ -14409,6 +14409,14 @@ export function maybeInstallE2eTauriMocks() {
             gateRowsRead: Array.isArray(request?.observedGates)
               ? (request.observedGates as unknown[]).length > 0
               : false,
+            // Finding 91's disclosure, and the same rule the native adapter
+            // applies (`coding_session_land.rs`): the binding was *read*
+            // exactly when the request carried one. The decoder's key set is
+            // exact, so a mock missing this key throws "malformed response" on
+            // every Land click rather than rendering anything.
+            boundRepositoriesRead:
+              request?.boundRepositories !== undefined &&
+              request?.boundRepositories !== null,
             command: null,
           };
         }
@@ -14431,8 +14439,9 @@ export function maybeInstallE2eTauriMocks() {
           rosterRead: false,
           seatsRead: false,
           // No repository record reached the rule, so nothing was folded for
-          // it to read gate rows from either.
+          // it to read gate rows from either — nor was any binding read.
           gateRowsRead: false,
+          boundRepositoriesRead: false,
           command: null,
         };
       }

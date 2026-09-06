@@ -231,7 +231,9 @@ fn candidate(
         canonical,
         active_seats: mission.seats.clone(),
         observed_gates: gates,
-        gate_policy,
+        gate_policy: super::gate_fixture::resolved(gate_policy),
+        bound_repositories: super::gate_fixture::bound(),
+        excluded_unauthorized_policies: 0,
     }
 }
 
@@ -249,6 +251,7 @@ fn query<'a>(pusher: &'a str, founders: &'a [String]) -> VerdictAdmissionQuery<'
         // missions were found; the bound channel is the lookup every other
         // arm's fixtures use (L28).
         candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
+        repository: super::gate_fixture::TEST_REPOSITORY,
     }
 }
 

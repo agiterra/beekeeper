@@ -254,6 +254,16 @@ test("L8.2: an admitted commit offers the exact command, and the app never runs 
     `git push origin ${HEAD_SHA}:refs/heads/main`,
   );
   await expect(control.getByTestId("mission-land-copy")).toBeVisible();
+  // F4 (2026-09-05 refuter): what the admission stood on. Both facts were on
+  // the wire and on no screen — a founder about to run this command could not
+  // see which policy record the arm read, nor whether the repository binding
+  // was checked or assumed.
+  await expect(control.getByTestId("land-policy-line")).toContainText(
+    "Policy: present (",
+  );
+  await expect(control.getByTestId("land-binding-line")).toHaveText(
+    "Bound repositories: read. The rule checked this mission's own binding.",
+  );
 
   await control.scrollIntoViewIfNeeded();
   await waitForAnimations(page);
@@ -283,6 +293,11 @@ test("L21 arm (A): a founder's push is ready, and the screen claims no ruling", 
   // borrow the word "approved" from an arm it is not standing on.
   await expect(approval).toContainText("Nothing here has ruled on this commit");
   await expect(approval).not.toContainText("Approved by");
+  // Arm (A) reads no policy at all, and the line names the exception rather
+  // than reading as "no policy was set".
+  await expect(control.getByTestId("land-policy-line")).toHaveText(
+    "Policy: not evaluated — founder_exception. A founder's landing is the deliberate exception; nothing here ruled on this commit.",
+  );
 
   await control.scrollIntoViewIfNeeded();
   await waitForAnimations(page);

@@ -64,6 +64,39 @@ pub struct RepositoryFounders {
     maintainers_declared: usize,
     invalid_maintainers: usize,
     roster_owners_read: Option<usize>,
+    /// How many entries of `founders` came from the announcement itself
+    /// (signer ∪ `maintainers`). Everything at or after this index was added
+    /// by the roster, which is what [`RepositoryFounders::basis`] reads.
+    announcement_founders: usize,
+}
+
+/// **Which** of the three sources admitted a key (2026-09-05 refuter, F5).
+///
+/// The push audit records that a founder landed a commit with no verdict at
+/// all; "founder" alone does not say whether that key signed the repository's
+/// announcement, was named in its NIP-34 `maintainers` tag, or holds Owner on
+/// the project roster. Those are three different grants, revoked in three
+/// different places, and an audit line that cannot tell them apart cannot
+/// answer the only question anybody asks of it afterwards: *by what authority*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FounderBasis {
+    /// The key that signed the kind:30617 announcement.
+    AnnouncementSigner,
+    /// A pubkey in the announcement's NIP-34 `maintainers` tag.
+    Maintainer,
+    /// A project-roster row whose git tier resolves to Owner.
+    RosterOwner,
+}
+
+impl FounderBasis {
+    /// The token an audit line carries.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AnnouncementSigner => "announcement-signer",
+            Self::Maintainer => "maintainer",
+            Self::RosterOwner => "roster-owner",
+        }
+    }
 }
 
 impl RepositoryFounders {
@@ -110,6 +143,7 @@ impl RepositoryFounders {
             }
         }
         Self {
+            announcement_founders: founders.len(),
             signer,
             founders,
             maintainers_declared,
@@ -165,6 +199,28 @@ impl RepositoryFounders {
     /// Every founder, lower-hex, deduped, signer first.
     pub fn pubkeys(&self) -> &[String] {
         &self.founders
+    }
+
+    /// Which source admitted this key, or `None` if it founded nothing here.
+    ///
+    /// Order is the set's own: the signer first, then the announcement's
+    /// maintainers, then whatever the roster added — so the answer is the
+    /// *earliest* source that names the key, which is the one that would still
+    /// admit it if the others were withdrawn.
+    pub fn basis(&self, pubkey: &str) -> Option<FounderBasis> {
+        let wanted = pubkey.trim();
+        if self.signer.eq_ignore_ascii_case(wanted) && self.contains(wanted) {
+            return Some(FounderBasis::AnnouncementSigner);
+        }
+        let index = self
+            .founders
+            .iter()
+            .position(|founder| founder.eq_ignore_ascii_case(wanted))?;
+        Some(if index < self.announcement_founders {
+            FounderBasis::Maintainer
+        } else {
+            FounderBasis::RosterOwner
+        })
     }
 
     /// Whether this key founded the repository. Case-folded, whole-string.

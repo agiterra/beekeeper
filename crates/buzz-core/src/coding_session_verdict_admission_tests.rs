@@ -232,7 +232,9 @@ fn candidate(mission: &Mission) -> VerdictAdmissionCandidate {
         ),
         // And `verifierRequired`, so arm (B) stays silent and the arm that
         // answers is the one under test.
-        gate_policy: super::gate_fixture::verifier_required_policy(),
+        gate_policy: super::gate_fixture::resolved(super::gate_fixture::verifier_required_policy()),
+        bound_repositories: super::gate_fixture::bound(),
+        excluded_unauthorized_policies: 0,
     }
 }
 
@@ -263,6 +265,7 @@ fn query_on<'a>(
         // These cases are about the rule, not the lookup; the source only
         // shapes the sentence one refusal renders.
         candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
+        repository: super::gate_fixture::TEST_REPOSITORY,
     }
 }
 
@@ -701,7 +704,9 @@ fn an_unauthorized_disposition_is_not_canonical_and_never_admits() {
             canonical,
             active_seats: Vec::new(),
             observed_gates: Vec::new(),
-            gate_policy: None,
+            gate_policy: GatePolicyResolution::Absent,
+            bound_repositories: super::gate_fixture::bound(),
+            excluded_unauthorized_policies: 0,
         }],
         &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
@@ -896,7 +901,9 @@ fn a_superseded_approval_no_longer_admits() {
             canonical,
             active_seats: Vec::new(),
             observed_gates: Vec::new(),
-            gate_policy: None,
+            gate_policy: GatePolicyResolution::Absent,
+            bound_repositories: super::gate_fixture::bound(),
+            excluded_unauthorized_policies: 0,
         }],
         &query(&pusher, std::slice::from_ref(&owner), HEAD_SHA),
     );
@@ -968,7 +975,9 @@ fn a_report_ref_pointing_outside_the_mission_never_admits() {
             canonical,
             active_seats: Vec::new(),
             observed_gates: Vec::new(),
-            gate_policy: None,
+            gate_policy: GatePolicyResolution::Absent,
+            bound_repositories: super::gate_fixture::bound(),
+            excluded_unauthorized_policies: 0,
         }],
         &query(
             &victim.builder.public_key().to_hex(),

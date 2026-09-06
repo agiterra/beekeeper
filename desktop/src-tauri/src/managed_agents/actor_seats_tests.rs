@@ -216,6 +216,118 @@ fn a_seat_with_no_role_keeps_the_behaviour_it_always_had() {
     assert!(resolve_local_seat_pack(&record, &[], &teams, Some("  ")).is_some());
 }
 
+/// A `named_role_pack` whose persona has since been rewritten to declare
+/// `declares` — the agent's record still says `role`, the pack no longer does.
+/// Finding 94's shape: the label is stale, the frontmatter is the fact.
+fn relabelled_role_pack(root: &Path, role: &str, declares: &str) -> PathBuf {
+    let pack = named_role_pack(root, role);
+    std::fs::write(
+        pack.join(format!("personas/{role}.persona.md")),
+        format!(
+            "---\nname: {role}\ndisplay_name: {role}\ndescription: Was {role}.\nrole: {declares}\n---\nYou are now the {declares}.\n"
+        ),
+    )
+    .expect("persona");
+    pack
+}
+
+/// Finding 94: `resolve_local_seat_pack` returned a pack on the strength of
+/// the agent's `home_role` label alone, without asking the persona what role
+/// it declares. A `verifier`-labelled agent whose pack now declares `builder`
+/// staged that builder pack into a verifier seat.
+///
+/// RED, before the fix — step 1 returned the relabelled pack:
+///
+/// ```text
+/// assertion failed: resolve_local_seat_pack(&stale, &records, &[], Some("verifier")).is_none()
+/// ```
+#[test]
+fn resolve_local_seat_pack_refuses_a_home_role_label_whose_pack_declares_another_role() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let stale_pack = relabelled_role_pack(tmp.path(), "verifier", "builder");
+    let stale = installed_role_agent("verifier", &stale_pack);
+    let records = vec![stale.clone()];
+    assert!(
+        resolve_local_seat_pack(&stale, &records, &[], Some("verifier")).is_none(),
+        "a pack whose persona declares `builder` is not a verifier seat's pack, \
+         whatever the agent's record says"
+    );
+}
+
+/// The same stale label on *another* installed agent (step 2): the label
+/// selects the candidate, the declared role refuses it, and the search moves
+/// on — here to `None`, because nothing on this computer declares `verifier`.
+#[test]
+fn resolve_local_seat_pack_refuses_another_agents_label_whose_pack_declares_another_role() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let builder_pack = named_role_pack(tmp.path(), "builder");
+    let builder = installed_role_agent("builder", &builder_pack);
+    let stale_pack = relabelled_role_pack(tmp.path(), "verifier", "builder");
+    let stale = installed_role_agent("verifier", &stale_pack);
+    let records = vec![builder.clone(), stale];
+    assert!(
+        resolve_local_seat_pack(&builder, &records, &[], Some("verifier")).is_none(),
+        "the only verifier-labelled agent's pack declares `builder`; no verifier pack here"
+    );
+}
+
+/// A refusal on step 1 falls through rather than ending the search: the
+/// actor's own relabelled pack is passed over and the pack that really
+/// declares the seat's role, installed on another agent, is staged.
+#[test]
+fn resolve_local_seat_pack_falls_through_a_relabelled_own_pack_to_one_declaring_the_seat_role() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let stale_pack = relabelled_role_pack(tmp.path(), "verifier", "builder");
+    let stale = installed_role_agent("verifier", &stale_pack);
+    let real_pack = tmp.path().join("real");
+    let real_verifier_pack = named_role_pack(&real_pack, "verifier");
+    let real = installed_role_agent("verifier", &real_verifier_pack);
+    let records = vec![stale.clone(), real];
+    assert_eq!(
+        resolve_local_seat_pack(&stale, &records, &[], Some("verifier")),
+        Some((real_verifier_pack, "verifier".to_owned())),
+        "the declared role decides; the home-role label only orders the search"
+    );
+}
+
+/// The declared role decides in the other direction too: an agent whose
+/// record is labelled `builder` but whose pack declares `verifier` is a
+/// verifier pack for a verifier seat (reached on step 3, its own pack).
+#[test]
+fn resolve_local_seat_pack_stages_a_pack_declaring_the_seat_role_whatever_the_label_says() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let pack = relabelled_role_pack(tmp.path(), "builder", "verifier");
+    let mislabelled = installed_role_agent("builder", &pack);
+    let records = vec![mislabelled.clone()];
+    assert_eq!(
+        resolve_local_seat_pack(&mislabelled, &records, &[], Some("verifier")),
+        Some((pack.clone(), "builder".to_owned())),
+    );
+    // And it is refused for the seat its stale label names.
+    assert!(
+        resolve_local_seat_pack(&mislabelled, &records, &[], Some("builder")).is_none(),
+        "a pack declaring `verifier` is not a builder seat's pack"
+    );
+}
+
+/// Step 3 is unchanged: a home-role match on a pack whose persona declares
+/// no role falls through steps 1 and 2 (no declaration to match) and is still
+/// staged as the actor's own, claim-free pack.
+#[test]
+fn resolve_local_seat_pack_still_stages_a_roleless_pack_as_the_actors_own() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = roleless_pack(tmp.path(), "runner");
+    let mut record = agent_record(None, None);
+    record.home_role = Some("runner".into());
+    record.persona_team_dir = Some(dir.clone());
+    record.persona_name_in_team = Some("runner".into());
+    let records = vec![record.clone()];
+    assert_eq!(
+        resolve_local_seat_pack(&record, &records, &[], Some("runner")),
+        Some((dir, "runner".to_owned())),
+    );
+}
+
 #[test]
 fn a_packref_rides_only_the_pack_it_names() {
     let pack_ref = packs_cache::PackRef {

@@ -1,9 +1,11 @@
 //! The exact sentences a refused `git push` prints, in one file.
 //!
 //! Split out of [`super`] on 2026-09-03 (L27) when the rule file passed the
-//! repository's 1,000-line ceiling. The split is along the seam the module
-//! already had: everything here is **frozen copy** that reaches a person
-//! through `git push`'s own stderr, and nothing here decides anything.
+//! repository's 1,000-line ceiling, and given the refusal enum itself on
+//! 2026-09-05 (findings 89–91) when it passed it again. The split is along
+//! the seam the module already had: everything here is **frozen copy** that
+//! reaches a person through `git push`'s own stderr, plus the type that names
+//! which sentence — and nothing here decides anything.
 //!
 //! Two properties every sentence holds, asserted by
 //! [`super::arms_tests`] and its siblings:
@@ -15,8 +17,157 @@
 // sentence through `VerdictAdmissionCandidateSource::searched_clause`, which
 // words them per lookup (L28).
 use super::{
-    VerdictAdmissionGateRows, VerdictAdmissionRefusal, VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
+    VerdictAdmissionCandidateSource, VerdictAdmissionGateRows,
+    VERDICT_ADMISSION_MAX_AUTHORITY_TRANSITIONS,
 };
+
+/// Why a verdict-gated update is refused.
+///
+/// The strings [`VerdictAdmissionRefusal::reason`] returns are frozen copy:
+/// they reach a person through `git push`'s own stderr, so they never repeat
+/// the ref (the renderer prefixes it) and never invent a remedy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerdictAdmissionRefusal {
+    /// Nothing canonical names this commit.
+    NoApprovingVerdict {
+        /// The object id that was searched for.
+        new_oid: String,
+        /// How many missions were searched — the bound, disclosed.
+        searched_sessions: usize,
+        /// Which lookup found them (finding 56), so the count means something.
+        source: VerdictAdmissionCandidateSource,
+    },
+    /// An approved report exists for this work but names only a branch.
+    ApprovedReportNamesBranchOnly,
+    /// Someone approved a report naming this commit, but nobody who could
+    /// stand as its verifier did.
+    ///
+    /// Since finding 75 (live run 6, 2026-09-04) this carries **arm (B)'s
+    /// status on the same commit** and whether the policy closes that arm,
+    /// so the sentence can lead with the route the mission is actually
+    /// running: a mission whose founder never asked for a verifier is owed
+    /// "which gate row is missing", not "find a verifier".
+    ApprovedButNotVerified {
+        /// The approved object id.
+        new_oid: String,
+        /// How many approving dispositions named it — disclosed so a reader
+        /// can tell "nobody ruled" from "the wrong people ruled".
+        approvals: usize,
+        /// Whether the mission's newest founder-signed kind 44245 policy sets
+        /// `gates.verifierRequired`. `false` covers both "set to false" and
+        /// "no policy read" — the two are one fact to arm (B), which is open
+        /// in either case.
+        verifier_required: bool,
+        /// What arm (B) found on this commit, seat aside.
+        rows: VerdictAdmissionGateRows,
+        /// Whether the pusher holds an active seat of the mission. Both
+        /// routes require one, and a pusher told to run the gates without
+        /// being told this would run them for nothing.
+        seated: bool,
+    },
+    /// The only approving verifier is the key that wrote the report.
+    VerifierIsTheReportAuthor {
+        /// The approved object id.
+        new_oid: String,
+        /// The key holding both the `verifier` seat and the report.
+        verifier: String,
+    },
+    /// A verifier cleared this commit and the pusher is not of that mission.
+    PushNotSeated {
+        /// The verified object id.
+        new_oid: String,
+        /// The umbrella whose verifier cleared it.
+        session_ref: String,
+        /// How many active seats that mission has — disclosed so a seat whose
+        /// grant was revoked can tell that from "this mission seats nobody".
+        seats: usize,
+    },
+    /// The commit is approved, but for a different branch than this ref.
+    ApprovedForAnotherRef {
+        /// The approved object id.
+        new_oid: String,
+        /// The branch the approved report named.
+        approved_branch: String,
+    },
+    /// Rows name this commit, and every one of them is its subject's own
+    /// claim.
+    ObservedRowsAreDeclared {
+        /// The pushed object id.
+        new_oid: String,
+        /// How many rows named it — disclosed so a reader can tell "one seat
+        /// said so" from "nobody said anything".
+        rows: usize,
+    },
+    /// A gate was observed red on this very commit.
+    ObservedGateRed {
+        /// The gate's own name, as the row carries it.
+        gate: String,
+        /// The pushed object id.
+        new_oid: String,
+    },
+    /// The gates were observed over a worktree the commit does not name.
+    ObservedDirty {
+        /// The pushed object id.
+        new_oid: String,
+    },
+    /// A required gate has no observed green row on this commit.
+    RequiredGateNotObserved {
+        /// The first required gate with no such row.
+        gate: String,
+        /// The pushed object id.
+        new_oid: String,
+        /// Every gate this mission requires, so the refusal names the whole
+        /// list rather than one item of it.
+        required: Vec<String>,
+    },
+    /// A verifier cleared this commit and its gates were not observed green
+    /// on it.
+    ///
+    /// The refusal that carries the 2026-09-03 follow-up ruling. It names
+    /// **both** halves — the one that is satisfied and the one that is not —
+    /// because a pusher told only "the gates are not green" would go looking
+    /// for a verifier they already have, and one told only "cleared" would not
+    /// understand why the push stopped.
+    VerifiedButGatesNotGreen {
+        /// The cleared object id.
+        new_oid: String,
+        /// The verifier seat that cleared it.
+        verifier: String,
+        /// Arm (B)'s own sentence about the rows, boxed because a refusal that
+        /// contains a refusal is otherwise infinitely sized. Carried whole
+        /// rather than paraphrased: the words a pusher reads here are the same
+        /// words the gate-row route would have given them.
+        gates: Box<VerdictAdmissionRefusal>,
+    },
+    /// The rule is set on a repository bound to no channel at all.
+    RepositoryUnbound,
+    /// The mission's newest policy record exists and this build cannot read
+    /// it (finding 89).
+    ///
+    /// Both arms read the policy — (B) for its verifier flag and gate list,
+    /// (C) for the gate list — so a record nobody can read closes both. An
+    /// older record is never read in its place: that is the resurrection
+    /// finding 89 caught.
+    PolicyUnreadable {
+        /// The mission whose policy it is.
+        session_ref: String,
+        /// The record that could not be read.
+        event_id: String,
+        /// The validator's own sentence about why.
+        reason: String,
+    },
+    /// The mission is not bound to the repository being pushed (finding 91).
+    ///
+    /// Sharing a founder with the repository is not a binding: two
+    /// repositories of one founder are two repositories, and a mission's
+    /// rows and rulings prove commits for the ones its genesis names.
+    MissionNotBoundToRepository {
+        /// The mission whose proof was not admitted here.
+        session_ref: String,
+        /// The kind:30617 coordinate of the repository being pushed.
+        repository: String,
+    },
+}
 
 /// The gate-row route's own remedy, word for word the same wherever the rows
 /// are what a push is short of — `NoApprovingVerdict` said it first, and a
@@ -204,6 +355,27 @@ impl VerdictAdmissionRefusal {
                  could read, this repository names no project, and it is bound to no channel. \
                  Remove the rule, put the repository in a project, or bind it to the mission's \
                  channel."
+            ),
+            Self::PolicyUnreadable {
+                session_ref,
+                event_id,
+                reason,
+            } => format!(
+                "mission {session_ref}'s newest policy record {event_id} could not be read by \
+                 this build ({reason}), and a policy nobody can read closes both routes: the gate \
+                 cannot tell whether it requires a verifier or which gates it names, and an older \
+                 record must not stand in for the newest one. Publish a policy this relay can \
+                 read, or withdraw it, then push again."
+            ),
+            Self::MissionNotBoundToRepository {
+                session_ref,
+                repository,
+            } => format!(
+                "mission {session_ref} is not bound to repository {repository}, so nothing it \
+                 holds — gate rows or verdicts — can admit a commit here: a mission proves \
+                 commits for the repositories its genesis and project name, and sharing a \
+                 founder with this repository is not a binding. Push through a mission whose \
+                 repoRef or project names {repository}."
             ),
         }
     }

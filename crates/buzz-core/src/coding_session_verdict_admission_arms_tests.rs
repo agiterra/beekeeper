@@ -228,7 +228,9 @@ fn candidate_with(
         canonical,
         active_seats: mission.seats.clone(),
         observed_gates,
-        gate_policy,
+        gate_policy: super::gate_fixture::resolved(gate_policy),
+        bound_repositories: super::gate_fixture::bound(),
+        excluded_unauthorized_policies: 0,
     }
 }
 
@@ -264,6 +266,7 @@ fn query<'a>(
         // These cases are about the rule, not the lookup; the source only
         // shapes the sentence one refusal renders.
         candidate_source: &super::VERDICT_ADMISSION_BOUND_CHANNEL,
+        repository: super::gate_fixture::TEST_REPOSITORY,
     }
 }
 
@@ -281,7 +284,9 @@ fn a_founder_push_admits_with_no_verdict_at_all() {
         &query(&founder, std::slice::from_ref(&founder), HEAD_SHA),
     );
     match outcome {
-        VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush { pusher_pubkey }) => {
+        VerdictAdmission::Admitted(VerdictAdmissionEvidence::FounderPush {
+            pusher_pubkey, ..
+        }) => {
             assert_eq!(pusher_pubkey, founder);
         }
         other => panic!("expected a founder push admission, got {other:?}"),

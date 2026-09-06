@@ -13,6 +13,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
+use buzz_core::coding_session_policy::signer_may_steer_at;
+use buzz_core::coding_session_verdict_admission::{
+    mission_provider_pubkeys_from_lifecycle, VERDICT_ADMISSION_MAX_LIFECYCLE_RECORDS,
+};
+use buzz_core::kind::{
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+};
 use buzz_core::pulse_mission::{
     fold_pulse_mission_row, open_rulings, pulse_mission_cap_disclosure, render_pulse_mission_lines,
     rulings_waiting_on_viewer, PulseMissionError, PulseMissionFacts, PulseMissionNames,
@@ -22,7 +29,9 @@ use buzz_core::pulse_mission::{
 use buzz_core::pulse_overlap::{fold_pulse_overlaps, render_pulse_overlap_rows, PulseOverlapSide};
 
 use crate::client::BuzzClient;
-use crate::commands::sessions::operations_reads::{fetch_session_authority, fetch_transactions};
+use crate::commands::sessions::operations_reads::{
+    fetch_session_authority, fetch_transactions, SessionAuthority,
+};
 use crate::commands::wip_refs::fetch_ref_state;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
@@ -45,6 +54,42 @@ fn observation_filter(channel: &str, session_ref: &str) -> Value {
     })
 }
 
+/// Relay filter for one channel's lifecycle records of `kind`.
+///
+/// No `#d`: a kind 44221 command carries `csl-command`, not the umbrella's
+/// `d`, so the mission split happens after the read — exactly as the relay's
+/// own gate does it.
+fn lifecycle_filter(channel: &str, kind: u32) -> Value {
+    json!({
+        "kinds": [kind],
+        "#h": [channel],
+    })
+}
+
+/// Who may commission an execution of this umbrella (2026-09-05 refuter, B1
+/// and S4): its founder, and the keys its accepted authority chain currently
+/// grants `operator`.
+///
+/// Read through [`signer_may_steer_at`] rather than re-deriving the rule, so a
+/// grant this reader could not see simply resolves no provider — which makes
+/// every gate line say `(observed, unverified)` rather than trusting a set
+/// nobody proved.
+fn steering_signers(authority: &SessionAuthority, now_unix: i64) -> Vec<String> {
+    let founder = authority.context.founder_pubkey.to_ascii_lowercase();
+    let now = now_unix.max(0) as u64;
+    let mut signers = vec![founder.clone()];
+    for grant in &authority.policy_grants {
+        let grantee = grant.grantee.to_ascii_lowercase();
+        if signers.contains(&grantee) {
+            continue;
+        }
+        if signer_may_steer_at(&grantee, now, &founder, &authority.policy_grants) {
+            signers.push(grantee);
+        }
+    }
+    signers
+}
+
 async fn fetch_signed(
     client: &BuzzClient,
     filter: Value,
@@ -65,6 +110,20 @@ async fn fetch_signed(
             Vec::new()
         }
     }
+}
+
+/// [`fetch_signed`] under the same page bound the push gate reads lifecycle
+/// records with, so the two surfaces cannot resolve different provider sets
+/// from the same channel.
+async fn fetch_bounded(
+    client: &BuzzClient,
+    filter: Value,
+    scope: &str,
+    errors: &mut Vec<PulseMissionError>,
+) -> Vec<nostr::Event> {
+    let mut events = fetch_signed(client, filter, scope, errors).await;
+    events.truncate(VERDICT_ADMISSION_MAX_LIFECYCLE_RECORDS);
+    events
 }
 
 /// Display names for a set of pubkeys, read from their own kind-0 profiles.
@@ -347,6 +406,33 @@ pub async fn compose_mission_rows(
             }
         }
 
+        // Finding 93's other half (2026-09-05 refuter, S4): until this read
+        // existed every consumer passed `None`, so **every** observed or
+        // measured row in production printed `(observed, unverified)` — honest,
+        // and verifying nobody. The set is the same one the push gate resolves:
+        // an accepted lifecycle pair whose command a steering key signed.
+        let commissioners = steering_signers(&authority, now_unix);
+        let lifecycle_commands = fetch_bounded(
+            client,
+            lifecycle_filter(&target.channel, KIND_CODING_SESSION_LIFECYCLE_COMMAND),
+            &format!("lifecycleCommands:{}", target.channel),
+            &mut errors,
+        )
+        .await;
+        let lifecycle_receipts = fetch_bounded(
+            client,
+            lifecycle_filter(&target.channel, KIND_CODING_SESSION_LIFECYCLE_RECEIPT),
+            &format!("lifecycleReceipts:{}", target.channel),
+            &mut errors,
+        )
+        .await;
+        let providers = mission_provider_pubkeys_from_lifecycle(
+            &target.session_ref,
+            &target.genesis,
+            &commissioners,
+            &lifecycle_commands,
+            &lifecycle_receipts,
+        );
         let sources = PulseMissionSources {
             session_key: &target.session_key,
             channel_id: &target.channel,
@@ -359,7 +445,10 @@ pub async fn compose_mission_rows(
             observation_events: &observation_events,
             ref_state: &ref_state,
             claimed_seats: &[],
-            gate_source: None,
+            // A set the reader resolved, never an assumption: an empty set is
+            // "this read proved no provider", and the fold then calls every
+            // `measured` row self-reported rather than crediting it.
+            provider_pubkeys: Some(&providers),
         };
         facts.push(fold_pulse_mission_row(&sources, now_unix));
     }

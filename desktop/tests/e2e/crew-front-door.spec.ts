@@ -1018,12 +1018,15 @@ test.describe("crew front door", () => {
     await waitForAnimations(page);
     await seatField.screenshot({ path: `${SHOTS}/08-seat-home-role.png` });
 
-    // Mismatch: seating a builder as a lead must say which pack it carries.
+    // Mismatch: seating a builder as a lead must say which pack it carries —
+    // the **seat's** role, which is what the host stages (commit `6afcda2f6`
+    // changed the copy and its unit test and left this expectation behind,
+    // which is why the smoke suite has been red here since 2026-09-03).
     await page.getByTestId("new-coding-session-seat-role").fill("lead");
     await expect(
       page.getByTestId("new-coding-session-seat-role-notice"),
     ).toHaveText(
-      "Builder is a builder — seating it as lead; it will carry the builder pack.",
+      "Builder is a builder — seating it as lead; it will carry the lead pack.",
     );
     await waitForAnimations(page);
     await seatField.screenshot({ path: `${SHOTS}/09-seat-mismatch.png` });

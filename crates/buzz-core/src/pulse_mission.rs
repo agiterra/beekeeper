@@ -9,8 +9,8 @@
 //!   land under the seat's own key because it ran `git commit`, not because it
 //!   remembered to post;
 //! - the **provider**, through gate rows derived from tool calls it already
-//!   parses (`source: "observed"`, another lane's field — see
-//!   [`PulseGateSource`]);
+//!   parses (`source: "observed"`, read through the observation fold's
+//!   *effective* source, never the raw JSON — see [`PulseGateSource`]);
 //! - the **relay**, through kind 30618 ref state, which it signs after a push.
 //!
 //! The agent's own words are left where judgment genuinely lives — a report, a
@@ -43,7 +43,8 @@ use serde_json::Value;
 
 use crate::coding_session_observation::{
     fold_coding_session_observations, CodingSessionObservationFoldContext,
-    CodingSessionObservationGateOutcome,
+    CodingSessionObservationGateEntry, CodingSessionObservationGateOutcome,
+    CodingSessionObservationSource,
 };
 use crate::coding_session_policy::{fold_coding_session_policies, CodingSessionPolicyGrant};
 use crate::coding_session_team_transaction::{
@@ -102,73 +103,124 @@ pub fn is_wip_ref(name: &str) -> bool {
         && !name.contains(char::is_whitespace)
 }
 
-// ── Gate provenance, the one field another lane owns ─────────────────────────
+// ── Gate provenance, read from the fold and never from raw JSON ──────────────
 
-/// Whether a gate row was **observed** by a mechanism or **declared** by its
-/// author.
+/// Who a gate row's word belongs to: a mechanism that watched, a bench that
+/// ran, or the row's own author.
 ///
-/// The token arrives on the wire as kind 44246's `gate.source`, which is Lane
-/// L5's field to land. This lane consumes it strictly as an interface: read it
-/// with [`pulse_gate_source_token`], turn it into this enum with
-/// [`PulseGateSource::from_wire_token`], and treat its absence as
-/// [`PulseGateSource::Declared`] — the honest reading, since a row nothing
-/// observed is a claim.
+/// The wire carries `source` as a **top-level** key of every kind 44246
+/// observation (`observed`, `declared`, `measured`), and the observation fold
+/// is the one reader of it: it verifies the signature, demotes an `observed`
+/// claim whose signer is not one of the mission's providers to `declared`, and
+/// reports whether it could check at all (`provenance_checked`). This enum is
+/// built from that fold's **effective** source through
+/// [`PulseGateSource::from_fold_entry`] — never from the event's JSON, which is
+/// where finding 93 found the previous reader looking (`body.rows[].source`, a
+/// key the schema forbids, so every observed row folded to `declared`).
 ///
-/// Nothing here writes the field, and nothing here fails when it is missing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// `measured` is the one token the fold does not check against the provider
+/// set (finding 95: a bench row's subject is a routing target, not the
+/// signer's own work). Pulse checks it here instead, because a reader that
+/// ranked a seat's own `measured` row above its `declared` one would be
+/// trusting the signer: with a provider set known, a `measured` row signed
+/// outside it is [`PulseGateSource::MeasuredSelfReported`] and renders as
+/// "self-reported measurement". With no provider set the word is left as
+/// written and the row says it was not verified.
+///
+/// There is no `Ord` here on purpose: two of the four words are the subject's
+/// own, and the precedence rule reads [`PulseGateSource::precedence`] so that a
+/// self-reported measurement never outranks a declared row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PulseGateSource {
     /// Stated by the row's author about its own work. A claim.
-    ///
-    /// Ordered first so `Declared < Observed` and the precedence rule below is
-    /// a plain comparison.
     Declared,
-    /// Derived from a tool call somebody's machine actually ran.
+    /// A `measured` row signed by someone the resolved provider set does not
+    /// name — the subject scoring itself. A claim wearing a bench's word, and
+    /// ranked exactly as [`PulseGateSource::Declared`].
+    MeasuredSelfReported,
+    /// Produced by a bench run and signed by a known provider, or by anyone
+    /// when no provider set was resolved (disclosed as unverified then).
+    Measured,
+    /// Derived from a tool call somebody's machine actually ran, as the fold
+    /// left it standing: signed by a known provider, or unchecked because no
+    /// provider set was resolved (disclosed as unverified then).
     Observed,
 }
 
 impl PulseGateSource {
-    /// The exact wire token.
+    /// The word a rendered gate line prints.
+    ///
+    /// For the three wire provenances this is the exact wire token; the fourth
+    /// is a Pulse verdict about a `measured` row and has no wire spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Observed => "observed",
+            Self::Measured => "measured",
+            Self::MeasuredSelfReported => "self-reported measurement",
             Self::Declared => "declared",
         }
     }
 
-    /// Read a `gate.source` token, absent or unknown reading as `declared`.
+    /// Rank in the precedence rule: a mechanism's word outranks the subject's
+    /// own, and the two words that are the subject's own tie.
     ///
-    /// An unknown token is **not** promoted to `observed`: only the exact word
-    /// `observed` buys the stronger claim.
+    /// `Declared` and `MeasuredSelfReported` share rank 0 so that neither
+    /// displaces the other by provenance — the newer of the seat's own words is
+    /// shown, and nothing says one "stood over" the other.
+    pub const fn precedence(self) -> u8 {
+        match self {
+            Self::Declared | Self::MeasuredSelfReported => 0,
+            Self::Measured => 1,
+            Self::Observed => 2,
+        }
+    }
+
+    /// Whether this word is the row's own author speaking about itself.
+    pub const fn is_claim(self) -> bool {
+        matches!(self, Self::Declared | Self::MeasuredSelfReported)
+    }
+
+    /// Read a bare `source` token, absent or unknown reading as `declared`.
+    ///
+    /// Kept for readers that hold only the token (the old wire vocabulary
+    /// stays valid): `observed` and `measured` read as themselves, and an
+    /// unknown token is **not** promoted. This cannot say
+    /// [`PulseGateSource::MeasuredSelfReported`], because a token alone does
+    /// not know who signed it — [`PulseGateSource::from_fold_entry`] does.
     pub fn from_wire_token(token: Option<&str>) -> Self {
         match token {
             Some("observed") => Self::Observed,
+            Some("measured") => Self::Measured,
             _ => Self::Declared,
         }
     }
-}
 
-/// How a caller supplies a gate row's `source` token.
-///
-/// Named rather than inlined so the seam this lane consumes Lane L5's field
-/// through has one spelling everywhere.
-pub type PulseGateSourceLookup = dyn Fn(&Event, &str) -> Option<String>;
-
-/// The `gate.source` token a signed 44246 event carries for one gate name.
-///
-/// Reads the event's own content JSON rather than the decoded struct, because
-/// the decoded struct is another lane's type and does not carry the field yet.
-/// Until it does this returns `None` for every row — the strict decoder refuses
-/// unknown keys, so a row carrying `source` does not reach the fold at all.
-/// The moment L5 lands the field, both halves work with no change here.
-pub fn pulse_gate_source_token(event: &Event, gate: &str) -> Option<String> {
-    let content: Value = serde_json::from_str(&event.content).ok()?;
-    let rows = content.get("body")?.get("rows")?.as_array()?;
-    rows.iter()
-        .find(|row| row.get("gate").and_then(Value::as_str) == Some(gate))
-        .and_then(|row| row.get("source"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+    /// The word for one folded gate row, given the provider set the fold was
+    /// handed.
+    ///
+    /// `entry.source` is already the fold's **effective** source: an
+    /// `observed` claim from outside the provider set arrives here as
+    /// `Declared` (and is listed in the fold's `misclaimed_observed`), so
+    /// nothing about `observed` is re-decided. `measured` is decided here,
+    /// because the fold leaves it alone: with `Some(providers)` a signer
+    /// outside the set is [`PulseGateSource::MeasuredSelfReported`]; with
+    /// `None` nothing was checked and the word stays `Measured`.
+    pub fn from_fold_entry(
+        entry: &CodingSessionObservationGateEntry,
+        provider_pubkeys: Option<&[String]>,
+    ) -> Self {
+        match entry.source {
+            CodingSessionObservationSource::Observed => Self::Observed,
+            CodingSessionObservationSource::Declared => Self::Declared,
+            CodingSessionObservationSource::Measured => match provider_pubkeys {
+                Some(providers) if !providers.contains(&entry.author_pubkey) => {
+                    Self::MeasuredSelfReported
+                }
+                _ => Self::Measured,
+            },
+        }
+    }
 }
 
 // Facts and rendering live in sibling files so no file here passes 1,000 lines
@@ -215,24 +267,17 @@ pub struct PulseMissionSources<'a> {
     /// Seats a caller claims; each is kept only when `context.active_seats`
     /// supports it.
     pub claimed_seats: &'a [String],
-    /// How a gate row's `source` is read.
+    /// Pubkeys whose `observed` and `measured` words this mission honours: the
+    /// provider instances running its executions.
     ///
-    /// The seam this lane consumes Lane L5's `gate.source` through. `None`
-    /// means [`pulse_gate_source_token`], which reads the signed event's own
-    /// content and today finds nothing because the key has not landed. A test —
-    /// or the day L5 lands it, the wire itself — supplies the token here and
-    /// every precedence rule below runs unchanged.
-    pub gate_source: Option<&'a PulseGateSourceLookup>,
-}
-
-impl PulseMissionSources<'_> {
-    /// The `gate.source` token for one row, through whichever adapter is set.
-    fn gate_source_token(&self, event: &Event, gate: &str) -> Option<String> {
-        match self.gate_source {
-            Some(lookup) => lookup(event, gate),
-            None => pulse_gate_source_token(event, gate),
-        }
-    }
+    /// **`None` is not an empty set.** It means the caller could not resolve
+    /// them; the observation fold then checks nothing, every word stands as
+    /// written, and [`PulseMissionFacts::gate_provenance_checked`] is `false`
+    /// so each rendered gate line can say so. `Some(set)` — even an empty one
+    /// — is an answer: an `observed` claim from outside it folds to `declared`
+    /// and a `measured` row from outside it renders as a self-reported
+    /// measurement.
+    pub provider_pubkeys: Option<&'a [String]>,
 }
 
 /// Fold one umbrella's signed events into the facts Pulse renders.
@@ -262,6 +307,7 @@ pub fn fold_pulse_mission_row(
         timing: Vec::new(),
         seat_claims_refused: Vec::new(),
         ref_state_present: !sources.ref_state.is_empty(),
+        gate_provenance_checked: false,
     };
 
     let team = match fold_coding_session_team_transactions(sources.team_events, sources.context) {
@@ -489,18 +535,14 @@ fn apply_observation_facts(
             .iter()
             .map(|settlement| settlement.assignment_event_id.clone())
             .collect(),
-        // `None`, and it is not an empty set: Pulse is handed signed events and
-        // a fold context, never the provider instances that ran the session's
-        // executions, so it cannot check who signed an `observed` claim. The
-        // fold therefore leaves every claim standing and reports
-        // `provenance_checked: false`. **A Pulse gate row saying `observed` is
-        // the row's own word for itself, not a checked measurement** — the one
-        // place in this wave where L5's rule does not run. Threading the
-        // executions' signer pubkeys into `PulseMissionSources` is the fix and
-        // is owed.
-        provider_pubkeys: None,
+        // Exactly what the caller resolved, `None` included: the fold is the
+        // one reader of `source`, and whether it could check is a fact this
+        // row carries (`gate_provenance_checked`) rather than a default it
+        // hides behind.
+        provider_pubkeys: sources.provider_pubkeys.map(<[String]>::to_vec),
     };
     let fold = fold_coding_session_observations(sources.observation_events, &context);
+    facts.gate_provenance_checked = fold.provenance_checked;
     let by_id: BTreeMap<String, &Event> = sources
         .observation_events
         .iter()
@@ -577,10 +619,9 @@ fn apply_observation_facts(
     let mut resolved: BTreeMap<(String, String), PulseMissionGate> = BTreeMap::new();
     for entry in &fold.gates {
         let event_id = entry.event_ids.last().cloned().unwrap_or_default();
-        let source = by_id
-            .get(&event_id)
-            .and_then(|event| sources.gate_source_token(event, &entry.row.gate));
-        let source = PulseGateSource::from_wire_token(source.as_deref());
+        // The fold's effective source, not the event's JSON (finding 93), and
+        // the `measured` check the fold leaves to its readers (finding 95).
+        let source = PulseGateSource::from_fold_entry(entry, sources.provider_pubkeys);
         let author = match (source, entry.assignment_ref.as_ref()) {
             (PulseGateSource::Observed, Some(reference)) => assignee
                 .get(reference)
@@ -598,20 +639,22 @@ fn apply_observation_facts(
             event_id,
         };
         match resolved.get_mut(&key) {
-            // An observed row beats a declared row for the same (author, gate),
-            // and says so — never silently.
-            Some(existing) if existing.source < candidate.source => {
-                let over_declared = existing.source == PulseGateSource::Declared;
+            // A mechanism's row beats the subject's own for the same (author,
+            // gate), and says so — never silently. A self-reported measurement
+            // ranks as the claim it is, so it never "stands over" a declared
+            // row and a declared row never stands over it.
+            Some(existing) if existing.source.precedence() < candidate.source.precedence() => {
+                let over_declared = existing.source.is_claim();
                 *existing = candidate;
                 existing.over_declared = over_declared;
             }
-            // A newer row of the same provenance replaces the older one, but the
+            // A newer row of the same rank replaces the older one, but the
             // disclosure is **sticky**: once an observed row has displaced a
             // declared one, a later observed row for the same `(author, gate)`
             // is still standing over a claim somebody made, and dropping the
             // clause would quietly retire the only evidence that it did
             // (REVIEW-L9 F11).
-            Some(existing) if existing.source == candidate.source => {
+            Some(existing) if existing.source.precedence() == candidate.source.precedence() => {
                 let over_declared = existing.over_declared;
                 *existing = candidate;
                 existing.over_declared = over_declared;

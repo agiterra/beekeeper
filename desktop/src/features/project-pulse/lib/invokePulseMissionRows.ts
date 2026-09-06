@@ -89,6 +89,19 @@ export type PulseMissionSessionInput = {
   teamEvents: RelayEvent[];
   policyEvents: RelayEvent[];
   observationEvents: RelayEvent[];
+  /**
+   * This channel's kind 44221 lifecycle commands and kind 44224 receipts —
+   * what proves who *provides* each mission (finding 90, and the 2026-09-05
+   * refuter's S4).
+   *
+   * Not filtered by `#d`: a command carries `csl-command`, not the umbrella's
+   * `d`, so the channel's page is sent and the native adapter splits it. The
+   * Rust fields are `#[serde(default)]`, so omitting them decodes — and
+   * resolves no provider, which makes every gate line read
+   * `(observed, unverified)`. Sending them is what lets the fold check anyone.
+   */
+  lifecycleCommands: RelayEvent[];
+  lifecycleReceipts: RelayEvent[];
   refState: PulseMissionRefStateInput[];
   overlapFiles: string[];
   overlapSha: string | null;

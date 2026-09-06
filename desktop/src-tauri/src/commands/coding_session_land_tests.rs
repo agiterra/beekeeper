@@ -137,10 +137,26 @@ fn event_id(event: &serde_json::Value) -> String {
     event["id"].as_str().expect("event id").to_owned()
 }
 
+/// The repository name these fixtures announce, as its `d` tag.
+///
+/// Finding 91 made the announcement's `d` load-bearing: the coordinate
+/// `30617:<signer>:<d>` is what a mission must be bound to, so a fixture with
+/// no `d` would exercise the binding check against an empty string.
+const REPO_D: &str = "beekeeper";
+
+/// A stand-in kind 44245 record id, so the answer's policy evidence has one
+/// to name (finding 89).
+const POLICY_EVENT_ID: &str = "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a";
+
+/// The `30617` coordinate `protect()`'s announcement addresses, for `founder`.
+fn repository_of(mission: &Mission) -> String {
+    format!("30617:{}:{REPO_D}", mission.founder.public_key().to_hex())
+}
+
 fn protect(rules: &[&str]) -> Vec<Vec<String>> {
     let mut tag = vec!["buzz-protect".to_owned(), "refs/heads/main".to_owned()];
     tag.extend(rules.iter().map(|rule| (*rule).to_owned()));
-    vec![tag]
+    vec![vec!["d".to_owned(), REPO_D.to_owned()], tag]
 }
 
 struct Mission {
@@ -260,6 +276,9 @@ fn request(
             crate::commands::coding_session_land::CodingSessionLandGatePolicy {
                 verifier_required: Some(true),
                 required_gates: None,
+                event_id: Some(POLICY_EVENT_ID.to_owned()),
+                resolution: None,
+                unreadable_reason: None,
             },
         ),
         ..request_without_gate_rows(mission, protection_tags)
@@ -292,6 +311,13 @@ fn request_without_gate_rows(
         active_seats: mission.seats(),
         observed_gates: Vec::new(),
         gate_policy: None,
+        // Read: this view knows the mission works on the repository it is
+        // being asked about. `None` is the caller that did not read it, and
+        // `boundRepositoriesRead` says which one answered.
+        bound_repositories: Some(vec![format!(
+            "30617:{}:{REPO_D}",
+            mission.founder.public_key().to_hex()
+        )]),
         included_event_ids: mission.included.clone(),
         events: mission.events.clone(),
     }
@@ -313,6 +339,9 @@ fn observed_gates_request(
             crate::commands::coding_session_land::CodingSessionLandGatePolicy {
                 verifier_required: Some(false),
                 required_gates: None,
+                event_id: Some(POLICY_EVENT_ID.to_owned()),
+                resolution: None,
+                unreadable_reason: None,
             },
         ),
         ..request_without_gate_rows(mission, protection_tags)
@@ -592,6 +621,139 @@ fn a_founder_push_is_admitted_with_no_verdict_and_says_which_arm() {
         evidence.session_ref.is_empty() && evidence.disposition_event_id.is_empty(),
         "arm (A) reads no mission, so it names no ruling"
     );
+}
+
+/// **Finding 91, where the rule is the only guard.** The relay narrows its
+/// search to the repository's own channels; this surface does not — it asks
+/// about the one mission on screen. So the binding check inside the rule is
+/// what stops a mission that works on another repository from admitting a
+/// push here, and the refusal names both the mission and the coordinate.
+#[test]
+fn a_mission_bound_to_another_repository_does_not_admit_a_push_here() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let mut request = observed_gates_request(&mission, Some(protect(&["require-verdict"])));
+    request.bound_repositories = Some(vec![format!(
+        "30617:{}:tankloop",
+        mission.founder.public_key().to_hex()
+    )]);
+
+    let answer = land_adapter(request).expect("the boundary answers");
+    assert!(
+        !answer.admitted,
+        "a shared founder is not a binding (finding 91)"
+    );
+    let refusal = answer.refusal_reason.unwrap_or_default();
+    assert!(refusal.contains(SESSION), "{refusal}");
+    assert!(refusal.contains(&repository_of(&mission)), "{refusal}");
+    assert!(
+        answer.bound_repositories_read,
+        "this caller sent the binding, and the answer must say so"
+    );
+
+    // The control: the same request bound to the repository on screen does
+    // admit, so the refusal above is about the binding and nothing else.
+    let mut bound = observed_gates_request(&mission, Some(protect(&["require-verdict"])));
+    bound.bound_repositories = Some(vec![repository_of(&mission)]);
+    assert!(
+        land_adapter(bound).expect("the boundary answers").admitted,
+        "the same mission bound to this repository admits it"
+    );
+}
+
+/// A caller that read no binding is answered as it always was — and the answer
+/// discloses that this surface assumed one, rather than implying it checked.
+#[test]
+fn an_unread_binding_is_assumed_and_the_answer_says_so() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let mut request = observed_gates_request(&mission, Some(protect(&["require-verdict"])));
+    request.bound_repositories = None;
+
+    let answer = land_adapter(request).expect("the boundary answers");
+    assert!(
+        answer.admitted,
+        "the pre-finding-91 caller still gets an answer"
+    );
+    assert!(
+        !answer.bound_repositories_read,
+        "and it says the binding was assumed, not read"
+    );
+}
+
+/// **Finding 89 on this surface.** A caller that read a policy record it could
+/// not decode says `unreadable`, and the rule refuses rather than falling back
+/// to the defaults — the one direction the old `Option` could not express.
+#[test]
+fn an_unreadable_policy_refuses_here_too() {
+    let mission = mission("approve", Some(HEAD_SHA), None);
+    let mut request = observed_gates_request(&mission, Some(protect(&["require-verdict"])));
+    request.gate_policy = Some(
+        crate::commands::coding_session_land::CodingSessionLandGatePolicy {
+            verifier_required: Some(false),
+            required_gates: None,
+            event_id: Some(POLICY_EVENT_ID.to_owned()),
+            resolution: Some("unreadable".to_owned()),
+            unreadable_reason: Some("gates.verifierRequired is not a boolean".to_owned()),
+        },
+    );
+
+    let answer = land_adapter(request).expect("the boundary answers");
+    assert!(
+        !answer.admitted,
+        "nothing admits under a policy nobody read"
+    );
+    let refusal = answer.refusal_reason.unwrap_or_default();
+    assert!(refusal.contains(POLICY_EVENT_ID), "{refusal}");
+
+    // A resolution word this build does not know is unreadable too — never
+    // silently `present`.
+    let mut unknown = observed_gates_request(&mission, Some(protect(&["require-verdict"])));
+    unknown.gate_policy = Some(
+        crate::commands::coding_session_land::CodingSessionLandGatePolicy {
+            verifier_required: Some(false),
+            required_gates: None,
+            event_id: Some(POLICY_EVENT_ID.to_owned()),
+            resolution: Some("provisional".to_owned()),
+            unreadable_reason: None,
+        },
+    );
+    assert!(
+        !land_adapter(unknown)
+            .expect("the boundary answers")
+            .admitted,
+        "a word nobody recognises must not become a policy"
+    );
+}
+
+/// An admission says which policy it stood on, and a founder's says that none
+/// was consulted — the audit's Q1 receipt, on the screen a person reads.
+#[test]
+fn an_admission_names_the_policy_it_stood_on() {
+    let mission = mission("changes-requested", Some(HEAD_SHA), None);
+    let observed = land_adapter(observed_gates_request(
+        &mission,
+        Some(protect(&["require-verdict"])),
+    ))
+    .expect("the boundary answers");
+    let evidence = observed.evidence.expect("arm (B) names its evidence");
+    assert_eq!(evidence.arm, "observed-gates");
+    assert_eq!(evidence.policy_resolution, "present");
+    assert_eq!(evidence.policy_event_id.as_deref(), Some(POLICY_EVENT_ID));
+    assert_eq!(evidence.policy_not_evaluated, None);
+
+    let founder = land_adapter(founder_request(
+        &mission,
+        Some(protect(&["require-verdict"])),
+    ))
+    .expect("the boundary answers");
+    let evidence = founder.evidence.expect("arm (A) names its evidence");
+    assert_eq!(evidence.arm, "founder");
+    assert_eq!(
+        evidence.policy_not_evaluated.as_deref(),
+        Some("founder_exception"),
+        "a founder's landing must never read as verifier-approved"
+    );
+    assert!(evidence.policy_resolution.is_empty());
+    assert_eq!(evidence.policy_event_id, None);
 }
 
 #[test]

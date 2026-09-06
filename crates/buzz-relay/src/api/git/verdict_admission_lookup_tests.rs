@@ -10,6 +10,16 @@
 //! These cases go through the real `git-receive-pack` policy handler, and each
 //! one binds the repository somewhere **other** than the mission's channel —
 //! the live shape.
+//!
+//! **Finding 91 narrowed step 1.** The seat lookup no longer returns the
+//! pusher's seats community-wide: it is intersected with the channels this
+//! repository grants (its project's session channels ∪ the channel it binds).
+//! So the live shape here is *repository names the project the mission lives
+//! in, and binds some other channel* — which is the shape live run 4 actually
+//! had. A repository that grants **nothing** the mission is in is no longer a
+//! repository that mission can land on, and
+//! [`a_seat_of_a_mission_this_repository_does_not_grant_is_not_searched`] is
+//! that case.
 
 use super::*;
 
@@ -52,6 +62,20 @@ fn guarded_repo_bound_to(channel_id: Uuid) -> Vec<Tag> {
         Tag::parse(["buzz-channel", &channel_id.to_string()]).expect("binding"),
         Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"]).expect("protect"),
     ]
+}
+
+/// The same announcement, back-referencing `project` as well — the live shape
+/// since finding 91: a repository grants the session channels of its project,
+/// and the seat lookup is narrowed to them.
+fn guarded_repo_in_project(channel_id: Uuid, project: &str) -> Vec<Tag> {
+    let mut tags = guarded_repo_bound_to(channel_id);
+    tags.push(Tag::parse(["project", project]).expect("project"));
+    tags
+}
+
+/// A project coordinate owned by `w`'s founder.
+fn project_of(w: &Watched) -> String {
+    format!("30621:{}:beekeeper", w.founder.public_key().to_hex())
 }
 
 /// A second mission, in its own channel, founded by `founder`, seating the
@@ -106,6 +130,7 @@ async fn mission_founded_by(w: &Watched, founder: &Keys) -> Watched {
         provider: w.provider.clone(),
         seat: w.seat.clone(),
     };
+    sibling.commission_the_provider().await;
     sibling.publish_provider_metadata().await;
     // The seat is already attested to `w`'s founder, so `grant_the_seat`'s
     // "newly attested" fixture assertion cannot run twice for one key; the
@@ -143,6 +168,38 @@ async fn grant_seat_in(w: &Watched, seq: u32) {
 #[ignore = "requires Postgres"]
 async fn a_seats_push_is_judged_by_the_mission_that_seated_it() {
     let w = watched().await;
+    let project = project_of(&w);
+    let mission = mission_in_project(&w, &project).await;
+    mission.commission_the_provider().await;
+    grant_seat_in(&mission, 1).await;
+    mission
+        .observe(
+            &mission.provider,
+            CodingSessionObservationSource::Observed,
+            default_green(HEAD_SHA),
+        )
+        .await;
+    let elsewhere = other_channel(&w).await;
+
+    let (status, body) = w
+        .seat_push_announced_as(HEAD_SHA, guarded_repo_in_project(elsewhere, &project))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the gate must find the mission that seated the pusher in this repository's own \
+         project, not the repository's bound channel (body: {body})"
+    );
+}
+
+/// **Finding 91.** The same seat, the same green rows, the same commit — and a
+/// repository that grants neither the mission's channel nor a project holding
+/// it. Before this lane the seat lookup swept the community and the mission
+/// admitted the push on nothing but a shared founder.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn a_seat_of_a_mission_this_repository_does_not_grant_is_not_searched() {
+    let w = watched().await;
     w.observe(
         &w.provider,
         CodingSessionObservationSource::Observed,
@@ -156,9 +213,14 @@ async fn a_seats_push_is_judged_by_the_mission_that_seated_it() {
         .await;
     assert_eq!(
         status,
-        StatusCode::OK,
-        "the gate must find the mission that seated the pusher, not the repository's \
-         bound channel (body: {body})"
+        StatusCode::FORBIDDEN,
+        "a mission on a channel this repository grants nothing to proves nothing about it \
+         (body: {body})"
+    );
+    assert!(
+        body.contains("none of them is on a mission of this repository's own channels"),
+        "the refusal must say the seat lookup was narrowed, not that the key holds no seat \
+         anywhere (body: {body})"
     );
 }
 
@@ -183,7 +245,10 @@ async fn a_seat_of_a_strangers_mission_is_still_refused() {
     // `w`'s own mission publishes nothing, so the only green rows anywhere
     // name the stranger's mission.
     let (status, body) = w
-        .seat_push_announced_as(HEAD_SHA, guarded_repo_bound_to(elsewhere))
+        .seat_push_announced_as(
+            HEAD_SHA,
+            guarded_repo_in_project(elsewhere, &project_of(&theirs)),
+        )
         .await;
     assert_eq!(
         status,
@@ -198,16 +263,23 @@ async fn a_seat_of_a_strangers_mission_is_still_refused() {
 #[ignore = "requires Postgres"]
 async fn the_refusal_names_the_lookup_that_ran() {
     let w = watched().await;
+    let project = project_of(&w);
+    let mission = mission_in_project(&w, &project).await;
+    grant_seat_in(&mission, 1).await;
     let elsewhere = other_channel(&w).await;
 
     let (status, body) = w
-        .seat_push_announced_as(HEAD_SHA, guarded_repo_bound_to(elsewhere))
+        .seat_push_announced_as(HEAD_SHA, guarded_repo_in_project(elsewhere, &project))
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "no rows exist yet");
     let short = &w.seat.public_key().to_hex()[..8];
     assert!(
-        body.contains(&format!("that seat {short}")),
+        body.contains(&format!("seat(s) held by {short}")),
         "the refusal must name the seat lookup it ran (body: {body})"
+    );
+    assert!(
+        body.contains("that lie in"),
+        "and must say what the seats were narrowed to (finding 91) (body: {body})"
     );
 }
 
@@ -334,6 +406,7 @@ async fn mission_in_project(w: &Watched, project_ref: &str) -> Watched {
         provider: w.provider.clone(),
         seat: w.seat.clone(),
     };
+    mission.commission_the_provider().await;
     mission.publish_provider_metadata().await;
     mission
 }

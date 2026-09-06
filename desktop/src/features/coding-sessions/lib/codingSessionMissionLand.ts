@@ -65,6 +65,26 @@ export type CodingSessionLandEvidence = {
   readonly observedGates: readonly string[];
   readonly reportEventId: string;
   readonly headSha: string;
+  /**
+   * How the mission's kind 44245 policy resolved under arms (B) and (C):
+   * `present`, `withdrawn` or `absent` (finding 89). Empty under arm
+   * `founder`, which reads no policy at all.
+   *
+   * "Nobody set a policy" and "the founder withdrew it" are different facts,
+   * and both apply the default gate list — a screen that showed only the
+   * gates could not tell them apart.
+   */
+  readonly policyResolution: string;
+  /** The kind 44245 record the arm read, or null when none named the mission. */
+  readonly policyEventId: string | null;
+  /**
+   * Why no policy was consulted, under arm `founder` only:
+   * `founder_exception`.
+   *
+   * The 2026-09-05 audit asked for exactly this: a founder's landing is the
+   * deliberate exception and must never read as verifier-approved.
+   */
+  readonly policyNotEvaluated: string | null;
 };
 
 /** The newest canonical verdict the mission holds, admitting or not. */
@@ -115,6 +135,14 @@ export type CodingSessionLandResult = {
    * is then a fact about this screen's reads, and it says so.
    */
   readonly gateRowsRead: boolean;
+  /**
+   * Whether the mission's repository binding reached the rule (finding 91).
+   *
+   * `false` means this answer **assumed** the mission is bound to the
+   * repository on screen. The relay checks the real binding, so a `false`
+   * here is the one place this surface can be friendlier than the gate.
+   */
+  readonly boundRepositoriesRead: boolean;
   readonly command: string | null;
 };
 
@@ -132,6 +160,9 @@ function isEvidence(value: unknown): value is CodingSessionLandEvidence | null {
         "reportEventId",
         "headSha",
         "observedGates",
+        "policyResolution",
+        "policyEventId",
+        "policyNotEvaluated",
       ],
     ]) &&
       (value.arm === "founder" ||
@@ -145,7 +176,12 @@ function isEvidence(value: unknown): value is CodingSessionLandEvidence | null {
       typeof value.refutationEventId === "string" &&
       typeof value.verifierPubkey === "string" &&
       typeof value.reportEventId === "string" &&
-      typeof value.headSha === "string")
+      typeof value.headSha === "string" &&
+      typeof value.policyResolution === "string" &&
+      (value.policyEventId === null ||
+        typeof value.policyEventId === "string") &&
+      (value.policyNotEvaluated === null ||
+        typeof value.policyNotEvaluated === "string"))
   );
 }
 
@@ -193,6 +229,7 @@ export function decodeCodingSessionLandResult(
         "rosterRead",
         "seatsRead",
         "gateRowsRead",
+        "boundRepositoriesRead",
         "command",
       ],
     ]) ||
@@ -212,6 +249,7 @@ export function decodeCodingSessionLandResult(
     typeof value.rosterRead !== "boolean" ||
     typeof value.seatsRead !== "boolean" ||
     typeof value.gateRowsRead !== "boolean" ||
+    typeof value.boundRepositoriesRead !== "boolean" ||
     (value.command !== null && typeof value.command !== "string")
   ) {
     throw new Error("native land adapter returned a malformed response");
@@ -398,7 +436,57 @@ export type CodingSessionMissionLandModel = {
    * signed fact.
    */
   readonly repositorySourceNote: string | null;
+  /**
+   * Which kind 44245 policy record the admitting arm stood on, in the confirm
+   * step — null in every state but `ready` (2026-09-05 refuter, F4).
+   *
+   * Finding 89 put `policyResolution` and `policyEventId` on the wire and no
+   * screen read them, so "the founder set no policy" and "the founder withdrew
+   * one" and "this is the founder's own exception" all rendered as the same
+   * silence. They are three different reasons a landing is being offered.
+   */
+  readonly policyLine: string | null;
+  /**
+   * Whether the mission's repository binding was **read** or assumed, in the
+   * confirm step — null in every state but `ready` (finding 91).
+   *
+   * `boundRepositoriesRead: false` means this answer assumed the mission is
+   * bound to the repository on screen. The relay checks the real binding, so a
+   * person about to run the command deserves to know which of the two they are
+   * looking at.
+   */
+  readonly bindingLine: string | null;
 };
+
+/** `Policy: …` for the confirm step, from the arm's own disclosed evidence. */
+function policyLine(evidence: CodingSessionLandEvidence): string {
+  if (evidence.policyNotEvaluated !== null) {
+    return `Policy: not evaluated — ${evidence.policyNotEvaluated}. A founder's landing is the deliberate exception; nothing here ruled on this commit.`;
+  }
+  if (evidence.policyResolution === "present") {
+    return evidence.policyEventId === null
+      ? "Policy: present. The mission's own gate policy applied."
+      : `Policy: present (${short(evidence.policyEventId)}). The mission's own gate policy applied.`;
+  }
+  if (evidence.policyResolution === "withdrawn") {
+    return evidence.policyEventId === null
+      ? "Policy: withdrawn. The defaults apply because somebody took the policy back."
+      : `Policy: withdrawn (${short(evidence.policyEventId)}). The defaults apply because somebody took the policy back.`;
+  }
+  if (evidence.policyResolution === "absent") {
+    return "Policy: absent. The defaults apply because nobody set one.";
+  }
+  // A resolution this build does not know is disclosed as itself rather than
+  // rounded to the friendliest of the three.
+  return `Policy: ${evidence.policyResolution || "not evaluated"}.`;
+}
+
+/** `Bound repositories: …` for the confirm step (finding 91). */
+function bindingLine(read: boolean): string {
+  return read
+    ? "Bound repositories: read. The rule checked this mission's own binding."
+    : "Bound repositories: assumed. This view did not read the mission's binding, so it assumed the repository on screen; the relay checks the real one.";
+}
 
 /**
  * §1l's second confirm sentence, frozen.
@@ -503,6 +591,10 @@ export function codingSessionMissionLandModel(input: {
     foundersSentence: foundersSentence(result, input.resolveWho),
     viewerIsFounder: result.viewerIsFounder,
     repositorySourceNote,
+    // Both are confirm-step lines: they describe what an *admission* stood on,
+    // and there is no admission in the other three states.
+    policyLine: null,
+    bindingLine: null,
   } as const;
 
   if (!result.repositoryKnown) {
@@ -548,6 +640,8 @@ export function codingSessionMissionLandModel(input: {
             : `Approved by ${input.resolveWho(evidence.dispositionAuthorPubkey)} in disposition ${short(evidence.dispositionEventId)}, over report ${short(evidence.reportEventId)}, and ${input.resolveWho(evidence.verifierPubkey)} did not refute it (refutation ${short(evidence.refutationEventId)}), over ${evidence.observedGates.join(", ")} observed green on this exact commit. The relay's require-verdict rule admits this commit on ${CODING_SESSION_LAND_REF}.`,
       notRunSentence: CODING_SESSION_LAND_NOT_RUN_SENTENCE,
       sentence: null,
+      policyLine: policyLine(evidence),
+      bindingLine: bindingLine(result.boundRepositoriesRead),
     };
   }
 

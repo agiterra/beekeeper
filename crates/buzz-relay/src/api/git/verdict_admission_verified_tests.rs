@@ -132,6 +132,18 @@ async fn verified() -> Verified {
         builder,
         verifier,
     };
+    // Finding 90: the accepted lifecycle is what names the provider. The
+    // metadata below describes an execution; it does not authorize one.
+    super::observed_tests::commission_provider(
+        &mission.state,
+        mission.community,
+        mission.channel_id,
+        &mission.session_ref,
+        &mission.genesis_ref,
+        &mission.founder,
+        &mission.provider,
+    )
+    .await;
     mission.publish_provider_metadata().await;
     // The authority chain is a chain: seq 1 has no predecessor and every seq
     // after it names the accepted transition before it, so the two grants are

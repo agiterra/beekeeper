@@ -22,8 +22,9 @@ use buzz_core::coding_session_policy::{
 };
 use buzz_core::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES;
 use buzz_core::kind::{
-    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_OBSERVATION,
-    KIND_CODING_SESSION_POLICY,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
 };
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 use std::sync::Arc;
@@ -114,18 +115,69 @@ pub(super) async fn watched() -> Watched {
         provider,
         seat,
     };
-    // The provider's own metadata for this umbrella is what makes its key a
-    // provider identity of this mission; without it every `observed` claim it
-    // signs folds down to `declared`.
+    // Finding 90: what makes this key a provider of this mission is the
+    // **accepted lifecycle** — a 44221 create naming it, answered by a 44224
+    // receipt it signed — not a 44223 it published about itself. Without the
+    // pair every `observed` claim it signs folds down to `declared` and
+    // arm (B) consumes none of them.
+    watched.commission_the_provider().await;
     watched.publish_provider_metadata().await;
     watched.grant_the_seat().await;
     watched
 }
 
 impl Watched {
+    /// The accepted lifecycle that names `self.provider` this mission's
+    /// provider: a kind 44221 `session.create` for this genesis, and the kind
+    /// 44224 receipt the named key signed for it (finding 90).
+    ///
+    /// This is the pair `mission_provider_pubkeys_from_lifecycle` reads.
+    /// Publishing metadata is not this, and since finding 90 it never was:
+    /// any channel member could publish a 44223 naming a mission and thereby
+    /// vouch for its own `observed` rows.
+    pub(super) async fn commission_the_provider(&self) {
+        self.commission(&self.provider).await;
+    }
+
+    /// The same accepted lifecycle, for a chosen key.
+    pub(super) async fn commission(&self, provider: &Keys) {
+        commission_provider(
+            &self.state,
+            self.community,
+            self.channel_id,
+            &self.session_ref,
+            &self.genesis_ref,
+            &self.founder,
+            provider,
+        )
+        .await;
+    }
+
+    /// The accepted lifecycle signed by a key of the caller's choosing, so a
+    /// case can ask what happens when the *command's* signer is not entitled
+    /// to steer the mission (2026-09-05 refuter, B1).
+    pub(super) async fn commission_signed_by(&self, commissioner: &Keys, provider: &Keys) {
+        commission_provider(
+            &self.state,
+            self.community,
+            self.channel_id,
+            &self.session_ref,
+            &self.genesis_ref,
+            commissioner,
+            provider,
+        )
+        .await;
+    }
+
     /// One kind 44223 metadata event, signed by the provider, naming this
-    /// umbrella. The shape `mission_provider_pubkeys` reads.
+    /// umbrella. Read for its `repoRef` and for nothing else since finding 90.
     pub(super) async fn publish_provider_metadata(&self) {
+        self.publish_provider_metadata_for(None).await;
+    }
+
+    /// The same, naming a repository the mission works on — the authorized
+    /// half of finding 91's binding.
+    pub(super) async fn publish_provider_metadata_for(&self, repo_ref: Option<&str>) {
         // Built through the real struct rather than by hand: the decoder is an
         // exact-key contract, and a hand-written body that silently failed to
         // decode would leave this fixture's provider unrecognised — which is
@@ -140,7 +192,7 @@ impl Watched {
                 generation: 1,
             },
             project_ref: None,
-            repo_ref: None,
+            repo_ref: repo_ref.map(str::to_owned),
             title: None,
             agent_ref: None,
             role: None,
@@ -255,7 +307,7 @@ impl Watched {
     }
 
     /// Publish a founder-signed kind 44245 policy carrying only `gates`.
-    async fn set_gate_policy(&self, gates: CodingSessionPolicyGates) {
+    pub(super) async fn set_gate_policy(&self, gates: CodingSessionPolicyGates) {
         let payload = CodingSessionPolicyPayload {
             gates: Some(gates),
             ..CodingSessionPolicyPayload::empty(self.session_ref.clone(), self.genesis_ref.clone())
@@ -280,7 +332,7 @@ impl Watched {
     }
 
     /// The seat's own fast-forward of a `require-verdict` `main`.
-    async fn seat_push(&self, new_oid: &str) -> (StatusCode, String) {
+    pub(super) async fn seat_push(&self, new_oid: &str) -> (StatusCode, String) {
         self.seat_push_announced_as(
             new_oid,
             vec![
@@ -317,6 +369,99 @@ impl Watched {
         .await;
         body_string(response).await
     }
+}
+
+/// Publish the accepted lifecycle that names `provider` this mission's
+/// provider (finding 90): a kind 44221 `session.create` for `genesis_ref`,
+/// and the kind 44224 receipt that key signed for it.
+///
+/// A free function rather than a method because two fixture structs need it
+/// — [`Watched`] here and `Verified` next door — and a second copy of this
+/// shape is a second chance to write one that does not decode.
+pub(super) async fn commission_provider(
+    state: &Arc<AppState>,
+    community: buzz_core::CommunityId,
+    channel_id: Uuid,
+    session_ref: &str,
+    genesis_ref: &str,
+    founder: &Keys,
+    provider: &Keys,
+) {
+    let command_id = format!("cmd-{}", Uuid::new_v4().simple());
+    let session_id = format!("s-{}", Uuid::new_v4().simple());
+    let target = serde_json::json!({
+        "driver": "claude-agent-acp",
+        "instanceId": "instance-1",
+        "sessionId": session_id,
+        "generation": 1,
+    });
+    let command = serde_json::json!({
+        "schema": buzz_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
+        "commandId": command_id,
+        "action": {
+            "type": "session.create",
+            "projectRef": serde_json::Value::Null,
+            "repoRef": serde_json::Value::Null,
+            "sessionRef": session_ref,
+            "genesisRef": genesis_ref,
+            "providerInstanceRef": "claude-primary",
+            "providerAuthorityPubkey": provider.public_key().to_hex(),
+            "model": serde_json::Value::Null,
+            "title": serde_json::Value::Null,
+            "initialTurn": serde_json::Value::Null,
+        },
+    })
+    .to_string();
+    buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(&command)
+        .expect("the fixture's create must decode, or no provider is proven");
+    let event = EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
+        command,
+    )
+    .tags([
+        Tag::parse(["h", &channel_id.to_string()]).expect("h"),
+        Tag::parse(["csl-v", "csl1-1"]).expect("v"),
+        Tag::parse(["csl-command", &command_id]).expect("command"),
+    ])
+    .sign_with_keys(founder)
+    .expect("sign create");
+    state
+        .db
+        .insert_event(community, &event, Some(channel_id))
+        .await
+        .expect("insert create");
+
+    let receipt = serde_json::json!({
+        "schema": buzz_core::coding_session_payload::LIFECYCLE_RECEIPT_SCHEMA,
+        "commandId": command_id,
+        "status": "created",
+        "session": target,
+        "error": serde_json::Value::Null,
+    })
+    .to_string();
+    buzz_core::coding_session_payload::decode_coding_session_lifecycle_receipt(&receipt)
+        .expect("the fixture's receipt must decode, or no provider is proven");
+    let key = format!(
+        "coding-session-lifecycle-receipt/v1|{}:{command_id}",
+        command_id.len()
+    );
+    let event = EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16),
+        receipt,
+    )
+    .tags([
+        Tag::parse(["h", &channel_id.to_string()]).expect("h"),
+        Tag::parse(["cslr-v", "cslr1-1"]).expect("v"),
+        Tag::parse(["csl-command", &command_id]).expect("command"),
+        Tag::parse(["csl-key", &key]).expect("key"),
+    ])
+    .sign_with_keys(provider)
+    .expect("sign receipt");
+    state
+        .db
+        .insert_event(community, &event, Some(channel_id))
+        .await
+        .expect("insert receipt");
 }
 
 /// One row, green on `head_sha` over a clean tree.

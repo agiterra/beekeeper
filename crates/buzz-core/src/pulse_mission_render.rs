@@ -358,7 +358,7 @@ pub fn render_pulse_mission_lines(
     let seats = facts
         .seats
         .iter()
-        .map(|seat| render_seat(seat, names, now_unix))
+        .map(|seat| render_seat(seat, names, now_unix, facts.gate_provenance_checked))
         .collect();
     let moved = facts
         .moved
@@ -445,6 +445,7 @@ fn render_seat(
     seat: &PulseMissionSeat,
     names: &PulseMissionNames,
     now_unix: i64,
+    provenance_checked: bool,
 ) -> PulseMissionSeatRow {
     let who = names.who(&seat.pubkey);
     let role = seat.role.clone().unwrap_or_else(|| "no role".to_owned());
@@ -485,11 +486,17 @@ fn render_seat(
         ));
     } else {
         for gate in &seat.gates {
-            let source = if gate.over_declared {
-                format!("{}, over a declared row", gate.source.as_str())
-            } else {
-                gate.source.as_str().to_owned()
-            };
+            let mut source = gate.source.as_str().to_owned();
+            // A mechanism's word that nobody checked is disclosed as exactly
+            // that: with no provider set resolved, `observed` and `measured`
+            // are the row's own words for itself (finding 93). A claim needs
+            // no such note — it never said anyone watched.
+            if !provenance_checked && !gate.source.is_claim() {
+                source.push_str(", unverified");
+            }
+            if gate.over_declared {
+                source.push_str(", over a declared row");
+            }
             lines.push(PulseMissionLine::new(
                 "gate",
                 format!(

@@ -883,7 +883,7 @@ async fn submit_event_authed(
 
     // Enforce relay membership (with NIP-OA fallback via x-auth-tag header).
     let auth_tag = super::relay_members::extract_auth_tag_header(headers);
-    let nip_oa_owner = match super::relay_members::enforce_relay_membership(
+    let membership = match super::relay_members::enforce_relay_membership(
         state,
         tenant.community(),
         &pubkey_bytes,
@@ -892,17 +892,7 @@ async fn submit_event_authed(
     )
     .await
     {
-        Ok(owner) => owner.or_else(|| {
-            if !state.config.require_relay_membership {
-                super::relay_members::extract_nip_oa_owner(
-                    &pubkey_bytes,
-                    auth_tag,
-                    signed_auth_created_at,
-                )
-            } else {
-                None
-            }
-        }),
+        Ok(owner) => owner,
         Err(e) => {
             return SubmitOutcome::Err {
                 status: e.0,
@@ -910,8 +900,54 @@ async fn submit_event_authed(
             };
         }
     };
+    // Whether membership was satisfied *because of* the owner, which is what
+    // decides how hard an unrecordable owner fails below.
+    let admitted_via_owner = membership.is_some();
+    let nip_oa_owner = membership.or_else(|| {
+        if !state.config.require_relay_membership {
+            super::relay_members::extract_nip_oa_owner(
+                &pubkey_bytes,
+                auth_tag,
+                signed_auth_created_at,
+            )
+        } else {
+            None
+        }
+    });
+    // NIP-AA:113 "retain O" (finding 92, and the 2026-09-05 refuter's F1). The
+    // WebSocket AUTH path has failed closed here since lane C; this one — and
+    // git smart-HTTP — collapsed the outcome to a `bool` and ignored it, so a
+    // login admitted **through** its owner was accepted with that owner
+    // unrecorded. Two different failures with two different sentences: a store
+    // that could not answer is a transient ("try again"), and an agent already
+    // bound to a different owner is a rule that retrying cannot change.
+    //
+    // `LoginAdmission` is what decides whether this is fatal: only a
+    // `ViaOwner` login depended on the owner. On an open relay the same
+    // credential would be admitted without any tag at all, so failing closed
+    // there would enforce nothing.
     if let Some(owner) = nip_oa_owner {
-        super::relay_members::materialize_nip_oa_owner(state, tenant, &pubkey, &owner).await;
+        if let Err((reason, message)) = super::relay_members::retain_nip_oa_owner(
+            state,
+            tenant,
+            &pubkey,
+            &owner,
+            admitted_via_owner,
+        )
+        .await
+        {
+            tracing::warn!(
+                agent = %pubkey.to_hex(),
+                owner = %owner.to_hex(),
+                reason,
+                "POST /events: refusing a login admitted through an owner it cannot retain"
+            );
+            let e = api_error(StatusCode::FORBIDDEN, message);
+            return SubmitOutcome::Err {
+                status: e.0,
+                response: e,
+            };
+        }
     }
 
     let kind_u32 = buzz_core::kind::event_kind_u32(&event);
