@@ -53,6 +53,8 @@ import { CodingSessionComposerSurface } from "./CodingSessionComposerSurface";
 type CodingSessionComposerProps = {
   canInterrupt: boolean;
   canControl?: boolean;
+  /** Authority evidence is unresolved; this is not a denied collaborator grant. */
+  authorityUnresolved?: boolean;
   authorityReason?: string | null;
   /**
    * Whether this execution advertised native mid-turn steering (its 44223
@@ -174,6 +176,7 @@ const DEFAULT_SEAT_CUSTODY: CodingSessionSeatCustody =
 /** Composer for steering a selected governed coding-session generation. */
 export function CodingSessionComposer({
   authorityReason = null,
+  authorityUnresolved = false,
   canInterrupt,
   canControl = true,
   canAttachImages = false,
@@ -706,6 +709,7 @@ export function CodingSessionComposer({
       <CodingSessionComposerSurface
         attachments={attachments}
         authorityReason={authorityReason}
+        authorityUnresolved={authorityUnresolved}
         canAttachImages={canAttachImages}
         canControl={canControl}
         canInterrupt={canInterrupt}

@@ -7,6 +7,26 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
+Follow-up control investigation: the same installed app later resolved
+Founded by Brian, owner actions and Can control without a code or permission
+change. Local provider `state.json` names founder
+`3d3b7169a13a8311b480bdfce85b4a0c7ff9b185832cbc6e547db7bbcf96c05e`,
+umbrella `43f8cdcd-340b-43c7-969d-5c00a076c238`, genesis
+`e2f0e131eabf9aad88c8a247136ec1235ec2905aeb26bf3045879c3fdfdd9159`,
+authority sequence 3. A live UI follow-up requesting only “Follow-up received”
+was sent and the transcript returned “Follow-up received.” The earlier
+View-only display was observed before the founder/owner controls resolved;
+it is not evidence that Brian needs a new grant. The immersive composer's
+placeholder and badge collapse unresolved authority into View only, while its
+normal explanatory banner is suppressed. The model now exposes an unresolved
+disclosure flag; the immersive composer shows “Access unresolved” with the
+actual reason instead of collaborator advice. The authority rules themselves
+remain unchanged. A mounted React regression exercises unresolved founder →
+unresolved identity → editable founder → denied viewer. All 26 focused tests,
+TypeScript, formatting, file-size checks and the full 8,282-test desktop suite
+pass (`composer-authority-focused.log`, `composer-access-desktop-tests.log`,
+`composer-access-size.log` in the September 6 validation directory).
+
 Subsequent live UI acceptance: Brian identified the session by Beekeeper /
 #Beekeeper sessions / Claude Agent Acp generation 1 / provider `1958c6c448…176b9644`.
 Opening **Project Structure Review** in the installed app shows the exact

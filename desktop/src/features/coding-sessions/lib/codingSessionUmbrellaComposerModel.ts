@@ -24,6 +24,8 @@ import type { CodingSessionUmbrellaRecord } from "./codingSessionTypes";
 export type CodingSessionUmbrellaComposerAuthority = {
   /** Whether this user may address executions (44220 turn/interrupt). */
   canPromptExecutions: boolean;
+  /** Missing founder or identity evidence, rather than a denied grant. */
+  isUnresolved: boolean;
   /** Honest reason shown on disabled execution targets, when gated. */
   reason: string | null;
   /** Legacy sessions have no signed umbrella authority anchor yet. */
@@ -52,10 +54,16 @@ export function resolveCodingSessionUmbrellaComposerAuthority(input: {
   const isUngovernedSession = input.umbrella.genesisRef === null;
   if (founder === null) {
     if (isUngovernedSession) {
-      return { canPromptExecutions: true, reason: null, isUngovernedSession };
+      return {
+        canPromptExecutions: true,
+        isUnresolved: false,
+        reason: null,
+        isUngovernedSession,
+      };
     }
     return {
       canPromptExecutions: false,
+      isUnresolved: true,
       reason:
         "Session authority could not be resolved from its genesis. Controls are disabled until authority is available.",
       isUngovernedSession,
@@ -64,6 +72,7 @@ export function resolveCodingSessionUmbrellaComposerAuthority(input: {
   if (input.currentUserPubkey === null) {
     return {
       canPromptExecutions: isUngovernedSession,
+      isUnresolved: !isUngovernedSession,
       reason: isUngovernedSession
         ? null
         : "Session authority is loading. Controls remain disabled until your identity is available.",
@@ -71,22 +80,34 @@ export function resolveCodingSessionUmbrellaComposerAuthority(input: {
     };
   }
   if (founder === input.currentUserPubkey) {
-    return { canPromptExecutions: true, reason: null, isUngovernedSession };
+    return {
+      canPromptExecutions: true,
+      isUnresolved: false,
+      reason: null,
+      isUngovernedSession,
+    };
   }
   if (input.acceptedOperators != null) {
     if (input.acceptedOperators.has(input.currentUserPubkey)) {
-      return { canPromptExecutions: true, reason: null, isUngovernedSession };
+      return {
+        canPromptExecutions: true,
+        isUnresolved: false,
+        reason: null,
+        isUngovernedSession,
+      };
     }
     // The roster is known and this user holds no operator grant: viewer (or
     // no grant at all) — the composer disables with the invite-shaped hint.
     return {
       canPromptExecutions: false,
+      isUnresolved: false,
       reason: CODING_SESSION_VIEW_ONLY_REASON,
       isUngovernedSession,
     };
   }
   return {
     canPromptExecutions: false,
+    isUnresolved: false,
     reason:
       "Only the session founder can prompt executions in this version. The session lane stays open to every member.",
     isUngovernedSession,

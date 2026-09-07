@@ -337,6 +337,7 @@ function ExecutionComposer({
   return (
     <CodingSessionComposer
       authorityReason={authority.reason}
+      authorityUnresolved={authority.isUnresolved}
       canInterrupt={
         codingSessionTargetSupportsInterrupt(target) &&
         record.capabilities?.threadTurnInterrupt !== false

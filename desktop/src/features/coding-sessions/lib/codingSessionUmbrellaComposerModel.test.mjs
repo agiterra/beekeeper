@@ -36,6 +36,7 @@ test("the founder may prompt executions; everyone else gets an honest disabled r
     }),
     {
       canPromptExecutions: true,
+      isUnresolved: false,
       reason: null,
       isUngovernedSession: false,
     },

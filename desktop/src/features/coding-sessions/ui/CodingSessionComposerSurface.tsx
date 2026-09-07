@@ -26,6 +26,7 @@ type ComposerSurfaceProps = {
    */
   attachments?: CodingSessionAttachmentController;
   authorityReason: string | null;
+  authorityUnresolved: boolean;
   /** This execution's advertised `promptImage` capability. */
   canAttachImages?: boolean;
   canControl: boolean;
@@ -80,6 +81,7 @@ type ComposerSurfaceProps = {
 export function CodingSessionComposerSurface({
   attachments,
   authorityReason,
+  authorityUnresolved,
   canAttachImages = false,
   canControl,
   canInterrupt,
@@ -170,6 +172,14 @@ export function CodingSessionComposerSurface({
           showAuthorityFailure={showAuthorityFailure}
         />
       )}
+      {immersive && !canControl && authorityUnresolved ? (
+        <p
+          className="px-4 py-2 text-sm text-muted-foreground"
+          data-testid="coding-session-composer-authority-unresolved"
+        >
+          {authorityReason ?? "Session access is unresolved."}
+        </p>
+      ) : null}
       {attachments && !immersive ? (
         <CodingSessionComposerAttachments
           canAttach={canAttachImages}
@@ -248,6 +258,8 @@ export function CodingSessionComposerSurface({
             if (canSubmitText) onPrimary();
           }}
           placeholder={composerPlaceholder({
+            authorityReason,
+            authorityUnresolved,
             canControl,
             canSteer,
             isDisconnected,
@@ -277,6 +289,7 @@ export function CodingSessionComposerSurface({
         ) : (
           <CodingSessionComposerDeck
             authorityReason={authorityReason}
+            authorityUnresolved={authorityUnresolved}
             canControl={canControl}
             canInterrupt={canInterrupt}
             canSessionStop={canSessionStop}
@@ -579,6 +592,8 @@ function CompactComposerNotices({
 }
 
 function composerPlaceholder({
+  authorityReason,
+  authorityUnresolved,
   canControl,
   canSteer,
   isDisconnected,
@@ -586,6 +601,8 @@ function composerPlaceholder({
   isMember,
   isWorking,
 }: {
+  authorityReason: string | null;
+  authorityUnresolved: boolean;
   canControl: boolean;
   canSteer: boolean;
   isDisconnected: boolean;
@@ -596,6 +613,9 @@ function composerPlaceholder({
   if (isEnded) return "This execution has ended.";
   if (isDisconnected) return "Reconnect this execution to continue…";
   if (!isMember) return "Join this channel to send a message.";
+  if (!canControl && authorityUnresolved) {
+    return authorityReason ?? "Session access is unresolved.";
+  }
   if (!canControl) return "View only — ask for collaborator access.";
   if (isWorking && !canSteer) return "Send the next turn…";
   if (isWorking) return "Steer this coding session…";

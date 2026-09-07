@@ -787,6 +787,7 @@ function ReadyCodingSessionWorkspace({
                 <div className="relative z-10">
                   <CodingSessionComposer
                     authorityReason={composerAuthority.reason}
+                    authorityUnresolved={composerAuthority.isUnresolved}
                     canInterrupt={
                       codingSessionTargetSupportsInterrupt(
                         session.commandTarget,

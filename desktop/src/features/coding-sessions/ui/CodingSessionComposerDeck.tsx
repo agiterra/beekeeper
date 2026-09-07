@@ -40,6 +40,7 @@ export type CodingSessionComposerControlContext = {
 
 type CodingSessionComposerDeckProps = {
   authorityReason: string | null;
+  authorityUnresolved: boolean;
   canControl: boolean;
   canInterrupt: boolean;
   canSessionStop: boolean;
@@ -62,6 +63,7 @@ type CodingSessionComposerDeckProps = {
 /** The compact, provider-neutral footer inside the full-screen composer. */
 export function CodingSessionComposerDeck({
   authorityReason,
+  authorityUnresolved,
   canControl,
   canInterrupt,
   canSessionStop,
@@ -118,7 +120,12 @@ export function CodingSessionComposerDeck({
   const identityLabel = [providerName, modelName]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
-  const accessLabel = canControl && isMember ? "Can control" : "View only";
+  const accessLabel =
+    canControl && isMember
+      ? "Can control"
+      : authorityUnresolved && isMember
+        ? "Access unresolved"
+        : "View only";
   const availableCapabilities = context
     ? capabilityLabels(context.capabilities)
     : [];
