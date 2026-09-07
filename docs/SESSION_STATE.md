@@ -9289,13 +9289,51 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
   the same quota after ~60 events; NIP-ST's own per-kind limiter (20 inputs/s,
   `shell_observe.rs:49-54`) was meant to be the gate. Either exempt the NIP-ST
   ephemerals from the per-minute message quota or document the ceiling.
-- **Slice 1 landed here:** kinds 30621/39010/30623/24310/24311/24312 in
-  `nostr_models.dart`, `ChannelData.projectRef` from the relay-stamped
-  `project` tag, project and shell filters in `nostr_filters.dart`, the
-  builders in `coding_session_commands.dart` pinned byte-for-byte to the
-  buzz-core fixtures (`coding_session_commands_test.dart`), and a shared
-  recording relay fake under `test/helpers/`. The mobile docstrings that said
-  "read-only by construction" now say what is true.
+- **All five slices are on `feat/mobile-interact`** (five commits, each
+  gated: `flutter analyze`, `dart format`, `flutter test` — 1840 passed /
+  0 failed at the end, up from 1747 — and `just file-size-check`).
+  1. Groundwork: the kinds, `ChannelData.projectRef`, the filters, the
+     command builders pinned byte-for-byte to the buzz-core fixtures, the
+     shared recording relay fake, and this entry.
+  2. Sessions interact: composer (Send / Send next / Steer only when the
+     runtime advertised `threadSteer` / Interrupt), pending rows settled by
+     receipt and commandId only (D4) with a re-address offer on
+     `NO_LIVE_EXECUTION`/`STALE_GENERATION` (D2 amended), the steer
+     disclosure for everyone else, and an app-bar menu with Rename, Set
+     goal, Close/Reopen (needs the genesis id the fold now exposes) and
+     Stop execution behind confirmations. Relay refusals shown verbatim.
+  3. Projects tab: 30621 heads + tombstones + the 39000 metadata of the
+     channels a head names (a transport channel admits members without a
+     39002 row, so the phone's own list would hide the sessions channel);
+     channels bound by the head's `channel` tags ∪ the relay-stamped
+     `project` tag; the transport channel first and expanded; terminals
+     under the project (see (a) above), inert rows until slice 4.
+  4. Terminal observe, read-only: `xterm` 4.0.0, `autoResize: false`,
+     `readOnly`, `hardwareKeyboardOnly`; the desktop's observer ported
+     (watch/keepalive/handshake/stall/resync/stop) plus the phone
+     lifecycle (background → stop; resume → watch again, next frame is a
+     gap). The signing relay is captured at start because Riverpod forbids
+     `ref` in the dispose callback — the first draft crashed there. Both
+     per-terminal providers are auto-disposed so leaving the page stops the
+     watch.
+  5. Collaborator input: line-mode composer (one 24312 per line, `\r`
+     appended) and a key bar (^C, Esc, Tab, arrows, Enter — each encoded
+     through the emulator so app-cursor mode is honoured, one event each);
+     a hardware keyboard's output is coalesced for 500 ms. Typing needs the
+     *live* announce head's roster (or the owner's own key), so a
+     revocation drops the bar without a reload. `restricted:` is kept
+     verbatim as a revocation; `rate-limited:` pauses input for the
+     relay's `retry in Ns` window and is not.
+- **Not yet done, in order:** (1) exercise on a simulator against the
+  local dev relay with a desktop that is actually streaming frames — the
+  plan's verification steps; nothing above has run on a device; (2) land
+  the branch (rebase onto `main`, push); (3) the desktop keystroke-quota
+  follow-up above; (4) two honest gaps in the Projects tab: sessions whose
+  44223 `projectRef` names a project but live in another channel are not
+  listed under it, and a collapsed channel says nothing about its sessions
+  (each expanded channel is one observer read); (5) the mobile trust gate
+  has not been checked against the desktop's 2026-09-05
+  `sessionCoordinationCommissioning.ts` rule.
 
 ## 2a. Direction settled 2026-08-18
 
@@ -9391,13 +9429,15 @@ they unblock, and the work item 109 measured but did not do.
    names a `requestRef`, not a commit — so this is a correction, not only an
    approval.
 
-3a. **Mobile interact, slices 2–5** (`feat/mobile-interact`, plan in
-   "Found 2026-09-07"): the session composer and umbrella menu, the Projects
-   tab with terminals under each project, the read-only terminal observer on
-   `xterm`, then collaborator line input. Slice 4 is the risky one — first
-   xterm integration and the first ephemeral-stream consumer on the phone — and
-   must be exercised on a simulator against a desktop that is actually
-   streaming frames before it is called done.
+3a. **Mobile interact: exercise on a device, then land** (`feat/mobile-
+   interact`, five commits, all gates green — "Found 2026-09-07" has the
+   list). Run the plan's verification on a simulator against the local dev
+   relay with a desktop streaming a shared terminal and hosting a session
+   founded on this identity: LIVE within 10 s, a line typed from the phone
+   echoed back by the owner's frames, a revocation flipping the page
+   read-only; a turn from the phone settling on `turn_started`, Interrupt,
+   Rename/Set goal/Close, Stop. Then rebase onto `main` and push. Nothing
+   in the branch has run on a device yet.
 
 4. **Live run 4, on the rebuilt app.** A lead, a builder and a verifier; gate
    rows on the wire for the first time; the **founder** lands the branch after
