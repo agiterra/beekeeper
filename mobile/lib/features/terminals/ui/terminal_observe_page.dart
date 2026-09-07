@@ -13,6 +13,7 @@ import '../../../shared/theme/theme.dart';
 import '../../../shared/utils/string_utils.dart';
 import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
+import '../../profile/user_cache_provider.dart';
 import '../domain/terminals_domain.dart';
 import '../state/shell_announce_head_provider.dart';
 import '../state/shell_observer_provider.dart';
@@ -45,7 +46,8 @@ class TerminalObservePage extends HookConsumerWidget {
   /// read replaces it.
   final RemoteTerminal? initial;
 
-  /// Resolves an owner pubkey to a display name; falls back to a short key.
+  /// Resolves an owner pubkey to a display name; by default the profile
+  /// cache, which fetches a profile it has not seen, then a short key.
   final String Function(String ownerPubkey)? ownerLabel;
 
   TerminalObservePage({
@@ -95,14 +97,19 @@ class TerminalObservePage extends HookConsumerWidget {
       return subscription.cancel;
     }, [emulator, target]);
 
-    final label = ownerLabel ?? shortPubkey;
-    final ownerName = label(target.ownerPubkey);
+    // Watching the cache rebuilds when the owner's profile lands; `get`
+    // schedules the fetch when it is not there yet.
+    ref.watch(userCacheProvider);
+    final ownerName = ownerLabel != null
+        ? ownerLabel!(target.ownerPubkey)
+        : ref.read(userCacheProvider.notifier).get(target.ownerPubkey)?.label ??
+              shortPubkey(target.ownerPubkey);
     final closed = head.hasRead && head.terminal == null;
     final isOwner = me != null && me.toLowerCase() == target.ownerPubkey;
-    final role = terminal == null
+    // The owner's own terminal needs no role line: the title already says
+    // whose it is, and the input bar says the rest.
+    final role = terminal == null || isOwner
         ? null
-        : isOwner
-        ? 'Yours, from another device'
         : switch (terminal.roleOf(me)) {
             ShellRosterRole.collaborator => 'Collaborator',
             ShellRosterRole.viewer => 'Viewer',
@@ -169,7 +176,7 @@ class TerminalObservePage extends HookConsumerWidget {
         children: [
           SizedBox(height: frostedAppBarHeight(context)),
           _ObserveHeader(
-            ownerName: ownerName,
+            ownerName: isOwner ? null : ownerName,
             role: role,
             closed: closed,
             canType: canType,

@@ -2,7 +2,8 @@ part of '../terminal_observe_page.dart';
 
 /// Whose terminal, what this viewer may do, the grid, and the stream status.
 class _ObserveHeader extends StatelessWidget {
-  final String ownerName;
+  /// The owner's name, or `null` for the viewer's own terminal.
+  final String? ownerName;
   final String? role;
   final bool closed;
   final bool canType;
@@ -34,7 +35,9 @@ class _ObserveHeader extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '$ownerName’s terminal · $dims',
+                  ownerName == null
+                      ? 'Your terminal · $dims'
+                      : '$ownerName’s terminal · $dims',
                   style: context.textTheme.titleSmall,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -43,34 +46,33 @@ class _ObserveHeader extends StatelessWidget {
               _StatusChip(status: status),
             ],
           ),
-          Padding(
-            padding: const EdgeInsets.only(top: Grid.quarter),
-            child: Row(
-              children: [
-                Icon(
-                  canType ? LucideIcons.keyboard : LucideIcons.eye,
-                  size: 14,
-                  color: colors.onSurfaceVariant,
-                ),
-                const SizedBox(width: Grid.xxs),
-                Expanded(
-                  child: Text(
-                    closed
-                        ? 'The owner closed or unshared this terminal'
-                        : canType
-                        ? '$role — your keystrokes go to the owner’s terminal'
-                        : role == null
-                        ? 'Read-only — you are observing this session'
-                        : '$role — read-only',
-                    key: const ValueKey('terminal-observe-role'),
-                    style: context.textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
+          if (closed || role != null)
+            Padding(
+              padding: const EdgeInsets.only(top: Grid.quarter),
+              child: Row(
+                children: [
+                  Icon(
+                    canType ? LucideIcons.keyboard : LucideIcons.eye,
+                    size: 14,
+                    color: colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: Grid.xxs),
+                  Expanded(
+                    child: Text(
+                      closed
+                          ? 'The owner closed or unshared this terminal'
+                          : canType
+                          ? '$role — your keystrokes go to this terminal'
+                          : '$role — read-only',
+                      key: const ValueKey('terminal-observe-role'),
+                      style: context.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
           if (watchError case final error?)
             Padding(
               padding: const EdgeInsets.only(top: Grid.quarter),

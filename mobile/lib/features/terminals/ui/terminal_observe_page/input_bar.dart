@@ -55,6 +55,7 @@ class _TerminalInputBar extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = useTextEditingController();
+    final focusNode = useFocusNode();
     final text = useState('');
     final now = useState(DateTime.now());
     final colors = context.colors;
@@ -106,6 +107,9 @@ class _TerminalInputBar extends HookConsumerWidget {
       final line = controller.text;
       if (line.isEmpty) return;
       controller.clear();
+      // Enter hands the line off and keeps the keyboard: the next line is
+      // the common case, not a dismissal.
+      focusNode.requestFocus();
       await notifier.sendLine(line);
     }
 
@@ -121,6 +125,7 @@ class _TerminalInputBar extends HookConsumerWidget {
         emulator.onOutput = previous;
       }
       if (buffer.isEmpty) return;
+      focusNode.requestFocus();
       await notifier.sendInput(Uint8List.fromList(utf8.encode('$buffer')));
     }
 
@@ -142,21 +147,27 @@ class _TerminalInputBar extends HookConsumerWidget {
                 ),
               ),
             ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
+          SizedBox(
+            height: 28,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
               children: [
                 for (final entry in terminalKeyBar)
                   Padding(
-                    padding: const EdgeInsets.only(right: Grid.half),
+                    padding: const EdgeInsets.only(right: Grid.quarter),
                     child: OutlinedButton(
                       key: ValueKey('terminal-key-${entry.label}'),
                       style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(40, 32),
+                        minimumSize: const Size(36, 28),
                         padding: const EdgeInsets.symmetric(
                           horizontal: Grid.xxs,
                         ),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         visualDensity: VisualDensity.compact,
+                        textStyle: const TextStyle(
+                          fontFamily: terminalFontFamily,
+                          fontSize: 12,
+                        ),
                       ),
                       onPressed: paused
                           ? null
@@ -167,14 +178,15 @@ class _TerminalInputBar extends HookConsumerWidget {
               ],
             ),
           ),
-          const SizedBox(height: Grid.half),
+          const SizedBox(height: Grid.quarter),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: TextField(
                   key: const ValueKey('terminal-input-field'),
                   controller: controller,
+                  focusNode: focusNode,
                   enabled: !paused,
                   autocorrect: false,
                   enableSuggestions: false,
@@ -186,20 +198,29 @@ class _TerminalInputBar extends HookConsumerWidget {
                     fontSize: 13,
                   ),
                   decoration: InputDecoration(
-                    hintText: 'Type a line — sent with Enter, no local echo',
+                    hintText: 'Type a line, Enter sends it',
                     isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: Grid.xxs,
+                      vertical: Grid.half,
+                    ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(Radii.lg),
+                      borderRadius: BorderRadius.circular(Radii.md),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: Grid.xxs),
+              const SizedBox(width: Grid.half),
               IconButton.filled(
                 key: const ValueKey('terminal-input-send'),
                 tooltip: 'Send line',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 32,
+                  height: 32,
+                ),
                 onPressed: paused || text.value.isEmpty ? null : sendLine,
-                icon: const Icon(LucideIcons.cornerDownLeft, size: 18),
+                icon: const Icon(LucideIcons.cornerDownLeft, size: 16),
               ),
             ],
           ),
@@ -221,10 +242,10 @@ class _InputShell extends StatelessWidget {
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-          Grid.twelve,
           Grid.xxs,
-          Grid.twelve,
+          Grid.half,
           Grid.xxs,
+          Grid.half,
         ),
         child: child,
       ),

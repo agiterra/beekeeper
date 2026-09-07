@@ -6,6 +6,8 @@ import 'package:buzz/features/terminals/domain/terminals_domain.dart';
 import 'package:buzz/features/terminals/state/shell_announce_head_provider.dart';
 import 'package:buzz/features/terminals/state/shell_observer_provider.dart';
 import 'package:buzz/features/terminals/ui/terminal_observe_page.dart';
+import 'package:buzz/features/profile/user_cache_provider.dart';
+import 'package:buzz/features/profile/user_profile.dart';
 import 'package:buzz/shared/relay/relay_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -95,6 +97,14 @@ _pump(
             ),
           ),
           myPubkeyProvider.overrideWithValue(viewer),
+          userCacheProvider.overrideWith(
+            () => FakeUserCacheNotifier({
+              testOwner: const UserProfile(
+                pubkey: testOwner,
+                displayName: 'Andy',
+              ),
+            }),
+          ),
         ],
         child: TerminalObservePage(terminal: testTerminal()),
       ),
@@ -110,7 +120,7 @@ void main() {
     tester,
   ) async {
     await _pump(tester);
-    expect(find.textContaining('’s terminal · 24x80'), findsOneWidget);
+    expect(find.text('Andy’s terminal · 24x80'), findsOneWidget);
     expect(find.text('Member — read-only'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('terminal-observe-status-connecting')),
@@ -165,14 +175,12 @@ void main() {
 
   testWidgets('the owner\'s own key, a roster role, and a closed head each '
       'read differently', (tester) async {
+    // The viewer's own terminal: no role line, the title says whose it is,
+    // and the input bar is there.
     await _pump(tester, viewer: testOwner);
-    expect(
-      find.text(
-        'Yours, from another device — your keystrokes go to the owner’s '
-        'terminal',
-      ),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('terminal-observe-role')), findsNothing);
+    expect(find.textContaining('Your terminal · 24x80'), findsOneWidget);
+    expect(find.byKey(const ValueKey('terminal-input-bar')), findsOneWidget);
 
     await _pump(
       tester,
@@ -189,7 +197,7 @@ void main() {
       ),
     );
     expect(
-      find.text('Collaborator — your keystrokes go to the owner’s terminal'),
+      find.text('Collaborator — your keystrokes go to this terminal'),
       findsOneWidget,
     );
 
@@ -232,7 +240,7 @@ void inputBarTests() {
     );
     expect(find.byKey(const ValueKey('terminal-input-bar')), findsOneWidget);
     expect(
-      find.text('Collaborator — your keystrokes go to the owner’s terminal'),
+      find.text('Collaborator — your keystrokes go to this terminal'),
       findsOneWidget,
     );
     final typable = tester.widget<TerminalView>(find.byType(TerminalView));
@@ -266,6 +274,8 @@ void inputBarTests() {
       find.byKey(const ValueKey('terminal-input-field')),
     );
     expect(field.controller!.text, isEmpty);
+    // Enter keeps the keyboard: the field has focus again for the next line.
+    expect(field.focusNode!.hasFocus, isTrue);
     final view = tester.widget<TerminalView>(find.byType(TerminalView));
     expect(view.terminal.buffer.getText().trim(), isEmpty);
 
