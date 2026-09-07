@@ -8,6 +8,8 @@
 /// tell which provider signed what.
 library;
 
+export 'coding_session_command_provider.dart';
 export 'coding_session_event_store.dart';
 export 'coding_session_observer_provider.dart';
 export 'coding_session_observer_snapshot.dart';
+export 'pending_turns_provider.dart';

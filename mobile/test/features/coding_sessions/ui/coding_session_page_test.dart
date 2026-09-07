@@ -1,4 +1,5 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:buzz/features/coding_sessions/ui/coding_session_labels.dart';
 import 'package:buzz/features/coding_sessions/ui/coding_session_page.dart';
 import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
@@ -250,7 +251,9 @@ void main() {
     expect(find.text('success · 1200ms · \$0.0125'), findsOneWidget);
   });
 
-  testWidgets('always ends with the read-only line', (tester) async {
+  testWidgets('ends with the steer disclosure when this device holds no key', (
+    tester,
+  ) async {
     final binding = FakeObserverBinding(
       testSnapshot(envelopes: _conversation()),
     );
@@ -258,10 +261,13 @@ void main() {
     await _pump(tester, binding);
 
     expect(
-      find.byKey(const ValueKey('coding-session-read-only')),
+      find.byKey(const ValueKey('coding-session-steer-disclosure')),
       findsOneWidget,
     );
-    expect(find.text('Read-only on mobile'), findsOneWidget);
+    expect(
+      find.text(codingSessionSteerDisclosure(CodingSessionSteerStanding.noKey)),
+      findsOneWidget,
+    );
   });
 
   testWidgets('discloses that signatures were not verified here', (

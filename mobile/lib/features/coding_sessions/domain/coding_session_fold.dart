@@ -102,7 +102,19 @@ class CodingSessionFounder {
 
   final CodingSessionFounderResolution resolution;
 
-  const CodingSessionFounder({required this.pubkey, required this.resolution});
+  /// The event id of the 44226 genesis the founder was read from; non-null
+  /// exactly when [resolution] is [CodingSessionFounderResolution.genesis].
+  ///
+  /// A 44230 closure has to name this id, so a session whose founder was read
+  /// any other way cannot be closed or reopened from this device — and says so
+  /// rather than guessing at an anchor.
+  final String? genesisRef;
+
+  const CodingSessionFounder({
+    required this.pubkey,
+    required this.resolution,
+    this.genesisRef,
+  });
 
   /// The unresolved founder, used before any create is readable.
   static const unresolved = CodingSessionFounder(
@@ -571,6 +583,7 @@ CodingSessionFounder resolveCodingSessionFounder({
     return CodingSessionFounder(
       pubkey: genesis.founderPubkey,
       resolution: CodingSessionFounderResolution.genesis,
+      genesisRef: genesis.ref.eventId,
     );
   }
   final earliest = records.reduce(

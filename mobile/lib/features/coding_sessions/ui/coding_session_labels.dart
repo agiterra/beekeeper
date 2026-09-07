@@ -5,8 +5,58 @@ import '../domain/coding_sessions_domain.dart';
 const codingSessionUnverifiedSignaturesLabel =
     'Signatures not verified on this device';
 
-/// The line every session page ends with: mobile observes, it does not drive.
-const codingSessionReadOnlyLabel = 'Read-only on mobile';
+/// Why the composer is missing, per [CodingSessionSteerStanding].
+///
+/// Each sentence claims only what this device read. It folds founders but not
+/// 44228 operator grants, so "not the founder" is stated as exactly that, and
+/// the relay — which does read grants — is named as the authority that may
+/// still admit a command.
+String codingSessionSteerDisclosure(CodingSessionSteerStanding standing) =>
+    switch (standing) {
+      CodingSessionSteerStanding.founder ||
+      CodingSessionSteerStanding.acceptedOperator => '',
+      CodingSessionSteerStanding.noKey =>
+        'This device holds no signing key, so it can only observe.',
+      CodingSessionSteerStanding.notFounder =>
+        'Only the session\'s founder or a granted operator can steer it. '
+            'This device is not the founder, and it does not read operator '
+            'grants — the relay would still admit a granted key.',
+      CodingSessionSteerStanding.founderUnresolved =>
+        'The session\'s founder could not be resolved from what this device '
+            'read, so it does not offer to steer.',
+    };
+
+/// The composer line when no current generation is live enough to address.
+const codingSessionNoLiveExecutionLabel =
+    'No live execution to send to — every generation is stopped, failed or '
+    'disconnected.';
+
+/// What a pending turn row says for each phase (D4: settled by receipt, never
+/// by text).
+String codingSessionPendingPhaseLabel(CodingSessionPendingTurnView view) =>
+    switch (view.phase) {
+      CodingSessionPendingPhase.sending => 'Sending…',
+      CodingSessionPendingPhase.published =>
+        'Sent · waiting for the provider\'s receipt',
+      CodingSessionPendingPhase.queued => 'Queued for the next turn',
+      CodingSessionPendingPhase.degraded =>
+        'Delivery downgraded${view.detail == null ? '' : ' — ${view.detail}'}',
+      CodingSessionPendingPhase.started => 'Started',
+      CodingSessionPendingPhase.refused =>
+        'Refused${view.detail == null ? '' : ' — ${view.detail}'}',
+      CodingSessionPendingPhase.dropped =>
+        'Dropped${view.detail == null ? '' : ' — ${view.detail}'}',
+    };
+
+/// The primary send label, per the desktop's `codingSessionComposerModel`.
+///
+/// "Steer" is the promise the button makes, so it is offered only when the
+/// execution advertised native steering; otherwise a mid-turn send runs at
+/// the next boundary, which is "Send next".
+String codingSessionSendLabel({
+  required bool isWorking,
+  required bool canSteer,
+}) => !isWorking ? 'Send' : (canSteer ? 'Steer' : 'Send next');
 
 /// The empty state for a channel with no readable coding sessions.
 const codingSessionsEmptyLabel = 'No coding sessions in this channel';

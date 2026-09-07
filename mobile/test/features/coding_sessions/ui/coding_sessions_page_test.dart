@@ -394,6 +394,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(CodingSessionPage), findsOneWidget);
-    expect(find.text('Read-only on mobile'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('coding-session-steer-disclosure')),
+      findsOneWidget,
+    );
   });
 }

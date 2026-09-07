@@ -11,21 +11,29 @@ import '../../../shared/widgets/bee_refresh_indicator.dart';
 import '../../../shared/widgets/buzz_loading_indicator.dart';
 import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
+import '../../../shared/widgets/modal_presentation.dart';
 import '../domain/coding_sessions_domain.dart';
+import '../state/coding_sessions_state.dart' show CodingSessionPublishException;
 import 'coding_session_labels.dart';
 import 'coding_session_status_chip.dart';
 import 'observer_contract.dart';
 
+part 'coding_session_page/actions.dart';
+part 'coding_session_page/composer.dart';
 part 'coding_session_page/header.dart';
 part 'coding_session_page/notices.dart';
 part 'coding_session_page/transcript.dart';
 part 'coding_session_page/rows.dart';
 
-/// One coding session, observed read-only (D11c).
+/// One coding session: its accepted facts, and — for the founder or a
+/// granted operator — a composer to steer it.
 ///
-/// The page never publishes: there is no composer and no command. It shows
-/// what the accepted facts say, marks what it could not verify, and says so
-/// when the history it has is only part of the history that exists.
+/// The read side is unchanged from the observer (D3–D10): the page shows what
+/// the accepted facts say, marks what it could not verify, and says so when
+/// the history it has is only part of the history that exists. Since
+/// 2026-09-07 it also publishes: turns, interrupts, stops, and the umbrella's
+/// name, goal and closure. Every publish is settled by the relay's `OK` and
+/// then by the provider's signed receipt, never by this page's own optimism.
 class CodingSessionPage extends HookConsumerWidget {
   /// The channel the session lives in.
   final String channelId;
@@ -46,6 +54,54 @@ class CodingSessionPage extends HookConsumerWidget {
     final binding = ref.watch(codingSessionObserverBindingProvider);
     final snapshot = binding.watch(ref, channelId);
     final session = snapshot.sessionFor(sessionKey);
+    final restoredDraft = useValueNotifier<_RestoredDraft?>(null);
+
+    final standing = session == null
+        ? CodingSessionSteerStanding.founderUnresolved
+        : codingSessionSteerStanding(
+            session: session,
+            myPubkey: binding.signerPubkey(ref),
+            relayAcceptedMine: binding
+                .watchSteerAccepted(ref)
+                .contains(session.key),
+          );
+    final maySteer = session != null && codingSessionMaySteer(standing);
+
+    // The rows this device is still owed an answer on, settled against the
+    // receipts the trust gate accepted (D4). A settled row leaves the store
+    // after the frame, never during a build.
+    final pendingViews = <CodingSessionPendingTurnView>[];
+    if (session != null) {
+      final pending = binding.watchPendingTurns(ref);
+      for (final execution in session.executions) {
+        if (!execution.isCurrentGeneration) continue;
+        for (final turn in pending.forExecution(
+          channelId,
+          execution.executionKey,
+        )) {
+          pendingViews.add(
+            settleCodingSessionPendingTurn(
+              turn,
+              snapshot.turnReceiptsByCommandId[turn.commandId] ?? const [],
+              currentGeneration: execution.target.generation,
+            ),
+          );
+        }
+      }
+    }
+    final settledKeys = [
+      for (final view in pendingViews)
+        if (view.settled) view.turn.key,
+    ];
+    useEffect(() {
+      if (settledKeys.isEmpty) return null;
+      Future<void>.microtask(() {
+        for (final key in settledKeys) {
+          binding.forgetPendingTurn(ref, key);
+        }
+      });
+      return null;
+    }, [settledKeys.join('\n')]);
 
     return FrostedScaffold(
       backgroundColor: context.colors.surface,
@@ -54,6 +110,10 @@ class CodingSessionPage extends HookConsumerWidget {
           session?.displayName ?? 'Coding session',
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          if (session != null && maySteer)
+            _SessionActionsMenu(session: session, binding: binding),
+        ],
       ),
       body: Column(
         children: [
@@ -64,10 +124,49 @@ class CodingSessionPage extends HookConsumerWidget {
               child: _CodingSessionBody(
                 snapshot: snapshot,
                 session: session,
+                standing: standing,
                 onRetry: () => binding.refresh(ref, channelId),
+                pendingRows: [
+                  for (final view in pendingViews)
+                    if (!view.settled)
+                      _PendingTurnRow(
+                        key: ValueKey(
+                          'coding-session-pending-${view.turn.commandId}',
+                        ),
+                        view: view,
+                        onDismiss: () =>
+                            binding.forgetPendingTurn(ref, view.turn.key),
+                        onEdit: () {
+                          restoredDraft.value = _RestoredDraft(
+                            view.turn.draft,
+                            executionKey: view.turn.executionKey,
+                          );
+                          binding.forgetPendingTurn(ref, view.turn.key);
+                        },
+                        onReaddress: view.readdressGeneration == null
+                            ? null
+                            : () {
+                                // The successor generation shares the
+                                // execution key, so the composer's target
+                                // resolves to it; the words come back too.
+                                restoredDraft.value = _RestoredDraft(
+                                  view.turn.draft,
+                                  executionKey: view.turn.executionKey,
+                                );
+                                binding.forgetPendingTurn(ref, view.turn.key);
+                              },
+                      ),
+                ],
               ),
             ),
           ),
+          if (session != null)
+            _SessionComposer(
+              session: session,
+              binding: binding,
+              standing: standing,
+              restoredDraft: restoredDraft,
+            ),
         ],
       ),
     );
@@ -77,12 +176,18 @@ class CodingSessionPage extends HookConsumerWidget {
 class _CodingSessionBody extends StatelessWidget {
   final CodingSessionObserverSnapshot snapshot;
   final CodingSessionUmbrella? session;
+  final CodingSessionSteerStanding standing;
   final Future<void> Function() onRetry;
+
+  /// Turns this device sent that no receipt has settled yet.
+  final List<Widget> pendingRows;
 
   const _CodingSessionBody({
     required this.snapshot,
     required this.session,
+    required this.standing,
     required this.onRetry,
+    required this.pendingRows,
   });
 
   @override
@@ -143,7 +248,7 @@ class _CodingSessionBody extends StatelessWidget {
           icon: LucideIcons.listTree,
           text: refusedByKind,
         ),
-      if (blocks.isEmpty)
+      if (blocks.isEmpty && pendingRows.isEmpty)
         const _SessionNotice(
           key: ValueKey('coding-session-no-transcript'),
           icon: LucideIcons.fileText,
@@ -156,7 +261,9 @@ class _CodingSessionBody extends StatelessWidget {
             block: block,
             showLabel: blocks.length > 1 || resolved.executions.length > 1,
           ),
-      const _ReadOnlyFooter(),
+      ...pendingRows,
+      if (!codingSessionMaySteer(standing))
+        _SteerDisclosure(standing: standing),
     ];
 
     return ListView.builder(

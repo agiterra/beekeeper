@@ -49,27 +49,3 @@ class _SessionNotice extends StatelessWidget {
     );
   }
 }
-
-/// The line every session page ends with.
-class _ReadOnlyFooter extends StatelessWidget {
-  const _ReadOnlyFooter();
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    key: const ValueKey('coding-session-read-only'),
-    padding: const EdgeInsets.only(top: Grid.xs),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(LucideIcons.eye, size: 14, color: context.colors.onSurfaceVariant),
-        const SizedBox(width: Grid.xxs),
-        Text(
-          codingSessionReadOnlyLabel,
-          style: context.textTheme.bodySmall?.copyWith(
-            color: context.colors.onSurfaceVariant,
-          ),
-        ),
-      ],
-    ),
-  );
-}

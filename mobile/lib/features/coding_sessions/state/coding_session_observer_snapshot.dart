@@ -77,6 +77,16 @@ class CodingSessionObserverSnapshot {
   /// read [CodingSessionReachabilityKind.unknown].
   final bool leasesRead;
 
+  /// Accepted turn-stage receipts (44224 `turn_*`), keyed by the `commandId`
+  /// they answer, in signed order.
+  ///
+  /// Taken from the trust gate's accepted list, never from raw events: a
+  /// receipt settles a pending turn only if the target's provider signed it.
+  /// The fold ignores these for status (a `turn_refused` naming a stale
+  /// generation must not conjure one); the composer reads them to settle the
+  /// rows it sent (D4).
+  final Map<String, List<CodingSessionReceipt>> turnReceiptsByCommandId;
+
   const CodingSessionObserverSnapshot({
     required this.channelId,
     required this.view,
@@ -90,6 +100,7 @@ class CodingSessionObserverSnapshot {
     required this.signaturesVerified,
     required this.lastError,
     required this.leasesRead,
+    this.turnReceiptsByCommandId = const {},
   });
 
   /// The state before anything has been read.
@@ -105,7 +116,8 @@ class CodingSessionObserverSnapshot {
        truncatedAt1000 = false,
        evictedByGeneration = const {},
        signaturesVerified = null,
-       leasesRead = false;
+       leasesRead = false,
+       turnReceiptsByCommandId = const {};
 
   /// Project a folded [view] into a snapshot.
   factory CodingSessionObserverSnapshot.fromView(
@@ -130,6 +142,11 @@ class CodingSessionObserverSnapshot {
         blocks.putIfAbsent(block.target.key, () => []).add(block);
       }
     }
+    final turnReceipts = <String, List<CodingSessionReceipt>>{};
+    for (final receipt in view.facts.receipts) {
+      if (!receipt.isTurnStage) continue;
+      turnReceipts.putIfAbsent(receipt.commandId, () => []).add(receipt);
+    }
     return CodingSessionObserverSnapshot(
       channelId: view.channelId,
       view: view,
@@ -148,6 +165,10 @@ class CodingSessionObserverSnapshot {
       signaturesVerified: view.signaturesVerified,
       lastError: lastError,
       leasesRead: view.leasesRead,
+      turnReceiptsByCommandId: Map.unmodifiable({
+        for (final entry in turnReceipts.entries)
+          entry.key: List<CodingSessionReceipt>.unmodifiable(entry.value),
+      }),
     );
   }
 
@@ -169,6 +190,7 @@ class CodingSessionObserverSnapshot {
     signaturesVerified: signaturesVerified,
     lastError: clearError ? null : (lastError ?? this.lastError),
     leasesRead: leasesRead,
+    turnReceiptsByCommandId: turnReceiptsByCommandId,
   );
 
   /// True once a read has produced a view.

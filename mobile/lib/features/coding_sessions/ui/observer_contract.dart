@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../../shared/relay/relay_provider.dart';
 import '../domain/coding_sessions_domain.dart';
 import '../state/coding_sessions_state.dart' as state;
 
@@ -78,6 +79,11 @@ class CodingSessionObserverSnapshot {
   /// "nobody answering" — see D8.
   final Map<String, CodingSessionReachability> reachabilityBySession;
 
+  /// Accepted turn-stage receipts by the `commandId` they answer, in signed
+  /// order — what settles a turn this device sent (D4). Only receipts the
+  /// trust gate accepted reach here.
+  final Map<String, List<CodingSessionReceipt>> turnReceiptsByCommandId;
+
   const CodingSessionObserverSnapshot({
     required this.channelId,
     this.sessions = const [],
@@ -90,6 +96,7 @@ class CodingSessionObserverSnapshot {
     this.signaturesVerified,
     this.lastError,
     this.reachabilityBySession = const {},
+    this.turnReceiptsByCommandId = const {},
   });
 
   /// How many events this device dropped across the whole read.
@@ -219,6 +226,24 @@ abstract interface class CodingSessionObserverBinding {
 
   /// Re-run the history read for [channelId].
   Future<void> refresh(WidgetRef ref, String channelId);
+
+  /// This device's signing pubkey, or `null` when it holds no key.
+  String? signerPubkey(WidgetRef ref);
+
+  /// The commands the pages may publish into [channelId].
+  state.CodingSessionCommands commands(WidgetRef ref, String channelId);
+
+  /// Turns this device sent and has not yet seen answered.
+  state.CodingSessionPendingTurns watchPendingTurns(WidgetRef ref);
+
+  /// Forget a pending turn: it settled, or its words went back to the editor.
+  void forgetPendingTurn(WidgetRef ref, String key);
+
+  /// Session keys the relay accepted a command from this device on, this run.
+  Set<String> watchSteerAccepted(WidgetRef ref);
+
+  /// The relay accepted a command on [sessionKey].
+  void markSteerAccepted(WidgetRef ref, String sessionKey);
 }
 
 /// The binding used when nothing has been wired in.
@@ -245,6 +270,27 @@ final class UnboundCodingSessionObserverBinding
 
   @override
   Future<void> refresh(WidgetRef ref, String channelId) async {}
+
+  @override
+  String? signerPubkey(WidgetRef ref) => null;
+
+  @override
+  state.CodingSessionCommands commands(WidgetRef ref, String channelId) =>
+      ref.read(state.codingSessionCommandsProvider(channelId));
+
+  @override
+  state.CodingSessionPendingTurns watchPendingTurns(WidgetRef ref) =>
+      ref.watch(state.pendingTurnsProvider);
+
+  @override
+  void forgetPendingTurn(WidgetRef ref, String key) =>
+      ref.read(state.pendingTurnsProvider.notifier).forget(key);
+
+  @override
+  Set<String> watchSteerAccepted(WidgetRef ref) => const {};
+
+  @override
+  void markSteerAccepted(WidgetRef ref, String sessionKey) {}
 }
 
 /// The binding that forwards to the real relay observer.
@@ -268,6 +314,29 @@ final class RelayCodingSessionObserverBinding
       .read(state.codingSessionChannelObserverProvider(channelId).notifier)
       .refresh();
 
+  @override
+  String? signerPubkey(WidgetRef ref) => ref.watch(myPubkeyProvider);
+
+  @override
+  state.CodingSessionCommands commands(WidgetRef ref, String channelId) =>
+      ref.read(state.codingSessionCommandsProvider(channelId));
+
+  @override
+  state.CodingSessionPendingTurns watchPendingTurns(WidgetRef ref) =>
+      ref.watch(state.pendingTurnsProvider);
+
+  @override
+  void forgetPendingTurn(WidgetRef ref, String key) =>
+      ref.read(state.pendingTurnsProvider.notifier).forget(key);
+
+  @override
+  Set<String> watchSteerAccepted(WidgetRef ref) =>
+      ref.watch(state.steerAcceptedProvider);
+
+  @override
+  void markSteerAccepted(WidgetRef ref, String sessionKey) =>
+      ref.read(state.steerAcceptedProvider.notifier).accept(sessionKey);
+
   static CodingSessionObserverSnapshot _project(
     state.CodingSessionObserverSnapshot read,
   ) {
@@ -287,6 +356,7 @@ final class RelayCodingSessionObserverBinding
         for (final session in read.sessions)
           session.key: read.reachabilityFor(session, now: now),
       },
+      turnReceiptsByCommandId: read.turnReceiptsByCommandId,
     );
   }
 

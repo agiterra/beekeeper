@@ -16,6 +16,7 @@ export 'coding_session_decoders.dart';
 export 'coding_session_fold.dart';
 export 'coding_session_keys.dart';
 export 'coding_session_models.dart';
+export 'coding_session_pending_turn.dart';
 export 'coding_session_session_decoders.dart';
 export 'coding_session_signature.dart';
 export 'coding_session_target.dart';

@@ -1,7 +1,13 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:buzz/features/coding_sessions/state/coding_sessions_state.dart'
+    show CodingSessionCommands, CodingSessionPendingTurns, pendingTurnsProvider;
 import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
+import 'package:buzz/shared/relay/signed_event_relay.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:hooks_riverpod/misc.dart';
+import 'package:nostr/nostr.dart' as nostr;
+
+import '../../../helpers/recording_relay_session.dart';
 
 const testChannelId = 'channel-1';
 const testSignerPubkey =
@@ -10,10 +16,31 @@ const testOperatorPubkey =
     '11111111222222223333333344444444555555556666666677777777dddddddd';
 
 /// A binding that hands the pages a fixed snapshot and counts refreshes.
+///
+/// Publishing goes through a real [CodingSessionCommands] over a
+/// [RecordingRelaySessionNotifier], signed with a throwaway key, so a test
+/// can assert the exact event a control produced. [signerPubkey] is what the
+/// pages *believe* this device's key is — it defaults to none, which keeps
+/// the composer hidden; pass [testSignerPubkey] to read as the founder of
+/// [testUmbrella].
 class FakeObserverBinding implements CodingSessionObserverBinding {
-  FakeObserverBinding(this.snapshot);
+  FakeObserverBinding(
+    this.snapshot, {
+    String? signerPubkey,
+    Set<String> steerAccepted = const {},
+    List<Object> publishResults = const [],
+  }) : _signerPubkey = signerPubkey,
+       steerAccepted = {...steerAccepted},
+       relay = RecordingRelaySessionNotifier(publishResults: publishResults);
 
-  final CodingSessionObserverSnapshot snapshot;
+  /// What the pages read; reassign and pump to simulate a new relay read.
+  CodingSessionObserverSnapshot snapshot;
+  final String? _signerPubkey;
+  final Set<String> steerAccepted;
+
+  /// Every event the pages published, in order.
+  final RecordingRelaySessionNotifier relay;
+  final String _nsec = nostr.Keys.generate().nsec;
   int refreshCount = 0;
 
   @override
@@ -23,6 +50,34 @@ class FakeObserverBinding implements CodingSessionObserverBinding {
   @override
   Future<void> refresh(WidgetRef ref, String channelId) async {
     refreshCount++;
+  }
+
+  @override
+  String? signerPubkey(WidgetRef ref) => _signerPubkey;
+
+  @override
+  CodingSessionCommands commands(WidgetRef ref, String channelId) =>
+      CodingSessionCommands(
+        channelId: channelId,
+        relay: SignedEventRelay(session: relay, nsec: _nsec),
+        isDeliveryValid: () => true,
+        pending: ref.read(pendingTurnsProvider.notifier),
+      );
+
+  @override
+  CodingSessionPendingTurns watchPendingTurns(WidgetRef ref) =>
+      ref.watch(pendingTurnsProvider);
+
+  @override
+  void forgetPendingTurn(WidgetRef ref, String key) =>
+      ref.read(pendingTurnsProvider.notifier).forget(key);
+
+  @override
+  Set<String> watchSteerAccepted(WidgetRef ref) => steerAccepted;
+
+  @override
+  void markSteerAccepted(WidgetRef ref, String sessionKey) {
+    steerAccepted.add(sessionKey);
   }
 }
 
@@ -152,6 +207,7 @@ CodingSessionObserverSnapshot testSnapshot({
   String? lastError,
   CodingSessionReadCounts counts = const CodingSessionReadCounts(),
   Map<String, CodingSessionReachability> reachabilityBySession = const {},
+  Map<String, List<CodingSessionReceipt>> turnReceiptsByCommandId = const {},
 }) {
   final resolved = sessions ?? [testUmbrella()];
   final blocks = <String, List<CodingSessionTranscriptBlock>>{};
@@ -180,5 +236,29 @@ CodingSessionObserverSnapshot testSnapshot({
     signaturesVerified: signaturesVerified,
     lastError: lastError,
     reachabilityBySession: reachabilityBySession,
+    turnReceiptsByCommandId: turnReceiptsByCommandId,
   );
 }
+
+/// A turn-stage receipt answering [commandId] for [target].
+CodingSessionReceipt testTurnReceipt({
+  required String commandId,
+  required CodingSessionReceiptStatus status,
+  CodingSessionTarget? target,
+  String? code,
+  String? message,
+  int createdAt = 2000,
+  String? eventId,
+}) => CodingSessionReceipt(
+  ref: testRef(
+    eventId: eventId ?? 'receipt-$commandId-${status.wire}',
+    createdAt: createdAt,
+  ),
+  commandId: commandId,
+  status: status,
+  session: target ?? testTarget(),
+  error: code == null
+      ? null
+      : CodingSessionReceiptError(code: code, message: message ?? ''),
+  turnId: status == CodingSessionReceiptStatus.turnStarted ? 'turn-x' : null,
+);
