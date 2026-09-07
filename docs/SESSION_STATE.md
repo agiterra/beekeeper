@@ -26,6 +26,18 @@ unresolved identity → editable founder → denied viewer. All 26 focused tests
 TypeScript, formatting, file-size checks and the full 8,282-test desktop suite
 pass (`composer-authority-focused.log`, `composer-access-desktop-tests.log`,
 `composer-access-size.log` in the September 6 validation directory).
+Disclosure repair `1a070db69` was packaged and installed to Beekeeper Dev.app;
+the bundled CLI reports `1a070db6`, built `2026-09-07T00:24:02Z`. Signature,
+sidecar and role resource checks pass (`desktop-access-fix-bundle.log`). Prior
+bundle is retained as `~/Applications/Beekeeper Dev.app.before-access-fix`.
+The idle app was restarted; the new process reached its dashboard after the
+local Keychain prompt. No permission grants were changed. After the restart,
+Project Structure Review correctly showed Can control but Disconnected;
+Reconnect resumed the existing ACP session as generation 2 at
+`2026-09-07T00:26:48Z` (provider log: `continuity=Resumed`, command
+`csl-1e604a71-5755-422e-8e02-6ba985970581`). The final live UI shows Idle,
+Can control and an editable “Send a message…” composer with the earlier
+summary and follow-up response retained.
 
 Subsequent live UI acceptance: Brian identified the session by Beekeeper /
 #Beekeeper sessions / Claude Agent Acp generation 1 / provider `1958c6c448…176b9644`.
