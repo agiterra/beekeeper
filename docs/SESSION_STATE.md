@@ -7,13 +7,15 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
-### Continuation checkpoint (September 7 — preparing shipment)
+### Continuation checkpoint (September 7 — shipped to main)
 
 Worktree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
-`work/2030-workspace-foundation`. Product code through `1a070db69`; subsequent
-commits record acceptance. Main has not been updated and this branch has not
-been pushed. The original main checkout remains separate. Installed and
-running app: `~/Applications/Beekeeper Dev.app`, built from `1a070db69`.
+`work/2030-workspace-foundation`. Product code shipped to canonical main at
+`66e347a579eb5c8391ef5672b57d888e73b890b1`; the original main checkout was
+fast-forwarded to the same commit. The relay accepted the push after every
+pre-push check passed (`ship-push.log`). Installed and running app remains
+`~/Applications/Beekeeper Dev.app`, built from pre-rebase `1a070db69`; the
+new directory feedback repair is in shipped source, not yet in that local app.
 The latest live acceptance is an editable Can control composer in Project
 Structure Review after reconnecting the same execution as generation 2.
 Both its read-only summary and a follow-up reply were verified in the UI.
@@ -26,8 +28,7 @@ The new unseated execution is founded by Keystone, its command signer;
 Brian's control and sidebar visibility remain separate acceptance questions.
 Next: verify one available subscription and independent
 threads (thread isolation is still default-off). Exercise the existing explicit
-teammate response policy without sending Andy an unsolicited message. Finish
-full desktop smoke before main landing; then follow the delivery plan's shared
+teammate response policy without sending Andy an unsolicited message. Full desktop smoke and main landing are complete; follow the delivery plan's shared
 role evolution, deterministic CI notification and cross-machine continuation
 increments. Do not rebuild a second orchestration mechanism or silently mark
 those later increments delivered.
@@ -80,8 +81,9 @@ ship-dm-publish-first, ship-channel-membership, ship-model-picker,
 ship-worktree-source, ship-rail-emoji-fixed, ship-mentions, and
 ship-where-to-run logs. Additional agent/profile integration coverage: 68
 cases passed. Logs live in the existing September 6 validation directory.
-The source is validated for shipment; relay push confirmation is recorded
-separately below when available.
+The relay accepted `66e347a57` on main after the pre-push floor passed
+(284.83 seconds; `ship-push.log`). This records source shipment, not a claim
+that the relay deployment or a new desktop bundle has completed.
 
 ### Investigation and evidence history
 
