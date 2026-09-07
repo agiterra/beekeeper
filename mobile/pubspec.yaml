@@ -43,6 +43,7 @@ dependencies:
   path_provider: ^2.1.6
   share_plus: ^13.3.0
   local_auth: ^3.0.2
+  xterm: ^4.0.0
 
 dev_dependencies:
   flutter_test:

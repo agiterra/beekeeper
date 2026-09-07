@@ -26,7 +26,9 @@ Future<void> _pump(
           ),
           myPubkeyProvider.overrideWithValue(viewer),
         ],
-        child: TerminalsPage(onOpen: onOpen),
+        child: onOpen == null
+            ? const TerminalsPage.inert()
+            : TerminalsPage(onOpen: onOpen),
       ),
     ),
   );

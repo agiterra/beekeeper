@@ -4,6 +4,7 @@ import 'package:buzz/features/profile/user_cache_provider.dart';
 import 'package:buzz/features/profile/user_profile.dart';
 import 'package:buzz/features/projects/domain/project_models.dart';
 import 'package:buzz/features/projects/state/projects_provider.dart';
+import 'package:buzz/features/projects/ui/project_page.dart';
 import 'package:buzz/features/terminals/domain/terminals_domain.dart';
 import 'package:buzz/features/terminals/state/terminals_index_provider.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
@@ -160,6 +161,7 @@ List<Override> projectOverrides({
   List<Channel> channels = const [],
   Map<String, UserProfile> users = const {},
   String? viewerPubkey = testViewer,
+  ProjectTerminalOpener? terminalOpener,
 }) => [
   projectsProvider.overrideWith(() => FakeProjectsNotifier(projects)),
   terminalsIndexProvider.overrideWith(
@@ -168,4 +170,5 @@ List<Override> projectOverrides({
   channelsProvider.overrideWith(() => FakeChannelsNotifier(channels)),
   userCacheProvider.overrideWith(() => FakeUserCacheNotifier(users)),
   myPubkeyProvider.overrideWithValue(viewerPubkey),
+  projectTerminalOpenerProvider.overrideWithValue(terminalOpener),
 ];

@@ -22,6 +22,7 @@ import '../../coding_sessions/ui/observer_contract.dart';
 import '../../profile/user_cache_provider.dart';
 import '../../terminals/domain/terminals_domain.dart';
 import '../../terminals/state/terminals_index_provider.dart';
+import '../../terminals/ui/terminal_observe_page.dart';
 import '../../terminals/ui/terminal_row.dart';
 import '../domain/project_models.dart';
 import '../state/projects_provider.dart';
@@ -30,16 +31,19 @@ import 'projects_page.dart';
 part 'project_page/channels.dart';
 part 'project_page/terminals.dart';
 
-/// Opens a terminal from a project page; wired by the observe slice.
-///
-/// Until then the rows are inert, which the row itself makes visible (no
-/// chevron) rather than promising a page that does not exist.
+/// Opens a terminal from a project page.
 typedef ProjectTerminalOpener =
     void Function(BuildContext context, RemoteTerminal terminal);
 
-/// The opener the project page uses; `null` leaves terminal rows inert.
+/// The opener the project page uses: the observe page. Tests override it
+/// with `null` to keep rows inert, which the row shows (no chevron).
 final projectTerminalOpenerProvider = Provider<ProjectTerminalOpener?>(
-  (ref) => null,
+  (ref) =>
+      (context, terminal) => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => TerminalObservePage(terminal: terminal),
+        ),
+      ),
 );
 
 /// One project: its channels with their coding sessions, and its terminals.

@@ -58,6 +58,15 @@ class ObserveStream {
   /// True once any snapshot has painted (a resync-snap must clear first).
   bool _painted = false;
 
+  /// Treat whatever arrives next as arriving after a gap.
+  ///
+  /// For an observer that was away (the app backgrounded, the socket
+  /// dropped): the owner expired its watch, so diffs are unsafe until the
+  /// next snapshot repaints, and a restarted owner may be on a new epoch.
+  void markGap() {
+    if (_epoch != null) _awaitingSnap = true;
+  }
+
   /// Fold [frame] in and say what to do with it.
   ObserveAction apply(ShellFrame frame) {
     final epochChanged = _epoch != null && frame.epoch != _epoch;

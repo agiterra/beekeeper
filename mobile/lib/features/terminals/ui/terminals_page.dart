@@ -11,10 +11,20 @@ import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
 import '../domain/terminals_domain.dart';
 import '../state/terminals_index_provider.dart';
+import 'terminal_observe_page.dart';
 import 'terminal_row.dart';
 
 /// The line shown when the relay answered and nobody is sharing a terminal.
 const terminalsEmptyLabel = 'Nobody is sharing a terminal right now';
+
+/// Push the observe page for [terminal].
+void openTerminalObservePage(BuildContext context, RemoteTerminal terminal) {
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => TerminalObservePage(terminal: terminal),
+    ),
+  );
+}
 
 /// Every shared terminal this reader may see, grouped by project address.
 ///
@@ -29,15 +39,20 @@ class TerminalsPage extends ConsumerWidget {
   /// Resolves an owner pubkey to a display name; falls back to a short key.
   final String Function(String ownerPubkey)? ownerLabel;
 
-  /// Opens a terminal; `null` leaves the rows inert.
+  /// Opens a terminal; defaults to the observe page. Pass
+  /// [TerminalsPage.inert] to leave the rows inert.
   final void Function(BuildContext context, RemoteTerminal terminal)? onOpen;
 
   const TerminalsPage({
     super.key,
     this.projectLabel,
     this.ownerLabel,
-    this.onOpen,
+    this.onOpen = openTerminalObservePage,
   });
+
+  /// A page whose rows open nothing.
+  const TerminalsPage.inert({super.key, this.projectLabel, this.ownerLabel})
+    : onOpen = null;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
