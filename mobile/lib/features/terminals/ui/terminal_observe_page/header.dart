@@ -5,6 +5,7 @@ class _ObserveHeader extends StatelessWidget {
   final String ownerName;
   final String? role;
   final bool closed;
+  final bool canType;
   final ShellObserverStatus status;
   final ShellDims dims;
   final String? watchError;
@@ -13,6 +14,7 @@ class _ObserveHeader extends StatelessWidget {
     required this.ownerName,
     required this.role,
     required this.closed,
+    required this.canType,
     required this.status,
     required this.dims,
     required this.watchError,
@@ -45,15 +47,21 @@ class _ObserveHeader extends StatelessWidget {
             padding: const EdgeInsets.only(top: Grid.quarter),
             child: Row(
               children: [
-                Icon(LucideIcons.eye, size: 14, color: colors.onSurfaceVariant),
+                Icon(
+                  canType ? LucideIcons.keyboard : LucideIcons.eye,
+                  size: 14,
+                  color: colors.onSurfaceVariant,
+                ),
                 const SizedBox(width: Grid.xxs),
                 Expanded(
                   child: Text(
                     closed
                         ? 'The owner closed or unshared this terminal'
+                        : canType
+                        ? '$role — your keystrokes go to the owner’s terminal'
                         : role == null
                         ? 'Read-only — you are observing this session'
-                        : '$role — read-only on this device',
+                        : '$role — read-only',
                     key: const ValueKey('terminal-observe-role'),
                     style: context.textTheme.bodySmall?.copyWith(
                       color: colors.onSurfaceVariant,

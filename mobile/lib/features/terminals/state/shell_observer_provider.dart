@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -108,23 +110,57 @@ class ShellObserverState {
   /// The last failure to publish a watch, verbatim.
   final String? lastWatchError;
 
+  /// The relay's verbatim refusal of an input event (`restricted: …`).
+  ///
+  /// NIP-ST says a refusal is a revocation: the roster no longer names this
+  /// key a collaborator, or the session closed. The page drops the input
+  /// bar and shows the words.
+  final String? inputRefused;
+
+  /// Until when input is paused after a `rate-limited:` answer.
+  ///
+  /// Not a revocation — the quota is per key and shared with the paired
+  /// desktop — so the bar stays and says "paused", never "revoked".
+  final DateTime? inputPausedUntil;
+
+  /// How many input events this observer published.
+  final int inputsSent;
+
   const ShellObserverState({
     required this.status,
     this.framesApplied = 0,
     this.lastWatchError,
+    this.inputRefused,
+    this.inputPausedUntil,
+    this.inputsSent = 0,
   });
+
+  /// True while a rate-limit pause is in force at [now].
+  bool inputPausedAt(DateTime now) {
+    final until = inputPausedUntil;
+    return until != null && now.isBefore(until);
+  }
 
   ShellObserverState copyWith({
     ShellObserverStatus? status,
     int? framesApplied,
     String? lastWatchError,
     bool clearWatchError = false,
+    String? inputRefused,
+    DateTime? inputPausedUntil,
+    bool clearInputPause = false,
+    int? inputsSent,
   }) => ShellObserverState(
     status: status ?? this.status,
     framesApplied: framesApplied ?? this.framesApplied,
     lastWatchError: clearWatchError
         ? null
         : (lastWatchError ?? this.lastWatchError),
+    inputRefused: inputRefused ?? this.inputRefused,
+    inputPausedUntil: clearInputPause
+        ? null
+        : (inputPausedUntil ?? this.inputPausedUntil),
+    inputsSent: inputsSent ?? this.inputsSent,
   );
 }
 
@@ -196,6 +232,67 @@ class ShellObserverNotifier extends Notifier<ShellObserverState> {
   Future<void> resync() {
     _relay ??= _makeRelay();
     return _publishWatch(ShellWatchAction.resync);
+  }
+
+  /// Sends are chained so chunks reach the relay in typing order.
+  Future<void> _sendChain = Future.value();
+
+  /// Type [bytes] into the owner's PTY (kind:24312), chunked and in order.
+  ///
+  /// Every EVENT counts against the human quota of 60 per minute, shared
+  /// with the paired desktop's key, so callers send whole lines or single
+  /// special keys — never a keystroke stream. A `restricted:` answer is a
+  /// revocation and is kept as [ShellObserverState.inputRefused]; a
+  /// `rate-limited:` answer pauses input for the relay's retry window and
+  /// is not.
+  Future<void> sendInput(Uint8List bytes) {
+    if (bytes.isEmpty || _disposed) return Future.value();
+    if (state.inputRefused != null) return Future.value();
+    if (state.inputPausedAt(DateTime.now())) return Future.value();
+    _relay ??= _makeRelay();
+    final chunks = chunkShellInput(bytes);
+    final send = _sendChain.then((_) => _publishChunks(chunks));
+    _sendChain = send.catchError((_) {});
+    return send;
+  }
+
+  /// Type one line: the text and a carriage return, as one event.
+  Future<void> sendLine(String line) =>
+      sendInput(Uint8List.fromList(utf8.encode('$line\r')));
+
+  Future<void> _publishChunks(List<Uint8List> chunks) async {
+    final relay = _relay;
+    if (relay == null) return;
+    for (final chunk in chunks) {
+      if (_disposed) return;
+      final event = buildShellInputEvent(
+        ownerPubkey: target.ownerPubkey,
+        sessionId: target.sessionId,
+        projectRef: target.projectRef,
+        bytes: chunk,
+      );
+      try {
+        await relay.submit(
+          kind: event.kind,
+          content: event.content,
+          tags: event.tags,
+        );
+        _emit(inputsSent: state.inputsSent + 1, clearInputPause: true);
+      } catch (error) {
+        final message = _message(error);
+        if (message.startsWith('rate-limited:')) {
+          final seconds =
+              parseRateLimitRetrySeconds(message) ??
+              RelayRateLimitGate.defaultRetrySeconds;
+          _emit(
+            inputPausedUntil: DateTime.now().add(Duration(seconds: seconds)),
+          );
+        } else {
+          _emit(inputRefused: message);
+        }
+        return;
+      }
+    }
   }
 
   SignedEventRelay _makeRelay() => SignedEventRelay(
@@ -342,6 +439,10 @@ class ShellObserverNotifier extends Notifier<ShellObserverState> {
     int? framesApplied,
     String? lastWatchError,
     bool clearWatchError = false,
+    String? inputRefused,
+    DateTime? inputPausedUntil,
+    bool clearInputPause = false,
+    int? inputsSent,
   }) {
     if (_disposed) return;
     state = state.copyWith(
@@ -349,6 +450,10 @@ class ShellObserverNotifier extends Notifier<ShellObserverState> {
       framesApplied: framesApplied,
       lastWatchError: lastWatchError,
       clearWatchError: clearWatchError,
+      inputRefused: inputRefused,
+      inputPausedUntil: inputPausedUntil,
+      clearInputPause: clearInputPause,
+      inputsSent: inputsSent,
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:buzz/features/terminals/state/shell_announce_head_provider.dart';
 import 'package:buzz/features/terminals/state/shell_observer_provider.dart';
@@ -119,6 +120,7 @@ Map<String, dynamic> _watchContent(NostrEvent event) =>
     jsonDecode(event.content) as Map<String, dynamic>;
 
 void main() {
+  inputTests();
   test('subscribes to the owner\'s frames and publishes a watch', () async {
     final h = _harness();
     final listener = h.container.listen(
@@ -351,5 +353,129 @@ void main() {
     final closed = container.read(shellAnnounceHeadProvider(target));
     expect(closed.hasRead, isTrue);
     expect(closed.terminal, isNull);
+  });
+}
+
+void inputTests() {
+  test(
+    'a line is one input event: the text plus a carriage return, base64',
+    () async {
+      final h = _harness();
+      final listener = h.container.listen(
+        shellObserverProvider(target),
+        (_, _) {},
+      );
+      addTearDown(listener.close);
+      await _settle();
+      final notifier = h.container.read(shellObserverProvider(target).notifier);
+
+      await notifier.sendLine('ls -la');
+
+      final inputs = h.relay.published.where((e) => e.kind == 24312).toList();
+      expect(inputs.length, 1);
+      expect(utf8.decode(base64.decode(inputs.single.content)), 'ls -la\r');
+      expect(inputs.single.tags, [
+        ['p', owner],
+        ['d', 's1'],
+        ['a', project],
+      ]);
+      expect(h.container.read(shellObserverProvider(target)).inputsSent, 1);
+    },
+  );
+
+  test('a large paste is chunked in order under the cap', () async {
+    final h = _harness();
+    final listener = h.container.listen(
+      shellObserverProvider(target),
+      (_, _) {},
+    );
+    addTearDown(listener.close);
+    await _settle();
+    final notifier = h.container.read(shellObserverProvider(target).notifier);
+    final big = List<int>.generate(13000, (i) => 0x61 + (i % 26));
+
+    await notifier.sendInput(Uint8List.fromList(big));
+
+    final inputs = h.relay.published.where((e) => e.kind == 24312).toList();
+    expect(inputs.length, 3);
+    final joined = inputs.expand((e) => base64.decode(e.content)).toList();
+    expect(joined, big);
+    for (final input in inputs) {
+      expect(input.content.length, lessThanOrEqualTo(8 * 1024));
+    }
+  });
+
+  test(
+    'a restricted answer is a revocation: kept verbatim, no more sends',
+    () async {
+      final h = _harness(
+        publishResults: [
+          // The first publish is the watch; the second is the input.
+          NostrEvent(
+            id: 'ok',
+            pubkey: owner,
+            createdAt: 1,
+            kind: 24310,
+            tags: const [],
+            content: '',
+            sig: '',
+          ),
+          Exception('restricted: not a collaborator on this session'),
+        ],
+      );
+      final listener = h.container.listen(
+        shellObserverProvider(target),
+        (_, _) {},
+      );
+      addTearDown(listener.close);
+      await _settle();
+      final notifier = h.container.read(shellObserverProvider(target).notifier);
+
+      await notifier.sendLine('whoami');
+      expect(
+        h.container.read(shellObserverProvider(target)).inputRefused,
+        'restricted: not a collaborator on this session',
+      );
+      final before = h.relay.published.length;
+      await notifier.sendLine('again');
+      expect(h.relay.published.length, before, reason: 'revoked: nothing sent');
+    },
+  );
+
+  test('a rate-limited answer pauses input for the relay\'s window and is '
+      'not a revocation', () async {
+    final h = _harness(
+      publishResults: [
+        NostrEvent(
+          id: 'ok',
+          pubkey: owner,
+          createdAt: 1,
+          kind: 24310,
+          tags: const [],
+          content: '',
+          sig: '',
+        ),
+        Exception('rate-limited: slow down, retry in 7s'),
+      ],
+    );
+    final listener = h.container.listen(
+      shellObserverProvider(target),
+      (_, _) {},
+    );
+    addTearDown(listener.close);
+    await _settle();
+    final notifier = h.container.read(shellObserverProvider(target).notifier);
+
+    await notifier.sendLine('make');
+    final state = h.container.read(shellObserverProvider(target));
+    expect(state.inputRefused, isNull);
+    expect(state.inputPausedAt(DateTime.now()), isTrue);
+    expect(
+      state.inputPausedUntil!.difference(DateTime.now()).inSeconds,
+      inInclusiveRange(5, 7),
+    );
+    final before = h.relay.published.length;
+    await notifier.sendLine('again');
+    expect(h.relay.published.length, before, reason: 'paused: nothing sent');
   });
 }

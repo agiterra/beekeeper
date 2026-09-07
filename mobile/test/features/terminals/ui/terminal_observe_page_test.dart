@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:buzz/features/terminals/domain/terminals_domain.dart';
 import 'package:buzz/features/terminals/state/shell_announce_head_provider.dart';
@@ -25,13 +27,27 @@ class FakeShellObserverNotifier extends ShellObserverNotifier {
   @override
   Stream<ShellTerminalWrite> get writes => controller.stream;
 
+  /// Every input the page asked to send, as raw bytes.
+  final List<Uint8List> sent = [];
+
   @override
   Future<void> resync() async {
     resyncCount++;
   }
 
+  @override
+  Future<void> sendInput(Uint8List bytes) async {
+    sent.add(bytes);
+  }
+
   void setStatus(ShellObserverStatus status) =>
       state = state.copyWith(status: status);
+
+  void setInputRefused(String message) =>
+      state = state.copyWith(inputRefused: message);
+
+  void setInputPausedUntil(DateTime until) =>
+      state = state.copyWith(inputPausedUntil: until);
 }
 
 class FakeShellAnnounceHeadNotifier extends ShellAnnounceHeadNotifier {
@@ -89,12 +105,13 @@ _pump(
 }
 
 void main() {
+  inputBarTests();
   testWidgets('shows whose terminal, the grid, the role and the status', (
     tester,
   ) async {
     await _pump(tester);
     expect(find.textContaining('’s terminal · 24x80'), findsOneWidget);
-    expect(find.text('Member — read-only on this device'), findsOneWidget);
+    expect(find.text('Member — read-only'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('terminal-observe-status-connecting')),
       findsOneWidget,
@@ -150,7 +167,10 @@ void main() {
       'read differently', (tester) async {
     await _pump(tester, viewer: testOwner);
     expect(
-      find.text('Yours, from another device — read-only on this device'),
+      find.text(
+        'Yours, from another device — your keystrokes go to the owner’s '
+        'terminal',
+      ),
       findsOneWidget,
     );
 
@@ -169,7 +189,7 @@ void main() {
       ),
     );
     expect(
-      find.text('Collaborator — read-only on this device'),
+      find.text('Collaborator — your keystrokes go to the owner’s terminal'),
       findsOneWidget,
     );
 
@@ -181,5 +201,115 @@ void main() {
       find.text('The owner closed or unshared this terminal'),
       findsOneWidget,
     );
+  });
+}
+
+void inputBarTests() {
+  ShellAnnounceHead collaboratorHead() => ShellAnnounceHead(
+    terminal: testTerminal(
+      roster: const [
+        ShellRosterEntry(
+          pubkey: testViewer,
+          role: ShellRosterRole.collaborator,
+        ),
+      ],
+    ),
+    hasRead: true,
+  );
+
+  testWidgets('a viewer or member gets no input bar; a collaborator does', (
+    tester,
+  ) async {
+    await _pump(tester, status: ShellObserverStatus.live);
+    expect(find.byKey(const ValueKey('terminal-input-bar')), findsNothing);
+    final readOnly = tester.widget<TerminalView>(find.byType(TerminalView));
+    expect(readOnly.readOnly, isTrue);
+
+    await _pump(
+      tester,
+      status: ShellObserverStatus.live,
+      head: collaboratorHead(),
+    );
+    expect(find.byKey(const ValueKey('terminal-input-bar')), findsOneWidget);
+    expect(
+      find.text('Collaborator — your keystrokes go to the owner’s terminal'),
+      findsOneWidget,
+    );
+    final typable = tester.widget<TerminalView>(find.byType(TerminalView));
+    expect(typable.readOnly, isFalse);
+    expect(typable.hardwareKeyboardOnly, isTrue);
+  });
+
+  testWidgets('the owner\'s own key may type from another device', (
+    tester,
+  ) async {
+    await _pump(tester, status: ShellObserverStatus.live, viewer: testOwner);
+    expect(find.byKey(const ValueKey('terminal-input-bar')), findsOneWidget);
+  });
+
+  testWidgets('a line is sent with Enter as one event; keys send their '
+      'sequences; nothing is echoed locally', (tester) async {
+    final h = await _pump(
+      tester,
+      status: ShellObserverStatus.live,
+      head: collaboratorHead(),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('terminal-input-field')),
+      'echo hi',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('terminal-input-send')));
+    await tester.pump();
+    expect(h.observer.sent.map(utf8.decode), ['echo hi\r']);
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('terminal-input-field')),
+    );
+    expect(field.controller!.text, isEmpty);
+    final view = tester.widget<TerminalView>(find.byType(TerminalView));
+    expect(view.terminal.buffer.getText().trim(), isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('terminal-key-^C')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('terminal-key-↑')));
+    await tester.pump();
+    expect(h.observer.sent.length, 3);
+    expect(h.observer.sent[1], [0x03]);
+    expect(utf8.decode(h.observer.sent[2]), '\x1b[A');
+  });
+
+  testWidgets('a refusal replaces the bar with the relay\'s words; a pause '
+      'disables it and says so', (tester) async {
+    final h = await _pump(
+      tester,
+      status: ShellObserverStatus.live,
+      head: collaboratorHead(),
+    );
+    h.observer.setInputRefused('restricted: not a collaborator');
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('terminal-input-refused')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Input refused — restricted: not a collaborator'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('terminal-input-field')), findsNothing);
+
+    final paused = await _pump(
+      tester,
+      status: ShellObserverStatus.live,
+      head: collaboratorHead(),
+    );
+    paused.observer.setInputPausedUntil(
+      DateTime.now().add(const Duration(seconds: 9)),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('terminal-input-paused')), findsOneWidget);
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('terminal-input-field')),
+    );
+    expect(field.enabled, isFalse);
   });
 }

@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -14,6 +18,7 @@ import '../state/shell_announce_head_provider.dart';
 import '../state/shell_observer_provider.dart';
 
 part 'terminal_observe_page/header.dart';
+part 'terminal_observe_page/input_bar.dart';
 
 /// The monospace face the emulator draws with; bundled with the app.
 const terminalFontFamily = 'GeistMono';
@@ -22,13 +27,17 @@ const terminalFontFamily = 'GeistMono';
 /// has to fit a phone in landscape at all.
 const terminalFontSize = 11.0;
 
-/// Watch another member's shared terminal (NIP-ST), read-only.
+/// Watch another member's shared terminal (NIP-ST), and type into it when
+/// the owner's roster says this key may.
 ///
 /// The grid keeps the owner's dimensions and scrolls sideways rather than
 /// reflowing — observers cannot resize, and reflowing would draw a screen
 /// the owner never saw. Nothing is claimed to be live until a frame arrives:
 /// the status chip says "Connecting…", then "LIVE", "Not streaming", or
-/// "Ended", from the frames alone.
+/// "Ended", from the frames alone. Input exists only when the *live*
+/// announce roster names this key a collaborator (or it is the owner's own
+/// key), so a revocation removes the bar without a reload; keystrokes are
+/// sent as whole lines or single keys, never streamed.
 class TerminalObservePage extends HookConsumerWidget {
   final ShellObserverTarget target;
 
@@ -89,15 +98,53 @@ class TerminalObservePage extends HookConsumerWidget {
     final label = ownerLabel ?? shortPubkey;
     final ownerName = label(target.ownerPubkey);
     final closed = head.hasRead && head.terminal == null;
+    final isOwner = me != null && me.toLowerCase() == target.ownerPubkey;
     final role = terminal == null
         ? null
-        : me != null && me.toLowerCase() == target.ownerPubkey
+        : isOwner
         ? 'Yours, from another device'
         : switch (terminal.roleOf(me)) {
             ShellRosterRole.collaborator => 'Collaborator',
             ShellRosterRole.viewer => 'Viewer',
             null => 'Member',
           };
+    // Typing needs the *live* head's word, not the row this page was opened
+    // from: a roster the owner revoked a minute ago must not still type.
+    final canType =
+        head.hasRead &&
+        head.terminal != null &&
+        head.terminal!.mayType(me) &&
+        observer.inputRefused == null &&
+        observer.status != ShellObserverStatus.ended &&
+        observer.status != ShellObserverStatus.offline;
+
+    // A hardware keyboard reaches the emulator's input handler; its output
+    // is coalesced and sent as one event, never a keystroke stream.
+    final pendingKeys = useRef(StringBuffer());
+    final flushTimer = useRef<Timer?>(null);
+    useEffect(() {
+      if (!canType) {
+        emulator.onOutput = null;
+        return null;
+      }
+      final notifier = ref.read(shellObserverProvider(target).notifier);
+      emulator.onOutput = (data) {
+        pendingKeys.value.write(data);
+        flushTimer.value ??= Timer(terminalInputCoalesce, () {
+          flushTimer.value = null;
+          final text = pendingKeys.value.toString();
+          pendingKeys.value.clear();
+          if (text.isNotEmpty) {
+            notifier.sendInput(Uint8List.fromList(utf8.encode(text)));
+          }
+        });
+      };
+      return () {
+        flushTimer.value?.cancel();
+        flushTimer.value = null;
+        emulator.onOutput = null;
+      };
+    }, [emulator, canType, target]);
 
     return FrostedScaffold(
       backgroundColor: context.colors.surface,
@@ -125,6 +172,7 @@ class TerminalObservePage extends HookConsumerWidget {
             ownerName: ownerName,
             role: role,
             closed: closed,
+            canType: canType,
             status: observer.status,
             dims: ShellDims(rows: rows.value, cols: cols.value),
             watchError: observer.lastWatchError,
@@ -134,8 +182,15 @@ class TerminalObservePage extends HookConsumerWidget {
               emulator: emulator,
               cols: cols.value,
               rows: rows.value,
+              canType: canType,
             ),
           ),
+          if (canType || observer.inputRefused != null)
+            _TerminalInputBar(
+              target: target,
+              emulator: emulator,
+              observer: observer,
+            ),
         ],
       ),
     );
@@ -148,10 +203,15 @@ class _TerminalGrid extends StatelessWidget {
   final int cols;
   final int rows;
 
+  /// Whether a hardware keyboard may type; the soft keyboard never opens
+  /// from a tap either way (`hardwareKeyboardOnly`).
+  final bool canType;
+
   const _TerminalGrid({
     required this.emulator,
     required this.cols,
     required this.rows,
+    required this.canType,
   });
 
   @override
@@ -175,7 +235,7 @@ class _TerminalGrid extends StatelessWidget {
             emulator,
             key: const ValueKey('terminal-observe-view'),
             autoResize: false,
-            readOnly: true,
+            readOnly: !canType,
             hardwareKeyboardOnly: true,
             textStyle: style,
             padding: const EdgeInsets.all(Grid.xs),
