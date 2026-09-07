@@ -78,7 +78,7 @@ import { NewCodingSessionReadiness } from "./NewCodingSessionReadiness";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
 import { NewCodingSessionPendingView } from "./NewCodingSessionPendingView";
-import { TeamReadinessCard } from "./TeamReadinessCard";
+import { NewCodingSessionRolesField } from "./NewCodingSessionRolesField";
 import {
   CodingSessionLaunchGoalNotes,
   CodingSessionLaunchSteps,
@@ -441,12 +441,18 @@ export function NewCodingSessionForm({
       }
     },
   });
+  // Roles are opt-in for a launch. Off, the project-roles readiness (a
+  // recorded checkout, a supervised provider, installed packs) neither
+  // gates Start nor shows: a session led by the person with no seats runs
+  // on none of it. On, the card and its gate are exactly what they were.
+  const [useRoles, setUseRoles] = React.useState(false);
   const readinessGate = teamReadinessLaunchGate({
     projectRef: projectContext?.projectRef ?? null,
     loading: teamReadiness.isLoading,
     error: teamReadiness.readError,
     readiness: teamReadiness.readiness,
     runtimeTarget: selectedTarget,
+    useRoles,
   });
 
   const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
@@ -509,10 +515,12 @@ export function NewCodingSessionForm({
     providerRefusal: newCodingSessionSeatModelBlocksCreate(seatedModel)
       ? seatedModel.note
       : null,
-    projectReadiness: projectContext?.projectRef
-      ? { allowed: readinessGate.allowed, reason: readinessGate.reason }
-      : null,
+    projectReadiness:
+      projectContext?.projectRef && useRoles
+        ? { allowed: readinessGate.allowed, reason: readinessGate.reason }
+        : null,
     projectReadinessUnknown:
+      useRoles &&
       projectContext?.projectRef !== undefined &&
       projectContext?.projectRef !== null &&
       (teamReadiness.isLoading || teamReadiness.readError !== null),
@@ -867,24 +875,13 @@ export function NewCodingSessionForm({
           />
 
           {projectContext?.projectRef ? (
-            <TeamReadinessCard
-              loading={teamReadiness.isLoading}
-              externalBusy={interactionLocked}
-              names={teamReadiness.names}
-              onBeginPrepare={() => void teamReadiness.beginPrepare()}
-              onCancelPrepare={teamReadiness.cancelPrepare}
-              onConfirmPrepare={() => void teamReadiness.confirmPrepare()}
-              onNameChange={teamReadiness.setName}
-              prepareError={teamReadiness.prepareError}
-              prepareWarning={teamReadiness.prepareWarning}
-              prepareSteps={teamReadiness.prepareSteps}
-              preparing={teamReadiness.isPreparing}
-              readError={teamReadiness.readError}
-              readiness={teamReadiness.readiness}
-              scan={teamReadiness.scan}
-              scanning={teamReadiness.isScanning}
-              selectedRoles={launchRoles}
+            <NewCodingSessionRolesField
+              disabled={interactionLocked}
+              launchRoles={launchRoles}
+              onUseRolesChange={setUseRoles}
               runtimeTarget={selectedTarget}
+              teamReadiness={teamReadiness}
+              useRoles={useRoles}
             />
           ) : null}
         </NewCodingSessionSetupDisclosure>

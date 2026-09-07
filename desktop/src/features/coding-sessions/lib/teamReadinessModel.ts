@@ -50,8 +50,17 @@ export function teamReadinessLaunchGate(input: {
   readiness: TeamReadinessResponse | null;
   /** The exact target selected by the create picker; omitted outside creation UI. */
   runtimeTarget?: NewCodingSessionTarget | null;
+  /**
+   * Whether the launch uses the project's role packs at all. A session led
+   * by the person, with no seats, needs no prepared roles: the checkout,
+   * the supervised provider and the role packs are what *seats* run on. When
+   * `false` the gate is open and the readiness facts are informational.
+   * Defaults to `true` so every existing caller keeps its gate.
+   */
+  useRoles?: boolean;
 }): TeamReadinessLaunchGate {
   if (input.projectRef === null) return { allowed: true, reason: null };
+  if (input.useRoles === false) return { allowed: true, reason: null };
   if (input.loading) {
     return {
       allowed: false,

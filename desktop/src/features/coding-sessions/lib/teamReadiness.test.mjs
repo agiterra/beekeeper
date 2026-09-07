@@ -89,6 +89,43 @@ test("Unknown blocks a project team launch and preserves the exact source remedy
   );
 });
 
+test("a launch that does not use roles is not gated by project readiness", () => {
+  // A session led by the person, with no seats, runs on none of the things
+  // readiness checks: no checkout to record, no provider to supervise, no
+  // packs to install. The card is informational then, and Start is open.
+  const response = readiness({
+    status: "blocked",
+    blockingCodes: ["CHECKOUT_NOT_RECORDED"],
+    facts: [
+      {
+        category: "checkout",
+        code: "CHECKOUT_NOT_RECORDED",
+        scope: "local",
+        state: "blocked",
+        summary: "No checkout is recorded for this project",
+        remedy: "Choose a checkout for this project.",
+      },
+    ],
+  });
+  const input = {
+    projectRef: response.projectRef,
+    loading: false,
+    error: null,
+    readiness: response,
+  };
+  assert.equal(teamReadinessLaunchGate(input).allowed, false);
+  assert.deepEqual(teamReadinessLaunchGate({ ...input, useRoles: false }), {
+    allowed: true,
+    reason: null,
+  });
+  // Unknown readiness is not a gate either when roles are off.
+  assert.equal(
+    teamReadinessLaunchGate({ ...input, readiness: null, useRoles: false })
+      .allowed,
+    true,
+  );
+});
+
 test("wire status Unknown or Blocked cannot be overruled by readyForFirstSession", () => {
   for (const status of ["unknown", "blocked"]) {
     const response = readiness({
