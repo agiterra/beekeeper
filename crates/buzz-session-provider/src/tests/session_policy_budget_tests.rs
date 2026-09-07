@@ -405,6 +405,26 @@ async fn a_grant_holders_policy_binds_a_create() {
         "an operator holding an accepted grant may set this umbrella's policy, and the create \
          that folded the grant must enforce it"
     );
+    let record = provider.state().sessions().next().expect("created session");
+    let channel_id = record.channel_id;
+    let target = record.target(&provider.config.instance_id);
+    assert!(
+        record
+            .granted_operators
+            .contains(&lead.public_key().to_hex()),
+        "create must hydrate the already-accepted grant onto its exact genesis-bearing record"
+    );
+    assert!(matches!(
+        lifecycle_decision_by(
+            &provider,
+            channel_id,
+            "resume-after-grant-before-create",
+            "session.resume",
+            &target,
+            &lead,
+        ),
+        LifecycleDecision::Resume(_)
+    ));
 
     relay.shutdown().await;
     server.abort();

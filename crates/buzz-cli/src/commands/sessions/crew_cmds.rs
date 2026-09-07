@@ -19,11 +19,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
     CodingSessionDelivery, TurnAttachment, ALLOWED_ATTACHMENT_MIMES, CODING_SESSION_COMMAND_SCHEMA,
     CODING_SESSION_COMMAND_TAG_VERSION, MAX_TURN_ATTACHMENTS,
 };
+use buzz_core::coding_session_genesis::CodingSessionGenesisPayload;
 use buzz_core::coding_session_identity::ProviderInstanceAlias;
 use buzz_core::coding_session_lifecycle_command::{
     validate_event_id_hex, validate_role_slug, validate_session_ref, CodingSessionLifecycleAction,
@@ -37,7 +39,10 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
 };
-use buzz_sdk::builders::{build_coding_session_command, build_coding_session_lifecycle_command};
+use buzz_sdk::builders::{
+    build_coding_session_command, build_coding_session_genesis,
+    build_coding_session_lifecycle_command,
+};
 use buzz_sdk::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
 };
@@ -558,6 +563,68 @@ fn readdress_report(plan: &ReaddressPlan) -> Value {
     })
 }
 
+#[derive(Debug)]
+struct CreatorOwnerGovernance {
+    session_ref: String,
+    genesis_ref: String,
+    owner_pubkey: String,
+    grant: Value,
+}
+
+/// Found a new umbrella and grant its creator's verified NIP-OA owner
+/// collaborator authority before dispatching an execution into it.
+///
+/// This path is reserved for a bare create. Explicit session coordinates mean
+/// the caller is joining an existing umbrella, where inferring a grant would
+/// cross the immutable founder boundary. Both setup writes precede the create,
+/// so a failed genesis or grant never leaves an ungoverned execution running.
+async fn prepare_creator_owner_governance(
+    client: &BuzzClient,
+    channel: Uuid,
+) -> Result<Option<CreatorOwnerGovernance>, CliError> {
+    let Some(owner_pubkey) = client.verified_auth_tag_owner_hex()? else {
+        return Ok(None);
+    };
+    let session_ref = Uuid::new_v4().to_string();
+    let payload = CodingSessionGenesisPayload::new(session_ref.clone());
+    let builder = build_coding_session_genesis(channel, &payload).map_err(sdk_err)?;
+    let event = client.sign_event_unchecked(builder)?;
+    let genesis_ref = event.id.to_hex();
+    let raw = client.submit_event(event).await.map_err(|error| {
+        CliError::Other(format!(
+            "creator-owner setup failed before session dispatch: session genesis {genesis_ref} was not confirmed: {error}"
+        ))
+    })?;
+    crate::commands::parse_write_response(&raw, "coding-session genesis already exists").map_err(
+        |error| {
+            CliError::Other(format!(
+                "creator-owner setup failed before session dispatch: session genesis {genesis_ref} was refused: {error}"
+            ))
+        },
+    )?;
+
+    let grant = super::submit_authority_transition_value(
+        client,
+        &channel.to_string(),
+        &genesis_ref,
+        CodingSessionAuthorityTransitionType::GrantOperator,
+        &owner_pubkey,
+    )
+    .await
+    .map_err(|error| {
+        CliError::Other(format!(
+            "session {session_ref} was founded as {genesis_ref}, but creator-owner collaborator grant for {owner_pubkey} failed; no session create was dispatched: {error}"
+        ))
+    })?;
+
+    Ok(Some(CreatorOwnerGovernance {
+        session_ref,
+        genesis_ref,
+        owner_pubkey,
+        grant,
+    }))
+}
+
 /// `bee sessions create` — publish one 44221 `session.create`.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_create(
@@ -610,9 +677,10 @@ pub async fn cmd_create(
         }
     }
     let initial_turn = brief.map(read_or_stdin).transpose()?;
-
     let command_id = Uuid::new_v4().to_string();
-    let payload = CodingSessionLifecycleCommandPayload {
+    let provider_instance_ref = ProviderInstanceAlias::from_wire(provider_instance)
+        .map_err(|error| CliError::Usage(format!("--provider-instance: {error}")))?;
+    let mut payload = CodingSessionLifecycleCommandPayload {
         schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.to_owned(),
         command_id: command_id.clone(),
         action: CodingSessionLifecycleAction::SessionCreate {
@@ -620,8 +688,7 @@ pub async fn cmd_create(
             repo_ref: repo.map(str::to_owned),
             session_ref: session_ref.map(str::to_owned),
             genesis_ref: genesis.map(str::to_owned),
-            provider_instance_ref: ProviderInstanceAlias::from_wire(provider_instance)
-                .map_err(|error| CliError::Usage(format!("--provider-instance: {error}")))?,
+            provider_instance_ref,
             provider_authority_pubkey: provider_authority.to_owned(),
             model: model.map(str::to_owned),
             title: title.map(str::to_owned),
@@ -635,15 +702,80 @@ pub async fn cmd_create(
             routing: None,
         },
     };
+    // Validate every caller-controlled create field before the first setup
+    // write. The managed path below must not found an umbrella for a command
+    // the lifecycle builder would later refuse.
+    build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
+
+    // A bare create signed by a managed agent is a new umbrella, not a join.
+    // Its attested owner receives an explicit collaborator grant while the
+    // agent remains the immutable founder. Explicit coordinates bypass this
+    // path: authority is never inferred for a join.
+    let governance = if session_ref.is_none() && genesis.is_none() {
+        prepare_creator_owner_governance(client, channel).await?
+    } else {
+        None
+    };
+    if let (
+        Some(governance),
+        CodingSessionLifecycleAction::SessionCreate {
+            session_ref,
+            genesis_ref,
+            ..
+        },
+    ) = (governance.as_ref(), &mut payload.action)
+    {
+        *session_ref = Some(governance.session_ref.clone());
+        *genesis_ref = Some(governance.genesis_ref.clone());
+    }
     let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
     let event = client.sign_event_unchecked(builder)?;
+    let mut extra = json!({ "commandId": command_id, "seated": false });
+    if let (Some(object), Some(value)) = (extra.as_object_mut(), governance.as_ref()) {
+        object.extend(
+            json!({
+                "sessionRef": value.session_ref,
+                "genesisRef": value.genesis_ref,
+                "creatorOwnerGrant": {
+                    "pubkey": value.owner_pubkey,
+                    "role": "collaborator",
+                    "transition": "grant-operator",
+                    "eventId": value.grant.get("event_id").cloned().unwrap_or(Value::Null),
+                    "accepted": value.grant.get("accepted").cloned().unwrap_or(Value::Null),
+                },
+            })
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
+        );
+    }
     let mut merged = submit_with(
         client,
         event,
         "lifecycle command already accepted",
-        json!({ "commandId": command_id, "seated": false }),
+        extra,
     )
-    .await?;
+    .await
+    .map_err(|error| {
+        if let Some(value) = governance.as_ref() {
+            let grant_event_id = value
+                .grant
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let context = format!(
+                "session {} was founded as {} and creator-owner collaborator authority was granted by transition {}, but create acceptance is unconfirmed for commandId {command_id}: {error}; do not retry blindly -- query receipts for this commandId first",
+                value.session_ref, value.genesis_ref, grant_event_id
+            );
+            if matches!(error, CliError::DeliveryUnknown(_)) {
+                CliError::DeliveryUnknown(context)
+            } else {
+                CliError::Other(context)
+            }
+        } else {
+            error
+        }
+    })?;
     if !wait {
         println!("{merged}");
         return Ok(());

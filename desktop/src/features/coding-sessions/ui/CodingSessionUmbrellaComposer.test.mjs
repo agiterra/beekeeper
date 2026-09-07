@@ -149,6 +149,45 @@ test("founder keeps the execution composer; the selection defaults sticky to the
   assert.doesNotMatch(markup, /coding-session-umbrella-composer-gated/);
 });
 
+test("an accepted collaborator may reconnect but only the founder may stop", () => {
+  const umbrella = multiExecutionUmbrella({ creates: foundedCreates(FOUNDER) });
+  assert.equal(umbrella.founderPubkey, FOUNDER);
+  umbrella.executions[0].activeGeneration.status = "disconnected";
+  const markup = render({
+    acceptedOperators: new Set([TEAMMATE]),
+    currentUserPubkey: TEAMMATE,
+    umbrella,
+  });
+
+  assert.doesNotMatch(markup, /coding-session-umbrella-composer-gated/);
+  assert.doesNotMatch(markup, /coding-session-composer-resume[^>]*disabled=""/);
+  assert.match(markup, /coding-session-composer-session-stop[^>]*disabled=""/);
+});
+
+test("legacy ungoverned stop fallback remains available", () => {
+  const markup = render({
+    currentUserPubkey: TEAMMATE,
+    umbrella: singleExecutionUmbrella({ lifecycleStatus: "disconnected" }),
+  });
+
+  assert.doesNotMatch(markup, /coding-session-composer-resume[^>]*disabled=""/);
+  assert.doesNotMatch(
+    markup,
+    /coding-session-composer-session-stop[^>]*disabled=""/,
+  );
+});
+
+test("a genesis-bearing session with no founder fails closed", () => {
+  const umbrella = singleExecutionUmbrella({
+    lifecycleStatus: "disconnected",
+  });
+  umbrella.genesisRef = "c".repeat(64);
+  const markup = render({ currentUserPubkey: TEAMMATE, umbrella });
+
+  assert.match(markup, /coding-session-umbrella-composer-gated/);
+  assert.doesNotMatch(markup, /coding-session-composer-session-stop/);
+});
+
 test("non-founders get honestly disabled execution targets, with the lane still open", () => {
   const markup = render({
     currentUserPubkey: TEAMMATE,

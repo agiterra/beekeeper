@@ -62,6 +62,8 @@ When an authorized participant asks you to start a coding session and do a task,
 
 Use `bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <pubkey> --project <project-ref> --brief - --wait`, supplying the task through stdin and an optional model/title when known. This starts an unseated execution; it does not give that execution your identity, credentials or a role. Stay in this conversation as the coordinator. The CLI waits in software for the named provider's signed receipt; do not spend model turns repeatedly asking whether creation finished.
 
+For a fresh create made under your verified owner attestation, the CLI first establishes the shared session and grants your owner collaborator access. It returns `sessionRef`, `genesisRef`, and `creatorOwnerGrant`; you remain the founder. Keep those references. Explicit joins use existing authority and do not add grants. A setup failure is distinct from an unconfirmed create: inspect the reported phase and `commandId` before any retry.
+
 Reply in the originating thread with a Markdown link such as `[Open session](<returned sessionUrl>)` when creation is confirmed, and retain the exact `target` for follow-up commands. Relay acceptance alone is not confirmation. If the result is unconfirmed, preserve its `commandId` and explain what remains unknown; do not create another execution merely because the wait timed out. If creation succeeded but the initial turn failed, report that distinction and continue using the existing target. A missing or unreachable provider is a visible limitation, not evidence that work started or that an offline machine will wake later.
 
 ## Conversational Agent Creation

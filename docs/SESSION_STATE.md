@@ -7,6 +7,123 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
+### September 7 — reconnect acceptance failure under repair
+
+Brian's post-rebuild test opened `Inspect Beekeeper project structure (read-only)`
+and found Reconnect disabled and View only. Live Computer Use confirmed both
+Reconnect and Stop execution disabled, with the original transcript intact.
+Read-only provider state confirms execution `bdfd25b4-31d5-4869-a794-c64ba0bb07ee`,
+generation 1, channel `aa946c4e-acdc-43cb-9209-b0ef221d8d65`, founder Keystone
+`ede6301723c5772cd47166b61c680cf321359cd9b89e1c887225c1ef895a3602`,
+`sessionRef: null`, `genesisRef: null`. It is not a governed umbrella and cannot
+receive a collaborator grant against an invented genesis. Existing adoption
+requires the old create to carry the matching sessionRef; this one does not.
+Do not rewrite its founder or silently replace its native context.
+
+Decision for the repair: fresh managed-agent CLI creates follow the existing
+desktop order of signed genesis, explicit collaborator grant for the verified
+NIP-OA owner, then provider create. Grants establish umbrella authority, not
+proof that an execution started. Both waiting and nonwaiting creation use this
+order; joins do not silently gain grants. Accepted operators may reconnect;
+terminal execution stop retains its founder-only boundary. Disabled lifecycle
+controls disclose their actual reason. This is a policy change to the current
+provider's founder-only resume rule, not merely a frontend button repair.
+
+Implementation is underway on `work/session-continuity-2026-09-07`, with Sol
+owning bounded CLI, provider and UI lanes; no claim of built or live repair yet.
+Brian authorized continuing other plan increments while away. The next bounded
+increment is relevant pack-ref/source invalidation, reusing the existing Packs
+resolver and ref-event path rather than another agent polling loop.
+
+### September 7 — continuity and Packs topic implementation
+
+The bounded Sol lanes are complete on `work/session-continuity-2026-09-07`.
+Source changes are not yet installed or merged. CLI bare creates carrying a
+verified NIP-OA owner now publish a fresh genesis, founder-signed owner operator
+grant, then exactly one create naming that umbrella. Explicit joins gain no
+implicit grant. Caller fields validate before writes; setup failure prevents
+create dispatch, while uncertain create delivery preserves its commandId and
+warns against blind recreation. Wire tests verify actual signed event order,
+owner attestation, refused setup and response-loss command reuse.
+
+Provider resume admits the founder or a currently accepted operator for that
+exact governed session, with founder presence required; terminal stop remains
+founder-only. The existing post-create authority backfill already covers grants
+published before create. Receipt-chain tests cover that hydration, viewer and
+wrong-genesis denial, accepted operator reconnect and later revocation. UI
+Reconnect discloses missing membership/authority/provider evidence. Stop uses
+its own founder boundary, preserving the existing ungoverned legacy fallback.
+
+The additional Packs increment reuses the native staging-source resolver.
+Project-scoped 30624 source and moving-source 30618 repository events invalidate
+its reads; SHA-pinned sources ignore ref changes. Events are refresh hints,
+never replacement pack data. Reconnect refreshes missed state and restarts a
+failed subscription. Replay memory is bounded, cleanup guards delayed callbacks,
+and failures remain visible with prior rows and their last-resolved timestamp.
+This is source/ref freshness, not proof of cross-machine active-role adoption.
+
+Validation so far: 1,042 CLI tests and 585 provider tests passed in
+`continuity-rust-tests.log`; one existing diagnostic test is ignored because it
+reads the real HOME (`agent_fence::tests::print_the_write_fence_for_this_host`).
+The subsequent response-loss regression passed separately. CLI/provider/ACP
+all-target clippy passed (`continuity-clippy.log`); typecheck, Rust formatting,
+file-size checks and diff whitespace passed. Focused browser acceptance passed
+28/28 (`continuity-desktop-smoke.log`): coding sessions, founder actions,
+reachability, runtime connection and project Packs. Full desktop unit tests passed 8,292/8,292 with no skips
+(`continuity-desktop-tests.log`). Installed build evidence will follow below. No relay deployment or main
+landing is implied by these checks.
+
+### Next increment investigated — deterministic CI completion (not implemented)
+
+The Sol read-only audit proposes one immutable CI-result fact and an exact
+`bee ci wait`, not a new agent daemon. Existing workflow webhook handling in
+`crates/buzz-relay/src/api/bridge.rs` authenticates its secret and rechecks
+workflow authority; an eventual narrow CI-result action must additionally bind
+the configured workflow to the exact repo/project. The relay would sign the
+accepted result. A webhook secret or membership alone must not confer reporter
+authority. The implementation/design still requires review before this is a
+wire contract; no new event kind, notifier or production configuration shipped.
+
+A result/wait must correlate community, full project/repo coordinates, commit,
+check, external run and attempt; same-outcome duplicates collapse and conflicting
+terminals stay explicit. Stored replay and authenticated reconnecting REQ should
+recover a missed result, reusing `buzz-ws-client` and the mirror bridge's
+reconnect pattern. The wait returning is itself a continuation; optional later
+session notification should use a deterministic command ID for the tuple and
+exact target. Build completion never stands in for deploy or product acceptance.
+
+Reuse cautions: kind 30618 proves ref movement, not CI success. Reserved 44234
+was proposed for local session check-at-tree evidence, so do not silently reuse
+it for external CI. Current `bee workflows runs` reads 46001–46003 without an
+emitter identified by this audit. Autodeploy's newest-pipeline lookup is not a
+complete run/attempt result stream. Acceptance needs stored/reconnected results,
+wrong tuple/reporter rejection, duplicate/conflicting callbacks and notification
+idempotency. The bounded next implementation is the result contract, authorized
+producer and blocking wait; scheduler/UI are separate increments.
+
+### September 7 — shipped-main desktop rebuild installed
+
+Installed and launched `~/Applications/Beekeeper Dev.app` from
+`b267662f219017eb925b630ec8929036390ef22d`. This supersedes the older installed
+`1a070db69` checkpoint below. Full packaged debug build preserves the existing
+`io.agiterra.beekeeper.app.dev` identity and dev Keychain service. Release
+optimization remains a separate acceptance/performance build; switching profiles
+also changes the Keychain service and must not silently strand the user's login.
+
+Evidence: `review-2026-09-06-validation/shipped-main-rebuild.log` (sibling of the
+worktrees) exited 0; all eight sidecars, roles resources and deep strict signature
+verification passed; installed `bee --version` reports `b267662f`, built
+`2026-09-07T13:10:14Z`. Previous bundle retained at
+`~/Applications/Beekeeper Dev.app.before-b267662f-20260907-091239`.
+Computer Use quit the old app; process inspection confirmed its executables were
+stopped before replacement. Reopened app showed Brian/hive, project navigation,
+and `Inspect Beekeeper project structure (read-only)` in the sidebar. A new
+follow-up in that session was not verified. Before restarting, the old app's
+restored generation-3 URL showed `Generation not found`; record this as an
+unresolved observation, not proof that rebuild fixed session recovery.
+Brian's screenshot confirms server pipeline #136 passed for product `66e347a57`
+(Rust, desktop, deploy scripts and rust-agent). No product source changed here.
+
 ### Continuation checkpoint (September 7 — shipped to main)
 
 Worktree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
@@ -38,8 +155,8 @@ Master plan: `docs/COLLABORATIVE_WORKSPACE_PLAN.md`; product contract:
 script: `/Users/brian/Projects/beekeeper/review-2026-09-06-validation/`.
 `build-test-app.sh <full commit>` builds a clean checked-out commit, includes all
 eight sidecars and role resources, and verifies the bundle; it does not install
-or restart it. Do not run the landed-only `app-from` recipe for this unlanded
-branch. Never overwrite a running bundle; retain the previous one, and verify
+or restart it. The branch is now landed, so the landed-only `app-from` recipe
+is applicable; the validated script reused the warm build target. Never overwrite a running bundle; retain the previous one, and verify
 the installed artifact. A changed ad-hoc signature may require Brian to complete
 the macOS Keychain prompt; Computer Use cannot access SecurityAgent.
 

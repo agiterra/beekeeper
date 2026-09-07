@@ -580,6 +580,25 @@ impl BuzzClient {
             .and_then(|slice| slice.get(1).cloned())
     }
 
+    /// Return the cryptographically verified NIP-OA owner of this signing key.
+    ///
+    /// This is the trust-bearing form of [`Self::auth_tag_owner_hex`]. Callers
+    /// that use the owner to grant authority must use this method rather than
+    /// treating the second string in an `auth` tag as an attested identity.
+    pub fn verified_auth_tag_owner_hex(&self) -> Result<Option<String>, CliError> {
+        let Some(auth_tag_json) = self.auth_tag_json.as_deref() else {
+            return Ok(None);
+        };
+        let owner = buzz_sdk::nip_oa::verify_auth_tag(auth_tag_json, &self.keys.public_key())
+            .map_err(|error| {
+                CliError::Auth(format!(
+                    "NIP-OA owner verification failed for pubkey {}: {error}",
+                    self.keys.public_key().to_hex()
+                ))
+            })?;
+        Ok(Some(owner.to_hex()))
+    }
+
     /// Sign an event builder, injecting the NIP-OA auth tag if configured.
     ///
     /// All event creation should go through this method to ensure consistent

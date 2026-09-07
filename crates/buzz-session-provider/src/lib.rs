@@ -7520,8 +7520,27 @@ mod tests {
         seq: u32,
         grantee_hex: &str,
     ) -> Event {
+        authority_transition_event(
+            channel_id,
+            genesis_ref,
+            prev_accepted,
+            seq,
+            grantee_hex,
+            CodingSessionAuthorityTransitionType::GrantOperator,
+        )
+    }
+
+    fn authority_transition_event(
+        channel_id: Uuid,
+        genesis_ref: &str,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_hex: &str,
+        transition_type: CodingSessionAuthorityTransitionType,
+    ) -> Event {
         let payload = buzz_core::coding_session_authority_transition::
-            CodingSessionAuthorityTransitionPayload::new_grant_operator(
+            CodingSessionAuthorityTransitionPayload::new(
+                transition_type,
                 genesis_ref.to_owned(),
                 prev_accepted,
                 seq,
@@ -7560,6 +7579,54 @@ mod tests {
         ])
         .sign_with_keys(relay_keys)
         .expect("sign receipt")
+    }
+
+    fn acceptance_receipt_for_transition(
+        relay_keys: &Keys,
+        channel_id: Uuid,
+        transition: &Event,
+    ) -> Event {
+        let payload = buzz_core::coding_session_authority_transition::
+            decode_coding_session_authority_transition(&transition.content)
+            .expect("transition payload");
+        nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_SYSTEM_MESSAGE as u16),
+            serde_json::json!({
+                "type": authority::ACCEPTANCE_RECEIPT_TYPE,
+                "genesisRef": payload.genesis_ref,
+                "acceptedEventId": transition.id.to_hex(),
+                "seq": payload.seq,
+                "transitionType": payload.transition_type,
+                "granteePubkey": payload.grantee_pubkey,
+            })
+            .to_string(),
+        )
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag")
+        ])
+        .sign_with_keys(relay_keys)
+        .expect("sign receipt")
+    }
+
+    fn lifecycle_decision_by(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        action: &str,
+        target: &CodingSessionTarget,
+        operator: &Keys,
+    ) -> LifecycleDecision {
+        let content =
+            lifecycle_target_event(provider, channel_id, command_id, action, target).content;
+        let event = signed_lifecycle_event_by(channel_id, content, operator);
+        let projects = ProjectsFile::default();
+        let actor_seats = crate::actor_seats::ActorSeatsFile::default();
+        commands::decide_lifecycle(
+            &provider.context(&projects, &actor_seats, &event.pubkey.to_hex()),
+            channel_id,
+            event.created_at.as_secs(),
+            &event.content,
+        )
     }
 
     /// The framing decision is the whole "iff": a founder's own words are
@@ -9676,7 +9743,7 @@ mod tests {
 
     /// The freshness proof for A5: a grant accepted *after* the session
     /// started is honored on the live subscription path — no provider
-    /// restart — while stop/resume stay owner-only for the same grantee.
+    /// restart — while stop stays owner-only for the same grantee.
     #[tokio::test]
     async fn a_mid_session_grant_is_honored_live_and_stop_stays_owner_only() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -9806,6 +9873,176 @@ mod tests {
             !failed.contains(&"turn-after-grant"),
             "the granted turn must not be refused"
         );
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    /// Resume consumes the exact same verified authority state as steering.
+    /// A viewer, a revoked operator, and an operator grant rooted at another
+    /// genesis all remain unable to reconnect this execution. Even while the
+    /// operator grant is live, stop remains founder-only.
+    #[tokio::test]
+    async fn only_a_current_operator_grant_for_this_genesis_authorizes_resume() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&dir.path().join("state"), None);
+        let relay_keys = Keys::generate();
+        provider.set_relay_self(relay_keys.public_key().to_hex());
+
+        let grantee = Keys::generate();
+        let grantee_hex = grantee.public_key().to_hex();
+        let genesis_ref = "ab".repeat(32);
+        let other_genesis_ref = "cd".repeat(32);
+        let record = governed_record(channel_id, &cwd, &genesis_ref);
+        let target = record.target(&provider.config.instance_id);
+        provider.state.insert_session(record).expect("insert");
+
+        let viewer = authority_transition_event(
+            channel_id,
+            &genesis_ref,
+            None,
+            1,
+            &grantee_hex,
+            CodingSessionAuthorityTransitionType::GrantViewer,
+        );
+        let grant = authority_transition_event(
+            channel_id,
+            &genesis_ref,
+            Some(viewer.id.to_hex()),
+            2,
+            &grantee_hex,
+            CodingSessionAuthorityTransitionType::GrantOperator,
+        );
+        let revoke = authority_transition_event(
+            channel_id,
+            &genesis_ref,
+            Some(grant.id.to_hex()),
+            3,
+            &grantee_hex,
+            CodingSessionAuthorityTransitionType::Revoke,
+        );
+        let wrong_genesis_grant = authority_transition_event(
+            channel_id,
+            &other_genesis_ref,
+            None,
+            1,
+            &grantee_hex,
+            CodingSessionAuthorityTransitionType::GrantOperator,
+        );
+        let (mut relay, _queries, server) = spawn_test_relay_with_events(
+            &provider.config.keys,
+            vec![
+                viewer.clone(),
+                grant.clone(),
+                revoke.clone(),
+                wrong_genesis_grant.clone(),
+            ],
+        )
+        .await;
+
+        let viewer_receipt = acceptance_receipt_for_transition(&relay_keys, channel_id, &viewer);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &viewer_receipt)
+            .await
+            .expect("apply viewer");
+        assert!(matches!(
+            lifecycle_decision_by(
+                &provider,
+                channel_id,
+                "resume-as-viewer",
+                "session.resume",
+                &target,
+                &grantee,
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
+
+        let wrong_genesis_receipt =
+            acceptance_receipt_for_transition(&relay_keys, channel_id, &wrong_genesis_grant);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &wrong_genesis_receipt)
+            .await
+            .expect("ignore grant for another genesis");
+        assert_eq!(
+            provider
+                .state()
+                .session(&target.session_id)
+                .expect("session")
+                .authority_seq,
+            1,
+            "a valid receipt for another genesis must not extend this record's chain"
+        );
+        assert!(matches!(
+            lifecycle_decision_by(
+                &provider,
+                channel_id,
+                "resume-wrong-genesis",
+                "session.resume",
+                &target,
+                &grantee,
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
+
+        let grant_receipt = acceptance_receipt_for_transition(&relay_keys, channel_id, &grant);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &grant_receipt)
+            .await
+            .expect("apply operator grant");
+        assert!(matches!(
+            lifecycle_decision_by(
+                &provider,
+                channel_id,
+                "resume-as-operator",
+                "session.resume",
+                &target,
+                &grantee,
+            ),
+            LifecycleDecision::Resume(_)
+        ));
+        assert!(matches!(
+            lifecycle_decision_by(
+                &provider,
+                channel_id,
+                "stop-as-operator",
+                "session.stop",
+                &target,
+                &grantee,
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
+
+        let revoke_receipt = acceptance_receipt_for_transition(&relay_keys, channel_id, &revoke);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &revoke_receipt)
+            .await
+            .expect("apply revocation");
+        assert!(matches!(
+            lifecycle_decision_by(
+                &provider,
+                channel_id,
+                "resume-after-revoke",
+                "session.resume",
+                &target,
+                &grantee,
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
 
         relay.shutdown().await;
         server.abort();

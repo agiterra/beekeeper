@@ -106,6 +106,14 @@ export function CodingSessionUmbrellaComposer({
     currentUserPubkey,
     acceptedOperators,
   });
+  const canStopExecution =
+    (umbrella.founderPubkey !== null &&
+      currentUserPubkey?.toLowerCase() ===
+        umbrella.founderPubkey.toLowerCase()) ||
+    (umbrella.founderPubkey === null &&
+      umbrella.genesisRef === null &&
+      authority.isUngovernedSession &&
+      authority.canPromptExecutions);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(() =>
     defaultCodingSessionUmbrellaParticipantKey(participants),
   );
@@ -225,6 +233,7 @@ export function CodingSessionUmbrellaComposer({
       ) : (
         <ExecutionComposer
           authority={authority}
+          canStopExecution={canStopExecution}
           channelId={channelId}
           currentUserPubkey={currentUserPubkey}
           isMember={isMember}
@@ -257,6 +266,7 @@ export function CodingSessionUmbrellaComposer({
 
 function ExecutionComposer({
   authority,
+  canStopExecution,
   channelId,
   currentUserPubkey,
   isMember,
@@ -270,6 +280,7 @@ function ExecutionComposer({
   resolveReachability,
 }: {
   authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
+  canStopExecution: boolean;
   channelId: string;
   currentUserPubkey: string | null;
   isMember: boolean;
@@ -343,6 +354,7 @@ function ExecutionComposer({
         record.capabilities?.threadTurnInterrupt !== false
       }
       canControl={authority.canPromptExecutions}
+      canStopExecution={canStopExecution}
       canSteer={record.capabilities?.threadSteer === true}
       canAttachImages={record.capabilities?.promptImage === true}
       runtimeLabel={runtimeLabel}

@@ -11,6 +11,7 @@ import type { ProjectContainer } from "../hooks";
 import {
   canSetProjectPackSource,
   fetchProjectPackSource,
+  projectPackSourceQueryKey,
   publishProjectPackSource,
   type ProjectPackSource,
 } from "../lib/projectPackSource";
@@ -24,10 +25,7 @@ import {
 import { useProjectCapabilities } from "../lib/projectPermissions";
 import { useProjectRosterQuery } from "../lib/projectMembers";
 
-/** Query key for one project's newest pack source. */
-export function projectPackSourceQueryKey(projectCoord: string) {
-  return ["project-pack-source", projectCoord] as const;
-}
+export { projectPackSourceQueryKey };
 
 /**
  * This app's own version, the way the "shipped defaults" disclosure names

@@ -53,6 +53,11 @@ import { CodingSessionComposerSurface } from "./CodingSessionComposerSurface";
 type CodingSessionComposerProps = {
   canInterrupt: boolean;
   canControl?: boolean;
+  /**
+   * Whether this operator may durably stop the provider execution. Defaults
+   * to `canControl` for callers without separate founder authority evidence.
+   */
+  canStopExecution?: boolean;
   /** Authority evidence is unresolved; this is not a denied collaborator grant. */
   authorityUnresolved?: boolean;
   authorityReason?: string | null;
@@ -179,6 +184,7 @@ export function CodingSessionComposer({
   authorityUnresolved = false,
   canInterrupt,
   canControl = true,
+  canStopExecution = canControl,
   canAttachImages = false,
   canSteer = false,
   channelId,
@@ -685,7 +691,10 @@ export function CodingSessionComposer({
   // Route it through a confirm instead of publishing on the raw click.
   const endDialog = useEndCodingSessionDialog();
   const canSessionStop =
-    canControl && isMember && providerAuthorityPubkey !== null && !isEnded;
+    canStopExecution &&
+    isMember &&
+    providerAuthorityPubkey !== null &&
+    !isEnded;
   const requestSessionEnd = React.useCallback(() => {
     if (!canSessionStop || !providerAuthorityPubkey) return;
     endDialog.requestEnd({

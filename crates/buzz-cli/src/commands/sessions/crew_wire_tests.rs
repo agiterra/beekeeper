@@ -2,12 +2,23 @@
 //! the relay's exactly-three-tags validator, and the delivery class that is
 //! omitted at its default because a relay predating the field refuses it.
 
+use buzz_core::coding_session_authority_transition::{
+    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
+};
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
     CodingSessionDelivery, CodingSessionTarget, CODING_SESSION_COMMAND_SCHEMA,
 };
+use buzz_core::coding_session_genesis::decode_coding_session_genesis;
+use buzz_core::coding_session_lifecycle_command::{
+    CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
+};
 use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptError, ReceiptStatus, LIFECYCLE_RECEIPT_SCHEMA,
+};
+use buzz_core::kind::{
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
 };
 use buzz_sdk::builders::build_coding_session_lifecycle_receipt;
 use buzz_sdk::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT;
@@ -349,6 +360,437 @@ fn create_wait_refuses_conflicting_targets_in_same_command() {
     let error = classify_create_receipts(&[first, second], CHANNEL, "create-a", &authority)
         .expect_err("two target answers must not be guessed between");
     assert!(error.contains("conflicting lifecycle receipts"), "{error}");
+}
+
+#[tokio::test]
+async fn managed_bare_create_founds_grants_verified_owner_then_dispatches() {
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::response::Json;
+    use axum::routing::post;
+    use axum::Router;
+    use std::sync::{Arc, Mutex};
+
+    let published = Arc::new(Mutex::new(Vec::<nostr::Event>::new()));
+    let app = Router::new()
+        .route(
+            "/events",
+            post(
+                |State(published): State<Arc<Mutex<Vec<nostr::Event>>>>, body: Bytes| async move {
+                    let event: nostr::Event = serde_json::from_slice(&body).expect("event JSON");
+                    let event_id = event.id.to_hex();
+                    published.lock().expect("published").push(event);
+                    Json(serde_json::json!({
+                        "event_id": event_id,
+                        "accepted": true,
+                        "message": ""
+                    }))
+                },
+            ),
+        )
+        .route("/query", post(|| async { Json(serde_json::json!([])) }))
+        .with_state(published.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("recording relay");
+    });
+
+    let agent = nostr::Keys::generate();
+    let owner = nostr::Keys::generate();
+    let auth_json = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+        .expect("owner attestation");
+    let auth_tag = buzz_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
+    let client =
+        BuzzClient::new(url, agent.clone(), Some(auth_tag), Some(auth_json)).expect("client");
+    let provider = nostr::Keys::generate().public_key().to_hex();
+
+    let invalid = cmd_create(
+        &client,
+        CHANNEL,
+        None,
+        None,
+        "provider-primary",
+        "not-a-provider-pubkey",
+        None,
+        None,
+        None,
+        None,
+        Some("start"),
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect_err("invalid create must fail before governance setup");
+    assert!(
+        matches!(invalid, CliError::Usage(message) if message.contains("providerAuthorityPubkey"))
+    );
+    assert!(published.lock().expect("published").is_empty());
+
+    cmd_create(
+        &client,
+        CHANNEL,
+        None,
+        None,
+        "provider-primary",
+        &provider,
+        None,
+        None,
+        None,
+        None,
+        Some("start"),
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect("managed create");
+
+    let events = published.lock().expect("published");
+    assert_eq!(events.len(), 3, "genesis, owner grant, then create");
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| u32::from(event.kind.as_u16()))
+            .collect::<Vec<_>>(),
+        vec![
+            KIND_CODING_SESSION_GENESIS,
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        ]
+    );
+    assert!(events
+        .iter()
+        .all(|event| event.pubkey == agent.public_key()));
+
+    let genesis = decode_coding_session_genesis(&events[0].content).expect("genesis payload");
+    let transition = decode_coding_session_authority_transition(&events[1].content)
+        .expect("authority transition");
+    assert_eq!(
+        transition.transition_type,
+        CodingSessionAuthorityTransitionType::GrantOperator
+    );
+    assert_eq!(transition.genesis_ref, events[0].id.to_hex());
+    assert_eq!(transition.grantee_pubkey, owner.public_key().to_hex());
+    let create: CodingSessionLifecycleCommandPayload =
+        serde_json::from_str(&events[2].content).expect("create payload");
+    let CodingSessionLifecycleAction::SessionCreate {
+        session_ref,
+        genesis_ref,
+        ..
+    } = create.action
+    else {
+        panic!("expected session.create");
+    };
+    assert_eq!(session_ref.as_deref(), Some(genesis.session_ref.as_str()));
+    assert_eq!(genesis_ref.as_deref(), Some(events[0].id.to_hex().as_str()));
+
+    drop(events);
+    server.abort();
+}
+
+#[tokio::test]
+async fn creator_owner_grant_failure_prevents_session_dispatch() {
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::response::Json;
+    use axum::routing::post;
+    use axum::Router;
+    use std::sync::{Arc, Mutex};
+
+    let published = Arc::new(Mutex::new(Vec::<nostr::Event>::new()));
+    let app = Router::new()
+        .route(
+            "/events",
+            post(
+                |State(published): State<Arc<Mutex<Vec<nostr::Event>>>>, body: Bytes| async move {
+                    let event: nostr::Event = serde_json::from_slice(&body).expect("event JSON");
+                    let event_id = event.id.to_hex();
+                    let accepted =
+                        u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_AUTHORITY_TRANSITION;
+                    published.lock().expect("published").push(event);
+                    Json(serde_json::json!({
+                        "event_id": event_id,
+                        "accepted": accepted,
+                        "message": if accepted { "" } else { "grant refused" }
+                    }))
+                },
+            ),
+        )
+        .route("/query", post(|| async { Json(serde_json::json!([])) }))
+        .with_state(published.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("recording relay");
+    });
+
+    let agent = nostr::Keys::generate();
+    let owner = nostr::Keys::generate();
+    let auth_json = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+        .expect("owner attestation");
+    let auth_tag = buzz_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
+    let client = BuzzClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
+
+    let error = cmd_create(
+        &client,
+        CHANNEL,
+        None,
+        None,
+        "provider-primary",
+        &nostr::Keys::generate().public_key().to_hex(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect_err("grant refusal must stop before create");
+    assert!(matches!(error, CliError::Other(message) if
+        message.contains("was founded as")
+            && message.contains("grant")
+            && message.contains("no session create was dispatched")));
+    let events = published.lock().expect("published");
+    assert_eq!(events.len(), 2, "only genesis and refused grant were sent");
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| u32::from(event.kind.as_u16()))
+            .collect::<Vec<_>>(),
+        vec![
+            KIND_CODING_SESSION_GENESIS,
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+        ]
+    );
+    drop(events);
+    server.abort();
+}
+
+#[tokio::test]
+async fn managed_join_never_infers_a_creator_owner_grant() {
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::response::Json;
+    use axum::routing::post;
+    use axum::Router;
+    use std::sync::{Arc, Mutex};
+
+    let published = Arc::new(Mutex::new(Vec::<nostr::Event>::new()));
+    let app = Router::new()
+        .route(
+            "/events",
+            post(
+                |State(published): State<Arc<Mutex<Vec<nostr::Event>>>>, body: Bytes| async move {
+                    let event: nostr::Event = serde_json::from_slice(&body).expect("event JSON");
+                    let event_id = event.id.to_hex();
+                    published.lock().expect("published").push(event);
+                    Json(serde_json::json!({
+                        "event_id": event_id,
+                        "accepted": true,
+                        "message": ""
+                    }))
+                },
+            ),
+        )
+        .with_state(published.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("recording relay");
+    });
+
+    let agent = nostr::Keys::generate();
+    let owner = nostr::Keys::generate();
+    let auth_json = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+        .expect("owner attestation");
+    let auth_tag = buzz_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
+    let client = BuzzClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
+    let provider = nostr::Keys::generate().public_key().to_hex();
+    let session_ref = "10e635a2-4150-4f65-ad5d-37c2afb0dd93";
+    let genesis_ref = "ab".repeat(32);
+
+    cmd_create(
+        &client,
+        CHANNEL,
+        Some(session_ref),
+        Some(&genesis_ref),
+        "provider-primary",
+        &provider,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect("join create");
+
+    let events = published.lock().expect("published");
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        u32::from(events[0].kind.as_u16()),
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND
+    );
+    drop(events);
+    server.abort();
+}
+
+#[tokio::test]
+async fn invalid_owner_attestation_fails_before_any_session_write() {
+    let agent = nostr::Keys::generate();
+    let other_agent = nostr::Keys::generate();
+    let owner = nostr::Keys::generate();
+    let auth_json = buzz_sdk::nip_oa::compute_auth_tag(&owner, &other_agent.public_key(), "")
+        .expect("mismatched attestation");
+    let auth_tag = buzz_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
+    let client = BuzzClient::new(
+        "http://127.0.0.1:1".into(),
+        agent,
+        Some(auth_tag),
+        Some(auth_json),
+    )
+    .expect("client");
+
+    let error = cmd_create(
+        &client,
+        CHANNEL,
+        None,
+        None,
+        "provider-primary",
+        &nostr::Keys::generate().public_key().to_hex(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect_err("unverified owner must fail closed");
+    assert!(
+        matches!(error, CliError::Auth(message) if message.contains("owner verification failed"))
+    );
+}
+
+#[tokio::test]
+async fn lost_managed_create_response_reports_unconfirmed_command() {
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::response::{IntoResponse, Json};
+    use axum::routing::post;
+    use axum::Router;
+    use std::sync::{Arc, Mutex};
+
+    let published = Arc::new(Mutex::new(Vec::<nostr::Event>::new()));
+    let app = Router::new()
+        .route(
+            "/events",
+            post(
+                |State(published): State<Arc<Mutex<Vec<nostr::Event>>>>, body: Bytes| async move {
+                    let event: nostr::Event = serde_json::from_slice(&body).expect("event JSON");
+                    let event_id = event.id.to_hex();
+                    let is_create =
+                        u32::from(event.kind.as_u16()) == KIND_CODING_SESSION_LIFECYCLE_COMMAND;
+                    published.lock().expect("published").push(event);
+                    if is_create {
+                        return (StatusCode::BAD_GATEWAY, "response lost").into_response();
+                    }
+                    Json(serde_json::json!({
+                        "event_id": event_id,
+                        "accepted": true,
+                        "message": ""
+                    }))
+                    .into_response()
+                },
+            ),
+        )
+        .route("/query", post(|| async { Json(serde_json::json!([])) }))
+        .with_state(published.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("recording relay");
+    });
+
+    let agent = nostr::Keys::generate();
+    let owner = nostr::Keys::generate();
+    let auth_json = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+        .expect("owner attestation");
+    let auth_tag = buzz_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
+    let client = BuzzClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
+    let error = cmd_create(
+        &client,
+        CHANNEL,
+        None,
+        None,
+        "provider-primary",
+        &nostr::Keys::generate().public_key().to_hex(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+    )
+    .await
+    .expect_err("lost response must remain ambiguous");
+
+    let events = published.lock().expect("published");
+    let creates = events
+        .iter()
+        .filter(|event| u32::from(event.kind.as_u16()) == KIND_CODING_SESSION_LIFECYCLE_COMMAND)
+        .collect::<Vec<_>>();
+    assert!(
+        creates.len() > 1,
+        "transport retry should reuse the command"
+    );
+    assert!(creates.iter().all(|event| event.id == creates[0].id));
+    let payload: CodingSessionLifecycleCommandPayload =
+        serde_json::from_str(&creates[0].content).expect("lifecycle payload");
+    match error {
+        CliError::DeliveryUnknown(message) => {
+            assert!(message.contains("create acceptance is unconfirmed"));
+            assert!(message.contains(&format!("commandId {}", payload.command_id)));
+            assert!(message.contains("do not retry blindly"));
+            assert!(!message.contains("not dispatched"));
+        }
+        other => panic!("expected delivery-unknown create outcome, got {other:?}"),
+    }
+    drop(events);
+    server.abort();
 }
 
 #[tokio::test]

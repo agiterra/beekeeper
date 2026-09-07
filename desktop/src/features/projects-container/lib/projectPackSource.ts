@@ -41,6 +41,18 @@ export type ProjectPackSource = {
   note: string | null;
 };
 
+/** React Query key for one project's newest pack-source head. */
+export function projectPackSourceQueryKey(projectCoord: string) {
+  return ["project-pack-source", projectCoord] as const;
+}
+
+/** Bare repository id used by relay-signed kind:30618 ref-state events. */
+export function projectPackSourceRepoId(
+  source: Pick<ProjectPackSource, "repo">,
+): string {
+  return source.repo.slice(source.repo.lastIndexOf(":") + 1);
+}
+
 function tagValue(tags: string[][], name: string): string | null {
   return tags.find((tag) => tag[0] === name)?.[1] ?? null;
 }

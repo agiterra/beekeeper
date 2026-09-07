@@ -423,11 +423,25 @@ pub fn decide_lifecycle(
                 ),
             };
         }
-        if !operator_owns_session(record, context.operator_pubkey) {
+        let is_resume = matches!(
+            &payload.action,
+            CodingSessionLifecycleAction::SessionResume { .. }
+        );
+        let authorized = if is_resume {
+            operator_may_resume(record, context.operator_pubkey)
+        } else {
+            operator_owns_session(record, context.operator_pubkey)
+        };
+        if !authorized {
+            let message = if is_resume {
+                "only the session founder or a granted operator may resume this execution"
+            } else {
+                "only the session founder may stop this execution"
+            };
             return LifecycleDecision::Fail {
                 command_id: payload.command_id,
                 code: UNAUTHORIZED_OPERATOR,
-                message: "only the session founder may stop or resume this execution".into(),
+                message: message.into(),
             };
         }
 
@@ -829,7 +843,7 @@ fn duplicate_operation_owner(
     })
 }
 
-/// Owner-only authority: stop/resume/end. Checks only authority facts
+/// Owner-only authority: stop/end. Checks only authority facts
 /// persisted when this provider witnessed the create. Old no-genesis records
 /// predate that field and remain ungoverned; genesis-bearing records can
 /// never fall open when their founder is absent. `grant-operator` never moves
@@ -839,6 +853,19 @@ fn operator_owns_session(record: &crate::state::SessionRecord, operator_pubkey: 
         Some(founder) => founder == operator_pubkey,
         None => record.genesis_ref.is_none(),
     }
+}
+
+/// Resume authority: the founder or a currently granted operator may
+/// reattach an execution. The grant cache is consulted only for a
+/// genesis-bearing record; each entry was derived from the verified,
+/// contiguous acceptance-receipt chain for that exact genesis and channel.
+/// Viewer grants, revoked operators, project membership, and agent ownership
+/// never enter this decision.
+fn operator_may_resume(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
+    operator_owns_session(record, operator_pubkey)
+        || (record.genesis_ref.is_some()
+            && record.founder_pubkey.is_some()
+            && record.granted_operators.contains(operator_pubkey))
 }
 
 /// Steering authority: turn start/interrupt. The owner always may; beyond
@@ -986,7 +1013,8 @@ pub const LEAD_ROLE: &str = "lead";
 /// host is not recognized here, which is a real limit and the honest one: this
 /// provider can verify a role it minted, and cannot verify a 44223 claim
 /// signed by a provider it does not trust for authority. Founder authority is
-/// untouched either way — stop, resume, and end never move to a seat.
+/// untouched either way — stop and end never move to a seat. Resume separately
+/// accepts any currently granted operator.
 fn operator_may_interrupt(
     context: &CommandContext<'_>,
     record: &crate::state::SessionRecord,
@@ -1710,6 +1738,7 @@ mod tests {
     fn pre_authority_legacy_records_stay_ungoverned_but_genesis_never_falls_open() {
         let dir = tempfile::tempdir().expect("tempdir");
         let projects = ProjectsFile::default();
+        let grantee = "ef".repeat(32);
 
         let mut legacy_state = store(&dir.path().join("legacy"));
         let mut legacy = session("legacy", dir.path());
@@ -1760,13 +1789,39 @@ mod tests {
                 ..
             }
         ));
+
+        let mut founderless_state = store(&dir.path().join("founderless"));
+        let mut founderless = session("founderless", dir.path());
+        founderless.genesis_ref = Some("34".repeat(32));
+        founderless.founder_pubkey = None;
+        founderless.granted_operators = [grantee.clone()].into_iter().collect();
+        founderless.authority_seq = 1;
+        founderless_state
+            .insert_session(founderless)
+            .expect("insert founderless");
+        assert!(matches!(
+            decide_lifecycle(
+                &ctx_as(&founderless_state, &projects, 1_000, &grantee),
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content(
+                    "session.resume",
+                    "resume-without-founder",
+                    "founderless",
+                    1,
+                ),
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
     }
 
-    /// The A5 authority split: a granted operator may steer (turn start and
-    /// interrupt) a genesis-bearing session, but stop/resume stay owner-only —
-    /// `grant-operator` never moves ownership.
+    /// A granted operator may steer and reconnect a genesis-bearing session,
+    /// while stop remains owner-only — `grant-operator` never moves ownership.
     #[test]
-    fn a_granted_operator_may_steer_but_never_stop_or_resume() {
+    fn a_granted_operator_may_steer_and_resume_but_never_stop() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut state = store(dir.path());
         let grantee = "ef".repeat(32);
@@ -1790,26 +1845,27 @@ mod tests {
             ),
             TurnDecision::Interrupt { .. }
         ));
-        for (action, command_id) in [
-            ("session.stop", "stop-grantee"),
-            ("session.resume", "resume-grantee"),
-        ] {
-            assert!(
-                matches!(
-                    decide_lifecycle(
-                        &context,
-                        Uuid::nil(),
-                        1_000,
-                        &lifecycle_target_content(action, command_id, "s1", 1),
-                    ),
-                    LifecycleDecision::Fail {
-                        code: UNAUTHORIZED_OPERATOR,
-                        ..
-                    }
-                ),
-                "{action} from a granted operator must stay owner-only"
-            );
-        }
+        assert!(matches!(
+            decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.resume", "resume-grantee", "s1", 1),
+            ),
+            LifecycleDecision::Resume(_)
+        ));
+        assert!(matches!(
+            decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.stop", "stop-grantee", "s1", 1),
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
     }
 
     /// A channel member who is neither founder nor granted operator is
@@ -1850,6 +1906,18 @@ mod tests {
                 &turn_content("turn-inert-grant", "s2", 1)
             ),
             TurnDecision::Fail { .. }
+        ));
+        assert!(matches!(
+            decide_lifecycle(
+                &ctx_as(&legacy_state, &projects, 1_000, &grantee),
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.resume", "resume-inert-grant", "s2", 1),
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
         ));
     }
 

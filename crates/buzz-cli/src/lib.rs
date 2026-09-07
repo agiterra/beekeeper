@@ -2923,9 +2923,12 @@ pub enum SessionsCmd {
     ///
     /// The brief becomes the create's `initialTurn`. Seated (agent) creates
     /// are refused here: an actor's key material is host-local custody the
-    /// CLI does not hold — see `--actor`.
+    /// CLI does not hold — see `--actor`. A bare create under a verified
+    /// NIP-OA identity first founds a new umbrella with the agent as immutable
+    /// founder and grants its attested owner collaborator authority. Passing
+    /// session coordinates joins that exact umbrella and never infers a grant.
     #[command(
-        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --brief 'start' --wait --timeout-secs 60\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -\n\nWith --wait, the command publishes once and waits for the named provider's signed create receipt. A confirmed receipt adds the exact cs-target; timeout preserves the commandId and never retries."
+        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --brief 'start' --wait --timeout-secs 60\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -\n\nFor a bare managed-agent create, the CLI first publishes a fresh genesis and a collaborator grant for the cryptographically verified NIP-OA owner; setup failure prevents dispatch. With --wait, the command publishes the create once and waits for the named provider's signed receipt. A confirmed receipt adds the exact cs-target; timeout preserves the commandId and never retries."
     )]
     Create {
         /// Channel UUID to publish the create into

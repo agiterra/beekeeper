@@ -297,6 +297,7 @@ test("founder authority gates send, interrupt, resume, and stop together", () =>
 
   const disconnected = renderToStaticMarkup(
     React.createElement(CodingSessionComposer, {
+      authorityReason: "Ask the session owner for collaborator access.",
       canControl: false,
       canInterrupt: true,
       channelId: "channel-1",
@@ -312,7 +313,66 @@ test("founder authority gates send, interrupt, resume, and stop together", () =>
   assert.match(disconnected, /coding-session-composer-resume[^>]*disabled=""/);
   assert.match(
     disconnected,
+    /This provider execution is disconnected\. Ask the session owner for collaborator access\./,
+  );
+  assert.match(
+    disconnected,
     /coding-session-composer-session-stop[^>]*disabled=""/,
+  );
+});
+
+test("a collaborator may reconnect but cannot stop the founder's execution", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canControl: true,
+      canStopExecution: false,
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      lifecycleStatus: "disconnected",
+      providerAuthorityPubkey: "ab".repeat(32),
+      target,
+      variant: "floating",
+    }),
+  );
+
+  assert.doesNotMatch(markup, /coding-session-composer-resume[^>]*disabled=""/);
+  assert.match(markup, /coding-session-composer-session-stop[^>]*disabled=""/);
+});
+
+test("a disconnected execution explains missing reconnect prerequisites", () => {
+  const nonMember = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: false,
+      isWorking: false,
+      lifecycleStatus: "disconnected",
+      providerAuthorityPubkey: "ab".repeat(32),
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(nonMember, /Join this channel to reconnect this execution\./);
+
+  const missingProviderAuthority = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      lifecycleStatus: "disconnected",
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(
+    missingProviderAuthority,
+    /Reconnect is unavailable until provider authority is available\./,
   );
 });
 

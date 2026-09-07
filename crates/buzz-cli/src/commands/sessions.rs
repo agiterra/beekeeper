@@ -2280,13 +2280,13 @@ fn is_chain_head_conflict(error: &CliError) -> bool {
 /// `csat-genesis`), so the event is signed without NIP-OA auth-tag
 /// injection — the chain's authority model is the signature itself (the
 /// relay checks the signer against the session owner).
-async fn submit_authority_transition(
+pub(super) async fn submit_authority_transition_value(
     client: &BuzzClient,
     channel_id: &str,
     genesis: &str,
     transition_type: CodingSessionAuthorityTransitionType,
     grantee: &str,
-) -> Result<(), CliError> {
+) -> Result<Value, CliError> {
     validate_uuid(channel_id)?;
     validate_lower_hex64("--genesis", genesis)?;
     let grantee = resolve_grantee_pubkey("--pubkey", grantee)?;
@@ -2344,8 +2344,9 @@ async fn submit_authority_transition(
         };
         match outcome {
             Ok(response) => {
-                println!("{response}");
-                return Ok(());
+                return serde_json::from_str(&response).map_err(|error| {
+                    CliError::Other(format!("relay response is not JSON: {error}"))
+                });
             }
             Err(error) if attempt == 0 && is_chain_head_conflict(&error) => {
                 // Lost a head race: another transition landed between our
@@ -2371,7 +2372,11 @@ async fn cmd_grant(
         crate::GrantRoleArg::Collaborator => CodingSessionAuthorityTransitionType::GrantOperator,
         crate::GrantRoleArg::Viewer => CodingSessionAuthorityTransitionType::GrantViewer,
     };
-    submit_authority_transition(client, channel_id, genesis, transition_type, pubkey).await
+    let response =
+        submit_authority_transition_value(client, channel_id, genesis, transition_type, pubkey)
+            .await?;
+    println!("{response}");
+    Ok(())
 }
 
 /// `bee sessions revoke`
@@ -2381,14 +2386,16 @@ async fn cmd_revoke(
     genesis: &str,
     pubkey: &str,
 ) -> Result<(), CliError> {
-    submit_authority_transition(
+    let response = submit_authority_transition_value(
         client,
         channel_id,
         genesis,
         CodingSessionAuthorityTransitionType::Revoke,
         pubkey,
     )
-    .await
+    .await?;
+    println!("{response}");
+    Ok(())
 }
 
 /// Every `agentRef` a channel's coding-session metadata (kind 44223) has

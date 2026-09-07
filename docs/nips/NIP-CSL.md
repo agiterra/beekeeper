@@ -736,9 +736,14 @@ statuses, lifecycle continuation uses:
 - `failed`: unchanged, with `session: null` and a stable error object.
 
 Authority refusals use stable codes: `GENESIS_NOT_FOUND` when an exact genesis
-cannot be resolved and verified, and `UNAUTHORIZED_OPERATOR` when a turn,
-interrupt, stop, or resume signer is not the cached founder. Both are durable
-receipts; the provider must never execute or silently discard these cases.
+cannot be resolved and verified, and `UNAUTHORIZED_OPERATOR` when the signer
+lacks the authority for the requested action. The founder may control its
+execution; current verified operator grants additionally authorize steering and
+reconnect on a genesis-bearing session. Resume requires a resolved founder and
+a grant from that exact session authority chain; viewer or revoked grants do
+not suffice. Terminal execution stop remains founder-only. Both refusal codes
+produce durable receipts; the provider must never execute or silently discard
+these cases.
 
 An old consumer that does not recognize a new status rejects that receipt; it
 must never coerce the outcome into `created`. The new generation's metadata and

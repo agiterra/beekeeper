@@ -13,6 +13,10 @@ import type { ProjectCodingSessionShelfState } from "@/features/projects-contain
 import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { listProjectRolePacks } from "@/shared/api/tauriRolePacks";
 import type { RolePackSummary } from "@/shared/api/types";
+import {
+  fetchProjectPackSource,
+  projectPackSourceQueryKey,
+} from "@/features/projects-container/lib/projectPackSource";
 
 import {
   buildRolesView,
@@ -24,6 +28,10 @@ import {
   buildRolePackSnapshots,
   type RolePackSnapshots,
 } from "./rolePackSnapshots";
+import {
+  rolePacksQueryKey,
+  useProjectPacksLiveInvalidation,
+} from "./rolePacksLiveInvalidation";
 
 const NO_PROJECT_BUCKETS: ReadonlyMap<string, never[]> = new Map();
 
@@ -33,10 +41,7 @@ const AGE_TICK_MS = 30_000;
 const NO_PACKS: readonly RolePackSummary[] = [];
 const NO_CHANNEL_IDS: readonly string[] = [];
 
-/** React Query key for one project's packs; `null` is the no-project read. */
-export function rolePacksQueryKey(projectRef: string | null) {
-  return ["role-packs", projectRef] as const;
-}
+export { rolePacksQueryKey };
 
 /** The ladder's answer for `projectRef`, cached per project. */
 export function useRolePacksQuery(projectRef: string | null) {
@@ -115,6 +120,20 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
   );
   const projectRef = project?.address ?? null;
 
+  const sourceQuery = useQuery({
+    enabled: projectRef !== null,
+    queryKey: projectPackSourceQueryKey(projectRef ?? ""),
+    queryFn: () =>
+      projectRef === null
+        ? Promise.resolve(null)
+        : fetchProjectPackSource(projectRef),
+    staleTime: 30_000,
+  });
+  const liveRefresh = useProjectPacksLiveInvalidation(
+    projectRef,
+    sourceQuery.data ?? null,
+  );
+
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
 
   // A project can name an ordinary channel itself, while its session transport
@@ -140,7 +159,21 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
 
   const packsQuery = useRolePacksQuery(projectRef);
   const packs = packsQuery.data ?? NO_PACKS;
-  const packsError = errorSentence(packsQuery.error);
+  const packsError = React.useMemo(() => {
+    const errors = [
+      errorSentence(packsQuery.error),
+      sourceQuery.isError
+        ? `The pack-source refresh failed: ${errorSentence(sourceQuery.error) ?? "unknown error"}. Reconnect or reopen this Packs tab to retry.`
+        : null,
+      liveRefresh.error,
+    ].filter((error): error is string => error !== null);
+    return errors.length > 0 ? errors.join(" ") : null;
+  }, [
+    liveRefresh.error,
+    packsQuery.error,
+    sourceQuery.error,
+    sourceQuery.isError,
+  ]);
   const packsPending = packsQuery.isPending;
 
   const agentsQuery = useManagedAgentsQuery();
@@ -198,14 +231,20 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     error: packsError,
     shelfState: buckets.state,
     rolePackSnapshots,
-    packsResolutionIsStale: packsQuery.isError && packsQuery.dataUpdatedAt > 0,
+    packsResolutionIsStale:
+      packsQuery.dataUpdatedAt > 0 &&
+      (packsQuery.isError || sourceQuery.isError || liveRefresh.error !== null),
     executionReports: {
       isLoading: channelsQuery.isPending || executionCatalog.isLoading,
       error: executionReportsError,
       authorityError: executionCatalog.authorityErrorMessage,
     },
     view,
-    refetchPacks: () => void packsQuery.refetch(),
+    refetchPacks: () => {
+      liveRefresh.retry();
+      void sourceQuery.refetch();
+      void packsQuery.refetch();
+    },
     refetchAgents: () => void agentsQuery.refetch(),
   };
 }

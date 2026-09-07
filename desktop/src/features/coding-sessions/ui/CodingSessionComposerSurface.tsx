@@ -140,6 +140,7 @@ export function CodingSessionComposerSurface({
     >
       {immersive ? (
         <ComposerLifecycleNotice
+          authorityReason={authorityReason}
           canControl={canControl}
           canSessionStop={canSessionStop}
           error={error}
@@ -392,6 +393,7 @@ function CompactComposerActions({
 }
 
 function ComposerLifecycleNotice({
+  authorityReason,
   canControl,
   canSessionStop,
   error,
@@ -411,6 +413,7 @@ function ComposerLifecycleNotice({
 }: {
   /** The seat this notice is about, or null to keep the unnamed sentence. */
   recipientLabel: string | null;
+  authorityReason: string | null;
   canControl: boolean;
   canSessionStop: boolean;
   error: string | null;
@@ -430,6 +433,14 @@ function ComposerLifecycleNotice({
   if (!error && !errorAction && !unreachable && !isDisconnected && !isEnded) {
     return null;
   }
+  const reconnectDisabledReason = !isMember
+    ? "Join this channel to reconnect this execution."
+    : !canControl
+      ? (authorityReason ??
+        "You do not have permission to reconnect this execution.")
+      : !providerAuthorityPubkey
+        ? "Reconnect is unavailable until provider authority is available."
+        : null;
   return (
     <div className="relative z-0 mx-3 -mb-5 space-y-2 rounded-t-2xl border border-b-0 border-border/70 bg-muted/35 px-3 pt-3 pb-7">
       {error ? (
@@ -490,7 +501,7 @@ function ComposerLifecycleNotice({
             </div>
           }
         >
-          This provider execution is disconnected.
+          {`This provider execution is disconnected.${reconnectDisabledReason ? ` ${reconnectDisabledReason}` : ""}`}
         </LifecycleNoticeRow>
       ) : isEnded ? (
         <LifecycleNoticeRow

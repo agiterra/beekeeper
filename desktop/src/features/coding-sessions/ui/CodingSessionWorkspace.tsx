@@ -494,10 +494,16 @@ function ReadyCodingSessionWorkspace({
   );
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? session.title;
-  const canRename =
-    sessionRef !== null &&
+  const isFounder =
     founderPubkey !== null &&
     currentUserPubkey?.toLowerCase() === founderPubkey.toLowerCase();
+  const canRename = sessionRef !== null && isFounder;
+  const canStopExecution =
+    isFounder ||
+    (founderPubkey === null &&
+      genesisRef === null &&
+      composerAuthority.isUngovernedSession &&
+      composerAuthority.canPromptExecutions);
   const blockIds = React.useMemo(
     () => deriveTranscriptItemBlockIds(session.transcript),
     [session.transcript],
@@ -794,6 +800,7 @@ function ReadyCodingSessionWorkspace({
                       ) && session.capabilities?.threadTurnInterrupt !== false
                     }
                     canControl={composerAuthority.canPromptExecutions}
+                    canStopExecution={canStopExecution}
                     canSteer={session.capabilities?.threadSteer === true}
                     canAttachImages={session.capabilities?.promptImage === true}
                     runtimeLabel={runtimeLabel}
