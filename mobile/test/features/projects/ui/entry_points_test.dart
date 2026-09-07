@@ -47,8 +47,9 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    // The tab content fades in behind an IgnorePointer; settle it first or
+    // the header cannot be tapped.
+    await tester.pumpAndSettle();
 
     expect(find.bySemanticsLabel('Projects'), findsNothing);
     expect(
@@ -56,17 +57,21 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Beekeeper'), findsOneWidget);
+    // Collapsed by default: the header alone, until tapped.
+    expect(find.byType(ProjectTree), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('home-project-$testProjectAddress')),
+    );
+    await tester.pumpAndSettle();
     expect(find.byType(ProjectTree), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('project-channel-row-c-transport')),
+      find.byKey(const ValueKey('project-row-channel:c-general')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const ValueKey('project-channel-row-c-general')),
-      findsOneWidget,
-    );
-    // The project-bound channel is not repeated in the plain list; the
-    // unbound one still is.
+    // The transport carries sessions and is not a channel row; the
+    // project-bound channel is not repeated in the plain list; the unbound
+    // one still is.
+    expect(find.text('meta c-transport'), findsNothing);
     expect(find.text('general'), findsOneWidget);
     expect(find.text('other'), findsOneWidget);
   });

@@ -29,12 +29,18 @@ class FakeObserverBinding implements CodingSessionObserverBinding {
     String? signerPubkey,
     Set<String> steerAccepted = const {},
     List<Object> publishResults = const [],
+    Map<String, CodingSessionObserverSnapshot> byChannel = const {},
   }) : _signerPubkey = signerPubkey,
        steerAccepted = {...steerAccepted},
+       byChannel = {...byChannel},
        relay = RecordingRelaySessionNotifier(publishResults: publishResults);
 
   /// What the pages read; reassign and pump to simulate a new relay read.
   CodingSessionObserverSnapshot snapshot;
+
+  /// Per-channel snapshots, for pages that read more than one channel; a
+  /// channel not listed here reads [snapshot].
+  final Map<String, CodingSessionObserverSnapshot> byChannel;
   final String? _signerPubkey;
   final Set<String> steerAccepted;
 
@@ -45,7 +51,7 @@ class FakeObserverBinding implements CodingSessionObserverBinding {
 
   @override
   CodingSessionObserverSnapshot watch(WidgetRef ref, String channelId) =>
-      snapshot;
+      byChannel[channelId] ?? snapshot;
 
   @override
   Future<void> refresh(WidgetRef ref, String channelId) async {

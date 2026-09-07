@@ -225,8 +225,11 @@ class _SliverChannelsList extends HookConsumerWidget {
 
     final sectionExpandedStates = useState<Map<String, bool>>({});
 
+    // Projects start collapsed: each one expanded is one observer read per
+    // bound channel, and a project header says enough on its own.
     bool sectionExpanded(String sectionId) =>
-        sectionExpandedStates.value[sectionId] ?? true;
+        sectionExpandedStates.value[sectionId] ??
+        !sectionId.startsWith('project:');
 
     void toggleSection(String sectionId) {
       sectionExpandedStates.value = {
