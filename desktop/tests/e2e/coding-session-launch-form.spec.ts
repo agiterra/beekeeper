@@ -303,6 +303,17 @@ async function openApp(page: Page, seatFailure?: string) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
 }
 
+/** Open the "Setup and advanced options" disclosure. */
+async function openSetup(page: Page) {
+  await page
+    .getByTestId("new-coding-session-configuration")
+    .locator(":scope > summary")
+    .click();
+  await expect(
+    page.getByTestId("new-coding-session-configuration"),
+  ).toHaveAttribute("open");
+}
+
 async function openDialog(page: Page) {
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.getByTestId("channel-coding-sessions-trigger").click();
@@ -342,9 +353,6 @@ test.describe("the one launch form", () => {
     // The primary path keeps setup details out of view while preserving the
     // mounted controls behind the disclosure for saved setups and edits.
     await expect(
-      page.getByTestId("new-coding-session-setup-summary"),
-    ).toContainText("Current setup");
-    await expect(
       page.getByTestId("new-coding-session-configuration"),
     ).not.toHaveAttribute("open");
     await expect(page.getByTestId("new-coding-session-bench")).toBeHidden();
@@ -364,7 +372,7 @@ test.describe("the one launch form", () => {
       page.getByTestId("new-coding-session-blocker-goal"),
     ).toContainText("Write the goal");
 
-    await page.getByTestId("new-coding-session-edit-setup").click();
+    await openSetup(page);
 
     await page
       .getByTestId("new-coding-session-goal")
@@ -468,7 +476,7 @@ test.describe("the one launch form", () => {
     await page
       .getByTestId("new-coding-session-goal")
       .fill("Inspect this project.");
-    await page.getByTestId("new-coding-session-edit-setup").click();
+    await openSetup(page);
     await page
       .getByTestId("new-coding-session-lead-select")
       .selectOption(ROLES[0].pubkey);
@@ -490,7 +498,7 @@ test.describe("the one launch form", () => {
   }) => {
     await openApp(page);
     await openDialog(page);
-    await page.getByTestId("new-coding-session-edit-setup").click();
+    await openSetup(page);
 
     await page
       .getByTestId("new-coding-session-goal")
@@ -612,7 +620,7 @@ test.describe("the one launch form", () => {
     // fire because the model was never null.
     await openApp(page);
     await openDialog(page);
-    await page.getByTestId("new-coding-session-edit-setup").click();
+    await openSetup(page);
     await page
       .getByTestId("new-coding-session-goal")
       .fill("Prove the model comes from the identity.");
@@ -654,7 +662,7 @@ test.describe("the one launch form", () => {
   }) => {
     await openApp(page);
     await openDialog(page);
-    await page.getByTestId("new-coding-session-edit-setup").click();
+    await openSetup(page);
     await page.setViewportSize({ width: 720, height: 1600 });
     await page
       .getByTestId("new-coding-session-goal")

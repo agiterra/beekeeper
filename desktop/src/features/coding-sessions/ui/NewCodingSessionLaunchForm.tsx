@@ -11,10 +11,7 @@ import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import { MAX_CODING_SESSION_NAME_BYTES } from "@/features/coding-sessions/lib/codingSessionName";
-import {
-  NewCodingSessionChannelPicker,
-  NewCodingSessionProjectDestination,
-} from "./NewCodingSessionDestination";
+import { NewCodingSessionChannelPicker } from "./NewCodingSessionDestination";
 import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
 import { useNewCodingSessionDraft } from "../lib/newCodingSessionDraft";
 import { useNewCodingSessionPromptRecall } from "../lib/newCodingSessionPromptHistory";
@@ -69,10 +66,7 @@ import {
   type NewCodingSessionLeadCandidate,
 } from "./NewCodingSessionLeadField";
 import { NewCodingSessionPolicyField } from "./NewCodingSessionPolicyField";
-import {
-  formatNewCodingSessionSetupProvider,
-  NewCodingSessionSetupDisclosure,
-} from "./NewCodingSessionSetupDisclosure";
+import { NewCodingSessionSetupDisclosure } from "./NewCodingSessionSetupDisclosure";
 import { useNewCodingSessionTitleSuggestion } from "./useNewCodingSessionTitleSuggestion";
 import { NewCodingSessionReadiness } from "./NewCodingSessionReadiness";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
@@ -703,11 +697,7 @@ export function NewCodingSessionForm({
           ) : null}
         </div>
 
-        {projectContext ? (
-          <NewCodingSessionProjectDestination
-            projectName={projectContext.projectName}
-          />
-        ) : (
+        {projectContext ? null : (
           <NewCodingSessionChannelPicker
             channels={pickerChannels}
             disabled={interactionLocked}
@@ -720,17 +710,42 @@ export function NewCodingSessionForm({
           />
         )}
 
+        {/* Where the session runs is required, so it lives beside the goal
+            rather than behind the setup disclosure (Andy, 2026-09-07). */}
+        <NewCodingSessionWorktreeField
+          checked={useWorktree}
+          disabled={
+            interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
+          }
+          name={worktreeName}
+          onCheckedChange={setUseWorktree}
+          onNameChange={setWorktreeName}
+          onSourceChange={setWorktreeSource}
+          sessionName={
+            governed
+              ? codingSessionLeadWorktreeName(title.trim() || "session")
+              : title
+          }
+          source={worktreeSource}
+          workdir={workdir}
+        />
+
+        <NewCodingSessionWorkdirField
+          channelId={channelId}
+          disabled={
+            interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
+          }
+          fallbackPath={projectContext?.defaultWorkdir ?? null}
+          onChange={setWorkdir}
+          projectKey={projectContext?.projectRef ?? null}
+          usesWorktree={useWorktree}
+          value={workdir}
+        />
+
         <NewCodingSessionSetupDisclosure
           configurationOpen={configurationOpen}
           governed={governed}
           onConfigurationOpenChange={setConfigurationOpen}
-          setupLead={
-            lead.kind === "agent" ? `${lead.label} · ${lead.role}` : lead.label
-          }
-          setupModel={
-            leadModel ?? effectiveModel ?? "Model will be chosen at runtime"
-          }
-          setupProvider={formatNewCodingSessionSetupProvider(selectedTarget)}
         >
           <NewCodingSessionLeadField
             candidates={candidates}
@@ -843,36 +858,6 @@ export function NewCodingSessionForm({
               </p>
             ) : null}
           </div>
-
-          <NewCodingSessionWorktreeField
-            checked={useWorktree}
-            disabled={
-              interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
-            }
-            name={worktreeName}
-            onCheckedChange={setUseWorktree}
-            onNameChange={setWorktreeName}
-            onSourceChange={setWorktreeSource}
-            sessionName={
-              governed
-                ? codingSessionLeadWorktreeName(title.trim() || "session")
-                : title
-            }
-            source={worktreeSource}
-            workdir={workdir}
-          />
-
-          <NewCodingSessionWorkdirField
-            channelId={channelId}
-            disabled={
-              interactionLocked && !isCodingSessionWorkdirFailure(failureCode)
-            }
-            fallbackPath={projectContext?.defaultWorkdir ?? null}
-            onChange={setWorkdir}
-            projectKey={projectContext?.projectRef ?? null}
-            usesWorktree={useWorktree}
-            value={workdir}
-          />
 
           {projectContext?.projectRef ? (
             <NewCodingSessionRolesField
