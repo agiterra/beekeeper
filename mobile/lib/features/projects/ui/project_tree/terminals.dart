@@ -1,4 +1,4 @@
-part of '../project_page.dart';
+part of '../project_tree.dart';
 
 /// The terminals shared under the project.
 ///
@@ -27,7 +27,7 @@ class _ProjectTerminalsSection extends StatelessWidget {
     final colors = context.colors;
     final Widget body;
     if (!index.hasRead) {
-      body = _SectionNote(
+      body = ProjectSectionNote(
         key: const ValueKey('project-terminals-unread'),
         text: switch (index.connection) {
           TerminalsConnection.connecting => 'Reading shared terminals…',
@@ -38,7 +38,7 @@ class _ProjectTerminalsSection extends StatelessWidget {
         },
       );
     } else if (terminals.isEmpty) {
-      body = const _SectionNote(
+      body = const ProjectSectionNote(
         key: ValueKey('project-terminals-empty'),
         text: 'No terminal is shared under this project right now',
       );

@@ -191,12 +191,20 @@ class _SliverChannelsList extends HookConsumerWidget {
       streamChannels.where((c) => starredChannelIds.contains(c.id)).toList(),
       sortState.sortModeFor('starred'),
     );
+    // Projects sit above the plain list; a channel a project claims lives
+    // under its project header, not in "Channels" as well. Starred and
+    // user sections keep their say: a starred project channel stays
+    // pinned in Starred and is not repeated under the project.
+    final projectsRead = ref.watch(projectsProvider);
+    final projects = projectsRead.projects;
+    final projectBound = projectBoundChannelIds(projects, visibleChannels);
     final ungroupedStreamChannels = sortChannelsForList(
       streamChannels
           .where(
             (c) =>
                 !assignedChannelIds.contains(c.id) &&
-                !starredChannelIds.contains(c.id),
+                !starredChannelIds.contains(c.id) &&
+                !projectBound.contains(c.id),
           )
           .toList(),
       sortState.sortModeFor('channels'),
@@ -254,6 +262,19 @@ class _SliverChannelsList extends HookConsumerWidget {
                 onSortModeChange: (mode) => setSortMode('starred', mode),
                 onSelectChannel: onSelectChannel,
               ),
+            // Projects: each with its channels, their coding sessions, and
+            // the terminals shared under it — one hierarchy, on Home.
+            for (final project in projects)
+              _ProjectHomeSection(
+                key: ValueKey('home-project-${project.address}'),
+                project: project,
+                myChannels: visibleChannels,
+                showTopDivider:
+                    starredStreamChannels.isNotEmpty ||
+                    projects.first.address != project.address,
+                expanded: sectionExpanded('project:${project.address}'),
+                onToggle: () => toggleSection('project:${project.address}'),
+              ),
             // User-defined sections for stream channels, in user-defined order.
             for (final section in userSections)
               _CustomChannelSection(
@@ -276,6 +297,7 @@ class _SliverChannelsList extends HookConsumerWidget {
                 isLast: userSections.last.id == section.id,
                 showTopDivider:
                     starredStreamChannels.isNotEmpty ||
+                    projects.isNotEmpty ||
                     userSections.first.id != section.id,
                 onToggle: () => toggleSection(section.id),
                 onRename: () async {
@@ -354,7 +376,9 @@ class _SliverChannelsList extends HookConsumerWidget {
               title: 'Channels',
               icon: LucideIcons.hash,
               showTopDivider:
-                  starredStreamChannels.isNotEmpty || userSections.isNotEmpty,
+                  starredStreamChannels.isNotEmpty ||
+                  projects.isNotEmpty ||
+                  userSections.isNotEmpty,
               expanded: channelsExpanded.value,
               onToggle: () => channelsExpanded.value = !channelsExpanded.value,
               channels: ungroupedStreamChannels,
@@ -386,4 +410,51 @@ class _SliverChannelsList extends HookConsumerWidget {
       ),
     );
   }
+}
+
+/// A project on the Home screen: a section header that opens the project's
+/// page, over the project's own tree of channels, sessions and terminals.
+class _ProjectHomeSection extends StatelessWidget {
+  final Project project;
+  final List<Channel> myChannels;
+  final bool showTopDivider;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  const _ProjectHomeSection({
+    super.key,
+    required this.project,
+    required this.myChannels,
+    required this.showTopDivider,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if (showTopDivider) const _SectionDivider(),
+      _SectionHeader(
+        label: project.name,
+        icon: project.isPrivate
+            ? LucideIcons.folderLock
+            : LucideIcons.folderCode,
+        expanded: expanded,
+        onToggle: onToggle,
+      ),
+      _AnimatedSectionBody(
+        expanded: expanded,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            Grid.xxs,
+            0,
+            Grid.xxs,
+            _kExpandedSectionTrailingPadding,
+          ),
+          child: ProjectTree(project: project, myChannels: myChannels),
+        ),
+      ),
+    ],
+  );
 }

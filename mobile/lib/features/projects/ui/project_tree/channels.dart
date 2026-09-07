@@ -1,4 +1,4 @@
-part of '../project_page.dart';
+part of '../project_tree.dart';
 
 /// One channel of the project, with its coding sessions underneath.
 ///

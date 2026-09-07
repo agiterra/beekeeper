@@ -1,58 +1,27 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../../shared/relay/nostr_models.dart';
-import '../../../shared/relay/relay_provider.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/utils/string_utils.dart';
-import '../../../shared/widgets/app_list_card.dart';
 import '../../../shared/widgets/bee_refresh_indicator.dart';
 import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
 import '../../channels/channel.dart';
-import '../../channels/channel_detail_page.dart';
 import '../../channels/channels_provider.dart';
-import '../../coding_sessions/ui/coding_session_labels.dart';
-import '../../coding_sessions/ui/coding_session_page.dart';
-import '../../coding_sessions/ui/coding_session_status_chip.dart';
-import '../../coding_sessions/ui/coding_sessions_page.dart';
-import '../../coding_sessions/ui/observer_contract.dart';
-import '../../profile/user_cache_provider.dart';
-import '../../terminals/domain/terminals_domain.dart';
 import '../../terminals/state/terminals_index_provider.dart';
-import '../../terminals/ui/terminal_observe_page.dart';
-import '../../terminals/ui/terminal_row.dart';
 import '../domain/project_models.dart';
 import '../state/projects_provider.dart';
-import 'projects_page.dart';
+import 'project_tree.dart';
 
-part 'project_page/channels.dart';
-part 'project_page/terminals.dart';
+export 'project_tree.dart'
+    show ProjectTerminalOpener, projectTerminalOpenerProvider;
 
-/// Opens a terminal from a project page.
-typedef ProjectTerminalOpener =
-    void Function(BuildContext context, RemoteTerminal terminal);
-
-/// The opener the project page uses: the observe page. Tests override it
-/// with `null` to keep rows inert, which the row shows (no chevron).
-final projectTerminalOpenerProvider = Provider<ProjectTerminalOpener?>(
-  (ref) =>
-      (context, terminal) => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => TerminalObservePage(terminal: terminal),
-        ),
-      ),
-);
-
-/// One project: its channels with their coding sessions, and its terminals.
+/// One project on its own page: the same tree the Home screen shows under
+/// the project's header, with a description line above it.
 ///
-/// Channels come from two bindings unioned as the desktop does: the head's
-/// own `channel` tags and the relay-stamped `project` tag on each channel's
-/// metadata. Terminals sit under the project, not a channel — a terminal
-/// announce names only a project, and this page does not invent more.
-class ProjectPage extends HookConsumerWidget {
+/// Reached from a project header's title; the Home list is the primary door.
+class ProjectPage extends ConsumerWidget {
   /// The `30621:<owner>:<d>` address.
   final String address;
 
@@ -63,10 +32,6 @@ class ProjectPage extends HookConsumerWidget {
     final read = ref.watch(projectsProvider);
     final project = read.byAddress(address);
     final channelsAsync = ref.watch(channelsProvider);
-    final terminals = ref.watch(terminalsIndexProvider);
-    final me = ref.watch(myPubkeyProvider);
-    final profiles = ref.watch(userCacheProvider);
-    final opener = ref.watch(projectTerminalOpenerProvider);
 
     Future<void> refresh() => Future.wait([
       ref.read(projectsProvider.notifier).refresh(),
@@ -99,17 +64,6 @@ class ProjectPage extends HookConsumerWidget {
     }
 
     final myChannels = channelsAsync.asData?.value ?? const <Channel>[];
-    final channels = projectChannelsFor(
-      project: project,
-      myChannels: myChannels,
-      referenced: read.referencedChannels,
-    );
-    final sessionsChannel = pickProjectSessionsChannel(project, channels);
-    final shared = terminals.forProject(project.address);
-
-    String ownerLabel(String pubkey) =>
-        profiles[pubkey.toLowerCase()]?.label ?? shortPubkey(pubkey);
-
     return FrostedScaffold(
       backgroundColor: context.colors.surface,
       appBar: FrostedAppBar(
@@ -130,27 +84,7 @@ class ProjectPage extends HookConsumerWidget {
                 ),
                 children: [
                   _ProjectHeader(project: project),
-                  if (channels.isEmpty)
-                    const _SectionNote(
-                      key: ValueKey('project-no-channels'),
-                      text: 'No channel is bound to this project yet',
-                    )
-                  else
-                    for (final channel in channels)
-                      _ProjectChannelSection(
-                        key: ValueKey('project-channel-${channel.id}'),
-                        channel: channel,
-                        isSessionsChannel: channel.id == sessionsChannel?.id,
-                        myChannel: _channelById(myChannels, channel.id),
-                      ),
-                  _ProjectTerminalsSection(
-                    project: project,
-                    terminals: shared,
-                    index: terminals,
-                    viewerPubkey: me,
-                    ownerLabel: ownerLabel,
-                    opener: opener,
-                  ),
+                  ProjectTree(project: project, myChannels: myChannels),
                 ],
               ),
             ),
@@ -159,67 +93,6 @@ class ProjectPage extends HookConsumerWidget {
       ),
     );
   }
-
-  static Channel? _channelById(List<Channel> channels, String id) {
-    for (final channel in channels) {
-      if (channel.id == id) return channel;
-    }
-    return null;
-  }
-}
-
-/// The project's channels: this device's own list filtered by binding, plus
-/// the heads' referenced channels the list does not carry.
-List<ProjectChannel> projectChannelsFor({
-  required Project project,
-  required List<Channel> myChannels,
-  required Map<String, ChannelData> referenced,
-}) {
-  final result = <ProjectChannel>[];
-  final seen = <String>{};
-  for (final channel in myChannels) {
-    if (!channelBelongsToProject(
-      project: project,
-      channelId: channel.id,
-      channelProjectRef: channel.projectRef,
-    )) {
-      continue;
-    }
-    if (!seen.add(channel.id)) continue;
-    result.add(
-      ProjectChannel(
-        id: channel.id,
-        name: channel.name,
-        channelType: channel.channelType,
-        isMember: true,
-        lastActivityAt: channel.lastMessageAt == null
-            ? null
-            : channel.lastMessageAt!.millisecondsSinceEpoch ~/ 1000,
-      ),
-    );
-  }
-  for (final id in project.channelIds) {
-    if (seen.contains(id)) continue;
-    final data = referenced[id];
-    if (data == null) continue;
-    seen.add(id);
-    result.add(
-      ProjectChannel(
-        id: id,
-        name: data.name,
-        channelType: data.channelType,
-        isMember: false,
-      ),
-    );
-  }
-  result.sort((left, right) {
-    // The sessions transport first, then by name.
-    if (left.isTransport != right.isTransport) {
-      return left.isTransport ? -1 : 1;
-    }
-    return left.name.toLowerCase().compareTo(right.name.toLowerCase());
-  });
-  return result;
 }
 
 class _ProjectHeader extends StatelessWidget {
@@ -264,22 +137,49 @@ class _ProjectHeader extends StatelessWidget {
   }
 }
 
-class _SectionNote extends StatelessWidget {
-  final String text;
+/// A full-height message with a Retry, kept scrollable for pull-to-refresh.
+class ProjectsMessage extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+  final Future<void> Function() onRetry;
 
-  const _SectionNote({super.key, required this.text});
+  const ProjectsMessage({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.onRetry,
+  });
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(
-      horizontal: Grid.xxs,
-      vertical: Grid.xs,
-    ),
-    child: Text(
-      text,
-      style: context.textTheme.bodySmall?.copyWith(
-        color: context.colors.onSurfaceVariant,
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(Grid.gutter, Grid.xxl, Grid.gutter, 0),
+    children: [
+      Icon(icon, size: 32, color: context.colors.onSurfaceVariant),
+      const SizedBox(height: Grid.twelve),
+      Text(
+        title,
+        textAlign: TextAlign.center,
+        style: context.textTheme.titleSmall,
       ),
-    ),
+      const SizedBox(height: Grid.half),
+      Text(
+        detail,
+        textAlign: TextAlign.center,
+        style: context.textTheme.bodySmall?.copyWith(
+          color: context.colors.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: Grid.xs),
+      Center(
+        child: TextButton.icon(
+          key: const ValueKey('projects-retry'),
+          onPressed: onRetry,
+          icon: const Icon(LucideIcons.refreshCw, size: 16),
+          label: const Text('Retry'),
+        ),
+      ),
+    ],
   );
 }

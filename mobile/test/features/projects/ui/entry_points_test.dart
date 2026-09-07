@@ -1,5 +1,5 @@
 import 'package:buzz/features/home/home_page.dart';
-import 'package:buzz/features/projects/ui/projects_page.dart';
+import 'package:buzz/features/projects/ui/project_tree.dart';
 import 'package:buzz/shared/theme/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,22 +9,33 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../coding_sessions/ui/fake_observer.dart';
 import 'fake_projects.dart';
 
-/// The one way a member reaches Projects: the fourth Home tab.
+/// The one way a member reaches a project: its section on the Home screen.
 ///
 /// Without this the feature is unreachable from the app and every other test
-/// in this directory passes over a page nothing opens.
+/// in this directory passes over a tree nothing shows.
 void main() {
   Widget settingsPage(BuildContext context) => const SizedBox.shrink();
 
-  testWidgets('the Home tab bar has a Projects destination that shows the '
-      'projects page', (tester) async {
+  testWidgets('the Home screen lists each project as a section over its '
+      'tree, and keeps its channels out of the plain list', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           savedPrefsProvider.overrideWithValue(prefs),
-          ...projectOverrides(projects: testProjectsRead([testProject()])),
+          ...projectOverrides(
+            projects: testProjectsRead(
+              [
+                testProject(channelIds: const ['c-transport']),
+              ],
+              referenced: {'c-transport': testChannelData('c-transport')},
+            ),
+            channels: [
+              testChannel('c-general', projectRef: testProjectAddress),
+              testChannel('c-other', name: 'other'),
+            ],
+          ),
           fakeObserverOverride(FakeObserverBinding(testSnapshot())),
         ],
         child: MaterialApp(
@@ -37,14 +48,26 @@ void main() {
       ),
     );
     await tester.pump();
+    await tester.pump();
 
-    expect(find.bySemanticsLabel('Projects'), findsOneWidget);
-    expect(find.byType(ProjectsPage), findsNothing);
-
-    await tester.tap(find.bySemanticsLabel('Projects'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(ProjectsPage), findsOneWidget);
+    expect(find.bySemanticsLabel('Projects'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-project-$testProjectAddress')),
+      findsOneWidget,
+    );
     expect(find.text('Beekeeper'), findsOneWidget);
+    expect(find.byType(ProjectTree), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('project-channel-row-c-transport')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('project-channel-row-c-general')),
+      findsOneWidget,
+    );
+    // The project-bound channel is not repeated in the plain list; the
+    // unbound one still is.
+    expect(find.text('general'), findsOneWidget);
+    expect(find.text('other'), findsOneWidget);
   });
 }
