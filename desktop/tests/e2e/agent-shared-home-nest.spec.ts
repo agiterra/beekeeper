@@ -1,3 +1,4 @@
+import { openDirectoryAgentProfile } from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
@@ -48,16 +49,14 @@ test("an agent whose shared home refuses its pack says so, and can be given a ne
   await page.getByTestId("open-agents-view").click();
 
   // The card: the fact, without the remedy a thumbnail has no room for.
-  const refusedBadge = page.getByTestId("agent-shared-home");
+  const refusedBadge = page.getByTestId("agent-row-pack");
   await expect(refusedBadge).toHaveCount(1);
   await expect(refusedBadge).toContainText("Shared home — packs refused");
   // And exactly one: the agent in a nest of its own is accused of nothing.
   await expect(page.getByTestId("agent-no-role-pack")).toHaveCount(0);
 
   // The profile: the fact, the remedy, and the button that performs it.
-  await page
-    .getByRole("button", { name: "Bob the builder agent profile" })
-    .click();
+  await openDirectoryAgentProfile(page, "Bob the builder");
   const panel = page.getByTestId("user-profile-summary-scroll-layout");
   const action = panel.getByTestId("agent-give-own-nest");
   await expect(action).toBeVisible();

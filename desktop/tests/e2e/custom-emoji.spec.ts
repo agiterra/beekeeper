@@ -380,12 +380,14 @@ test("reacting with a custom emoji renders via the loopback media proxy", async 
   // The picker closes with the pointer/focus position depending on animation
   // timing. Put the row into a deterministic idle state before checking the
   // pill's pre-existing hidden behavior.
+  await expect(picker).toBeHidden();
+  await waitForAnimations(page);
   await page.mouse.move(0, 0);
-  await page.evaluate(() => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-  });
+  // Move focus only after the closing picker has restored focus to its trigger.
+  // A premature blur races that restoration and leaves :focus-within active.
+  const composerInput = page.getByTestId("message-input");
+  await composerInput.focus();
+  await expect(composerInput).toBeFocused();
   await expect
     .poll(() =>
       inlineAddReactionButton.evaluate((button) => {

@@ -1,3 +1,7 @@
+import {
+  openAgentDefinitions,
+  openDirectoryAgentProfile,
+} from "../helpers/agentDirectory";
 import { expect, test, type Page } from "@playwright/test";
 
 import {
@@ -357,9 +361,7 @@ test("owned agent profile stays in parity between Agents and its DM", async ({
   );
 
   await openDashboardTab(page, "agents");
-  await page
-    .getByRole("button", { name: `${agentName} agent profile` })
-    .click();
+  await openDirectoryAgentProfile(page, agentName);
   await page.getByTestId("user-profile-message").click();
   await expect(page.getByTestId("chat-header-dm-avatar")).toBeVisible();
   const dmChannelId = await page.evaluate(() => {
@@ -398,9 +400,7 @@ test("owned agent profile stays in parity between Agents and its DM", async ({
   );
 
   await openDashboardTab(page, "agents");
-  await page
-    .getByRole("button", { name: `${agentName} agent profile` })
-    .click();
+  await openDirectoryAgentProfile(page, agentName);
   const agentsSurface = await readOwnedAgentProfileContract(page);
 
   await page.getByTestId("user-profile-message").click();
@@ -469,6 +469,7 @@ test("updates the relay-backed profile from settings", async ({ page }) => {
   const avatarUrl = `https://example.com/avatar-${stamp}.png`;
   const about = `Coordinating relay profile setup ${stamp}`;
   await page.goto("/#/?tab=inbox");
+  await expectHomeView(page);
 
   await openSettings(page, "profile");
   await expect(
@@ -1872,6 +1873,7 @@ test("an older agent message opens the same persona instance as the Agents libra
   await page.goto("/");
 
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await page.getByTestId(`persona-agent-row-${personaId}`).click();
   await expect(
     page.getByTestId("user-profile-agent-primary-action"),
@@ -2135,6 +2137,7 @@ test("renders settings in the app shell with a back button", async ({
   page,
 }) => {
   await page.goto("/#/?tab=inbox");
+  await expectHomeView(page);
 
   const dashboardNavButton = page
     .getByTestId("app-sidebar")
@@ -2175,11 +2178,11 @@ test("renders settings in the app shell with a back button", async ({
       name: "Appearance",
     }),
   ).toBeVisible();
-  await expect(inboxNavButton).toHaveCount(0);
+  await expect(dashboardNavButton).toHaveCount(0);
 
   await page.getByTestId("settings-back-to-app").click();
   await expectHomeView(page);
-  await expect(inboxNavButton).toBeVisible();
+  await expect(dashboardNavButton).toBeVisible();
 });
 
 test("notification settings drive the Inbox badge and desktop alerts", async ({
@@ -2196,6 +2199,7 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
   }
 
   await page.goto("/#/?tab=inbox");
+  await expectHomeView(page);
   await expect(page.getByTestId("sidebar-home-count")).toHaveCount(0);
 
   await openSettings(page, "notifications");

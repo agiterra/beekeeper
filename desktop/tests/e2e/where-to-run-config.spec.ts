@@ -92,7 +92,7 @@ async function selectRunOnOption(
 async function openCreateDialogOnProvider(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await openDashboardTab(page, "agents");
-  await page.getByTestId("new-agent-card").click();
+  await page.getByTestId("agent-directory-add").click();
   const dialog = page.getByTestId("persona-dialog");
   await expect(dialog).toBeVisible({ timeout: 10_000 });
   const advanced = dialog.getByRole("button", {

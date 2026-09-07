@@ -1,3 +1,4 @@
+import { openAgentDefinitions } from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
@@ -32,6 +33,7 @@ async function openNewPersonaDialog(page: import("@playwright/test").Page) {
   await waitForInvokeBridge(page);
 
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await expect(page.getByTestId("agents-library-personas")).toBeVisible({
     timeout: 8_000,
   });

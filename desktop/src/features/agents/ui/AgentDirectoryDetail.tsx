@@ -1,3 +1,4 @@
+import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { X } from "lucide-react";
 
 import type { AgentDirectoryRow } from "@/features/agents/lib/agentDirectoryModel";
@@ -61,6 +62,7 @@ export function AgentDirectoryDetail({
   isPending: boolean;
 }) {
   const packText = agentDetailPackText(row);
+  const { openProfilePanel } = useProfilePanel();
 
   return (
     <div
@@ -158,6 +160,16 @@ export function AgentDirectoryDetail({
         data-testid={AGENT_DETAIL_CONTROLS_TESTID}
       >
         <h3 className="text-sm font-medium">Controls</h3>
+        {openProfilePanel ? (
+          <Button
+            data-testid="agent-detail-profile"
+            variant="outline"
+            size="sm"
+            onClick={() => openProfilePanel(row.pubkey)}
+          >
+            Open profile
+          </Button>
+        ) : null}
         {row.isInstalled ? (
           <div className="flex flex-wrap gap-2">
             <Button
@@ -185,7 +197,11 @@ export function AgentDirectoryDetail({
               size="sm"
               variant="outline"
             >
-              {isRestartPending ? "Restarting…" : "Restart"}
+              {isRestartPending
+                ? "Restarting…"
+                : row.needsRestart
+                  ? "Restart to apply changes"
+                  : "Restart"}
             </Button>
             <Button
               data-testid={AGENT_DETAIL_EDIT_TESTID}

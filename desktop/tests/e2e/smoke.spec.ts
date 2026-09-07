@@ -1,3 +1,4 @@
+import { openAgentDefinitions } from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, openCreateChannelDialog } from "../helpers/bridge";
@@ -143,6 +144,7 @@ test("Buzz shared compute explains automatic model selection", async ({
     ).__BUZZ_E2E_SET_MESH__?.({ models: [] });
   });
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await page.getByTestId("new-agent-card").click();
   await chooseSharedComputeProvider(page);
 
@@ -171,6 +173,7 @@ test("create agent persists Buzz shared compute with auto model", async ({
 
   await page.goto("/");
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await page.getByTestId("new-agent-card").click();
   await page.locator("#persona-display-name").fill(agentName);
 
@@ -217,6 +220,7 @@ test("create agent supports parallelism and system prompt overrides", async ({
 
   await page.goto("/");
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await page.getByTestId("new-agent-card").click();
 
   await page.locator("#persona-display-name").fill(agentName);

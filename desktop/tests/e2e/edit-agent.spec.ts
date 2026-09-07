@@ -1,3 +1,7 @@
+import {
+  openAgentDefinitions,
+  openDirectoryAgentProfile,
+} from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
@@ -46,11 +50,7 @@ async function openEditDialog(page: import("@playwright/test").Page) {
   await page.goto("/");
   await openDashboardTab(page, "agents");
 
-  const agentButton = page.getByRole("button", {
-    name: `${AGENT_NAME} agent profile`,
-  });
-  await expect(agentButton).toBeVisible({ timeout: 10_000 });
-  await agentButton.click();
+  await openDirectoryAgentProfile(page, AGENT_NAME);
 
   await expect(page.getByTestId("user-profile-panel")).toBeVisible({
     timeout: 10_000,
@@ -89,6 +89,7 @@ test.describe("agent definition dialog", () => {
     });
     await page.goto("/");
     await openDashboardTab(page, "agents");
+    await openAgentDefinitions(page);
     await page.getByTestId("new-agent-card").click();
 
     const dialog = page.getByRole("dialog");
@@ -385,17 +386,9 @@ test.describe("edit agent dialog", () => {
     await page.goto("/");
     await openDashboardTab(page, "agents");
 
-    // A persona card that has an instance behind it is titled with the
-    // INSTANCE's name, not the pack's — resolveAgentCardTitle
-    // (src/features/agents/lib/agentCardTitle.ts:16-21), because the card's
-    // avatar, model, status and click target all resolve to that instance.
-    // The persona name still titles the actions menu (PersonaActionsMenu),
-    // which acts on the definition.
-    const agentButton = page.getByRole("button", {
-      name: `${AGENT_NAME} agent profile`,
-    });
-    await expect(agentButton).toBeVisible({ timeout: 10_000 });
-    await agentButton.click();
+    // The directory identifies the deployed instance; its shared profile Edit
+    // action still resolves to the linked definition editor.
+    await openDirectoryAgentProfile(page, AGENT_NAME);
 
     await expect(page.getByTestId("user-profile-panel")).toBeVisible({
       timeout: 10_000,

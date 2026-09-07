@@ -91,7 +91,10 @@ async function clickStop(page: Page) {
   const stop = page.getByTestId("agent-session-stop-turn");
   await expect(stop).toBeVisible();
   await expect(stop).toBeEnabled();
-  await stop.click();
+  // Activate the real menu item with the keyboard. The clock-controlled
+  // timeout case must not depend on pointer stability during Radix motion.
+  await stop.focus();
+  await stop.press("Enter");
 }
 
 test.describe("agent control browser regressions", () => {

@@ -1,3 +1,7 @@
+import {
+  openAgentDefinitions,
+  openDirectoryAgentProfile,
+} from "../helpers/agentDirectory";
 /**
  * Screenshot spec for the needsRestart badge and config diff (PR #1853 + diff
  * overlay work).
@@ -72,6 +76,12 @@ const STANDALONE_AGENT = {
   restartDiff: DIFF_ENTRIES,
 };
 
+// Definition cards retain the avatar controls; standalone identities use the directory.
+const DEFINITION_AGENT = {
+  ...STANDALONE_AGENT,
+  personaId: "custom:restart_definition",
+};
+
 const PERSONA_AGENT = {
   pubkey: TEST_IDENTITIES.bob.pubkey,
   name: "Persona Agent",
@@ -85,14 +95,14 @@ const PERSONA_AGENT = {
 const NO_DRIFT_AGENT = {
   pubkey: TEST_IDENTITIES.tyler.pubkey,
   name: "Stable Agent",
+  personaId: "custom:no_drift_agent",
   status: "running" as const,
   needsRestart: false,
 };
 
 /**
- * Inactive agent with a friendly error AND a restart diff. Opening its card
- * forces the panel to open on the Runtime tab (opensRuntimeTab logic).
- * Used to assert: Runtime tab is active, hero badge visible, uncapped banner.
+ * Inactive agent with a friendly error AND a restart diff. Its directory
+ * profile must retain the hero badge and full Runtime-tab diagnostics.
  */
 const INACTIVE_FRIENDLY_ERROR_AGENT = {
   pubkey: TEST_IDENTITIES.outsider.pubkey,
@@ -107,6 +117,7 @@ const INACTIVE_FRIENDLY_ERROR_AGENT = {
 const RESTART_AGENT = {
   pubkey: "cd".repeat(32),
   name: "Restart Agent",
+  personaId: "custom:restart_agent",
   status: "running" as const,
   needsRestart: true,
   restartDiff: DIFF_ENTRIES,
@@ -115,6 +126,7 @@ const RESTART_AGENT = {
 const START_AGENT = {
   pubkey: "ef".repeat(32),
   name: "Start Agent",
+  personaId: "custom:start_agent",
   status: "stopped" as const,
   needsRestart: false,
 };
@@ -125,6 +137,7 @@ async function gotoAgentsView(page: import("@playwright/test").Page) {
     timeout: 10_000,
   });
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await expect(page.getByTestId("agents-library-personas")).toBeVisible({
     timeout: 10_000,
   });
@@ -225,22 +238,33 @@ test.describe("restart-diff screenshots", () => {
 
   // ── Badge presence ──────────────────────────────────────────────────────────
 
-  test("01-grid-standalone-restart-badge", async ({ page }) => {
+  test("01-definition-and-directory-restart-badge", async ({ page }) => {
     await installMockBridge(page, {
-      managedAgents: [STANDALONE_AGENT, NO_DRIFT_AGENT],
+      managedAgents: [DEFINITION_AGENT, NO_DRIFT_AGENT],
+      personas: [DEFINITION_AGENT, NO_DRIFT_AGENT].map((agent) => ({
+        id: agent.personaId,
+        displayName: agent.name,
+        systemPrompt: "Test restart controls.",
+      })),
     });
 
     await gotoAgentsView(page);
 
+    await expect(
+      page.getByTestId(`agent-needs-restart-${DEFINITION_AGENT.pubkey}`),
+    ).toHaveText("Restart to apply changes");
+    await expect(
+      page.getByTestId(`agent-needs-restart-${NO_DRIFT_AGENT.pubkey}`),
+    ).toHaveCount(0);
     const agentCard = page.getByTestId(
-      `managed-agent-${STANDALONE_AGENT.pubkey}`,
+      `persona-agent-row-${DEFINITION_AGENT.personaId}`,
     );
     await expect(agentCard).toBeVisible({ timeout: 10_000 });
     await expect(agentCard.getByText("Restart", { exact: true })).toBeVisible();
     await expect(agentCard.getByTestId("restart-diff-badge")).toHaveCount(0);
 
     const stableCard = page.getByTestId(
-      `managed-agent-${NO_DRIFT_AGENT.pubkey}`,
+      `persona-agent-row-${NO_DRIFT_AGENT.personaId}`,
     );
     await expect(stableCard).toBeVisible({ timeout: 10_000 });
     await expect(stableCard.getByText("Restart", { exact: true })).toHaveCount(
@@ -249,7 +273,7 @@ test.describe("restart-diff screenshots", () => {
 
     await waitForAnimations(page);
     await agentCard.screenshot({
-      path: `${SHOTS}/01-grid-standalone-restart-badge.png`,
+      path: `${SHOTS}/01-definition-and-directory-restart-badge.png`,
     });
   });
 
@@ -279,11 +303,20 @@ test.describe("restart-diff screenshots", () => {
   test("03-running-restart-action", async ({ page }) => {
     await installMockBridge(page, {
       managedAgents: [RESTART_AGENT],
+      personas: [
+        {
+          id: RESTART_AGENT.personaId,
+          displayName: RESTART_AGENT.name,
+          systemPrompt: "Test restart controls.",
+        },
+      ],
     });
 
     await gotoAgentsView(page);
 
-    const agentCard = page.getByTestId(`managed-agent-${RESTART_AGENT.pubkey}`);
+    const agentCard = page.getByTestId(
+      `persona-agent-row-${RESTART_AGENT.personaId}`,
+    );
     await expect(agentCard).toBeVisible({ timeout: 10_000 });
     const restartAction = page.getByTestId(
       `agent-runtime-start-${RESTART_AGENT.pubkey}`,
@@ -316,6 +349,13 @@ test.describe("restart-diff screenshots", () => {
     });
     await installMockBridge(page, {
       managedAgents: [RESTART_AGENT],
+      personas: [
+        {
+          id: RESTART_AGENT.personaId,
+          displayName: RESTART_AGENT.name,
+          systemPrompt: "Test restart controls.",
+        },
+      ],
     });
 
     await gotoAgentsView(page);
@@ -335,6 +375,11 @@ test.describe("restart-diff screenshots", () => {
   }) => {
     await installMockBridge(page, {
       managedAgents: [START_AGENT, RESTART_AGENT],
+      personas: [START_AGENT, RESTART_AGENT].map((agent) => ({
+        id: agent.personaId,
+        displayName: agent.name,
+        systemPrompt: "Test restart controls.",
+      })),
     });
 
     await gotoAgentsView(page);
@@ -382,11 +427,7 @@ test.describe("restart-diff screenshots", () => {
 
     await gotoAgentsView(page);
 
-    const agentButton = page.getByRole("button", {
-      name: `${STANDALONE_AGENT.name} agent profile`,
-    });
-    await expect(agentButton).toBeVisible({ timeout: 10_000 });
-    await agentButton.click();
+    await openDirectoryAgentProfile(page, STANDALONE_AGENT.name);
 
     const panel = page.getByTestId("user-profile-panel");
     await expect(panel).toBeVisible({ timeout: 10_000 });
@@ -417,10 +458,7 @@ test.describe("restart-diff screenshots", () => {
 
     await gotoAgentsView(page);
 
-    const agentButton = page.getByRole("button", {
-      name: `${STANDALONE_AGENT.name} agent profile`,
-    });
-    await agentButton.click();
+    await openDirectoryAgentProfile(page, STANDALONE_AGENT.name);
 
     const panel = page.getByTestId("user-profile-panel");
     await expect(panel).toBeVisible({ timeout: 10_000 });
@@ -450,10 +488,7 @@ test.describe("restart-diff screenshots", () => {
 
     await gotoAgentsView(page);
 
-    const agentButton = page.getByRole("button", {
-      name: `${agentAutoOff.name} agent profile`,
-    });
-    await agentButton.click();
+    await openDirectoryAgentProfile(page, agentAutoOff.name);
 
     const panel = page.getByTestId("user-profile-panel");
     await expect(panel).toBeVisible({ timeout: 10_000 });
@@ -479,11 +514,7 @@ test.describe("restart-diff screenshots", () => {
     await gotoAgentsView(page);
 
     // Open profile panel via the agent card button — opens on Info tab by default
-    const agentButton = page.getByRole("button", {
-      name: `${STANDALONE_AGENT.name} agent profile`,
-    });
-    await expect(agentButton).toBeVisible({ timeout: 10_000 });
-    await agentButton.click();
+    await openDirectoryAgentProfile(page, STANDALONE_AGENT.name);
 
     const panel = page.getByTestId("user-profile-panel");
     await expect(panel).toBeVisible({ timeout: 10_000 });
@@ -507,29 +538,24 @@ test.describe("restart-diff screenshots", () => {
     });
   });
 
-  // ── Inactive + friendly-error: panel opens on Runtime, hero badge + banner ─
+  // ── Inactive + friendly-error: Runtime diagnostics, hero badge + banner ─
 
-  test("11-inactive-friendly-error-panel-opens-runtime-tab", async ({
-    page,
-  }) => {
+  test("11-inactive-friendly-error-runtime-details", async ({ page }) => {
     await installMockBridge(page, {
       managedAgents: [INACTIVE_FRIENDLY_ERROR_AGENT],
     });
 
     await gotoAgentsView(page);
 
-    // The card for an inactive agent with a friendly error forces Runtime tab on open.
-    const agentCard = page.getByTestId(
-      `managed-agent-${INACTIVE_FRIENDLY_ERROR_AGENT.pubkey}`,
-    );
-    await expect(agentCard).toBeVisible({ timeout: 10_000 });
-    await agentCard.click();
+    // An inactive agent remains reachable through the directory profile action.
+    await openDirectoryAgentProfile(page, INACTIVE_FRIENDLY_ERROR_AGENT.name);
 
     const panel = page.getByTestId("user-profile-panel");
     await expect(panel).toBeVisible({ timeout: 10_000 });
 
-    // Panel opens on Runtime tab (opensRuntimeTab = true for inactive+friendlyError)
+    // Directory Open profile exposes the same diagnostics on the Runtime tab.
     const runtimeTab = panel.getByRole("tab", { name: "Runtime" });
+    await runtimeTab.click();
     await expect(runtimeTab).toHaveAttribute("aria-selected", "true", {
       timeout: 5_000,
     });

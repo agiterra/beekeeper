@@ -1361,8 +1361,20 @@ test.describe("community rail", () => {
         }),
       );
     }, `community-rail-button-${COMMUNITY_B.id}`);
-    // ArrowUp moves the active item one slot up.
+    // Wait for the sensor's accessible pickup announcement before moving.
+    // Otherwise the next key can beat the newly installed keyboard listener.
+    const dragStatus = page.getByTestId("community-rail").getByRole("status");
+    await expect(dragStatus).toContainText(
+      new RegExp(
+        `(?:Picked up draggable item ${COMMUNITY_B.id}|Draggable item ${COMMUNITY_B.id} was moved over droppable area ${COMMUNITY_B.id})`,
+      ),
+    );
+    // ArrowUp moves the active item one slot up; wait until collision state
+    // actually names A before dropping, so drop cannot observe the old B slot.
     await page.keyboard.press("ArrowUp");
+    await expect(dragStatus).toContainText(
+      `Draggable item ${COMMUNITY_B.id} was moved over droppable area ${COMMUNITY_A.id}`,
+    );
     // Space drops the item — same synthetic dispatch for consistency.
     await page.evaluate((testId) => {
       const el = document.querySelector(`[data-testid="${testId}"]`);

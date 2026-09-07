@@ -1,3 +1,7 @@
+import {
+  openAgentDefinitions,
+  openDirectoryAgentProfile,
+} from "../helpers/agentDirectory";
 /**
  * E2E spec for the inline "Add custom harness…" entry in the agent dialogs.
  *
@@ -50,6 +54,7 @@ async function registerHarness(page: Page) {
 async function openCreateDialog(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await page.getByTestId("new-agent-card").click();
   const dialog = page.getByTestId("persona-dialog");
   await expect(dialog).toBeVisible({ timeout: 10_000 });
@@ -61,6 +66,7 @@ async function openCreateDialog(page: Page) {
 async function openDefinitionEditDialog(page: Page, name: string) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await openDashboardTab(page, "agents");
+  await openAgentDefinitions(page);
   await expect(page.getByTestId("agents-library-personas")).toBeVisible({
     timeout: 10_000,
   });
@@ -162,9 +168,7 @@ test.describe("inline add custom harness", () => {
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await openDashboardTab(page, "agents");
-    await page
-      .getByRole("button", { name: "Instance Agent agent profile" })
-      .click();
+    await openDirectoryAgentProfile(page, "Instance Agent");
     await expect(page.getByTestId("user-profile-panel")).toBeVisible({
       timeout: 10_000,
     });

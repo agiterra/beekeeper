@@ -1,3 +1,4 @@
+import { openDirectoryAgentProfile } from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
@@ -18,7 +19,7 @@ const EDIT_AGENT_PUBKEY = TEST_IDENTITIES.tyler.pubkey;
 async function openCreateDialog(page: import("@playwright/test").Page) {
   await page.goto("/");
   await openDashboardTab(page, "agents");
-  await page.getByTestId("new-agent-card").click();
+  await page.getByTestId("agent-directory-add").click();
   await page.locator("#persona-display-name").fill("Test Agent");
 }
 
@@ -89,15 +90,7 @@ async function openEditDialog(
   await page.goto("/");
   await openDashboardTab(page, "agents");
 
-  const agentButton = page.getByRole("button", {
-    name: `${agentName} agent profile`,
-  });
-  await expect(agentButton).toBeVisible({ timeout: 10_000 });
-  await agentButton.click();
-
-  const panel = page.getByTestId("user-profile-panel");
-  await expect(panel).toBeVisible({ timeout: 10_000 });
-
+  await openDirectoryAgentProfile(page, agentName);
   await page.getByTestId("user-profile-edit-agent").click();
 
   // Wait for the Edit dialog's LLM provider field (goose runtime supports it).

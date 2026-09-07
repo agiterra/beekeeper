@@ -1,3 +1,4 @@
+import { openAgentDefinitions } from "../helpers/agentDirectory";
 /**
  * Screenshot-regression spec for PR #1764: provider/model dropdown fixes.
  *
@@ -159,6 +160,7 @@ test.describe("agent provider dropdown screenshots", () => {
 
     await page.goto("/");
     await openDashboardTab(page, "agents");
+    await openAgentDefinitions(page);
     await expect(page.getByTestId("agents-library-personas")).toBeVisible({
       timeout: 10_000,
     });
@@ -232,6 +234,7 @@ test.describe("agent provider dropdown screenshots", () => {
 
     await page.goto("/");
     await openDashboardTab(page, "agents");
+    await openAgentDefinitions(page);
     await page
       .getByRole("button", { name: "Open actions for Codex Definition" })
       .click();

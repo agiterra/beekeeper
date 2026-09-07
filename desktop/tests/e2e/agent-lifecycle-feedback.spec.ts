@@ -1,3 +1,4 @@
+import { openAgentDefinitions } from "../helpers/agentDirectory";
 /**
  * E2E screenshots + regression tests for agent-lifecycle feedback (PR #1766):
  *
@@ -32,9 +33,7 @@ const CASCADE_AGENT_B_PUBKEY = "bb".repeat(32);
 async function openAgentsView(page: import("@playwright/test").Page) {
   await page.goto("/");
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
-    timeout: 10_000,
-  });
+  await openAgentDefinitions(page);
 }
 
 async function openAiDefaultsSettings(page: import("@playwright/test").Page) {
@@ -114,7 +113,9 @@ test.describe("agent lifecycle feedback screenshots", () => {
     // displayName here would demand the app name an agent the operator cannot
     // find anywhere else; the product is right and this expectation was stale.
     await expect(
-      page.getByText("Cascade Instance B", { exact: true }),
+      page
+        .getByTestId("agent-definitions-management")
+        .getByText("Cascade Instance B", { exact: true }),
     ).toBeVisible({ timeout: 10_000 });
 
     // Open the actions menu for the custom persona. The trigger button carries
@@ -250,7 +251,9 @@ test.describe("agent lifecycle feedback screenshots", () => {
     // One instance behind the card, so the card is titled with that instance's
     // name rather than the persona pack's (item 79a). Same reason as 01.
     await expect(
-      page.getByText("Cascade Instance A", { exact: true }),
+      page
+        .getByTestId("agent-definitions-management")
+        .getByText("Cascade Instance A", { exact: true }),
     ).toBeVisible({ timeout: 10_000 });
 
     await page

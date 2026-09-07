@@ -1,3 +1,4 @@
+import { openDirectoryAgentProfile } from "../helpers/agentDirectory";
 /**
  * Playwright regression tests for the numeric tuning fields (max output tokens,
  * context limit, max rounds) on both the global Agent Defaults surface and the
@@ -42,14 +43,7 @@ async function openEditAgentDialog(
   await page.goto("/");
   await openDashboardTab(page, "agents");
 
-  const agentButton = page.getByRole("button", {
-    name: `${agentName} agent profile`,
-  });
-  await expect(agentButton).toBeVisible({ timeout: 10_000 });
-  await agentButton.click();
-  await expect(page.getByTestId("user-profile-panel")).toBeVisible({
-    timeout: 10_000,
-  });
+  await openDirectoryAgentProfile(page, agentName);
   await page.getByTestId("user-profile-edit-agent").click();
   await expect(page.getByTestId("edit-agent-dialog")).toBeVisible({
     timeout: 10_000,
@@ -200,14 +194,7 @@ test("goose_per_agent_advanced_max_tokens_shows_inherited_global_placeholder", a
   // the in-memory mock state (page.goto causes a full reload that resets it).
   await page.getByRole("button", { name: "Back to app" }).click();
   await openDashboardTab(page, "agents");
-  const agentButton = page.getByRole("button", {
-    name: "Tyler Agent agent profile",
-  });
-  await expect(agentButton).toBeVisible({ timeout: 10_000 });
-  await agentButton.click();
-  await expect(page.getByTestId("user-profile-panel")).toBeVisible({
-    timeout: 10_000,
-  });
+  await openDirectoryAgentProfile(page, "Tyler Agent");
   await page.getByTestId("user-profile-edit-agent").click();
   await expect(page.getByTestId("edit-agent-dialog")).toBeVisible({
     timeout: 10_000,

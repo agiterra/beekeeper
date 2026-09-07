@@ -39,7 +39,7 @@ async function openAgentsView(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await waitForBridge(page);
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
+  await expect(page.getByTestId("agent-filters")).toBeVisible({
     timeout: 10_000,
   });
 }
@@ -58,16 +58,6 @@ async function seedTurns(
     };
     for (const seed of seeds) win.__BUZZ_E2E_SEED_ACTIVE_TURNS__?.(seed);
   }, turns);
-}
-
-async function openAgentProfile(
-  page: import("@playwright/test").Page,
-  pubkey: string,
-) {
-  await page.getByTestId(`managed-agent-${pubkey}`).click();
-  const panel = page.getByTestId("user-profile-panel");
-  await expect(panel).toBeVisible({ timeout: 5_000 });
-  return panel;
 }
 
 test.describe("active turn badge resilience", () => {
@@ -117,9 +107,6 @@ test.describe("active turn badge resilience", () => {
         turnId: "t-duncan-g",
       },
     ]);
-
-    const paulPanel = await openAgentProfile(page, AGENT_PAUL);
-    await expect(paulPanel).toBeVisible();
 
     // The profile panel surfaces active turns via the live-activity embed only
     // where an agent session can open (channel surfaces). In the Agents view

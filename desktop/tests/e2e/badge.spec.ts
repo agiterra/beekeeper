@@ -146,6 +146,10 @@ test("hovering a channel keeps its text color", async ({ page }) => {
   await overridePreviewFeatures(page, { projects: false });
   await page.goto("/");
   const channel = page.getByTestId("channel-engineering");
+  // The default Buzz theme loads asynchronously. Compare hover against its
+  // settled color, not the fallback palette painted before theme data arrives.
+  await expect(page.locator("html")).toHaveAttribute("data-buzz-theme", "buzz");
+  await waitForAnimations(page);
   const initialColor = await channel.evaluate(
     (element) => getComputedStyle(element).color,
   );

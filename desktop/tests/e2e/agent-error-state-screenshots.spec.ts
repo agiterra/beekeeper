@@ -43,7 +43,7 @@ async function gotoAgentsView(page: import("@playwright/test").Page) {
     timeout: 10_000,
   });
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId("agents-library-personas")).toBeVisible({
+  await expect(page.getByTestId("agent-filters")).toBeVisible({
     timeout: 10_000,
   });
 }
@@ -76,12 +76,13 @@ test.describe("agent error state screenshots", () => {
       `agent-runtime-error-${MODEL_NOT_FOUND_AGENT.pubkey}`,
     );
     await expect(errorBadge).toBeVisible({ timeout: 10_000 });
+    await expect(errorBadge).toContainText(
+      "The configured model is not available",
+    );
     await waitForAnimations(page);
 
     // Capture the agent card element.
-    const agentCard = page.getByTestId(
-      `managed-agent-${MODEL_NOT_FOUND_AGENT.pubkey}`,
-    );
+    const agentCard = page.getByTestId("agent-row").filter({ has: errorBadge });
     await agentCard.screenshot({
       path: `${SHOTS}/01-model-not-found-error-badge.png`,
     });
@@ -102,11 +103,10 @@ test.describe("agent error state screenshots", () => {
       `agent-runtime-error-${GENERIC_ERROR_AGENT.pubkey}`,
     );
     await expect(errorBadge).toBeVisible({ timeout: 10_000 });
+    await expect(errorBadge).toContainText("harness exited with status 1");
     await waitForAnimations(page);
 
-    const agentCard = page.getByTestId(
-      `managed-agent-${GENERIC_ERROR_AGENT.pubkey}`,
-    );
+    const agentCard = page.getByTestId("agent-row").filter({ has: errorBadge });
     await agentCard.screenshot({
       path: `${SHOTS}/02-generic-error-badge.png`,
     });
@@ -131,7 +131,7 @@ test.describe("agent error state screenshots", () => {
     await waitForAnimations(page);
 
     // Capture the full agents section (scroll-bounded crop to the section).
-    const section = page.getByTestId("agents-library-personas");
+    const section = page.getByTestId("agent-filters").locator("..");
     await section.screenshot({
       path: `${SHOTS}/03-agents-section-both-errors.png`,
     });

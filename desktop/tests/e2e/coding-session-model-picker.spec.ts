@@ -77,6 +77,7 @@ async function openCreateScreen(page: import("@playwright/test").Page) {
   await page.getByTestId("channel-engineering").click();
   await page.getByTestId("channel-coding-sessions-trigger").click();
   await page.getByTestId("channel-coding-sessions-new").click();
+  await page.getByRole("button", { name: "Change setup", exact: true }).click();
   await expect(page.getByTestId("coding-session-model-picker")).toBeVisible();
 }
 

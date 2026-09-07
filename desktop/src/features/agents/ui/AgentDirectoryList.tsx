@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Plus } from "lucide-react";
+import { CircleAlert, Plus } from "lucide-react";
 
 import type {
   AgentDirectoryFilters,
@@ -135,6 +135,24 @@ function AgentDirectoryRowButton({
           </span>
         ) : null}
       </div>
+      {row.needsRestart ? (
+        <span
+          className="text-sm text-amber-800 dark:text-amber-400"
+          data-testid={`agent-needs-restart-${row.pubkey}`}
+        >
+          Restart to apply changes
+        </span>
+      ) : null}
+      {row.lastError ? (
+        <span
+          className="flex items-start gap-2 text-sm text-destructive"
+          data-testid={`agent-runtime-error-${row.pubkey}`}
+          title={row.lastError}
+        >
+          <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
+          {row.lastError}
+        </span>
+      ) : null}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
         <span data-testid={AGENT_ROW_ROLE_HISTORY_TESTID}>
           {row.roleHistoryLabel}

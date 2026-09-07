@@ -240,3 +240,35 @@ test("agentDirectoryFilter: running/stopped never match a wire-only agent", () =
     0,
   );
 });
+
+test("directory preserves stopped-agent errors and running restart state without reviving stale errors", () => {
+  const base = {
+    relayAgents: [],
+    seats: [],
+    openSeatKeys: new Set(),
+    defaultModel: "",
+  };
+  const stopped = buildAgentDirectory({
+    ...base,
+    managedAgents: [
+      managedAgent({
+        status: "stopped",
+        lastError: "harness exited with status 1",
+        needsRestart: false,
+      }),
+    ],
+  });
+  assert.equal(stopped[0].lastError, "harness exited with status 1");
+  const running = buildAgentDirectory({
+    ...base,
+    managedAgents: [
+      managedAgent({
+        status: "running",
+        lastError: "stale failure",
+        needsRestart: true,
+      }),
+    ],
+  });
+  assert.equal(running[0].lastError, null);
+  assert.equal(running[0].needsRestart, true);
+});

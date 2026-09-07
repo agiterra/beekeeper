@@ -1,4 +1,7 @@
 import * as React from "react";
+import { UnifiedAgentsSection } from "./UnifiedAgentsSection";
+import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
+import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
 import { EllipsisVertical, OctagonX, Settings2 } from "lucide-react";
 import {
   consumePendingSnapshotImport,
@@ -55,8 +58,10 @@ const DEFAULT_AGENT_DIRECTORY_FILTERS: AgentDirectoryFilters = {
 };
 
 export function AgentsView() {
-  const { openPersonaProfilePanel } = useProfilePanel();
+  const { openPersonaProfilePanel, openProfilePanel } = useProfilePanel();
   const { globalConfig } = useGlobalAgentConfig();
+  const { data: bakedEnv } = useBakedBuildEnvQuery({ enabled: true });
+  const inheritedDefaults = getInheritedAgentDefaults(globalConfig, bakedEnv);
   const agents = useManagedAgentActions();
   const personas = usePersonaActions();
   const teamImportInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -284,6 +289,75 @@ export function AgentsView() {
                 seatNotice={directory.seatNotice}
                 selectedPubkey={selectedPubkey}
               />
+
+              <details data-testid="agent-definitions-management">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Manage definitions
+                </summary>
+                <p className="my-3 text-sm text-muted-foreground">
+                  Edit, share, or delete the saved definitions your agents use.
+                </p>
+                <UnifiedAgentsSection
+                  defaultModel={inheritedDefaults.model.value}
+                  actionErrorMessage={agents.actionErrorMessage}
+                  actionNoticeMessage={agents.actionNoticeMessage}
+                  agents={agents.managedAgents.filter(
+                    (agent) => agent.personaId != null,
+                  )}
+                  agentsError={
+                    agents.managedAgentsQuery.error instanceof Error
+                      ? agents.managedAgentsQuery.error
+                      : null
+                  }
+                  isActionPending={isActionPending}
+                  isAgentsLoading={agents.managedAgentsQuery.isLoading}
+                  startingAgentPubkey={agents.startingAgentPubkey}
+                  restartingAgentPubkey={agents.restartingAgentPubkey}
+                  startingPersonaIds={agents.startingPersonaIds}
+                  onOpenAgentProfile={(pubkey, options) => {
+                    openProfilePanel?.(pubkey, options);
+                  }}
+                  onOpenPersonaProfile={(persona) => {
+                    openPersonaProfilePanel?.(persona);
+                  }}
+                  onStartAgent={(pubkey) => {
+                    void agents.handleStart(pubkey);
+                  }}
+                  onRestartAgent={(pubkey) => {
+                    void agents.handleRestart(pubkey);
+                  }}
+                  onStartPersona={(persona) => {
+                    void agents.handleStartPersona(persona);
+                  }}
+                  // Persona props
+                  personas={personas.libraryPersonas}
+                  personasError={
+                    personas.personasQuery.error instanceof Error
+                      ? personas.personasQuery.error
+                      : null
+                  }
+                  personaFeedbackErrorMessage={
+                    personas.personaFeedbackSurface === "library"
+                      ? personas.personaErrorMessage
+                      : null
+                  }
+                  personaFeedbackNoticeMessage={
+                    personas.personaFeedbackSurface === "library"
+                      ? personas.personaNoticeMessage
+                      : null
+                  }
+                  isPersonasLoading={personas.personasQuery.isLoading}
+                  isPersonasPending={personas.isPending}
+                  onOpenCatalog={openAgentCatalog}
+                  onDuplicatePersona={personas.openDuplicate}
+                  onEditPersona={personas.openEdit}
+                  onSharePersona={personas.openShare}
+                  onDeactivatePersona={(persona) => {
+                    void personas.handleSetActive(persona, false, "library");
+                  }}
+                  onDeletePersona={personas.openDelete}
+                />
+              </details>
 
               <TeamsSection
                 error={

@@ -285,3 +285,7 @@ matches the code is worse than no rule; a new pattern that isn't written down
 here will be broken by the next agent that never learns it existed. Reviewers:
 treat a config-behavior diff without a matching AGENTS.md diff (or an explicit
 "no rules changed" note) as incomplete.
+
+## Directory management continuity
+
+The agent directory retains reported runtime errors on its primary rows and opens the shared profile for identity management. Saved definition edit/share/delete remains under the secondary **Manage definitions** disclosure, reusing the existing definition management components. It includes definitions with zero installed agents; do not strand their management when changing the deployed-agent list.

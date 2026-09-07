@@ -68,6 +68,7 @@ test("the source picker defaults to the trunk, not the parked checkout", async (
   page,
 }) => {
   await openCreateDialog(page);
+  await page.getByRole("button", { name: "Change setup", exact: true }).click();
 
   // No workdir yet: there is no repository to list, so no picker.
   await expect(page.getByTestId("coding-session-worktree-source")).toHaveCount(

@@ -42,6 +42,47 @@ branch. Never overwrite a running bundle; retain the previous one, and verify
 the installed artifact. A changed ad-hoc signature may require Brian to complete
 the macOS Keychain prompt; Computer Use cannot access SecurityAgent.
 
+### September 7 shipment validation
+
+Fetched both shared remotes: both name `059e81794`; the foundation branch
+already contains that commit. No newer main changes were published. Andrew
+Bent's mobile Huddle spike remains separate at `093a847c5` on
+`feat/mobile-huddle-spike` and is not included in this desktop shipment.
+Local main was fast-forwarded to the shared base, then the topic was rebased
+with signoff; the source tree was unchanged by that rebase. `git range-diff`
+reports every commit equivalent. Product commit mapping: `3ac49a2e9` →
+`ead3391be`, `aa9cbc0af` → `b02769cfb`, `1a070db69` → `63a90d83d`.
+Historical installed-build IDs above retain their original meaning.
+
+The required full browser smoke exposed missing feedback/navigation in the
+prior Agents directory redesign. The primary list now preserves reported
+errors and restart-needed state, its detail opens the existing shared profile,
+and collapsed Manage definitions reuses the existing edit/share/delete surface.
+No runtime-selection or access-policy rules changed. Open profile uses the
+normal Info tab; full diagnostics remain under Runtime. Independent review
+approved these boundaries. Other smoke repairs update old navigation through
+Change setup and the directory, synchronize theme/menu readiness, and retain
+publish-first messaging semantics: an already delivered message is not restored
+as an unsent draft when its detached agent wake fails.
+
+`ship-just-ci.log` records exit 0: workspace checks/tests, 8,283 desktop tests,
+frontend build, native check/tests, web tests/build, and 1,734 mobile tests.
+The browser suite is partitioned by exact file lists in
+`ship-smoke-partitions.json`, against an immutable copied E2E build, to avoid
+production build output replacing the served test application. All 112 cases
+in the two focused partitions passed. The remaining partition finished with
+1,134 passes, 16 failures and one pre-existing skip; each of the 16 failures
+was repaired and passed in a focused rerun, for 1,262 passing smoke cases and
+one skip across the complete manifest. No failed case was waived. The skip
+is the existing direct forum-thread navigation case at navigation.spec.ts:94.
+Rerun evidence: ship-isolated-controls-fixed, ship-badge-fixed,
+ship-dm-publish-first, ship-channel-membership, ship-model-picker,
+ship-worktree-source, ship-rail-emoji-fixed, ship-mentions, and
+ship-where-to-run logs. Additional agent/profile integration coverage: 68
+cases passed. Logs live in the existing September 6 validation directory.
+The source is validated for shipment; relay push confirmation is recorded
+separately below when available.
+
 ### Investigation and evidence history
 
 September 7, 08:00 AM channel retry after restart: Claude channel Keystone

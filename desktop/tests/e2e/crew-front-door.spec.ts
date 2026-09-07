@@ -1,3 +1,7 @@
+import {
+  openAgentDefinitions,
+  openDirectoryAgentProfile,
+} from "../helpers/agentDirectory";
 import { expect, test, type Page } from "@playwright/test";
 import {
   finalizeEvent,
@@ -670,6 +674,7 @@ test.describe("crew front door", () => {
   }) => {
     await openApp(page);
     await openDashboardTab(page, "agents");
+    await openAgentDefinitions(page);
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
@@ -787,6 +792,7 @@ test.describe("crew front door", () => {
     // Install a folder missing the verifier pack and read what the screen says.
     await openApp(page);
     await openDashboardTab(page, "agents");
+    await openAgentDefinitions(page);
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
@@ -844,6 +850,7 @@ test.describe("crew front door", () => {
     // the operator to look at a folder that was read fine.
     await openApp(page);
     await openDashboardTab(page, "agents");
+    await openAgentDefinitions(page);
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
@@ -883,47 +890,39 @@ test.describe("crew front door", () => {
   test("02 — the home-role badges reach both screens the Agents view renders", async ({
     page,
   }) => {
-    // `Home role: {Role}` and the no-pack warning are the disclosure
-    // `hasRolePack` exists for, and they used to render only from
-    // `ManagedAgentRow` — a row whose only caller, `AgentGroupRows`, nothing
-    // imported. Both are deleted; the badges are on the card grid and the
-    // profile panel. Driven here rather than read: seven agents each with a
-    // `home_role`, one of them with `has_role_pack: false`, plus one plain
-    // agent the backend answered nothing about.
     await openApp(page);
     await openDashboardTab(page, "agents");
-    await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
-      timeout: 15_000,
+    const rows = page.getByTestId("agent-row");
+    const packlessCard = rows.filter({
+      has: page.getByText(CREW_ROLES[1].name, { exact: true }),
     });
-    const packlessCard = page.getByTestId(
-      `managed-agent-${CREW_ROLES[1].pubkey}`,
-    );
     await expect(packlessCard).toBeVisible({ timeout: 15_000 });
-    // Seven role-carrying agents, each showing the role it is…
-    await expect(page.getByTestId("agent-home-role")).toHaveCount(
-      CREW_ROLES.length,
-    );
-    // …and exactly one of them disclosing that its pack is not installed here.
-    await expect(page.getByTestId("agent-no-role-pack")).toHaveCount(1);
-    await expect(packlessCard.getByTestId("agent-home-role")).toHaveText(
-      "Home role: Architect",
-    );
-    // The card states the fact; the remedy needs room the card does not have.
-    await expect(packlessCard.getByTestId("agent-no-role-pack")).toHaveText(
+    for (const role of CREW_ROLES) {
+      const row = rows.filter({
+        has: page.getByText(role.name, { exact: true }),
+      });
+      await expect(row.getByTestId("agent-row-launches-as")).toContainText(
+        role.role,
+        { ignoreCase: true },
+      );
+    }
+    await expect(rows.getByTestId("agent-row-pack")).toHaveCount(1);
+    await expect(packlessCard.getByTestId("agent-row-pack")).toHaveText(
       "Role pack not installed here",
     );
-    // The plain agent the backend never answered about claims neither.
-    const plainCard = page.getByTestId(`managed-agent-${"b0".repeat(32)}`);
-    await expect(plainCard).toBeVisible();
-    await expect(plainCard.getByTestId("agent-home-role")).toHaveCount(0);
-    await expect(plainCard.getByTestId("agent-no-role-pack")).toHaveCount(0);
+    const plainRow = page.locator(
+      `[data-testid="agent-row"][data-pubkey="${"b0".repeat(32)}"]`,
+    );
+    await expect(plainRow).toBeVisible();
+    await expect(plainRow.getByTestId("agent-row-pack")).toHaveCount(0);
+    await expect(plainRow.getByTestId("agent-row-launches-as")).toHaveText(
+      "launches as — not set",
+    );
     await waitForAnimations(page);
     await page
-      .getByTestId("unified-agents-groups")
+      .getByTestId("agents-page-content")
       .screenshot({ path: `${SHOTS}/04-agents-home-role-badges.png` });
-
-    // The card's own detail surface is the other place an operator would look.
-    await packlessCard.click();
+    await openDirectoryAgentProfile(page, CREW_ROLES[1].name);
     const panel = page.getByTestId("user-profile-summary-scroll-layout");
     await expect(panel).toBeVisible({ timeout: 15_000 });
     await expect(panel.getByTestId("agent-home-role")).toHaveText(
@@ -970,6 +969,9 @@ test.describe("crew front door", () => {
     await page
       .getByTestId("new-coding-session-goal")
       .fill("Close ledger item 77.");
+    await page
+      .getByRole("button", { name: "Change setup", exact: true })
+      .click();
     await page
       .getByTestId("new-coding-session-lead-select")
       .selectOption(CREW_ROLES[0].pubkey);

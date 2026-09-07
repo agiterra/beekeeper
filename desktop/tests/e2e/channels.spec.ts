@@ -1107,8 +1107,9 @@ test("drops an expanded DM after the first message fails", async ({ page }) => {
   ).toHaveAttribute("data-channel-id", retryChannelId ?? "");
 });
 
-test("drops an expanded DM after agent startup fails", async ({ page }) => {
-  const retryMessage = "Retry after agent startup failed";
+test("keeps a delivered expanded DM when the agent wake fails", async ({
+  page,
+}) => {
   const startError = "Mock agent startup failed.";
   await installMockBridge(page, {
     activePersonaIds: ["builtin:fizz"],
@@ -1137,7 +1138,19 @@ test("drops an expanded DM after agent startup fails", async ({ page }) => {
   await expect(
     page.getByText(startError, { exact: false }).first(),
   ).toBeVisible();
-  await expect(input).toContainText("Fizz");
+  await expect(
+    page.getByText("your message was sent, but the agent may not respond", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  // Publish-first: this failure concerns the wake, after the first message
+  // was accepted. Restoring it as an unsent draft would invite a duplicate.
+  await expect(input).toBeEmpty();
+  await expect(page.getByTestId("chat-title")).toContainText("Fizz");
+  await expect(page.getByTestId("chat-title")).toContainText("charlie");
+  await expect(
+    page.getByTestId("message-row").filter({ hasText: "before startup fails" }),
+  ).toHaveCount(1);
 
   const commandsAfterFailure = await readCommandPayloadLog(page);
   const openDmCallsAfterFailure = commandsAfterFailure.filter(
@@ -1153,25 +1166,25 @@ test("drops an expanded DM after agent startup fails", async ({ page }) => {
       ?.pubkeys,
   ).toHaveLength(2);
 
-  await input.fill(retryMessage);
-  const retryBaseline = commandsAfterFailure.length;
-  await page.getByTestId("send-message").click();
-
-  await expect(page.getByTestId("chat-title")).toHaveText("charlie");
-  await expect(page.getByTestId("message-timeline")).toContainText(
-    retryMessage,
+  const sentMessages = commandsAfterFailure.filter(
+    (entry) =>
+      entry.command === "send_channel_message" &&
+      (entry.payload as { content?: string })?.content?.includes(
+        "before startup fails",
+      ),
   );
-
-  const retryCommands = (await readCommandPayloadLog(page)).slice(
-    retryBaseline,
+  expect(sentMessages).toHaveLength(1);
+  const sentChannelId = (sentMessages[0].payload as { channelId: string })
+    .channelId;
+  await expect(
+    page.locator("[data-active='true'][data-channel-id]"),
+  ).toHaveAttribute("data-channel-id", sentChannelId);
+  const startIndex = commandsAfterFailure.findIndex(
+    (entry) => entry.command === "start_managed_agent",
   );
-  const retryOpenDm = retryCommands.find(
-    (entry) => entry.command === "open_dm",
+  expect(startIndex).toBeGreaterThan(
+    commandsAfterFailure.indexOf(sentMessages[0]),
   );
-  expect(
-    (retryOpenDm?.payload as { pubkeys?: string[] } | undefined)?.pubkeys,
-  ).toEqual([TEST_IDENTITIES.charlie.pubkey]);
-  await expect(page.getByTestId("chat-title")).not.toContainText("Fizz");
 });
 
 test("closes direct message results while opening", async ({ page }) => {
@@ -4420,7 +4433,9 @@ test("removing a channel-scoped agent preserves the managed agent record", async
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId(`managed-agent-${agentPubkey}`)).toHaveCount(1);
+  await expect(
+    page.locator(`[data-testid="agent-row"][data-pubkey="${agentPubkey}"]`),
+  ).toHaveCount(1);
 });
 
 test("members sidebar can stop and start a managed bot in this community", async ({
@@ -4586,10 +4601,14 @@ test("members sidebar omits bulk controls for managed bots", async ({
 
   await openDashboardTab(page, "agents");
   await expect(
-    page.getByTestId(`managed-agent-${firstAgentPubkey}`),
+    page.locator(
+      `[data-testid="agent-row"][data-pubkey="${firstAgentPubkey}"]`,
+    ),
   ).toHaveCount(1);
   await expect(
-    page.getByTestId(`managed-agent-${secondAgentPubkey}`),
+    page.locator(
+      `[data-testid="agent-row"][data-pubkey="${secondAgentPubkey}"]`,
+    ),
   ).toHaveCount(1);
 
   const commands = await readCommandLog(page);
@@ -4644,7 +4663,9 @@ test("removing a multi-channel managed bot preserves its record after removal fr
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId(`managed-agent-${agentPubkey}`)).toHaveCount(1);
+  await expect(
+    page.locator(`[data-testid="agent-row"][data-pubkey="${agentPubkey}"]`),
+  ).toHaveCount(1);
 
   let commands = await readCommandLog(page);
   // First removal: 1 remove_channel_member, agent record preserved.
@@ -4663,7 +4684,9 @@ test("removing a multi-channel managed bot preserves its record after removal fr
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
   await openDashboardTab(page, "agents");
-  await expect(page.getByTestId(`managed-agent-${agentPubkey}`)).toHaveCount(1);
+  await expect(
+    page.locator(`[data-testid="agent-row"][data-pubkey="${agentPubkey}"]`),
+  ).toHaveCount(1);
 
   commands = await readCommandLog(page);
   // Second removal: agent is preserved even after removal from all channels.

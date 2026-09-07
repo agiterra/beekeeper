@@ -1,3 +1,4 @@
+import { openDirectoryAgentProfile } from "../helpers/agentDirectory";
 import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
@@ -31,9 +32,7 @@ async function openEditDialog(
 ) {
   await page.goto("/");
   await openDashboardTab(page, "agents");
-  await page
-    .getByRole("button", { name: `${agentName} agent profile` })
-    .click();
+  await openDirectoryAgentProfile(page, agentName);
   await page.getByTestId("user-profile-edit-agent").click();
   await expect(page.getByTestId("edit-agent-dialog")).toBeVisible();
 }

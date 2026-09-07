@@ -1,3 +1,4 @@
+import { friendlyAgentLastError } from "./friendlyAgentLastError";
 /**
  * The Agents directory — one row per agent this build knows about (managed
  * here, or discoverable on the wire), joined with its seat history across
@@ -43,6 +44,10 @@ export type AgentDirectoryRow = {
   isRunning: boolean;
   /** Installed but not running. `false` for a wire-only agent. */
   isStopped: boolean;
+  /** Last failure reported by the installed agent, formatted for display. */
+  lastError?: string | null;
+  /** The installed process differs from its saved configuration. */
+  needsRestart?: boolean;
   modelLabel: string;
   homeRole: string | null;
   hasRolePack?: boolean;
@@ -195,6 +200,13 @@ export function buildAgentDirectory(
       isInstalled: managed !== null,
       isRunning,
       isStopped: managed !== null && !isRunning,
+      needsRestart: managed?.needsRestart ?? false,
+      lastError: !isRunning
+        ? (friendlyAgentLastError(
+            managed?.lastError ?? null,
+            managed?.lastErrorCode,
+          )?.copy ?? null)
+        : null,
       modelLabel,
       homeRole,
       hasRolePack: managed?.hasRolePack,

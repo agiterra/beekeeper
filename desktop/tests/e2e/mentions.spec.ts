@@ -718,11 +718,13 @@ test("selecting a managed agent mention inserts @Name into input", async ({
   await expect(agentMentionChip).toHaveCSS("border-top-width", "0px");
 });
 
-test("selecting a persona mention creates a channel agent before sending", async ({
+test("selecting a persona mention creates its identity before publishing and starts it detached", async ({
   page,
 }) => {
   await installMockBridge(page, {
     activePersonaIds: ["builtin:fizz"],
+    // Publishing must finish while the runtime start is still pending.
+    startManagedAgentDelayMs: 45_000,
   });
   await page.goto("/");
   await page.getByTestId("channel-general").click();
@@ -789,7 +791,14 @@ test("selecting a persona mention creates a channel agent before sending", async
   const sendIndex = commandsAfterSend.indexOf("sign_event");
   expect(startIndex).toBeGreaterThanOrEqual(0);
   expect(sendIndex).toBeGreaterThanOrEqual(0);
-  expect(startIndex).toBeLessThan(sendIndex);
+  const createIndex = commandsAfterSend.indexOf("create_managed_agent");
+  const addIndex = commandsAfterSend.indexOf("add_channel_members");
+  expect(createIndex).toBeGreaterThanOrEqual(0);
+  expect(addIndex).toBeGreaterThan(createIndex);
+  expect(addIndex).toBeLessThan(sendIndex);
+  expect(sendIndex).toBeLessThan(startIndex);
+  expect(commandCount(commandsAfterSend, "sign_event")).toBe(1);
+  expect(commandCount(commandsAfterSend, "start_managed_agent")).toBe(1);
 
   const mentionChip = page
     .getByTestId("message-row")
