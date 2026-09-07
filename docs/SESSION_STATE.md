@@ -5,9 +5,52 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## Current checkpoint — September 7, 10:10 AM: topic build installed, live test pending OS approval
+
+Working tree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
+`work/session-continuity-2026-09-07`. Product topic commit:
+`4d56d978b36cc4d0542b40f745e05d4f080ee0cb`. It is committed locally and **not
+merged into main**. Main remains the prior shipped `b267662f2` checkpoint.
+
+Installed `~/Applications/Beekeeper Dev.app` is now the complete packaged debug
+build from `4d56d978`, built `2026-09-07T14:05:56Z`. All eight sidecars, role
+resources and deep strict code-signature checks passed. Build evidence:
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/continuity-build.log`.
+The previous installed bundle is preserved at
+`~/Applications/Beekeeper Dev.app.before-4d56d978-20260907-100742`.
+The app was gracefully quit and its processes were absent before replacement.
+
+**Live acceptance is pending, not passed.** The new app process started at
+14:07 UTC alongside macOS SecurityAgent, but Computer Use app reads time out.
+An explicit SecurityAgent inspection returned: `Computer Use is not allowed to
+use the app 'com.apple.SecurityAgent' for safety reasons.` App logs stop at
+`2026-09-07T14:07:48.644132Z ... log file opened`. This is consistent with the
+new-signature Keychain prompt observed on prior rebuilds, but its exact prompt
+could not be inspected. Brian must handle that OS prompt after returning.
+Do not bypass Keychain protections, repeatedly rebuild, or claim startup/reconnect
+acceptance from the running process alone.
+
+After startup, test a **fresh channel-created session**: ask Keystone to start
+`Continuity acceptance`, with an opening task to reply `Ready for continuation`
+without tools or project-file edits, and return its confirmed session link.
+Verify Brian has Can control and can send a follow-up. Then restart the app,
+reconnect that execution and verify another reply plus honest native-context
+continuity reporting. The old `bdfd25b4...` execution still has no sessionRef or
+genesisRef; its transcript remains preserved, but this patch does not retroactively
+grant Brian authority over it. Do not use it as the new-grant acceptance case.
+
+Validated: 8,292 desktop unit tests; 28 focused browser tests; 1,042 CLI tests
+plus the later added response-loss wire regression; 585 provider tests with one
+existing opt-in real-HOME diagnostic ignored; all-target clippy for CLI/provider/
+ACP; TypeScript, Rust formatting and file-size checks. Full repository `just ci`
+and the full browser smoke suite were **not rerun for this topic**; no PR or
+main landing has been made. Sol performed the bounded implementation lanes;
+Astra coordinated, reviewed and finalized. No coding agents or test/build jobs
+remain running. The product changes and next CI design are detailed below.
+
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
-### September 7 — reconnect acceptance failure under repair
+### September 7 — reconnect acceptance finding
 
 Brian's post-rebuild test opened `Inspect Beekeeper project structure (read-only)`
 and found Reconnect disabled and View only. Live Computer Use confirmed both
@@ -29,8 +72,9 @@ terminal execution stop retains its founder-only boundary. Disabled lifecycle
 controls disclose their actual reason. This is a policy change to the current
 provider's founder-only resume rule, not merely a frontend button repair.
 
-Implementation is underway on `work/session-continuity-2026-09-07`, with Sol
-owning bounded CLI, provider and UI lanes; no claim of built or live repair yet.
+Implementation is committed on `work/session-continuity-2026-09-07`; Sol owned
+the bounded CLI, provider and UI lanes. The current checkpoint above names the
+installed build and pending live acceptance.
 Brian authorized continuing other plan increments while away. The next bounded
 increment is relevant pack-ref/source invalidation, reusing the existing Packs
 resolver and ref-event path rather than another agent polling loop.
@@ -38,7 +82,7 @@ resolver and ref-event path rather than another agent polling loop.
 ### September 7 — continuity and Packs topic implementation
 
 The bounded Sol lanes are complete on `work/session-continuity-2026-09-07`.
-Source changes are not yet installed or merged. CLI bare creates carrying a
+The current checkpoint above supersedes installation status; source is not merged. CLI bare creates carrying a
 verified NIP-OA owner now publish a fresh genesis, founder-signed owner operator
 grant, then exactly one create naming that umbrella. Explicit joins gain no
 implicit grant. Caller fields validate before writes; setup failure prevents
