@@ -87,6 +87,11 @@ class CodingSessionObserverSnapshot {
   /// rows it sent (D4).
   final Map<String, List<CodingSessionReceipt>> turnReceiptsByCommandId;
 
+  /// Accepted lifecycle-stage receipts (`created`, `failed`, `resumed`,
+  /// `stopped`, …) by the `commandId` they answer, in signed order — what
+  /// settles a create this device sent.
+  final Map<String, List<CodingSessionReceipt>> lifecycleReceiptsByCommandId;
+
   const CodingSessionObserverSnapshot({
     required this.channelId,
     required this.view,
@@ -101,6 +106,7 @@ class CodingSessionObserverSnapshot {
     required this.lastError,
     required this.leasesRead,
     this.turnReceiptsByCommandId = const {},
+    this.lifecycleReceiptsByCommandId = const {},
   });
 
   /// The state before anything has been read.
@@ -117,7 +123,8 @@ class CodingSessionObserverSnapshot {
        evictedByGeneration = const {},
        signaturesVerified = null,
        leasesRead = false,
-       turnReceiptsByCommandId = const {};
+       turnReceiptsByCommandId = const {},
+       lifecycleReceiptsByCommandId = const {};
 
   /// Project a folded [view] into a snapshot.
   factory CodingSessionObserverSnapshot.fromView(
@@ -143,9 +150,11 @@ class CodingSessionObserverSnapshot {
       }
     }
     final turnReceipts = <String, List<CodingSessionReceipt>>{};
+    final lifecycleReceipts = <String, List<CodingSessionReceipt>>{};
     for (final receipt in view.facts.receipts) {
-      if (!receipt.isTurnStage) continue;
-      turnReceipts.putIfAbsent(receipt.commandId, () => []).add(receipt);
+      (receipt.isTurnStage ? turnReceipts : lifecycleReceipts)
+          .putIfAbsent(receipt.commandId, () => [])
+          .add(receipt);
     }
     return CodingSessionObserverSnapshot(
       channelId: view.channelId,
@@ -167,6 +176,10 @@ class CodingSessionObserverSnapshot {
       leasesRead: view.leasesRead,
       turnReceiptsByCommandId: Map.unmodifiable({
         for (final entry in turnReceipts.entries)
+          entry.key: List<CodingSessionReceipt>.unmodifiable(entry.value),
+      }),
+      lifecycleReceiptsByCommandId: Map.unmodifiable({
+        for (final entry in lifecycleReceipts.entries)
           entry.key: List<CodingSessionReceipt>.unmodifiable(entry.value),
       }),
     );
@@ -191,6 +204,7 @@ class CodingSessionObserverSnapshot {
     lastError: clearError ? null : (lastError ?? this.lastError),
     leasesRead: leasesRead,
     turnReceiptsByCommandId: turnReceiptsByCommandId,
+    lifecycleReceiptsByCommandId: lifecycleReceiptsByCommandId,
   );
 
   /// True once a read has produced a view.

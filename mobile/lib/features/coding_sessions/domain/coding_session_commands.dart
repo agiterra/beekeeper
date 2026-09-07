@@ -45,6 +45,9 @@ const maxCodingSessionGoalBytes = 4096;
 /// Maximum UTF-8 byte length of a 44221 lifecycle command's content.
 const maxCodingSessionLifecycleContentBytes = 16 * 1024;
 
+/// Maximum UTF-8 byte length of a 44226 genesis's content.
+const maxCodingSessionGenesisContentBytes = 1024;
+
 /// How a turn asks the provider to deliver it (CREW_SESSIONS_PLAN D3).
 ///
 /// [boundary] is the wire default and is *omitted* from the payload: a relay
@@ -115,6 +118,10 @@ String createCodingSessionCommandId() => 'csc-${_uuid.v4()}';
 
 /// A fresh 44221 command id, `csl-<uuid>`, as the desktop mints them.
 String createCodingSessionLifecycleCommandId() => 'csl-${_uuid.v4()}';
+
+/// A fresh umbrella `sessionRef`: a lowercase hyphenated v4 UUID, as the
+/// desktop's `createCodingSessionSessionRef` mints them.
+String createCodingSessionSessionRef() => _uuid.v4().toLowerCase();
 
 /// Build a generation-fenced `thread.turn.start` (kind 44220).
 ///
@@ -208,6 +215,142 @@ CodingSessionCommandEvent buildCodingSessionStopEvent({
       'type': 'session.stop',
       'session': target.toJson(),
       'providerAuthorityPubkey': providerAuthorityPubkey,
+    },
+  };
+  final content = jsonEncode(payload);
+  if (utf8ByteLength(content) > maxCodingSessionLifecycleContentBytes) {
+    throw const CodingSessionCommandError(
+      'content',
+      'lifecycle command exceeds 16 KiB',
+    );
+  }
+  return CodingSessionCommandEvent(
+    kind: EventKind.codingSessionLifecycleCommand,
+    content: content,
+    tags: [
+      ['h', channelId],
+      ['csl-v', codingSessionLifecycleCommandTagVersion],
+      ['csl-command', commandId],
+    ],
+  );
+}
+
+/// Build a 44226 genesis founding a fresh umbrella (kind 44226).
+///
+/// Mirrors the desktop's `buildCodingSessionGenesisEvent`
+/// (`codingSessionGenesis.ts`): the content is exactly
+/// `{"sessionRef":…,"v":1}` and the signer becomes the umbrella's founder —
+/// the identity the relay admits closures and steering from.
+CodingSessionCommandEvent buildCodingSessionGenesisEvent({
+  required String channelId,
+  required String sessionRef,
+}) {
+  _requireChannel(channelId);
+  _requireSessionRef(sessionRef);
+  final content = jsonEncode(<String, Object?>{
+    'sessionRef': sessionRef,
+    'v': codingSessionGenesisSchemaVersion,
+  });
+  if (utf8ByteLength(content) > maxCodingSessionGenesisContentBytes) {
+    throw const CodingSessionCommandError(
+      'content',
+      'genesis exceeds 1024 bytes',
+    );
+  }
+  return CodingSessionCommandEvent(
+    kind: EventKind.codingSessionGenesis,
+    content: content,
+    tags: [
+      ['h', channelId],
+      ['csg-v', codingSessionGenesisTagVersion],
+      ['csg-session', sessionRef],
+    ],
+  );
+}
+
+/// Build an unseated `session.create` (kind 44221) under a founded umbrella.
+///
+/// Mirrors the desktop's `buildCodingSessionCreateEvent`
+/// (`codingSessionLifecycleCommand.ts`) in its ten-key form — the one the
+/// desktop's own single-session launch signs: `sessionRef` names the umbrella
+/// the genesis founded and [genesisRef] is that genesis's event id. Key order
+/// is the wire order buzz-core decodes; `deny_unknown_fields` makes a stray
+/// key a refusal.
+///
+/// No agent seat, no hire, no routing: those forms carry key material or
+/// decisions only the desktop holds, so a phone never signs them.
+CodingSessionCommandEvent buildCodingSessionCreateEvent({
+  required String channelId,
+  required String commandId,
+  required String? projectRef,
+  required String? repoRef,
+  required String sessionRef,
+  required String genesisRef,
+  required String providerInstanceRef,
+  required String providerAuthorityPubkey,
+  required String? model,
+  required String? title,
+  required String? initialTurn,
+}) {
+  _requireChannel(channelId);
+  _requireBounded(commandId, 'commandId', maxCodingSessionIdentifierBytes);
+  _requireSessionRef(sessionRef);
+  if (!isHex64(genesisRef)) {
+    throw const CodingSessionCommandError(
+      'action.genesisRef',
+      'must be a lowercase 64-hex event id',
+    );
+  }
+  _requireBounded(
+    providerInstanceRef,
+    'action.providerInstanceRef',
+    maxCodingSessionReferenceBytes,
+  );
+  if (!isHex64(providerAuthorityPubkey)) {
+    throw const CodingSessionCommandError(
+      'action.providerAuthorityPubkey',
+      'must be a lowercase 64-hex pubkey',
+    );
+  }
+  _requireNullableBounded(
+    projectRef,
+    'action.projectRef',
+    maxCodingSessionReferenceBytes,
+  );
+  _requireNullableBounded(
+    repoRef,
+    'action.repoRef',
+    maxCodingSessionReferenceBytes,
+  );
+  _requireNullableBounded(
+    model,
+    'action.model',
+    maxCodingSessionReferenceBytes,
+  );
+  _requireNullableBounded(
+    title,
+    'action.title',
+    maxCodingSessionReferenceBytes,
+  );
+  _requireNullableBounded(
+    initialTurn,
+    'action.initialTurn',
+    maxCodingSessionTextBytes,
+  );
+  final payload = <String, Object?>{
+    'schema': codingSessionLifecycleCommandSchema,
+    'commandId': commandId,
+    'action': {
+      'type': 'session.create',
+      'projectRef': projectRef,
+      'repoRef': repoRef,
+      'sessionRef': sessionRef,
+      'genesisRef': genesisRef,
+      'providerInstanceRef': providerInstanceRef,
+      'providerAuthorityPubkey': providerAuthorityPubkey,
+      'model': model,
+      'title': title,
+      'initialTurn': initialTurn,
     },
   };
   final content = jsonEncode(payload);
@@ -338,6 +481,13 @@ void _requireTarget(CodingSessionTarget target, String field) {
       'must be a positive integer',
     );
   }
+}
+
+/// A nullable field: absent is fine, present must be non-blank and bounded —
+/// the same rule the decoder's `boundedNullable` reads it back with.
+void _requireNullableBounded(String? value, String field, int maxBytes) {
+  if (value == null) return;
+  _requireBounded(value, field, maxBytes);
 }
 
 void _requireBounded(String value, String field, int maxBytes) {

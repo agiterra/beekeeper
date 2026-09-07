@@ -1,3 +1,4 @@
+import 'package:buzz/features/coding_sessions/domain/coding_session_wire.dart';
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -364,6 +365,148 @@ void main() {
         createCodingSessionCommandId(),
         isNot(createCodingSessionCommandId()),
       );
+    });
+  });
+
+  group('44226 genesis', () {
+    test('founds a fresh umbrella with the desktop\'s exact bytes', () {
+      // desktop codingSessionGenesis.ts: `{"sessionRef", "v"}`, tags
+      // h / csg-v / csg-session — the fresh-founding form buzz-core's
+      // coding_session_genesis.rs decodes.
+      final event = buildCodingSessionGenesisEvent(
+        channelId: _channel,
+        sessionRef: _sessionRef,
+      );
+      expect(event.kind, 44226);
+      expect(event.content, '{"sessionRef":"$_sessionRef","v":1}');
+      expect(event.tags, [
+        ['h', _channel],
+        ['csg-v', 'csg1-1'],
+        ['csg-session', _sessionRef],
+      ]);
+      final decoded = decodeCodingSessionGenesis(_signed(event));
+      expect(decoded.value?.sessionRef, _sessionRef);
+    });
+
+    test('refuses a non-canonical sessionRef before signing', () {
+      expect(
+        () => buildCodingSessionGenesisEvent(
+          channelId: _channel,
+          sessionRef: _sessionRef.toUpperCase(),
+        ),
+        throwsA(
+          isA<CodingSessionCommandError>().having(
+            (e) => e.field,
+            'field',
+            'sessionRef',
+          ),
+        ),
+      );
+    });
+  });
+
+  group('44221 session.create', () {
+    test('the unseated ten-key form is byte-identical to the buzz-core '
+        'fixture', () {
+      // crates/buzz-core/src/coding_session_lifecycle_command.rs, the
+      // `sessionRef` + `genesisRef` create form.
+      final genesisRef = 'ab' * 32;
+      final event = buildCodingSessionCreateEvent(
+        channelId: _channel,
+        commandId: 'create-1',
+        projectRef: null,
+        repoRef: null,
+        sessionRef: _sessionRef,
+        genesisRef: genesisRef,
+        providerInstanceRef: 'claude-primary',
+        providerAuthorityPubkey: _hex,
+        model: null,
+        title: null,
+        initialTurn: null,
+      );
+      expect(event.kind, 44221);
+      expect(
+        event.content,
+        '{"schema":"buzz-coding-session-lifecycle-command/v1",'
+        '"commandId":"create-1","action":{"type":"session.create",'
+        '"projectRef":null,"repoRef":null,"sessionRef":"$_sessionRef",'
+        '"genesisRef":"$genesisRef","providerInstanceRef":"claude-primary",'
+        '"providerAuthorityPubkey":"$_hex","model":null,"title":null,'
+        '"initialTurn":null}}',
+      );
+      expect(event.tags, [
+        ['h', _channel],
+        ['csl-v', 'csl1-1'],
+        ['csl-command', 'create-1'],
+      ]);
+      // The observer's own strict decoder reads it back — the same reader
+      // that will fold the session this create founds.
+      final decoded = decodeCodingSessionCreate(_signed(event));
+      expect(decoded.value?.sessionRef, _sessionRef);
+      expect(decoded.value?.genesisRef, genesisRef);
+      expect(decoded.value?.providerInstanceRef, 'claude-primary');
+    });
+
+    test('a project, model, title and first prompt are written verbatim', () {
+      final event = buildCodingSessionCreateEvent(
+        channelId: _channel,
+        commandId: 'create-2',
+        projectRef: '30621:$_hex:beekeeper',
+        repoRef: null,
+        sessionRef: _sessionRef,
+        genesisRef: 'cd' * 32,
+        providerInstanceRef: 'claude-primary',
+        providerAuthorityPubkey: _hex,
+        model: 'sonnet',
+        title: 'Fix the gate',
+        initialTurn: 'Start by reading the ledger.\n',
+      );
+      final decoded = decodeCodingSessionCreate(_signed(event));
+      expect(decoded.value?.projectRef, '30621:$_hex:beekeeper');
+      expect(decoded.value?.model, 'sonnet');
+      expect(decoded.value?.title, 'Fix the gate');
+      expect(event.content, contains('"initialTurn":"Start by reading'));
+    });
+
+    test('bounds are refused before signing, naming the field', () {
+      CodingSessionCommandEvent build({
+        String? initialTurn,
+        String genesisRef = 'ab',
+        String authority = 'ab',
+      }) => buildCodingSessionCreateEvent(
+        channelId: _channel,
+        commandId: 'create-3',
+        projectRef: null,
+        repoRef: null,
+        sessionRef: _sessionRef,
+        genesisRef: genesisRef == 'ab' ? 'ab' * 32 : genesisRef,
+        providerInstanceRef: 'claude-primary',
+        providerAuthorityPubkey: authority == 'ab' ? _hex : authority,
+        model: null,
+        title: null,
+        initialTurn: initialTurn,
+      );
+      Matcher refuses(String field) => throwsA(
+        isA<CodingSessionCommandError>().having((e) => e.field, 'field', field),
+      );
+      expect(
+        () => build(initialTurn: 'x' * (12 * 1024 + 1)),
+        refuses('action.initialTurn'),
+      );
+      expect(() => build(initialTurn: '   '), refuses('action.initialTurn'));
+      expect(() => build(genesisRef: 'nope'), refuses('action.genesisRef'));
+      expect(
+        () => build(authority: _hex.toUpperCase()),
+        refuses('action.providerAuthorityPubkey'),
+      );
+    });
+  });
+
+  group('session refs', () {
+    test('are canonical lowercase v4 UUIDs, fresh each time', () {
+      final ref = createCodingSessionSessionRef();
+      expect(isCodingSessionSessionRef(ref), isTrue);
+      expect(ref, isNot(createCodingSessionSessionRef()));
     });
   });
 }

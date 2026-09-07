@@ -30,6 +30,7 @@ import '../../shared/custom_emoji/custom_emoji_render.dart';
 import '../profile/profile_avatar.dart';
 import '../projects/domain/project_models.dart';
 import '../projects/state/projects_provider.dart';
+import '../projects/ui/new_session_sheet.dart';
 import '../projects/ui/project_tree.dart';
 import '../profile/profile_provider.dart';
 import '../profile/presence_cache_provider.dart';

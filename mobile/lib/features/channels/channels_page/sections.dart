@@ -511,6 +511,9 @@ class _SectionHeader extends StatelessWidget {
   final ChannelSortMode? sortMode;
   final ValueChanged<ChannelSortMode>? onSortModeChange;
 
+  /// An action before the chevron — a project's "+", say.
+  final Widget? trailing;
+
   const _SectionHeader({
     required this.label,
     required this.icon,
@@ -518,6 +521,7 @@ class _SectionHeader extends StatelessWidget {
     required this.onToggle,
     this.sortMode,
     this.onSortModeChange,
+    this.trailing,
   });
 
   @override
@@ -588,6 +592,10 @@ class _SectionHeader extends StatelessWidget {
                   },
                 ),
               ),
+              const SizedBox(width: Grid.quarter),
+            ],
+            if (trailing case final action?) ...[
+              action,
               const SizedBox(width: Grid.quarter),
             ],
             _SectionChevron(expanded: expanded, color: sectionColor),

@@ -417,7 +417,7 @@ class _SliverChannelsList extends HookConsumerWidget {
 
 /// A project on the Home screen: a section header that opens the project's
 /// page, over the project's own tree of channels, sessions and terminals.
-class _ProjectHomeSection extends StatelessWidget {
+class _ProjectHomeSection extends ConsumerWidget {
   final Project project;
   final List<Channel> myChannels;
   final bool showTopDivider;
@@ -434,7 +434,7 @@ class _ProjectHomeSection extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context, WidgetRef ref) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       if (showTopDivider) const _SectionDivider(),
@@ -445,6 +445,25 @@ class _ProjectHomeSection extends StatelessWidget {
             : LucideIcons.folderCode,
         expanded: expanded,
         onToggle: onToggle,
+        // New coding session. Terminals have no "+": a shared terminal is a
+        // PTY the desktop hosts, and nothing on the wire asks a desktop to
+        // open one.
+        trailing: IconButton(
+          key: ValueKey('home-project-new-${project.address}'),
+          tooltip: 'New coding session in ${project.name}',
+          visualDensity: VisualDensity.compact,
+          icon: Icon(
+            LucideIcons.plus,
+            size: _kChannelIconSize,
+            color: navigationSectionForeground(context),
+          ),
+          onPressed: () => showNewCodingSessionSheet(
+            context,
+            ref,
+            project: project,
+            myChannels: myChannels,
+          ),
+        ),
       ),
       _AnimatedSectionBody(
         expanded: expanded,

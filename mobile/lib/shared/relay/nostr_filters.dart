@@ -249,6 +249,20 @@ abstract final class NostrFilters {
     limit: 0,
   );
 
+  /// The provider catalogs (44222) advertised in one channel — what a
+  /// create's provider picker lists. Newest first; a provider re-advertises
+  /// on every revision, so a small window holds every live signer.
+  static NostrFilter codingSessionProviderCatalogs(
+    String channelId, {
+    int limit = 50,
+  }) => NostrFilter(
+    kinds: const [EventKind.codingSessionProviderCatalog],
+    tags: {
+      '#h': [channelId],
+    },
+    limit: limit,
+  );
+
   /// Creation evidence: one filter per kind (44221, 44224, 44226).
   ///
   /// Deliberately three filters rather than one three-kind filter: a single

@@ -1,6 +1,11 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/features/coding_sessions/state/coding_sessions_state.dart'
-    show CodingSessionCommands, CodingSessionPendingTurns, pendingTurnsProvider;
+    show
+        CodingSessionCommands,
+        CodingSessionPendingCreates,
+        CodingSessionPendingTurns,
+        pendingCreatesProvider,
+        pendingTurnsProvider;
 import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
 import 'package:buzz/shared/relay/signed_event_relay.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -68,6 +73,7 @@ class FakeObserverBinding implements CodingSessionObserverBinding {
         relay: SignedEventRelay(session: relay, nsec: _nsec),
         isDeliveryValid: () => true,
         pending: ref.read(pendingTurnsProvider.notifier),
+        pendingCreates: ref.read(pendingCreatesProvider.notifier),
       );
 
   @override
@@ -77,6 +83,14 @@ class FakeObserverBinding implements CodingSessionObserverBinding {
   @override
   void forgetPendingTurn(WidgetRef ref, String key) =>
       ref.read(pendingTurnsProvider.notifier).forget(key);
+
+  @override
+  CodingSessionPendingCreates watchPendingCreates(WidgetRef ref) =>
+      ref.watch(pendingCreatesProvider);
+
+  @override
+  void forgetPendingCreate(WidgetRef ref, String key) =>
+      ref.read(pendingCreatesProvider.notifier).forget(key);
 
   @override
   Set<String> watchSteerAccepted(WidgetRef ref) => steerAccepted;
@@ -214,6 +228,8 @@ CodingSessionObserverSnapshot testSnapshot({
   CodingSessionReadCounts counts = const CodingSessionReadCounts(),
   Map<String, CodingSessionReachability> reachabilityBySession = const {},
   Map<String, List<CodingSessionReceipt>> turnReceiptsByCommandId = const {},
+  Map<String, List<CodingSessionReceipt>> lifecycleReceiptsByCommandId =
+      const {},
 }) {
   final resolved = sessions ?? [testUmbrella()];
   final blocks = <String, List<CodingSessionTranscriptBlock>>{};
@@ -243,8 +259,33 @@ CodingSessionObserverSnapshot testSnapshot({
     lastError: lastError,
     reachabilityBySession: reachabilityBySession,
     turnReceiptsByCommandId: turnReceiptsByCommandId,
+    lifecycleReceiptsByCommandId: lifecycleReceiptsByCommandId,
   );
 }
+
+/// A lifecycle-stage receipt answering a create's [commandId]: `created`
+/// names the execution it minted; `failed` names none and carries the
+/// provider's refusal.
+CodingSessionReceipt testLifecycleReceipt({
+  required String commandId,
+  required CodingSessionReceiptStatus status,
+  String signerPubkey = testSignerPubkey,
+  String? code,
+  String? message,
+  int createdAt = 2000,
+}) => CodingSessionReceipt(
+  ref: testRef(
+    eventId: 'receipt-$commandId-${status.wire}',
+    signerPubkey: signerPubkey,
+    createdAt: createdAt,
+  ),
+  commandId: commandId,
+  status: status,
+  session: status == CodingSessionReceiptStatus.failed ? null : testTarget(),
+  error: code == null
+      ? null
+      : CodingSessionReceiptError(code: code, message: message ?? ''),
+);
 
 /// A turn-stage receipt answering [commandId] for [target].
 CodingSessionReceipt testTurnReceipt({

@@ -9334,6 +9334,62 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
   (each expanded channel is one observer read); (5) the mobile trust gate
   has not been checked against the desktop's 2026-09-05
   `sessionCoordinationCommissioning.ts` rule.
+- **Amended later on 2026-09-07 — the phone now asks for new sessions
+  (Andy: "add a + to add new coding sessions and terminals").** The "creates
+  no session" line above is superseded for *sessions*; it stands for
+  terminals. Creation on the wire is nothing the desktop holds locally: the
+  desktop's own single-session launch is a 44226 genesis, a 44229 name when
+  titled, then an unseated ten-key 44221 `session.create`
+  (`useNewCodingSessionCreate.ts:724-770`), and the relay admits a 44221 from
+  any channel member or project writer (`ingest.rs:922-965`). What *is*
+  host-local is the working directory: the provider resolves `cwd` from its
+  `projects.json` by `pending[commandId]` (the desktop's staged hint, which
+  a phone cannot write), then `projects[projectRef]`, then
+  `channels[channelId]` (`commands.rs:561-575`), and refuses with
+  `PROJECT_CWD_UNRESOLVED` otherwise. So a phone-issued create runs in the
+  checkout the desktop has *recorded* for the project — exactly the
+  `CHECKOUT_NOT_RECORDED` readiness item — and never cuts a worktree.
+  Built on `feat/mobile-interact`, one commit, all gated:
+  - Home: a "+" on each project's section header
+    (`home-project-new-<addr>`) opens `NewCodingSessionSheet`
+    (`projects/ui/new_session_sheet.dart`): title, first prompt, provider and
+    model. Providers come from the 44222 catalogs advertised in the project's
+    sessions channel — `domain/coding_session_provider_catalog.dart` ports the
+    desktop decoder: exact tags, `cspc-key` = sha256 of the signed bytes,
+    content re-serialized in contract key order and compared byte-for-byte,
+    newest revision per signer. Authority is open (channel membership), as the
+    desktop's display surfaces read; the picker names the signer, prefers one
+    already running a verified session in that channel, and every offer
+    carries the signer's name so the choice is a person's, not a guess. No
+    sessions channel → a snackbar says the first session must start from the
+    desktop (only it creates the transport channel). No catalog → a reason
+    and Retry, with the count of unreadable catalogs disclosed.
+  - `CodingSessionCommands.createSession` publishes genesis → name → create
+    in the desktop's order, records a `CodingSessionPendingCreate` before
+    the first publish and forgets it on failure; a create refused *after*
+    an accepted genesis says so in the error ("founded on the relay … nothing
+    will start") — the same seatless-umbrella hazard the desktop carries at
+    that step. Builders pinned to the buzz-core fixture bytes
+    (`coding_session_lifecycle_command.rs:1413`).
+  - The project's tree shows the pending row ("Waiting for <provider> to
+    answer") until the provider's 44224 names the commandId — `created` /
+    `created_with_failed_initial_turn` clears it (or an umbrella claiming its
+    sessionRef appears), `failed` shows the code and words verbatim with a
+    dismiss. Settlement is by commandId and the addressed signer only, never
+    title or timing. The observer snapshot now carries
+    `lifecycleReceiptsByCommandId` beside the turn receipts.
+  - **Terminals have no "+", and cannot from the phone alone.** A shared
+    terminal is a PTY the desktop hosts (`buzz-shell-host`, "spawned by the
+    desktop app, never run by hand"); NIP-ST has announce / watch / frame /
+    input (30623, 24310–24312) and nothing that asks a host to *open* one
+    (`kind.rs:504-520,904`). Adding it means a new kind, a relay gate, and a
+    desktop handler that spawns a shell on a signed request — a remote-exec
+    surface that wants a design record, not a slice. Left open, said in the
+    header's tooltip comment (`channels_page/body.dart`).
+  - Gate: `flutter analyze` clean, `dart format` clean, `flutter test` 1880
+    passed / 0 failed (up from 1843), `just file-size-check` clean. Not yet
+    exercised on a device: the next step is the simulator against the local
+    relay with the desktop's provider advertising in the project's channel.
 
 ## 2a. Direction settled 2026-08-18
 

@@ -84,6 +84,10 @@ class CodingSessionObserverSnapshot {
   /// trust gate accepted reach here.
   final Map<String, List<CodingSessionReceipt>> turnReceiptsByCommandId;
 
+  /// Accepted lifecycle-stage receipts by `commandId` — what settles a
+  /// create this device sent.
+  final Map<String, List<CodingSessionReceipt>> lifecycleReceiptsByCommandId;
+
   const CodingSessionObserverSnapshot({
     required this.channelId,
     this.sessions = const [],
@@ -97,6 +101,7 @@ class CodingSessionObserverSnapshot {
     this.lastError,
     this.reachabilityBySession = const {},
     this.turnReceiptsByCommandId = const {},
+    this.lifecycleReceiptsByCommandId = const {},
   });
 
   /// How many events this device dropped across the whole read.
@@ -239,6 +244,13 @@ abstract interface class CodingSessionObserverBinding {
   /// Forget a pending turn: it settled, or its words went back to the editor.
   void forgetPendingTurn(WidgetRef ref, String key);
 
+  /// Sessions this device asked a provider to create and has not seen
+  /// answered.
+  state.CodingSessionPendingCreates watchPendingCreates(WidgetRef ref);
+
+  /// Forget a pending create: it settled, or the member dismissed its refusal.
+  void forgetPendingCreate(WidgetRef ref, String key);
+
   /// Session keys the relay accepted a command from this device on, this run.
   Set<String> watchSteerAccepted(WidgetRef ref);
 
@@ -287,6 +299,14 @@ final class UnboundCodingSessionObserverBinding
       ref.read(state.pendingTurnsProvider.notifier).forget(key);
 
   @override
+  state.CodingSessionPendingCreates watchPendingCreates(WidgetRef ref) =>
+      ref.watch(state.pendingCreatesProvider);
+
+  @override
+  void forgetPendingCreate(WidgetRef ref, String key) =>
+      ref.read(state.pendingCreatesProvider.notifier).forget(key);
+
+  @override
   Set<String> watchSteerAccepted(WidgetRef ref) => const {};
 
   @override
@@ -330,6 +350,14 @@ final class RelayCodingSessionObserverBinding
       ref.read(state.pendingTurnsProvider.notifier).forget(key);
 
   @override
+  state.CodingSessionPendingCreates watchPendingCreates(WidgetRef ref) =>
+      ref.watch(state.pendingCreatesProvider);
+
+  @override
+  void forgetPendingCreate(WidgetRef ref, String key) =>
+      ref.read(state.pendingCreatesProvider.notifier).forget(key);
+
+  @override
   Set<String> watchSteerAccepted(WidgetRef ref) =>
       ref.watch(state.steerAcceptedProvider);
 
@@ -357,6 +385,7 @@ final class RelayCodingSessionObserverBinding
           session.key: read.reachabilityFor(session, now: now),
       },
       turnReceiptsByCommandId: read.turnReceiptsByCommandId,
+      lifecycleReceiptsByCommandId: read.lifecycleReceiptsByCommandId,
     );
   }
 

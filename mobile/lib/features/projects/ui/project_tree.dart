@@ -10,6 +10,12 @@ import '../../../shared/utils/string_utils.dart';
 import '../../../shared/widgets/modal_presentation.dart';
 import '../../channels/channel.dart';
 import '../../channels/channel_detail_page.dart';
+import '../../coding_sessions/domain/coding_sessions_domain.dart'
+    show
+        CodingSessionPendingCreate,
+        CodingSessionPendingCreateKind,
+        CodingSessionPendingCreatePhase,
+        settleCodingSessionPendingCreate;
 import '../../coding_sessions/ui/coding_session_page.dart';
 import '../../coding_sessions/ui/coding_session_status_chip.dart';
 import '../../coding_sessions/ui/coding_sessions_page.dart';
@@ -26,6 +32,7 @@ import '../state/project_session_filter_provider.dart';
 import '../state/projects_provider.dart';
 
 part 'project_tree/filter_sheet.dart';
+part 'project_tree/pending_rows.dart';
 part 'project_tree/rows.dart';
 
 /// Opens a terminal from a project tree.
@@ -99,8 +106,30 @@ class ProjectTree extends HookConsumerWidget {
     // hidden: a failed read is a line, not an empty list.
     final allSessions = <ProjectSessionRow>[];
     final readNotes = <String>[];
+    // Sessions this device asked for and no provider has answered yet, read
+    // against each channel's receipts and sessions. One that settled as
+    // created is forgotten after this frame: its session row is the truth
+    // now. One that failed stays until dismissed, in the provider's words.
+    final pendingRows = <_PendingCreateRow>[];
+    final pendingCreates = binding.watchPendingCreates(ref);
     for (final channel in channels) {
       final snapshot = binding.watch(ref, channel.id);
+      for (final pending in pendingCreates.forChannel(channel.id)) {
+        final phase = settleCodingSessionPendingCreate(
+          pending,
+          receipts: [
+            ...?snapshot.lifecycleReceiptsByCommandId[pending.commandId],
+          ],
+          sessions: snapshot.sessions,
+        );
+        if (phase.kind == CodingSessionPendingCreateKind.created) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => binding.forgetPendingCreate(ref, pending.key),
+          );
+          continue;
+        }
+        pendingRows.add(_PendingCreateRow(pending, phase));
+      }
       for (final session in snapshot.sessions) {
         allSessions.add(
           ProjectSessionRow(
@@ -157,6 +186,7 @@ class ProjectTree extends HookConsumerWidget {
     final isEmpty =
         channelRows.isEmpty &&
         allSessions.isEmpty &&
+        pendingRows.isEmpty &&
         projectTerminals.isEmpty &&
         readNotes.isEmpty &&
         !terminalsUnreadable;
@@ -219,6 +249,14 @@ class ProjectTree extends HookConsumerWidget {
                   ),
                 );
               },
+            ),
+          for (final row in pendingRows)
+            _PendingCreateTile(
+              key: ValueKey('project-pending-${row.pending.commandId}'),
+              row: row,
+              providerLabel: ownerLabel(row.pending.providerAuthorityPubkey),
+              onDismiss: () =>
+                  binding.forgetPendingCreate(ref, row.pending.key),
             ),
           for (final row in visibleOpen) sessionTile(row),
           for (final row in terminalRows)

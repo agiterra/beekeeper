@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/features/coding_sessions/state/coding_sessions_state.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:buzz/shared/relay/signed_event_relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -30,6 +31,7 @@ class _Harness {
       relay: SignedEventRelay(session: relay, nsec: nostr.Keys.generate().nsec),
       isDeliveryValid: () => harness.deliveryValid,
       pending: container.read(pendingTurnsProvider.notifier),
+      pendingCreates: container.read(pendingCreatesProvider.notifier),
       now: () => DateTime.fromMillisecondsSinceEpoch(5000),
     );
     harness = _Harness._(relay, container, commands);
@@ -37,7 +39,20 @@ class _Harness {
   }
 
   CodingSessionPendingTurns get pending => container.read(pendingTurnsProvider);
+  CodingSessionPendingCreates get pendingCreates =>
+      container.read(pendingCreatesProvider);
 }
+
+/// A relay OK echo for a publish the recording relay should accept.
+final _accepted = NostrEvent(
+  id: 'ab' * 32,
+  pubkey: 'cd' * 32,
+  createdAt: 1,
+  kind: 44226,
+  tags: const [],
+  content: '',
+  sig: '',
+);
 
 Map<String, dynamic> _content(RecordingRelaySessionNotifier relay) =>
     jsonDecode(relay.published.single.content) as Map<String, dynamic>;
@@ -247,5 +262,174 @@ void main() {
     expect(container.read(pendingTurnsProvider).byKey[a.key]!.published, true);
     notifier.forget(a.key);
     expect(container.read(pendingTurnsProvider).byKey.keys, [b.key]);
+  });
+
+  group('createSession', () {
+    const authority = testSignerPubkey;
+
+    test('publishes genesis, name and create in the desktop\'s order, the '
+        'create naming the genesis it just signed', () async {
+      final harness = _Harness();
+
+      final requested = await harness.commands.createSession(
+        projectRef: '30621:$testOperatorPubkey:beekeeper',
+        repoRef: null,
+        providerInstanceRef: 'claude-primary',
+        providerAuthorityPubkey: authority,
+        model: 'sonnet',
+        title: '  Fix the gate ',
+        initialTurn: 'Read the ledger first.',
+      );
+
+      expect(harness.relay.operations, ['publish', 'publish', 'publish']);
+      final [genesis, name, create] = harness.relay.published;
+      expect(genesis.kind, 44226);
+      expect(genesis.tags, [
+        ['h', _channel],
+        ['csg-v', 'csg1-1'],
+        ['csg-session', requested.sessionRef],
+      ]);
+      expect(name.kind, 44229);
+      expect(name.content, 'Fix the gate');
+      expect(name.tags[1], ['d', requested.sessionRef]);
+      expect(create.kind, 44221);
+      expect(create.tags, [
+        ['h', _channel],
+        ['csl-v', 'csl1-1'],
+        ['csl-command', requested.commandId],
+      ]);
+      final action =
+          (jsonDecode(create.content) as Map<String, dynamic>)['action']
+              as Map<String, dynamic>;
+      expect(action['sessionRef'], requested.sessionRef);
+      expect(action['genesisRef'], genesis.id);
+      expect(action['projectRef'], '30621:$testOperatorPubkey:beekeeper');
+      expect(action['providerInstanceRef'], 'claude-primary');
+      expect(action['providerAuthorityPubkey'], authority);
+      expect(action['model'], 'sonnet');
+      expect(action['title'], 'Fix the gate');
+      expect(action['initialTurn'], 'Read the ledger first.');
+      // Every event is signed by this device's key.
+      expect({genesis.pubkey, name.pubkey, create.pubkey}, hasLength(1));
+
+      final row = harness.pendingCreates.byKey[requested.pendingKey]!;
+      expect(row.published, isTrue);
+      expect(row.genesisRef, genesis.id);
+      expect(row.sessionRef, requested.sessionRef);
+      expect(row.title, 'Fix the gate');
+      expect(row.providerAuthorityPubkey, authority);
+      expect(row.recordedAt, 5000);
+    });
+
+    test(
+      'no title means no 44229, and blank text means no first turn',
+      () async {
+        final harness = _Harness();
+        await harness.commands.createSession(
+          projectRef: null,
+          repoRef: null,
+          providerInstanceRef: 'claude-primary',
+          providerAuthorityPubkey: authority,
+          model: null,
+          title: '   ',
+          initialTurn: '\n',
+        );
+        expect(harness.relay.published.map((e) => e.kind), [44226, 44221]);
+        final action =
+            (jsonDecode(harness.relay.published.last.content)
+                    as Map<String, dynamic>)['action']
+                as Map<String, dynamic>;
+        expect(action['title'], isNull);
+        expect(action['initialTurn'], isNull);
+        expect(action['model'], isNull);
+        expect(harness.pendingCreates.byKey.values.single.title, isNull);
+      },
+    );
+
+    test(
+      'a refused genesis forgets the row and publishes nothing else',
+      () async {
+        final harness = _Harness(
+          publishResults: [Exception('restricted: not a member')],
+        );
+        await expectLater(
+          harness.commands.createSession(
+            projectRef: null,
+            repoRef: null,
+            providerInstanceRef: 'claude-primary',
+            providerAuthorityPubkey: authority,
+            model: null,
+            title: null,
+            initialTurn: null,
+          ),
+          throwsA(
+            isA<CodingSessionPublishException>().having(
+              (e) => e.message,
+              'message',
+              'restricted: not a member',
+            ),
+          ),
+        );
+        expect(harness.relay.published.map((e) => e.kind), [44226]);
+        expect(harness.pendingCreates.byKey, isEmpty);
+      },
+    );
+
+    test('a refused create after an accepted genesis says the umbrella '
+        'exists and nothing will start', () async {
+      // The genesis is accepted (the relay's OK echo); the create is refused.
+      final failing = _Harness(
+        publishResults: [_accepted, Exception('rate-limited: slow down')],
+      );
+      await expectLater(
+        failing.commands.createSession(
+          projectRef: null,
+          repoRef: null,
+          providerInstanceRef: 'claude-primary',
+          providerAuthorityPubkey: authority,
+          model: null,
+          title: null,
+          initialTurn: null,
+        ),
+        throwsA(
+          isA<CodingSessionPublishException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              startsWith('rate-limited: slow down'),
+              contains('founded on the relay'),
+              contains('nothing will start'),
+            ),
+          ),
+        ),
+      );
+      expect(failing.relay.published.map((e) => e.kind), [44226, 44221]);
+      expect(failing.pendingCreates.byKey, isEmpty);
+    });
+
+    test('a first prompt over the bound is refused before anything is '
+        'signed', () async {
+      final harness = _Harness();
+      await expectLater(
+        harness.commands.createSession(
+          projectRef: null,
+          repoRef: null,
+          providerInstanceRef: 'claude-primary',
+          providerAuthorityPubkey: authority,
+          model: null,
+          title: null,
+          initialTurn: 'x' * (12 * 1024 + 1),
+        ),
+        throwsA(
+          isA<CodingSessionPublishException>().having(
+            (e) => e.message,
+            'message',
+            startsWith('action.initialTurn'),
+          ),
+        ),
+      );
+      expect(harness.relay.published, isEmpty);
+      expect(harness.pendingCreates.byKey, isEmpty);
+    });
   });
 }
