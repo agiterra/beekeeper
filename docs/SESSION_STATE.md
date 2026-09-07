@@ -7,7 +7,7 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
-### Continuation checkpoint (September 6 evening / September 7 UTC)
+### Continuation checkpoint (September 7 — preparing shipment)
 
 Worktree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
 `work/2030-workspace-foundation`. Product code through `1a070db69`; subsequent
@@ -19,10 +19,12 @@ Structure Review after reconnecting the same execution as generation 2.
 Both its read-only summary and a follow-up reply were verified in the UI.
 No agents or test jobs are left working in the background at this checkpoint.
 
-Next: exercise the **channel** entry story end to end in the packaged app:
-`@Keystone, start a session and do N`, signed provider confirmation and clickable
-session link returned in the originating thread. The proven dialog launch is
-not proof of that story. Verify one available subscription and independent
+Brian confirmed the channel-created session link worked on September 7 after
+Keystone recovered from an unconfirmed launch in the originating channel.
+Signed creation and accepted originating-thread link are recorded below.
+The new unseated execution is founded by Keystone, its command signer;
+Brian's control and sidebar visibility remain separate acceptance questions.
+Next: verify one available subscription and independent
 threads (thread isolation is still default-off). Exercise the existing explicit
 teammate response policy without sending Andy an unsolicited message. Finish
 full desktop smoke before main landing; then follow the delivery plan's shared
@@ -41,6 +43,43 @@ the installed artifact. A changed ad-hoc signature may require Brian to complete
 the macOS Keychain prompt; Computer Use cannot access SecurityAgent.
 
 ### Investigation and evidence history
+
+September 7, 08:00 AM channel retry after restart: Claude channel Keystone
+processed Brian's request. Its first `sessions create --wait` targeted
+`#bee-keeper` (`3cd83250-c66a-40a0-91c7-ee70aeddf826`) where it found no
+provider catalog; no confirmed execution resulted from that attempt. Keystone
+then selected existing Beekeeper sessions channel `aa946c4e…8d65`. The provider
+log confirms a fresh ACP session `bdfd25b4-31d5-4869-a794-c64ba0bb07ee` at
+`2026-09-07T12:03:53Z`, command `b9e06b34-5050-4ffb-b4af-0faca44733a0`.
+CLI returned `outcome: created`, receipt
+`25042f2664604bbf636c9699cf7e3ac50b75400c0292ef1926cedc9cf8d8c848`,
+and a session URL. Keystone published that URL in the original thread
+(`messages send` accepted event
+`d06fc6e28b72f4a8ef8c0429f433eda3b558aecf058273de8fb3a604ad30dc14`).
+Evidence: native transcript under `.claude/projects/` for nest `ede63017`,
+session `62ce7b8f-53a0-47c2-9158-d9fad42209ad`, and dev session-provider log.
+Brian's screenshot predates creation and shows only channel-agent activity.
+Sidebar visibility, human control of this unseated agent-created execution,
+and returned inspection output remain unverified. Do not describe the earlier
+unconfirmed request as cancelled: a timeout is not cancellation.
+
+September 7 channel acceptance: Keystone (`ede63017…3602`) answered the
+7:38 AM and 7:45 AM channel requests with a missing-provider setup nudge.
+Its persisted `agent_command_override` now correctly names `claude-agent-acp`
+after Brian saved the instance editor; the original `builtin:fizz` record had
+no runtime or override and resolved to Buzz Agent. This is not evidence that
+Claude needs an API-provider setting. The agent log in the dev profile's
+`agents/logs/ede6301723c5772cd47166b61c680cf321359cd9b89e1c887225c1ef895a3602__2fd4bca91aeb4b35fe402a3b0652ce4d61a2aec2dd3a5f9c9b19d72fd61419ce.log`
+shows one setup-listener start at `2026-09-07T11:38:15Z` and the second nudge
+at `11:45:55Z`, with no intervening restart. Instance runtime edits persist
+for the next start; `commands/agent_models_update.rs` only collects and
+restarts live runtimes here for an access-policy change. Next live action:
+restart Keystone from its profile, then repeat the channel request and verify
+the returned session link. Computer Use's native pipe failed before this
+restart could be performed. The setup repair flow needs clearer apply/restart
+behavior; channel acceptance remains open. Do not make global preferred runtime
+a retroactive fallback: effective_config explicitly documents create-time-only
+semantics.
 
 Follow-up control investigation: the same installed app later resolved
 Founded by Brian, owner actions and Can control without a code or permission
