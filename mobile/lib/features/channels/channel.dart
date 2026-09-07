@@ -27,6 +27,10 @@ class Channel {
   final int? ttlSeconds;
   final DateTime? ttlDeadline;
 
+  /// The project this channel belongs to (`30621:<owner>:<d>`), from the
+  /// relay-stamped `project` tag on its metadata; `null` when unclaimed.
+  final String? projectRef;
+
   const Channel({
     required this.id,
     required this.name,
@@ -45,6 +49,7 @@ class Channel {
     this.isMember = false,
     this.ttlSeconds,
     this.ttlDeadline,
+    this.projectRef,
   });
 
   factory Channel.fromJson(Map<String, dynamic> json) => Channel(
@@ -74,6 +79,7 @@ class Channel {
     ttlDeadline: json['ttl_deadline'] != null
         ? DateTime.parse(json['ttl_deadline'] as String)
         : null,
+    projectRef: json['project_ref'] as String?,
   );
 
   bool get isEphemeral => ttlSeconds != null || ttlDeadline != null;
@@ -167,6 +173,7 @@ class Channel {
     isMember: isMember ?? this.isMember,
     ttlSeconds: ttlSeconds,
     ttlDeadline: ttlDeadline,
+    projectRef: projectRef,
   );
 }
 
