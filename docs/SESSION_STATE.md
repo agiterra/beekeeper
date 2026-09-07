@@ -7,6 +7,21 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
+Subsequent live UI acceptance: Brian identified the session by Beekeeper /
+#Beekeeper sessions / Claude Agent Acp generation 1 / provider `1958c6c448…176b9644`.
+Opening **Project Structure Review** in the installed app shows the exact
+read-only project-summary instruction, executed tool calls, a returned
+repository summary, “Worked for 1m 2s”, and Idle. Route identifies channel
+`aa946c4e-acdc-43cb-9209-b0ef221d8d65`, session
+`aacda507-50cd-4a68-9deb-c7bc3117180e`, generation 1, provider
+`1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644`.
+This verifies a real launch and returned response after the fix, rather than
+only packaging or mock tests. The agent reports no modifications; that claim
+has not independently been checked against its worktree. Separate observed
+issue: the Brian profile is visible but the composer says “View only — ask
+for collaborator access.” Authority resolution for that composer has not yet
+been traced; do not treat the completed first turn as proof of follow-up control.
+
 Live launch finding after opening the test bundle: at 23:21:16 and 23:22:02 UTC,
 `actor_seats` refused the lead pack fetch because Git evaluated the unquoted
 `/Users/brian/Applications/Beekeeper Dev.app/Contents/MacOS/git-credential-nostr`
