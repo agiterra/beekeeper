@@ -407,8 +407,9 @@ Surfaces:
     disclosure: `No role pack on this computer` is the whole point of `has_role_pack`. An agent
       that carries a home role but no pack must never render as if it carried the role's craft.
   mobile: no surface, by decision — installing packs and minting keys is desktop-host-local
-    (custody lives in the desktop keyring); the Flutter app is a read-only observer. (needs Brian's
-    sign-off)
+    (custody lives in the desktop keyring). *Amended 2026-09-07 (Andy):* the Flutter app is no
+    longer read-only — it steers existing sessions and types into shared terminals (SESSION_STATE
+    "Found 2026-09-07") — but it still installs nothing and mints nothing.
   web: no surface, by decision — same reason; the web client holds no keys. (needs Brian's sign-off)
   CLI: no surface, by decision — `bee` cannot reach the desktop's managed-agent store or keyring,
     and a second minting path is exactly the kind of divergence that produces an agent the provider
@@ -545,8 +546,9 @@ Surfaces:
     disclosure: a seated execution must never read like a human one.
   desktop: desktop/src/features/coding-sessions/ui/CodingSessionHeader.tsx — the seat chip, on both
     the pending screen and a live single-execution workspace.
-  mobile: no surface, by decision — the mobile observer is read-only and cannot create sessions at
-    all. (needs Brian's sign-off)
+  mobile: no seat surface, by decision — the phone cannot create sessions (custody is host-local),
+    so it never stages a seat. *Amended 2026-09-07 (Andy):* it does now send turns, interrupt, stop,
+    rename, set the goal and close existing sessions; the seat chip is read-only there.
   web: no surface, by decision — same. (needs Brian's sign-off)
   CLI: no surface, by decision — `bee sessions create --actor` is already refused on purpose
     (crew_cmds.rs:392-416): the CLI holds no host-local custody, so a seated create from `bee` would
@@ -662,7 +664,9 @@ Surfaces:
   desktop: no surface, by decision — the desktop already shows founder provenance in the session
     header popover (`founderDetails`, CodingSessionUmbrellaWorkspace.tsx:366), and `bee events
     query` is a debugging verb for agents and the lead, not a screen. (needs Brian's sign-off)
-  mobile: no surface, by decision — read-only observer, no CLI. (needs Brian's sign-off)
+  mobile: no surface, by decision — no CLI on the phone; founder provenance stays read-only
+    there. (*Amended 2026-09-07 (Andy):* the phone is no longer a read-only observer overall — see
+    the mobile lines above.)
   web: no surface, by decision — same. (needs Brian's sign-off)
 
 Tests you must add (red first, then green) — `cargo test -p buzz-cli --lib`:
@@ -708,7 +712,9 @@ Report format: docs/CREW_SESSIONS_PLAN.md §1.2.
 - **Materializing packs for the channel-agent spawn path.** `docs/CREW_ROLES.md` § Materialization
   records that managed agents in the shared nest materialize nothing; lane A gives them a pack
   *link*, which the coding-session seat path consumes. The nest path stays refused.
-- **Mobile and web, everywhere.** Both are read-only observers with no key custody. Every "no
-  surface, by decision" above is for that reason and needs Brian's sign-off to stay that way.
+- **Web, everywhere; mobile for custody only.** *Amended 2026-09-07 (Andy):* mobile holds the
+  paired identity's key and now publishes member-signed session commands and terminal input; what
+  stays refused there is anything needing host-local custody (create, seat, install, mint). Web
+  remains a read-only observer with no key custody.
 - **A CLI path to seat or install.** Custody is host-local; a second minting path is how you get an
   agent the provider cannot resolve.

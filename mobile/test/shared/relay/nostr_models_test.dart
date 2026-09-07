@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
 
 void main() {
+  _projectTagTests();
   test('NostrFilter serializes and preserves authors', () {
     const filter = NostrFilter(
       kinds: [EventKind.readState],
@@ -97,5 +98,64 @@ void main() {
       EventKind.channelMessageEventKinds,
       isNot(contains(EventKind.systemMessage)),
     );
+  });
+}
+
+const _owner =
+    'aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd';
+
+NostrEvent _channelMetadata(List<List<String>> tags) => NostrEvent(
+  id: _owner,
+  pubkey: _owner,
+  createdAt: 1,
+  kind: 39000,
+  tags: tags,
+  content: '',
+  sig: '$_owner$_owner',
+);
+
+void _projectTagTests() {
+  group('ChannelData.projectRef', () {
+    test('reads the relay-stamped project tag', () {
+      final channel = ChannelData.fromEvent(
+        _channelMetadata([
+          ['d', 'chan-1'],
+          ['name', 'sessions'],
+          ['t', 'transport'],
+          ['project', '30621:$_owner:beekeeper'],
+        ]),
+      );
+      expect(channel.projectRef, '30621:$_owner:beekeeper');
+      expect(channel.channelType, 'transport');
+    });
+
+    test('a channel with no project tag has no project', () {
+      final channel = ChannelData.fromEvent(
+        _channelMetadata([
+          ['d', 'chan-1'],
+          ['name', 'general'],
+        ]),
+      );
+      expect(channel.projectRef, isNull);
+    });
+
+    test('a malformed project claim reads as no project, never as one', () {
+      for (final bad in [
+        '30617:$_owner:repo',
+        '30621:$_owner:',
+        '30621:ABC:slug',
+        'beekeeper',
+      ]) {
+        final channel = ChannelData.fromEvent(
+          _channelMetadata([
+            ['d', 'chan-1'],
+            ['project', bad],
+          ]),
+        );
+        expect(channel.projectRef, isNull, reason: bad);
+        expect(isProjectAddress(bad), isFalse, reason: bad);
+      }
+      expect(isProjectAddress('30621:$_owner:my.project-1'), isTrue);
+    });
   });
 }

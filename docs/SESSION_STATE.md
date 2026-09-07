@@ -9257,6 +9257,46 @@ installed Beekeeper.app (and the `bee` symlinked out of it) rebuilt from
   they *still* passed. A green test that survives the removal of its subject
   is not evidence — revert-and-rerun is the cheap check.
 
+### Found 2026-09-07 — mobile stops being a read-only observer (Andy's call)
+
+**Direction, not a defect.** Andy asked for the Flutter app to view *and
+interact with* terminals and coding sessions, and to show projects with their
+channels, sessions and terminals. That reverses the "mobile: no surface, by
+decision — read-only observer" lines of item 76 and `docs/CREW_FRONT_DOOR.md`
+(§ lanes A–C and "Mobile and web, everywhere"), which said the reversal needed
+Brian's sign-off; Andy made the call on 2026-09-07 and this entry records it.
+The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
+`feat/mobile-interact`); CREW_FRONT_DOOR carries the amended lines.
+
+- **What changes.** The phone signs with the paired desktop's nsec, so it is
+  the founder identity the relay's steer gate already admits
+  (`ingest.rs:858-885`). It will publish 44220 turns/interrupts, 44221
+  `session.stop`, 44229/44227/44230 name/goal/closure, 24310 watches and
+  24312 terminal input. **What does not change:** it creates no session,
+  stages no seat, mints no key, installs no pack, hosts no PTY — every one of
+  those needs host-local custody (D6) — and it signs no provider fact.
+- **Two things the wire settled against the literal ask.** (a) A 30623
+  terminal announce names a project (`a`) and no channel, so terminals sit
+  under the project beside its channels, as the desktop sidebar does
+  (`projectChildren.ts:45-64`); placing one under a channel would be a display
+  lie. (b) Every EVENT, ephemeral included, counts against the human quota of
+  60/min (`rejection.rs:84-100`, `rate_limit.rs:110-118`) — shared with the
+  paired desktop's identity — and a `rate-limited:` OK arms the mobile gate
+  that pauses *every* publish for 10 s (`relay_session.dart:809-811`). So
+  phone terminal input is one 24312 per submitted line plus a special-key bar,
+  not keystroke streaming. **Follow-up, not done:** the desktop's collaborator
+  path coalesces keystrokes at 30 ms (`ShellObserveScreen.tsx:22`) and hits
+  the same quota after ~60 events; NIP-ST's own per-kind limiter (20 inputs/s,
+  `shell_observe.rs:49-54`) was meant to be the gate. Either exempt the NIP-ST
+  ephemerals from the per-minute message quota or document the ceiling.
+- **Slice 1 landed here:** kinds 30621/39010/30623/24310/24311/24312 in
+  `nostr_models.dart`, `ChannelData.projectRef` from the relay-stamped
+  `project` tag, project and shell filters in `nostr_filters.dart`, the
+  builders in `coding_session_commands.dart` pinned byte-for-byte to the
+  buzz-core fixtures (`coding_session_commands_test.dart`), and a shared
+  recording relay fake under `test/helpers/`. The mobile docstrings that said
+  "read-only by construction" now say what is true.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -9350,6 +9390,14 @@ they unblock, and the work item 109 measured but did not do.
    written — "this ruling can only cover the commit it names", when an answer
    names a `requestRef`, not a commit — so this is a correction, not only an
    approval.
+
+3a. **Mobile interact, slices 2–5** (`feat/mobile-interact`, plan in
+   "Found 2026-09-07"): the session composer and umbrella menu, the Projects
+   tab with terminals under each project, the read-only terminal observer on
+   `xterm`, then collaborator line input. Slice 4 is the risky one — first
+   xterm integration and the first ephemeral-stream consumer on the phone — and
+   must be exercised on a simulator against a desktop that is actually
+   streaming frames before it is called done.
 
 4. **Live run 4, on the rebuilt app.** A lead, a builder and a verifier; gate
    rows on the wire for the first time; the **founder** lands the branch after

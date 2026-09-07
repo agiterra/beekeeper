@@ -4,8 +4,13 @@
 ///
 /// Pure Dart — no Riverpod, no widgets, no I/O. Everything here is a function
 /// of its inputs, so the same events read the same way on any device.
+///
+/// Since 2026-09-07 it also holds the builders for the member-signed events
+/// this app publishes (`coding_session_commands.dart`); those are pure too —
+/// signing and publishing live in the state layer.
 library;
 
+export 'coding_session_commands.dart';
 export 'coding_session_decode_result.dart';
 export 'coding_session_decoders.dart';
 export 'coding_session_fold.dart';

@@ -2,7 +2,10 @@
 /// a channel's signed facts off the relay and hand the domain layer's folds to
 /// the UI.
 ///
-/// Read-only by construction — nothing here publishes.
+/// The observer providers never publish. Publishing is the job of the command
+/// provider that lands beside them (`coding_session_command_provider.dart`,
+/// slice 2 of the 2026-09-07 mobile-interact plan), so a reader can still
+/// tell which provider signed what.
 library;
 
 export 'coding_session_event_store.dart';

@@ -46,10 +46,47 @@ abstract final class EventKind {
   static const huddleParticipantLeft = 48102;
   static const huddleEnded = 48103;
 
+  // --- Projects (NIP-MP) ------------------------------------------------------
+
+  /// Kind:30621 project announcement (addressable, `d` = slug; address is
+  /// `30621:<owner-hex>:<d>`). Channels hang off it two ways: the head's own
+  /// `channel` tags, and the `project` tag the relay stamps onto each
+  /// channel's kind:39000 metadata.
+  static const project = 30621;
+
+  /// Kind:39010 relay-signed project roster projection (`d` = the project
+  /// address).
+  static const projectRoster = 39010;
+
+  // --- Shared terminals (NIP-ST) ---------------------------------------------
+  // Keep in sync with `crates/buzz-core/src/kind.rs` and
+  // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-ST.md`.
+
+  /// Kind:30623 shared-terminal announce (addressable, `d` = session id).
+  /// Owner-signed; carries the project address in `a`, `title`, `status`
+  /// (`open`|`closed`), `dims` (`<rows>x<cols>`) and the per-session roster as
+  /// arity-4 `p` tags (`collaborator`|`viewer`). Deliberately no cwd.
+  static const shellSession = 30623;
+
+  /// Kind:24310 watch (ephemeral, observer → owner): `{"action":"watch"|"stop"
+  /// |"resync"}`, sent on open and every 15 s while a terminal is on screen.
+  static const shellWatch = 24310;
+
+  /// Kind:24311 frame (ephemeral, owner → observers): base64 raw terminal
+  /// bytes with `t` (`tail`|`snap`|`diff`|`resize`|`end`), `seq`, `epoch`.
+  static const shellFrame = 24311;
+
+  /// Kind:24312 input (ephemeral, roster collaborator → owner): base64 raw
+  /// input bytes for the owner's PTY, ≤ 8 KiB of base64 per event.
+  static const shellInput = 24312;
+
   // --- Coding sessions (44220-44230, 44244-44246, 24223) --------------------
-  // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile is a
-  // read-only observer: it subscribes to the fact kinds and never publishes a
-  // command kind.
+  // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile reads
+  // the fact kinds and, since 2026-09-07, also publishes the member-signed
+  // command kinds (44220 turns, 44221 stop, 44227/44229/44230 goal, name,
+  // closure) from `features/coding_sessions/domain/coding_session_commands.dart`.
+  // It still never signs a provider fact, and it cannot create a session:
+  // custody of agent keys is desktop-host-local (CREW_SESSIONS_PLAN D6).
 
   /// Kind:44220 governed turn command addressed to a coding-session provider.
   static const codingSessionCommand = 44220;
@@ -357,6 +394,15 @@ class ProfileData {
   }
 }
 
+final _projectAddress = RegExp(r'^30621:[0-9a-f]{64}:\S+$');
+
+/// True when [value] is a well-formed NIP-MP project address
+/// (`30621:<lowercase 64-hex owner>:<slug>`).
+///
+/// The relay only requires the slug to be a single non-empty `d` tag
+/// (`validate_project_envelope`), so this checks shape, not vocabulary.
+bool isProjectAddress(String value) => _projectAddress.hasMatch(value);
+
 /// Parsed kind:39000 channel metadata.
 @immutable
 class ChannelData {
@@ -371,6 +417,14 @@ class ChannelData {
   final DateTime? ttlDeadline;
   final bool isArchived;
 
+  /// The project this channel belongs to, as a `30621:<owner>:<d>` address.
+  ///
+  /// Read from the `["project", …]` tag the relay stamps onto the metadata it
+  /// signs (`crates/buzz-relay/src/handlers/side_effects.rs`); `null` for a
+  /// channel no project claims. Only the relay's own back-reference — a
+  /// project head's forward `channel` tags are unioned in by the reader.
+  final String? projectRef;
+
   const ChannelData({
     required this.id,
     required this.name,
@@ -382,6 +436,7 @@ class ChannelData {
     this.ttlSeconds,
     this.ttlDeadline,
     this.isArchived = false,
+    this.projectRef,
   });
 
   factory ChannelData.fromEvent(NostrEvent event) {
@@ -419,6 +474,12 @@ class ChannelData {
     // archived — anything else (missing tag, "false", unexpected value) means
     // active.
     final isArchived = event.getTagValue('archived') == 'true';
+    // A project address is `30621:<64-hex owner>:<slug>`; anything else in the
+    // tag is a malformed claim and reads as no project, never as one.
+    final projectRaw = event.getTagValue('project');
+    final projectRef = projectRaw != null && isProjectAddress(projectRaw)
+        ? projectRaw
+        : null;
     return ChannelData(
       id: id,
       name: name,
@@ -430,6 +491,7 @@ class ChannelData {
       ttlSeconds: ttlSeconds,
       ttlDeadline: ttlDeadline,
       isArchived: isArchived,
+      projectRef: projectRef,
     );
   }
 }

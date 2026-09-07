@@ -316,6 +316,84 @@ abstract final class NostrFilters {
     limit: 1000,
   );
 
+  // --- Projects (NIP-MP) ------------------------------------------------------
+
+  /// Every project head the relay will show this reader (kind:30621).
+  ///
+  /// The relay withholds private projects the reader is not admitted to, so
+  /// an unfiltered read is already scoped to what may be seen.
+  static NostrFilter projects({int limit = 200}) =>
+      NostrFilter(kinds: const [EventKind.project], limit: limit);
+
+  /// Live twin of [projects]: heads published from now on.
+  static NostrFilter projectsLive(int sinceSeconds) => NostrFilter(
+    kinds: const [EventKind.project],
+    since: sinceSeconds,
+    limit: 100,
+  );
+
+  /// Deletions (kind:5) that may tombstone a project head.
+  static NostrFilter projectTombstones({int limit = 500}) =>
+      NostrFilter(kinds: const [EventKind.deletion], limit: limit);
+
+  /// The relay-signed roster projection (kind:39010) for one project address.
+  static NostrFilter projectRoster(String projectAddress) => NostrFilter(
+    kinds: const [EventKind.projectRoster],
+    tags: {
+      '#d': [projectAddress],
+    },
+    limit: 1,
+  );
+
+  // --- Shared terminals (NIP-ST) ---------------------------------------------
+
+  /// Every shared-terminal announce (kind:30623) the relay will show me.
+  ///
+  /// Announces of private projects I am not admitted to are withheld unless I
+  /// am on the session's roster, so this is already the set I may watch.
+  static NostrFilter shellSessions({int limit = 500}) =>
+      NostrFilter(kinds: const [EventKind.shellSession], limit: limit);
+
+  /// Live twin of [shellSessions]: republished heads from now on.
+  static NostrFilter shellSessionsLive(int sinceSeconds) => NostrFilter(
+    kinds: const [EventKind.shellSession],
+    since: sinceSeconds,
+    limit: 100,
+  );
+
+  /// The current announce head of one terminal, by its owner and session id.
+  ///
+  /// Pinned to `authors` so a member's forged head for someone else's session
+  /// never reaches the roster check.
+  static NostrFilter shellSessionHead(String ownerPubkey, String sessionId) =>
+      NostrFilter(
+        kinds: const [EventKind.shellSession],
+        authors: [ownerPubkey],
+        tags: {
+          '#d': [sessionId],
+        },
+        limit: 1,
+      );
+
+  /// The frame stream (kind:24311) of one terminal.
+  ///
+  /// The `authors` constraint is what makes frame spoofing by other members
+  /// ineffective by construction (NIP-ST § Client behavior). Frames are
+  /// ephemeral, so `since` only matters for the relay's in-memory tail.
+  static NostrFilter shellFrames(
+    String ownerPubkey,
+    String sessionId, {
+    required int sinceSeconds,
+  }) => NostrFilter(
+    kinds: const [EventKind.shellFrame],
+    authors: [ownerPubkey],
+    tags: {
+      '#d': [sessionId],
+    },
+    since: sinceSeconds,
+    limit: 500,
+  );
+
   /// Roster reads: authority transitions (44228) and relay receipts (40099).
   static List<NostrFilter> codingSessionRoster(
     String channelId, {
