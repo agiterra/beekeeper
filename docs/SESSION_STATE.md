@@ -7,6 +7,41 @@ disagrees with an older document about *current state*, this one wins.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
+### Continuation checkpoint (September 6 evening / September 7 UTC)
+
+Worktree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
+`work/2030-workspace-foundation`. Product code through `1a070db69`; subsequent
+commits record acceptance. Main has not been updated and this branch has not
+been pushed. The original main checkout remains separate. Installed and
+running app: `~/Applications/Beekeeper Dev.app`, built from `1a070db69`.
+The latest live acceptance is an editable Can control composer in Project
+Structure Review after reconnecting the same execution as generation 2.
+Both its read-only summary and a follow-up reply were verified in the UI.
+No agents or test jobs are left working in the background at this checkpoint.
+
+Next: exercise the **channel** entry story end to end in the packaged app:
+`@Keystone, start a session and do N`, signed provider confirmation and clickable
+session link returned in the originating thread. The proven dialog launch is
+not proof of that story. Verify one available subscription and independent
+threads (thread isolation is still default-off). Exercise the existing explicit
+teammate response policy without sending Andy an unsolicited message. Finish
+full desktop smoke before main landing; then follow the delivery plan's shared
+role evolution, deterministic CI notification and cross-machine continuation
+increments. Do not rebuild a second orchestration mechanism or silently mark
+those later increments delivered.
+
+Master plan: `docs/COLLABORATIVE_WORKSPACE_PLAN.md`; product contract:
+`VISION_COLLABORATION.md`. Durable test/build logs and the exact local test-bundle
+script: `/Users/brian/Projects/beekeeper/review-2026-09-06-validation/`.
+`build-test-app.sh <full commit>` builds a clean checked-out commit, includes all
+eight sidecars and role resources, and verifies the bundle; it does not install
+or restart it. Do not run the landed-only `app-from` recipe for this unlanded
+branch. Never overwrite a running bundle; retain the previous one, and verify
+the installed artifact. A changed ad-hoc signature may require Brian to complete
+the macOS Keychain prompt; Computer Use cannot access SecurityAgent.
+
+### Investigation and evidence history
+
 Follow-up control investigation: the same installed app later resolved
 Founded by Brian, owner actions and Can control without a code or permission
 change. Local provider `state.json` names founder
@@ -49,10 +84,9 @@ repository summary, “Worked for 1m 2s”, and Idle. Route identifies channel
 `1958c6c448e05eed32599f6a25e2293ba84c9d4095c7c6958397bd95176b9644`.
 This verifies a real launch and returned response after the fix, rather than
 only packaging or mock tests. The agent reports no modifications; that claim
-has not independently been checked against its worktree. Separate observed
-issue: the Brian profile is visible but the composer says “View only — ask
-for collaborator access.” Authority resolution for that composer has not yet
-been traced; do not treat the completed first turn as proof of follow-up control.
+has not independently been checked against its worktree. The initial View-only
+observation was subsequently traced and repaired as recorded above; a separate
+live follow-up proved control. Do not infer control from first-turn completion alone.
 
 Live launch finding after opening the test bundle: at 23:21:16 and 23:22:02 UTC,
 `actor_seats` refused the lead pack fetch because Git evaluated the unquoted
@@ -76,10 +110,10 @@ passes (`desktop-launch-fix-bundle.log`). Prior bundle is retained as
 launched, but startup is waiting in `SecretStore::read_blob_raw_keyring` /
 `keyring::Entry::get_password`; SecurityAgent is running. Stack evidence is
 `launch-fix-startup-sample.txt` in the validation directory. Computer Use
-refused access to SecurityAgent. Brian must complete the local Keychain prompt
-before live session retry; successful role-pack fetch is not yet verified.
+refused access to SecurityAgent. That startup wait was subsequently cleared;
+the successful launch and later follow-up are recorded above.
 
-Desktop test bundle is now built from `3ac49a2e9` and installed at
+The first desktop test bundle was built from `3ac49a2e9` and installed at
 `/Users/brian/Applications/Beekeeper Dev.app`. It uses the debug profile and
 `io.agiterra.beekeeper.app.dev` identifier to retain the founder's existing
 dev profile. This is an unlanded branch test build, assembled directly with
