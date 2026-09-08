@@ -5,6 +5,48 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 follow-on — report provenance and transcript count validated
+
+Integrated Fable candidate `ab7571c00` and its separate `b71aec7f0` hireRef
+compatibility repair into Astra's finalizer tree. The latter accepts the
+producer's optional lowercase-64-hex hire attribution in create observations;
+it does not grant authority. The Packs tab now distinguishes reports signed by
+the provider assigned through an exact-generation founder-signed lifecycle
+chain, missing proof, and contradictory evidence. Plain copy says “Reported by
+the assigned provider”; it explicitly does not prove which role instructions
+were used. Operator-granted commissioning remains unavailable until its 44228
+projection exists; those reports remain visible and execution is not gated.
+
+Independent review repaired three false-positive paths: truncated/failed reads
+suppress confirmations in affected channels; relay-specific query identity and
+community reset prevent cached proof crossing relays; lifecycle event fan-out
+invalidates proof without polling, and old confirmations are withdrawn during
+fetching, errors and offline pauses. Mounted tests cover positive→conflicting
+proof→deferred/failed read, cross-community reuse with identical report IDs, and
+paused refetch. The final focused review found the named defects closed.
+
+Sol's one-file CLI correction makes the transcript header count the records
+actually rendered instead of the metadata-only discovery row. The full CLI
+suite passed 1,055/1,055 (`transcript-count-cli-tests.log`), and file-size checks
+passed (`transcript-count-file-size.log`). This closes the misleading count
+finding recorded below.
+
+Fable's final role suite passed 136/136, TypeScript and Biome passed
+(`review-role-adoption-fable-logs/final7-*.log`). Root confirmed the integrated
+desktop tree matches that candidate except the earlier validated Inbox test
+repair, then rebuilt and ran the Packs browser tests twice: 6/6 passed
+(`review-2026-09-06-validation/role-provenance-combined-e2e.log`, exit 0).
+The signed mock-relay fixture serves real genesis/create/receipt facts through
+the ordinary query path. Screenshot:
+`review-2026-09-06-validation/role-provenance-ranked-rows.png`.
+
+These follow-on changes are ready for the final normal push checks. The installed
+bundle and Keychain acceptance status are recorded in the checkpoint below.
+The previous full `just ci`, `just test` and 1,264-case browser run cover the
+preceding shipment; they are not represented as a new full run of this follow-on.
+No new relay/provider protocol or production configuration changes are included
+in this follow-on. Both orchestrators have stopped opening new feature slices.
+
 ## Current checkpoint — September 7 late night: CI results and role revisions shipped
 
 Canonical relay `main` accepted `82eee7231296f89362e2a7c3e7ab7e45c0405efb`.
@@ -40,10 +82,8 @@ and build time `2026-09-08T01:40:54Z`
 not proof that the new relay source is deployed. No manual production deploy or
 CI webhook configuration was performed.
 
-Next: Fable is implementing the separate exact-generation commissioned-report
-provenance slice in a new isolated worktree; it is not in the installed bundle.
-Its discovered `hireRef` classifier compatibility repair will be a separate
-commit. The CI continuation design reuses signed 44220 intent, truthful 44224
+The follow-on provenance and hireRef repairs are recorded above; they are
+separate from this installed bundle. The CI continuation design reuses signed 44220 intent, truthful 44224
 registration receipts and the existing durable provider queue. Before coding,
 resolve private-project provider read access separately from session steering,
 and materialize the verified result/identity into the awakened context rather
