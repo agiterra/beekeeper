@@ -20,6 +20,13 @@ must not be treated as historical authority. Root's files stay in desktop Roles
 and narrowly scoped evidence adapters; Fable owns core/CLI/provider continuation.
 Cross-client schema parity needs exact file claims before editing.
 
+While CI recovery is in flight, root prepares step 3 through
+`WORK_COORDINATION_VISIBILITY_SPEC.md`: expose existing plans and accepted
+assignments in Pulse before adding repository-bound overlap comparisons. The
+paired native acceptance sequence is in `COLLABORATION_TWO_MACHINE_ACCEPTANCE.md`.
+This preparation does not touch Fable's provider/host recovery ownership or
+replace the remaining integration and installed-build acceptance.
+
 This assignment supersedes the September7 owner split below. Current completion,
 installed state and concrete findings remain solely in SESSION_STATE.md.
 

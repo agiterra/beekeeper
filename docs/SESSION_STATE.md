@@ -5,6 +5,51 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 parallel work — coordination visibility preparation
+
+Brian authorized useful parallel work while Fable finishes recovery. Root completed
+a core/CLI and desktop reuse audit and wrote
+`docs/WORK_COORDINATION_VISIBILITY_SPEC.md` plus
+`docs/COLLABORATION_TWO_MACHINE_ACCEPTANCE.md`. The first build increment is a
+declared-work section in existing Project Pulse, using kind-44240 plans and
+canonically accepted team assignments. No new registry, automatic work dispatch,
+human approval queue or model call is needed for that projection. These documents
+are preparation, not an implemented feature or a passing two-machine test.
+
+Existing assignment records already carry the assignee, objective/brief,
+branch/base, file ownership and acceptance steps
+(`crates/buzz-core/src/coding_session_team_transaction.rs:165`). The trusted
+desktop projection currently drops assignee actor, branch and base
+(`desktop/src/features/coding-sessions/lib/codingSessionMissionTransactionProjection.ts:527`).
+Pulse `active` means not superseded, not currently executing; its `pu-session`
+pointer is author-controlled (`crates/buzz-core/src/pulse_fold.rs:116`). Existing
+mission reads start with open sessions and select eight, so a project-wide view
+of unresolved assignments must deliberately include ended sessions and disclose
+bounded read coverage (`pulseMissionSessionRead.ts:153`, `:385`).
+
+**Overlap audit finding:** current shared-path UI is not proof of an operating
+checkpoint-to-overlap workflow. The strict checkpoint body has no files or commit
+field (`crates/buzz-core/src/coding_session_observation.rs:220`), while
+`crates/buzz-cli/src/commands/pulse_mission.rs:395` scrapes raw `body.files` before
+authority projection and puts the event ID in `sha`. `PulseOverlapSide` has no
+repository identity (`crates/buzz-core/src/pulse_overlap.rs:50`); desktop currently
+passes empty overlap fields (`pulseMissionSessionRead.ts:324`). Simply adding a
+checkpoint field would activate incorrect cross-repository comparisons and an
+unverified input path. The next view must not claim this comparison works.
+Pulse paths reject trailing `/`; assignment paths have a different bounded-string
+grammar. Execution `repoRef` exists but does not uniquely bind every assignment
+in a multi-execution umbrella. Display declarations first; defer automatic scope
+comparison until repository identity, path semantics and accepted evidence are
+explicitly joined. These are source audit findings, not a demonstrated live exploit.
+
+Fable's mailbox now reports disposition and host-restaging lanes completed in its
+isolated worktree, with strict native restore and restart acceptance still in
+flight. Those are Fable's reports, not root-verified recovery acceptance. Root
+changed only these preparation documents and the plan/ledger; no provider/native
+file, running app, relay, CI settings or shared infrastructure was changed. The
+two-machine runbook names build/account/project prerequisites and separates Roles,
+channel-to-session, CI delivery, isolated restart, and future declared-work tests.
+
 ## September 8 Fable CI-continuation integration — in progress
 
 ### Commute checkpoint — source preserved, acceptance still blocked
