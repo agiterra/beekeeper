@@ -117,7 +117,7 @@ fn seeding_writes_the_packs_under_the_path_and_pushes_one_signed_commit() {
     std::fs::write(seed.join("lead/PERSONA.md"), "you lead\n").expect("write");
 
     let remote = root.join("remote.git");
-    let init = std::process::Command::new("git")
+    let init = crate::commands::sessions::worktree::git_command(&root)
         .args(["init", "--bare", "--quiet", "--initial-branch=main"])
         .arg(&remote)
         .output()
@@ -133,9 +133,7 @@ fn seeding_writes_the_packs_under_the_path_and_pushes_one_signed_commit() {
     assert_eq!(seeded.pushed_ref, "refs/heads/main");
     assert_eq!(seeded.commit.len(), 40, "a full commit id, never a prefix");
 
-    let listing = std::process::Command::new("git")
-        .args(["-C"])
-        .arg(&remote)
+    let listing = crate::commands::sessions::worktree::git_command(&remote)
         .args(["ls-tree", "-r", "--name-only", "refs/heads/main"])
         .output()
         .expect("ls-tree");
@@ -146,9 +144,7 @@ fn seeding_writes_the_packs_under_the_path_and_pushes_one_signed_commit() {
         "the packs must land under the record's path: {files}"
     );
 
-    let message = std::process::Command::new("git")
-        .args(["-C"])
-        .arg(&remote)
+    let message = crate::commands::sessions::worktree::git_command(&remote)
         .args(["log", "-1", "--format=%B", "refs/heads/main"])
         .output()
         .expect("git log");

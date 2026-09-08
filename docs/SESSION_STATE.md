@@ -59,6 +59,14 @@ Biome and TypeScript passed. Final desktop checks (including the full desktop un
 and all 59 rebuilt affected browser cases passed before landing. Evidence:
 `continuity-final-desktop-check.log` and `continuity-final-focused-smoke.log`. No relay deployment is part of this shipment.
 
+The first pre-push floor caught an existing Packs test-fixture isolation bug:
+its bare init/inspection commands inherited hook Git repository selectors. The
+production seed function already uses the shared sanitized `git_command` helper;
+the fixture now uses it too. The targeted test passed with `GIT_DIR` deliberately
+pointing at this worktree's Git directory (`continuity-hook-git-fixture.log`).
+No production behavior changed for this correction. The original refused push
+is preserved as `continuity-push.log`; the retry runs every normal hook.
+
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
 ### September 7 — reconnect acceptance finding
