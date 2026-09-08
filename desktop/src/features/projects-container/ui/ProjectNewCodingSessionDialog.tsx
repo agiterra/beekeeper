@@ -38,6 +38,7 @@ import {
 import {
   projectSessionActivityByChannel,
   projectSessionsChannelDescription,
+  projectSessionsChannelCandidates,
   projectSessionsChannelName,
   resolveProjectSessionsChannel,
 } from "../lib/projectSessionsChannel";
@@ -139,10 +140,16 @@ export function ProjectNewCodingSessionDialog({
     channelBuckets.forumsByProject,
   );
 
+  // Every channel the project claims, transports included: the sidebar
+  // partition above keeps only stream and forum channels, and reading the
+  // candidates from it made rule 0 unreachable — every create minted a new
+  // transport (2026-09-08).
   const projectChannels = React.useMemo(
     () =>
-      project ? (channelBuckets.channelsByProject.get(project.id) ?? []) : [],
-    [channelBuckets.channelsByProject, project],
+      project
+        ? projectSessionsChannelCandidates(project, channelsQuery.data ?? [])
+        : [],
+    [channelsQuery.data, project],
   );
   const resolvedChannel = React.useMemo(() => {
     if (!project) return null;

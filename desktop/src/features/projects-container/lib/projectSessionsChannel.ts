@@ -13,7 +13,14 @@
  *
  *   0. The project channel with `channel_type = "transport"` wins outright —
  *      the relay-assigned type is the identity, immune to a person naming an
- *      ordinary channel the same way.
+ *      ordinary channel the same way. Among several transports, the one with
+ *      the newest session activity wins, then the lowest id: several exist
+ *      because until 2026-09-08 every project-scoped create minted a fresh
+ *      one (the dialog read its candidates from a partition that keeps only
+ *      stream and forum channels, so rule 0 could never fire — seven
+ *      "Mobile Test sessions" transports on the dev relay, one per create).
+ *      Following activity converges every device on the channel the
+ *      provider already advertises in, not on an empty one nobody joined.
  *   1. Failing that (legacy transports predate the type), the project channel
  *      named `<project name> sessions` wins. The name *is* the mapping —
  *      published, visible to every member, and reproducible by any client
@@ -28,6 +35,8 @@
  * A rename leaves rule 2 holding the line: the old channel keeps the history,
  * so it keeps winning until someone deliberately moves.
  */
+
+import { normalizeProjectRef } from "./projectContainerModel";
 
 /** The canonical name a project's sessions channel is created with. */
 export function projectSessionsChannelName(projectName: string): string {
@@ -121,9 +130,15 @@ export function resolveProjectSessionsChannel(input: {
   projectChannels: readonly ProjectSessionsChannelCandidate[];
   sessionActivityByChannel?: ReadonlyMap<string, string>;
 }): ProjectSessionsChannelResolution | null {
+  const activity = input.sessionActivityByChannel ?? new Map();
   const transport = [...input.projectChannels]
     .filter((channel) => channel.channelType === "transport")
-    .sort((left, right) => left.id.localeCompare(right.id))[0];
+    .sort((left, right) => {
+      const byTime = (activity.get(right.id) ?? "").localeCompare(
+        activity.get(left.id) ?? "",
+      );
+      return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+    })[0];
   if (transport) return { channelId: transport.id, reason: "transport" };
 
   const wanted = projectSessionsChannelName(input.projectName);
@@ -132,7 +147,6 @@ export function resolveProjectSessionsChannel(input: {
     .sort((left, right) => left.id.localeCompare(right.id))[0];
   if (named) return { channelId: named.id, reason: "name" };
 
-  const activity = input.sessionActivityByChannel ?? new Map();
   const active = [...input.projectChannels]
     .filter((channel) => activity.has(channel.id))
     .sort((left, right) => {
@@ -142,6 +156,32 @@ export function resolveProjectSessionsChannel(input: {
       return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
     })[0];
   return active ? { channelId: active.id, reason: "activity" } : null;
+}
+
+/**
+ * Every channel a project claims, of any type — the candidate list
+ * `resolveProjectSessionsChannel` must be given.
+ *
+ * Not `partitionChannels(...).channelsByProject`: that partition exists for
+ * the sidebar and keeps only stream and forum channels, so a transport is
+ * never in it and rule 0 never fires (the 2026-09-08 finding above). A
+ * channel belongs here when the project's head lists its id or the channel
+ * carries the project's coordinate as its back-reference — the same two
+ * claims the partition honours, minus the type filter.
+ */
+export function projectSessionsChannelCandidates<
+  T extends { id: string; projectRef?: string | null },
+>(
+  project: { address: string; channelIds: readonly string[] },
+  channels: readonly T[],
+): T[] {
+  const claimed = new Set(project.channelIds);
+  return channels.filter((channel) => {
+    if (claimed.has(channel.id)) return true;
+    const ref = channel.projectRef;
+    if (!ref) return false;
+    return (normalizeProjectRef(ref) ?? ref) === project.address;
+  });
 }
 
 /** Newest session event per channel, from resolved shelf entries. */

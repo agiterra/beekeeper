@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   projectSessionActivityByChannel,
+  projectSessionsChannelCandidates,
   projectSessionsChannelDescription,
   projectSessionsChannelName,
   resolveProjectSessionsChannel,
@@ -241,6 +242,73 @@ test("a transport-typed channel wins the resolution outright", () => {
     }),
     // Deterministic across members: lowest id among transports.
     { channelId: "t1", reason: "transport" },
+  );
+});
+
+test("among several transports the one with the newest session activity wins", () => {
+  // The dev relay grew seven transports for one project (one per create,
+  // 2026-09-08); the sessions live in three of them. Every device must pick
+  // the same one, and it must be one the provider already advertises in.
+  assert.deepEqual(
+    resolveProjectSessionsChannel({
+      projectName: "Mobile Test",
+      projectChannels: [
+        {
+          id: "t-empty-a",
+          name: "Mobile Test sessions",
+          channelType: "transport",
+        },
+        { id: "t-old", name: "Mobile Test sessions", channelType: "transport" },
+        { id: "t-new", name: "Mobile Test sessions", channelType: "transport" },
+        {
+          id: "t-empty-b",
+          name: "Mobile Test sessions",
+          channelType: "transport",
+        },
+      ],
+      sessionActivityByChannel: new Map([
+        ["t-old", "2026-09-07T23:42:58.000Z"],
+        ["t-new", "2026-09-08T08:44:29.000Z"],
+      ]),
+    }),
+    { channelId: "t-new", reason: "transport" },
+  );
+});
+
+test("the candidate list keeps a project's transports (the sidebar partition does not)", () => {
+  const project = {
+    address: "30621:owner:mobile-test",
+    channelIds: ["listed-stream", "listed-transport"],
+  };
+  const channels = [
+    { id: "listed-stream", channelType: "stream" },
+    { id: "listed-transport", channelType: "transport" },
+    // Claimed only by its own back-reference, in the raw `kind:owner:dtag` form.
+    {
+      id: "backref-transport",
+      channelType: "transport",
+      projectRef: "30621:owner:mobile-test",
+    },
+    {
+      id: "other-project",
+      channelType: "transport",
+      projectRef: "30621:owner:other",
+    },
+    { id: "unclaimed", channelType: "stream", projectRef: null },
+  ];
+  assert.deepEqual(
+    projectSessionsChannelCandidates(project, channels).map(
+      (channel) => channel.id,
+    ),
+    ["listed-stream", "listed-transport", "backref-transport"],
+  );
+  // And the resolution over that list reaches rule 0.
+  assert.deepEqual(
+    resolveProjectSessionsChannel({
+      projectName: "Mobile Test",
+      projectChannels: projectSessionsChannelCandidates(project, channels),
+    }),
+    { channelId: "backref-transport", reason: "transport" },
   );
 });
 
