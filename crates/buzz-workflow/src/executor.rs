@@ -146,7 +146,7 @@ fn resolve_ci_template(
             ))
         })?;
         let expr = remaining[..end].trim();
-        let var_path = expr.splitn(2, '|').next().unwrap_or("").trim();
+        let var_path = expr.split('|').next().unwrap_or("").trim();
         if var_path.is_empty() || resolve_variable(var_path, trigger_ctx, step_outputs).is_none() {
             return Err(WorkflowError::TemplateError(format!(
                 "record_ci_result {field} references missing variable {var_path:?}"
