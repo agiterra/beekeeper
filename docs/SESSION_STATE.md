@@ -9370,6 +9370,26 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
      driver ("claude-agent-acp") on the phone; `displayName`
      (`coding_session_fold.dart`) now says "Coding session" like the
      desktop, the driver staying in the detail line.
+  4. **Every 44223 was refused by the phone as corruption.** Same afternoon,
+     project "SSD": the desktop painted one session green and one blue,
+     the phone said "unknown" for both. Relay: the provider's metadata
+     (signer `3b118514…`, statuses `idle`/`running`, e.g. `644123d9…`)
+     carries the `promptImage` capability that buzz-core added
+     (`coding_session_payload.rs`) and the desktop reads as optional
+     (`codingSessionIngressPayloads.ts` `decodeCapabilities`); the phone's
+     `_decodeCapabilities` (`coding_session_decoders.dart`) was
+     exact-keyed on the original six, so no metadata decoded at all — no
+     status, no title, no model, and the trust fallback never even saw a
+     signer. Fixed to the desktop's rule; the exact relay event is now a
+     test fixture (`fixtures/metadata_44223_dev_relay_2026-09-08.json`).
+     The catalog decoder already had the rule; the metadata one was
+     forgotten, the third time an additive amendment blanked this observer
+     (see the `optional` list's own comment). With it, the tree rows paint
+     the desktop's dot instead of a text chip
+     (`coding_session_status_dot.dart`: green only for `working`, orange
+     closed, blue otherwise; label and tooltip carry the state and the
+     "last reported, not a live lease" caveat). The sessions page keeps
+     the chip.
   3. **The desktop minted a new transport channel at every project-scoped
      create** — seven "Mobile Test sessions" transports on the dev relay
      (`channels` rows with `project_ref …:mobile-test`, created 20:06Z Sep 7

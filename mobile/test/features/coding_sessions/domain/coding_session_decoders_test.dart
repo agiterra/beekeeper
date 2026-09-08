@@ -29,6 +29,7 @@ NostrEvent _withContent(NostrEvent source, String content) => NostrEvent(
 );
 
 void main() {
+  _promptImageAmendment();
   group('44223 metadata', () {
     test('decodes the exact payload and reads statusAt off the event', () {
       final decoded = decodeCodingSessionMetadata(
@@ -761,6 +762,51 @@ void main() {
         ).reason,
         CodingSessionDecodeReason.malformedPayload,
       );
+    });
+  });
+}
+
+void _promptImageAmendment() {
+  group('44223 capabilities.promptImage', () {
+    test('a payload carrying promptImage decodes, and keeps the flag', () {
+      final source = metadataEvent();
+      final payload = jsonDecode(source.content) as Map<String, dynamic>;
+      (payload['capabilities'] as Map<String, dynamic>)['promptImage'] = true;
+      final decoded = decodeCodingSessionMetadata(
+        _withContent(source, jsonEncode(payload)),
+      );
+      expect(decoded.value, isNotNull, reason: decoded.reason.toString());
+      expect(decoded.value!.capabilities['promptImage'], isTrue);
+      expect(decoded.value!.capabilities['plan'], isNotNull);
+    });
+
+    test('a non-boolean promptImage is still corruption', () {
+      final source = metadataEvent();
+      final payload = jsonDecode(source.content) as Map<String, dynamic>;
+      (payload['capabilities'] as Map<String, dynamic>)['promptImage'] = 'yes';
+      final decoded = decodeCodingSessionMetadata(
+        _withContent(source, jsonEncode(payload)),
+      );
+      expect(decoded.reason, CodingSessionDecodeReason.malformedPayload);
+    });
+
+    // The exact event the dev relay held on 2026-09-08 for a session the
+    // desktop showed as idle and the phone showed as "unknown": promptImage,
+    // turnBudget, sessionRef and the four B1 facts, all at once.
+    test('the 2026-09-08 dev-relay metadata event decodes', () {
+      final json =
+          jsonDecode(
+                File(
+                  'test/features/coding_sessions/domain/fixtures/'
+                  'metadata_44223_dev_relay_2026-09-08.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
+      final decoded = decodeCodingSessionMetadata(NostrEvent.fromJson(json));
+      expect(decoded.value, isNotNull, reason: decoded.reason.toString());
+      expect(decoded.value!.status, CodingSessionStatus.idle);
+      expect(decoded.value!.title, 'ping 2');
+      expect(decoded.value!.capabilities['promptImage'], isTrue);
     });
   });
 }

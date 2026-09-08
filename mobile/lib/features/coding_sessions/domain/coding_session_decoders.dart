@@ -539,11 +539,24 @@ Map<String, bool>? _decodeCapabilities(Object? value) {
     'diff',
     'plan',
   ];
+  // `promptImage` is optional, not exact-keyed — the same rule as the
+  // desktop's `decodeCapabilities` and this app's own catalog decoder. It was
+  // exact-keyed here, so every 44223 from a provider that publishes the
+  // amendment (all of them, since 2026-09) decoded as corruption: no status,
+  // no title, no model — a session list of "unknown" chips over live
+  // sessions (live finding 2026-09-08, phone vs desktop on the same relay).
+  const optional = ['promptImage'];
   if (!isPlainRecord(value)) return null;
   final record = value! as Map<String, dynamic>;
-  if (!hasExactKeys(record, keys)) return null;
+  if (!hasRequiredAndOptionalKeys(record, keys, optional)) return null;
   final capabilities = <String, bool>{};
   for (final key in keys) {
+    final flag = record[key];
+    if (flag is! bool) return null;
+    capabilities[key] = flag;
+  }
+  for (final key in optional) {
+    if (!record.containsKey(key)) continue;
     final flag = record[key];
     if (flag is! bool) return null;
     capabilities[key] = flag;

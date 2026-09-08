@@ -18,7 +18,7 @@ import '../../coding_sessions/domain/coding_sessions_domain.dart'
         CodingSessionReceiptError,
         settleCodingSessionPendingCreate;
 import '../../coding_sessions/ui/coding_session_page.dart';
-import '../../coding_sessions/ui/coding_session_status_chip.dart';
+import '../../coding_sessions/ui/coding_session_status_dot.dart';
 import '../../coding_sessions/ui/coding_sessions_page.dart';
 import '../../coding_sessions/ui/observer_contract.dart';
 import '../../profile/user_cache_provider.dart';

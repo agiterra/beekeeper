@@ -94,9 +94,10 @@ class _SessionTile extends StatelessWidget {
             color: colors.onSurfaceVariant,
           ),
         ),
-        trailing: settled
-            ? null
-            : CodingSessionStatusChip(status: row.session.status),
+        trailing: CodingSessionStatusDot(
+          status: row.session.status,
+          closed: settled,
+        ),
         onTap: onTap,
       ),
     );

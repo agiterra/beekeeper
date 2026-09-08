@@ -1,0 +1,26 @@
+{
+  "id": "644123d93401cae9b9e2cd9abcf6bf139afea9a2ccea558882604c40dd61a6e2",
+  "pubkey": "3b1185149463932ad3d27ad54e1773ff8240ba6550e722db6c2c6bcbfbf08465",
+  "created_at": 1788876581,
+  "kind": 44223,
+  "tags": [
+    [
+      "h",
+      "63e2a2e5-da7f-4f72-8cec-cde23861b471"
+    ],
+    [
+      "csm-v",
+      "csm1-1"
+    ],
+    [
+      "cs-target",
+      "coding-session/v1|16:claude-agent-acp16:3b1185149463932a36:c6add042-60ef-4474-a630-be8d65bf87a61:1"
+    ],
+    [
+      "csm-key",
+      "coding-session-metadata/v1|16:claude-agent-acp16:3b1185149463932a36:c6add042-60ef-4474-a630-be8d65bf87a61:1"
+    ]
+  ],
+  "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"claude-agent-acp\",\"instanceId\":\"3b1185149463932a\",\"sessionId\":\"c6add042-60ef-4474-a630-be8d65bf87a6\",\"generation\":1},\"projectRef\":\"30621:11868153b9c8dbbf5b8a3565e93d16957dd39e6d2d98d4c0e35684fbb8152c79:ssd\",\"repoRef\":null,\"title\":\"ping 2\",\"agentRef\":null,\"provider\":\"claude-primary\",\"runtime\":\"claude\",\"model\":\"claude-fable-5-1[1m]\",\"status\":\"idle\",\"branch\":\"ping\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true,\"promptImage\":true},\"sessionRef\":\"81e9f305-c754-4dca-aa7e-1c8692b0f615\",\"observedCommit\":\"088409da787def5774f92d9dd84123e95d0a2be8\",\"dirty\":false,\"relayReachable\":null,\"verifiedAt\":null,\"turnBudget\":{\"used\":2,\"limit\":200}}",
+  "sig": "48aa8f888a7b4f7aedf44de85906d38036570f66a14928bb3b362e72260bd22e266f104703afae5df17a25705e60872eb83682067d1689f9b9b18f57931700dd"
+}
