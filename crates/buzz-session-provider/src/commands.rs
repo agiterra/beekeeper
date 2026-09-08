@@ -13,8 +13,10 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use buzz_core::ci_result::{correlation_id, CiResultIdentity};
 use buzz_core::coding_session_command::{
     CodingSessionAction, CodingSessionCommandPayload, CodingSessionDelivery, CodingSessionTarget,
     TurnAttachment,
@@ -26,12 +28,24 @@ use buzz_core::coding_session_lifecycle_command::{
 use buzz_core::coding_session_routing::RoutingRecord;
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
+use crate::ci_continuation_store::{AdmitRefusal, Admitted, CiContinuationStore};
 use crate::payload::{
-    ACTOR_UNAVAILABLE, BUDGET_EXHAUSTED, DUPLICATE_OPERATION, PROJECT_CWD_UNRESOLVED,
-    PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION, UNAUTHORIZED_OPERATOR,
-    UNKNOWN_TARGET,
+    ACTOR_UNAVAILABLE, BUDGET_EXHAUSTED, CI_CONTINUATION_EXPIRED, CI_CONTINUATION_STORE_FULL,
+    COMMAND_ID_CONFLICT, DUPLICATE_OPERATION, PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE,
+    SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION, UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
 };
 use crate::state::StateStore;
+
+/// The refusal code for a registration whose requested expiry lies beyond the
+/// window this provider will hold a command for.
+///
+/// Provider-local, exactly like [`crate::QUEUE_FULL_TURN_KEPT`], and for the
+/// same reason: the receipt code list is open (`docs/nips/NIP-CSL.md`), and
+/// this is a fact none of the five wire codes states. Calling it
+/// `CI_CONTINUATION_EXPIRED` would be false — nothing expired; the sender
+/// asked for a horizon the provider does not offer — and a control that
+/// misnames why it refused is the class of lie this project treats as a bug.
+pub const CI_CONTINUATION_HORIZON: &str = "CI_CONTINUATION_HORIZON";
 
 /// Why a command produced no side effect.
 ///
@@ -270,6 +284,11 @@ pub enum TurnDecision {
         /// already been checked here: an `interrupt` that reaches this variant
         /// was signed by the founder.
         deliver: CodingSessionDelivery,
+        /// The resolved operation fence key this turn takes custody of, or
+        /// `None` when its prompt is not a pointer. Resolved here rather than
+        /// re-derived at delivery so the fence that *admitted* the turn and
+        /// the fence the turn *claims* can never be computed two ways.
+        operation_key: Option<String>,
     },
     /// Cancel the in-flight turn of a live session.
     Interrupt {
@@ -277,6 +296,27 @@ pub enum TurnDecision {
         command_id: String,
         /// The fenced target.
         target: CodingSessionTarget,
+    },
+    /// Durably register a turn to be started when one exact CI result lands.
+    ///
+    /// Not a turn: nothing enters a mailbox, no budget is spent, and the
+    /// operation ledger is untouched until the eventual turn actually starts.
+    RegisterCiContinuation {
+        /// The command being answered; the eventual turn runs under it.
+        command_id: String,
+        /// The exact generation the eventual turn will address.
+        target: CodingSessionTarget,
+        /// The exact CI run attempt awaited.
+        identity: CiResultIdentity,
+        /// `correlation_id(identity)` — validated here so a registration that
+        /// could never correlate is refused rather than stored.
+        correlation_id: String,
+        /// Text to deliver alongside the verified result.
+        continuation: String,
+        /// Unix seconds after which the registration is refused.
+        expires_at: u64,
+        /// SHA-256 of the registration event content, the idempotence fence.
+        payload_digest: String,
     },
 }
 
@@ -286,6 +326,12 @@ pub struct CommandContext<'a> {
     pub provider_pubkey: &'a str,
     /// Pubkey that signed the command currently being decided.
     pub operator_pubkey: &'a str,
+    /// Channel the command arrived on.
+    ///
+    /// Read only by the CI-continuation store's per-channel cap: one noisy
+    /// room must not be able to consume every pending slot the provider has
+    /// for every other room.
+    pub channel_id: Uuid,
     /// Every runtime this provider offers.
     pub runtimes: &'a [RuntimeDescriptor],
     /// Instance id in every `cs-target` this provider mints.
@@ -312,6 +358,14 @@ pub struct CommandContext<'a> {
     pub active_session_count: usize,
     /// Durable state: dedupe ledger and session records.
     pub state: &'a StateStore,
+    /// Durable CI-continuation registrations.
+    ///
+    /// Consulted only by `thread.turn.continue_on_ci`, and only for facts the
+    /// file already holds: whether this `commandId` is taken, by what bytes,
+    /// and whether there is a pending slot left. The decision writes nothing —
+    /// [`CiContinuationStore::insert`] happens in the caller, before the
+    /// acknowledgement.
+    pub ci_continuations: &'a CiContinuationStore,
     /// Host-local working-directory map, freshly read.
     pub projects: &'a ProjectsFile,
     /// Host-local agent-seat custody, freshly read.
@@ -666,7 +720,22 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         Ok(command) => command,
         Err(error) => return TurnDecision::Ignore(Ignored::Malformed(error)),
     };
+    decide_turn_command(context, created_at, command)
+}
 
+/// Decide what an already-decoded 44220 means for this provider.
+///
+/// The same decision [`decide_turn`] makes, reachable without a signed event.
+/// The CI-continuation delivery path uses it to run the turn it rebuilds from
+/// a durable registration through the **identical** check order — authority,
+/// generation, closure, budget, and the operation fence are re-evaluated at
+/// delivery, not at registration, so a grant revoked while CI was running
+/// refuses the turn instead of starting it.
+pub fn decide_turn_command(
+    context: &CommandContext<'_>,
+    created_at: u64,
+    command: TurnCommand,
+) -> TurnDecision {
     // Any driver this provider's runtimes mint is acceptable; the session id
     // (a UUID) plus generation fence everything downstream, so two runtimes
     // sharing a driver slug cannot misroute a turn.
@@ -745,10 +814,20 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     // a second turn of the lead's context on a fact it already has. Checked
     // here, at the only place that spends model context, and answered with a
     // refusal that spends no turn.
-    if let TurnAction::Start { text, .. } = &command.action {
-        if let Some(owner) =
-            duplicate_operation_owner(context, &command.target, text, &command.command_id)
-        {
+    let operation_key = match &command.action {
+        // The pointer the fence reads: the provider-supplied one when the
+        // provider minted this turn and knows it independently of the text
+        // (a CI continuation materializes its whole result into the prompt),
+        // otherwise the prompt itself, which is what every existing producer
+        // means by a pointer.
+        TurnAction::Start { text, .. } => crate::team_wake::operation_fence_key(
+            &command.target,
+            command.operation_key.as_deref().unwrap_or(text),
+        ),
+        _ => None,
+    };
+    if let Some(key) = &operation_key {
+        if let Some(owner) = duplicate_operation_owner(context, key, &command.command_id) {
             // This message names provider *state* (the owner), not just the
             // command — the one receipt in this module that does. It is
             // stable only because `on_turn`'s `Fail` arm records the refusal
@@ -806,10 +885,126 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
             text,
             attachments,
             deliver,
+            operation_key,
         },
         TurnAction::Interrupt => TurnDecision::Interrupt {
             command_id: command.command_id,
             target: command.target,
+        },
+        // A registration, not a turn. Every check above has already run in
+        // its usual order — including `operator_may_steer`, because a
+        // registration promises a turn and only somebody who may steer now
+        // may promise one. What is deliberately absent is the budget spend
+        // (nothing has run) and the operation ledger (nothing has started).
+        TurnAction::ContinueOnCi {
+            identity,
+            continuation,
+            expires_at,
+        } => decide_ci_continuation(
+            context,
+            created_at,
+            command.command_id,
+            command.target,
+            command.payload_digest,
+            identity,
+            continuation,
+            expires_at,
+        ),
+    }
+}
+
+/// The CI-continuation-specific half of [`decide_turn_command`].
+///
+/// Reached only once the shared checks have admitted the command. Refuses,
+/// in order: an identity that cannot be correlated at all, an expiry already
+/// past, an expiry beyond this provider's command horizon, a `commandId`
+/// already holding different bytes, and a full store.
+#[allow(clippy::too_many_arguments)]
+fn decide_ci_continuation(
+    context: &CommandContext<'_>,
+    created_at: u64,
+    command_id: String,
+    target: CodingSessionTarget,
+    payload_digest: String,
+    identity: CiResultIdentity,
+    continuation: String,
+    expires_at: u64,
+) -> TurnDecision {
+    let correlation_id = match correlation_id(&identity) {
+        Ok(digest) => digest,
+        // The relay validates the same identity before storing the command,
+        // so this is a version skew rather than an operator error — but it
+        // still has to be visible, because the sender is waiting on a receipt.
+        Err(error) => {
+            return TurnDecision::Fail {
+                command_id,
+                target,
+                code: UNKNOWN_TARGET,
+                message: format!("the CI identity cannot be correlated: {error}"),
+            }
+        }
+    };
+    if expires_at <= context.now_secs {
+        return TurnDecision::Fail {
+            command_id,
+            target,
+            code: CI_CONTINUATION_EXPIRED,
+            message: "the registration's expiresAt is already in the past, so no result could \
+                      ever be delivered under it"
+                .into(),
+        };
+    }
+    let horizon = created_at.saturating_add(context.horizon_secs);
+    if expires_at > horizon {
+        return TurnDecision::Fail {
+            command_id,
+            target,
+            code: CI_CONTINUATION_HORIZON,
+            message: format!(
+                "this provider holds a registration for at most {} seconds past the command's \
+                 own created_at; register again with a shorter expiresAt",
+                context.horizon_secs
+            ),
+        };
+    }
+    match context
+        .ci_continuations
+        .admission(&command_id, &payload_digest, context.channel_id)
+    {
+        // An exact retry — same id, same bytes — is admitted rather than
+        // ignored, and the register path is idempotent: it writes no second
+        // record and re-enqueues the *same* `continuation_registered` receipt
+        // under the same semantic key. That is what makes §2's recovery real.
+        // A caller whose acknowledgement was lost re-runs the identical
+        // command and is answered, instead of being met with silence and
+        // having to mint a second registration to get a receipt at all.
+        Ok(Some(Admitted::AlreadyStored) | Some(Admitted::Stored)) | Ok(None) => {
+            TurnDecision::RegisterCiContinuation {
+                command_id,
+                target,
+                identity,
+                correlation_id,
+                continuation,
+                expires_at,
+                payload_digest,
+            }
+        }
+        Err(AdmitRefusal::CommandIdConflict) => TurnDecision::Fail {
+            command_id,
+            target,
+            code: COMMAND_ID_CONFLICT,
+            message: "a different CI continuation is already durably registered under this \
+                      commandId; the first durable record wins"
+                .into(),
+        },
+        Err(AdmitRefusal::StoreFull { detail }) => TurnDecision::Fail {
+            command_id,
+            target,
+            code: CI_CONTINUATION_STORE_FULL,
+            message: format!(
+                "{detail}, so this registration was refused rather than displacing one somebody \
+                 is already waiting on"
+            ),
         },
     }
 }
@@ -829,16 +1024,14 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
 /// command that may run. Refusing it there would lose the wake permanently.
 fn duplicate_operation_owner(
     context: &CommandContext<'_>,
-    target: &CodingSessionTarget,
-    text: &str,
+    key: &str,
     command_id: &str,
 ) -> Option<String> {
-    let key = crate::team_wake::operation_fence_key(target, text)?;
-    if let Some(owner) = context.state.operation_owner(&key) {
+    if let Some(owner) = context.state.operation_owner(key) {
         return (owner != command_id).then(|| owner.to_owned());
     }
     context.in_flight.iter().find_map(|(candidate, turn)| {
-        (candidate != command_id && turn.operation_key.as_deref() == Some(key.as_str()))
+        (candidate != command_id && turn.operation_key.as_deref() == Some(key))
             .then(|| candidate.clone())
     })
 }
@@ -1046,6 +1239,24 @@ pub struct TurnCommand {
     pub target: CodingSessionTarget,
     /// The requested action.
     pub action: TurnAction,
+    /// The operation pointer this turn takes custody of, when the provider
+    /// itself minted the turn and knows the pointer independently of the text.
+    ///
+    /// `None` for every command decoded off the wire, which is what keeps
+    /// existing turns byte-for-byte unchanged: their pointer, if they have
+    /// one, *is* their text. A CI continuation is the one case where the two
+    /// differ — the delivered text materializes the whole verified result, but
+    /// the fence has to stay on the compact
+    /// [`buzz_core::coding_session_command::ci_continuation_pointer`] so that
+    /// duplicate results and alternate command ids converge on one operation.
+    pub operation_key: Option<String>,
+    /// SHA-256 (lowercase hex) of the raw event content this command decoded
+    /// from, or the empty string for a command the provider minted itself.
+    ///
+    /// Only a CI continuation reads it: the same `commandId` carrying the same
+    /// bytes is the same registration, and carrying different bytes is a
+    /// `COMMAND_ID_CONFLICT`.
+    pub payload_digest: String,
 }
 
 /// The two turn actions the donor contract defines.
@@ -1062,6 +1273,15 @@ pub enum TurnAction {
     },
     /// Cancel the in-flight turn.
     Interrupt,
+    /// Register a turn for when one exact CI result is recorded.
+    ContinueOnCi {
+        /// The exact CI run attempt awaited.
+        identity: CiResultIdentity,
+        /// Text to deliver alongside the verified result.
+        continuation: String,
+        /// Unix seconds after which the registration is refused.
+        expires_at: u64,
+    },
 }
 
 /// Strictly decode a 44220 payload of either action.
@@ -1080,11 +1300,22 @@ pub fn decode_turn_command(content: &str) -> Result<TurnCommand, String> {
             deliver,
         },
         CodingSessionAction::ThreadTurnInterrupt => TurnAction::Interrupt,
+        CodingSessionAction::ThreadTurnContinueOnCi {
+            identity,
+            continuation,
+            expires_at,
+        } => TurnAction::ContinueOnCi {
+            identity,
+            continuation,
+            expires_at,
+        },
     };
     Ok(TurnCommand {
         command_id: payload.command_id,
         target: payload.target,
         action,
+        operation_key: None,
+        payload_digest: hex::encode(<Sha256 as Digest>::digest(content.as_bytes())),
     })
 }
 
@@ -1251,6 +1482,7 @@ mod tests {
         CommandContext {
             provider_pubkey: AUTHORITY,
             operator_pubkey,
+            channel_id: Uuid::nil(),
             runtimes: runtimes(),
             instance_id: "instance-1",
             now_secs,
@@ -1262,6 +1494,7 @@ mod tests {
             policy_turn_budgets: HashMap::new(),
             active_session_count: state.live_session_count(),
             state,
+            ci_continuations: no_ci_continuations(),
             projects,
             actor_seats,
             in_flight: no_commands_in_flight(),
@@ -1275,6 +1508,18 @@ mod tests {
         static EMPTY: std::sync::OnceLock<HashMap<String, crate::InFlightTurn>> =
             std::sync::OnceLock::new();
         EMPTY.get_or_init(HashMap::new)
+    }
+
+    /// The empty CI-continuation store, leaked once for the same reason: a
+    /// decision test that names no continuation must not have to own a state
+    /// directory to run. Shared and immutable, so it never touches the disk
+    /// again after it is opened.
+    fn no_ci_continuations() -> &'static CiContinuationStore {
+        static EMPTY: std::sync::OnceLock<CiContinuationStore> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            CiContinuationStore::open(dir.path()).expect("empty continuation store")
+        })
     }
 
     /// The empty delivered-cancel queue, leaked once for the same reason.

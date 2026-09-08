@@ -34,6 +34,9 @@ mod agent_fence;
 pub mod attachments;
 pub mod authority;
 pub mod catalog;
+pub mod ci_continuation;
+pub mod ci_continuation_store;
+pub mod ci_result_listener;
 pub mod commands;
 pub mod config;
 pub mod context_projector;
@@ -303,6 +306,16 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
         ),
     }
 
+    // One bounded listener for every pending CI continuation, started after
+    // the relay identity is known: without it no result signer can be
+    // verified, and an unverifiable result must never wake an agent.
+    provider.start_ci_result_listener();
+    // Held out here, not on the provider: the run loop's `select!` already
+    // borrows `provider` mutably for the session inbox, and two mutable
+    // borrows in one `select!` do not compile. The listener's queue is the
+    // loop's, exactly like the relay socket's.
+    let mut ci_events = provider.take_ci_result_events();
+
     let channels = relay.discover_channels().await?;
     for channel_id in channels.keys().copied() {
         // `Some(now)` — not `None` — so a channel with no consumed-command
@@ -375,6 +388,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     }
                 }
             },
+            event = ci_continuation::next_ci_listener_event(&mut ci_events) => {
+                if let Err(error) = provider.handle_ci_listener_event(event).await {
+                    tracing::error!(target: "csp::ci", "CI result handling failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease handoff after a CI result failed: {error}");
+                }
+            }
             Some(event) = provider.next_session_event() => {
                 if let Err(error) = provider.handle_session_event(event) {
                     tracing::error!(target: "csp", "failed to record session event: {error}");
@@ -397,6 +418,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
                 if let Err(error) = provider.run_one_team_wake_tick(&publisher).await {
                     tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
+                }
+                if let Err(error) = provider.run_ci_continuation_tick().await {
+                    tracing::warn!(target: "csp::ci", "CI continuation processing failed: {error}");
                 }
             }
             // The replay reorder window closing is a delivery, not a timer
@@ -506,6 +530,16 @@ pub struct Provider {
     pubkey_hex: String,
     state: StateStore,
     outbox: Outbox,
+    /// Durable CI-continuation registrations. See [`ci_continuation`].
+    ci_continuations: ci_continuation_store::CiContinuationStore,
+    /// Verified CI results reported by the single listener task.
+    ///
+    /// `None` until [`Provider::start_ci_result_listener`] runs, which is
+    /// after the relay identity has been witnessed: without that identity no
+    /// result signer can be verified, so there is nothing to listen for.
+    ci_listener: Option<ci_result_listener::CiResultListener>,
+    /// The listener's report queue, merged into the run loop's `select!`.
+    ci_events: Option<mpsc::Receiver<ci_result_listener::CiListenerEvent>>,
     team_wakes: team_wake::WakeIntentStore,
     /// Channels whose complete stored 44244 partition was scanned this run.
     team_wake_scanned_channels: HashSet<Uuid>,
@@ -684,6 +718,28 @@ pub struct Provider {
     replay: ReplayWindow,
 }
 
+/// What [`Provider::apply_turn_decision`] actually did with one command.
+///
+/// Exists for the CI-continuation delivery path, which has a durable record to
+/// retire and therefore has to know whether the turn it rebuilt reached a
+/// mailbox, was refused, or was silently ignored — a question every other
+/// caller can answer by not asking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnDisposition {
+    /// Handed to an execution's mailbox. The turn path owns the command now:
+    /// the operation and command ledgers are written at `TurnStarted`.
+    Delivered,
+    /// Durably answered with a terminal receipt carrying this code.
+    Answered(String),
+    /// A CI continuation was durably registered. No turn exists yet.
+    Registered,
+    /// An interrupt was answered. Never reached by a continuation, which is
+    /// always a `thread.turn.start`.
+    Interrupt,
+    /// Nothing was owed and nothing was done.
+    Silent,
+}
+
 /// One turn command accepted into a mailbox and not yet started.
 #[derive(Debug, Clone)]
 pub struct InFlightTurn {
@@ -782,6 +838,7 @@ impl Provider {
         let state = StateStore::open(&config.state_dir, config.command_horizon.as_secs())?;
         let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
         let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
+        let ci_continuations = ci_continuation_store::CiContinuationStore::open(&config.state_dir)?;
         let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
         let media = attachments::MediaFetcher::new(&config.relay_url, config.keys.clone());
@@ -790,6 +847,9 @@ impl Provider {
             pubkey_hex,
             state,
             outbox,
+            ci_continuations,
+            ci_listener: None,
+            ci_events: None,
             team_wakes,
             team_wake_scanned_channels: HashSet::new(),
             team_wake_discovery_backoff: HashMap::new(),
@@ -870,6 +930,7 @@ impl Provider {
             );
         }
         self.sweep_redaction_vault();
+        self.recover_ci_continuations()?;
         let orphans: Vec<(String, String)> = self
             .state
             .sessions()
@@ -1249,6 +1310,7 @@ impl Provider {
                     command.channel_id,
                     command.created_at,
                     &command.operator_pubkey,
+                    &command.event_id,
                     &command.content,
                 )
                 .await;
@@ -1346,8 +1408,14 @@ impl Provider {
                     // the non-44220 path below already applies.
                     return Ok(());
                 }
-                self.on_turn(channel_id, created_at, &operator_pubkey, &event.content)
-                    .await?;
+                self.on_turn(
+                    channel_id,
+                    created_at,
+                    &operator_pubkey,
+                    &event.id.to_hex(),
+                    &event.content,
+                )
+                .await?;
             }
             KIND_SYSTEM_MESSAGE => {
                 self.on_authority_receipt(channel_id, event, relay).await?;
@@ -2112,7 +2180,7 @@ impl Provider {
         let actor_seats =
             crate::actor_seats::ActorSeatsFile::load(self.config.actor_seats_file.as_deref());
         let decision = decide_lifecycle(
-            &self.context(&projects, &actor_seats, operator_pubkey),
+            &self.context(channel_id, &projects, &actor_seats, operator_pubkey),
             channel_id,
             created_at,
             content,
@@ -3581,6 +3649,7 @@ impl Provider {
         channel_id: Uuid,
         created_at: u64,
         operator_pubkey: &str,
+        event_id: &str,
         content: &str,
     ) -> anyhow::Result<()> {
         let projects = ProjectsFile::default();
@@ -3588,10 +3657,38 @@ impl Provider {
         // keep the context type honest without touching the disk.
         let actor_seats = crate::actor_seats::ActorSeatsFile::default();
         let decision = commands::decide_turn(
-            &self.context(&projects, &actor_seats, operator_pubkey),
+            &self.context(channel_id, &projects, &actor_seats, operator_pubkey),
             created_at,
             content,
         );
+        self.apply_turn_decision(channel_id, created_at, operator_pubkey, event_id, decision)
+            .await
+            .map(|_| ())
+    }
+
+    /// Carry out one already-made turn decision.
+    ///
+    /// Split out of [`Self::on_turn`] so the CI-continuation delivery path can
+    /// reach the *same* code with a decision made from a durable registration
+    /// rather than from a freshly decoded event. Nothing here knows which of
+    /// the two produced its decision, which is the point: a continuation turn
+    /// is queued, degraded, fenced, receipted and consumed by exactly the
+    /// machinery every other turn goes through.
+    ///
+    /// `registration_event_id` is the signed event's id when there is one, and
+    /// empty for a provider-minted delivery. Only a registration reads it.
+    pub(crate) async fn apply_turn_decision(
+        &mut self,
+        channel_id: Uuid,
+        created_at: u64,
+        operator_pubkey: &str,
+        registration_event_id: &str,
+        decision: TurnDecision,
+    ) -> anyhow::Result<TurnDisposition> {
+        // Resolved by `decide_turn_command`, which is also where the
+        // duplicate check read it: the fence that admitted the turn and the
+        // fence the turn claims must never be two computations.
+        let mut decided_operation_key: Option<String> = None;
         let (command_id, target, deliver, dropped_attachments, mut message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
@@ -3607,10 +3704,11 @@ impl Provider {
                         refusal.message,
                     );
                     let command_id = refusal.command_id.to_owned();
+                    let code = refusal.code;
                     tracing::warn!(
                         target: "csp",
                         %command_id,
-                        code = refusal.code,
+                        code,
                         "turn command refused: {}",
                         refusal.message
                     );
@@ -3618,9 +3716,10 @@ impl Provider {
                     // and an answer given twice under the same semantic key
                     // after a restart is a stutter, not a second fact.
                     self.state.record_refusal(&command_id, now_secs())?;
-                    return self.enqueue_receipt(channel_id, &command_id, &receipt);
+                    self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    return Ok(TurnDisposition::Answered(code.to_owned()));
                 }
-                return Ok(());
+                return Ok(TurnDisposition::Silent);
             }
             TurnDecision::Fail {
                 command_id,
@@ -3639,7 +3738,30 @@ impl Provider {
                     code,
                     "turn command rejected: {message}"
                 );
-                return self.enqueue_receipt(channel_id, &command_id, &receipt);
+                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                return Ok(TurnDisposition::Answered(code.to_owned()));
+            }
+            TurnDecision::RegisterCiContinuation {
+                command_id,
+                target,
+                identity,
+                correlation_id,
+                continuation,
+                expires_at,
+                payload_digest,
+            } => {
+                return self.register_ci_continuation(ci_continuation::Registration {
+                    channel_id,
+                    command_id,
+                    target,
+                    identity,
+                    correlation_id,
+                    continuation,
+                    expires_at,
+                    payload_digest,
+                    registration_event_id: registration_event_id.to_owned(),
+                    signer: operator_pubkey.to_owned(),
+                });
             }
             TurnDecision::Start {
                 command_id,
@@ -3647,7 +3769,9 @@ impl Provider {
                 text,
                 attachments,
                 deliver,
+                operation_key: fence_key,
             } => {
+                decided_operation_key = fence_key;
                 let framing = self.turn_framing(
                     &target.session_id,
                     operator_pubkey,
@@ -3703,7 +3827,7 @@ impl Provider {
         // `[Context]` envelope is applied to the *delivery*, never to the
         // fenced identity. An interrupt spends no turn and fences nothing.
         let operation_key = match &message {
-            SessionCommand::Turn { text, .. } => team_wake::operation_fence_key(&target, text),
+            SessionCommand::Turn { .. } => decided_operation_key.clone(),
             _ => None,
         };
 
@@ -3742,7 +3866,8 @@ impl Provider {
                     "the execution's queue is full, so the running turn was left alone and \
                      this turn was not delivered; send it again once the queue drains",
                 );
-                return self.enqueue_receipt(channel_id, &command_id, &receipt);
+                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                return Ok(TurnDisposition::Answered(QUEUE_FULL_TURN_KEPT.to_owned()));
             }
             self.interrupt_open_turn(&session_id, &command_id);
         }
@@ -3773,7 +3898,7 @@ impl Provider {
             }
         }
 
-        match self.sessions.handle(&session_id) {
+        let disposition = match self.sessions.handle(&session_id) {
             Some(handle) => match handle.deliver(message) {
                 // Custody, not execution: the provider has the turn, and the
                 // `turn_started` receipt is what says it began.
@@ -3821,6 +3946,7 @@ impl Provider {
                     }
                     let receipt = LifecycleReceipt::turn_queued(&command_id, &target);
                     self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    TurnDisposition::Delivered
                 }
                 // An interrupt is answered by whether the cancel reached a
                 // live turn, which is a fact this loop already holds.
@@ -3897,6 +4023,7 @@ impl Provider {
                     // Durably answered *and* durably fenced: the process-local
                     // record has nothing left to say.
                     self.forget_delivered_cancel(&command_id);
+                    TurnDisposition::Interrupt
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -3905,13 +4032,13 @@ impl Provider {
                         %session_id,
                         "could not deliver command to session: {error:?}"
                     );
-                    self.report_undelivered_turn(
+                    TurnDisposition::Answered(self.report_undelivered_turn(
                         channel_id,
                         &command_id,
                         &target,
                         is_turn,
                         &error,
-                    )?;
+                    )?)
                 }
             },
             // A persisted session with no live actor. This used to be a
@@ -3924,10 +4051,15 @@ impl Provider {
                     %session_id,
                     "no live actor for a persisted session"
                 );
-                self.report_no_live_execution(channel_id, &command_id, &target, is_turn)?;
+                TurnDisposition::Answered(self.report_no_live_execution(
+                    channel_id,
+                    &command_id,
+                    &target,
+                    is_turn,
+                )?)
             }
-        }
-        Ok(())
+        };
+        Ok(disposition)
     }
 
     /// Whether a native mid-turn steer can be delivered to `session_id`.
@@ -4031,7 +4163,7 @@ impl Provider {
         target: &CodingSessionTarget,
         is_turn: bool,
         error: &DeliverError,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<String> {
         match error {
             // The mailbox is full and the execution is alive. That is a
             // terminal answer for this command: it is recorded as refused so a
@@ -4045,7 +4177,8 @@ impl Provider {
                     payload::QUEUE_FULL,
                     "the execution's queue is full",
                 );
-                self.enqueue_receipt(channel_id, command_id, &receipt)
+                self.enqueue_receipt(channel_id, command_id, &receipt)?;
+                Ok(payload::QUEUE_FULL.to_owned())
             }
             DeliverError::QueueFull => {
                 self.state.record_refusal(command_id, now_secs())?;
@@ -4055,7 +4188,8 @@ impl Provider {
                     payload::QUEUE_FULL,
                     "the execution's queue is full, so the interrupt could not be delivered",
                 );
-                self.enqueue_receipt(channel_id, command_id, &receipt)
+                self.enqueue_receipt(channel_id, command_id, &receipt)?;
+                Ok(payload::QUEUE_FULL.to_owned())
             }
             // The actor is gone: same fact as no handle at all.
             DeliverError::Gone => {
@@ -4081,7 +4215,8 @@ impl Provider {
             .collect();
         for (command_id, turn) in lost {
             self.in_flight.remove(&command_id);
-            self.report_no_live_execution(turn.channel_id, &command_id, &turn.target, true)?;
+            let _ =
+                self.report_no_live_execution(turn.channel_id, &command_id, &turn.target, true)?;
         }
         Ok(())
     }
@@ -4132,7 +4267,7 @@ impl Provider {
         command_id: &str,
         target: &CodingSessionTarget,
         is_turn: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<String> {
         let receipt = if is_turn {
             // Refused, not consumed: the turn never ran, and it never will.
             // Recording it terminally is also what lets the channel watermark
@@ -4157,7 +4292,8 @@ impl Provider {
                 "this execution has no live process, so there is no turn to interrupt",
             )
         };
-        self.enqueue_receipt(channel_id, command_id, &receipt)
+        self.enqueue_receipt(channel_id, command_id, &receipt)?;
+        Ok(payload::NO_LIVE_EXECUTION.to_owned())
     }
 
     /// Handle one kind 40099 system message: if it is a verifiable
@@ -4478,6 +4614,7 @@ impl Provider {
 
     fn context<'a>(
         &'a self,
+        channel_id: Uuid,
         projects: &'a ProjectsFile,
         actor_seats: &'a crate::actor_seats::ActorSeatsFile,
         operator_pubkey: &'a str,
@@ -4485,6 +4622,7 @@ impl Provider {
         CommandContext {
             provider_pubkey: &self.pubkey_hex,
             operator_pubkey,
+            channel_id,
             runtimes: &self.config.runtimes,
             instance_id: &self.config.instance_id,
             now_secs: now_secs(),
@@ -4494,6 +4632,7 @@ impl Provider {
             policy_turn_budgets: self.policy_turn_budgets.clone(),
             active_session_count: self.sessions.live_count(),
             state: &self.state,
+            ci_continuations: &self.ci_continuations,
             projects,
             actor_seats,
             in_flight: &self.in_flight,
@@ -5360,6 +5499,12 @@ impl Provider {
                         .consume_operation(&key, &command_id, now_secs())?;
                 }
                 self.state.consume_command(&command_id, now_secs())?;
+                // Third, and only third: the durable promise that produced
+                // this turn. The ledgers above are what make the turn once;
+                // this record's only remaining job would be to promise a turn
+                // that is already running, so it is retired here and nowhere
+                // earlier.
+                self.retire_ci_continuation(&command_id)?;
                 // D9: the umbrella is charged where the turn is consumed, and
                 // for the same reason — this is the moment work actually
                 // began. Charging at accept would bill a crew for turns a
@@ -6573,6 +6718,8 @@ mod tests {
 
     use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
 
+    #[path = "ci_continuation_tests.rs"]
+    mod ci_continuation_tests;
     #[path = "founder_wake_framing_tests.rs"]
     mod founder_wake_framing_tests;
     #[path = "hire_requester_tests.rs"]
@@ -6640,8 +6787,9 @@ mod tests {
     }
 
     /// Minimal NIP-01 filter matching for the fake relay's `/query` bridge:
-    /// `ids`, `kinds`, `authors`, and `#h` — the fields the provider's
-    /// genesis resolution, transition resolution, and authority backfill use.
+    /// `ids`, `kinds`, `authors`, `#h`, and `#d` — the fields the provider's
+    /// genesis resolution, transition resolution, authority backfill, and CI
+    /// correlation use.
     fn test_filter_matches(filter: &serde_json::Value, event: &Event) -> bool {
         if let Some(ids) = filter.get("ids").and_then(serde_json::Value::as_array) {
             if !ids.iter().any(|id| id.as_str() == Some(&event.id.to_hex())) {
@@ -6672,6 +6820,20 @@ mod tests {
             if !channels
                 .iter()
                 .any(|channel| channel.as_str() == event_channel.as_deref())
+            {
+                return false;
+            }
+        }
+        // Addressable/correlation tag. A CI result carries its correlation
+        // digest here, which is the only way to ask for one exact run attempt.
+        if let Some(wanted) = filter.get("#d").and_then(serde_json::Value::as_array) {
+            let event_d = event.tags.iter().find_map(|tag| {
+                let tag = tag.as_slice();
+                (tag.len() == 2 && tag[0] == "d").then(|| tag[1].clone())
+            });
+            if !wanted
+                .iter()
+                .any(|value| value.as_str() == event_d.as_deref())
             {
                 return false;
             }
@@ -7622,7 +7784,7 @@ mod tests {
         let projects = ProjectsFile::default();
         let actor_seats = crate::actor_seats::ActorSeatsFile::default();
         commands::decide_lifecycle(
-            &provider.context(&projects, &actor_seats, &event.pubkey.to_hex()),
+            &provider.context(channel_id, &projects, &actor_seats, &event.pubkey.to_hex()),
             channel_id,
             event.created_at.as_secs(),
             &event.content,

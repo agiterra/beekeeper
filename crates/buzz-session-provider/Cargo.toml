@@ -38,6 +38,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 
 # Digests
+buzz-ws-client = { path = "../buzz-ws-client" }
 sha2 = { workspace = true }
 hex = { workspace = true }
 
