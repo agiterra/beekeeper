@@ -306,3 +306,70 @@ integration where possible. A participant's absence does not block work others
 are authorized to continue. Persona/team deletion waits on preservation of
 existing behavior, not on nostalgia for the old nouns. No universal mandatory
 reviewer or human gate is introduced by this plan.
+
+
+## Parallel orchestration assignment — September 7 evening
+
+Brian requested Astra and Fable each orchestrate a distinct workstream. Astra
+coordinates the integrated product plan and lands the combined work. Fable owns
+its slice end to end: investigation, design decisions, builder delegation,
+validation and review. Fable will run in a separate t3code session on this machine. The assignment
+is ready in `/Users/brian/Desktop/BEEKEEPER-FABLE-ORCHESTRATION-BRIEF.md`;
+this does not claim Fable has read it or started.
+
+### Astra: operational completion (step 2)
+
+Deliver the smallest durable, authorized CI result producer and exact-run
+`bee ci wait` consumer described in step 2 and the ledger's reuse audit. Own
+CI/workflow/CLI result code and its tests. Do not change role staging, role
+adoption or the Packs UI. Use deterministic subscription/replay for waiting;
+use economical builders for implementation and stronger judgment only where
+needed. Production webhook configuration/deployment is distinct from source
+implementation and requires the applicable existing authorization.
+
+### Fable: shared role adoption (step 1)
+
+Deliver observable project-role revision use across machines, extending the
+existing Packs resolver, staged `packRef` and execution records. Begin by
+tracing what already proves configured, resolved, staged and executed revisions;
+close only the missing evidence/visibility. The shipped refresh mechanism is a
+foundation, not proof that a running agent adopted a new procedure.
+
+Acceptance: an authoritative project source advances; an old execution remains
+truthfully on its old revision; a subsequent launch reports the actual new
+artifact; an unavailable machine has unknown freshness; source failures retain
+honest stale/error state. Exercise two isolated hosts if real second-machine
+access is unavailable and label that limitation. Do not reset active executions
+or silently restage their native context. Define the resume adoption boundary
+from provider behavior before changing it. No human approval for ordinary role
+updates is introduced, and one provider/subscription remains supported.
+
+Primary ownership: `desktop/src/features/roles/`, role/Packs source resolver and
+view files under `desktop/src-tauri/src/managed_agents/`, plus directly related
+tests. Name exact additional files before editing them. Provider `actor_seats`
+and shared pack-reference types may be needed; coordinate their ownership with
+Astra before an edit, not before independent investigation. CI-result files are
+outside this slice. Do not add a separate role registry or polling agent.
+
+### Coordination and integration
+
+Use separate short-lived topic branches/worktrees based on shipped main.
+Each orchestrator writes a short lane spec with strict file ownership before
+spawning builders. Builders do not commit; the designated finalizer does.
+Fable may prepare commits on its isolated topic as its slice finalizer; only
+Astra updates main, rebasing topics with signoff and preserving accepted work.
+Unrelated implementation continues while a shared contract is resolved.
+
+Exchange checkpoints on scope/contract changes, an actual dependency, and
+completion: base/HEAD, exact owned files, decisions with evidence, checks and
+remaining uncertainty. Record accepted findings in `docs/SESSION_STATE.md`;
+Astra owns integration edits to that shared ledger and this master plan, so
+Fable supplies its factual update text rather than racing on those files.
+A checkpoint is not a recurring human approval gate. Either orchestrator may
+consult another available agent, decide within its scope, continue and report.
+Cross-provider review is optional; never block a single-subscription setup.
+
+Astra reviews interface compatibility; Fable reviews whether CI completion and
+role adoption remain distinct evidence. Combine only after the named acceptance
+checks pass. Avoid rerunning unrelated expensive suites absent changes or
+unresolved failures; follow the repository's actual landing requirements.

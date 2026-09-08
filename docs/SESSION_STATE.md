@@ -20,13 +20,18 @@ and validation record. Working tree:
 Andy had no newer main commits at the pre-push check; his separate mobile huddle
 branch remained `093a847c5`, not included in this shipment.
 
-Installed `~/Applications/Beekeeper Dev.app` is now the complete packaged debug
-build from `4d56d978`, built `2026-09-07T14:05:56Z`. All eight sidecars, role
-resources and deep strict code-signature checks passed. Build evidence:
-`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/continuity-build.log`.
-The previous installed bundle is preserved at
-`~/Applications/Beekeeper Dev.app.before-4d56d978-20260907-100742`.
-The app was gracefully quit and its processes were absent before replacement.
+Installed `~/Applications/Beekeeper Dev.app` is the complete packaged debug
+build from shipped `45152ec865482cbdbfb0ba7c841c8e2338a4060a`, built
+`2026-09-08T01:24:54Z`. All eight sidecars, role resources and deep strict
+code-signature checks passed. Evidence:
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/continuity-shipped-rebuild.log`.
+The prior app was gracefully quit and process absence checked before replacement;
+backup: `~/Applications/Beekeeper Dev.app.before-45152ec8-20260907-212750`.
+Computer Use verified the new app opened on Dashboard, signed in as Brian on hive.
+This build includes the final Packs refresh-race and Stop-explanation repairs.
+New-build reconnect acceptance remains to be exercised; the test below belongs
+to the prior build. Brian next requested two parallel orchestrators; their split
+is defined in `COLLABORATIVE_WORKSPACE_PLAN.md`, not a second status ledger.
 
 **Live continuity acceptance passed.** Brian started the app and completed the
 fresh channel-created `Continuity acceptance` test. Read-only relay transcript
