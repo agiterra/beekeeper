@@ -396,6 +396,18 @@ pub async fn cmd_continue(
 /// [`ReceiptStatus`] values a CI-continuation command can ever produce,
 /// spelled without the `turn_`/`continuation_` prefixes redundant once the
 /// caller already knows they asked about one.
+/// How far a continuation has progressed, for ordering receipts that share a
+/// second: registered, then queued, then started; a refusal or drop is the
+/// end of the road.
+fn stage_rank(status: ReceiptStatus) -> u8 {
+    match status {
+        ReceiptStatus::ContinuationRegistered => 0,
+        ReceiptStatus::TurnQueued => 1,
+        ReceiptStatus::TurnStarted => 2,
+        _ => 3,
+    }
+}
+
 pub(crate) fn stage_str(status: ReceiptStatus) -> &'static str {
     match status {
         ReceiptStatus::ContinuationRegistered => "registered",
@@ -469,7 +481,15 @@ pub(crate) fn resolve_continuation_status(
             receipt.error.map(|error| error.code),
         ));
     }
-    matches.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    // Receipts for one command can share a second. Their event ids are content
+    // hashes, unrelated to which came first, so ties are broken by how far the
+    // stage has progressed: a `turn_started` in the same second as its
+    // `turn_queued` is the later fact. The id is only the last-resort order.
+    matches.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| stage_rank(a.2).cmp(&stage_rank(b.2)))
+            .then_with(|| a.1.cmp(&b.1))
+    });
 
     let stage = matches
         .last()

@@ -562,6 +562,19 @@ test-ci-completion: _ensure-services
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" BUZZ_TEST_BEE_BIN="${target_dir}/debug/bee" \
         cargo test -p buzz-relay --lib ci_result -- --ignored --test-threads=1
 
+# CI-managed turn continuation (docs/CI_MANAGED_CONTINUATION_IMPL.md): composes
+# the real buzz-relay binary (its own scratch database, dropped on exit; Redis
+# logical DB 14, never DB 0 or the dev database), the built `bee` CLI, and the
+# real buzz-session-provider binary (a fake ACP adapter script standing in for
+# the model — no network model call) to prove registration, real-webhook-
+# produced CI results, exactly-once turn admission, and the materialized-
+# context contract end to end. See scripts/ci-continuation-acceptance.sh for
+# what each step proves and what this does not cover (the private-project
+# read path, §3f).
+test-ci-continuation: _ensure-services
+    cargo build -p buzz-cli --bin bee -p buzz-relay --bin buzz-relay -p buzz-session-provider --bin buzz-session-provider
+    cargo test -p buzz-session-provider --test ci_continuation_composition -- --ignored --test-threads=1
+
 # Run unit tests only (no infra needed)
 test-unit:
     #!/usr/bin/env bash

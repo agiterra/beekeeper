@@ -667,6 +667,38 @@ fn continuation_status_resolves_the_latest_stage_with_receipt_ids() {
 }
 
 #[test]
+fn continuation_status_ranks_same_second_receipts_by_stage_not_event_id() {
+    let target = ci_target();
+    // Event ids are content hashes: "a…" sorts before "z…" whatever the order
+    // of delivery. Both orders must read as started.
+    for (queued_id, started_id) in [("aaaa", "zzzz"), ("zzzz", "aaaa")] {
+        let events = vec![
+            receipt_event(
+                &LifecycleReceipt::turn_started("cic-t", &target, "turn-1"),
+                500,
+                started_id,
+            ),
+            receipt_event(
+                &LifecycleReceipt::turn_queued("cic-t", &target),
+                500,
+                queued_id,
+            ),
+            receipt_event(
+                &LifecycleReceipt::continuation_registered("cic-t", &target),
+                500,
+                "rrrr",
+            ),
+        ];
+        let status = resolve_continuation_status(&events, "cic-t");
+        assert_eq!(status.stage, "started", "ids {queued_id}/{started_id}");
+        assert_eq!(
+            status.receipt_event_ids.last().map(String::as_str),
+            Some(started_id)
+        );
+    }
+}
+
+#[test]
 fn continuation_status_is_none_with_no_matching_receipts() {
     let target = ci_target();
     let events = vec![receipt_event(

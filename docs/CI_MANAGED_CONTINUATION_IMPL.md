@@ -211,3 +211,25 @@ Gates per lane: `cargo fmt --check`, `cargo clippy -p <crate> --all-targets -- -
 `cargo test -p <crate>`; desktop parity: `pnpm typecheck` + the touched tests. Cargo:
 `CARGO_TARGET_DIR=/tmp/fable-ci-continuation-target CARGO_BUILD_JOBS=4`. No push, no
 deploy, no production workflow/deployment settings.
+
+## 7. Validation record (2026-09-08 evening)
+
+Logs: `/Users/brian/Projects/beekeeper/review-role-adoption-fable-logs/` (`finalCI-*.log`,
+`finalCI2-*.log`, lanes `laneK-*`, `laneP-*`, `laneC-*`, `laneA-*`).
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | exit 0 |
+| `cargo clippy --all-targets -- -D warnings` for buzz-core, buzz-sdk, buzz-relay, buzz-cli, buzz-session-provider, buzz-test-client | exit 0 |
+| `cargo test -p buzz-core -p buzz-sdk` | 1352 passed, 0 failed |
+| `cargo test -p buzz-cli` | 1074 passed (+1 ordering test → 61 in the `ci` filter), 0 failed |
+| `cargo test -p buzz-session-provider` | 645 passed, 0 failed, 1 pre-existing ignored (57 new: store 15, listener 14, materialize 5, provider-level 23) |
+| `cargo test -p buzz-relay --lib ingest` | 238 passed |
+| `just file-size-check` | exit 0 |
+| desktop `pnpm typecheck` + the four parity test files | exit 0; 117 passed |
+| `just test-ci-continuation` (real relay on a scratch DB + Redis 14, built `bee`, real provider with a bash ACP stub) | exit 0, three consecutive green runs; proves create → register → real webhook-produced 46008 → exactly one `turn_started` whose 44225 prompt is the §1c JSON byte-for-byte → duplicate webhook and a second command id admit nothing (`DUPLICATE_OPERATION`) |
+| NUL-byte and binary-diff scans of every changed file | clean |
+
+Not proven by the composition: the private-project read path (§3f, unit-tested only),
+a real model behind the adapter. Not run here: `just ci` / `just test` whole-workspace
+(root owns the aggregate). Reproducible acceptance command: `just test-ci-continuation`.
