@@ -5,9 +5,12 @@
  *
  * A resolved pack is a snapshot made when the local packs query completed. A
  * metadata claim is one channel member's signed 44223 account of a generation.
- * Open ingress proves the signature and readable channel, but it does not prove
- * that the signer was commissioned as a provider. Neither side implies that
- * every machine resolved the same tree or that a running process changed.
+ * Open ingress proves the signature and readable channel by itself; whether
+ * the signer was commissioned as a provider is a separate question this
+ * module does not answer — it only displays the answer
+ * `buildRolePackProvenance` (`./rolePackProvenance`) computed for the row's
+ * exact generation. Neither side implies that every machine resolved the
+ * same tree or that a running process changed.
  *
  * A running generation never changes packs; the next launch or resume adopts
  * the current project revision (provider behaviour, unchanged by this module,
@@ -17,13 +20,24 @@ import type {
   CodingSessionStatus,
   GlobalCodingSessionCatalogRecord,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { PACK_REF_SHIPPED_REPO } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import type {
   ProjectPackRevisionComparison,
   RolePackSummary,
 } from "@/shared/api/types";
 
+import {
+  rolePackProvenanceKey,
+  type RolePackProvenanceResult,
+  type RolePackProvenanceRow,
+  type RolePackProvenanceState,
+} from "./rolePackProvenance";
 import { seatAgeSeconds } from "./seatRows";
+
+/** The reason a row carries `proof-unavailable` while nothing has answered
+ * yet — the query has not resolved for the first time. */
+const PROVENANCE_NOT_CHECKED_YET = "Provenance has not been checked yet.";
 
 export type RolePackCoordinate = {
   repo: string;
@@ -60,7 +74,7 @@ export type ReportedRolePackSnapshot = {
   channelId: string;
   generationId: string;
   label: string;
-  /** Signer of the 44223 metadata. Commissioning is not established here. */
+  /** Signer of the 44223 metadata. See `provenance` for commissioning. */
   claimedByPubkey: string | null;
   reportedAt: number | null;
   coordinate: RolePackCoordinate | null;
@@ -89,7 +103,17 @@ export type ReportedRolePackSnapshot = {
    * until its next launch or resume. `"none"` otherwise.
    */
   adoption: ReportedRolePackAdoption;
-  provenance: "unverified-channel-metadata";
+  /**
+   * Whether the 44223 that reported this row is signed by the provider a
+   * founder-signed lifecycle chain commissioned for this exact generation.
+   * Never a claim that the pack bytes ran — see
+   * `docs/ROLE_PROVENANCE_SPEC.md`.
+   */
+  provenance: RolePackProvenanceState;
+  /** Product sentence explaining `provenance`, null only for `commissioned`. */
+  provenanceReason: string | null;
+  /** The founder pubkey the lifecycle chain resolved, or null when unbound. */
+  founderPubkey: string | null;
 };
 
 export type RolePackSnapshots = {
@@ -102,6 +126,12 @@ export type RolePackSnapshots = {
     comparedAt: number;
     reason: string | null;
   } | null;
+  /**
+   * Readable sentences from the provenance fold (source errors and fold
+   * ambiguities), byte-ordered and deduped by `buildRolePackProvenance`.
+   * Empty until a provenance result exists.
+   */
+  provenanceNotes: string[];
 };
 
 /** Statuses a report can never advance from — no next generation is coming. */
@@ -281,6 +311,10 @@ export function buildRolePackSnapshots(input: {
   revisions: ProjectPackRevisionComparison | null;
   /** The revision comparison's disclosed error, or `null`. */
   revisionsError: string | null;
+  /** The provenance fold's answer, or `null` before the first one resolves. */
+  provenance: RolePackProvenanceResult | null;
+  /** The provenance hook's own readable error, or `null`. */
+  provenanceError: string | null;
   nowSeconds: number;
 }): RolePackSnapshots {
   // A query in error can still carry stale `data` from an earlier success
@@ -299,6 +333,14 @@ export function buildRolePackSnapshots(input: {
     }
   }
 
+  const provenanceFallbackReason =
+    input.provenanceError ?? PROVENANCE_NOT_CHECKED_YET;
+  // Same discipline as the revision comparison: a result that arrived beside
+  // an error is not one this render can vouch for, so no row reads a positive
+  // off it. The hook already withholds its result while a read is in flight
+  // or failed; this is the belt to that brace.
+  const provenance = input.provenanceError === null ? input.provenance : null;
+
   const reported = input.catalogEntries
     .filter(({ session }) => session.projectRef === input.projectRef)
     .map(({ channelId, session }) => {
@@ -309,6 +351,18 @@ export function buildRolePackSnapshots(input: {
         resolvedByRole,
         revisions,
       });
+      const provenanceRow: RolePackProvenanceRow = {
+        channelId,
+        targetKey: session.commandTarget
+          ? buildCodingSessionTargetKey(session.commandTarget)
+          : null,
+        metadataEventId: session.statusEventId,
+        signerPubkey: session.metadataAuthorityPubkey,
+        sessionRef: session.sessionRef,
+      };
+      const disposition =
+        provenance?.dispositions.get(rolePackProvenanceKey(provenanceRow)) ??
+        null;
       return {
         channelId,
         generationId: session.generationId,
@@ -327,7 +381,11 @@ export function buildRolePackSnapshots(input: {
         status: session.status,
         ageSeconds: seatAgeSeconds(session.statusAt, input.nowSeconds),
         adoption: adoptionFor(relation, session.status),
-        provenance: "unverified-channel-metadata",
+        provenance: disposition?.state ?? "proof-unavailable",
+        provenanceReason: disposition
+          ? disposition.reason
+          : provenanceFallbackReason,
+        founderPubkey: disposition?.founderPubkey ?? null,
       } satisfies ReportedRolePackSnapshot;
     })
     .sort(
@@ -348,6 +406,7 @@ export function buildRolePackSnapshots(input: {
           reason: revisions.reason,
         }
       : null,
+    provenanceNotes: provenance ? [...provenance.notes] : [],
   };
 }
 

@@ -7,6 +7,7 @@ import {
 import { formatCoordinationAge } from "@/shared/coordination/sessionCoordinationFormat";
 
 import type { ReportedRolePackRelation } from "../lib/rolePackSnapshots";
+import type { RolePackProvenanceState } from "../lib/rolePackProvenance";
 import type { PacksSourceSummary } from "../lib/rolesViewModel";
 
 /**
@@ -212,6 +213,46 @@ export function reportedAgoText(ageSeconds: number | null): string {
 /** The one sentence a non-current, non-terminal reported row adds. */
 export const ADOPTION_KEEPS_UNTIL_NEXT_GENERATION =
   "Keeps this revision until its next launch or resume.";
+
+/**
+ * The Revision-snapshots section's own subtitle (final copy, per review).
+ * Deliberately never says a commissioned label proves which role
+ * instructions ran — only that Beekeeper checked who sent the report.
+ */
+export const ROLE_PACK_SNAPSHOTS_SUBTITLE =
+  "Versions found on this machine and pack revisions reported in this project’s channels. Beekeeper checks who sent each report. Confirming its source does not prove which role instructions were used.";
+
+/**
+ * The three provenance labels, final wording (per review). `commissioned`
+ * never says "verified execution" or "adopted" — it names only what was
+ * checked: the signer of this report is the provider a founder-signed
+ * lifecycle chain named for this exact generation.
+ */
+const PROVENANCE_STATE_LABEL: Record<RolePackProvenanceState, string> = {
+  commissioned: "Reported by the assigned provider",
+  "proof-unavailable": "Unverified · proof unavailable",
+  disputed: "Disputed",
+};
+
+export const PROVENANCE_LABEL_COMMISSIONED =
+  PROVENANCE_STATE_LABEL.commissioned;
+export const PROVENANCE_LABEL_PROOF_UNAVAILABLE =
+  PROVENANCE_STATE_LABEL["proof-unavailable"];
+export const PROVENANCE_LABEL_DISPUTED = PROVENANCE_STATE_LABEL.disputed;
+
+/** The provenance chip's text: the state's label, then ` · <reason>` when present. */
+export function provenanceLabelText(
+  state: RolePackProvenanceState,
+  reason: string | null,
+): string {
+  const label = PROVENANCE_STATE_LABEL[state];
+  return reason ? `${label} · ${reason}` : label;
+}
+
+/** The reported section's one-line summary of the provenance fold's own notes. */
+export function provenanceNotesSentence(notes: readonly string[]): string {
+  return `Proof reads: ${notes.join(" ")}`;
+}
 
 /** The "Available here" heading's own commit fact, once git has answered. */
 export function checkoutAnsweredSentence(

@@ -141,6 +141,10 @@ async function resetCommunityState({
   // this the next community would classify moderation DMs and relay-signed
   // state against the PREVIOUS relay's identity until the entry went stale.
   queryClient.removeQueries({ queryKey: relaySelfQueryKey });
+  // A pack-revision provenance verdict is a fact about one relay's 44221,
+  // 44224 and 44226 events, so it must not survive a switch to a relay whose
+  // events it never read.
+  queryClient.removeQueries({ queryKey: ["role-pack-provenance"] });
   // Folded Pulse digests are keyed by project coordinate, and a coordinate
   // names no relay: carrying them across a switch would paint one community's
   // claims and observed commits under another community's project.

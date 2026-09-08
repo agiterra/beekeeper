@@ -2,16 +2,26 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
-import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+} from "nostr-tools/pure";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import {
   BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
+  lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
+import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import type { RelayEvent } from "@/shared/api/types";
 import {
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
   KIND_PROJECT,
 } from "@/shared/constants/kinds";
@@ -150,14 +160,14 @@ test("the Packs tab explains local versions and unverified metadata claims", asy
   const snapshots = page.getByTestId("role-pack-snapshots");
   await expect(snapshots).toBeVisible({ timeout: 15_000 });
   await expect(snapshots).toContainText(
-    "Versions found on this machine and signed metadata claims visible in this project’s channels.",
+    "Versions found on this machine and pack revisions reported in this project’s channels.",
   );
   await expect(snapshots).toContainText(
-    "Beekeeper has not verified that a commissioned provider authored these claims.",
+    "Beekeeper checks who sent each report. Confirming its source does not prove which role instructions were used.",
   );
   await expect(snapshots.getByText("Available here")).toBeVisible();
   await expect(
-    snapshots.getByText("Unverified channel metadata"),
+    snapshots.getByText("Reported revisions", { exact: true }),
   ).toBeVisible();
   await expect(page.getByTestId("role-pack-resolved-row")).toHaveCount(2);
   await expect(snapshots).toContainText("lead · 9f2e1d0c");
@@ -252,6 +262,12 @@ function rankedMetadataEvent(input: {
   status: "idle" | "running";
   sha: string;
   reportedSecondsAgo: number;
+  /** Fixed signer, for a scenario that must name a specific provider. */
+  secret?: Uint8Array;
+  /** The umbrella session this generation's create claimed, when proving
+   * provenance needs one echoed back (additive on the wire — omitted keeps
+   * every existing caller's content byte-identical). */
+  sessionRef?: string;
 }): RelayEvent {
   return finalizeEvent(
     {
@@ -276,6 +292,15 @@ function rankedMetadataEvent(input: {
         status: input.status,
         branch: null,
         capabilities: RANKED_CAPABILITIES,
+        // Key order past `capabilities` is load-bearing: the shared strict
+        // metadata decoder (`sessionCoordinationStrictJson.ts`
+        // `metadataFieldForms`) only recognizes amendment keys in one fixed
+        // sequence — `sessionRef` before `packRef` — so `sessionRef` must be
+        // spread in first, or the whole event reads as malformed and the fold
+        // never groups it into a session at all.
+        ...(input.sessionRef !== undefined
+          ? { sessionRef: input.sessionRef }
+          : {}),
         packRef: {
           repo: RANKED_REPO,
           sha: input.sha,
@@ -284,8 +309,111 @@ function rankedMetadataEvent(input: {
         },
       }),
     },
-    generateSecretKey(),
+    input.secret ?? generateSecretKey(),
   ) as unknown as RelayEvent;
+}
+
+// ── A commissioned generation's provenance chain ─────────────────────────
+//
+// Everything above proves only that a signature and a channel are readable —
+// the ranked rows above never seed a lifecycle chain, so both stay
+// `proof-unavailable`. This block builds the one thing that can read
+// `commissioned`: a founder-signed genesis, a founder-signed generation-1
+// create naming it, and a provider-signed receipt accepting that create —
+// using the same production builders `codingSessionCreateObservations.test.mjs`
+// uses for the equivalent unit fixtures, not hand-rolled tags.
+
+const COMMISSIONED_SESSION_REF = "11111111-2222-4333-8444-555555555555";
+const COMMISSIONED_SHA = "dd11ee22ff33001122334455667788990011aabb";
+const COMMISSIONED_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "commissioned-seat",
+  sessionId: "dddddddd-eeee-ffff-0000-111111111111",
+  generation: 1,
+};
+
+function commissionedGenerationEvents(): {
+  founderPubkey: string;
+  events: RelayEvent[];
+} {
+  const founderSecret = generateSecretKey();
+  const providerSecret = generateSecretKey();
+  const commandId = "csl-commissioned-1";
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  const builtGenesis = buildCodingSessionGenesisEvent({
+    channelId: GENERAL_CHANNEL_ID,
+    sessionRef: COMMISSIONED_SESSION_REF,
+  });
+  const genesis = finalizeEvent(
+    {
+      kind: builtGenesis.kind,
+      created_at: nowSeconds - 600,
+      tags: builtGenesis.tags,
+      content: builtGenesis.content,
+    },
+    founderSecret,
+  ) as unknown as RelayEvent;
+
+  const builtCreate = buildCodingSessionCreateEvent({
+    channelId: GENERAL_CHANNEL_ID,
+    commandId,
+    projectRef: null,
+    repoRef: null,
+    sessionRef: COMMISSIONED_SESSION_REF,
+    genesisRef: genesis.id,
+    providerInstanceRef: "claude-primary",
+    providerAuthorityPubkey: getPublicKey(providerSecret),
+    model: null,
+    title: "Commissioned generation",
+    initialTurn: null,
+  });
+  const create = finalizeEvent(
+    {
+      kind: builtCreate.kind,
+      created_at: nowSeconds - 500,
+      tags: builtCreate.tags,
+      content: builtCreate.content,
+    },
+    // Founder-signed: the create is the command a founder-signed chain
+    // commissioned, not merely a member's claim about one.
+    founderSecret,
+  ) as unknown as RelayEvent;
+
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: nowSeconds - 480,
+      tags: [
+        ["h", GENERAL_CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", commandId],
+        ["csl-key", lifecycleReceiptSemanticKey(commandId)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId,
+        status: "created",
+        session: COMMISSIONED_TARGET,
+        error: null,
+      }),
+    },
+    providerSecret,
+  ) as unknown as RelayEvent;
+
+  const metadata = rankedMetadataEvent({
+    target: COMMISSIONED_TARGET,
+    status: "idle",
+    sha: COMMISSIONED_SHA,
+    reportedSecondsAgo: 60,
+    secret: providerSecret,
+    sessionRef: COMMISSIONED_SESSION_REF,
+  });
+
+  return {
+    founderPubkey: getPublicKey(founderSecret),
+    events: [genesis, create, receipt, metadata],
+  };
 }
 
 test("the Packs tab ranks reported pack revisions against this machine's checkout", async ({
@@ -374,7 +502,14 @@ test("the Packs tab ranks reported pack revisions against this machine's checkou
   await expect(currentRow).toHaveCount(1);
   await expect(currentRow).toContainText("Same revision as this machine");
   await expect(currentRow).not.toContainText("Keeps this revision");
-  await expect(currentRow).toContainText("Unverified metadata");
+  // No lifecycle chain was ever seeded for either ranked row — a signed 44223
+  // alone proves a signature and a channel, nothing about who commissioned
+  // the generation that sent it (constraint 3: missing is not disputed).
+  await expect(currentRow).toHaveAttribute(
+    "data-provenance",
+    "proof-unavailable",
+  );
+  await expect(currentRow).toContainText("Unverified · proof unavailable");
 
   const earlierRow = page.locator(
     '[data-testid="role-pack-reported-row"][data-relation="earlier"]',
@@ -388,11 +523,44 @@ test("the Packs tab ranks reported pack revisions against this machine's checkou
   await expect(earlierRow).toContainText(
     "Keeps this revision until its next launch or resume.",
   );
-  await expect(earlierRow).toContainText("Unverified metadata");
+  await expect(earlierRow).toHaveAttribute(
+    "data-provenance",
+    "proof-unavailable",
+  );
+  await expect(earlierRow).toContainText("Unverified · proof unavailable");
 
   const checkoutStatus = page.getByTestId("role-pack-checkout-status");
   await expect(checkoutStatus).toContainText("On 9f2e1d0c");
   await expect(checkoutStatus).toContainText("git answered at");
+
+  // Now seed a founder-signed genesis + generation-1 create + provider
+  // receipt for a third generation, and confirm the mock relay's generic
+  // kind+#h history path — the same one `emitMockHistory` already serves
+  // 44223 reads through — answers `fetchRolePackProvenanceEvents`'s 44221 /
+  // 44224 / 44226 reads too, with no special-casing and no bridge knob.
+  await page.evaluate(
+    ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("mock signed-event seam is missing");
+      for (const event of events as never[]) seed({ channelName, event });
+    },
+    {
+      channelName: "general",
+      events: commissionedGenerationEvents().events as unknown as never[],
+    },
+  );
+
+  await expect(rows).toHaveCount(3, { timeout: 15_000 });
+  const commissionedRow = page.locator(
+    '[data-testid="role-pack-reported-row"][data-provenance="commissioned"]',
+  );
+  await expect(commissionedRow).toHaveCount(1, { timeout: 15_000 });
+  await expect(commissionedRow).toContainText(
+    "Reported by the assigned provider",
+  );
+  // Never worded as verified execution or adoption (constraint 2).
+  await expect(commissionedRow).not.toContainText("verified execution");
+  await expect(commissionedRow).not.toContainText("verified adoption");
 
   await waitForAnimations(page);
   const rankedBuffer = await snapshots.screenshot({

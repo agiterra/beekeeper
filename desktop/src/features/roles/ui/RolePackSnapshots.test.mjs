@@ -29,7 +29,9 @@ function reportedRow(overrides = {}) {
     status: "running",
     ageSeconds: 300,
     adoption: "none",
-    provenance: "unverified-channel-metadata",
+    provenance: "proof-unavailable",
+    provenanceReason: "no accepted lifecycle proof for this generation",
+    founderPubkey: null,
     ...overrides,
   };
 }
@@ -46,6 +48,7 @@ test("states the checkout commit and when git answered, and marks every metadata
           comparedAt: 1_700_000_000_900,
           reason: null,
         },
+        provenanceNotes: [],
       },
       resolvedError: "native resolver timed out",
       resolvedIsStale: true,
@@ -68,12 +71,20 @@ test("states the checkout commit and when git answered, and marks every metadata
     html,
     /Metadata claims may be incomplete: one visible channel did not answer/,
   );
-  assert.match(html, /Unverified metadata/);
+  assert.match(
+    html,
+    /Unverified · proof unavailable · no accepted lifecycle proof for this generation/,
+  );
   assert.match(html, /from <span[^>]+>ffffffff…ffff<\/span>/);
   assert.match(html, /Same revision as this machine/);
   assert.match(html, /reported 5m ago/);
-  assert.match(html, /Unverified channel metadata/);
-  assert.match(html, /not verified that a commissioned provider authored/);
+  assert.match(html, /Reported revisions/);
+  assert.match(
+    html,
+    /Beekeeper checks who sent each report\. Confirming its source does not prove which role instructions were used\./,
+  );
+  // Never word `commissioned` as verified execution or adoption.
+  assert.doesNotMatch(html, /verified execution|verified adoption/);
   // A current row never carries the adoption sentence.
   assert.doesNotMatch(html, /Keeps this revision until its next launch/);
   assert.doesNotMatch(html, /Reported by sessions/);
@@ -94,6 +105,7 @@ test("discloses a failed revision comparison instead of guessing a relation", ()
           }),
         ],
         comparison: null,
+        provenanceNotes: [],
       },
       resolvedError: null,
       resolvedIsStale: false,
@@ -125,6 +137,7 @@ test("shows the earlier/later distance and the terminal status without an adopti
           }),
         ],
         comparison: null,
+        provenanceNotes: [],
       },
       resolvedError: null,
       resolvedIsStale: false,
@@ -151,6 +164,7 @@ test("renders the comparison's per-row note after the relation text", () => {
           }),
         ],
         comparison: null,
+        provenanceNotes: [],
       },
       resolvedError: null,
       resolvedIsStale: false,
@@ -175,6 +189,7 @@ test("omits the note segment entirely when the row carries none", () => {
         resolved: [],
         reported: [reportedRow({ relation: "current", note: null })],
         comparison: null,
+        provenanceNotes: [],
       },
       resolvedError: null,
       resolvedIsStale: false,
@@ -196,6 +211,7 @@ test("does not turn a failed session discovery into a zero-report claim", () => 
         resolved: [],
         reported: [],
         comparison: null,
+        provenanceNotes: [],
       },
       resolvedError: null,
       resolvedIsStale: false,
@@ -214,4 +230,120 @@ test("does not turn a failed session discovery into a zero-report claim", () => 
     html,
     /No role-version metadata claims are visible for this project/,
   );
+});
+
+// ── Provenance labels ────────────────────────────────────────────────────
+
+function renderReported(reported) {
+  return renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: null,
+        resolved: [],
+        reported,
+        comparison: null,
+        provenanceNotes: [],
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+    }),
+  );
+}
+
+test("a commissioned row carries the final wording, a plain (non-error) chip, and no reason suffix", () => {
+  const founder = "c".repeat(64);
+  const html = renderReported([
+    reportedRow({
+      provenance: "commissioned",
+      provenanceReason: null,
+      founderPubkey: founder,
+    }),
+  ]);
+
+  assert.match(html, /Reported by the assigned provider/);
+  // `commissioned` never carries a `· <reason>` suffix — the type contract
+  // fixes `reason: null` for it.
+  assert.doesNotMatch(html, /Reported by the assigned provider ·/);
+  // Never word it as verified execution or adoption (constraint 2).
+  assert.doesNotMatch(
+    html,
+    /verified execution|verified adoption|ran the pack/,
+  );
+  assert.match(html, /data-provenance="commissioned"/);
+  // Plain, not amber or destructive — no error-toned class on the chip.
+  assert.doesNotMatch(
+    html,
+    /text-amber-600[^"]*"[^>]*>Reported by the assigned provider/,
+  );
+});
+
+test("a proof-unavailable row appends its reason and carries the amber chip", () => {
+  const html = renderReported([
+    reportedRow({
+      provenance: "proof-unavailable",
+      provenanceReason: "operator authority not projected",
+    }),
+  ]);
+
+  assert.match(
+    html,
+    /Unverified · proof unavailable · operator authority not projected/,
+  );
+  assert.match(html, /data-provenance="proof-unavailable"/);
+  assert.match(html, /text-amber-600[^>]*>Unverified · proof unavailable/);
+});
+
+test("a disputed row appends its reason and carries the destructive chip", () => {
+  const html = renderReported([
+    reportedRow({
+      provenance: "disputed",
+      provenanceReason: "the 44223 signer is not the accepted provider",
+    }),
+  ]);
+
+  assert.match(
+    html,
+    /Disputed · the 44223 signer is not the accepted provider/,
+  );
+  assert.match(html, /data-provenance="disputed"/);
+  assert.match(html, /text-destructive[^>]*>Disputed/);
+});
+
+test("every reported row keeps its data-provenance attribute alongside data-relation", () => {
+  const html = renderReported([
+    reportedRow({ relation: "earlier", behind: 2, provenance: "disputed" }),
+  ]);
+
+  assert.match(html, /data-relation="earlier"/);
+  assert.match(html, /data-provenance="disputed"/);
+});
+
+test("the reported heading surfaces the provenance fold's notes as one 'Proof reads' line", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: null,
+        resolved: [],
+        reported: [reportedRow()],
+        comparison: null,
+        provenanceNotes: ["Lifecycle receipts could not be read: timed out."],
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+    }),
+  );
+
+  assert.match(
+    html,
+    /Proof reads: Lifecycle receipts could not be read: timed out\./,
+  );
+});
+
+test("the 'Proof reads' line is omitted entirely when there are no provenance notes", () => {
+  const html = renderReported([reportedRow()]);
+  assert.doesNotMatch(html, /Proof reads:/);
 });

@@ -19,11 +19,17 @@ import {
   PROJECT_PACKS_MISSING,
   PROJECT_SEATS_EMPTY,
   projectSeatCount,
+  PROVENANCE_LABEL_COMMISSIONED,
+  PROVENANCE_LABEL_DISPUTED,
+  PROVENANCE_LABEL_PROOF_UNAVAILABLE,
+  provenanceLabelText,
+  provenanceNotesSentence,
   reportedAgoText,
   revisionComparisonUnavailableSentence,
   revisionRelationText,
   ROLE_AGENTS_EMPTY,
   ROLE_NO_PACK,
+  ROLE_PACK_SNAPSHOTS_SUBTITLE,
   ROLE_SEATS_EMPTY,
   ROLE_SEATS_TITLE,
   ROLE_SKILLS_EMPTY,
@@ -250,5 +256,71 @@ test("the adoption sentence is the design's final wording, verbatim", () => {
   assert.equal(
     ADOPTION_KEEPS_UNTIL_NEXT_GENERATION,
     "Keeps this revision until its next launch or resume.",
+  );
+});
+
+test("the revision-snapshots subtitle names what a commissioned label does and does not prove", () => {
+  assert.equal(
+    ROLE_PACK_SNAPSHOTS_SUBTITLE,
+    "Versions found on this machine and pack revisions reported in this project’s channels. Beekeeper checks who sent each report. Confirming its source does not prove which role instructions were used.",
+  );
+  // `commissioned` is never worded as verified execution or adoption.
+  assert.doesNotMatch(
+    ROLE_PACK_SNAPSHOTS_SUBTITLE,
+    /verified execution|verified adoption/,
+  );
+});
+
+test("the three provenance labels are the design's final wording, verbatim", () => {
+  assert.equal(
+    PROVENANCE_LABEL_COMMISSIONED,
+    "Reported by the assigned provider",
+  );
+  assert.equal(
+    PROVENANCE_LABEL_PROOF_UNAVAILABLE,
+    "Unverified · proof unavailable",
+  );
+  assert.equal(PROVENANCE_LABEL_DISPUTED, "Disputed");
+  // Never worded as verified execution or adoption (constraint 2).
+  for (const label of [
+    PROVENANCE_LABEL_COMMISSIONED,
+    PROVENANCE_LABEL_PROOF_UNAVAILABLE,
+    PROVENANCE_LABEL_DISPUTED,
+  ]) {
+    assert.doesNotMatch(label, /verified execution|verified adoption/i);
+  }
+});
+
+test("provenanceLabelText appends the reason only when one is present", () => {
+  assert.equal(
+    provenanceLabelText("commissioned", null),
+    "Reported by the assigned provider",
+  );
+  assert.equal(
+    provenanceLabelText(
+      "proof-unavailable",
+      "operator authority not projected",
+    ),
+    "Unverified · proof unavailable · operator authority not projected",
+  );
+  assert.equal(
+    provenanceLabelText(
+      "disputed",
+      "the 44223 signer is not the accepted provider",
+    ),
+    "Disputed · the 44223 signer is not the accepted provider",
+  );
+});
+
+test("provenanceNotesSentence prefixes the fold's own notes with 'Proof reads:'", () => {
+  assert.equal(
+    provenanceNotesSentence([
+      "Lifecycle receipts could not be read: timed out.",
+    ]),
+    "Proof reads: Lifecycle receipts could not be read: timed out.",
+  );
+  assert.equal(
+    provenanceNotesSentence(["First sentence.", "Second sentence."]),
+    "Proof reads: First sentence. Second sentence.",
   );
 });

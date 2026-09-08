@@ -6,6 +6,7 @@ import {
   readRolePackCoordinate,
   revisionShas,
 } from "./rolePackSnapshots.ts";
+import { rolePackProvenanceKey } from "./rolePackProvenance.ts";
 
 const PROJECT = "30621:a".repeat(1);
 const REPO = "30617:owner:packs";
@@ -90,9 +91,42 @@ function build(overrides = {}) {
     sourceKnown: true,
     revisions: null,
     revisionsError: null,
+    provenance: null,
+    provenanceError: null,
     nowSeconds: 1_700_000_300,
     ...overrides,
   });
+}
+
+/** The `RolePackProvenanceRow` the default `entry()` fixture projects to —
+ * `entry()` names no `commandTarget`, so `targetKey` is null. */
+const DEFAULT_PROVENANCE_ROW = {
+  channelId: "project-channel",
+  targetKey: null,
+  metadataEventId: null,
+  signerPubkey: "b".repeat(64),
+  sessionRef: null,
+};
+
+function provenanceResult(overrides = {}) {
+  return {
+    dispositions: new Map(),
+    notes: [],
+    ...overrides,
+  };
+}
+
+function disposition(overrides = {}) {
+  return {
+    state: "proof-unavailable",
+    reason: "no accepted lifecycle proof for this generation",
+    founderPubkey: null,
+    commandSignerPubkey: null,
+    commandEventId: null,
+    receiptEventId: null,
+    genesisEventId: null,
+    ...overrides,
+  };
 }
 
 const SHIPPED = {
@@ -387,4 +421,154 @@ test("never carries a note for an incomplete, different-source, or shipped-diffe
   });
   assert.equal(shippedDiffers.reported[0].relation, "shipped-differs");
   assert.equal(shippedDiffers.reported[0].note, null);
+});
+
+// ── Provenance lookup ────────────────────────────────────────────────────
+
+test("a row with no disposition and no provenance answer yet is proof-unavailable, unchecked", () => {
+  const snapshots = build({ provenance: null, provenanceError: null });
+  const row = snapshots.reported[0];
+  assert.equal(row.provenance, "proof-unavailable");
+  assert.equal(row.provenanceReason, "Provenance has not been checked yet.");
+  assert.equal(row.founderPubkey, null);
+  assert.deepEqual(snapshots.provenanceNotes, []);
+});
+
+test("a row with no disposition and a failed provenance read carries the hook's error", () => {
+  const snapshots = build({
+    provenance: null,
+    provenanceError: "the relay closed the subscription",
+  });
+  assert.equal(snapshots.reported[0].provenance, "proof-unavailable");
+  assert.equal(
+    snapshots.reported[0].provenanceReason,
+    "the relay closed the subscription",
+  );
+});
+
+test("a commissioned disposition beside a provenance error is not trusted", () => {
+  const key = rolePackProvenanceKey(DEFAULT_PROVENANCE_ROW);
+  const snapshots = build({
+    provenance: provenanceResult({
+      dispositions: new Map([
+        [
+          key,
+          {
+            state: "commissioned",
+            reason: null,
+            founderPubkey: "f".repeat(64),
+            commandSignerPubkey: "f".repeat(64),
+            commandEventId: "c".repeat(64),
+            receiptEventId: "d".repeat(64),
+            genesisEventId: "e".repeat(64),
+          },
+        ],
+      ]),
+      notes: ["Lifecycle receipts were truncated at 1000 events."],
+    }),
+    provenanceError: "the relay closed the connection",
+  });
+  assert.equal(snapshots.reported[0].provenance, "proof-unavailable");
+  assert.equal(
+    snapshots.reported[0].provenanceReason,
+    "the relay closed the connection",
+  );
+  assert.equal(snapshots.reported[0].founderPubkey, null);
+  assert.deepEqual(snapshots.provenanceNotes, []);
+});
+
+test("a commissioned disposition carries the founder pubkey and a null reason", () => {
+  const founder = "f".repeat(64);
+  const key = rolePackProvenanceKey(DEFAULT_PROVENANCE_ROW);
+  const snapshots = build({
+    provenance: provenanceResult({
+      dispositions: new Map([
+        [
+          key,
+          disposition({
+            state: "commissioned",
+            reason: null,
+            founderPubkey: founder,
+            commandSignerPubkey: founder,
+          }),
+        ],
+      ]),
+    }),
+  });
+  const row = snapshots.reported[0];
+  assert.equal(row.provenance, "commissioned");
+  assert.equal(row.provenanceReason, null);
+  assert.equal(row.founderPubkey, founder);
+});
+
+test("a proof-unavailable disposition carries the fold's own product sentence", () => {
+  const key = rolePackProvenanceKey(DEFAULT_PROVENANCE_ROW);
+  const snapshots = build({
+    provenance: provenanceResult({
+      dispositions: new Map([
+        [
+          key,
+          disposition({
+            reason:
+              "The command that started generation 2 was signed by a key that is not the founder; operator grants are not projected yet.",
+          }),
+        ],
+      ]),
+    }),
+  });
+  assert.equal(snapshots.reported[0].provenance, "proof-unavailable");
+  assert.match(
+    snapshots.reported[0].provenanceReason ?? "",
+    /operator grants are not projected yet/,
+  );
+});
+
+test("a disputed disposition names the contradiction", () => {
+  const key = rolePackProvenanceKey(DEFAULT_PROVENANCE_ROW);
+  const snapshots = build({
+    provenance: provenanceResult({
+      dispositions: new Map([
+        [
+          key,
+          disposition({
+            state: "disputed",
+            reason: "The 44223 signer is not the accepted provider.",
+          }),
+        ],
+      ]),
+    }),
+  });
+  assert.equal(snapshots.reported[0].provenance, "disputed");
+  assert.equal(
+    snapshots.reported[0].provenanceReason,
+    "The 44223 signer is not the accepted provider.",
+  );
+});
+
+test("a row whose key is absent from an otherwise-resolved provenance result still falls back honestly", () => {
+  const snapshots = build({
+    provenance: provenanceResult({ dispositions: new Map() }),
+    provenanceError: null,
+  });
+  assert.equal(snapshots.reported[0].provenance, "proof-unavailable");
+  assert.equal(
+    snapshots.reported[0].provenanceReason,
+    "Provenance has not been checked yet.",
+  );
+});
+
+test("carries the provenance fold's notes through to the section model", () => {
+  const snapshots = build({
+    provenance: provenanceResult({
+      notes: ["Lifecycle receipts could not be read: timed out."],
+    }),
+  });
+  assert.deepEqual(snapshots.provenanceNotes, [
+    "Lifecycle receipts could not be read: timed out.",
+  ]);
+});
+
+test("provenanceNotes is empty before any provenance answer exists", () => {
+  const snapshots = build({ provenance: null });
+  assert.deepEqual(snapshots.provenanceNotes, []);
 });

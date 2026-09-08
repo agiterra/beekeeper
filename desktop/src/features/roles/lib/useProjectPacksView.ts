@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import {
   type ProjectContainer,
@@ -11,6 +12,7 @@ import {
 } from "@/features/projects-container/hooks";
 import type { ProjectCodingSessionShelfState } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
   compareProjectPackRevisions,
   listProjectRolePacks,
@@ -32,6 +34,8 @@ import {
   revisionShas,
   type RolePackSnapshots,
 } from "./rolePackSnapshots";
+import type { RolePackProvenanceRow } from "./rolePackProvenance";
+import { useRolePackProvenance } from "./useRolePackProvenance";
 import {
   projectPacksResolutionNeedsRefresh,
   rolePackRevisionsQueryKey,
@@ -46,6 +50,7 @@ const AGE_TICK_MS = 30_000;
 
 const NO_PACKS: readonly RolePackSummary[] = [];
 const NO_CHANNEL_IDS: readonly string[] = [];
+const NO_PROVENANCE_ROWS: readonly RolePackProvenanceRow[] = [];
 
 export { rolePacksQueryKey };
 
@@ -139,6 +144,8 @@ export type ProjectPacksViewState = {
   packsResolutionIsStale: boolean;
   /** The revision comparison's own disclosed error, or `null`. */
   revisionsError: string | null;
+  /** The provenance hook's own disclosed error, or `null`. */
+  provenanceError: string | null;
   /** The open metadata-claim read's disclosed state. */
   executionReports: {
     isLoading: boolean;
@@ -293,6 +300,37 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
   });
   const revisionsError = errorSentence(revisionsQuery.error);
 
+  // Same project-scoping predicate `buildRolePackSnapshots` applies to
+  // `catalogEntries` below — the provenance fold must be asked about exactly
+  // the generations this Packs tab will render, never a shared channel's
+  // other-project rows.
+  const provenanceRows = React.useMemo<readonly RolePackProvenanceRow[]>(() => {
+    const scopedProjectRef = projectRef ?? "";
+    const rows = executionCatalog.entries
+      .filter(({ session }) => session.projectRef === scopedProjectRef)
+      .map(
+        ({ channelId, session }): RolePackProvenanceRow => ({
+          channelId,
+          targetKey: session.commandTarget
+            ? buildCodingSessionTargetKey(session.commandTarget)
+            : null,
+          metadataEventId: session.statusEventId,
+          signerPubkey: session.metadataAuthorityPubkey,
+          sessionRef: session.sessionRef,
+        }),
+      );
+    return rows.length > 0 ? rows : NO_PROVENANCE_ROWS;
+  }, [executionCatalog.entries, projectRef]);
+  // A proof is a fact about one relay's events, so the provenance read is
+  // keyed by the community's relay and disabled without one.
+  const { activeCommunity } = useCommunities();
+  const provenance = useRolePackProvenance({
+    relayUrl: activeCommunity?.relayUrl ?? null,
+    projectRef,
+    channelIds: projectChannelIds,
+    rows: provenanceRows,
+  });
+
   const rolePackSnapshots = React.useMemo(
     () =>
       buildRolePackSnapshots({
@@ -304,6 +342,8 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
         sourceKnown,
         revisions: revisionsQuery.data ?? null,
         revisionsError,
+        provenance: provenance.result,
+        provenanceError: provenance.error,
         nowSeconds,
       }),
     [
@@ -312,6 +352,8 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       packs,
       packsQuery.dataUpdatedAt,
       projectRef,
+      provenance.error,
+      provenance.result,
       revisionsError,
       revisionsQuery.data,
       sourceKnown,
@@ -341,6 +383,7 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       packsQuery.dataUpdatedAt > 0 &&
       (packsQuery.isError || sourceQuery.isError || liveRefresh.error !== null),
     revisionsError,
+    provenanceError: provenance.error,
     executionReports: {
       isLoading: channelsQuery.isPending || executionCatalog.isLoading,
       error: executionReportsError,
@@ -352,6 +395,7 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       void sourceQuery.refetch();
       void packsQuery.refetch();
       void revisionsQuery.refetch();
+      provenance.refetch();
     },
     refetchAgents: () => void agentsQuery.refetch(),
   };

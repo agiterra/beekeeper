@@ -4,13 +4,30 @@ import type {
   RolePackSnapshots as RolePackSnapshotModel,
 } from "../lib/rolePackSnapshots";
 import { rolePackCoordinateText } from "../lib/rolePackSnapshots";
+import type { RolePackProvenanceState } from "../lib/rolePackProvenance";
 import {
   ADOPTION_KEEPS_UNTIL_NEXT_GENERATION,
   checkoutAnsweredSentence,
+  provenanceLabelText,
+  provenanceNotesSentence,
   reportedAgoText,
   revisionComparisonUnavailableSentence,
   revisionRelationText,
+  ROLE_PACK_SNAPSHOTS_SUBTITLE,
 } from "./rolesCopy";
+
+/** Amber for unproven, red for a contradiction, plain for a commissioned
+ * report — never emphasize `commissioned` the way an error state is. */
+function provenanceLabelClassName(state: RolePackProvenanceState): string {
+  switch (state) {
+    case "commissioned":
+      return "font-medium text-foreground";
+    case "proof-unavailable":
+      return "font-medium text-amber-600 dark:text-amber-400";
+    case "disputed":
+      return "font-medium text-destructive";
+  }
+}
 
 function timestamp(value: number | null): string {
   return value === null
@@ -117,9 +134,7 @@ export function RolePackSnapshots({
           Revision snapshots
         </h2>
         <p className="text-xs text-muted-foreground">
-          Versions found on this machine and signed metadata claims visible in
-          this project&rsquo;s channels. Beekeeper has not verified that a
-          commissioned provider authored these claims.
+          {ROLE_PACK_SNAPSHOTS_SUBTITLE}
         </p>
       </div>
 
@@ -184,8 +199,16 @@ export function RolePackSnapshots({
 
       <div className="flex flex-col gap-1" data-testid="role-pack-reported">
         <h3 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-          Unverified channel metadata
+          Reported revisions
         </h3>
+        {snapshots.provenanceNotes.length > 0 ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="role-pack-provenance-notes"
+          >
+            {provenanceNotesSentence(snapshots.provenanceNotes)}
+          </p>
+        ) : null}
         {reports.authorityError ? (
           <p
             className="text-xs text-amber-600 dark:text-amber-400"
@@ -221,13 +244,19 @@ export function RolePackSnapshots({
             {snapshots.reported.map((snapshot) => (
               <li
                 className="flex flex-col gap-1 text-xs"
+                data-provenance={snapshot.provenance}
                 data-relation={snapshot.relation}
                 data-testid="role-pack-reported-row"
                 key={`${snapshot.channelId}:${snapshot.generationId}`}
               >
                 <p>
-                  <span className="font-medium text-amber-600 dark:text-amber-400">
-                    Unverified metadata
+                  <span
+                    className={provenanceLabelClassName(snapshot.provenance)}
+                  >
+                    {provenanceLabelText(
+                      snapshot.provenance,
+                      snapshot.provenanceReason,
+                    )}
                   </span>
                   {" from "}
                   <span
