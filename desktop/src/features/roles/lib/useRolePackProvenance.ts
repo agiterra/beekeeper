@@ -181,7 +181,9 @@ export function useRolePackProvenance(
   // nothing to stand on — so both windows report no result rather than the
   // old one. Rows fall back to "proof unavailable" with the read's own words;
   // a positive label never outlives the evidence it was drawn from.
-  const settled = !query.isFetching && !query.isError;
+  // `fetchStatus` rather than `isFetching`: a re-read that React Query has
+  // paused (offline) is not fetching, yet has confirmed nothing either.
+  const settled = query.fetchStatus === "idle" && !query.isError;
   return {
     result: settled ? (query.data ?? null) : null,
     isLoading: query.isLoading,

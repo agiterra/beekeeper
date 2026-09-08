@@ -401,3 +401,47 @@ test("a positive verdict is withdrawn the moment conflicting proof arrives, and 
     cleanup();
   }
 });
+
+test("a re-read paused while offline confirms nothing, so the old positive stays withdrawn until it completes", async () => {
+  const relayRef = { current: RELAY_A };
+  const eventsByRelay = new Map([[RELAY_A, FULL_PROOF]]);
+  const calls = [];
+  const { act, mounted, waitFor } = await mountHook({
+    eventsByRelay,
+    relayRef,
+    calls,
+    initialRelayUrl: RELAY_A,
+  });
+  const { onlineManager } = await import("@tanstack/react-query");
+  const { fanOutObservedCodingSessionEvents } = await import(
+    "@/features/coding-sessions/lib/codingSessionObservedEvents.ts"
+  );
+
+  try {
+    await waitFor(() => assert.equal(stateOf(mounted), "commissioned"));
+    const beforePause = calls.length;
+
+    await act(async () => {
+      onlineManager.setOnline(false);
+      fanOutObservedCodingSessionEvents([RECEIPT]);
+    });
+    await waitFor(() =>
+      assert.equal(
+        mounted.result.current.result,
+        null,
+        "a paused re-read is not a confirmation",
+      ),
+    );
+    assert.equal(calls.length, beforePause, "nothing was read while offline");
+
+    await act(async () => {
+      onlineManager.setOnline(true);
+    });
+    await waitFor(() => assert.equal(stateOf(mounted), "commissioned"));
+    assert.ok(calls.length > beforePause, "the re-read ran once back online");
+  } finally {
+    onlineManager.setOnline(true);
+    const { cleanup } = await import("@testing-library/react");
+    cleanup();
+  }
+});
