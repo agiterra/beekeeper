@@ -524,6 +524,7 @@ export function useNewCodingSessionCreate({
           await stageCodingSessionCreateHint({
             commandId,
             path: input.workdir,
+            projectRef: input.projectRef ?? null,
           });
           await recordCodingSessionWorkdirUse(
             input.rememberWorkdir ?? input.workdir,

@@ -355,6 +355,37 @@ impl CodingSessionWorkdirStore {
         }
     }
 
+    /// Stage a create's one-shot hint and, when the create is project-scoped
+    /// and the project has no directory of its own yet, make this directory
+    /// the project's default too.
+    ///
+    /// A hint dies with its receipt, so before this a project's directory
+    /// existed only in the desktop's project settings — which nothing
+    /// prompted anyone to open. The first create from the desktop is the one
+    /// moment the host knows which tree the project lives in, and a phone
+    /// create for that project (live finding 2026-09-08, refused with
+    /// `PROJECT_CWD_UNRESOLVED`) can only ever resolve through
+    /// `projects[projectRef]`. A directory already recorded for the project
+    /// is left alone: settings win over a one-off choice.
+    pub(crate) fn stage_hint_for_project(
+        &mut self,
+        command_id: &str,
+        project_ref: Option<&str>,
+        path: PathBuf,
+    ) {
+        let project_ref = project_ref.map(str::trim).filter(|key| !key.is_empty());
+        if let Some(project_ref) = project_ref {
+            if !self.by_project.contains_key(project_ref) {
+                self.set(
+                    CodingSessionWorkdirScope::Project,
+                    project_ref,
+                    path.clone(),
+                );
+            }
+        }
+        self.stage_hint(command_id, path);
+    }
+
     /// Drop a hint once its receipt has been seen.
     pub(crate) fn clear_hint(&mut self, command_id: &str) {
         self.pending.remove(command_id);
@@ -832,12 +863,17 @@ pub fn record_coding_session_workdir_use(
 }
 
 /// Stage the directory a specific create command should run in.
+///
+/// With `project_ref`, the same directory also becomes the project's default
+/// when it has none yet — see
+/// [`CodingSessionWorkdirStore::stage_hint_for_project`].
 #[tauri::command]
 pub fn stage_coding_session_create_hint(
     app: AppHandle,
     state: State<'_, AppState>,
     command_id: String,
     path: String,
+    project_ref: Option<String>,
 ) -> Result<CodingSessionWorkdirStore, String> {
     let command_id = command_id.trim().to_string();
     if command_id.is_empty() {
@@ -847,7 +883,9 @@ pub fn stage_coding_session_create_hint(
     if !path.is_absolute() {
         return Err("a coding-session working directory must be an absolute path".to_string());
     }
-    mutate(&app, &state, |store| store.stage_hint(&command_id, path))
+    mutate(&app, &state, |store| {
+        store.stage_hint_for_project(&command_id, project_ref.as_deref(), path)
+    })
 }
 
 /// Drop a staged hint once its receipt has settled the create.

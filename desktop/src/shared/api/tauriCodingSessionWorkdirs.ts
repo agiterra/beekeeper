@@ -94,14 +94,25 @@ export async function recordCodingSessionWorkdirUse(
  * The provider resolves `pending[commandId]` first, so this is how a
  * standalone session gets a working directory that no project or channel
  * default would have supplied.
+ *
+ * With `projectRef`, the host also records the directory as that project's
+ * default when it has none yet, so a create issued from another device (the
+ * phone cannot pick a folder on this machine) resolves through
+ * `projects[projectRef]` instead of being refused `PROJECT_CWD_UNRESOLVED`.
+ * A directory already set in project settings is left alone.
  */
 export async function stageCodingSessionCreateHint(input: {
   commandId: string;
   path: string;
+  projectRef?: string | null;
 }): Promise<CodingSessionWorkdirState> {
   return invokeTauri<CodingSessionWorkdirState>(
     "stage_coding_session_create_hint",
-    { commandId: input.commandId, path: input.path },
+    {
+      commandId: input.commandId,
+      path: input.path,
+      projectRef: input.projectRef ?? null,
+    },
   );
 }
 

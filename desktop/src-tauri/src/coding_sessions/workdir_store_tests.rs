@@ -485,3 +485,29 @@ fn a_prune_is_recorded_with_the_sentence_that_admitted_it() {
     );
     assert!(!recorded.pruned_at.is_empty());
 }
+
+#[test]
+fn a_project_scoped_hint_becomes_the_project_default_when_it_has_none() {
+    let mut store = CodingSessionWorkdirStore::default();
+    let project = "30621:11868153aa:test-proj";
+    store.stage_hint_for_project("csl-1", Some(project), PathBuf::from("/src/test-proj"));
+    assert_eq!(store.pending["csl-1"], PathBuf::from("/src/test-proj"));
+    assert_eq!(
+        store.by_project[project].path,
+        PathBuf::from("/src/test-proj")
+    );
+
+    // A later create in another tree keeps the recorded default: settings win.
+    store.stage_hint_for_project("csl-2", Some(project), PathBuf::from("/src/elsewhere"));
+    assert_eq!(store.pending["csl-2"], PathBuf::from("/src/elsewhere"));
+    assert_eq!(
+        store.by_project[project].path,
+        PathBuf::from("/src/test-proj")
+    );
+
+    // No project, or a blank one: a one-shot hint and nothing more.
+    store.stage_hint_for_project("csl-3", None, PathBuf::from("/src/standalone"));
+    store.stage_hint_for_project("csl-4", Some("  "), PathBuf::from("/src/standalone"));
+    assert_eq!(store.by_project.len(), 1);
+    assert_eq!(store.pending.len(), 4);
+}

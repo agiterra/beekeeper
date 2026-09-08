@@ -9359,9 +9359,17 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
      `pending[commandId]` hint. So a phone create is refused until the
      project's working directory is set on the desktop. The refusal now
      reaches the row (fix 1) and carries the sentence that says where to set
-     it (`pending_rows.dart` `pendingCreateRefusalHint`). Open product
-     question: whether a desktop create should record its directory as the
-     project's default when none is set yet.
+     it (`pending_rows.dart` `pendingCreateRefusalHint`). Decided the same
+     day (Andy, after the cleared relay reproduced it on project "Test
+     Proj"): a desktop create now records its directory as the project's
+     default when none is set — `workdir_store.rs`
+     `stage_hint_for_project`, reached from `useNewCodingSessionCreate.ts`
+     via `stageCodingSessionCreateHint({projectRef})`; a directory already
+     set in project settings is left alone. The hint sentence names both
+     routes. Same pass: an unnamed, untitled session was headed by its
+     driver ("claude-agent-acp") on the phone; `displayName`
+     (`coding_session_fold.dart`) now says "Coding session" like the
+     desktop, the driver staying in the detail line.
   3. **The desktop minted a new transport channel at every project-scoped
      create** — seven "Mobile Test sessions" transports on the dev relay
      (`channels` rows with `project_ref …:mobile-test`, created 20:06Z Sep 7
