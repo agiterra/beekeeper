@@ -9,7 +9,8 @@ import { formatCoordinationAge } from "@/shared/coordination/sessionCoordination
 
 import type { ReportedRolePackRelation } from "../lib/rolePackSnapshots";
 import type { RolePackProvenanceState } from "../lib/rolePackProvenance";
-import type { PacksSourceSummary } from "../lib/rolesViewModel";
+import type { RoleReportSummary } from "../lib/roleVersionSummary";
+import type { PacksSourceSummary, RoleAgentChip } from "../lib/rolesViewModel";
 
 /**
  * Every sentence the Roles tab shows, as values a test can assert.
@@ -29,8 +30,17 @@ import type { PacksSourceSummary } from "../lib/rolesViewModel";
 
 export const ROLES_TITLE = "Roles";
 
-/** The one sentence under the header: what this page answers. */
+/** The one line under the header: what this page answers. */
 export const ROLES_SUBTITLE =
+  "What each role is for, its project participants, and the versions available here or reported by agents.";
+
+/**
+ * The longer explanation the header used to carry. It is still true and still
+ * the first thing an unfamiliar reader needs, so it is kept verbatim — moved
+ * into Technical details, where a reader who wants it can open it, instead of
+ * standing between the header and the roles every time.
+ */
+export const ROLES_EXPLANATION =
   "Each role is a set of instructions an agent follows in this project. Here you can see what each role is for, which agents can take it, and which version of its instructions is available on this computer and reported by running agents.";
 
 /** The header control that re-reads every source this page already reads. */
@@ -65,17 +75,63 @@ export function roleSkillsSummary(count: number): string {
   return `${ROLE_SKILLS_TITLE} (${count})`;
 }
 
+/** The card's foot disclosure, which holds the long description and the skills. */
+export const ROLE_ABOUT_TITLE = "About this role";
+
+/** `About this role · Skills (3)`. */
+export function roleAboutSummary(skillCount: number): string {
+  return `${ROLE_ABOUT_TITLE} · ${roleSkillsSummary(skillCount)}`;
+}
+
+/** The collapsed reported-version disclosure's summary: `Versions (2)`. */
+export function roleVersionsSummary(count: number): string {
+  return `Versions (${count})`;
+}
+
 export const ROLE_AGENTS_TITLE = "Agents";
 
 export const ROLE_SEATS_TITLE = "Sessions";
 
 export const ROLE_SKILLS_EMPTY = "No skills listed.";
 
-export const ROLE_AGENTS_EMPTY = "No agent has this role yet.";
+export const ROLE_AGENTS_EMPTY = "No agents yet.";
 
 export const ROLE_SEATS_EMPTY = "No open sessions.";
 
-export const PROJECT_SEATS_EMPTY = "No agents in open sessions.";
+/**
+ * A role no agent holds, no session runs and no report names. One line
+ * instead of three separate absences, which said the same thing three times.
+ */
+export const ROLE_QUIET = "No agents or sessions observed for this role.";
+
+/**
+ * The one scope line on the page, under the agent count. Two different kinds
+ * of agent are counted there and they are not equally known: one is a record
+ * on this computer, the other was merely *seen* in this project. The line
+ * names both rather than presenting their sum as one roster, and the tooltip
+ * says plainly that the seen half is an observation, not a complete list.
+ */
+export function rolesScopeText(local: number, shared: number): string {
+  const here = `${local} on this computer`;
+  return shared === 0 ? here : `${here} · ${shared} shared`;
+}
+
+export const ROLES_SCOPE_TITLE =
+  "Local agents are set up on this computer. Shared agents were seen in this project's sessions or channels; this is an observed list, not a complete roster.";
+
+/** The badge on an agent this computer does not manage. */
+export const AGENT_SHARED_BADGE = "shared";
+
+export const AGENT_SHARED_TITLE =
+  "Seen in this project's sessions or channels; not set up on this computer. Its status, instructions and model are not known here.";
+
+/**
+ * The pack disclosure for a shared agent. Not "no pack" and not "has one":
+ * this computer resolved instructions for itself, and what another machine
+ * staged is not something it was told.
+ */
+export const AGENT_CHIP_PACK_UNKNOWN_TITLE =
+  "Whether this agent has this role's instructions on its own machine is not known here.";
 
 export const SHA_UNKNOWN = "version unknown";
 
@@ -139,9 +195,9 @@ function isCommitSha(sha: string | null): sha is string {
   return sha !== null && /^[0-9a-f]{40}$/i.test(sha);
 }
 
-/** `3 agents` / `1 agent` / `0 agents`. */
+/** `3 sessions` / `1 session` / `0 sessions` — rows are sessions, with or without an agent. */
 export function projectSeatCount(count: number): string {
-  return `${count} ${count === 1 ? "agent" : "agents"}`;
+  return `${count} ${count === 1 ? "session" : "sessions"}`;
 }
 
 /** What the source line and the card's availability line call each rung. */
@@ -263,13 +319,39 @@ export type RoleAvailability = {
  * and a refused role carries the backend's own refusal sentence instead of a
  * version it would not stage.
  */
-export function roleAvailabilitySentence(input: {
+export type RoleVersionInput = {
   hasPack: boolean;
   version: string | null;
   origin: RolePackOrigin | null;
   packRef: RolePackRef | null;
   refusal: string | null;
-}): RoleAvailability {
+};
+
+/**
+ * The two things this computer can name about a role's version: the version
+ * string it recorded and the commit it pinned. Either can be absent; neither
+ * is ever filled in from the other, and a shipped pack whose only version is
+ * its `packRef.sha` is named from that sha rather than from nothing.
+ */
+function roleVersionNames(input: RoleVersionInput): {
+  version: string | null;
+  commit: string | null;
+} {
+  const sha = input.packRef?.sha ?? null;
+  return {
+    version:
+      input.version !== null
+        ? `v${input.version}`
+        : input.origin === "shipped" && sha !== null
+          ? `v${sha}`
+          : null,
+    commit: isCommitSha(sha) ? shaText(sha) : null,
+  };
+}
+
+export function roleAvailabilitySentence(
+  input: RoleVersionInput,
+): RoleAvailability {
   if (!input.hasPack || input.refusal !== null) {
     return {
       availability: "unavailable",
@@ -278,14 +360,8 @@ export function roleAvailabilitySentence(input: {
     };
   }
   const sha = input.packRef?.sha ?? null;
-  const version =
-    input.version !== null
-      ? `v${input.version}`
-      : input.origin === "shipped" && sha !== null
-        ? `v${sha}`
-        : null;
-  const commit = isCommitSha(sha) ? `(${shaText(sha)})` : null;
-  const named = [version, commit].filter(
+  const { version, commit } = roleVersionNames(input);
+  const named = [version, commit === null ? null : `(${commit})`].filter(
     (part): part is string => part !== null,
   );
   const originText =
@@ -299,17 +375,165 @@ export function roleAvailabilitySentence(input: {
   };
 }
 
+/** The card chip's words for a role with no instructions here. */
+export const ROLE_NOT_AVAILABLE_CHIP = "Not available here";
+
+/** The disclosure that carries the whole unavailable sentence on the card. */
+export const ROLE_UNAVAILABLE_DETAILS_SUMMARY = "Why not available";
+
+export type RoleVersionChip = {
+  availability: "available" | "unavailable";
+  /** The chip's own short text: `v1.3.0 · 9f2e1d0c`, or the unavailable words. */
+  text: string;
+  /** The whole sentence, for the tooltip and the unavailable disclosure. */
+  sentence: string;
+  /** The chip's tooltip. */
+  title: string;
+};
+
+/**
+ * The card's version chip: the shortest true form on the face, the whole
+ * sentence in the tooltip. Nothing is dropped on the way in — a role with no
+ * version and no commit says "version not recorded" rather than showing an
+ * empty chip, an unavailable role says so on the face and carries its reason
+ * in the tooltip, and the full 40-hex commit is appended to the tooltip
+ * whenever one is named.
+ */
+export function roleVersionChip(input: RoleVersionInput): RoleVersionChip {
+  const sentence = roleAvailabilitySentence(input);
+  if (sentence.availability === "unavailable") {
+    return {
+      availability: "unavailable",
+      text: ROLE_NOT_AVAILABLE_CHIP,
+      sentence: sentence.text,
+      title: input.refusal ?? ROLE_NO_PACK,
+    };
+  }
+  const { version, commit } = roleVersionNames(input);
+  const named = [version, commit].filter(
+    (part): part is string => part !== null,
+  );
+  return {
+    availability: "available",
+    text: named.length > 0 ? named.join(" · ") : ROLE_VERSION_UNRECORDED,
+    sentence: sentence.text,
+    title:
+      sentence.title === null
+        ? sentence.text
+        : `${sentence.text} · ${sentence.title}`,
+  };
+}
+
 /** The card's "Reported by agents" block. */
 export const ROLE_REPORTS_TITLE = "Reported by agents";
 
-export const ROLE_REPORTS_EMPTY =
-  "No agent has reported running this role yet.";
+export const ROLE_REPORTS_EMPTY = "No reports yet.";
 
 /** The card shows at most five version lines; the rest are in the history. */
 export const ROLE_REPORT_VERSION_LIMIT = 5;
 
 export function roleReportsMoreText(count: number): string {
   return `and ${count} more ${count === 1 ? "version" : "versions"} in Report history`;
+}
+
+/**
+ * The card's one-line form of `roleReportSentence`: the same counts in the
+ * same fixed order, in the fewest words that stay true ("2 same version", not
+ * "2 on the same version as this computer"). The long sentence is the line's
+ * `title`, so the short form abbreviates and never replaces it.
+ */
+export function roleReportShortSentence(summary: RoleReportSummary): string {
+  const parts: string[] = [reportCountText(summary.total)];
+  if (summary.sameAsHere > 0) parts.push(`${summary.sameAsHere} same version`);
+  if (summary.earlier > 0) parts.push(`${summary.earlier} earlier`);
+  if (summary.newer > 0) parts.push(`${summary.newer} newer`);
+  if (summary.other > 0) {
+    parts.push(
+      `${summary.other} other ${summary.other === 1 ? "version" : "versions"}`,
+    );
+  }
+  if (summary.unknown > 0) {
+    parts.push(`${summary.unknown} no version reported`);
+  }
+  return parts.join(" · ");
+}
+
+/** How many of a role's reports the provenance fold contradicted. */
+export function roleDisputedReportCount(summary: RoleReportSummary): number {
+  return summary.versions.reduce(
+    (total, version) => total + version.provenance.disputed,
+    0,
+  );
+}
+
+/** The word beside a disputed count, wherever one is shown. */
+export const DISPUTED_WORD = "disputed";
+
+/** `2 unconfirmed` — reports whose sender could not be confirmed. */
+export function unconfirmedCountText(count: number): string {
+  return `${count} unconfirmed`;
+}
+
+/** `1 disputed` — reports the provenance fold contradicted. */
+export function disputedCountText(count: number): string {
+  return `${count} ${DISPUTED_WORD}`;
+}
+
+/**
+ * A managed agent's own status word, as the record reports it. `undefined` is
+ * a fourth case and never folded into "stopped": the agent is known here by
+ * name and role, and its run state is simply not something this view was
+ * told (a relay-discovered agent).
+ */
+export function agentStatusWord(
+  status: RoleAgentChip["status"] | undefined,
+): string {
+  switch (status) {
+    case "running":
+      return "running";
+    case "deployed":
+      return "deployed";
+    case "stopped":
+      return "stopped";
+    case "not_deployed":
+      return "not deployed";
+    default:
+      return AGENT_STATUS_NOT_REPORTED;
+  }
+}
+
+/** What a chip says when nothing told this view the agent's run state. */
+export const AGENT_STATUS_NOT_REPORTED = "status not reported here";
+
+/** What the card's leading dot means, in words, for its `aria-label`. */
+export function roleActivityLabel(
+  activity: "running" | "idle" | "none",
+): string {
+  switch (activity) {
+    case "running":
+      return "A session in this role is running";
+    case "idle":
+      return "This role has open sessions, none running";
+    case "none":
+      return "No open sessions in this role";
+  }
+}
+
+/** The summary strip's four labels, plural-correct. */
+export function rolesCountLabel(count: number): string {
+  return count === 1 ? "role" : "roles";
+}
+
+export function agentsCountLabel(count: number): string {
+  return count === 1 ? "agent" : "agents";
+}
+
+export function openSessionsCountLabel(count: number): string {
+  return count === 1 ? "open session" : "open sessions";
+}
+
+export function reportsCountLabel(count: number): string {
+  return count === 1 ? "report" : "reports";
 }
 
 /**

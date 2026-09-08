@@ -19,6 +19,7 @@ import {
   ROLE_PACK_SNAPSHOTS_SUBTITLE,
   ROLES_DIAGNOSTICS_CHECKS_TITLE,
   ROLES_DIAGNOSTICS_SOURCE_TITLE,
+  ROLES_EXPLANATION,
   ROLES_TECHNICAL_DETAILS_TITLE,
 } from "./rolesCopy";
 
@@ -132,7 +133,10 @@ function SourceGroup({
   revisionsError: string | null;
 }) {
   return (
-    <details data-testid="roles-diagnostics-source">
+    <details
+      className="border-l border-border/60 pl-3"
+      data-testid="roles-diagnostics-source"
+    >
       <summary className={GROUP_SUMMARY_CLASS}>
         {ROLES_DIAGNOSTICS_SOURCE_TITLE}
       </summary>
@@ -300,7 +304,10 @@ function HistoryGroup({
     (currentPage + 1) * pageSize,
   );
   return (
-    <details data-testid="roles-diagnostics-history">
+    <details
+      className="border-l border-border/60 pl-3"
+      data-testid="roles-diagnostics-history"
+    >
       <summary className={GROUP_SUMMARY_CLASS}>
         {reportHistorySummary(snapshots.reported.length)}
       </summary>
@@ -391,11 +398,20 @@ function ChecksGroup({
   shelfNotice: RolesShelfNotice | null;
 }) {
   return (
-    <details data-testid="roles-diagnostics-checks">
+    <details
+      className="border-l border-border/60 pl-3"
+      data-testid="roles-diagnostics-checks"
+    >
       <summary className={GROUP_SUMMARY_CLASS}>
         {ROLES_DIAGNOSTICS_CHECKS_TITLE}
       </summary>
       <div className="mt-1 flex flex-col gap-1">
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="roles-explanation"
+        >
+          {ROLES_EXPLANATION}
+        </p>
         <p className="text-xs text-muted-foreground">
           {ROLE_PACK_SNAPSHOTS_SUBTITLE}
         </p>
@@ -453,14 +469,14 @@ export function RolePackSnapshots({
 }) {
   return (
     <section
-      className="flex flex-col gap-3 rounded-lg border border-border/70 p-3"
+      className="rounded-lg border border-border/70"
       data-testid="role-pack-snapshots"
     >
       <details data-testid="roles-technical-details">
-        <summary className="cursor-pointer text-sm font-medium text-foreground">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-foreground">
           {ROLES_TECHNICAL_DETAILS_TITLE}
         </summary>
-        <div className="mt-2 flex flex-col gap-3">
+        <div className="flex flex-col gap-3 px-3 pb-3">
           <SourceGroup
             resolvedError={resolvedError}
             resolvedIsStale={resolvedIsStale}

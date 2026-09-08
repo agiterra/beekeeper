@@ -35,7 +35,12 @@ test("the header states what this page is and where the instructions came from",
   const html = render();
 
   assert.match(html, /data-testid="roles-subtitle"/);
-  assert.match(html, /Each role is a set of instructions an agent follows/);
+  // One line, not the old paragraph — which now lives in Technical details.
+  assert.match(
+    html,
+    />What each role is for, who can take it, and which version of its instructions is available and in use\.</,
+  );
+  assert.doesNotMatch(html, /Each role is a set of instructions an agent/);
   assert.match(html, /data-testid="packs-source-sentence"/);
   assert.match(
     html,
@@ -122,4 +127,20 @@ test("Install roles keeps its label and its own testid beside Check again", () =
   const html = render();
   assert.match(html, /data-testid="project-packs-install"/);
   assert.match(html, />Install roles</);
+});
+
+test("the two controls are quiet: a ghost recheck and an outline install, both small", () => {
+  const html = render();
+  // `size="sm"` on both, so the controls sit under the title rather than
+  // competing with it.
+  assert.equal((html.match(/h-8 px-3 text-xs/g) ?? []).length, 2);
+  // Ghost for the repeatable read, outline for the one that opens a dialog.
+  assert.match(
+    html,
+    /hover:bg-accent hover:text-accent-foreground h-8[^"]*" data-testid="roles-recheck"/,
+  );
+  assert.match(
+    html,
+    /border border-input\/40[^"]*" data-testid="project-packs-install"/,
+  );
 });

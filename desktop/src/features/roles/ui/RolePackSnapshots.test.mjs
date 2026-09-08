@@ -459,16 +459,23 @@ test("everything is inside a Technical details disclosure that is collapsed by d
   // One outer disclosure, three named groups, none of them open.
   assert.match(html, /<details data-testid="roles-technical-details">/);
   assert.match(html, /<summary[^>]*>Technical details<\/summary>/);
-  assert.match(html, /<details data-testid="roles-diagnostics-source">/);
-  assert.match(html, /<details data-testid="roles-diagnostics-history">/);
-  assert.match(html, /<details data-testid="roles-diagnostics-checks">/);
+  assert.match(html, /<details[^>]*data-testid="roles-diagnostics-source"/);
+  assert.match(html, /<details[^>]*data-testid="roles-diagnostics-history"/);
+  assert.match(html, /<details[^>]*data-testid="roles-diagnostics-checks"/);
   assert.doesNotMatch(html, /<details[^>]*data-testid="roles-[^"]*"[^>]*open/);
-  assert.doesNotMatch(html, /<details data-testid="roles-[^"]*" open/);
+  // Each group is indented off the same rule, so the three read as one list.
+  assert.equal(
+    (html.match(/border-l border-border\/60 pl-3/g) ?? []).length,
+    3,
+  );
 
   // The named group summaries, including the history's own count.
   assert.match(html, /Where instructions come from/);
   assert.match(html, /Report history \(2\)/);
   assert.match(html, /How Beekeeper checks reports/);
+  // The page's own explanation of what a role is lives here now, verbatim.
+  assert.match(html, /data-testid="roles-explanation"/);
+  assert.match(html, /Each role is a set of instructions an agent follows/);
 
   // The rows themselves are unchanged and still inside the groups.
   assert.match(html, /data-testid="role-pack-resolved"/);

@@ -53,6 +53,10 @@ const IDENTITY = {
 
 const PROJECT_FEATURES = JSON.stringify({ projects: true });
 const SNAPSHOTS = "test-results/roles-usability";
+/** The design pass's own screenshot matrix — kept separate from the
+ * usability slice's above so a reviewer can diff either generation without
+ * one overwriting the other. */
+const DESIGN_SNAPSHOTS = "test-results/roles-design";
 
 /** Kind:30621 is not signature-checked by the client, like the other mock
  * fixtures, so a hand-built head is enough to give this viewer projects. */
@@ -171,8 +175,11 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   // Tab label reads "Roles"; id/route are unchanged (project-tab-packs).
   await expect(page.getByTestId("project-tab-packs")).toHaveText("Roles");
 
+  // The design pass's one-liner (`rolesCopy.ts` `ROLES_SUBTITLE`) — the
+  // longer explanation it replaced (`ROLES_EXPLANATION`) is still true and
+  // still kept, just moved into Technical details (asserted below).
   await expect(page.getByTestId("roles-subtitle")).toHaveText(
-    "Each role is a set of instructions an agent follows in this project. Here you can see what each role is for, which agents can take it, and which version of its instructions is available on this computer and reported by running agents.",
+    "What each role is for, who can take it, and which version of its instructions is available and in use.",
   );
 
   // The mock fixture's two roles come from two different rungs (lead is
@@ -186,37 +193,93 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   await expect(recheck).toBeVisible();
   await expect(recheck).toHaveText("Check again");
 
+  // ── Summary strip: 2 roles, 0 agents/sessions/reports — this fixture
+  // seeds no managed agent and no coding-session event for this project. ──
+  await expect(page.getByTestId("roles-summary")).toBeVisible();
+  const rolesTile = page.getByTestId("roles-summary-roles");
+  await expect(rolesTile).toContainText("2");
+  await expect(rolesTile).toContainText("roles");
+  const agentsTile = page.getByTestId("roles-summary-agents");
+  await expect(agentsTile).toContainText("0");
+  await expect(agentsTile).toContainText("agents");
+  const sessionsTile = page.getByTestId("roles-summary-sessions");
+  await expect(sessionsTile).toContainText("0");
+  await expect(sessionsTile).toContainText("open sessions");
+  const reportsTile = page.getByTestId("roles-summary-reports");
+  await expect(reportsTile).toContainText("0");
+  await expect(reportsTile).toContainText("reports");
+  await expect(reportsTile).not.toContainText("unconfirmed");
+  await expect(reportsTile).not.toContainText("disputed");
+
+  // The one scope label — reserved for real project-team data root is
+  // still building; today it discloses this is a this-computer-only view.
+  const scope = page.getByTestId("roles-scope");
+  await expect(scope).toHaveText("0 on this computer");
+  await expect(scope).toHaveAttribute(
+    "title",
+    "Local agents are set up on this computer. Shared agents were seen in this project's sessions or channels; this is an observed list, not a complete roster.",
+  );
+
   // Cards: no origin badge or bare version in the header, just name + slug.
   const leadCard = page.getByTestId("role-card-lead");
   await expect(leadCard).toBeVisible();
   await expect(leadCard.getByTestId("role-origin-lead")).toHaveCount(0);
   await expect(leadCard.getByTestId("role-version-lead")).toHaveCount(0);
 
+  // Activity dot: neither role has an open session, so both read "none".
+  const leadActivity = page.getByTestId("role-activity-lead");
+  await expect(leadActivity).toHaveAttribute("data-activity", "none");
+  await expect(leadActivity).toHaveAttribute("aria-label");
+
+  // Version chip: the short face carries the version/sha; the full sentence
+  // ("… from the project's repository" / "… built-in defaults") moves to
+  // the tooltip.
   const leadAvailable = page.getByTestId("role-available-lead");
   await expect(leadAvailable).toHaveAttribute("data-availability", "available");
+  await expect(leadAvailable).toContainText("v1.3.0");
   await expect(leadAvailable).toContainText("9f2e1d0c");
-  await expect(leadAvailable).toContainText("project's repository");
+  await expect(leadAvailable).toHaveAttribute("title", /project's repository/);
 
   const reviewerAvailable = page.getByTestId("role-available-reviewer");
   await expect(reviewerAvailable).toHaveAttribute(
     "data-availability",
     "available",
   );
-  await expect(reviewerAvailable).toContainText("built-in defaults");
+  await expect(reviewerAvailable).toHaveAttribute("title", /built-in defaults/);
 
-  // No reports yet.
-  const leadReports = page.getByTestId("role-reports-lead");
-  await expect(leadReports).toHaveAttribute("data-reports", "none");
-  await expect(leadReports).toContainText(
-    "No agent has reported running this role yet.",
+  // Description carries its full text in `title` even though the face is
+  // clamped to two lines.
+  await expect(leadCard.getByTestId("role-description-lead")).toHaveAttribute(
+    "title",
+    "Triages findings, briefs lanes, rules on landings.",
   );
 
-  // Skills are collapsed behind a native <details>.
+  // No reports yet — the per-section empty sentence is folded into the
+  // single "quiet" line below (agents, reports and seats are all empty).
+  const leadReports = page.getByTestId("role-reports-lead");
+  await expect(leadReports).toHaveAttribute("data-reports", "none");
+
+  // Every section empty on both cards → one line each, not three repeated
+  // absences.
+  await expect(page.getByTestId("role-quiet-lead")).toHaveText(
+    "Nothing is using this role yet.",
+  );
+  await expect(page.getByTestId("role-quiet-reviewer")).toHaveText(
+    "Nothing is using this role yet.",
+  );
+
+  // "About this role" holds the summary paragraph and the skills, collapsed
+  // behind one native <details> at the card foot.
+  const about = page.getByTestId("role-about-lead");
+  await expect(about).toBeAttached();
+  await expect(about.locator("summary").first()).toHaveText(
+    "About this role · Skills (2)",
+  );
+  await about.locator("summary").first().click();
+  await expect(about).toHaveJSProperty("open", true);
   const skills = page.getByTestId("role-skills-lead");
   await expect(skills).toBeVisible();
-  await expect(
-    page.locator('[data-testid="role-skills-lead"] summary'),
-  ).toHaveText("Skills (2)");
+  await expect(skills.getByTestId("role-skill")).toHaveCount(2);
 
   // Technical details is collapsed by default…
   const details = page.getByTestId("roles-technical-details");
@@ -237,6 +300,11 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   await summary.focus();
   await page.keyboard.press("Enter");
   await expect(details).toHaveJSProperty("open", true);
+
+  // The longer explanation the header used to carry lives here now.
+  await expect(details).toContainText(
+    "Each role is a set of instructions an agent follows in this project. Here you can see what each role is for, which agents can take it, and which version of its instructions is available on this computer and reported by running agents.",
+  );
 
   await expect(page.getByTestId("roles-diagnostics-source")).toBeVisible();
   await expect(page.getByTestId("roles-diagnostics-history")).toContainText(
@@ -567,9 +635,22 @@ function commissionedGenerationEvents(): {
   };
 }
 
-test("the Roles tab distinguishes a version, no version reported, and no role at all", async ({
-  page,
-}) => {
+/** A managed agent seeded with home role "lead" so the ranked scenario
+ * below exercises a populated Agents row (avatar + name + status) and a
+ * non-"none" activity dot, alongside its reports. Deterministic 64-hex,
+ * matching the style of `RANKED_PROJECT_OWNER` above. */
+const LEAD_AGENT_PUBKEY = "b2".repeat(32);
+const LEAD_AGENT_NAME = "Nova";
+
+/**
+ * Seeds the ranked "general" project (with its channel declared, so
+ * `useProjectPacksView`'s project-channel filter admits it), a managed
+ * agent whose home role is "lead", and the earlier-vs-current pack-revision
+ * override, then opens its Roles tab. No report is published yet. Shared by
+ * the report-cases test and the design screenshot matrix so both draw from
+ * one fixture.
+ */
+async function openRankedProjectRolesTab(page: Page) {
   await page.addInitScript((features) => {
     window.localStorage.setItem("buzz-feature-overrides-v1", features);
   }, PROJECT_FEATURES);
@@ -581,7 +662,18 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
     },
     [generalProjectWithChannel()],
   );
-  await installMockBridge(page, {});
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: LEAD_AGENT_PUBKEY,
+        name: LEAD_AGENT_NAME,
+        avatarUrl: null,
+        status: "running",
+        homeRole: "lead",
+        hasRolePack: true,
+      },
+    ],
+  });
   // Patch the mock's revision-comparison answer after `installMockBridge`'s
   // own init script runs (it overwrites `window.__BUZZ_E2E__.mock` wholesale),
   // so this merge survives rather than being clobbered by it. There is no
@@ -606,19 +698,16 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await openRolesTab(page);
+}
 
-  const leadCard = page.getByTestId("role-card-lead");
-  await expect(leadCard).toBeVisible({ timeout: 15_000 });
-
-  await waitForAnimations(page);
-  const pageBuffer = await page.screenshot({
-    path: `${SNAPSHOTS}/01-roles-page.png`,
-    fullPage: true,
-  });
-
-  // Seed the generations only once the tab is open — the channel's live
-  // subscription (armed on navigation) must already exist for the seeded
-  // events to be delivered rather than dropped.
+/**
+ * Publishes the ranked idle/running reports, the no-version-reported report
+ * and the no-role report onto the mock `general` channel. Seeded only once
+ * the tab is open — the channel's live subscription (armed on navigation)
+ * must already exist for the seeded events to be delivered rather than
+ * dropped.
+ */
+async function seedRankedReports(page: Page) {
   await page.evaluate(
     ({ channelName, events }) => {
       const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
@@ -645,6 +734,31 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
       ] as unknown as never[],
     },
   );
+}
+
+test("the Roles tab distinguishes a version, no version reported, and no role at all", async ({
+  page,
+}) => {
+  await openRankedProjectRolesTab(page);
+
+  const leadCard = page.getByTestId("role-card-lead");
+  await expect(leadCard).toBeVisible({ timeout: 15_000 });
+
+  // The seeded managed agent (home role "lead") shows on the card from the
+  // start, before any report — its status word ("running") is disclosed in
+  // a title somewhere in the row, never color-only.
+  const leadAgents = page.getByTestId("role-agents-lead");
+  await expect(leadAgents).toContainText(LEAD_AGENT_NAME);
+  await expect(leadAgents.locator('[title*="running" i]')).not.toHaveCount(0);
+  const leadActivity = page.getByTestId("role-activity-lead");
+
+  await waitForAnimations(page);
+  const pageBuffer = await page.screenshot({
+    path: `${SNAPSHOTS}/01-roles-page.png`,
+    fullPage: true,
+  });
+
+  await seedRankedReports(page);
 
   // Case (a) + (b): the lead card's own reports sentence and version lines.
   // 3 lead reports: current (same version as here), earlier (1 behind), and
@@ -655,14 +769,57 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
     timeout: 15_000,
   });
   await expect(leadReports).toContainText("3 reports");
-  await expect(leadReports).toContainText(
-    "1 on the same version as this computer",
-  );
-  await expect(leadReports).toContainText("1 on an earlier version");
-  await expect(leadReports).toContainText("1 with no version reported");
+  await expect(leadReports).toContainText("1 same version");
+  await expect(leadReports).toContainText("1 earlier");
+  await expect(leadReports).toContainText("1 no version reported");
   await expect(leadReports).toContainText("same version as here");
   await expect(leadReports).toContainText("earlier, 1 behind");
   await expect(leadReports).toContainText("version not reported");
+
+  // The 3 distinct versions are collapsed behind "Versions (3)", closed by
+  // default, keyboard/click-openable, still holding the same version rows.
+  const versionsDetails = page.getByTestId("role-versions-lead");
+  await expect(versionsDetails).toBeAttached();
+  await expect(versionsDetails).not.toHaveJSProperty("open", true);
+  await expect(versionsDetails.locator("summary").first()).toHaveText(
+    "Versions (3)",
+  );
+  await versionsDetails.locator("summary").first().click();
+  await expect(versionsDetails).toHaveJSProperty("open", true);
+  await expect(versionsDetails.getByTestId("role-report-version")).toHaveCount(
+    3,
+  );
+
+  // Activity dot: the lead role now has a seat (the no-version report,
+  // which names "lead" with a seated `agentRef`) but that seat is `idle`,
+  // never `running` — the two ranked reports carry no top-level `role`
+  // (only `packRef.role`), so they count toward Report history but not
+  // toward this role's own seats (`rolesViewModel.ts`'s stated join key is
+  // `session.role`, not `packRef.role`).
+  await expect(leadActivity).toHaveAttribute("data-activity", "idle");
+
+  // Sessions: exactly the one seated report that names "lead" directly.
+  const leadSeats = page.getByTestId("role-seats-lead");
+  const leadSeatRows = leadSeats.getByTestId("seat-row");
+  await expect(leadSeatRows).toHaveCount(1, { timeout: 15_000 });
+  await expect(leadSeatRows.first()).toHaveAttribute(
+    "data-seat-status",
+    "idle",
+  );
+
+  // Reviewer never gets a report, an agent or a seat in this fixture — it
+  // stays the single "quiet" line, distinct from lead's populated card.
+  await expect(page.getByTestId("role-quiet-lead")).toHaveCount(0);
+  await expect(page.getByTestId("role-quiet-reviewer")).toHaveText(
+    "Nothing is using this role yet.",
+  );
+
+  // Summary strip reacts to the same reads: 2 roles, the one seeded agent,
+  // the 4 seated/reported events as open sessions, and 4 reports total
+  // (Report history counts the no-role report too; only role cards omit it).
+  await expect(page.getByTestId("roles-summary-agents")).toContainText("1");
+  await expect(page.getByTestId("roles-summary-sessions")).toContainText("4");
+  await expect(page.getByTestId("roles-summary-reports")).toContainText("4");
 
   // Case (c): the no-role report never spawns a third card.
   await expect(page.locator('[data-testid^="role-card-"]')).toHaveCount(2);
@@ -750,6 +907,10 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
   await expect(commissionedRow).not.toContainText("verified execution");
   await expect(commissionedRow).not.toContainText("verified adoption");
 
+  // The commissioned generation is a 5th report and a 5th open session.
+  await expect(page.getByTestId("roles-summary-reports")).toContainText("5");
+  await expect(page.getByTestId("roles-summary-sessions")).toContainText("5");
+
   const digest = (buffer: Buffer) =>
     createHash("sha256").update(buffer).digest("hex");
   const distinctHashes = new Set([
@@ -761,6 +922,196 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
     distinctHashes.size,
     "01-roles-page.png, 02-card-lead.png, and 03-technical-details-open.png must be visually distinct",
   ).toBe(3);
+});
+
+// ── Design screenshot matrix ─────────────────────────────────────────────
+
+test("the Roles page reads as one calm system across viewports, themes and zoom", async ({
+  page,
+}) => {
+  await openRankedProjectRolesTab(page);
+  const leadCard = page.getByTestId("role-card-lead");
+  await expect(leadCard).toBeVisible({ timeout: 15_000 });
+
+  await seedRankedReports(page);
+  await expect(page.getByTestId("role-reports-lead")).toHaveAttribute(
+    "data-reports",
+    "some",
+    { timeout: 15_000 },
+  );
+
+  async function horizontalOverflow() {
+    return page.evaluate(() => {
+      const root = document.documentElement;
+      const screen = document.querySelector(
+        '[data-testid="project-packs-screen"]',
+      );
+      return {
+        root: root.scrollWidth - root.clientWidth,
+        screen: screen ? screen.scrollWidth - screen.clientWidth : 0,
+      };
+    });
+  }
+
+  async function titleBox() {
+    return leadCard
+      .locator("h3")
+      .first()
+      .evaluate((el) => ({
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      }));
+  }
+
+  // 01 — light, 1280×900 (the mock bridge's default theme).
+  await waitForAnimations(page);
+  const lightBuffer = await page.screenshot({
+    path: `${DESIGN_SNAPSHOTS}/01-light-1280.png`,
+    fullPage: true,
+  });
+
+  // 03 — narrow, 640×900, light. No clipped text, no horizontal overflow.
+  await page.setViewportSize({ width: 640, height: 900 });
+  await waitForAnimations(page);
+  const narrowBuffer = await page.screenshot({
+    path: `${DESIGN_SNAPSHOTS}/03-narrow-640.png`,
+    fullPage: true,
+  });
+  const narrowOverflow = await horizontalOverflow();
+  expect(
+    narrowOverflow.root,
+    "documentElement overflows horizontally at 640px",
+  ).toBeLessThanOrEqual(0);
+  expect(
+    narrowOverflow.screen,
+    "project-packs-screen overflows horizontally at 640px",
+  ).toBeLessThanOrEqual(0);
+  const narrowTitleBox = await titleBox();
+  expect(
+    narrowTitleBox.scrollWidth,
+    `role card title is clipped at 640px: ${JSON.stringify(narrowTitleBox)}`,
+  ).toBeLessThanOrEqual(narrowTitleBox.clientWidth + 1);
+
+  // 04 — 1280×900, 250% zoom via the app's own text-scale mechanism
+  // (`useWebviewZoomShortcuts.ts`: root font-size = 16px × zoomFactor;
+  // 16 × 2.5 = 40px).
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "40px";
+  });
+  await waitForAnimations(page);
+  const zoomBuffer = await page.screenshot({
+    path: `${DESIGN_SNAPSHOTS}/04-zoom-250.png`,
+    fullPage: true,
+  });
+  const zoomOverflow = await horizontalOverflow();
+  expect(
+    zoomOverflow.root,
+    "documentElement overflows horizontally at 250% zoom",
+  ).toBeLessThanOrEqual(0);
+  expect(
+    zoomOverflow.screen,
+    "project-packs-screen overflows horizontally at 250% zoom",
+  ).toBeLessThanOrEqual(0);
+  const zoomTitleBox = await titleBox();
+  expect(
+    zoomTitleBox.scrollWidth,
+    `role card title is clipped at 250% zoom: ${JSON.stringify(zoomTitleBox)}`,
+  ).toBeLessThanOrEqual(zoomTitleBox.clientWidth + 1);
+
+  // Reset zoom before the remaining shots so they read at 100%.
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
+
+  // 05 — the lead card alone, with its reports, agent and seat.
+  await waitForAnimations(page);
+  const cardBuffer = await leadCard.screenshot({
+    path: `${DESIGN_SNAPSHOTS}/05-card-lead.png`,
+  });
+
+  // 06 — Technical details opened.
+  const details = page.getByTestId("roles-technical-details");
+  await details.locator("summary").first().click();
+  await expect(details).toHaveJSProperty("open", true);
+  await waitForAnimations(page);
+  const detailsBuffer = await details.screenshot({
+    path: `${DESIGN_SNAPSHOTS}/06-technical-details-open.png`,
+  });
+
+  // 02 — dark, the way the app really does it: `ThemeProvider` keys the whole
+  // theme (CSS-variable surfaces included) off the stored theme *name*
+  // (`buzz-theme`), read at boot. A stored name only takes effect on a page's
+  // first navigation (the app rewrites it afterwards), so — exactly as
+  // `badge.spec.ts` and `buzz-theme-screenshots.spec.ts` do — this seeds
+  // "buzz-dark" on a fresh page before its first load, then opens the same
+  // fixture and re-seeds the same reports. Flipping the `.dark` class alone
+  // leaves every `bg-card` surface on its light value, which is not the dark
+  // theme a person sees.
+  const darkPage = await page.context().newPage();
+  // The Buzz theme aliases follow the native appearance, so a stored
+  // "buzz-dark" renders as "buzz" under Playwright's default light scheme:
+  // emulate a dark scheme and, once the mock bridge is up, emit the native
+  // theme-changed event the app listens for (`buzz-theme-screenshots.spec.ts`).
+  await darkPage.emulateMedia({ colorScheme: "dark" });
+  await darkPage.addInitScript(() => {
+    window.localStorage.setItem("buzz-theme", "buzz-dark");
+  });
+  await openRankedProjectRolesTab(darkPage);
+  await darkPage.evaluate(async () => {
+    const tauriWindow = window as typeof window & {
+      __TAURI_INTERNALS__?: {
+        invoke?: (
+          command: string,
+          payload?: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+    };
+    const invoke = tauriWindow.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) throw new Error("Mock Tauri invoke bridge is unavailable.");
+    await invoke("plugin:event|emit", {
+      event: "tauri://theme-changed",
+      payload: "dark",
+    });
+  });
+  await expect(darkPage.locator("html")).toHaveAttribute(
+    "data-buzz-theme",
+    "buzz-dark",
+    { timeout: 15_000 },
+  );
+  await expect(darkPage.locator("html")).toHaveClass(/dark/, {
+    timeout: 15_000,
+  });
+  await expect(darkPage.getByTestId("role-card-lead")).toBeVisible({
+    timeout: 15_000,
+  });
+  await seedRankedReports(darkPage);
+  await expect(darkPage.getByTestId("role-reports-lead")).toHaveAttribute(
+    "data-reports",
+    "some",
+    { timeout: 15_000 },
+  );
+  await waitForAnimations(darkPage);
+  const darkBuffer = await darkPage.screenshot({
+    path: `${DESIGN_SNAPSHOTS}/02-dark-1280.png`,
+    fullPage: true,
+  });
+  await darkPage.close();
+
+  const digest = (buffer: Buffer) =>
+    createHash("sha256").update(buffer).digest("hex");
+  const hashes = {
+    "01-light-1280": digest(lightBuffer),
+    "02-dark-1280": digest(darkBuffer),
+    "03-narrow-640": digest(narrowBuffer),
+    "04-zoom-250": digest(zoomBuffer),
+    "05-card-lead": digest(cardBuffer),
+    "06-technical-details-open": digest(detailsBuffer),
+  };
+  expect(
+    new Set(Object.values(hashes)).size,
+    `every screenshot in the design matrix must be visually distinct: ${JSON.stringify(hashes)}`,
+  ).toBe(6);
 });
 
 test("project Roles resolves shared identities without showing another project's sessions", async ({

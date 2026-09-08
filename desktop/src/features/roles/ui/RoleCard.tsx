@@ -1,6 +1,7 @@
-import type * as React from "react";
+import { AlertTriangle } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
+import { UserAvatar } from "@/shared/ui/UserAvatar";
 
 import { roleAgentPackState } from "../lib/rolesViewModel";
 import type { RoleAgentChip, RoleRow, SeatRow } from "../lib/rolesViewModel";
@@ -8,64 +9,60 @@ import type { RoleReportSummary } from "../lib/roleVersionSummary";
 import { roleReportSentence } from "../lib/roleVersionSummary";
 import {
   AGENT_CHIP_NO_PACK_TITLE,
+  AGENT_CHIP_PACK_UNKNOWN_TITLE,
   AGENT_CHIP_SHARED_HOME_TITLE,
+  AGENT_SHARED_BADGE,
+  AGENT_SHARED_TITLE,
+  agentStatusWord,
+  DISPUTED_WORD,
   ROLE_AGENTS_EMPTY,
-  ROLE_AGENTS_TITLE,
+  ROLE_QUIET,
   ROLE_REPORT_VERSION_LIMIT,
   ROLE_REPORTS_EMPTY,
-  ROLE_REPORTS_TITLE,
-  ROLE_SEATS_EMPTY,
-  ROLE_SEATS_TITLE,
   ROLE_SKILLS_EMPTY,
-  roleAvailabilitySentence,
+  ROLE_UNAVAILABLE_DETAILS_SUMMARY,
+  roleAboutSummary,
+  roleActivityLabel,
+  roleDisputedReportCount,
+  roleReportShortSentence,
   roleReportsMoreText,
   roleReportVersionLine,
-  roleSkillsSummary,
+  roleVersionChip,
+  roleVersionsSummary,
   SHARED_SKILL_MARK,
 } from "./rolesCopy";
+import {
+  agentStatusDotClass,
+  roleActivity,
+  roleActivityDotClass,
+  seatStatusDotClass,
+  StatusDot,
+} from "./roleDots";
 import { SeatRowButton } from "./SeatRowButton";
 
-function CardSection({
-  children,
-  empty,
-  isEmpty,
-  testId,
-  title,
-}: {
-  children: React.ReactNode;
-  empty: string;
-  isEmpty: boolean;
-  testId: string;
-  title: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1" data-testid={testId}>
-      <h4 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h4>
-      {isEmpty ? (
-        <p
-          className="text-xs text-muted-foreground"
-          data-testid={`${testId}-empty`}
-        >
-          {empty}
-        </p>
-      ) : (
-        children
-      )}
-    </div>
-  );
-}
+const DETAILS_SUMMARY_CLASS =
+  "cursor-pointer text-xs text-muted-foreground marker:text-muted-foreground/60";
 
 /**
  * A managed agent whose home role is this card's role.
  *
- * The chip's disclosure comes from the *role row*, not the agent's own probe
- * (Fix 2, `roleAgentPackState`): a role whose pack resolved shows its agents
- * as plain chips, even for an agent whose own `hasRolePack` was never asked.
- * A refused shared home is the one claim that is about this agent
+ * The chip's pack disclosure comes from the *role row*, not the agent's own
+ * probe (Fix 2, `roleAgentPackState`): a role whose pack resolved shows its
+ * agents as plain chips, even for an agent whose own `hasRolePack` was never
+ * asked. A refused shared home is the one claim that is about this agent
  * specifically, so it outranks the role's own state. Every state but
- * "present" is muted and dashed, with the tooltip naming why.
+ * "present" keeps the dashed outline, with the tooltip naming why.
+ *
+ * The run-state dot is a separate fact and is drawn only when something
+ * reported one. An agent this view was never told the run state of gets no
+ * dot and says so in the tooltip — a grey dot would read as "stopped", which
+ * is a claim nobody made.
+ *
+ * An agent this computer does not manage (`isManagedHere === false`) is only
+ * ever a sighting: it was seen in this project's sessions or channels. It
+ * carries a "shared" badge, no status dot, and a pack state of "unknown" —
+ * not "missing", which would be this computer answering a question about
+ * another machine. "Available here" keeps meaning here.
  */
 function AgentChip({
   agent,
@@ -76,34 +73,61 @@ function AgentChip({
   roleHasPack: boolean;
   roleRefusal: string | null;
 }) {
+  const isShared = agent.isManagedHere === false;
   const state = roleAgentPackState({
     roleHasPack,
     roleRefusal,
     agentPackRefusedSharedHome: agent.packRefusedSharedHome,
     isManagedHere: agent.isManagedHere,
   });
-  const title =
+  const packTitle =
     state === "unknown"
-      ? "Shared agent · role availability on its computer is not reported here"
+      ? AGENT_CHIP_PACK_UNKNOWN_TITLE
       : state === "refused"
         ? AGENT_CHIP_SHARED_HOME_TITLE
         : state === "missing"
           ? AGENT_CHIP_NO_PACK_TITLE
           : state === "blocked"
-            ? (roleRefusal ?? undefined)
-            : undefined;
+            ? roleRefusal
+            : null;
+  const statusWord = agentStatusWord(agent.status);
+  const dotClass = isShared ? null : agentStatusDotClass(agent.status);
+  const title = isShared
+    ? AGENT_CHIP_PACK_UNKNOWN_TITLE
+    : packTitle === null
+      ? statusWord
+      : `${statusWord} · ${packTitle}`;
   return (
     <li
       className={cn(
-        "rounded-full border border-border px-2 py-0.5 text-xs text-foreground",
-        state !== "present" && "border-dashed text-muted-foreground",
+        "flex min-w-0 items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-sm text-foreground",
+        state !== "present" &&
+          "border border-dashed border-border text-muted-foreground",
       )}
       data-agent-pack={state}
       data-agent-pubkey={agent.pubkey}
+      data-agent-scope={isShared ? "shared" : "local"}
       data-testid="role-agent-chip"
       title={title}
     >
-      {agent.name}
+      <UserAvatar
+        avatarUrl={agent.avatarUrl}
+        displayName={agent.name}
+        fallbackDelayMs={0}
+        size="sm"
+      />
+      <span className="truncate">{agent.name}</span>
+      {isShared ? (
+        <span
+          className="shrink-0 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground"
+          title={AGENT_SHARED_TITLE}
+        >
+          {AGENT_SHARED_BADGE}
+        </span>
+      ) : null}
+      {dotClass === null ? null : (
+        <StatusDot className={dotClass} title={statusWord} />
+      )}
     </li>
   );
 }
@@ -111,204 +135,108 @@ function AgentChip({
 /**
  * What running agents said they were on, for this role only.
  *
- * Three cases stay distinct and none is inferred from the other: no report
- * at all, a report that named a version, and a report that named this role
- * without a version (`sha: null`, which the line words as "version not
- * reported"). At most five version lines are drawn — the rest are counted
- * and left to Report history, so a busy project cannot grow this card
- * without bound.
+ * The face carries one line — the counts, in the fewest words that stay true,
+ * with the long sentence in its `title` — and the per-version detail lives in
+ * a disclosure beside it. At most five version lines are drawn; the rest are
+ * counted and left to Report history, so a busy project cannot grow this card
+ * without bound. A contradiction is the one thing that is never folded into
+ * the count: a disputed report leads the line, in words and in colour.
  */
 function RoleReports({
   slug,
   summary,
 }: {
   slug: string;
-  summary: RoleReportSummary | null;
+  summary: RoleReportSummary;
 }) {
-  const versions = summary?.versions ?? [];
+  const versions = summary.versions;
   const shown = versions.slice(0, ROLE_REPORT_VERSION_LIMIT);
   const hidden = versions.length - shown.length;
+  const disputed = roleDisputedReportCount(summary);
   return (
-    <div
-      className="flex flex-col gap-1"
-      data-reports={summary === null || summary.total === 0 ? "none" : "some"}
-      data-testid={`role-reports-${slug}`}
-    >
-      <h4 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-        {ROLE_REPORTS_TITLE}
-      </h4>
-      {summary === null || summary.total === 0 ? (
-        <p
-          className="text-xs text-muted-foreground"
-          data-testid={`role-reports-${slug}-empty`}
-        >
-          {ROLE_REPORTS_EMPTY}
-        </p>
-      ) : (
-        <>
-          <p className="text-xs text-foreground">
-            {roleReportSentence(summary)}
-          </p>
-          <ul className="flex flex-col gap-0.5">
-            {shown.map((version) => {
-              const line = roleReportVersionLine({
-                sha: version.sha,
-                relation: version.relation,
-                behind: version.behind,
-                ahead: version.ahead,
-                count: version.count,
-                latestAgeSeconds: version.latestAgeSeconds,
-                provenance: version.provenance,
-              });
-              return (
-                <li
-                  className="text-xs text-muted-foreground"
-                  data-relation={version.relation}
-                  data-testid="role-report-version"
-                  key={`${version.sha ?? "no-version"}:${version.relation}`}
-                  title={line.title}
-                >
-                  {line.text}
-                </li>
-              );
-            })}
-          </ul>
+    <>
+      <p
+        className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground"
+        title={roleReportSentence(summary)}
+      >
+        {disputed > 0 ? (
+          <span className="flex items-center gap-1 text-destructive">
+            <AlertTriangle aria-hidden className="size-3" />
+            {DISPUTED_WORD}
+          </span>
+        ) : null}
+        <span>{roleReportShortSentence(summary)}</span>
+      </p>
+      <details data-testid={`role-versions-${slug}`}>
+        <summary className={DETAILS_SUMMARY_CLASS}>
+          {roleVersionsSummary(versions.length)}
+        </summary>
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {shown.map((version) => {
+            const line = roleReportVersionLine({
+              sha: version.sha,
+              relation: version.relation,
+              behind: version.behind,
+              ahead: version.ahead,
+              count: version.count,
+              latestAgeSeconds: version.latestAgeSeconds,
+              provenance: version.provenance,
+            });
+            return (
+              <li
+                className="text-xs text-muted-foreground"
+                data-relation={version.relation}
+                data-testid="role-report-version"
+                key={`${version.sha ?? "no-version"}:${version.relation}`}
+                title={line.title}
+              >
+                {line.text}
+              </li>
+            );
+          })}
           {hidden > 0 ? (
-            <p
-              className="text-2xs text-muted-foreground"
+            <li
+              className="text-xs text-muted-foreground"
               data-testid={`role-reports-${slug}-more`}
             >
               {roleReportsMoreText(hidden)}
-            </p>
+            </li>
           ) : null}
-        </>
-      )}
-    </div>
+        </ul>
+      </details>
+    </>
   );
 }
 
-/**
- * One role: what it is for, which agents can take it, which version of its
- * instructions is on this computer, and what running agents reported.
- *
- * The version facts are the card's own (`packRef`, `version`, `origin`,
- * `refusal`) and the report facts are the ones the reports themselves named
- * for this role — neither side fills in for the other, and a role with no
- * instructions here says so in the same place the version would have been.
- */
-export function RoleCard({
-  role,
-  reports = null,
-  onOpenSeat,
-}: {
-  role: RoleRow;
-  reports?: RoleReportSummary | null;
-  onOpenSeat?: (seat: SeatRow) => void;
-}) {
+/** The card's foot: the long description and the skills, behind one click. */
+function RoleAbout({ role }: { role: RoleRow }) {
   const slug = role.role;
-  const available = roleAvailabilitySentence({
-    hasPack: role.hasPack,
-    version: role.version,
-    origin: role.origin,
-    packRef: role.packRef,
-    refusal: role.refusal,
-  });
   return (
-    <article
-      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3"
-      data-role-has-pack={role.hasPack ? "true" : "false"}
-      data-testid={`role-card-${slug}`}
-    >
-      <header className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-medium text-foreground">
-          {role.displayName}
-        </h3>
-        <span
-          className="text-2xs text-muted-foreground"
-          data-testid={`role-slug-${slug}`}
-        >
-          {slug}
-        </span>
-      </header>
-      {role.description ? (
-        <p
-          className="line-clamp-2 text-sm text-foreground"
-          data-testid={`role-description-${slug}`}
-          title={role.description}
-        >
-          {role.description}
-        </p>
-      ) : null}
-      {role.summary ? (
-        <p
-          className="line-clamp-3 text-sm text-muted-foreground"
-          data-testid={`role-summary-${slug}`}
-        >
-          {role.summary}
-        </p>
-      ) : null}
-      <p
-        className={cn(
-          "text-xs",
-          available.availability === "available"
-            ? "text-foreground"
-            : "text-amber-600 dark:text-amber-400",
-        )}
-        data-availability={available.availability}
-        data-testid={`role-available-${slug}`}
-        title={available.title ?? undefined}
-      >
-        {available.text}
-      </p>
-      <CardSection
-        empty={ROLE_AGENTS_EMPTY}
-        isEmpty={role.agents.length === 0}
-        testId={`role-agents-${slug}`}
-        title={ROLE_AGENTS_TITLE}
-      >
-        <ul className="flex flex-wrap gap-1">
-          {role.agents.map((agent) => (
-            <AgentChip
-              agent={agent}
-              key={agent.pubkey}
-              roleHasPack={role.hasPack}
-              roleRefusal={role.refusal}
-            />
-          ))}
-        </ul>
-      </CardSection>
-      <RoleReports slug={slug} summary={reports} />
-      <CardSection
-        empty={ROLE_SEATS_EMPTY}
-        isEmpty={role.seats.length === 0}
-        testId={`role-seats-${slug}`}
-        title={ROLE_SEATS_TITLE}
-      >
-        <ul className="flex flex-col">
-          {role.seats.map((seat) => (
-            <li key={seat.key}>
-              <SeatRowButton
-                columns="role-card"
-                onOpen={onOpenSeat}
-                seat={seat}
-              />
-            </li>
-          ))}
-        </ul>
-      </CardSection>
-      <details data-testid={`role-skills-${slug}`}>
-        <summary className="cursor-pointer text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-          {roleSkillsSummary(role.skills.length)}
-        </summary>
+    <details className="mt-auto" data-testid={`role-about-${slug}`}>
+      <summary className={DETAILS_SUMMARY_CLASS}>
+        {roleAboutSummary(role.skills.length)}
+      </summary>
+      <div className="mt-1 flex flex-col gap-1">
+        {role.summary ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid={`role-summary-${slug}`}
+          >
+            {role.summary}
+          </p>
+        ) : null}
         {role.skills.length === 0 ? (
           <p
-            className="mt-1 text-xs text-muted-foreground"
+            className="text-xs text-muted-foreground"
             data-testid={`role-skills-${slug}-empty`}
           >
             {ROLE_SKILLS_EMPTY}
           </p>
         ) : (
-          <ul className="mt-1 flex flex-col gap-0.5">
+          <ul
+            className="flex flex-col gap-0.5"
+            data-testid={`role-skills-${slug}`}
+          >
             {role.skills.map((skill) => (
               <li
                 className="text-xs"
@@ -334,7 +262,190 @@ export function RoleCard({
             ))}
           </ul>
         )}
-      </details>
+      </div>
+    </details>
+  );
+}
+
+/**
+ * One role, read top to bottom: whether anything is running it, what it is
+ * called, which version of its instructions is here, what it is for, who can
+ * take it, and what running agents reported.
+ *
+ * The version facts are the card's own (`packRef`, `version`, `origin`,
+ * `refusal`) and the report facts are the ones the reports themselves named
+ * for this role — neither side fills in for the other, and a role with no
+ * instructions here says so in the same place the version would have been.
+ *
+ * A role nothing is using says that once, in one line, instead of three
+ * separate absences. Everything long — the persona summary, the skills, the
+ * per-version report lines, the reason a role is unavailable — is behind a
+ * disclosure, so the card's height is set by what is actually happening.
+ */
+export function RoleCard({
+  role,
+  reports = null,
+  onOpenSeat,
+}: {
+  role: RoleRow;
+  reports?: RoleReportSummary | null;
+  onOpenSeat?: (seat: SeatRow) => void;
+}) {
+  const slug = role.role;
+  const version = roleVersionChip({
+    hasPack: role.hasPack,
+    version: role.version,
+    origin: role.origin,
+    packRef: role.packRef,
+    refusal: role.refusal,
+  });
+  const activity = roleActivity(role.seats);
+  const hasReports = reports !== null && reports.total > 0;
+  const quiet =
+    role.agents.length === 0 && role.seats.length === 0 && !hasReports;
+  return (
+    <article
+      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3"
+      data-role-has-pack={role.hasPack ? "true" : "false"}
+      data-testid={`role-card-${slug}`}
+    >
+      <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <StatusDot
+          className={roleActivityDotClass(activity)}
+          data-activity={activity}
+          label={roleActivityLabel(activity)}
+          testId={`role-activity-${slug}`}
+          title={roleActivityLabel(activity)}
+        />
+        {/* Name and slug travel together, so when the version chip wraps to
+            its own line the slug stays beside the name instead of drifting
+            to the far edge. */}
+        <span className="flex min-w-0 flex-1 basis-40 items-baseline gap-2">
+          <h3
+            className="min-w-0 truncate text-sm font-semibold text-foreground"
+            title={role.displayName}
+          >
+            {role.displayName}
+          </h3>
+          <span
+            className="min-w-0 truncate font-mono text-xs text-muted-foreground"
+            data-testid={`role-slug-${slug}`}
+          >
+            {slug}
+          </span>
+        </span>
+        <span
+          className={cn(
+            "ml-auto shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
+            version.availability === "available"
+              ? "border-border/70 bg-muted/40 text-muted-foreground"
+              : "border-amber-500/30 text-amber-600 dark:text-amber-400",
+          )}
+          data-availability={version.availability}
+          data-testid={`role-available-${slug}`}
+          title={version.title}
+        >
+          {version.text}
+        </span>
+      </header>
+      {role.description ? (
+        <p
+          className="line-clamp-2 text-sm text-muted-foreground"
+          data-testid={`role-description-${slug}`}
+          title={role.description}
+        >
+          {role.description}
+        </p>
+      ) : null}
+      {version.availability === "unavailable" ? (
+        <details data-testid={`role-unavailable-${slug}`}>
+          <summary className={DETAILS_SUMMARY_CLASS}>
+            {ROLE_UNAVAILABLE_DETAILS_SUMMARY}
+          </summary>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {version.sentence}
+          </p>
+        </details>
+      ) : null}
+      {quiet ? (
+        <div
+          data-reports="none"
+          data-testid={`role-reports-${slug}`}
+          className="flex flex-col gap-1"
+        >
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid={`role-quiet-${slug}`}
+          >
+            {ROLE_QUIET}
+          </p>
+        </div>
+      ) : (
+        <>
+          <ul
+            className="flex flex-wrap items-center gap-x-3 gap-y-1"
+            data-testid={`role-agents-${slug}`}
+          >
+            {role.agents.length === 0 ? (
+              <li
+                className="text-xs text-muted-foreground"
+                data-testid={`role-agents-${slug}-empty`}
+              >
+                {ROLE_AGENTS_EMPTY}
+              </li>
+            ) : (
+              role.agents.map((agent) => (
+                <AgentChip
+                  agent={agent}
+                  key={agent.pubkey}
+                  roleHasPack={role.hasPack}
+                  roleRefusal={role.refusal}
+                />
+              ))
+            )}
+          </ul>
+          <div
+            className="flex flex-col gap-1"
+            data-reports={hasReports ? "some" : "none"}
+            data-testid={`role-reports-${slug}`}
+          >
+            {reports !== null && hasReports ? (
+              <RoleReports slug={slug} summary={reports} />
+            ) : (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid={`role-reports-${slug}-empty`}
+              >
+                {ROLE_REPORTS_EMPTY}
+              </p>
+            )}
+          </div>
+          {role.seats.length > 0 ? (
+            <ul
+              className="flex flex-col gap-0.5"
+              data-testid={`role-seats-${slug}`}
+            >
+              {role.seats.map((seat) => (
+                <li
+                  className="flex min-w-0 items-center gap-1.5"
+                  key={seat.key}
+                >
+                  <StatusDot
+                    className={seatStatusDotClass(seat.status)}
+                    title={seat.status}
+                  />
+                  <SeatRowButton
+                    columns="role-card"
+                    onOpen={onOpenSeat}
+                    seat={seat}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      )}
+      <RoleAbout role={role} />
     </article>
   );
 }

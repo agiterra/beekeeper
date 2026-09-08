@@ -82,6 +82,42 @@ test("seatAgeSeconds converts catalog milliseconds to whole seconds and never go
   assert.equal(seatAgeSeconds(Number.NaN, NOW), null);
 });
 
+test("a chip carries the agent record's own avatar, harness and model, unchanged", () => {
+  const view = buildRolesView({
+    rolePacks: [pack()],
+    agents: [
+      agent({
+        avatarUrl: "https://example.test/ada.png",
+        runtime: "goose",
+        model: "claude-opus",
+      }),
+    ],
+    shelfEntries: [],
+    projects: [project()],
+    nowSeconds: NOW,
+  });
+  const chip = view.roles.find((row) => row.role === "lead")?.agents[0];
+  assert.ok(chip);
+  assert.equal(chip.avatarUrl, "https://example.test/ada.png");
+  assert.equal(chip.runtime, "goose");
+  assert.equal(chip.model, "claude-opus");
+
+  // A record that names none of the three passes `null` through rather than
+  // inventing a face, a harness or a model for it.
+  const bare = buildRolesView({
+    rolePacks: [pack()],
+    agents: [agent({ avatarUrl: null, runtime: null, model: null })],
+    shelfEntries: [],
+    projects: [project()],
+    nowSeconds: NOW,
+  });
+  const bareChip = bare.roles.find((row) => row.role === "lead")?.agents[0];
+  assert.ok(bareChip);
+  assert.equal(bareChip.avatarUrl, null);
+  assert.equal(bareChip.runtime, null);
+  assert.equal(bareChip.model, null);
+});
+
 test("an agent with a home role and no pack on this computer keeps that disclosure on its chip", () => {
   const view = buildRolesView({
     rolePacks: [pack()],

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { Info } from "lucide-react";
 import { toast } from "sonner";
 
 import { InstallCrewRolesDialog } from "@/features/agents/ui/InstallCrewRolesDialog";
@@ -8,6 +9,7 @@ import { ProjectPageTabs } from "@/features/projects-container/ui/ProjectPageTab
 import { useFeatureEnabled } from "@/shared/features";
 import { Skeleton } from "@/shared/ui/skeleton";
 
+import { rolesPageSummary } from "../lib/rolesPageSummary";
 import { useProjectPacksView } from "../lib/useProjectPacksView";
 import type { SeatRow } from "../lib/rolesViewModel";
 import {
@@ -19,6 +21,7 @@ import { AgentsByProject } from "./AgentsByProject";
 import { RoleCard } from "./RoleCard";
 import { RolePackSnapshots } from "./RolePackSnapshots";
 import { RolesHeader } from "./RolesHeader";
+import { RolesSummaryStrip } from "./RolesSummaryStrip";
 import {
   PROJECT_PACKS_MISSING,
   ROLES_EMPTY,
@@ -31,7 +34,7 @@ function RolesSkeleton() {
   return (
     <output
       aria-label={ROLES_LOADING}
-      className="grid gap-2 md:grid-cols-2 xl:grid-cols-3"
+      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
       data-testid="roles-loading"
     >
       {["a", "b", "c"].map((key) => (
@@ -104,6 +107,12 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
   const reportSummaries = React.useMemo(
     () => summarizeRoleReports(rolePackSnapshots),
     [rolePackSnapshots],
+  );
+  // The strip's four counts are set sizes over the same rows the cards draw,
+  // so it can never disagree with what is under it.
+  const summary = React.useMemo(
+    () => rolesPageSummary(view, rolePackSnapshots),
+    [rolePackSnapshots, view],
   );
   const uncertainty = React.useMemo(
     () =>
@@ -210,6 +219,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
             {rolesErrorSentence(error)}
           </p>
         ) : null}
+        <RolesSummaryStrip summary={summary} />
         <section className="flex flex-col gap-2" data-testid="roles-section">
           {isLoading && view.roles.length === 0 ? (
             <RolesSkeleton />
@@ -221,7 +231,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
               {ROLES_EMPTY}
             </p>
           ) : (
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {view.roles.map((role) => (
                 <RoleCard
                   key={role.role}
@@ -239,11 +249,14 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           unplaced={view.unplaced}
         />
         <p
-          className="text-xs text-muted-foreground"
+          className="flex items-center gap-2 text-xs text-muted-foreground"
           data-testid="roles-uncertainty-summary"
           data-uncertain={uncertainty === "" ? "false" : "true"}
         >
-          {uncertainty === "" ? ROLES_UNCERTAINTY_NONE : uncertainty}
+          <Info aria-hidden className="size-3.5 shrink-0" />
+          <span>
+            {uncertainty === "" ? ROLES_UNCERTAINTY_NONE : uncertainty}
+          </span>
         </p>
         <RolePackSnapshots
           reports={executionReports}

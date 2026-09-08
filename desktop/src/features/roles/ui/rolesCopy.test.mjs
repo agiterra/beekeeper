@@ -19,7 +19,6 @@ import {
   PACKS_SOURCE_MIXED,
   packsSourceSentence,
   PROJECT_PACKS_MISSING,
-  PROJECT_SEATS_EMPTY,
   projectSeatCount,
   PROVENANCE_LABEL_COMMISSIONED,
   PROVENANCE_LABEL_DISPUTED,
@@ -35,8 +34,15 @@ import {
   revisionComparisonUnavailableSentence,
   revisionRelationShortText,
   revisionRelationText,
+  AGENT_CHIP_PACK_UNKNOWN_TITLE,
+  AGENT_SHARED_BADGE,
+  AGENT_SHARED_TITLE,
+  agentStatusWord,
+  disputedCountText,
   ROLE_AGENTS_EMPTY,
   ROLE_NO_PACK,
+  ROLE_NOT_AVAILABLE_CHIP,
+  ROLE_QUIET,
   ROLE_PACK_SNAPSHOTS_SUBTITLE,
   ROLE_REPORTS_EMPTY,
   ROLE_REPORTS_TITLE,
@@ -44,19 +50,29 @@ import {
   ROLE_SEATS_TITLE,
   ROLE_SKILLS_EMPTY,
   ROLE_VERSION_UNRECORDED,
+  roleAboutSummary,
+  roleActivityLabel,
   roleAvailabilitySentence,
+  roleDisputedReportCount,
   roleReportProvenanceText,
+  roleReportShortSentence,
   roleReportsMoreText,
   roleReportVersionLine,
   ROLES_EMPTY,
+  ROLES_EXPLANATION,
   ROLES_RECHECK_BUSY_LABEL,
   ROLES_RECHECK_LABEL,
+  ROLES_SCOPE_TITLE,
   ROLES_SUBTITLE,
   ROLES_TECHNICAL_DETAILS_TITLE,
   ROLES_TITLE,
   ROLES_UNCERTAINTY_NONE,
   rolesErrorSentence,
+  rolesScopeText,
   roleSkillsSummary,
+  roleVersionChip,
+  roleVersionsSummary,
+  unconfirmedCountText,
   SEAT_NO_AGENT,
   SEAT_UNMANAGED_AGENT,
   seatStatusText,
@@ -73,17 +89,14 @@ const JARGON =
 test("the empty states are the usability spec's exact words", () => {
   assert.equal(ROLES_TITLE, "Roles");
   assert.equal(ROLE_SKILLS_EMPTY, "No skills listed.");
-  assert.equal(ROLE_AGENTS_EMPTY, "No agent has this role yet.");
+  assert.equal(ROLE_AGENTS_EMPTY, "No agents yet.");
+  assert.equal(ROLE_QUIET, "No agents or sessions observed for this role.");
   // A session is what an agent opened; the card no longer calls it a seat.
   assert.equal(ROLE_SEATS_TITLE, "Sessions");
   assert.equal(ROLE_SEATS_EMPTY, "No open sessions.");
-  assert.equal(PROJECT_SEATS_EMPTY, "No agents in open sessions.");
   assert.equal(AGENTS_BY_PROJECT_TITLE, "Sessions by project");
   assert.equal(ROLE_REPORTS_TITLE, "Reported by agents");
-  assert.equal(
-    ROLE_REPORTS_EMPTY,
-    "No agent has reported running this role yet.",
-  );
+  assert.equal(ROLE_REPORTS_EMPTY, "No reports yet.");
   assert.equal(UNPLACED_TITLE, "Unplaced");
   assert.equal(SHA_UNKNOWN, "version unknown");
   assert.equal(SHARED_SKILL_MARK, "(shared)");
@@ -98,14 +111,22 @@ test("the empty states are the usability spec's exact words", () => {
   assert.equal(ROLES_TECHNICAL_DETAILS_TITLE, "Technical details");
 });
 
-test("the header sentence says what a role is and what this page answers", () => {
-  assert.match(ROLES_SUBTITLE, /^Each role is a set of instructions/);
-  assert.match(ROLES_SUBTITLE, /which agents can take it/);
-  assert.match(
+test("the header line says what this page answers, in one sentence", () => {
+  assert.equal(
     ROLES_SUBTITLE,
-    /available on this computer and reported by running agents\.$/,
+    "What each role is for, its project participants, and the versions available here or reported by agents.",
   );
   assert.doesNotMatch(ROLES_SUBTITLE, JARGON);
+});
+
+test("the longer explanation is kept verbatim for Technical details", () => {
+  assert.match(ROLES_EXPLANATION, /^Each role is a set of instructions/);
+  assert.match(ROLES_EXPLANATION, /which agents can take it/);
+  assert.match(
+    ROLES_EXPLANATION,
+    /available on this computer and reported by running agents\.$/,
+  );
+  assert.doesNotMatch(ROLES_EXPLANATION, JARGON);
 });
 
 test("the primary copy carries none of the protocol vocabulary", () => {
@@ -118,7 +139,10 @@ test("the primary copy carries none of the protocol vocabulary", () => {
     ROLE_SEATS_TITLE,
     ROLE_REPORTS_EMPTY,
     ROLE_REPORTS_TITLE,
-    PROJECT_SEATS_EMPTY,
+    ROLE_QUIET,
+    ROLES_SCOPE_TITLE,
+    AGENT_SHARED_TITLE,
+    AGENT_CHIP_PACK_UNKNOWN_TITLE,
     AGENTS_BY_PROJECT_TITLE,
     ROLES_UNCERTAINTY_NONE,
     PACKS_SOURCE_MIXED,
@@ -179,9 +203,9 @@ test("shaText shortens a commit the way the seat pack line does, and never inven
 });
 
 test("projectSeatCount pluralizes", () => {
-  assert.equal(projectSeatCount(0), "0 agents");
-  assert.equal(projectSeatCount(1), "1 agent");
-  assert.equal(projectSeatCount(2), "2 agents");
+  assert.equal(projectSeatCount(0), "0 sessions");
+  assert.equal(projectSeatCount(1), "1 session");
+  assert.equal(projectSeatCount(2), "2 sessions");
 });
 
 test("rolesErrorSentence attributes the backend's words", () => {
@@ -636,4 +660,168 @@ test("provenanceNotesSentence prefixes the fold's own notes with 'Proof reads:'"
     provenanceNotesSentence(["First sentence.", "Second sentence."]),
     "Proof reads: First sentence. Second sentence.",
   );
+});
+
+// ── The design pass's own short forms ────────────────────────────────────
+
+function versionInput(overrides = {}) {
+  return {
+    hasPack: true,
+    version: "1.3.0",
+    origin: "project",
+    packRef: { repo: "30617:owner:packs", sha: "9f2e1d0c".padEnd(40, "a") },
+    refusal: null,
+    ...overrides,
+  };
+}
+
+test("the version chip shortens the sentence without dropping anything from it", () => {
+  const available = roleVersionChip(versionInput());
+  assert.equal(available.availability, "available");
+  assert.equal(available.text, "v1.3.0 · 9f2e1d0c");
+  assert.equal(
+    available.sentence,
+    "Available here: v1.3.0 (9f2e1d0c) from the project's repository",
+  );
+  // The tooltip carries the whole sentence and the full commit.
+  assert.match(available.title, /^Available here: v1\.3\.0 \(9f2e1d0c\)/);
+  assert.match(available.title, /· 9f2e1d0ca{32}$/);
+
+  // A role with nothing to name says so rather than showing an empty chip.
+  const unrecorded = roleVersionChip(
+    versionInput({ version: null, origin: "installed", packRef: null }),
+  );
+  assert.equal(unrecorded.text, ROLE_VERSION_UNRECORDED);
+
+  // A built-in default whose only version is its own sha still names one.
+  const shipped = roleVersionChip(
+    versionInput({
+      version: null,
+      origin: "shipped",
+      packRef: { repo: "app:shipped", sha: "0.4.2" },
+    }),
+  );
+  assert.equal(shipped.text, "v0.4.2");
+});
+
+test("an unavailable role's chip says so and carries its reason and its sentence", () => {
+  const missing = roleVersionChip(
+    versionInput({
+      hasPack: false,
+      version: null,
+      origin: null,
+      packRef: null,
+    }),
+  );
+  assert.equal(missing.availability, "unavailable");
+  assert.equal(missing.text, ROLE_NOT_AVAILABLE_CHIP);
+  assert.equal(missing.title, ROLE_NO_PACK);
+  assert.match(missing.sentence, /^Not available here — No instructions/);
+
+  const refused = roleVersionChip(
+    versionInput({ refusal: "This repository is not synced here." }),
+  );
+  assert.equal(refused.title, "This repository is not synced here.");
+  assert.match(refused.sentence, /^Not available here — This repository/);
+});
+
+test("the card's report line abbreviates every count the long sentence names", () => {
+  assert.equal(
+    roleReportShortSentence({
+      role: "builder",
+      total: 3,
+      sameAsHere: 2,
+      earlier: 1,
+      newer: 0,
+      other: 0,
+      unknown: 0,
+      versions: [],
+    }),
+    "3 reports · 2 same version · 1 earlier",
+  );
+  assert.equal(
+    roleReportShortSentence({
+      role: "builder",
+      total: 4,
+      sameAsHere: 0,
+      earlier: 0,
+      newer: 1,
+      other: 2,
+      unknown: 1,
+      versions: [],
+    }),
+    "4 reports · 1 newer · 2 other versions · 1 no version reported",
+  );
+  assert.equal(
+    roleReportShortSentence({
+      role: "builder",
+      total: 1,
+      sameAsHere: 0,
+      earlier: 0,
+      newer: 0,
+      other: 1,
+      unknown: 0,
+      versions: [],
+    }),
+    "1 report · 1 other version",
+  );
+});
+
+test("a role's disputed count is summed from its own version groups", () => {
+  const summary = {
+    role: "builder",
+    total: 3,
+    sameAsHere: 3,
+    earlier: 0,
+    newer: 0,
+    other: 0,
+    unknown: 0,
+    versions: [
+      { provenance: { commissioned: 1, unavailable: 0, disputed: 1 } },
+      { provenance: { commissioned: 0, unavailable: 0, disputed: 1 } },
+    ],
+  };
+  assert.equal(roleDisputedReportCount(summary), 2);
+  assert.equal(roleDisputedReportCount({ ...summary, versions: [] }), 0);
+});
+
+test("the card's two disclosure summaries carry their own counts", () => {
+  assert.equal(roleAboutSummary(0), "About this role · Skills (0)");
+  assert.equal(roleAboutSummary(3), "About this role · Skills (3)");
+  assert.equal(roleVersionsSummary(1), "Versions (1)");
+});
+
+test("a status nobody reported is a fourth word, never folded into stopped", () => {
+  assert.equal(agentStatusWord("running"), "running");
+  assert.equal(agentStatusWord("deployed"), "deployed");
+  assert.equal(agentStatusWord("stopped"), "stopped");
+  assert.equal(agentStatusWord("not_deployed"), "not deployed");
+  assert.equal(agentStatusWord(undefined), "status not reported here");
+});
+
+test("the activity dot's label says what it is claiming", () => {
+  assert.equal(
+    roleActivityLabel("running"),
+    "A session in this role is running",
+  );
+  assert.equal(
+    roleActivityLabel("idle"),
+    "This role has open sessions, none running",
+  );
+  assert.equal(roleActivityLabel("none"), "No open sessions in this role");
+});
+
+test("the scope line splits the agent count instead of presenting a roster", () => {
+  assert.equal(rolesScopeText(3, 0), "3 on this computer");
+  assert.equal(rolesScopeText(3, 2), "3 on this computer · 2 shared");
+  assert.equal(rolesScopeText(0, 1), "0 on this computer · 1 shared");
+  assert.match(ROLES_SCOPE_TITLE, /not a complete roster\.$/);
+  assert.equal(AGENT_SHARED_BADGE, "shared");
+  assert.match(AGENT_SHARED_TITLE, /not set up on this computer/);
+  assert.match(AGENT_CHIP_PACK_UNKNOWN_TITLE, /not known here\.$/);
+});
+
+test("the summary strip's two report qualifiers say their own counts", () => {
+  assert.equal(unconfirmedCountText(2), "2 unconfirmed");
+  assert.equal(disputedCountText(1), "1 disputed");
 });

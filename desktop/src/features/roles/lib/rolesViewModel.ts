@@ -41,6 +41,13 @@ export type RoleAgentChip = {
   packRefusedSharedHome: boolean | undefined;
   /** Local process status only; relay presence is not process status. */
   status: ManagedAgent["status"] | undefined;
+  /** Identity image when known; null draws initials. */
+  avatarUrl: string | null;
+  /** Local runtime setting; null for an unknown remote runtime. */
+  runtime: string | null;
+  /** Local model setting; null for an unknown remote model. */
+  model: string | null;
+  /** Whether this computer manages this agent record. */
   isManagedHere?: boolean;
   ownerPubkey?: string | null;
 };
@@ -115,6 +122,9 @@ function agentChip(
     hasRolePack: agent.hasRolePack,
     packRefusedSharedHome: agent.packRefusedSharedHome,
     status: agent.status,
+    avatarUrl: agent.avatarUrl,
+    runtime: agent.runtime,
+    model: agent.model,
     isManagedHere: true,
     ownerPubkey,
   };
@@ -214,6 +224,9 @@ function projectRoleAgents(
           hasRolePack: undefined,
           packRefusedSharedHome: undefined,
           status: undefined,
+          avatarUrl: null,
+          runtime: null,
+          model: null,
           isManagedHere: false,
           ownerPubkey: relay?.ownerPubkey,
         };
