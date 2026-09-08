@@ -168,12 +168,14 @@ export function NewCodingSessionWorktreeField({
       </label>
       {checked ? (
         <>
+          {/* One line: the worktree name, then "from" and the source branch
+              when the repository's branches are known. */}
           <div className="flex items-center gap-2">
             <GitBranch className="size-4 shrink-0 text-muted-foreground" />
             <Input
               aria-label="Worktree name"
               autoComplete="off"
-              className="font-mono text-xs placeholder:text-muted-foreground/50"
+              className="min-w-0 flex-1 font-mono text-xs placeholder:text-muted-foreground/50"
               data-testid="coding-session-worktree-name"
               disabled={disabled}
               onChange={(event) => onNameChange(event.target.value)}
@@ -181,33 +183,33 @@ export function NewCodingSessionWorktreeField({
               spellCheck={false}
               value={name}
             />
+            {branches !== null && branches.branches.length > 0 ? (
+              <>
+                <label
+                  className="shrink-0 px-1 text-2xs text-muted-foreground"
+                  htmlFor="coding-session-worktree-source"
+                >
+                  from
+                </label>
+                <select
+                  aria-label="Source branch"
+                  className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 font-mono text-xs disabled:opacity-50"
+                  data-testid="coding-session-worktree-source"
+                  disabled={disabled}
+                  id="coding-session-worktree-source"
+                  onChange={(event) => onSourceChange(event.target.value)}
+                  value={source ?? branches.defaultBranch ?? ""}
+                >
+                  {branches.branches.map((branch) => (
+                    <option key={branch} value={branch}>
+                      {branch}
+                      {branch === branches.defaultBranch ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
           </div>
-          {branches !== null && branches.branches.length > 0 ? (
-            <div className="flex items-center gap-2">
-              <label
-                className="w-4 shrink-0 text-right text-2xs text-muted-foreground"
-                htmlFor="coding-session-worktree-source"
-              >
-                from
-              </label>
-              <select
-                aria-label="Source branch"
-                className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 font-mono text-xs disabled:opacity-50"
-                data-testid="coding-session-worktree-source"
-                disabled={disabled}
-                id="coding-session-worktree-source"
-                onChange={(event) => onSourceChange(event.target.value)}
-                value={source ?? branches.defaultBranch ?? ""}
-              >
-                {branches.branches.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
-                    {branch === branches.defaultBranch ? " (default)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
           {folderDraft === null ? (
             <button
               className="self-start text-2xs text-muted-foreground underline underline-offset-2 disabled:opacity-50"
