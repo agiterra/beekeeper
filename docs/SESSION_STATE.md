@@ -41,8 +41,9 @@ signature checks passed. Previous app preserved as
 `Beekeeper Dev.app.before-347e9e9a-20260908`. App was quit with Cmd-Q and its
 process exit checked before replacement. The new process starts but Computer
 Use times out; a fresh sample shows `SecKeychainFindGenericPassword` during
-secret-store startup. User must handle the OS prompt; live scrolling acceptance
-is still pending. No Keychain interaction or bypass attempted.
+secret-store startup. Brian subsequently opened the app and confirmed scrolling and Next/Previous
+transitions are much more responsive. Performance live acceptance passes; role
+version adoption remains unverified. No Keychain interaction or bypass attempted.
 
 Validation: all 8,399 desktop tests pass; three rebuilt Packs browser tests
 pass; targeted store/remount tests 81/81; 1,000-report rendering bound and actual
@@ -52,6 +53,16 @@ Logs are preserved in `../review-2026-09-08-packs-performance/`. Source is on
 `work/packs-scroll-performance` (5f192ea1c plus 347e9e9a), not landed or pushed.
 Repeated 1,000 same-object signature checks benchmark at 2.57ms versus fresh
 objects 1545.95ms; this is Node evidence, not a measured WebView frame rate.
+
+### Active split — September 8 Roles usability and metadata investigation
+
+Brian authorized Fable to take the usability slice while Astra continues testing.
+Brief delivered to existing t3 thread `d5211a94-2560-4b54-b6fc-e2940601b807`;
+thread visibly Working after send. Fable owns presentation in dedicated worktree
+`../review-roles-usability-fable`, branch `work/roles-usability-fable`, base
+`e517f3d5f`. Exact scope is in the shared Desktop coordination mailbox. Root
+owns session/provider metadata investigation, performance landing and final
+integration/build. Preserve unknown-version disclosures; do not invent adoption.
 
 ### Follow-on evidence
 
