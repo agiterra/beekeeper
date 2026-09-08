@@ -216,7 +216,7 @@ export function NewCodingSessionWorktreeField({
               onClick={() => setFolderDraft(plan?.parent ?? "")}
               type="button"
             >
-              Change folder
+              Set a custom worktree folder
             </button>
           ) : (
             <div className="flex items-center gap-2">
