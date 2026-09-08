@@ -9383,6 +9383,24 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
   was written 19:21, so the raised dev quotas have never been in force (the
   `relay-quota-per-pubkey` memory says "next relay start"); the phone's REQ
   rate around the create was 1–5 per 5 s, so quota was not a factor here.
+- **Dev relay cleared 2026-09-08 (environment fact).** Andy's dev
+  community is the `communities` row whose host is `localhost:3000`
+  (`c2b23ad0…`); the e2e suites run against that same community with
+  throwaway keys, so by today it held 57 project heads (2 Andy's), 29
+  channels (3 starter), 36 e2e repo names, and the database held 620 other
+  test communities. Cleared by a single-transaction SQL script (session
+  scratchpad `cleanup.sql`, `pg_dump` taken first) that respects the
+  schema's guards rather than disabling them: the two `fenced` communities
+  and the two carrying `community_deletion_approvals` evidence stay (the
+  fence trigger and the immutable-evidence trigger refuse otherwise);
+  kind 30078 read-state rows go through the schema's own opt-in
+  `SET LOCAL buzz.nip_rs_hard_delete = 'on'`. Kept: the three starter
+  channels, Andy's kind 0/30078/30177 events; rosters republished with
+  `buzz-admin reconcile-channels --channel <id>`; `just dev` restarted, so
+  the relay now runs this branch (`/health` → `ok 06a5b5d0`, NIP-11
+  advertises `reads_per_connection: 150`) and the `.env` quota bump is
+  finally in force. The phone relaunched clean (Home lists only the
+  starter channels; `scratchpad/phone-clean.png`).
 - **Not yet done, in order:** (1) exercise on a simulator against the
   local dev relay with a desktop that is actually streaming frames — the
   plan's verification steps; nothing above has run on a device; (2) land
