@@ -4017,6 +4017,7 @@ mod tests {
     ///   OpenRelay without a DB lookup.
     /// - `nip98_replay` replaced with an always-fresh guard → no Redis needed
     ///   for replay detection.
+    ///
     /// Uses configured test Postgres and Redis; returns `None` if setup fails.
     async fn bridge_handler_test_state() -> Option<Arc<crate::state::AppState>> {
         let mut config = crate::config::Config::from_env().ok()?;

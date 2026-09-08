@@ -22,7 +22,10 @@ lint exception, following the existing `SessionPolicyCmd` convention, without
 changing parser behavior. The retry is running with three Cargo jobs and root's
 separate target. Logs: `../review-2026-09-08-release-candidate/check.log` and
 `check-retry.log`. This is the repository check recipe, not full `just ci` or a
-completed release. No new app bundle has been installed. The test packaging
+completed release. A second check reached the relay test helper and found a
+doc-comment paragraph missing its blank line (`api/bridge.rs:4020`); corrected
+with no runtime change, and the next retry is `check-next.log`.
+No new app bundle has been installed. The test packaging
 script in that evidence directory was adapted to the current root checkout and
 requires an exact clean commit before building all sidecars and resources.
 
