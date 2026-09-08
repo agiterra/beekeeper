@@ -467,9 +467,14 @@ export function useTrustedCodingSessionIngress(
       }, 1_000);
     };
 
+    // Stores are retained and shared between mounted catalogs. Another
+    // listener can ingest a batch first; duplicate ingestion is only a no-op
+    // for this reader after it has published that shared store revision.
+    let publishedRevision = -1;
     const publish = () => {
       if (cancelled) return;
       const stored = store.snapshot(stableChannelIds);
+      publishedRevision = store.getRevision();
       setSnapshot({
         authorityIdentity,
         scopeIdentity: requestIdentity,
@@ -505,9 +510,8 @@ export function useTrustedCodingSessionIngress(
     };
     const receiveObservedEvents = (events: readonly RelayEvent[]) => {
       if (cancelled) return;
-      if (store.ingestRelayEvents(events, stableChannelIds, authority)) {
-        publish();
-      }
+      store.ingestRelayEvents(events, stableChannelIds, authority);
+      if (store.getRevision() !== publishedRevision) publish();
     };
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
       receiveObservedEvents,

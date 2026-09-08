@@ -477,6 +477,13 @@ export class TrustedCodingSessionIngressStore {
     this.maxRetainedRawEventsPerGeneration = maxRetainedRawEventsPerGeneration;
   }
 
+  private revision = 0;
+
+  /** Monotonic revision of stored evidence, shared by every mounted reader. */
+  getRevision(): number {
+    return this.revision;
+  }
+
   /** Returns whether newly ingested evidence or diagnostics need publication. */
   ingestRelayEvents(
     events: readonly RelayEvent[],
@@ -609,6 +616,7 @@ export class TrustedCodingSessionIngressStore {
           break;
       }
     }
+    if (changed) this.revision += 1;
     return changed;
   }
 

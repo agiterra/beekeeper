@@ -500,6 +500,17 @@ test("one mounted catalog observing session facts updates its sibling catalog", 
   assert.equal(second.result.current.trusted.metadata.length, 1);
   assert.equal(second.result.current.creates.observations.length, 1);
 
+  const firstSnapshot = first.result.current.trusted;
+  const secondSnapshot = second.result.current.trusted;
+  const { fanOutObservedCodingSessionEvents } = await import(
+    "./codingSessionObservedEvents.ts"
+  );
+  await act(async () => {
+    fanOutObservedCodingSessionEvents([receiptEvent, metadataEvent]);
+  });
+  assert.equal(first.result.current.trusted, firstSnapshot);
+  assert.equal(second.result.current.trusted, secondSnapshot);
+
   first.unmount();
   second.unmount();
   queryClient.clear();
