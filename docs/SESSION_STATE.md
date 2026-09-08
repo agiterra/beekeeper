@@ -5,7 +5,52 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-## Active work — parallel orchestration
+## Current checkpoint — September 7 late night: CI results and role revisions shipped
+
+Canonical relay `main` accepted `82eee7231296f89362e2a7c3e7ab7e45c0405efb`.
+`git ls-remote` confirmed it; local `main` was fast-forwarded to the same commit.
+Normal pre-push destination, skew and full-floor checks passed in 298.8 seconds
+(`review-2026-09-06-validation/ci-role-push.log`); no hook was bypassed. The
+required signoff rebase rewrote candidate IDs without changing the tested tree
+(`git diff 0b9b6b81a 82eee7231` empty). CI source is `a80c2ce65`; Fable's role
+revision changes are `7bda2f7bd` and `ce492d337`. This shipment includes both.
+
+The complete packaged debug app from that exact commit is installed at
+`/Users/brian/Applications/Beekeeper Dev.app`, built `2026-09-08T03:24:49Z`.
+All eight sidecars, role resources and deep strict code-signature verification
+passed (`ci-role-packaged-build.log`, exit 0; `ci-role-install.log`). Previous
+bundle is preserved at
+`~/Applications/Beekeeper Dev.app.before-82eee723-20260907-232847`.
+The previous app was gracefully quit and process absence checked before copying.
+
+**Live UI acceptance is pending a macOS Keychain prompt.** The installed process
+started, but Computer Use timed out reading its window. A process sample shows
+`SecretStore::read_blob_raw_keyring` → `Entry::get_password` →
+`SecKeychainFindGenericPassword`; SecurityAgent started alongside the new app.
+Computer Use explicitly refused access to `com.apple.SecurityAgent` for safety
+reasons. No credential access was bypassed or changed. Evidence:
+`ci-role-startup-sample.txt` and `ci-role-startup-sample-command.log`. Brian must
+handle the OS prompt before we can call the reopened UI verified. Before the
+replacement, Computer Use observed the continuity session disconnected with
+Reconnect enabled; that observation belongs to the prior installed build.
+
+Live relay NIP-11 currently reports `software_commit: unknown`, count `null`,
+and build time `2026-09-08T01:40:54Z`
+(`ci-role-relay-build-observation.json`). This is an unavailable build identity,
+not proof that the new relay source is deployed. No manual production deploy or
+CI webhook configuration was performed.
+
+Next: Fable is implementing the separate exact-generation commissioned-report
+provenance slice in a new isolated worktree; it is not in the installed bundle.
+Its discovered `hireRef` classifier compatibility repair will be a separate
+commit. The CI continuation design reuses signed 44220 intent, truthful 44224
+registration receipts and the existing durable provider queue. Before coding,
+resolve private-project provider read access separately from session steering,
+and materialize the verified result/identity into the awakened context rather
+than assume that target remembers the registering caller. No automatic
+CI-to-coding-turn continuation is claimed by this shipment.
+
+## Validation and parallel orchestration record
 
 Brian confirmed Fable has been assigned shared role adoption in a separate
 t3code thread `d5211a94-2560-4b54-b6fc-e2940601b807`. Astra verified the
@@ -23,7 +68,7 @@ Astra's isolated worktree is
 `work/ci-completion-astra`, based on the same commit. Three Sol build lanes own
 the core result contract, authorized workflow producer, and exact-run wait CLI.
 The implementation contract and strict ownership are in
-`docs/CI_COMPLETION_IMPLEMENTATION.md`. This is in progress, not deployed.
+`docs/CI_COMPLETION_IMPLEMENTATION.md`. This source is shipped above; live relay deployment is unverified.
 Focused CI acceptance is green: core 7/7, final CLI 11/11, strict workflow
 resolution 6/6, and `just test-ci-completion` passed 3 atomic DB plus 6 relay
 cases. The latter runs the actual built `bee ci wait` against a local relay:
@@ -70,8 +115,7 @@ one existing skip and that one pre-repair failure in 42.3 minutes. It was not an
 all-green full run. The ranked-row screenshot was preserved under
 `review-2026-09-06-validation/validation/role-adoption-ranked-rows.png` and
 visually checked: current and one-commit-earlier reports remain explicitly
-unverified. Neither candidate
-is installed or deployed. The hosted Woodpecker Rust job now explicitly runs
+unverified. Both candidates are shipped and packaged as recorded above. The hosted Woodpecker Rust job now explicitly runs
 the ignored CI-result DB/relay cases using its freshly built CLI, matching the
 local `just test-ci-completion` coverage.
 
