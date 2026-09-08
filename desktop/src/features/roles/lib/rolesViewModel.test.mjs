@@ -341,3 +341,161 @@ test("roleAgentPackState reads the role row first, the agent's own probe last (F
     "present",
   );
 });
+
+function relayAgent(overrides = {}) {
+  return {
+    pubkey: REVIEWER_PUBKEY,
+    ownerPubkey: "owner-andy",
+    name: "Andy's reviewer",
+    status: "offline",
+    channelIds: ["chan-1"],
+    capabilities: ["lead"],
+    ...overrides,
+  };
+}
+
+function projectView(overrides = {}) {
+  return buildRolesView({
+    rolePacks: [pack()],
+    agents: [],
+    relayAgents: [],
+    shelfEntries: [],
+    projects: [project(), project({ id: "proj-2" })],
+    projectId: "proj-1",
+    projectChannelIds: ["chan-1"],
+    nowSeconds: NOW,
+    ...overrides,
+  });
+}
+
+test("selected project excludes other-project and unclaimed sessions, local home roles alone, and unplaced rows", () => {
+  const view = projectView({
+    agents: [agent({ homeRole: "builder" })],
+    shelfEntries: [
+      entry({ projectId: "proj-2", session: { role: "other-role" } }),
+      entry({ projectId: null, session: { role: "unclaimed-role" } }),
+    ],
+  });
+  assert.deepEqual(
+    view.roles.map((row) => row.role),
+    ["lead"],
+  );
+  assert.deepEqual(view.roles[0].agents, []);
+  assert.deepEqual(
+    view.byProject.map((row) => [row.projectId, row.seats.length]),
+    [["proj-1", 0]],
+  );
+  assert.deepEqual(view.unplaced, []);
+});
+
+test("historical scoped sessions retain named remote participants without inventing a local process or pack status", () => {
+  const view = projectView({
+    relayAgents: [relayAgent({ channelIds: [] })],
+    shelfEntries: [
+      entry({
+        isClosed: true,
+        session: { agentRef: REVIEWER_PUBKEY, role: "reviewer" },
+      }),
+    ],
+  });
+  const reviewer = view.roles.find((row) => row.role === "reviewer");
+  assert.equal(reviewer.seats.length, 0);
+  assert.equal(reviewer.agents.length, 1);
+  assert.equal(reviewer.agents[0].name, "Andy's reviewer");
+  assert.equal(reviewer.agents[0].ownerPubkey, "owner-andy");
+  assert.equal(reviewer.agents[0].isManagedHere, false);
+  assert.equal(reviewer.agents[0].status, undefined);
+  assert.equal(reviewer.agents[0].hasRolePack, undefined);
+});
+
+test("local and relay copies join case-insensitively and scoped session roles supplement explicit local home roles", () => {
+  const key = "ab".repeat(32);
+  const view = projectView({
+    agents: [agent({ pubkey: key.toUpperCase(), homeRole: "lead" })],
+    relayAgents: [relayAgent({ pubkey: key, name: "Shared name" })],
+    shelfEntries: [
+      entry({ session: { agentRef: key, role: "runner" } }),
+      entry({
+        generationId: "gen-2",
+        session: { agentRef: key.toUpperCase(), role: "runner" },
+      }),
+    ],
+  });
+  assert.deepEqual(
+    view.roles.map((row) => [row.role, row.agents.length]),
+    [
+      ["lead", 1],
+      ["runner", 1],
+    ],
+  );
+  const runner = view.roles.find((row) => row.role === "runner");
+  assert.equal(runner.agents[0].pubkey, key);
+  assert.equal(runner.agents[0].name, "Ada");
+  assert.equal(runner.agents[0].isManagedHere, true);
+  assert.equal(runner.agents[0].status, "running");
+  assert.equal(runner.agents[0].ownerPubkey, "owner-andy");
+  assert.equal(runner.seats[0].agentName, "Ada");
+});
+
+test("project channel membership admits local explicit home roles but never invents remote roles", () => {
+  const view = projectView({
+    agents: [agent()],
+    relayAgents: [
+      relayAgent({ pubkey: LEAD_PUBKEY }),
+      relayAgent({ name: "Lead", homeRole: "lead", capabilities: ["lead"] }),
+    ],
+  });
+  assert.deepEqual(
+    view.roles[0].agents.map((chip) => chip.pubkey),
+    [LEAD_PUBKEY],
+  );
+});
+
+test("roleless remote sessions stay roleless, unknown identities keep their session pubkey", () => {
+  const view = projectView({
+    relayAgents: [relayAgent()],
+    shelfEntries: [
+      entry({
+        session: { agentRef: REVIEWER_PUBKEY, role: null, packRef: null },
+      }),
+      entry({
+        generationId: "gen-2",
+        session: { agentRef: STRANGER_PUBKEY, role: "runner" },
+      }),
+    ],
+  });
+  assert.equal(view.roles[0].agents.length, 0);
+  const roleless = view.byProject[0].seats.find((row) => row.role === null);
+  assert.equal(roleless.agentName, "Andy's reviewer");
+  const runner = view.roles.find((row) => row.role === "runner");
+  assert.deepEqual(runner.agents, []);
+  assert.equal(runner.seats[0].agentPubkey, STRANGER_PUBKEY);
+  assert.equal(runner.seats[0].agentName, null);
+});
+
+test("remote pack availability stays unknown regardless of this computer's availability or refusals", () => {
+  for (const roleHasPack of [true, false]) {
+    for (const roleRefusal of [null, "Local checkout refused"]) {
+      for (const agentPackRefusedSharedHome of [true, false, undefined]) {
+        assert.equal(
+          roleAgentPackState({
+            isManagedHere: false,
+            roleHasPack,
+            roleRefusal,
+            agentPackRefusedSharedHome,
+          }),
+          "unknown",
+        );
+      }
+    }
+  }
+  assert.equal(
+    roleAgentPackState({
+      isManagedHere: true,
+      roleHasPack: true,
+      roleRefusal: null,
+      agentPackRefusedSharedHome: undefined,
+    }),
+    "present",
+  );
+});

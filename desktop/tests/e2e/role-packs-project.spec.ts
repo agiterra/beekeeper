@@ -762,3 +762,110 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
     "01-roles-page.png, 02-card-lead.png, and 03-technical-details-open.png must be visually distinct",
   ).toBe(3);
 });
+
+test("project Roles resolves shared identities without showing another project's sessions", async ({
+  page,
+}) => {
+  const remoteKey = getPublicKey(generateSecretKey());
+  const otherKey = getPublicKey(generateSecretKey());
+  const makeReport = (
+    agentRef: string,
+    projectRef: string,
+    sessionId: string,
+    title: string,
+  ) => {
+    const original = noVersionRoleMetadataEvent();
+    const content = JSON.parse(original.content);
+    content.agentRef = agentRef;
+    content.projectRef = projectRef;
+    content.title = title;
+    content.session = { ...NO_VERSION_TARGET, sessionId };
+    return finalizeEvent(
+      {
+        kind: KIND_CODING_SESSION_METADATA,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ["h", GENERAL_CHANNEL_ID],
+          ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+          ["cs-target", buildCodingSessionTargetKey(content.session)],
+          ["csm-key", codingSessionMetadataSemanticKey(content.session)],
+        ],
+        content: JSON.stringify(content),
+      },
+      generateSecretKey(),
+    );
+  };
+  await page.addInitScript(
+    (features) =>
+      window.localStorage.setItem("buzz-feature-overrides-v1", features),
+    PROJECT_FEATURES,
+  );
+  await page.addInitScript(
+    (events) => {
+      (
+        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+    },
+    [generalProjectWithChannel(), projectHead("other-scope", "Other scope")],
+  );
+  await installMockBridge(page, {
+    relayAgents: [
+      {
+        pubkey: remoteKey,
+        name: "Andy project lead",
+        channelIds: [GENERAL_CHANNEL_ID],
+        status: "offline",
+      },
+      {
+        pubkey: otherKey,
+        name: "Other project lead",
+        channelIds: [GENERAL_CHANNEL_ID],
+        status: "online",
+      },
+    ],
+  });
+  await page.goto("/");
+  await openRolesTab(page);
+  await page.evaluate(
+    ({ events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seam missing");
+      for (const event of events as never[])
+        seed({ channelName: "general", event });
+    },
+    {
+      events: [
+        makeReport(
+          remoteKey,
+          RANKED_PROJECT_ADDRESS,
+          "11111111-2222-3333-4444-555555555555",
+          "Selected project work",
+        ),
+        makeReport(
+          otherKey,
+          `30621:${IDENTITY.pubkey}:other-scope`,
+          "66666666-7777-8888-9999-000000000000",
+          "Other project work",
+        ),
+      ],
+    },
+  );
+  const card = page.getByTestId("role-card-lead");
+  await expect(
+    card
+      .getByTestId("role-agent-chip")
+      .filter({ hasText: "Andy project lead" }),
+  ).toBeVisible();
+  await expect(card).not.toContainText("Other project lead");
+  await expect(
+    card
+      .getByTestId("role-agent-chip")
+      .filter({ hasText: "Andy project lead" }),
+  ).toHaveAttribute("data-agent-pack", "unknown");
+  await expect(
+    card.getByRole("button", { name: /Andy project lead/ }),
+  ).toBeVisible();
+  await expect(page.getByTestId("roles-section")).not.toContainText(
+    "Other project work",
+  );
+});

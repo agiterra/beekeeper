@@ -5,6 +5,36 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 project Roles identity and scope candidate
+
+Root implemented the selected-project boundary in useProjectPacksView and
+rolesViewModel. Project cards now use only exact-project shelf entries and join
+shared agent names by pubkey through existing relay-agent discovery. A local home
+role alone no longer establishes project participation. Scoped session history or
+membership in a selected-project channel establishes participation; shared agents'
+role association comes only from scoped sessions. Historical association is not
+proof of current assignment, and this is not a complete team roster.
+
+Local and shared identities de-duplicate by normalized pubkey. Shared identity
+names do not change session authority or process status. Remote pack availability
+is explicitly unknown even when a local role resolves; owner may be unavailable.
+Failed or initially offline-paused identity reads disclose missing information.
+Local availability, reported versions and actual execution remain distinct. No
+remote role adoption or automatic role hot-reload was added.
+
+Validation: all 8,462 desktop tests passed before the final remote-availability
+guard; final focused Roles suite 201/201 and rebuilt Roles browser suite 4/4 pass.
+Browser regression places two explicit projects on one channel and checks shared
+identity naming, project isolation, and unknown remote pack availability. These
+are mock-bridge tests, not a live two-machine claim. Logs are preserved under
+`../review-2026-09-08-team-roles/`. The final offline-paused disclosure received
+TypeScript and Biome validation. Full release smoke and landing remain pending.
+
+Fable has the shared-identity contract for its separate design worktree. The
+installed app is still e71cb7ba; this source candidate is not installed or pushed.
+Remaining acceptance: combine Fable's design, validate the combined UI, then test
+real teammate visibility and role revision changes across execution boundaries.
+
 ## September 8 visual design pass and team-sync audit
 
 Brian confirmed functionality of e71cb7ba but rejected its visual quality.

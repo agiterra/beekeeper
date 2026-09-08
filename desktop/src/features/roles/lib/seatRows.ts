@@ -10,7 +10,7 @@
 import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { ProjectCodingSessionShelfEntry } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import type { ProjectContainer } from "@/features/projects-container/lib/projectContainerModel";
-import type { ManagedAgent } from "@/shared/api/types";
+import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
 
 /** One seat — a session generation — as the view reads it. */
 export type SeatRow = {
@@ -22,7 +22,7 @@ export type SeatRow = {
   label: string;
   /** Lowercased `session.agentRef`, or `null` for a person's session. */
   agentPubkey: string | null;
-  /** The managed agent's name, or `null` when no managed agent has that pubkey. */
+  /** Local managed name, then relay identity name, or `null` when unknown. */
   agentName: string | null;
   /** The seat's role slug, or `null` when the session carries none. */
   role: string | null;
@@ -94,6 +94,7 @@ function seatRow(
   entry: ProjectCodingSessionShelfEntry,
   agentsByPubkey: ReadonlyMap<string, ManagedAgent>,
   projectsById: ReadonlyMap<string, ProjectContainer>,
+  relayAgentsByPubkey: ReadonlyMap<string, RelayAgent>,
   nowSeconds: number,
 ): SeatRow {
   const session = entry.session;
@@ -109,7 +110,10 @@ function seatRow(
     generationId: entry.generationId,
     label: entry.label,
     agentPubkey,
-    agentName: agent?.name ?? null,
+    agentName:
+      agent?.name ??
+      (agentPubkey ? relayAgentsByPubkey.get(agentPubkey)?.name : null) ??
+      null,
     role: role ? role : null,
     projectId: entry.projectId,
     projectName: project?.name ?? null,
@@ -122,6 +126,8 @@ function seatRow(
 export type BuildSeatRowsInput = {
   shelfEntries: readonly ProjectCodingSessionShelfEntry[];
   agents: readonly ManagedAgent[];
+  /** Shared identity fallback only; never changes a session's authority or status. */
+  relayAgents?: readonly RelayAgent[];
   projects: readonly ProjectContainer[];
   nowSeconds: number;
   /**
@@ -140,12 +146,16 @@ export function buildSeatRows(input: BuildSeatRowsInput): SeatRow[] {
   const {
     shelfEntries,
     agents,
+    relayAgents = [],
     projects,
     nowSeconds,
     includeClosed = false,
   } = input;
   const agentsByPubkey = new Map(
     agents.map((agent) => [agent.pubkey.toLowerCase(), agent] as const),
+  );
+  const relayAgentsByPubkey = new Map(
+    relayAgents.map((agent) => [agent.pubkey.toLowerCase(), agent] as const),
   );
   const projectsById = new Map(
     projects.map((project) => [project.id, project] as const),
@@ -154,6 +164,14 @@ export function buildSeatRows(input: BuildSeatRowsInput): SeatRow[] {
     ? shelfEntries
     : shelfEntries.filter((entry) => !entry.isClosed);
   return entries
-    .map((entry) => seatRow(entry, agentsByPubkey, projectsById, nowSeconds))
+    .map((entry) =>
+      seatRow(
+        entry,
+        agentsByPubkey,
+        projectsById,
+        relayAgentsByPubkey,
+        nowSeconds,
+      ),
+    )
     .sort(compareSeatsLiveFirst);
 }

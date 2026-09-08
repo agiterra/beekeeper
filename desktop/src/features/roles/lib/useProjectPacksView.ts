@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
-import { useManagedAgentsQuery } from "@/features/agents/hooks";
+import {
+  useManagedAgentsQuery,
+  useRelayAgentsQuery,
+} from "@/features/agents/hooks";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
@@ -244,10 +247,17 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
   const packsPending = packsQuery.isPending;
 
   const agentsQuery = useManagedAgentsQuery();
+  const relayAgentsQuery = useRelayAgentsQuery({
+    enabled: projectRef !== null,
+  });
   const agents = agentsQuery.data;
 
+  const projectChannels = React.useMemo(() => {
+    const ids = new Set(projectChannelIds);
+    return channelsQuery.data?.filter((channel) => ids.has(channel.id));
+  }, [channelsQuery.data, projectChannelIds]);
   const buckets = useProjectCodingSessionBuckets(
-    channelsQuery.data,
+    projectChannels,
     NO_PROJECT_BUCKETS,
     NO_PROJECT_BUCKETS,
   );
@@ -262,11 +272,23 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       buildRolesView({
         rolePacks: packs,
         agents: agents ?? [],
+        relayAgents: relayAgentsQuery.data ?? [],
+        projectId: project?.id ?? "",
+        projectChannelIds,
         shelfEntries,
         projects,
         nowSeconds,
       }),
-    [agents, nowSeconds, packs, projects, shelfEntries],
+    [
+      agents,
+      relayAgentsQuery.data,
+      project?.id,
+      projectChannelIds,
+      nowSeconds,
+      packs,
+      projects,
+      shelfEntries,
+    ],
   );
   const packsSource = React.useMemo(() => describePacksSource(packs), [packs]);
 
@@ -373,9 +395,35 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     const errors = [
       errorSentence(channelsQuery.error),
       executionCatalog.errorMessage,
+      relayAgentsQuery.isError
+        ? `Shared agent identities unavailable: ${errorSentence(relayAgentsQuery.error) ?? "unknown error"}`
+        : null,
+      agentsQuery.isError
+        ? `Local agent identities unavailable: ${errorSentence(agentsQuery.error) ?? "unknown error"}`
+        : null,
+      projectRef !== null &&
+      relayAgentsQuery.isPending &&
+      relayAgentsQuery.fetchStatus === "paused"
+        ? "Shared agent identities have not been read; waiting for a connection."
+        : null,
+      agentsQuery.isPending && agentsQuery.fetchStatus === "paused"
+        ? "Local agent identities have not been read; waiting for a connection."
+        : null,
     ].filter((error): error is string => error !== null);
     return errors.length > 0 ? errors.join(" ") : null;
-  }, [channelsQuery.error, executionCatalog.errorMessage]);
+  }, [
+    channelsQuery.error,
+    executionCatalog.errorMessage,
+    relayAgentsQuery.isError,
+    relayAgentsQuery.error,
+    agentsQuery.isError,
+    agentsQuery.error,
+    projectRef,
+    relayAgentsQuery.isPending,
+    relayAgentsQuery.fetchStatus,
+    agentsQuery.isPending,
+    agentsQuery.fetchStatus,
+  ]);
 
   return {
     project,
@@ -388,6 +436,7 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       revisionsQuery.isFetching ||
       provenance.isFetching ||
       agentsQuery.isFetching ||
+      relayAgentsQuery.isFetching ||
       channelsQuery.isPending ||
       executionCatalog.isLoading,
     error: packsError,
@@ -399,7 +448,11 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     revisionsError,
     provenanceError: provenance.error,
     executionReports: {
-      isLoading: channelsQuery.isPending || executionCatalog.isLoading,
+      isLoading:
+        channelsQuery.isPending ||
+        executionCatalog.isLoading ||
+        relayAgentsQuery.isLoading ||
+        agentsQuery.isLoading,
       error: executionReportsError,
       authorityError: executionCatalog.authorityErrorMessage,
     },
@@ -411,6 +464,9 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       void revisionsQuery.refetch();
       provenance.refetch();
     },
-    refetchAgents: () => void agentsQuery.refetch(),
+    refetchAgents: () => {
+      void agentsQuery.refetch();
+      void relayAgentsQuery.refetch();
+    },
   };
 }

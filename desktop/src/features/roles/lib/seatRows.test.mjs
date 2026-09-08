@@ -128,3 +128,39 @@ test("buildSeatRows sorts live-first, then freshest-first", () => {
     ["gen-fresh-live", "gen-old-live", "gen-fresh-done"],
   );
 });
+
+test("relay identity names are fallback-only and do not replace session status or role", () => {
+  const key = "ab".repeat(32);
+  const input = {
+    shelfEntries: [
+      entry({
+        session: {
+          agentRef: key.toUpperCase(),
+          role: null,
+          status: "disconnected",
+        },
+      }),
+    ],
+    agents: [],
+    relayAgents: [
+      {
+        pubkey: key,
+        name: "Remote builder",
+        status: "online",
+        capabilities: ["builder"],
+      },
+    ],
+    projects: [project()],
+    nowSeconds: NOW,
+  };
+  const [remote] = buildSeatRows(input);
+  assert.equal(remote.agentName, "Remote builder");
+  assert.equal(remote.agentPubkey, key);
+  assert.equal(remote.status, "disconnected");
+  assert.equal(remote.role, null);
+  const [local] = buildSeatRows({
+    ...input,
+    agents: [{ pubkey: key.toUpperCase(), name: "Local name" }],
+  });
+  assert.equal(local.agentName, "Local name");
+});

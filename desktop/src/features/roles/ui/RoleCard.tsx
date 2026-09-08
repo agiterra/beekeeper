@@ -80,15 +80,18 @@ function AgentChip({
     roleHasPack,
     roleRefusal,
     agentPackRefusedSharedHome: agent.packRefusedSharedHome,
+    isManagedHere: agent.isManagedHere,
   });
   const title =
-    state === "refused"
-      ? AGENT_CHIP_SHARED_HOME_TITLE
-      : state === "missing"
-        ? AGENT_CHIP_NO_PACK_TITLE
-        : state === "blocked"
-          ? (roleRefusal ?? undefined)
-          : undefined;
+    state === "unknown"
+      ? "Shared agent · role availability on its computer is not reported here"
+      : state === "refused"
+        ? AGENT_CHIP_SHARED_HOME_TITLE
+        : state === "missing"
+          ? AGENT_CHIP_NO_PACK_TITLE
+          : state === "blocked"
+            ? (roleRefusal ?? undefined)
+            : undefined;
   return (
     <li
       className={cn(
