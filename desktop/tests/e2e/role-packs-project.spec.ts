@@ -167,6 +167,10 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   await page.addInitScript((features) => {
     window.localStorage.setItem("buzz-feature-overrides-v1", features);
   }, PROJECT_FEATURES);
+  // Exercise an existing project, independent of background General migration.
+  await page.addInitScript((event) => {
+    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [event];
+  }, generalProjectWithChannel());
   await installMockBridge(page, {});
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
@@ -191,7 +195,8 @@ test("the Roles tab explains what a role is in plain language, and Technical det
 
   const recheck = page.getByTestId("roles-recheck");
   await expect(recheck).toBeVisible();
-  await expect(recheck).toHaveText("Check again");
+  // Initial roster discovery shares the paced relay read budget with startup.
+  await expect(recheck).toHaveText("Check again", { timeout: 15_000 });
 
   // ── Summary strip: 2 roles, 0 agents/sessions/reports — this fixture
   // seeds no managed agent and no coding-session event for this project. ──
@@ -1252,7 +1257,7 @@ test("project Roles resolves shared identities without showing another project's
     card
       .getByTestId("role-agent-chip")
       .filter({ hasText: "Andy project lead" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(card).not.toContainText("Other project lead");
   await expect(
     card

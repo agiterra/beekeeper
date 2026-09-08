@@ -5,6 +5,46 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 Andy mobile integration — local candidate
+
+Both remotes were fetched and agree on `9eb64eecf0d67fe43f95b708775f685f4b76c070`.
+Local `main` fast-forwarded from `088269385`; the 15 root topic commits rebased
+cleanly with signoff onto it. `git range-diff` marks all 15 patches equivalent.
+The original candidate remains at `archive/role-evidence-before-andy-20260908`
+(`155601edb`); its rebased equivalent is `f9f5bcb92`.
+
+Andy's 30 commits add mobile project navigation, session creation through an
+advertised provider, targeted session messages/control, and shared terminal input.
+They also add batched relay reads and admission pacing across clients, plus desktop
+project transport/workdir reuse. These controls retain existing authority checks;
+this is not absent-owner takeover, machine migration, or CI continuation. Fable's
+active `work/ci-managed-continuation-fable` worktree remains on its original base
+and will be integrated after its candidate is complete.
+
+Integration adapts Roles history reads to the shared coalescer. Two literal NUL
+bytes in Dart's pending-turn store key are replaced with equivalent `\u0000`
+escapes so the source remains reviewable as text. The combined candidate passes
+8,643 desktop tests, 1,993 mobile tests, mobile formatting/analyzer, desktop checks,
+and TypeScript. Initial Roles browser validation exposed missing support for
+`query_relay_filters` in the mock bridge (forced paced WS fallback) and a test
+relying on asynchronous General-project migration. The mock now reuses the
+existing REQ responders for HTTP batches, preserving refusals, intentional hangs
+and signed fixture bytes; six new helper tests pass. The Roles spec explicitly
+seeds its project and allows the existing 15-second discovery window for startup
+roster reads. The rebuilt Roles browser suite passes **6/6**, with final TypeScript,
+Biome and file-size checks green. Browser cases took 2–13 seconds with read pacing;
+this is mock-bridge evidence, not a native performance or Windows acceptance claim.
+Evidence is in `../review-2026-09-08-andy-integration/`, including initial failures
+and `andy-integration-browser-final.log`.
+
+Remote CI reports failure for this main at Woodpecker pipeline 140, context
+`ci/woodpecker/push/gate`: https://ci.agiterra.org/repos/2/pipeline/140/1.
+Its detailed API returns 401; no authorized log-reading path was available in
+this environment. The failing step is unknown. Local passing client tests do not
+establish a green repository-wide gate. No push, production deployment, native
+rebuild or installed-app replacement was performed; the installed Mac remains
+`497943d3`. Windows and phone runtime acceptance remain unverified.
+
 ## September 8 role evidence candidate validated
 
 On `work/team-role-evidence-astra`, based on985fca952: bounded history recovery

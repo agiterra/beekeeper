@@ -441,7 +441,7 @@ export async function fetchRolePackProvenanceEvents(
   } = {},
 ): Promise<RolePackProvenanceEvents> {
   const fetchEvents: RolePackProvenanceFetcher =
-    deps.fetchEvents ?? ((filter) => relayClient.fetchEvents(filter));
+    deps.fetchEvents ?? ((filter) => relayClient.fetchEventsCoalesced(filter));
   const sourceErrors: RolePackProvenanceSourceError[] = [];
   const events: RelayEvent[] = [];
 

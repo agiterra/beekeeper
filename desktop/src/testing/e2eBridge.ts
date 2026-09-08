@@ -14,6 +14,10 @@ import {
   type MockFilter,
 } from "./e2eBridgeSessionFacts.ts";
 import { relayClient } from "@/shared/api/relayClient";
+import {
+  mockChannelHistoryPage,
+  queryMockRelayFilters,
+} from "./e2eBridgeRelayQuery";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
 import { resolveAgentParallelism } from "@/features/agents/lib/agentParallelism";
 import type { ConnectionState } from "@/shared/api/relayClientShared";
@@ -4546,35 +4550,7 @@ function emitMockHistory(
   channelId: string,
   filter: MockFilter,
 ) {
-  const events = getMockMessageStore(channelId)
-    .filter((event) => {
-      if (filter.kinds && !filter.kinds.includes(event.kind)) {
-        return false;
-      }
-      if (filter.since !== undefined && event.created_at < filter.since) {
-        return false;
-      }
-      if (filter.until !== undefined && event.created_at > filter.until) {
-        return false;
-      }
-      return true;
-    })
-    // Relay order is `created_at DESC, id ASC` — match it (both the WS history
-    // page and the `get_channel_messages_before` keyset are backed by that one
-    // order in production, so the mock must be self-consistent too, else a
-    // same-second slice returned here won't line up with the keyset's tiebreak
-    // and the dense-second escape hatch can't prove completeness). Bare `until`
-    // still can't advance past a second denser than one page; the composite
-    // keyset is the escape hatch.
-    .sort(
-      (left, right) =>
-        right.created_at - left.created_at || left.id.localeCompare(right.id),
-    )
-    .slice(0, filter.limit ?? 50)
-    .sort(
-      (left, right) =>
-        left.created_at - right.created_at || left.id.localeCompare(right.id),
-    );
+  const events = mockChannelHistoryPage(getMockMessageStore(channelId), filter);
 
   const emit = () => {
     for (const event of events) {
@@ -10531,15 +10507,19 @@ async function sendToRealSocket(args: {
   }
 }
 
-function sendToMockSocket(args: {
-  id: number;
-  message?: {
-    type: "Text" | "Close";
-    data?: string;
-  };
-}) {
-  const socket = mockSockets.get(args.id);
+function sendToMockSocket(
+  args: {
+    id: number;
+    message?: {
+      type: "Text" | "Close";
+      data?: string;
+    };
+  },
+  querySocket?: MockSocket,
+) {
+  const socket = querySocket ?? mockSockets.get(args.id);
   if (
+    !querySocket &&
     getConfig()?.mock?.stallWebsocketSends &&
     args.message?.type !== "Close"
   ) {
@@ -11614,6 +11594,30 @@ export function maybeInstallE2eTauriMocks() {
     window.__BUZZ_E2E_COMMAND_LOG__?.push({ command, payload });
 
     switch (command) {
+      case "query_relay_filters": {
+        const { filters } = payload as { filters: MockFilter[] };
+        if (activeConfig?.mode === "relay")
+          return relayQuery(activeConfig, filters);
+        return queryMockRelayFilters(filters, (filter, subId, send) =>
+          sendToMockSocket(
+            {
+              id: -1,
+              message: {
+                type: "Text",
+                data: JSON.stringify(["REQ", subId, filter]),
+              },
+            },
+            {
+              subscriptions: new Map(),
+              handler: (message) => {
+                const frame = message as { type: string; data?: string };
+                if (frame.type === "Text" && frame.data)
+                  send(JSON.parse(frame.data));
+              },
+            },
+          ),
+        );
+      }
       case "get_huddle_state": {
         const snapshot = mockHuddle ? structuredClone(mockHuddle.state) : null;
         const delayMs = activeConfig?.mock?.huddleStateReadDelayMs ?? 0;
