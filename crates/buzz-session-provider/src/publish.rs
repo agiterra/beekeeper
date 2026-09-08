@@ -113,6 +113,13 @@ pub struct Outbox {
     path: PathBuf,
     signer: String,
     pending: Vec<Pending>,
+    /// One-shot injected failure for the next enqueue. Test-only.
+    ///
+    /// The dispositions that now enqueue before they write their ledger claim
+    /// that a failing enqueue leaves the command *unanswered and unfenced*,
+    /// which is only provable if the enqueue can be made to fail on demand.
+    #[cfg(test)]
+    fail_next_enqueue: bool,
 }
 
 impl Outbox {
@@ -191,9 +198,17 @@ impl Outbox {
             path,
             signer: signer.to_owned(),
             pending,
+            #[cfg(test)]
+            fail_next_enqueue: false,
         };
         outbox.compact_if_idle()?;
         Ok(outbox)
+    }
+
+    /// Make the next enqueue fail once. Test-only.
+    #[cfg(test)]
+    pub(crate) fn fail_next_enqueue(&mut self) {
+        self.fail_next_enqueue = true;
     }
 
     /// Number of rows still awaiting delivery.
@@ -257,6 +272,10 @@ impl Outbox {
         event: nostr::Event,
         supersede: bool,
     ) -> io::Result<bool> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_enqueue) {
+            return Err(io::Error::other("injected outbox enqueue failure"));
+        }
         let signer = event.pubkey.to_hex();
         if signer != self.signer {
             tracing::warn!(

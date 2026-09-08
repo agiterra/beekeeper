@@ -42,6 +42,7 @@ fn record() -> CiContinuationRecord {
         relay_answered: true,
         attempts: 0,
         next_check_at: 0,
+        last_obstacle: None,
         state: RecordState::Waiting,
     }
 }

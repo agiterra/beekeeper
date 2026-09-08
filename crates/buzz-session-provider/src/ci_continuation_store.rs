@@ -9,6 +9,11 @@
 //! turn it promised is durably somebody's (the command ledger) or once its
 //! refusal is durably the operator's (the refusal ledger).
 //!
+//! Between the durable claim and the adapter actually starting the turn the
+//! record sits in [`RecordState::Claimed`] rather than vanishing, so a crash
+//! in that window leaves evidence of a delivery that was lost and can never be
+//! re-admitted, instead of leaving nothing at all.
+//!
 //! The file is `ci-continuations.json` beside `state.json`, written through
 //! [`crate::state::atomic_write`], so a crash leaves either the whole previous
 //! generation or the whole next one.
@@ -87,6 +92,22 @@ pub enum RecordState {
     /// A verified result is held and the continuation turn has not been
     /// admitted yet.
     Ready(ReadyResult),
+    /// Start permission was durably claimed — the operation and command
+    /// ledgers both name this `commandId` — and the adapter has not yet
+    /// reported the turn beginning.
+    ///
+    /// The window this state exists to make visible is short and unavoidable:
+    /// between the durable claim and the actor's prompt there is a crash that
+    /// loses the delivery and *cannot* re-admit it, because the ledgers are
+    /// first-writer-wins. Removing the record at claim time (what this store
+    /// used to do) made that loss indistinguishable from a delivered turn. A
+    /// record left here instead is found at the next boot and answered with
+    /// `LOST_AFTER_CLAIM` — see
+    /// [`crate::ci_continuation::LOST_AFTER_CLAIM`].
+    Claimed {
+        /// Epoch seconds at which start permission was granted.
+        at: u64,
+    },
     /// The registration was answered with a durable refusal.
     Terminal {
         /// The receipt error code that was published.
@@ -103,8 +124,19 @@ pub enum RecordState {
 
 impl RecordState {
     /// Whether this state still owes the operator a turn or a refusal.
+    ///
+    /// `Claimed` is deliberately **not** pending: its turn is already
+    /// somebody's, so it must not be re-delivered, re-watched, expired or
+    /// counted against the admission caps. What it still owes is a *drop*
+    /// receipt if the turn never started, and that is reconciled at boot
+    /// rather than on the delivery path.
     pub fn is_pending(&self) -> bool {
         matches!(self, Self::Waiting | Self::Ready(_))
+    }
+
+    /// Whether start permission has been durably claimed for this record.
+    pub fn is_claimed(&self) -> bool {
+        matches!(self, Self::Claimed { .. })
     }
 }
 
@@ -147,6 +179,22 @@ pub struct CiContinuationRecord {
     pub attempts: u32,
     /// Epoch seconds before which the provider will not retry delivery.
     pub next_check_at: u64,
+    /// The receipt code of the last thing that stopped a delivery, when a
+    /// delivery was deferred rather than answered.
+    ///
+    /// Written only by the deferral path (see
+    /// [`Self::note_attempt_with_obstacle`](CiContinuationStore::note_attempt_with_obstacle)),
+    /// and read only at expiry. It exists so the terminal answer names the
+    /// obstacle that actually held the turn up instead of the generic "the
+    /// window closed": a registration whose target could never be reopened
+    /// because its agent seat was never re-staged is a custody problem with a
+    /// custody remedy, and `CI_CONTINUATION_EXPIRED` would send the operator
+    /// looking at CI instead.
+    ///
+    /// Defaults to `None` for records written before this field existed, and
+    /// for every record that has never been deferred.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_obstacle: Option<String>,
     /// Lifecycle position.
     pub state: RecordState,
 }
@@ -192,6 +240,14 @@ pub enum Admitted {
 pub struct CiContinuationStore {
     path: PathBuf,
     registrations: Vec<CiContinuationRecord>,
+    /// One-shot injected failure for the next durable write.
+    ///
+    /// Test-only. The ordering guarantees this store participates in are only
+    /// meaningful if the failing half can actually be made to fail, and a real
+    /// disk that refuses one write on demand is not something a unit test can
+    /// arrange.
+    #[cfg(test)]
+    fail_next_write: bool,
 }
 
 impl CiContinuationStore {
@@ -228,7 +284,15 @@ impl CiContinuationStore {
         Ok(Self {
             path,
             registrations,
+            #[cfg(test)]
+            fail_next_write: false,
         })
+    }
+
+    /// Make the next durable write fail once.
+    #[cfg(test)]
+    pub(crate) fn fail_next_write(&mut self) {
+        self.fail_next_write = true;
     }
 
     /// Every record, in insertion order.
@@ -241,6 +305,18 @@ impl CiContinuationStore {
         self.registrations
             .iter()
             .filter(|record| record.state.is_pending())
+    }
+
+    /// Every record whose start permission was claimed and whose turn has not
+    /// been observed starting.
+    ///
+    /// Empty in steady state: `TurnStarted` removes each record as it arrives.
+    /// A non-empty answer at boot is exactly the set of deliveries this
+    /// provider lost to a crash inside the claim window.
+    pub fn claimed(&self) -> impl Iterator<Item = &CiContinuationRecord> {
+        self.registrations
+            .iter()
+            .filter(|record| record.state.is_claimed())
     }
 
     /// The record for `command_id`, whatever state it is in.
@@ -415,10 +491,43 @@ impl CiContinuationStore {
         })
     }
 
+    /// Move one pending record into [`RecordState::Claimed`].
+    ///
+    /// Called once the operation and command ledgers both name this
+    /// `commandId`, and **only** then: the state asserts that start permission
+    /// is already durable elsewhere.
+    ///
+    /// This is the one mutation that does not roll its in-memory half back
+    /// when the write fails, and the asymmetry is deliberate. The claim itself
+    /// is durable in the two ledgers whatever this file says; all this record
+    /// still decides is whether *this process* would treat the registration as
+    /// deliverable again. Rolling back to `ready` would do exactly that — hand
+    /// the same registration to another delivery pass for a turn that is
+    /// already permitted. Keeping the memory state and returning the error
+    /// lets the caller log the lost durability without re-arming the promise.
+    pub fn mark_claimed(&mut self, command_id: &str, at: u64) -> io::Result<()> {
+        if !self
+            .registrations
+            .iter()
+            .any(|record| record.command_id == command_id && record.state.is_pending())
+        {
+            return Ok(());
+        }
+        for record in self.registrations.iter_mut() {
+            if record.command_id == command_id {
+                record.state = RecordState::Claimed { at };
+            }
+        }
+        self.persist()
+    }
+
     /// Record a durable disposition for one registration.
     ///
-    /// Called only after the refusal is in the refusal ledger, so the record
-    /// and the ledger can never disagree about whether the operator was told.
+    /// Written after the receipt is in the crash-safe outbox and after the
+    /// refusal ledger, so a record that says `terminal` is one whose answer is
+    /// both queued for the operator and fenced against a second answer. The
+    /// converse is not guaranteed and does not need to be: a queued receipt
+    /// with no terminal record is re-derived and re-fenced on replay.
     pub fn mark_terminal(
         &mut self,
         command_id: &str,
@@ -460,6 +569,55 @@ impl CiContinuationStore {
                 if record.command_id == command_id {
                     record.attempts = record.attempts.saturating_add(1);
                     record.next_check_at = next_check_at;
+                }
+            }
+        })
+    }
+
+    /// Note a delivery attempt that was held up by a *named* obstacle.
+    ///
+    /// Identical to [`Self::note_attempt`] except that it also records the
+    /// obstacle on the record, so the eventual expiry can answer with it. A
+    /// separate method rather than a wider `note_attempt` signature: the
+    /// callers that defer for an unnamed transient reason genuinely have
+    /// nothing to record, and passing them `None` would invite recording
+    /// "unknown" over an obstacle a previous pass did name.
+    pub fn note_attempt_with_obstacle(
+        &mut self,
+        command_id: &str,
+        next_check_at: u64,
+        obstacle: &str,
+    ) -> io::Result<()> {
+        if !self
+            .registrations
+            .iter()
+            .any(|record| record.command_id == command_id)
+        {
+            return Ok(());
+        }
+        self.mutate(|registrations| {
+            for record in registrations.iter_mut() {
+                if record.command_id == command_id {
+                    record.attempts = record.attempts.saturating_add(1);
+                    record.next_check_at = next_check_at;
+                    record.last_obstacle = Some(obstacle.to_owned());
+                }
+            }
+        })
+    }
+
+    /// Bring one registration's deadline forward to now.
+    ///
+    /// Test-only. Expiry is a wall-clock fact and this crate's `now_secs`
+    /// reads the system clock, so a test that wanted to observe what happens
+    /// *after* a deferral would otherwise have to sleep out the registration's
+    /// whole window. Nothing in production ever shortens a deadline.
+    #[cfg(test)]
+    pub fn expire_now(&mut self, command_id: &str) -> io::Result<()> {
+        self.mutate(|registrations| {
+            for record in registrations.iter_mut() {
+                if record.command_id == command_id {
+                    record.expires_at = 0;
                 }
             }
         })
@@ -514,7 +672,13 @@ impl CiContinuationStore {
         Ok(())
     }
 
-    fn persist(&self) -> io::Result<()> {
+    fn persist(&mut self) -> io::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_write) {
+            return Err(io::Error::other(
+                "injected CI continuation store write failure",
+            ));
+        }
         let body = serde_json::to_vec_pretty(&SnapshotRef {
             version: STORE_VERSION,
             registrations: &self.registrations,

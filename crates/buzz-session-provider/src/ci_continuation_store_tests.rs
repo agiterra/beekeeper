@@ -40,6 +40,7 @@ fn record(command_id: &str, channel_id: Uuid, run: &str) -> CiContinuationRecord
         relay_answered: false,
         attempts: 0,
         next_check_at: 0,
+        last_obstacle: None,
         state: RecordState::Waiting,
     }
 }
@@ -384,4 +385,104 @@ fn the_store_file_is_the_documented_schema() {
         );
     }
     assert_eq!(entry["state"]["type"], "waiting");
+}
+
+/// The claim window is a durable, reopenable state — not a flag held only in
+/// the process that granted it. It is also not *pending*: a claimed record is
+/// never re-delivered, re-watched, expired, or counted against the caps.
+#[test]
+fn a_claimed_record_is_durable_reopenable_and_not_pending() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let mut store = CiContinuationStore::open(dir.path()).expect("open");
+    store
+        .insert(record("cic-a", channel_id, "1"))
+        .expect("insert");
+    store
+        .mark_ready(&identity_digest("1"), &ready())
+        .expect("ready");
+    store.mark_claimed("cic-a", 1_700).expect("claim");
+
+    let body = std::fs::read_to_string(dir.path().join(STORE_FILE)).expect("read");
+    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(value["registrations"][0]["state"]["type"], "claimed");
+    assert_eq!(value["registrations"][0]["state"]["at"], 1_700);
+
+    let reopened = CiContinuationStore::open(dir.path()).expect("reopen");
+    let stored = reopened.record("cic-a").expect("record survives");
+    assert_eq!(stored.state, RecordState::Claimed { at: 1_700 });
+    assert_eq!(reopened.pending_count(), 0);
+    assert!(reopened.pending_identities().is_empty());
+    assert!(reopened.ready_for_delivery(u64::MAX).is_empty());
+    assert!(reopened.expired(u64::MAX).is_empty());
+    assert_eq!(
+        reopened
+            .claimed()
+            .map(|record| record.command_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cic-a"],
+        "the boot reconciliation finds it exactly here"
+    );
+}
+
+/// A claim that cannot be persisted keeps its in-memory state rather than
+/// rolling back to `ready`. The claim is already durable in the operation and
+/// command ledgers, so rolling back would re-offer a turn that is already
+/// somebody's; the error is reported so the caller can log the lost visibility.
+#[test]
+fn a_failed_claim_write_reports_the_error_without_re_arming_the_promise() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let mut store = CiContinuationStore::open(dir.path()).expect("open");
+    store
+        .insert(record("cic-a", channel_id, "1"))
+        .expect("insert");
+    store
+        .mark_ready(&identity_digest("1"), &ready())
+        .expect("ready");
+
+    store.fail_next_write();
+    let error = store
+        .mark_claimed("cic-a", 1_700)
+        .expect_err("the write fails");
+    assert_eq!(
+        error.to_string(),
+        "injected CI continuation store write failure"
+    );
+    assert_eq!(
+        store.record("cic-a").expect("record").state,
+        RecordState::Claimed { at: 1_700 },
+        "the in-memory claim stands; only its visibility was lost"
+    );
+    assert!(store.ready_for_delivery(u64::MAX).is_empty());
+}
+
+/// The rollback rule the rest of the store keeps: an undurable change is not a
+/// change.
+#[test]
+fn a_failed_write_rolls_back_every_other_mutation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let channel_id = Uuid::new_v4();
+    let mut store = CiContinuationStore::open(dir.path()).expect("open");
+    store
+        .insert(record("cic-a", channel_id, "1"))
+        .expect("insert");
+
+    store.fail_next_write();
+    store
+        .mark_terminal("cic-a", "CI_CONTINUATION_EXPIRED", 1_800, None)
+        .expect_err("the write fails");
+    assert_eq!(
+        store.record("cic-a").expect("record").state,
+        RecordState::Waiting
+    );
+    let reopened = CiContinuationStore::open(dir.path()).expect("reopen");
+    assert_eq!(
+        reopened.record("cic-a").expect("record").state,
+        RecordState::Waiting
+    );
+}
+
+fn identity_digest(run: &str) -> String {
+    buzz_core::ci_result::correlation_id(&identity(run)).expect("valid identity digest")
 }

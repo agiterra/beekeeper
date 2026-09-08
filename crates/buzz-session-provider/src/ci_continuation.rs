@@ -30,12 +30,18 @@
 //!   revoked while CI was running refuses the turn; a regrant does not
 //!   resurrect it.
 //! - **Start permission:** at the actor's execution boundary the provider
-//!   repeats admission, writes operation then command ledgers, and retires the
-//!   record before allowing any prompt. A crash after these writes can lose
-//!   execution; recovery never grants this operation twice.
-//! - **Refusal:** the refusal ledger, then the outbox, then the terminal
-//!   record. The retained terminal record is what stops a relay redelivery of
-//!   the registration from resurrecting a refused promise.
+//!   repeats admission, writes operation then command ledgers, and marks the
+//!   record `claimed` before allowing any prompt. A crash after these writes
+//!   can lose execution; recovery never grants this operation twice, and the
+//!   `claimed` record is what makes that loss *visible* — startup answers it
+//!   with [`LOST_AFTER_CLAIM`] rather than leaving the sender with silence.
+//!   The record is removed when `TurnStarted` reports the turn beginning.
+//! - **Refusal:** the outbox, then the refusal ledger, then the terminal
+//!   record. The outbox is crash-safe and fenced by semantic key, so
+//!   enqueuing first cannot answer twice; writing the ledger first *could*
+//!   answer never, because a durably-refused command is never re-derived. The
+//!   retained terminal record is what stops a relay redelivery of the
+//!   registration from resurrecting a refused promise.
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -49,6 +55,7 @@ use crate::ci_continuation_store::{
 };
 use crate::ci_result_listener::{CiListenerEvent, CiResultListener, ListenerConfig};
 use crate::commands::{decide_turn_command, TurnAction, TurnCommand, TurnDecision};
+use crate::native_restore::RestoreObstacle;
 use crate::payload::{
     LifecycleReceipt, CI_CONTINUATION_EXPIRED, CI_RESULT_CONFLICT, CI_RESULT_UNAVAILABLE_OR_HIDDEN,
     COMMAND_ID_CONFLICT,
@@ -58,6 +65,15 @@ use crate::{commands::ProjectsFile, Provider, TurnDisposition};
 
 /// The requested CI project is not the execution's recorded project.
 pub const CI_CONTINUATION_PROJECT_MISMATCH: &str = "CI_CONTINUATION_PROJECT_MISMATCH";
+
+/// The provider crashed after durably claiming this continuation and before
+/// the adapter prompt; the claim cannot be spent again, so this delivery is
+/// lost — resend a new registration.
+///
+/// Provider-local, like [`CI_CONTINUATION_PROJECT_MISMATCH`]: it names a fact
+/// about *this* process's crash window, not a rule the wire protocol has an
+/// opinion about, so `buzz-core` is left alone.
+pub const LOST_AFTER_CLAIM: &str = "LOST_AFTER_CLAIM";
 
 /// Await the next verified-result report, parking forever when there is none.
 ///
@@ -279,6 +295,7 @@ impl Provider {
             relay_answered: false,
             attempts: 0,
             next_check_at: 0,
+            last_obstacle: None,
             state: RecordState::Waiting,
         };
         match self.ci_continuations.insert(record) {
@@ -437,6 +454,58 @@ impl Provider {
                 None,
             );
         }
+        // The restart seam. A registration made before this provider restarted
+        // names a target whose adapter died with the previous process: without
+        // this, the rebuilt turn reaches a session record with no live handle
+        // and is answered `turn_dropped/NO_LIVE_EXECUTION` — a promise the
+        // provider made and then declined to keep, for a reason that is its own
+        // restart rather than anything about the work.
+        //
+        // So the generation is reopened *in place* first, and only then is the
+        // turn built. The reopen never advances a generation and never starts a
+        // new conversation; when it cannot happen at all it names the obstacle,
+        // and the registration ends visibly rather than in a fresh chat with an
+        // agent that remembers nothing. See `crate::native_restore`.
+        if self.sessions.handle(&record.target.session_id).is_none() {
+            match self
+                .restore_generation(&record.target.session_id, None)
+                .await?
+            {
+                // Reopened, or already live — either way there is a process to
+                // deliver into and the ordinary decision runs next.
+                Ok(()) | Err(RestoreObstacle::AlreadyLive) => {}
+                // The one retryable obstacle. Host custody is re-staged by the
+                // desktop shortly after a provider restart, and that can land
+                // after this pass; refusing now would answer a question whose
+                // answer is still changing. The registration's own expiry is
+                // the outer bound, and it will report this obstacle by name.
+                Err(RestoreObstacle::ActorUnavailable) => {
+                    tracing::info!(
+                        target: "csp::ci",
+                        %command_id,
+                        "the continuation's execution has no live process and its agent seat is \
+                         not staged yet; deferring rather than refusing"
+                    );
+                    self.ci_continuations.note_attempt_with_obstacle(
+                        command_id,
+                        now_secs().saturating_add(DELIVERY_RETRY_SECS),
+                        crate::payload::ACTOR_UNAVAILABLE,
+                    )?;
+                    self.sync_ci_listener();
+                    return Ok(());
+                }
+                // Settled: no cursor, no runtime, no native reattachment, or a
+                // rejected one. None of these become true by waiting.
+                Err(obstacle) => {
+                    return self.refuse_ci_continuation(
+                        command_id,
+                        obstacle.code(),
+                        &obstacle.message(),
+                        None,
+                    );
+                }
+            }
+        }
         let text = match materialize(&record, ready) {
             Ok(text) => text,
             // The stored result cannot be turned into a prompt. Terminal and
@@ -515,23 +584,45 @@ impl Provider {
     /// Recheck a CI turn at the actor's execution boundary and durably claim it
     /// before permitting any prompt. A crash after this claim may lose the
     /// execution, but cannot admit this command or operation a second time.
+    ///
+    /// This wrapper exists for one invariant the decision itself kept getting
+    /// wrong: **the in-flight entry is released on every path that is not a
+    /// yes.** Each denial branch used to release it by hand, after a fallible
+    /// write, so a write that failed returned early and left the command
+    /// wedged in `in_flight` — occupying its target's admission slot for the
+    /// life of the process, with no receipt and no way to retry it. The
+    /// decision is now made by [`Self::decide_ci_turn_start`], which never
+    /// touches `in_flight`, and the release happens here for every `Err` and
+    /// every `Ok(false)` alike. What is returned is the disposition that was
+    /// actually recorded: `Ok(true)` only when both durable claims landed,
+    /// `Ok(false)` when a refusal was durably recorded, and `Err` when the
+    /// recording itself failed after its receipt was queued.
     pub(crate) fn admit_ci_turn_start(
         &mut self,
         session_id: &str,
         command_id: &str,
     ) -> anyhow::Result<bool> {
-        let Some(record) = self.ci_continuations.record(command_id).cloned() else {
+        let admitted = self.decide_ci_turn_start(session_id, command_id);
+        if !matches!(admitted, Ok(true)) {
             self.in_flight.remove(command_id);
+        }
+        admitted
+    }
+
+    /// Decide, and durably record, one CI start-permission request.
+    ///
+    /// Owns no `in_flight` bookkeeping — see [`Self::admit_ci_turn_start`],
+    /// which releases the entry for every outcome that is not a permission.
+    fn decide_ci_turn_start(&mut self, session_id: &str, command_id: &str) -> anyhow::Result<bool> {
+        let Some(record) = self.ci_continuations.record(command_id).cloned() else {
             return Ok(false);
         };
         if record.target.session_id != session_id || !matches!(record.state, RecordState::Ready(_))
         {
-            self.in_flight.remove(command_id);
             return Ok(false);
         }
         if record.expires_at <= now_secs() {
             self.expire_ci_continuation(command_id)?;
-            self.in_flight.remove(command_id);
             return Ok(false);
         }
         if self
@@ -546,7 +637,6 @@ impl Provider {
                 "the CI result project no longer matches this execution's recorded project",
                 None,
             )?;
-            self.in_flight.remove(command_id);
             return Ok(false);
         }
         let projects = ProjectsFile::default();
@@ -576,25 +666,39 @@ impl Provider {
                     self.state.consume_operation(&key, command_id, now_secs())?;
                 }
                 self.state.consume_command(command_id, now_secs())?;
-                self.retire_ci_continuation(command_id)?;
+                // Past this line the actor is permitted, unconditionally. Both
+                // durable claims are down and they are first-writer-wins, so
+                // nothing that happens now can be undone by denying the turn —
+                // denying it would only guarantee that the operation this
+                // command already owns is never spent by anyone.
+                //
+                // The record therefore moves to `claimed` rather than being
+                // removed, and a failure to write that is logged rather than
+                // returned. An earlier version returned the store error and
+                // refused the actor: the turn was already durably consumed, so
+                // that answer was simply false.
+                if let Err(error) = self.ci_continuations.mark_claimed(command_id, now_secs()) {
+                    tracing::error!(
+                        target: "csp::ci",
+                        %command_id,
+                        "the CI continuation's start claim could not be recorded, so a crash \
+                         before this turn starts will not be reported as lost: {error}"
+                    );
+                }
+                self.sync_ci_listener();
                 Ok(true)
             }
             TurnDecision::Fail { code, message, .. } => {
                 self.refuse_ci_continuation(command_id, code, &message, None)?;
-                self.in_flight.remove(command_id);
                 Ok(false)
             }
             TurnDecision::Ignore(reason) => {
                 if let Some(refusal) = reason.refusal() {
                     self.refuse_ci_continuation(command_id, refusal.code, refusal.message, None)?;
                 }
-                self.in_flight.remove(command_id);
                 Ok(false)
             }
-            _ => {
-                self.in_flight.remove(command_id);
-                Ok(false)
-            }
+            _ => Ok(false),
         }
     }
 
@@ -637,6 +741,25 @@ impl Provider {
             return Ok(());
         };
         let (code, observation, message) = match (&record.state, record.relay_answered) {
+            // A ready record that spent its whole window deferring on custody
+            // did not fail to find a CI result — it found one and had nowhere
+            // to deliver it, because the seat this execution runs as was never
+            // re-staged on this host. `CI_CONTINUATION_EXPIRED` would point an
+            // operator at CI; this points them at the machine that holds the
+            // agent's key. The distinction is recorded, not guessed: only the
+            // deferral path writes `last_obstacle`.
+            (RecordState::Ready(_), _)
+                if record.last_obstacle.as_deref() == Some(crate::payload::ACTOR_UNAVAILABLE) =>
+            {
+                (
+                    crate::payload::ACTOR_UNAVAILABLE,
+                    None,
+                    "a verified CI result was found, but this execution had no live process and \
+                     no key material was staged for its agent seat before the registration \
+                     expired; reconnect from the host that holds this agent's key and register \
+                     the continuation again",
+                )
+            }
             (RecordState::Ready(_), _) => (
                 CI_CONTINUATION_EXPIRED,
                 None,
@@ -660,9 +783,27 @@ impl Provider {
 
     /// Publish a terminal refusal for one registration, durably and once.
     ///
-    /// Refusal ledger, then outbox, then the terminal record — the same order
-    /// every other refusal in this crate takes, so a crash costs a receipt
-    /// rather than a second answer.
+    /// **Outbox, then refusal ledger, then the terminal record.** This used to
+    /// be ledger-first, on the reasoning that a crash should cost a receipt
+    /// rather than risk a second answer. That reasoning was wrong about which
+    /// failure it was trading against, and the order is now reversed:
+    ///
+    /// - The outbox is itself crash-safe and fenced by `(kind, semantic key)`,
+    ///   so enqueuing first cannot produce a duplicate answer. A re-derived
+    ///   refusal on replay finds the row already queued and adds nothing; if
+    ///   the row has already been published and acked, the receipt a consumer
+    ///   receives twice is byte-identical under one key.
+    /// - Ledger-first, in contrast, converts *any* failure of the enqueue into
+    ///   permanent silence: the command is durably recorded as answered, so no
+    ///   replay ever re-derives the refusal, and the operator is left with a
+    ///   registration that simply stops existing. That is the failure this
+    ///   whole path exists to prevent, and it is not recoverable by retrying.
+    ///
+    /// So the enqueue happens first and its failure aborts before anything is
+    /// recorded — leaving the command unrefused, unconsumed and answerable on
+    /// the next pass. A refusal-ledger failure *after* a successful enqueue
+    /// returns the error but keeps the queued receipt: the operator is told,
+    /// and the replay re-refuses into a fenced outbox.
     fn refuse_ci_continuation(
         &mut self,
         command_id: &str,
@@ -674,9 +815,9 @@ impl Provider {
             return Ok(());
         };
         let now = now_secs();
-        self.state.record_refusal(command_id, now)?;
         let receipt = LifecycleReceipt::turn_refused(command_id, &record.target, code, message);
         self.enqueue_receipt(record.channel_id, command_id, &receipt)?;
+        self.state.record_refusal(command_id, now)?;
         self.ci_continuations
             .mark_terminal(command_id, code, now, observation)?;
         tracing::info!(target: "csp::ci", %command_id, %code, "CI continuation refused");
@@ -684,10 +825,16 @@ impl Provider {
         Ok(())
     }
 
-    /// Retire a registration after durable start permission.
+    /// Retire a registration whose turn has been observed starting.
     ///
-    /// CI calls this after operation and command claims, before permitting the
-    /// actor's prompt. The ordinary `TurnStarted` arm may call it again.
+    /// Called from the `TurnStarted` arm, which is the first moment the
+    /// promise is unambiguously kept: the record it removes is normally the
+    /// `claimed` one written by [`Self::admit_ci_turn_start`]. Until then the
+    /// record deliberately survives, because a record that is gone and a
+    /// delivery that was lost look identical (see [`LOST_AFTER_CLAIM`]).
+    ///
+    /// Idempotent, and a no-op for a `commandId` this store never held —
+    /// `TurnStarted` fires for every turn, not just continuations.
     pub(crate) fn retire_ci_continuation(&mut self, command_id: &str) -> anyhow::Result<()> {
         if self.ci_continuations.record(command_id).is_none() {
             return Ok(());
@@ -699,12 +846,22 @@ impl Provider {
 
     /// Reconcile the store against the durable ledgers at startup.
     ///
-    /// A record whose `commandId` is already consumed or already refused is
-    /// dropped: those ledgers are the fence, and a surviving record could only
-    /// promise a turn that already ran or re-answer a command already
-    /// answered. Everything else is left exactly where it was — a `waiting`
-    /// record is picked up by the listener's first REQ, which replays stored
-    /// results, and a `ready` record is re-delivered by the first tick.
+    /// A *pending* record whose `commandId` is already consumed or already
+    /// refused is dropped: those ledgers are the fence, and a surviving record
+    /// could only promise a turn that already ran or re-answer a command
+    /// already answered. `waiting` and `ready` records are otherwise left
+    /// exactly where they were — a `waiting` record is picked up by the
+    /// listener's first REQ, which replays stored results, and a `ready`
+    /// record is re-delivered by the first tick.
+    ///
+    /// A `claimed` record is the case this pass exists for. Reaching boot in
+    /// that state means the previous process durably claimed start permission
+    /// and died before the adapter reported the turn beginning: the operation
+    /// and command ledgers both name the `commandId`, so the claim can never
+    /// be spent again, and the delivery is simply gone. The honest answer is
+    /// to say so — a [`LOST_AFTER_CLAIM`] `turn_dropped` receipt, enqueued
+    /// before the record is removed so a crash between the two repeats the
+    /// enqueue into a fenced outbox rather than dropping the answer.
     pub(crate) fn recover_ci_continuations(&mut self) -> anyhow::Result<()> {
         let stale: Vec<String> = self
             .ci_continuations
@@ -722,6 +879,24 @@ impl Provider {
                 "a pending CI continuation was already consumed or refused — reconciling"
             );
             self.ci_continuations.remove(&command_id)?;
+        }
+        let lost: Vec<CiContinuationRecord> = self.ci_continuations.claimed().cloned().collect();
+        for record in lost {
+            tracing::warn!(
+                target: "csp::ci",
+                command_id = %record.command_id,
+                "a CI continuation was claimed but never started — reporting the delivery as lost"
+            );
+            let receipt = LifecycleReceipt::turn_dropped(
+                &record.command_id,
+                &record.target,
+                LOST_AFTER_CLAIM,
+                "this provider stopped after durably claiming the continuation turn and before \
+                 the agent was prompted; the claim cannot be spent again, so this delivery is \
+                 lost — register the continuation again to retry it",
+            );
+            self.enqueue_receipt(record.channel_id, &record.command_id, &receipt)?;
+            self.ci_continuations.remove(&record.command_id)?;
         }
         let pending = self.ci_continuations.pending_count();
         if pending > 0 {

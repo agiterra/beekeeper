@@ -410,6 +410,27 @@ pub struct StateStore {
     refusals: HashSet<String>,
     /// Team-wake operation key → the `commandId` that owns it.
     operations: HashMap<String, String>,
+    /// Injected one-shot ledger-append failures. Test-only.
+    #[cfg(test)]
+    fault_plan: FaultPlan,
+}
+
+/// One-shot injected failures for the durable ledger appends.
+///
+/// Test-only, and compiled out of every release build. The provider's
+/// ordering guarantees are claims about what survives a *failing* write, so
+/// they can only be proven by a test that can make one write fail on demand
+/// without breaking the directory for every write after it. Each flag is
+/// consumed by the first append it applies to.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct FaultPlan {
+    /// Fail the next [`StateStore::record_refusal`].
+    pub fail_next_refusal_append: bool,
+    /// Fail the next [`StateStore::consume_command`].
+    pub fail_next_command_append: bool,
+    /// Fail the next [`StateStore::consume_operation`].
+    pub fail_next_operation_append: bool,
 }
 
 impl StateStore {
@@ -431,9 +452,17 @@ impl StateStore {
             commands: HashSet::new(),
             refusals: HashSet::new(),
             operations: HashMap::new(),
+            #[cfg(test)]
+            fault_plan: FaultPlan::default(),
         };
         store.load_commands(command_retention_secs)?;
         Ok(store)
+    }
+
+    /// The injected ledger faults this store will honor next. Test-only.
+    #[cfg(test)]
+    pub(crate) fn fault_plan(&mut self) -> &mut FaultPlan {
+        &mut self.fault_plan
     }
 
     /// Newest `created_at` already consumed in a channel, if any.
@@ -467,6 +496,10 @@ impl StateStore {
     /// the turn is not lost. See [`crate::Provider::handle_session_event`]'s
     /// `TurnStarted` arm.
     pub fn consume_command(&mut self, command_id: &str, at: u64) -> io::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fault_plan.fail_next_command_append) {
+            return Err(io::Error::other("injected command-ledger append failure"));
+        }
         Self::append_ledger_record(
             &self.dir.join(COMMANDS_FILE),
             &mut self.commands,
@@ -496,6 +529,10 @@ impl StateStore {
     pub fn consume_operation(&mut self, key: &str, command_id: &str, at: u64) -> io::Result<()> {
         if self.operations.contains_key(key) {
             return Ok(());
+        }
+        #[cfg(test)]
+        if std::mem::take(&mut self.fault_plan.fail_next_operation_append) {
+            return Err(io::Error::other("injected operation-ledger append failure"));
         }
         self.operations
             .insert(key.to_owned(), command_id.to_owned());
@@ -532,14 +569,27 @@ impl StateStore {
         self.refusals.contains(command_id)
     }
 
-    /// Record a command as refused, durably, before its refusal is published.
+    /// Record a command as refused, durably, once its refusal is queued.
     ///
     /// A refused command never ran, so it must not be *consumed* — consumed
     /// means "this one started". It must also never be answered twice: the
     /// outbox fences duplicates only within one process lifetime, so without a
     /// durable set a restart plus a relay redelivery republishes the same
     /// refusal under the same semantic key.
+    ///
+    /// This is written *after* the receipt reaches the outbox, not before.
+    /// Both files are crash-safe, so the question is only which failure is
+    /// worse. Ledger-first turns a failing outbox write into a command that is
+    /// permanently recorded as answered and never actually answered — silence
+    /// the operator cannot even retry into. Outbox-first turns a failing
+    /// ledger write into at worst a second copy of the identical receipt on
+    /// replay, which the semantic key fences while the row is queued and which
+    /// a consumer deduplicates in any case.
     pub fn record_refusal(&mut self, command_id: &str, at: u64) -> io::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fault_plan.fail_next_refusal_append) {
+            return Err(io::Error::other("injected refusal-ledger append failure"));
+        }
         Self::append_ledger_record(
             &self.dir.join(REFUSALS_FILE),
             &mut self.refusals,
