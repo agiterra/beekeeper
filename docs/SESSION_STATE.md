@@ -5,6 +5,25 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## Latest installed test build — 497943d3 (September 8)
+
+Combined Roles design + shared project identities installed at
+`/Users/brian/Applications/Beekeeper Dev.app`, built 2026-09-08T14:25:45Z.
+All eight sidecars, role resources and deep strict signature verification pass.
+The old app was quit through its UI and process exit verified before replacement.
+Its bundle is preserved as `Beekeeper Dev.app.before-497943d3-20260908`.
+
+Relaunch process 48693 exists, but Computer Use timed out before the window.
+A fresh startup sample confirms SecKeychainFindGenericPassword on the wait path;
+Brian must handle the macOS Keychain prompt. No prompt bypass attempted. Installed
+native WebView acceptance is pending: overview/card readability, About/Skills and
+Technical details disclosures, Check again, scrolling and project-only sessions.
+
+Full combined desktop suite 8,501/8,501 and Roles browser suite 5/5 pass. Package
+log and startup sample are in `../review-2026-09-08-roles-design-integration/`.
+Source is 0be582fe9 (integrated Fable c1ec17763) + 497943d33 review fixes on the
+performance topic; not pushed or landed. Full release smoke remains for landing.
+
 ## September 8 Roles design integrated with shared identities
 
 Fable's c1ec17763 visual candidate is integrated on work/packs-scroll-performance
