@@ -5235,6 +5235,7 @@ mod tests {
             "agents",
             "canvas",
             "channels",
+            "ci",
             "dms",
             "emoji",
             "events",
