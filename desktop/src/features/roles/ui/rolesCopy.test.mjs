@@ -90,7 +90,10 @@ test("the empty states are the usability spec's exact words", () => {
   assert.equal(ROLES_TITLE, "Roles");
   assert.equal(ROLE_SKILLS_EMPTY, "No skills listed.");
   assert.equal(ROLE_AGENTS_EMPTY, "No agents yet.");
-  assert.equal(ROLE_QUIET, "No agents or sessions observed for this role.");
+  assert.equal(
+    ROLE_QUIET,
+    "No agents, sessions or reports observed for this role.",
+  );
   // A session is what an agent opened; the card no longer calls it a seat.
   assert.equal(ROLE_SEATS_TITLE, "Sessions");
   assert.equal(ROLE_SEATS_EMPTY, "No open sessions.");
@@ -750,7 +753,7 @@ test("the card's report line abbreviates every count the long sentence names", (
       unknown: 1,
       versions: [],
     }),
-    "4 reports · 1 newer · 2 other versions · 1 no version reported",
+    "4 reports · 1 newer · 2 on other versions · 1 no version reported",
   );
   assert.equal(
     roleReportShortSentence({
@@ -763,7 +766,7 @@ test("the card's report line abbreviates every count the long sentence names", (
       unknown: 0,
       versions: [],
     }),
-    "1 report · 1 other version",
+    "1 report · 1 on another version",
   );
 });
 

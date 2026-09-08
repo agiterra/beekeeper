@@ -14,6 +14,7 @@ import type * as React from "react";
 import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { cn } from "@/shared/lib/cn";
 
+import { roleSeatIsOpen } from "../lib/rolesPageSummary";
 import type { RoleAgentChip, SeatRow } from "../lib/rolesViewModel";
 
 /** Muted is a real state ("stopped", "no open sessions"), never an unknown. */
@@ -107,8 +108,8 @@ export type RoleActivity = "running" | "idle" | "none";
  * sessions that do not, `none` when it holds none.
  */
 export function roleActivity(seats: readonly SeatRow[]): RoleActivity {
-  if (seats.length === 0) return "none";
-  return seats.some((seat) => seat.status === "running") ? "running" : "idle";
+  if (seats.some((seat) => seat.status === "running")) return "running";
+  return seats.some((seat) => roleSeatIsOpen(seat.status)) ? "idle" : "none";
 }
 
 export function roleActivityDotClass(activity: RoleActivity): string {

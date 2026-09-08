@@ -179,7 +179,7 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   // longer explanation it replaced (`ROLES_EXPLANATION`) is still true and
   // still kept, just moved into Technical details (asserted below).
   await expect(page.getByTestId("roles-subtitle")).toHaveText(
-    "What each role is for, who can take it, and which version of its instructions is available and in use.",
+    "What each role is for, its project participants, and the versions available here or reported by agents.",
   );
 
   // The mock fixture's two roles come from two different rungs (lead is
@@ -262,10 +262,10 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   // Every section empty on both cards → one line each, not three repeated
   // absences.
   await expect(page.getByTestId("role-quiet-lead")).toHaveText(
-    "Nothing is using this role yet.",
+    "No agents, sessions or reports observed for this role.",
   );
   await expect(page.getByTestId("role-quiet-reviewer")).toHaveText(
-    "Nothing is using this role yet.",
+    "No agents, sessions or reports observed for this role.",
   );
 
   // "About this role" holds the summary paragraph and the skills, collapsed
@@ -670,6 +670,8 @@ async function openRankedProjectRolesTab(page: Page) {
         avatarUrl: null,
         status: "running",
         homeRole: "lead",
+        // The mock projects this membership into shared agent discovery.
+        channelIds: [GENERAL_CHANNEL_ID],
         hasRolePack: true,
       },
     ],
@@ -811,7 +813,7 @@ test("the Roles tab distinguishes a version, no version reported, and no role at
   // stays the single "quiet" line, distinct from lead's populated card.
   await expect(page.getByTestId("role-quiet-lead")).toHaveCount(0);
   await expect(page.getByTestId("role-quiet-reviewer")).toHaveText(
-    "Nothing is using this role yet.",
+    "No agents, sessions or reports observed for this role.",
   );
 
   // Summary strip reacts to the same reads: 2 roles, the one seeded agent,

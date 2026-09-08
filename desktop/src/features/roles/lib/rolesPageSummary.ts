@@ -24,6 +24,11 @@ const FINISHED_STATUSES: ReadonlySet<CodingSessionStatus> = new Set([
   "failed",
 ]);
 
+/** The same execution-status boundary for summary counts and role activity. */
+export function roleSeatIsOpen(status: CodingSessionStatus): boolean {
+  return !FINISHED_STATUSES.has(status);
+}
+
 export type RolesPageSummary = {
   /** Role cards on the page. */
   roles: number;
@@ -56,7 +61,7 @@ export function rolesPageSummary(
   const shared = new Set<string>();
   const openSeats = new Set<string>();
   const countSeat = (seat: SeatRow) => {
-    if (!FINISHED_STATUSES.has(seat.status)) openSeats.add(seat.key);
+    if (roleSeatIsOpen(seat.status)) openSeats.add(seat.key);
   };
 
   for (const role of view.roles) {

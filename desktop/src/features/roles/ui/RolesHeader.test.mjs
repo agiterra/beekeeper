@@ -38,7 +38,7 @@ test("the header states what this page is and where the instructions came from",
   // One line, not the old paragraph — which now lives in Technical details.
   assert.match(
     html,
-    />What each role is for, who can take it, and which version of its instructions is available and in use\.</,
+    />What each role is for, its project participants, and the versions available here or reported by agents\.</,
   );
   assert.doesNotMatch(html, /Each role is a set of instructions an agent/);
   assert.match(html, /data-testid="packs-source-sentence"/);

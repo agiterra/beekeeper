@@ -5,6 +5,31 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 Roles design integrated with shared identities
+
+Fable's c1ec17763 visual candidate is integrated on work/packs-scroll-performance
+with ef934b668 project scoping and shared identity discovery. The four summary
+tiles, compact cards, avatar/status presentation and progressive details preserve
+25-row history pagination and performance repairs. Shared chips use the model's
+unknown pack state and never a local process status; local presentation fields
+are retained, while unavailable remote avatar/runtime/model values stay null.
+
+Integration review repaired three honesty issues: observed version claims are
+not called "in use"; empty observations do not assert nobody uses a role; counts
+of reports on other versions do not claim to count distinct versions. Activity
+dots and open-session summary counts now share the same terminal-status rule.
+The browser fixture now explicitly establishes its local agent's project-channel
+membership rather than relying on homeRole alone. Other-project isolation remains
+covered, including two projects sharing a channel.
+
+Final full desktop suite 8,501/8,501 passes; rebuilt Roles browser suite 5/5 passes,
+including light/dark, 640px, 250% zoom, overflow/title checks and shared identity
+isolation. Six screenshot hashes are distinct. Desktop checks and file-size checks
+pass. Logs/screenshots: `../review-2026-09-08-roles-design-integration/`. These are
+mock-browser results; live two-machine role adoption is not yet proven. A packaged
+desktop test build is next; installed app remains e71cb7ba until replacement is
+recorded below. Main landing and full release smoke remain pending.
+
 ## September 8 project Roles identity and scope candidate
 
 Root implemented the selected-project boundary in useProjectPacksView and

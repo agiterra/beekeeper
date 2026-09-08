@@ -102,7 +102,8 @@ export const ROLE_SEATS_EMPTY = "No open sessions.";
  * A role no agent holds, no session runs and no report names. One line
  * instead of three separate absences, which said the same thing three times.
  */
-export const ROLE_QUIET = "No agents or sessions observed for this role.";
+export const ROLE_QUIET =
+  "No agents, sessions or reports observed for this role.";
 
 /**
  * The one scope line on the page, under the agent count. Two different kinds
@@ -449,7 +450,7 @@ export function roleReportShortSentence(summary: RoleReportSummary): string {
   if (summary.newer > 0) parts.push(`${summary.newer} newer`);
   if (summary.other > 0) {
     parts.push(
-      `${summary.other} other ${summary.other === 1 ? "version" : "versions"}`,
+      `${summary.other} on ${summary.other === 1 ? "another version" : "other versions"}`,
     );
   }
   if (summary.unknown > 0) {

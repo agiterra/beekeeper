@@ -443,7 +443,10 @@ test("a role nothing is using says it once, not three times", () => {
   const html = render({ role: role(), reports: null });
 
   assert.match(html, /data-testid="role-quiet-builder"/);
-  assert.match(html, />No agents or sessions observed for this role\.</);
+  assert.match(
+    html,
+    />No agents, sessions or reports observed for this role\.</,
+  );
   // Still discloses that there are no reports, for anything reading the state.
   assert.match(html, /data-reports="none"/);
   // And none of the three sentences it replaces.
