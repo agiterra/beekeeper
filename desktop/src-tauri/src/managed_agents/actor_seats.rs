@@ -534,10 +534,12 @@ pub struct SeatPackPreview {
 
 /// Resolve the seat pack for `agent_pubkey` at `role`, project source first.
 ///
-/// The one place the staging rule lives, shared by the preview command and the
-/// staging command so the dialog cannot promise a pack the create then fails
-/// to stage.
-fn plan_seat_pack(
+/// The one place the staging rule lives, shared by the preview command, the
+/// staging command, and [`crate::managed_agents::actor_seats_restage`] (a
+/// provider restart re-resolves the pack rather than trusting a stale one)
+/// so no caller can promise or restage a pack the create-time rule would not
+/// pick.
+pub(crate) fn plan_seat_pack(
     app: &AppHandle,
     state: &AppState,
     records: &[crate::managed_agents::types::ManagedAgentRecord],
@@ -830,7 +832,7 @@ impl StagedActorSeat {
 /// read": the plan's `pack_dir`/`persona_id` become the entry's pack and its
 /// `pack_ref` rides the entry verbatim, so a seat staged from the project's
 /// repository is stamped with that repository's commit and nothing else.
-fn seat_entry_for_plan(
+pub(crate) fn seat_entry_for_plan(
     record: &crate::managed_agents::types::ManagedAgentRecord,
     relay_url: &str,
     plan: SeatPackPreview,

@@ -12,9 +12,10 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
+use crate::app_state::AppState;
 use crate::managed_agents::{
-    append_log_marker, known_acp_runtime_exact, open_log_file, resolve_command,
-    should_skip_claude_executable,
+    actor_seats_restage::restage_actor_seats_for_provider, append_log_marker,
+    known_acp_runtime_exact, open_log_file, resolve_command, should_skip_claude_executable,
 };
 use crate::session_provider::env::{
     build_provider_env, ProviderEnvInputs, INHERITED_KEYS_TO_CLEAR,
@@ -348,6 +349,7 @@ fn start_supervisor(
         &binary, &record, &relay_url, &state_dir, &log_path, settings,
     )?;
     child_pid.store(child.id(), Ordering::Release);
+    spawn_seat_restage(app, state_dir.clone(), log_path.clone());
 
     state.install(SupervisorHandle {
         id,
@@ -400,6 +402,7 @@ fn start_supervisor(
                 Ok(next) => {
                     child_pid.store(next.id(), Ordering::Release);
                     child = next;
+                    spawn_seat_restage(&app, state_dir.clone(), log_path.clone());
                 }
                 Err(error) => {
                     eprintln!("buzz-desktop: session-provider: respawn failed: {error}");
@@ -413,6 +416,42 @@ fn start_supervisor(
         }
     });
     Ok(())
+}
+
+/// Re-stage custody for the provider's open seated generations, best-effort,
+/// after the initial spawn and after every successful respawn.
+///
+/// Runs on the Tauri async runtime rather than being awaited inline: a
+/// provider (re)start must not block on a relay round-trip
+/// ([`restage_actor_seats_for_provider`] may read a project's kind:30624),
+/// and a re-stage that does not run this time is not lost — the next restart
+/// tries again, and `seat-requests.json` still names the row. Success and
+/// failure are both logged to the provider's own log with
+/// [`append_log_marker`] so the file the operator already reads after a crash
+/// carries this too — never a key, only the counts
+/// [`crate::managed_agents::actor_seats_restage::RestageReport`] carries.
+fn spawn_seat_restage(app: &AppHandle, state_dir: PathBuf, log_path: PathBuf) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        match restage_actor_seats_for_provider(&app, &state, &state_dir).await {
+            Ok(report) => {
+                let _ = append_log_marker(
+                    &log_path,
+                    &format!(
+                        "=== re-staged {} of {} agent seats after provider start ===",
+                        report.staged, report.requested
+                    ),
+                );
+            }
+            Err(error) => {
+                let _ = append_log_marker(
+                    &log_path,
+                    &format!("=== agent seat re-stage failed after provider start: {error} ==="),
+                );
+            }
+        }
+    });
 }
 
 /// Poll the child until it exits or a stop is requested.
