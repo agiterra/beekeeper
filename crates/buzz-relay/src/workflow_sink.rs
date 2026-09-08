@@ -8,6 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
+use buzz_core::ci_result::CiResult;
 use buzz_core::kind::KIND_STREAM_MESSAGE;
 use buzz_core::tenant::CommunityId;
 use buzz_workflow::action_sink::{ActionSink, ActionSinkError};
@@ -365,6 +366,18 @@ impl ActionSink for RelayActionSink {
             }
 
             Ok(event_id_hex)
+        })
+    }
+
+    fn record_ci_result(
+        &self,
+        community_id: CommunityId,
+        result: &CiResult,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>> {
+        let state = self.state.clone();
+        let result = result.clone();
+        Box::pin(async move {
+            crate::workflow_ci_result::record_ci_result(&state, community_id, &result).await
         })
     }
 }

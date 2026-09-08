@@ -6,7 +6,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use buzz_core::tenant::CommunityId;
+use buzz_core::{ci_result::CiResult, tenant::CommunityId};
 
 /// Errors from action sink operations.
 #[derive(Debug, thiserror::Error)]
@@ -29,11 +29,23 @@ pub enum ActionSinkError {
     /// Message content is empty or whitespace-only.
     #[error("empty message content")]
     EmptyContent,
+    /// The same CI identity was already accepted with different canonical content.
+    #[error("CI result conflict: {0}")]
+    CiResultConflict(String),
+    /// The workflow owner no longer has authority over the configured repository.
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
 }
 
 impl From<ActionSinkError> for crate::WorkflowError {
     fn from(e: ActionSinkError) -> Self {
-        crate::WorkflowError::WebhookError(e.to_string())
+        match e {
+            ActionSinkError::CiResultConflict(detail) => {
+                crate::WorkflowError::CiResultConflict(detail)
+            }
+            ActionSinkError::Unauthorized(detail) => crate::WorkflowError::Unauthorized(detail),
+            other => crate::WorkflowError::WebhookError(other.to_string()),
+        }
     }
 }
 
@@ -65,5 +77,16 @@ pub trait ActionSink: Send + Sync {
         channel_id: &str,
         text: &str,
         author_pubkey: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
+
+    /// Persist a canonical relay-signed CI result for the run's community.
+    ///
+    /// Implementations must recheck the stored workflow owner's repository
+    /// authority at this action boundary and atomically distinguish a new
+    /// result, an exact retry, and conflicting content for the same identity.
+    fn record_ci_result(
+        &self,
+        community_id: CommunityId,
+        result: &CiResult,
     ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
 }

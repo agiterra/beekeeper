@@ -26,6 +26,7 @@ use buzz_workflow::executor::TriggerContext;
 
 use crate::state::AppState;
 use crate::webhook_secret;
+use crate::workflow_ci_result::{authorize_ci_result_binding, CiResultAuthorityError};
 
 use super::ingest::{extract_channel_id, IngestAuth, IngestError, IngestResult};
 use super::side_effects::{
@@ -744,6 +745,40 @@ async fn handle_workflow_def(
     let (def, definition_json_str) = buzz_workflow::WorkflowEngine::parse_yaml(&event.content)
         .map_err(|e| IngestError::Rejected(format!("invalid: workflow YAML parse error: {e}")))?;
     let workflow_name = extract_tag(event, "name").unwrap_or_else(|| def.name.clone());
+
+    // CI result authority is bound when the definition is saved, before any
+    // workflow row or command event is persisted. Each literal binding must
+    // resolve to the exact announced repository, its configured project, and
+    // a founder owner. The sink repeats this check at execution time so later
+    // revocation cannot be bypassed by an already-stored workflow.
+    for step in &def.steps {
+        if let buzz_workflow::ActionDef::RecordCiResult {
+            project,
+            repository,
+            ..
+        } = &step.action
+        {
+            authorize_ci_result_binding(
+                state,
+                tenant.community(),
+                &self_bytes,
+                project,
+                repository,
+            )
+            .await
+            .map_err(|error| match error {
+                CiResultAuthorityError::Invalid(detail) => {
+                    IngestError::Rejected(format!("invalid: record_ci_result: {detail}"))
+                }
+                CiResultAuthorityError::Unauthorized(detail) => {
+                    IngestError::Rejected(format!("forbidden: record_ci_result: {detail}"))
+                }
+                CiResultAuthorityError::Storage(detail) => {
+                    IngestError::Internal(format!("error: record_ci_result authority: {detail}"))
+                }
+            })?;
+        }
+    }
 
     // SEC-006: definitions with exfiltration-capable actions (call_webhook)
     // require elevated channel authority to save — plain membership is not

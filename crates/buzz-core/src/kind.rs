@@ -835,6 +835,8 @@ pub const KIND_WORKFLOW_COMPLETED: u32 = 46005;
 pub const KIND_WORKFLOW_FAILED: u32 = 46006;
 /// The workflow was cancelled before completion.
 pub const KIND_WORKFLOW_CANCELLED: u32 = 46007;
+/// Relay-signed immutable terminal result for one exact external CI run attempt.
+pub const KIND_CI_RESULT: u32 = 46008;
 /// A workflow step is waiting for human approval.
 pub const KIND_WORKFLOW_APPROVAL_REQUESTED: u32 = 46010;
 /// A pending workflow approval was granted.
@@ -1258,10 +1260,11 @@ pub fn shell_session_roster(event: &nostr::Event) -> Vec<(String, &'static str)>
 }
 
 /// Kinds whose visibility follows the repo → project link (NIP-MP Buzz
-/// access extension, phase 2): the NIP-34 repo surface. When a repo's 30617
-/// carries a `["project", …]` back-reference into a private project, the
-/// announcement itself, the relay-signed 30618 ref state, and every child
-/// event that `a`-tags the repo are hidden from readers outside the project.
+/// access extension, phase 2): the NIP-34 repo surface and relay-signed facts
+/// explicitly bound to a repository. When a repo's 30617 carries a
+/// `["project", …]` back-reference into a private project, the announcement
+/// itself, the relay-signed 30618 ref state, and every child event that
+/// `a`-tags the repo are hidden from readers outside the project.
 ///
 /// Enforcement is DB-backed (the project's ACL lives on a different event),
 /// so unlike [`SHARED_GATED_KINDS`] there is no stateless per-event
@@ -1280,6 +1283,7 @@ pub const GIT_PROJECT_GATED_KINDS: &[u32] = &[
     KIND_GIT_STATUS_MERGED,
     KIND_GIT_STATUS_CLOSED,
     KIND_GIT_STATUS_DRAFT,
+    KIND_CI_RESULT,
 ];
 
 /// Returns `true` for kinds in [`GIT_PROJECT_GATED_KINDS`].
@@ -1340,8 +1344,8 @@ pub fn normalize_project_coordinate(value: &str) -> Option<String> {
 /// - kind 30617/30618: the event's own `d` tag (repo names are unique per
 ///   community, so the name alone identifies the repo — necessary for 30618,
 ///   which is relay-signed and carries no owner reference);
-/// - child kinds (patches/PRs/issues/status): the `<repo-d>` segment of every
-///   well-formed `30617:<hex>:<repo-d>` `a` tag.
+/// - child kinds (patches/PRs/issues/status and CI results): the `<repo-d>`
+///   segment of every well-formed `30617:<hex>:<repo-d>` `a` tag.
 ///
 /// Parsing is tolerant (hex case-insensitive) so a case-variant coordinate
 /// cannot dodge the per-event check even though the SQL pushdown's exact
@@ -1558,6 +1562,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_WORKFLOW_COMPLETED,
     KIND_WORKFLOW_FAILED,
     KIND_WORKFLOW_CANCELLED,
+    KIND_CI_RESULT,
     KIND_WORKFLOW_APPROVAL_REQUESTED,
     KIND_WORKFLOW_APPROVAL_GRANTED,
     KIND_WORKFLOW_APPROVAL_DENIED,
@@ -1656,6 +1661,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_DM_VISIBILITY
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
+            | KIND_CI_RESULT
     )
 }
 

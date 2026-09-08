@@ -17,6 +17,8 @@ pub mod api_token;
 pub mod archived_identities;
 /// Channel and membership persistence.
 pub mod channel;
+/// Atomic storage for relay-produced CI completion events.
+pub mod ci_result;
 /// Coding-session authority-grant queries (NIP-CSAT ACL projection).
 pub mod coding_session_acl;
 /// Immutable lifecycle command/receipt authority resolution for session generations.
@@ -65,6 +67,7 @@ pub mod user;
 /// Workflow, run, and approval persistence.
 pub mod workflow;
 
+pub use ci_result::CiResultInsertOutcome;
 pub use error::{DbError, Result};
 pub use event::{
     AuthorityTransitionRefusal, CodingSessionAuthorityTransitionInsertOutcome,
@@ -1769,6 +1772,18 @@ impl Db {
             }
         }
         Ok(result)
+    }
+
+    /// Atomically insert a relay-produced CI result by its community-scoped
+    /// correlation key.
+    #[datastore_span(name = "insert_ci_result_event", system = "postgresql")]
+    pub async fn insert_ci_result_event(
+        &self,
+        community_id: CommunityId,
+        event: &nostr::Event,
+        correlation_id: &str,
+    ) -> Result<CiResultInsertOutcome> {
+        ci_result::insert_ci_result_event(&self.pool, community_id, event, correlation_id).await
     }
 
     /// Insert an event while holding and validating an admitted serving-write

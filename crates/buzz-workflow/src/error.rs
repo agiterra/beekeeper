@@ -46,6 +46,11 @@ pub enum WorkflowError {
     #[error("webhook error: {0}")]
     WebhookError(String),
 
+    /// A terminal CI result already exists for this exact identity with
+    /// different canonical content.
+    #[error("CI result conflict: {0}")]
+    CiResultConflict(String),
+
     /// The engine's concurrency limit was reached.
     #[error("capacity exceeded")]
     CapacityExceeded,
@@ -75,6 +80,7 @@ impl WorkflowError {
             Self::TemplateError(_) => "template_resolution_failed",
             Self::StepTimeout { .. } => "step_timeout",
             Self::WebhookError(_) => "webhook_failed",
+            Self::CiResultConflict(_) => "ci_result_conflict",
             Self::CapacityExceeded => "capacity_exceeded",
             Self::Database(_) => "database_error",
             Self::Unauthorized(_) => "owner_unauthorized",
@@ -110,5 +116,9 @@ mod tests {
             WorkflowError::NotImplemented("SendDm".to_owned()).code(),
             "action_not_implemented"
         );
+
+        let conflict = WorkflowError::CiResultConflict("existing event abc".into());
+        assert_eq!(conflict.code(), "ci_result_conflict");
+        assert!(conflict.to_string().contains("existing event abc"));
     }
 }

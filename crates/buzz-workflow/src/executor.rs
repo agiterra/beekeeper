@@ -122,6 +122,46 @@ pub fn resolve_template(
     Ok(result)
 }
 
+/// Resolve a CI action field only after proving every placeholder in the
+/// configured template has a value. Validation happens before substitution so
+/// braces introduced by a callback value remain ordinary result text rather
+/// than being mistaken for a second template pass.
+fn resolve_ci_template(
+    field: &str,
+    template: &str,
+    trigger_ctx: &TriggerContext,
+    step_outputs: &HashMap<String, JsonValue>,
+) -> Result<String, WorkflowError> {
+    let mut remaining = template;
+    while let Some(start) = remaining.find("{{") {
+        if remaining[..start].contains("}}") {
+            return Err(WorkflowError::TemplateError(format!(
+                "record_ci_result {field} contains a malformed template"
+            )));
+        }
+        remaining = &remaining[start + 2..];
+        let end = remaining.find("}}").ok_or_else(|| {
+            WorkflowError::TemplateError(format!(
+                "record_ci_result {field} contains an unclosed template"
+            ))
+        })?;
+        let expr = remaining[..end].trim();
+        let var_path = expr.splitn(2, '|').next().unwrap_or("").trim();
+        if var_path.is_empty() || resolve_variable(var_path, trigger_ctx, step_outputs).is_none() {
+            return Err(WorkflowError::TemplateError(format!(
+                "record_ci_result {field} references missing variable {var_path:?}"
+            )));
+        }
+        remaining = &remaining[end + 2..];
+    }
+    if remaining.contains("}}") {
+        return Err(WorkflowError::TemplateError(format!(
+            "record_ci_result {field} contains a malformed template"
+        )));
+    }
+    resolve_template(template, trigger_ctx, step_outputs)
+}
+
 /// Resolve a single variable path to its string value.
 fn resolve_variable(
     path: &str,
@@ -401,6 +441,13 @@ pub fn resolve_step_templates(
             None => Ok(None),
         }
     };
+    let t_strict = |field: &str, s: &str| resolve_ci_template(field, s, trigger_ctx, step_outputs);
+    let t_opt_strict = |field: &str, s: &Option<String>| -> Result<Option<String>, WorkflowError> {
+        match s {
+            Some(value) => Ok(Some(t_strict(field, value)?)),
+            None => Ok(None),
+        }
+    };
 
     match &step.action {
         SendMessage { text, channel } => Ok(SendMessage {
@@ -447,6 +494,29 @@ pub fn resolve_step_templates(
         }),
         Delay { duration } => Ok(Delay {
             duration: duration.clone(),
+        }),
+        RecordCiResult {
+            project,
+            repository,
+            check,
+            phase,
+            commit,
+            run,
+            attempt,
+            conclusion,
+            evidence_url,
+            summary,
+        } => Ok(RecordCiResult {
+            project: project.clone(),
+            repository: repository.clone(),
+            check: check.clone(),
+            phase: *phase,
+            commit: t_strict("commit", commit)?,
+            run: t_strict("run", run)?,
+            attempt: t_strict("attempt", attempt)?,
+            conclusion: t_strict("conclusion", conclusion)?,
+            evidence_url: t_opt_strict("evidence_url", evidence_url)?,
+            summary: t_opt_strict("summary", summary)?,
         }),
     }
 }
@@ -704,6 +774,74 @@ pub async fn dispatch_action(
                     Ok(StepResult::Completed(
                         serde_json::json!({ "slept_secs": secs }),
                     ))
+                }
+
+                RecordCiResult {
+                    project,
+                    repository,
+                    check,
+                    phase,
+                    commit,
+                    run,
+                    attempt,
+                    conclusion,
+                    evidence_url,
+                    summary,
+                } => {
+                    let attempt = attempt.parse::<u32>().map_err(|_| {
+                        WorkflowError::InvalidDefinition(
+                            "record_ci_result attempt must resolve to a positive integer".into(),
+                        )
+                    })?;
+                    let conclusion = match conclusion.as_str() {
+                        "success" => buzz_core::ci_result::CiConclusion::Success,
+                        "failure" => buzz_core::ci_result::CiConclusion::Failure,
+                        "cancelled" => buzz_core::ci_result::CiConclusion::Cancelled,
+                        _ => {
+                            return Err(WorkflowError::InvalidDefinition(
+                                "record_ci_result conclusion must resolve to success, failure, or cancelled"
+                                    .into(),
+                            ));
+                        }
+                    };
+
+                    // The workflow identity is loaded from the stored run. The
+                    // callback cannot choose or spoof this correlation field.
+                    let wf_run = engine
+                        .db
+                        .get_workflow_run(community_id, run_id)
+                        .await
+                        .map_err(|e| {
+                            WorkflowError::Database(format!(
+                                "record_ci_result: failed to load workflow run {run_id}: {e}"
+                            ))
+                        })?;
+                    let result = buzz_core::ci_result::CiResult {
+                        schema: buzz_core::ci_result::CI_RESULT_SCHEMA.to_owned(),
+                        identity: buzz_core::ci_result::CiResultIdentity {
+                            project: project.clone(),
+                            repository: repository.clone(),
+                            commit: commit.clone(),
+                            check: check.clone(),
+                            run: run.clone(),
+                            attempt,
+                            workflow: wf_run.workflow_id.to_string(),
+                            phase: *phase,
+                        },
+                        conclusion,
+                        evidence_url: evidence_url.clone(),
+                        summary: summary.clone(),
+                    };
+
+                    let event_id = engine
+                        .action_sink()?
+                        .record_ci_result(community_id, &result)
+                        .await
+                        .map_err(WorkflowError::from)?;
+                    Ok(StepResult::Completed(serde_json::json!({
+                        "recorded": true,
+                        "event_id": event_id,
+                    })))
                 }
             }
         })
@@ -1870,5 +2008,119 @@ mod tests {
             resolve_send_message_channel(Some(&override_channel_id.to_string()), "", None)
                 .expect("override should be accepted");
         assert_eq!(resolved, override_channel_id.to_string());
+    }
+
+    fn record_ci_result_template_step() -> Step {
+        Step {
+            id: "record".into(),
+            name: None,
+            if_expr: None,
+            timeout_secs: None,
+            action: ActionDef::RecordCiResult {
+                project: "literal-project".into(),
+                repository: "literal-repository".into(),
+                check: "literal-check".into(),
+                phase: buzz_core::ci_result::CiPhase::Deploy,
+                commit: "{{trigger.commit}}".into(),
+                run: "{{trigger.run}}".into(),
+                attempt: "{{trigger.attempt}}".into(),
+                conclusion: "{{trigger.conclusion}}".into(),
+                evidence_url: Some("{{trigger.url}}".into()),
+                summary: Some("{{trigger.summary}}".into()),
+            },
+        }
+    }
+
+    fn valid_ci_trigger_fields() -> TriggerContext {
+        let mut trigger = TriggerContext::default();
+        for (key, value) in [
+            ("commit", "a".repeat(40)),
+            ("run", "42".into()),
+            ("attempt", "2".into()),
+            ("conclusion", "success".into()),
+            ("url", "https://ci.example/run/42".into()),
+            ("summary", "passed".into()),
+        ] {
+            trigger.webhook_fields.insert(key.into(), value);
+        }
+        trigger
+    }
+
+    #[test]
+    fn record_ci_result_templates_only_callback_owned_fields() {
+        let step = record_ci_result_template_step();
+        let trigger = valid_ci_trigger_fields();
+        let resolved = resolve_step_templates(&step, &trigger, &HashMap::new())
+            .expect("templates should resolve");
+        assert!(matches!(
+            resolved,
+            ActionDef::RecordCiResult {
+                project,
+                repository,
+                check,
+                phase: buzz_core::ci_result::CiPhase::Deploy,
+                commit,
+                attempt,
+                conclusion,
+                ..
+            } if project == "literal-project"
+                && repository == "literal-repository"
+                && check == "literal-check"
+                && commit == "a".repeat(40)
+                && attempt == "2"
+                && conclusion == "success"
+        ));
+    }
+
+    #[test]
+    fn record_ci_result_rejects_missing_required_template_field() {
+        let step = record_ci_result_template_step();
+        let mut trigger = valid_ci_trigger_fields();
+        trigger.webhook_fields.remove("run");
+        let error = resolve_step_templates(&step, &trigger, &HashMap::new())
+            .expect_err("missing trigger.run must fail before the action sink");
+        assert!(matches!(error, WorkflowError::TemplateError(_)));
+        assert!(error.to_string().contains("record_ci_result run"));
+    }
+
+    #[test]
+    fn record_ci_result_rejects_missing_optional_template_fields_when_configured() {
+        let step = record_ci_result_template_step();
+        let mut trigger = valid_ci_trigger_fields();
+        trigger.webhook_fields.remove("url");
+        trigger.webhook_fields.remove("summary");
+        let evidence_error = resolve_step_templates(&step, &trigger, &HashMap::new())
+            .expect_err("configured evidence template must resolve");
+        assert!(evidence_error
+            .to_string()
+            .contains("record_ci_result evidence_url"));
+
+        trigger
+            .webhook_fields
+            .insert("url".into(), "https://ci.example/run/42".into());
+        let summary_error = resolve_step_templates(&step, &trigger, &HashMap::new())
+            .expect_err("configured summary template must resolve");
+        assert!(summary_error
+            .to_string()
+            .contains("record_ci_result summary"));
+    }
+
+    #[test]
+    fn record_ci_result_preserves_literal_braces_from_callback_value() {
+        let step = record_ci_result_template_step();
+        let mut trigger = valid_ci_trigger_fields();
+        let compiler_output = "compiler preserved {{template_source}} literally";
+        trigger
+            .webhook_fields
+            .insert("summary".into(), compiler_output.into());
+        let resolved = resolve_step_templates(&step, &trigger, &HashMap::new())
+            .expect("callback brace text is data, not a recursive template");
+        assert!(matches!(
+            resolved,
+            ActionDef::RecordCiResult {
+                summary: Some(summary),
+                ..
+            } if summary == compiler_output
+        ));
     }
 }

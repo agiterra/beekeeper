@@ -2851,6 +2851,10 @@ mod tests {
     use nostr::{Alphabet, EventBuilder, Keys, Kind, SingleLetterTag, Tag};
     use std::sync::Mutex;
 
+    mod bridge_ci_result_tests {
+        include!("bridge_ci_result_tests.rs");
+    }
+
     fn redis_pool() -> deadpool_redis::Pool {
         let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
         deadpool_redis::Config::from_url(url)

@@ -5,6 +5,62 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## Active work — parallel orchestration
+
+Brian confirmed Fable has been assigned shared role adoption in a separate
+t3code thread `d5211a94-2560-4b54-b6fc-e2940601b807`. Astra verified the
+thread in Computer Use and successfully posted a coordination message at
+9:42 PM. Fable replied in the agreed mailbox:
+`/Users/brian/Desktop/BEEKEEPER-ASTRA-FABLE-COORDINATION.md`.
+Fable's worktree is `/Users/brian/Projects/beekeeper/review-role-adoption-fable`,
+branch `work/role-adoption-fable`, initially based on `7c5c6e50b`. Its exact
+claimed paths and first acceptance are in its `docs/ROLE_ADOPTION_EVIDENCE.md`.
+No core/CLI/provider file overlap is claimed. Fable's first slice is reported
+revision relation/freshness; commissioning proof remains a disclosed residual.
+
+Astra's isolated worktree is
+`/Users/brian/Projects/beekeeper/review-ci-completion-astra`, branch
+`work/ci-completion-astra`, based on the same commit. Three Sol build lanes own
+the core result contract, authorized workflow producer, and exact-run wait CLI.
+The implementation contract and strict ownership are in
+`docs/CI_COMPLETION_IMPLEMENTATION.md`. This is in progress, not deployed.
+Focused CI acceptance is green: core 7/7, final CLI 11/11, strict workflow
+resolution 6/6, and `just test-ci-completion` passed 3 atomic DB plus 6 relay
+cases. The latter runs the actual built `bee ci wait` against a local relay:
+start before the callback for live delivery, then start again for stored replay;
+both return the same exact event. It also covers callback secret, client-forged
+result refusal, private-project read isolation, exact repository/project/owner
+binding, disabled/revoked/changed workflow authority, and missing callback run
+rejection without a recorded result. Evidence is
+`ci-completion-acceptance-final.log`, `ci-completion-cli-final.log`, and
+`ci-producer-strict-template-final.log` under the validation directory.
+
+Independent source review found that generic workflow resolution preserves
+missing placeholders. CI fields now validate their configured references before
+single-pass expansion; missing data fails before recording, while literal braces
+inside supplied compiler output remain intact. The first real-CLI test failed
+because its fixture omitted the stable NIP-11 signer and expected deployment URL;
+the corrected production-router fixture passes. The original failed run remains
+in `ci-completion-acceptance.log`. Database-failure/no-fanout is supported by code
+ordering/error propagation, not a dedicated injected-failure test.
+
+`just test-ci-completion` is included in `just test`, using its own migrated
+throwaway database and an explicitly built CLI. No production configuration or
+new coding-turn wakeup is included: the feature returns a waiting process to its
+caller. Fable candidate `fc8c60018` passed its scoped tests; final shallow/error
+ancestry, refreshed comparison cache, and browser evidence are being finished.
+Aggregate repository checks remain pending; neither candidate is installed or
+deployed.
+Astra owns integration/review/final commits and shared ledger updates. Brian
+authorized continued autonomous work while away; reversible scoped decisions
+continue without a human dependency. No production deployment authorization is
+inferred from that instruction.
+
+Cargo uses the warm `/tmp/astra-workspace-admission-target` with jobs3,
+serialized between lanes. Scratch DB `astra_ci_completion_1788831821`, Redis13,
+is separate from the live app. Fable uses `/tmp/fable-role-adoption-target`,
+jobs4, no DB. Coordinate aggregate builds rather than repeating them per lane.
+
 ## Current checkpoint — September 7 evening: continuity and Packs shipped
 
 Canonical relay `main` accepted `4803aed3e` after every normal pre-push check

@@ -435,7 +435,7 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test: test-genesis test-git-push-gate
+test: test-genesis test-git-push-gate test-ci-completion
     ./scripts/run-tests.sh all
 
 # The push gate's Postgres-backed acceptance cases: the binding gate, the
@@ -541,6 +541,26 @@ test-genesis: _ensure-services
     echo "==> genesis + authority-chain proofs against ${db} (serial, isolated)"
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
         cargo test -p buzz-db --lib -- genesis authority_transition --ignored --test-threads=1
+
+# CI callback composition and atomic result proofs require Postgres. Keep them
+# in the integration entrypoint so their #[ignore] annotations cannot hide them.
+# Each run owns its database; no developer or live app database is reset.
+test-ci-completion: _ensure-services
+    #!/usr/bin/env bash
+    set -euo pipefail
+    db="buzz_ci_completion_$$_$(date +%s)"
+    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
+    trap cleanup EXIT
+    pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
+    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+        cargo test -p buzz-db --lib ci_result -- --ignored --test-threads=1
+    cargo build -p buzz-cli --bin bee
+    target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" BUZZ_TEST_BEE_BIN="${target_dir}/debug/bee" \
+        cargo test -p buzz-relay --lib ci_result -- --ignored --test-threads=1
 
 # Run unit tests only (no infra needed)
 test-unit:

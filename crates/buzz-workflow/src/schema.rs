@@ -144,6 +144,31 @@ pub enum ActionDef {
         /// Duration string (e.g. `"5m"`, `"1h"`).
         duration: String,
     },
+    /// Record an authenticated CI completion as a durable relay-signed event.
+    RecordCiResult {
+        /// Full kind:30621 project coordinate. This binding is literal.
+        project: String,
+        /// Full kind:30617 repository coordinate. This binding is literal.
+        repository: String,
+        /// Stable check name. This binding is literal.
+        check: String,
+        /// CI phase covered by this result. This binding is literal.
+        phase: buzz_core::ci_result::CiPhase,
+        /// Full commit hash (supports template variables).
+        commit: String,
+        /// Provider run identifier (supports template variables).
+        run: String,
+        /// Positive provider attempt number (supports template variables).
+        attempt: String,
+        /// Terminal conclusion: success, failure, or cancelled (supports templates).
+        conclusion: String,
+        /// Optional provider evidence URL (supports template variables).
+        #[serde(default)]
+        evidence_url: Option<String>,
+        /// Optional human-readable result summary (supports template variables).
+        #[serde(default)]
+        summary: Option<String>,
+    },
 }
 
 impl WorkflowDef {
@@ -202,6 +227,36 @@ impl WorkflowDef {
                     "duplicate step id: {}",
                     step.id
                 )));
+            }
+
+            if let ActionDef::RecordCiResult {
+                project,
+                repository,
+                check,
+                ..
+            } = &step.action
+            {
+                if !matches!(self.trigger, TriggerDef::Webhook) {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "record_ci_result requires a webhook trigger".into(),
+                    ));
+                }
+                if project.trim().is_empty() || repository.trim().is_empty() {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "record_ci_result requires literal project and repository coordinates"
+                            .into(),
+                    ));
+                }
+                if project.contains("{{") || repository.contains("{{") || check.contains("{{") {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "record_ci_result project, repository, and check must be literal".into(),
+                    ));
+                }
+                if check.trim().is_empty() || check.len() > 128 {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "record_ci_result check must be 1 to 128 bytes".into(),
+                    ));
+                }
             }
         }
 
@@ -385,6 +440,60 @@ mod tests {
             ActionDef::RequestApproval { .. }
         ));
         assert!(matches!(&def.steps[6].action, ActionDef::Delay { .. }));
+    }
+
+    #[test]
+    fn parse_record_ci_result_preserves_literal_binding_and_dynamic_templates() {
+        let yaml = concat!(
+            "name: CI completion\n",
+            "trigger:\n  on: webhook\n",
+            "steps:\n",
+            "  - id: record\n",
+            "    action: record_ci_result\n",
+            "    project: '30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:agiterra'\n",
+            "    repository: '30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:beekeeper'\n",
+            "    check: relay-ci\n",
+            "    phase: build\n",
+            "    commit: '{{trigger.commit}}'\n",
+            "    run: '{{trigger.run}}'\n",
+            "    attempt: '{{trigger.attempt}}'\n",
+            "    conclusion: '{{trigger.conclusion}}'\n",
+            "    evidence_url: '{{trigger.url}}'\n",
+            "    summary: '{{trigger.summary}}'\n",
+        );
+        let (def, canonical) = parse_yaml(yaml).expect("record action should parse");
+        assert!(canonical.contains("record_ci_result"));
+        assert!(matches!(
+            &def.steps[0].action,
+            ActionDef::RecordCiResult {
+                phase: buzz_core::ci_result::CiPhase::Build,
+                commit,
+                attempt,
+                ..
+            } if commit == "{{trigger.commit}}" && attempt == "{{trigger.attempt}}"
+        ));
+    }
+
+    #[test]
+    fn record_ci_result_requires_webhook_and_literal_authority_binding() {
+        let non_webhook = concat!(
+            "name: CI completion\ntrigger:\n  on: message_posted\nsteps:\n",
+            "  - id: record\n    action: record_ci_result\n",
+            "    project: p\n    repository: r\n    check: ci\n    phase: build\n",
+            "    commit: c\n    run: r\n    attempt: '1'\n    conclusion: success\n",
+        );
+        assert!(parse_yaml(non_webhook)
+            .unwrap_err()
+            .to_string()
+            .contains("requires a webhook trigger"));
+
+        let templated_binding = non_webhook
+            .replace("on: message_posted", "on: webhook")
+            .replace("project: p", "project: '{{trigger.project}}'");
+        assert!(parse_yaml(&templated_binding)
+            .unwrap_err()
+            .to_string()
+            .contains("must be literal"));
     }
 
     #[test]

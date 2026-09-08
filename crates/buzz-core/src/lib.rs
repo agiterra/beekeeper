@@ -13,6 +13,8 @@ pub mod agent_turn_metric;
 pub mod build_info;
 /// Channel and membership enums shared across crates.
 pub mod channel;
+/// Relay-recorded terminal CI results and their exact correlation contract.
+pub mod ci_result;
 /// NIP-CSAT (draft): append-only coding-session authority-chain transitions
 /// (44228) — one `grant-operator` step at a time today.
 pub mod coding_session_authority_transition;

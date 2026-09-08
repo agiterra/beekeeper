@@ -270,6 +270,9 @@ enum Cmd {
     /// Draft owner-reviewed agent creation and updates
     #[command(subcommand)]
     Agents(AgentsCmd),
+    /// Wait for exact, relay-confirmed CI results
+    #[command(subcommand)]
+    Ci(CiCmd),
     /// Send, read, search, and manage messages
     #[command(subcommand)]
     Messages(MessagesCmd),
@@ -358,6 +361,55 @@ enum Cmd {
     /// Run raw Nostr filters against the relay — the debugging verb
     #[command(subcommand)]
     Events(EventsCmd),
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum CiPhaseArg {
+    Build,
+    Deploy,
+}
+
+impl From<CiPhaseArg> for buzz_core::ci_result::CiPhase {
+    fn from(value: CiPhaseArg) -> Self {
+        match value {
+            CiPhaseArg::Build => Self::Build,
+            CiPhaseArg::Deploy => Self::Deploy,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum CiCmd {
+    /// Block until the exact CI run has a durable terminal result
+    Wait {
+        /// Full NIP-MP project coordinate (30621:<owner>:<slug>)
+        #[arg(long)]
+        project: String,
+        /// Full NIP-34 repository coordinate (30617:<owner>:<id>)
+        #[arg(long)]
+        repo: String,
+        /// Exact lowercase 40-hex commit
+        #[arg(long)]
+        commit: String,
+        /// Configured CI check name
+        #[arg(long)]
+        check: String,
+        /// External CI run identifier
+        #[arg(long)]
+        run: String,
+        /// External CI attempt number
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        attempt: u32,
+        /// Workflow UUID authorized to record this result
+        #[arg(long)]
+        workflow: String,
+        /// Completion phase; build completion never satisfies a deploy wait
+        #[arg(long, value_enum)]
+        phase: CiPhaseArg,
+        /// Overall wait limit. Omit to wait until cancelled.
+        #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
+        timeout: Option<u64>,
+    },
 }
 
 /// Raw relay queries — no contract decoding, no writes.
@@ -4468,6 +4520,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,
+        Cmd::Ci(sub) => commands::ci::dispatch(sub, &client).await,
         Cmd::Messages(sub) => commands::messages::dispatch(sub, &client, &cli.format).await,
         Cmd::Channels(sub) => commands::channels::dispatch(sub, &client, &cli.format).await,
         Cmd::Canvas(sub) => commands::channels::dispatch_canvas(sub, &client).await,

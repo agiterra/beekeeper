@@ -16,6 +16,13 @@ just test               # unit + integration (starts Docker if needed)
 cargo test -p buzz-test-client -- --ignored
 ```
 
+### CI completion integration checks
+
+`just test-ci-completion` runs the CI-result atomic storage and authenticated
+webhook composition tests against a newly migrated throwaway database. It is
+included in `just test`. The default unit harness skips these Postgres cases;
+core contracts and CLI replay/reconnect tests run without infrastructure.
+
 ### The desktop Playwright smoke suite is not in `just ci`
 
 ```bash
