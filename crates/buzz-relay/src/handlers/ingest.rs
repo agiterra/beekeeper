@@ -8047,6 +8047,89 @@ mod tests {
         assert!(validate_coding_session_command_envelope(&bad_version).is_err());
     }
 
+    /// A CI-continuation registration is a 44220 like any other: the relay
+    /// stores it, does not execute it, and validates it with the same
+    /// envelope rules. What this pins is that the *new* closed action reaches
+    /// the store at all — and that a malformed one still does not.
+    #[test]
+    fn coding_session_command_admits_a_ci_continuation_registration() {
+        let channel = Uuid::new_v4().to_string();
+        let owner = "ab".repeat(32);
+        let identity = serde_json::json!({
+            "project": format!("30621:{owner}:beekeeper"),
+            "repository": format!("30617:{owner}:beekeeper"),
+            "commit": "abcdef0123456789abcdef0123456789abcdef01",
+            "check": "main-validation",
+            "run": "136",
+            "attempt": 1,
+            "workflow": "d3e440ea-89f8-4aee-8a02-17edc3e7272e",
+            "phase": "build",
+        });
+        let target = "coding-session/v1|10:provider-a10:instance-19:session-11:2";
+        let content = |action: serde_json::Value| {
+            serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": format!("cic-{}", "0".repeat(64)),
+                "target": {
+                    "driver": "provider-a",
+                    "instanceId": "instance-1",
+                    "sessionId": "session-1",
+                    "generation": 2,
+                },
+                "action": action,
+            })
+            .to_string()
+        };
+        let registration = |action: serde_json::Value| {
+            make_event_with_tags(
+                KIND_CODING_SESSION_COMMAND,
+                &content(action),
+                &[
+                    &["h", &channel],
+                    &["cs-v", "csc1-1"],
+                    &["cs-target", target],
+                ],
+            )
+        };
+
+        let valid = serde_json::json!({
+            "type": "thread.turn.continue_on_ci",
+            "identity": identity,
+            "continuation": "Report the failing test",
+            "expiresAt": 1_788_800_000_u64,
+        });
+        assert!(validate_coding_session_command_envelope(&registration(valid.clone())).is_ok());
+
+        // No horizon is not "wait forever": the payload contract requires one,
+        // and the relay refuses the event rather than storing a registration
+        // nothing can ever expire.
+        let mut missing_expires_at = valid.clone();
+        assert!(missing_expires_at
+            .as_object_mut()
+            .expect("object")
+            .remove("expiresAt")
+            .is_some());
+        assert!(
+            validate_coding_session_command_envelope(&registration(missing_expires_at)).is_err()
+        );
+
+        let mut zero_expires_at = valid.clone();
+        zero_expires_at["expiresAt"] = serde_json::json!(0);
+        assert!(validate_coding_session_command_envelope(&registration(zero_expires_at)).is_err());
+
+        // The action is closed: a key this build does not know would be terms
+        // the consumer never read.
+        let mut unknown_key = valid.clone();
+        unknown_key["deliver"] = serde_json::json!("steer");
+        assert!(validate_coding_session_command_envelope(&registration(unknown_key)).is_err());
+
+        // The identity is validated by the same rules a recorded result is,
+        // so a registration cannot name a run no result could be filed under.
+        let mut bad_identity = valid;
+        bad_identity["identity"]["commit"] = serde_json::json!("nothex");
+        assert!(validate_coding_session_command_envelope(&registration(bad_identity)).is_err());
+    }
+
     fn lifecycle_content(project_ref: serde_json::Value) -> String {
         serde_json::json!({
             "schema": "buzz-coding-session-lifecycle-command/v1",

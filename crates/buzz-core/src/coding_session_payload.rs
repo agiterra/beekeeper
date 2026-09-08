@@ -148,6 +148,54 @@ pub const DUPLICATE_OPERATION: &str = "DUPLICATE_OPERATION";
 /// cancel spends nothing and refusing one would leave a runaway turn running
 /// with no way to stop it short of stopping the execution.
 pub const BUDGET_EXHAUSTED: &str = "BUDGET_EXHAUSTED";
+/// A CI continuation reached its `expiresAt` with no result recorded for the
+/// exact run attempt it named.
+///
+/// **Terminal for the registration, and it says nothing about the run.** The
+/// check may still be queued, still running, or may have been recorded under a
+/// different attempt; what the provider knows is only that it waited the
+/// window the sender chose and nothing arrived. Re-registering with a later
+/// horizon is the sender's call, and mints a new registration rather than
+/// resurrecting this one.
+pub const CI_CONTINUATION_EXPIRED: &str = "CI_CONTINUATION_EXPIRED";
+/// Two or more *different* relay-signed results exist for one CI correlation
+/// digest, so there is no single fact to deliver.
+///
+/// A result is meant to be immutable per identity: one run attempt, one
+/// terminal conclusion. When the relay's store answers with more than one
+/// canonical result for the same digest, the provider refuses rather than
+/// picking a winner — delivering "the first one" would let whichever producer
+/// wrote first decide what the agent believes about a build.
+pub const CI_RESULT_CONFLICT: &str = "CI_RESULT_CONFLICT";
+/// The provider's window closed without ever being able to *see* results for
+/// the named project, so "not finished" and "not permitted to read" are
+/// indistinguishable.
+///
+/// Results are private-project gated for the reader, and the listener reads
+/// with the provider's own key — it borrows no credential from the registering
+/// signer. When every check in the window returned no rows for a project the
+/// provider may not read, this code says exactly that instead of implying the
+/// check never completed.
+pub const CI_RESULT_UNAVAILABLE_OR_HIDDEN: &str = "CI_RESULT_UNAVAILABLE_OR_HIDDEN";
+/// A second registration reused a `commandId` already durably held for a
+/// *different* payload.
+///
+/// The id of a CI continuation is derived from everything that changes what
+/// would be delivered, so an exact retry is idempotent and collides with
+/// nothing. A collision therefore means two different intents named one
+/// registration; the first durable record wins and the second is refused,
+/// because silently overwriting it would change what a pending turn will say
+/// after its sender was told it was registered.
+pub const COMMAND_ID_CONFLICT: &str = "COMMAND_ID_CONFLICT";
+/// The provider's durable continuation store is at its bound, so the
+/// registration was refused before it was acknowledged.
+///
+/// Refused, not queued: a bounded store that accepted one more registration by
+/// evicting another would silently drop a turn somebody was already told would
+/// run. The bound exists because each pending record costs a live
+/// subscription filter and a slot in the file the provider must rewrite
+/// atomically.
+pub const CI_CONTINUATION_STORE_FULL: &str = "CI_CONTINUATION_STORE_FULL";
 
 /// Ceiling on a receipt error code, in UTF-8 bytes.
 ///
@@ -252,6 +300,19 @@ pub enum ReceiptStatus {
     /// issued. The turn's own `result` item reports how it actually ended.
     #[serde(rename = "interrupt_delivered")]
     InterruptDelivered,
+    /// A `thread.turn.continue_on_ci` was validated and its registration
+    /// durably stored.
+    ///
+    /// **Not a mailbox stage and not terminal.** Nothing is queued, no budget
+    /// is spent, and no turn exists yet: the provider has only promised to
+    /// watch for one exact CI result until the registration's `expiresAt`. If
+    /// the result arrives and the signer may still steer the target then, the
+    /// ordinary `turn_queued`/`turn_started` stages follow under the same
+    /// `commandId`; otherwise a `turn_refused` names why. A consumer that
+    /// treats this as delivery would report a turn that has not been accepted
+    /// by anything.
+    #[serde(rename = "continuation_registered")]
+    ContinuationRegistered,
 }
 
 impl ReceiptStatus {
@@ -270,6 +331,7 @@ impl ReceiptStatus {
             Self::TurnRefused => "turn_refused",
             Self::TurnDegraded => "turn_degraded",
             Self::InterruptDelivered => "interrupt_delivered",
+            Self::ContinuationRegistered => "continuation_registered",
         }
     }
 
@@ -288,6 +350,7 @@ impl ReceiptStatus {
                 | Self::TurnRefused
                 | Self::TurnDegraded
                 | Self::InterruptDelivered
+                | Self::ContinuationRegistered
         )
     }
 }
@@ -498,6 +561,23 @@ impl LifecycleReceipt {
         }
     }
 
+    /// A `thread.turn.continue_on_ci` was validated and durably stored.
+    ///
+    /// Says the provider took custody of the *registration*, not of a turn.
+    /// The turn, if the named result is recorded in time and the signer may
+    /// still steer the target then, is answered by the ordinary turn stages
+    /// under this same `commandId`.
+    pub fn continuation_registered(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::ContinuationRegistered,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: None,
+        }
+    }
+
     /// The turn was refused before it reached the execution.
     ///
     /// `code` is documented in NIP-CSL — [`UNAUTHORIZED_OPERATOR`],
@@ -667,6 +747,12 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
                     .is_some_and(|error| is_receipt_error_code(&error.code))
         }
         ReceiptStatus::InterruptDelivered => receipt.session.is_some() && receipt.error.is_none(),
+        // A registration names the execution its eventual turn would address
+        // and carries no failure: the refusals a continuation can earn all
+        // arrive later, as turn stages of the same command.
+        ReceiptStatus::ContinuationRegistered => {
+            receipt.session.is_some() && receipt.error.is_none()
+        }
     };
     if !valid_shape {
         return Err("lifecycle receipt status/session/error shape is inconsistent".into());
@@ -3534,6 +3620,70 @@ mod tests {
         let mut contradictory = serde_json::to_value(&delivered).unwrap_or_default();
         contradictory["error"] = serde_json::json!({ "code": QUEUE_FULL, "message": "full" });
         assert!(decode_coding_session_lifecycle_receipt(&contradictory.to_string()).is_err());
+    }
+
+    /// `continuation_registered` is a stage of one 44220 and carries no
+    /// error: everything a CI continuation can be refused for happens later,
+    /// as a turn stage of the same command.
+    #[test]
+    fn continuation_registered_holds_its_exact_shape_and_is_a_turn_stage() {
+        let registered =
+            LifecycleReceipt::continuation_registered("cic-0123456789abcdef", &target());
+        let encoded = serde_json::to_value(&registered).unwrap_or_default();
+        assert_eq!(
+            keys(&encoded),
+            vec!["commandId", "error", "schema", "session", "status"],
+            "a registration must not carry turnId: no turn has begun"
+        );
+        assert_eq!(encoded["status"], "continuation_registered");
+        assert!(encoded["error"].is_null());
+        assert_eq!(
+            encoded["session"],
+            serde_json::to_value(target()).unwrap_or_default()
+        );
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&encoded.to_string())
+                .unwrap_or_else(|error| panic!("continuation_registered rejected: {error}")),
+            registered
+        );
+        assert_eq!(
+            ReceiptStatus::ContinuationRegistered.as_str(),
+            "continuation_registered"
+        );
+        // It answers a 44220, so a fold deciding what happened to a
+        // *generation* must skip it exactly as it skips the other turn
+        // stages — a registration creates, confirms, and ends nothing.
+        assert!(ReceiptStatus::ContinuationRegistered.is_turn_stage());
+
+        // A registration that also names a turn, or a failure, is incoherent:
+        // nothing was queued and nothing has been refused yet.
+        let mut with_turn_id = encoded.clone();
+        with_turn_id["turnId"] = serde_json::json!("turn-abc");
+        assert!(decode_coding_session_lifecycle_receipt(&with_turn_id.to_string()).is_err());
+        let mut with_error = encoded.clone();
+        with_error["error"] =
+            serde_json::json!({ "code": CI_CONTINUATION_EXPIRED, "message": "expired" });
+        assert!(decode_coding_session_lifecycle_receipt(&with_error.to_string()).is_err());
+
+        // The refusals a continuation earns ride the existing turn vocabulary
+        // with the new codes, and those codes are well formed.
+        for code in [
+            CI_CONTINUATION_EXPIRED,
+            CI_RESULT_CONFLICT,
+            CI_RESULT_UNAVAILABLE_OR_HIDDEN,
+            COMMAND_ID_CONFLICT,
+            CI_CONTINUATION_STORE_FULL,
+        ] {
+            assert!(is_receipt_error_code(code), "malformed code {code}");
+            let refused =
+                LifecycleReceipt::turn_refused("cic-0123456789abcdef", &target(), code, "no");
+            let encoded = serde_json::to_value(&refused).unwrap_or_default();
+            assert_eq!(
+                decode_coding_session_lifecycle_receipt(&encoded.to_string())
+                    .unwrap_or_else(|error| panic!("{code} rejected: {error}")),
+                refused
+            );
+        }
     }
 
     /// `with_thread_steer` changes exactly one capability and nothing else.

@@ -1657,6 +1657,49 @@ test("an issued interrupt is neither progress on a turn nor a refusal", () => {
   );
 });
 
+test("a stored CI continuation is custody of a registration, not of a turn", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [turnReceiptEvent("continuation_registered")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  // It decodes and it is indexed as a turn stage of this command...
+  const decoded = parseCodingSessionLifecycleReceipt(
+    JSON.stringify(turnReceipt("continuation_registered")),
+  );
+  assert.equal(isCodingSessionTurnReceipt(decoded), true);
+  // ...but nothing has been queued and nothing has started, so a surface
+  // reading progress must say nothing rather than claim a stage.
+  assert.equal(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+  // Registered is not refused: the draft must not come back.
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+  // And it never touches the generation: a registration creates, confirms,
+  // and ends nothing.
+  assert.deepEqual(
+    store.resolveLifecycle(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { state: "pending", commandId: TURN_COMMAND_ID },
+  );
+
+  // The turn that a delivered continuation eventually starts is an ordinary
+  // turn under the same command id, and those stages do read as progress.
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_queued"), turnReceiptEvent("turn_started")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "started", turnId: "turn-abc" },
+  );
+});
+
 test("a refused turn and a dropped turn read back as different outcomes", () => {
   const refused = new TrustedCodingSessionIngressStore();
   refused.ingestRelayEvents(

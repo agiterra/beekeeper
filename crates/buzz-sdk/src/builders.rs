@@ -4,6 +4,7 @@
 //! The caller signs: `builder.sign_with_keys(&keys)?`.
 
 use buzz_core::{
+    ci_result::CiResultIdentity,
     coding_session_authority_transition::{
         CodingSessionAuthorityTransitionPayload, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
         MAX_AUTHORITY_TRANSITION_CONTENT_BYTES,
@@ -13,8 +14,9 @@ use buzz_core::{
         MAX_CODING_SESSION_CLOSURE_CONTENT_BYTES,
     },
     coding_session_command::{
-        coding_session_target_key, CodingSessionCommandPayload, CodingSessionTarget,
-        CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
+        coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
+        CodingSessionTarget, CODING_SESSION_COMMAND_SCHEMA, CODING_SESSION_COMMAND_TAG_VERSION,
+        MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
     },
     coding_session_genesis::{
         CodingSessionGenesisPayload, CODING_SESSION_GENESIS_TAG_VERSION, MAX_GENESIS_CONTENT_BYTES,
@@ -2689,6 +2691,38 @@ pub fn build_coding_session_command(
         tag(&["cs-target", &target_key])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_COMMAND as u16), content).tags(tags))
+}
+
+/// Build a CI-continuation registration command (kind 44220).
+///
+/// Same kind, envelope, and tags as [`build_coding_session_command`] — this is
+/// one more closed action, not a new surface — so the relay validates it with
+/// the same rules and an adapter routes it on the same `cs-target` tag. The
+/// caller signs it, and the signature is the only authority: nothing in the
+/// payload claims who registered the continuation.
+///
+/// `command_id` should be derived with
+/// [`buzz_core::coding_session_command::ci_continuation_command_id`] so an
+/// exact retry names the same registration instead of minting a second one.
+pub fn build_coding_session_ci_continuation(
+    channel_id: Uuid,
+    command_id: &str,
+    target: &CodingSessionTarget,
+    identity: &CiResultIdentity,
+    continuation: &str,
+    expires_at: u64,
+) -> Result<EventBuilder, SdkError> {
+    let payload = CodingSessionCommandPayload {
+        schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),
+        command_id: command_id.to_owned(),
+        target: target.clone(),
+        action: CodingSessionAction::ThreadTurnContinueOnCi {
+            identity: identity.clone(),
+            continuation: continuation.to_owned(),
+            expires_at,
+        },
+    };
+    build_coding_session_command(channel_id, &payload)
 }
 
 /// Build a provider-neutral coding-session lifecycle command (kind 44221).
@@ -6217,6 +6251,89 @@ mod tests {
         let mut payload = cs_command_payload();
         payload.target.generation = 0;
         assert!(build_coding_session_command(channel, &payload).is_err());
+    }
+
+    /// A CI-continuation registration is the *same* envelope as any other
+    /// 44220 — one more closed action, not a second command surface — so the
+    /// relay validator and every adapter route it on tags they already read.
+    #[test]
+    fn ci_continuation_builder_matches_the_command_envelope() {
+        let channel = Uuid::new_v4();
+        let identity = buzz_core::ci_result::CiResultIdentity {
+            project: format!("30621:{}:beekeeper", "ab".repeat(32)),
+            repository: format!("30617:{}:beekeeper", "ab".repeat(32)),
+            commit: "abcdef0123456789abcdef0123456789abcdef01".into(),
+            check: "main-validation".into(),
+            run: "136".into(),
+            attempt: 1,
+            workflow: "d3e440ea-89f8-4aee-8a02-17edc3e7272e".into(),
+            phase: buzz_core::ci_result::CiPhase::Build,
+        };
+        let correlation = buzz_core::ci_result::correlation_id(&identity).expect("correlation");
+        let target = cs_target();
+        let command_id = buzz_core::coding_session_command::ci_continuation_command_id(
+            &channel.to_string(),
+            &correlation,
+            &coding_session_target_key(&target),
+            1_788_800_000,
+            "report the failure",
+        );
+        let event = build_coding_session_ci_continuation(
+            channel,
+            &command_id,
+            &target,
+            &identity,
+            "report the failure",
+            1_788_800_000,
+        )
+        .unwrap()
+        .sign_with_keys(&keys())
+        .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_COMMAND);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cs-v".into(), "csc1-1".into()),
+                (
+                    "cs-target".into(),
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+            ]
+        );
+        let decoded: CodingSessionCommandPayload = serde_json::from_str(&event.content).unwrap();
+        assert_eq!(decoded.command_id, command_id);
+        assert_eq!(
+            decoded.action,
+            CodingSessionAction::ThreadTurnContinueOnCi {
+                identity,
+                continuation: "report the failure".into(),
+                expires_at: 1_788_800_000,
+            }
+        );
+        assert!(decoded.validate().is_ok());
+
+        // The builder validates before signing, exactly as the command
+        // builder does: an unbounded registration never reaches the wire.
+        assert!(build_coding_session_ci_continuation(
+            channel,
+            &command_id,
+            &target,
+            &decoded_identity(&decoded),
+            "report the failure",
+            0,
+        )
+        .is_err());
+    }
+
+    fn decoded_identity(
+        payload: &CodingSessionCommandPayload,
+    ) -> buzz_core::ci_result::CiResultIdentity {
+        match &payload.action {
+            CodingSessionAction::ThreadTurnContinueOnCi { identity, .. } => identity.clone(),
+            _ => panic!("expected a CI continuation action"),
+        }
     }
 
     /// Both arms of the fork amendment: a project-bound session and a

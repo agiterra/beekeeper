@@ -138,6 +138,7 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
       "turn_dropped",
       "turn_refused",
       "interrupt_delivered",
+      "continuation_registered",
     ],
   );
   // Literal, not a call compared to itself: the earlier form was true for any
@@ -439,4 +440,67 @@ test("a malformed packRef refuses the payload, it is not dropped", () => {
       `decoded ${JSON.stringify(packRef)} instead of refusing it`,
     );
   }
+});
+
+/**
+ * A CI-continuation registration (`continuation_registered`) is a stage of one
+ * 44220 and nothing more: the provider stored a pending registration and will
+ * watch for one exact CI result. It must decode — a status this reader called
+ * malformed would leave the sender's `bee ci continue` with no answer at all —
+ * and it must decode as a *turn* stage, so no generation fold reads it as a
+ * create, a confirmation, or an end.
+ */
+test("a continuation_registered receipt decodes as a non-mailbox turn stage", () => {
+  const parsed = parseCodingSessionLifecycleReceipt(
+    receipt({
+      commandId: "cic-0123456789abcdef",
+      status: "continuation_registered",
+    }),
+  );
+  assert.ok(parsed, "a stored CI continuation must not decode as malformed");
+  assert.equal(parsed.status, "continuation_registered");
+  assert.equal(parsed.error, null);
+  assert.deepEqual(parsed.session, SESSION);
+  assert.equal(
+    isCodingSessionTurnReceiptStatus("continuation_registered"),
+    true,
+  );
+  // Its own semantic key, so it never fences out the `turn_queued` that may
+  // follow under the same command id.
+  assert.equal(
+    codingSessionReceiptSemanticKey("cic-1", "continuation_registered"),
+    "coding-session-lifecycle-receipt/v1|5:cic-123:continuation_registered",
+  );
+  assert.notEqual(
+    codingSessionReceiptSemanticKey("cic-1", "continuation_registered"),
+    codingSessionReceiptSemanticKey("cic-1", "turn_queued"),
+  );
+});
+
+test("a continuation_registered receipt may claim neither a turn nor a failure", () => {
+  // Nothing was queued and nothing has been refused yet: a registration that
+  // named a turn id would claim a turn that does not exist, and one carrying
+  // an error would report a refusal the provider has not made.
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receipt({
+        status: "continuation_registered",
+        error: { code: "CI_CONTINUATION_EXPIRED", message: "expired" },
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      JSON.stringify({
+        schema: "buzz-coding-session-lifecycle-receipt/v1",
+        commandId: "cic-1",
+        status: "continuation_registered",
+        session: SESSION,
+        error: null,
+        turnId: "turn-1",
+      }),
+    ),
+    null,
+  );
 });

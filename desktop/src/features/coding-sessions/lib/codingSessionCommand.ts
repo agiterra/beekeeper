@@ -82,6 +82,54 @@ export type CodingSessionTurnAttachment = {
   filename?: string;
 };
 
+/**
+ * The wire `type` of a CI-continuation registration.
+ *
+ * Registering is not sending a turn: nothing is queued, no budget is spent,
+ * and the provider answers with a `continuation_registered` receipt. A turn
+ * follows only if the named run attempt records a result before `expiresAt`
+ * and the signer may still steer the target then. Desktop does not publish
+ * these today — `bee ci continue` does — but every reader of a channel's
+ * 44220s has to know it is a real action rather than a malformed turn.
+ */
+export const CODING_SESSION_CI_CONTINUATION_ACTION_TYPE =
+  "thread.turn.continue_on_ci";
+
+/** Maximum UTF-8 byte length of a CI continuation prompt. */
+export const MAX_CODING_SESSION_CONTINUATION_BYTES =
+  MAX_CODING_SESSION_TEXT_BYTES;
+
+/**
+ * Exact identity of one external CI run attempt, mirroring `CiResultIdentity`
+ * in `crates/buzz-core/src/ci_result.rs`.
+ *
+ * All eight keys are required and none may be added: the canonical JSON of
+ * exactly these fields is the correlation digest a recorded result is filed
+ * under, so a ninth key here would name a run no result could ever satisfy.
+ */
+export type CodingSessionCiResultIdentity = {
+  project: string;
+  repository: string;
+  commit: string;
+  check: string;
+  run: string;
+  attempt: number;
+  workflow: string;
+  phase: "build" | "deploy";
+};
+
+/** The eight keys a {@link CodingSessionCiResultIdentity} carries, in order. */
+export const CODING_SESSION_CI_IDENTITY_KEYS = [
+  "project",
+  "repository",
+  "commit",
+  "check",
+  "run",
+  "attempt",
+  "workflow",
+  "phase",
+] as const;
+
 /** Actions supported by the governed coding-session command contract. */
 export type CodingSessionCommandAction =
   | {
@@ -110,6 +158,18 @@ export type CodingSessionCommandAction =
     }
   | {
       type: "thread.turn.interrupt";
+    }
+  | {
+      type: typeof CODING_SESSION_CI_CONTINUATION_ACTION_TYPE;
+      /** The exact CI run attempt whose recorded result unblocks the turn. */
+      identity: CodingSessionCiResultIdentity;
+      /** Text delivered with the verified result when the turn starts. */
+      continuation: string;
+      /**
+       * Unix seconds after which the registration is refused rather than
+       * delivered. Required and positive — there is no "waits forever".
+       */
+      expiresAt: number;
     };
 
 /** Exact JSON content of a coding-session command. */
@@ -301,6 +361,97 @@ export function validateCodingSessionCommandInput(input: {
       validateCodingSessionAttachments(input.action.attachments);
     }
   }
+  // A registration is checked here for the same reason a turn is: the bounds
+  // the relay and provider enforce should be named by whoever is about to
+  // sign, not discovered as a rejection afterwards.
+  if (input.action.type === CODING_SESSION_CI_CONTINUATION_ACTION_TYPE) {
+    if (!isCodingSessionCiContinuationAction(input.action)) {
+      throw new Error(
+        `action must carry exactly type, identity, continuation, and expiresAt, with an identity of ${CODING_SESSION_CI_IDENTITY_KEYS.join(", ")}`,
+      );
+    }
+  }
+}
+
+/**
+ * True for exactly the CI-continuation action shape, and nothing adjacent.
+ *
+ * Strict on both sides: the action carries exactly `type`, `identity`,
+ * `continuation`, `expiresAt`, and the identity exactly its eight keys — the
+ * relay and the provider both decode this payload with
+ * `deny_unknown_fields`, so a reader that tolerated an extra key here would
+ * be reading terms nobody downstream will honour. It is deliberately a
+ * *recognizer*, not a validator of the identity's contents: whether the
+ * commit is 40-hex and the workflow a canonical UUID is `buzz-core`'s rule,
+ * re-implemented here only where it would change what a surface renders.
+ */
+export function isCodingSessionCiContinuationAction(
+  value: unknown,
+): value is Extract<
+  CodingSessionCommandAction,
+  { type: typeof CODING_SESSION_CI_CONTINUATION_ACTION_TYPE }
+> {
+  if (!isPlainRecord(value)) return false;
+  if (value.type !== CODING_SESSION_CI_CONTINUATION_ACTION_TYPE) return false;
+  if (
+    !hasExactCommandKeys(value, [
+      "type",
+      "identity",
+      "continuation",
+      "expiresAt",
+    ])
+  ) {
+    return false;
+  }
+  if (
+    typeof value.continuation !== "string" ||
+    value.continuation.trim().length === 0 ||
+    new TextEncoder().encode(value.continuation).byteLength >
+      MAX_CODING_SESSION_CONTINUATION_BYTES
+  ) {
+    return false;
+  }
+  if (
+    !Number.isSafeInteger(value.expiresAt) ||
+    (value.expiresAt as number) <= 0
+  ) {
+    return false;
+  }
+  const identity = value.identity;
+  if (
+    !isPlainRecord(identity) ||
+    !hasExactCommandKeys(identity, [...CODING_SESSION_CI_IDENTITY_KEYS])
+  ) {
+    return false;
+  }
+  for (const key of [
+    "project",
+    "repository",
+    "commit",
+    "check",
+    "run",
+    "workflow",
+  ]) {
+    const field = identity[key];
+    if (typeof field !== "string" || field.length === 0) return false;
+  }
+  return (
+    Number.isSafeInteger(identity.attempt) &&
+    (identity.attempt as number) > 0 &&
+    (identity.phase === "build" || identity.phase === "deploy")
+  );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactCommandKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => key in value);
 }
 
 /** Bounds every attachment field the relay will re-check after signing. */

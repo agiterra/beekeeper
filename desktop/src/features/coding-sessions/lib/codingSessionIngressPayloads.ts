@@ -115,6 +115,13 @@ export type CodingSessionLifecycleReceipt =
       status: "interrupt_delivered";
       session: CodingSessionCommandTarget;
       error: null;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "continuation_registered";
+      session: CodingSessionCommandTarget;
+      error: null;
     };
 
 /** Every status a 44224 can carry, lifecycle and turn alike. */
@@ -122,12 +129,23 @@ export type CodingSessionLifecycleReceiptStatus =
   CodingSessionLifecycleReceipt["status"];
 
 /**
- * The six per-stage turn statuses.
+ * The per-stage turn statuses.
  *
  * A turn receipt reports what happened to one 44220 command — a
- * `thread.turn.start` or a `thread.turn.interrupt`; it never creates,
- * confirms, or ends a generation, which is why every fold that reads a receipt
- * to decide a generation's state must skip these.
+ * `thread.turn.start`, a `thread.turn.interrupt`, or a
+ * `thread.turn.continue_on_ci`; it never creates, confirms, or ends a
+ * generation, which is why every fold that reads a receipt to decide a
+ * generation's state must skip these.
+ *
+ * `continuation_registered` is the odd one and is deliberately here anyway:
+ * it answers a 44220, so a generation fold must skip it — but it is **not** a
+ * mailbox stage and not terminal. Nothing was queued, no turn exists, and no
+ * budget was spent; the provider has only stored a registration and promised
+ * to watch for one exact CI result until its `expiresAt`. If that result
+ * arrives and the signer may still steer the target then, the ordinary
+ * `turn_queued`/`turn_started` stages follow under the same `commandId`;
+ * otherwise a `turn_refused` names why. A surface that read it as delivery
+ * would report a turn nothing has accepted.
  *
  * `turn_queued`, `turn_started`, and `interrupt_delivered` carry
  * `error: null`. `turn_degraded` (`STEER_UNSUPPORTED`), `turn_dropped`
@@ -149,6 +167,7 @@ export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   "turn_dropped",
   "turn_refused",
   "interrupt_delivered",
+  "continuation_registered",
 ] as const;
 
 /** A per-stage turn status, as opposed to a generation lifecycle status. */
@@ -450,7 +469,14 @@ function parseTurnReceipt(
   const session = decodeTarget(value.session);
   if (!session) return null;
   const commandId = value.commandId as string;
-  if (status === "turn_queued" || status === "interrupt_delivered") {
+  if (
+    status === "turn_queued" ||
+    status === "interrupt_delivered" ||
+    // A registration carries no error for the same reason a queued turn does
+    // not: everything a CI continuation can be refused for happens later, as
+    // a turn stage of this same command.
+    status === "continuation_registered"
+  ) {
     if (value.error !== null) return null;
     return Object.freeze({
       schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,

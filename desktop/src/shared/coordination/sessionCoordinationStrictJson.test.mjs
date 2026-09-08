@@ -672,3 +672,36 @@ test("routing.override.effort may be a human-only value like xhigh", () => {
   assert.equal(withOverride("ultra"), true);
   assert.equal(withOverride(""), false, "blank is still refused");
 });
+
+// ── A CI-continuation registration is not a generation lifecycle fact ───────
+//
+// `continuation_registered` (`ReceiptStatus::ContinuationRegistered`,
+// coding_session_payload.rs) answers a 44220: the provider stored a pending
+// CI continuation. It is a turn stage, so this lifecycle-scoped reader must
+// keep rejecting it — accepting it would let a stored registration read as a
+// change to the generation, which is exactly the confusion the turn/lifecycle
+// split exists to prevent.
+
+test("a continuation_registered receipt is not a lifecycle receipt", () => {
+  const receipt = {
+    schema: "buzz-coding-session-lifecycle-receipt/v1",
+    commandId: "cic-0123456789abcdef",
+    status: "continuation_registered",
+    session: {
+      driver: "claude-agent-acp",
+      instanceId: "0123456789abcdef",
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      generation: 1,
+    },
+    error: null,
+  };
+  const source = JSON.stringify(receipt);
+  // The *shape* is a receipt shape — it is the five keys — but the status
+  // belongs to the turn vocabulary, so the value check refuses it.
+  assert.equal(hasStrictLifecycleReceiptJson(source, receipt), true);
+  assert.equal(
+    hasStrictLifecycleReceiptValues(receipt),
+    false,
+    "a stored CI continuation must not read as a generation lifecycle fact",
+  );
+});

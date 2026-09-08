@@ -287,12 +287,18 @@ export function hasStrictLifecycleReceiptValues(
       boundedString(content.error.message, 1024 + 3)
     );
   }
-  // Every turn-stage status (`turn_queued`, `turn_started`, …) is rejected
-  // here on purpose: this reader is scoped to the lifecycle vocabulary the
-  // coordination fold cares about, and the caller (`readLifecycleReceipt`,
-  // `sessionCoordinationFold.ts`) further discriminates by the `csl-command`/
-  // `cslr-v` tag pair a turn receipt never carries. Turn-stage receipts
-  // decode through `codingSessionIngressPayloads.ts` instead.
+  // Every turn-stage status (`turn_queued`, `turn_started`,
+  // `continuation_registered`, …) is rejected here on purpose: this reader is
+  // scoped to the lifecycle vocabulary the coordination fold cares about, and
+  // the caller (`readLifecycleReceipt`, `sessionCoordinationFold.ts`) further
+  // discriminates by the `csl-command`/`cslr-v` tag pair a turn receipt never
+  // carries. Turn-stage receipts decode through
+  // `codingSessionIngressPayloads.ts` instead.
+  //
+  // `continuation_registered` is named because it is the newest and the
+  // easiest to mistake for a lifecycle fact: it is a stage of one 44220 that
+  // says a CI continuation was stored, so it must not create, confirm, or end
+  // a generation here any more than a `turn_queued` does.
   return false;
 }
 

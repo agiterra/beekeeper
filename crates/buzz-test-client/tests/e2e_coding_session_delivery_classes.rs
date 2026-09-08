@@ -271,7 +271,8 @@ async fn the_relay_stores_every_delivery_class_and_the_new_turn_stages() {
                 CodingSessionAction::ThreadTurnStart { deliver, .. } => {
                     Some(deliver.as_str().to_owned())
                 }
-                CodingSessionAction::ThreadTurnInterrupt => None,
+                CodingSessionAction::ThreadTurnInterrupt
+                | CodingSessionAction::ThreadTurnContinueOnCi { .. } => None,
             }
         })
         .collect();

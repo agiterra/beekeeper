@@ -3,14 +3,17 @@ import test from "node:test";
 
 import {
   buildCodingSessionCommandEvent,
+  CODING_SESSION_CI_CONTINUATION_ACTION_TYPE,
   CODING_SESSION_TURN_DELIVERIES,
   buildCodingSessionInterruptEvent,
   buildCodingSessionTargetKey,
   codingSessionTargetSupportsInterrupt,
+  isCodingSessionCiContinuationAction,
   MAX_CODING_SESSION_IDENTIFIER_BYTES,
   MAX_CODING_SESSION_TEXT_BYTES,
   publishCodingSessionCommand,
   publishCodingSessionInterrupt,
+  validateCodingSessionCommandInput,
 } from "./codingSessionCommand.ts";
 
 const target = {
@@ -442,4 +445,160 @@ test("attachments ride the payload and are validated before signing", () => {
     assert.throws(() => build([bad]), undefined, `accepted ${label}`);
   }
   assert.throws(() => build(new Array(5).fill(attachment)), /exceeds 4/);
+});
+
+// ── A CI-continuation registration is a known action, strictly shaped ───────
+//
+// `thread.turn.continue_on_ci` (`CodingSessionAction::ThreadTurnContinueOnCi`,
+// crates/buzz-core/src/coding_session_command.rs) is a third closed action on
+// the same 44220. It is neither a turn start nor an interrupt: nothing is
+// queued and no turn exists until the named CI result is recorded. The relay
+// and the provider both decode it with `deny_unknown_fields`, so this reader
+// is exact on both the action's four keys and the identity's eight.
+
+const CI_OWNER = "ab".repeat(32);
+
+function ciContinuationAction(overrides = {}) {
+  return {
+    type: CODING_SESSION_CI_CONTINUATION_ACTION_TYPE,
+    identity: {
+      project: `30621:${CI_OWNER}:beekeeper`,
+      repository: `30617:${CI_OWNER}:beekeeper`,
+      commit: "abcdef0123456789abcdef0123456789abcdef01",
+      check: "main-validation",
+      run: "136",
+      attempt: 1,
+      workflow: "d3e440ea-89f8-4aee-8a02-17edc3e7272e",
+      phase: "build",
+    },
+    continuation: "Report the failing test",
+    expiresAt: 1_788_800_000,
+    ...overrides,
+  };
+}
+
+test("a CI continuation is a known action, distinct from a start or interrupt", () => {
+  const action = ciContinuationAction();
+  assert.equal(isCodingSessionCiContinuationAction(action), true);
+  assert.notEqual(action.type, "thread.turn.start");
+  assert.notEqual(action.type, "thread.turn.interrupt");
+  assert.equal(
+    CODING_SESSION_CI_CONTINUATION_ACTION_TYPE,
+    "thread.turn.continue_on_ci",
+  );
+  // The wire shape is exactly the four keys, in the order buzz-core writes.
+  assert.deepEqual(Object.keys(action), [
+    "type",
+    "identity",
+    "continuation",
+    "expiresAt",
+  ]);
+  assert.deepEqual(Object.keys(action.identity), [
+    "project",
+    "repository",
+    "commit",
+    "check",
+    "run",
+    "attempt",
+    "workflow",
+    "phase",
+  ]);
+  // A start and an interrupt are not continuations, so no surface can mistake
+  // one for the other.
+  assert.equal(
+    isCodingSessionCiContinuationAction({
+      type: "thread.turn.start",
+      text: "go",
+    }),
+    false,
+  );
+  assert.equal(
+    isCodingSessionCiContinuationAction({ type: "thread.turn.interrupt" }),
+    false,
+  );
+});
+
+test("a CI continuation reader is exact about its keys and its bounds", () => {
+  const rejected = [
+    // A key the relay would refuse under deny_unknown_fields.
+    ciContinuationAction({ deliver: "steer" }),
+    // The three required keys, each missing in turn.
+    (() => {
+      const value = ciContinuationAction();
+      delete value.identity;
+      return value;
+    })(),
+    (() => {
+      const value = ciContinuationAction();
+      delete value.continuation;
+      return value;
+    })(),
+    (() => {
+      const value = ciContinuationAction();
+      delete value.expiresAt;
+      return value;
+    })(),
+    // No horizon is not "waits forever".
+    ciContinuationAction({ expiresAt: 0 }),
+    ciContinuationAction({ expiresAt: -1 }),
+    ciContinuationAction({ expiresAt: 1.5 }),
+    ciContinuationAction({ expiresAt: "1788800000" }),
+    // A registration with no words is a wake with nothing to say.
+    ciContinuationAction({ continuation: "   " }),
+    ciContinuationAction({
+      continuation: `${"é".repeat(MAX_CODING_SESSION_TEXT_BYTES / 2)}a`,
+    }),
+    // A ninth identity key names a run no recorded result could satisfy.
+    ciContinuationAction({
+      identity: { ...ciContinuationAction().identity, branch: "main" },
+    }),
+    ciContinuationAction({
+      identity: (() => {
+        const identity = { ...ciContinuationAction().identity };
+        delete identity.phase;
+        return identity;
+      })(),
+    }),
+    ciContinuationAction({
+      identity: { ...ciContinuationAction().identity, phase: "release" },
+    }),
+    ciContinuationAction({
+      identity: { ...ciContinuationAction().identity, attempt: 0 },
+    }),
+  ];
+  for (const value of rejected) {
+    assert.equal(
+      isCodingSessionCiContinuationAction(value),
+      false,
+      JSON.stringify(value),
+    );
+  }
+  // The largest continuation the contract admits is still admitted.
+  assert.equal(
+    isCodingSessionCiContinuationAction(
+      ciContinuationAction({
+        continuation: "é".repeat(MAX_CODING_SESSION_TEXT_BYTES / 2),
+      }),
+    ),
+    true,
+  );
+});
+
+test("a malformed CI continuation is refused before anything is signed", () => {
+  assert.throws(
+    () =>
+      validateCodingSessionCommandInput({
+        commandId: "cic-1",
+        target,
+        action: ciContinuationAction({ expiresAt: 0 }),
+      }),
+    /action must carry exactly type, identity, continuation, and expiresAt/,
+  );
+  assert.doesNotThrow(() =>
+    validateCodingSessionCommandInput({
+      commandId: "cic-1",
+      target,
+      action: ciContinuationAction(),
+    }),
+  );
 });
