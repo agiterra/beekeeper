@@ -237,10 +237,6 @@ export function NewCodingSessionWorkdirField({
           </div>
         </div>
       ) : null}
-      <p className="text-2xs text-muted-foreground">
-        Stays on this computer. Working directories are never published to the
-        channel.
-      </p>
     </div>
   );
 }

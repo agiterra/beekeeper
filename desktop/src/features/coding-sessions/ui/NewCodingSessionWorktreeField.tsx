@@ -258,12 +258,7 @@ export function NewCodingSessionWorktreeField({
           )}
           <WorktreePlanNote plan={plan} />
         </>
-      ) : (
-        <p className="text-2xs text-muted-foreground">
-          The session will run directly in the working directory, sharing its
-          branch and uncommitted changes with anything else open there.
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -288,14 +283,7 @@ export function WorktreePlanNote({
       </p>
     );
   }
-  if (!plan?.path) {
-    return (
-      <p className="text-2xs text-muted-foreground">
-        A new branch off the source branch, in its own directory beside the
-        repository. Stays on this computer.
-      </p>
-    );
-  }
+  if (!plan?.path) return null;
   return (
     <p
       className={cn("text-2xs text-muted-foreground")}
