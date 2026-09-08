@@ -14,7 +14,9 @@ use serde_json::json;
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
-use crate::{CiCmd, CiPhaseArg};
+use crate::{CiCmd, CiContinuationCmd, CiPhaseArg};
+
+mod continuation;
 
 const SUBSCRIPTION_ID: &str = "bee-ci-wait";
 const IDLE_RECONNECT_SECS: u64 = 900;
@@ -294,7 +296,11 @@ async fn wait_for_result(
     }
 }
 
-pub async fn dispatch(cmd: CiCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(
+    cmd: CiCmd,
+    client: &BuzzClient,
+    format: &crate::OutputFormat,
+) -> Result<(), CliError> {
     match cmd {
         CiCmd::Wait {
             project,
@@ -312,6 +318,52 @@ pub async fn dispatch(cmd: CiCmd, client: &BuzzClient) -> Result<(), CliError> {
             )
             .await
         }
+        CiCmd::Continue {
+            channel,
+            target,
+            driver,
+            instance_id,
+            session_id,
+            generation,
+            project,
+            repository,
+            commit,
+            check,
+            run,
+            attempt,
+            workflow,
+            phase,
+            continuation,
+            expires_in,
+            ack_timeout,
+        } => {
+            continuation::cmd_continue(
+                client,
+                format,
+                &channel,
+                target.as_deref(),
+                driver.as_deref(),
+                instance_id.as_deref(),
+                session_id.as_deref(),
+                generation,
+                project,
+                repository,
+                commit,
+                check,
+                run,
+                attempt,
+                workflow,
+                phase,
+                &continuation,
+                expires_in,
+                ack_timeout,
+            )
+            .await
+        }
+        CiCmd::Continuation(CiContinuationCmd::Status {
+            channel,
+            command_id,
+        }) => continuation::cmd_continuation_status(client, format, &channel, &command_id).await,
     }
 }
 

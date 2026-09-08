@@ -393,20 +393,28 @@ pub struct TurnCommand {
 }
 
 impl TurnCommand {
-    /// Turn text, or `None` for `thread.turn.interrupt`, which carries none.
+    /// Turn text, or `None` for `thread.turn.interrupt` or
+    /// `thread.turn.continue_on_ci`, neither of which carries turn text of
+    /// its own. A CI-continuation registration's `continuation` is not this
+    /// command's turn text — the provider materializes the eventual turn's
+    /// text from the verified result later, under this same commandId — so
+    /// crew's pointer matching must not see it here.
     pub fn text(&self) -> Option<&str> {
         match &self.action {
             CodingSessionAction::ThreadTurnStart { text, .. } => Some(text),
-            CodingSessionAction::ThreadTurnInterrupt => None,
+            CodingSessionAction::ThreadTurnInterrupt
+            | CodingSessionAction::ThreadTurnContinueOnCi { .. } => None,
         }
     }
 
-    /// Requested delivery class; `boundary` for an interrupt's own command,
-    /// which is a class of its own on the wire.
+    /// Requested delivery class; `boundary` for an interrupt's own command
+    /// or a CI-continuation registration, neither of which is a delivery
+    /// class request of its own on the wire.
     pub fn deliver(&self) -> CodingSessionDelivery {
         match &self.action {
             CodingSessionAction::ThreadTurnStart { deliver, .. } => *deliver,
             CodingSessionAction::ThreadTurnInterrupt => CodingSessionDelivery::Interrupt,
+            CodingSessionAction::ThreadTurnContinueOnCi { .. } => CodingSessionDelivery::Boundary,
         }
     }
 }
@@ -1218,6 +1226,12 @@ pub fn plan_readdress(
             return Err(CliError::Usage(format!(
                 "command '{command_id}' is a thread.turn.interrupt — \
                  it carries no text to re-address"
+            )))
+        }
+        CodingSessionAction::ThreadTurnContinueOnCi { .. } => {
+            return Err(CliError::Usage(format!(
+                "command '{command_id}' is a thread.turn.continue_on_ci — it registers a turn \
+                 rather than carrying one to re-address"
             )))
         }
     };

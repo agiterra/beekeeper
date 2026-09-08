@@ -270,7 +270,8 @@ enum Cmd {
     /// Draft owner-reviewed agent creation and updates
     #[command(subcommand)]
     Agents(AgentsCmd),
-    /// Wait for exact, relay-confirmed CI results
+    /// Wait for exact, relay-confirmed CI results; register and inspect
+    /// CI-managed turn continuations
     #[command(subcommand)]
     Ci(CiCmd),
     /// Send, read, search, and manage messages
@@ -409,6 +410,99 @@ pub enum CiCmd {
         /// Overall wait limit. Omit to wait until cancelled.
         #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
         timeout: Option<u64>,
+    },
+    /// Register a turn to run when one exact CI result is recorded.
+    ///
+    /// The provider reads the recorded result with its own relay key at
+    /// delivery time: a private project must explicitly admit that identity,
+    /// or a real result is reported the same as "not finished" until the
+    /// registration expires. Durable, at-most-once admission: an exact retry
+    /// of this command (same target, identity, continuation text, and
+    /// --expires-in) reproduces the same commandId and names the same
+    /// registration rather than minting a second one.
+    #[command(after_help = "Examples:\n  \
+        bee ci continue --channel <uuid> \\\n    \
+        --driver claude-code --instance-id i-1 --session-id s-1 --generation 1 \\\n    \
+        --project '30621:<owner>:<id>' --repository '30617:<owner>:<id>' \\\n    \
+        --commit <40-hex> --check main-validation --run 136 --attempt 1 \\\n    \
+        --workflow <uuid> --phase build \\\n    \
+        --continuation 'CI passed; open the PR.' --expires-in 86400 --ack-timeout 60")]
+    Continue {
+        /// Channel UUID the registration is published into
+        #[arg(long)]
+        channel: String,
+        /// Full `cs-target` key, in place of the four target flags below
+        #[arg(long, conflicts_with_all = ["driver", "instance_id", "session_id", "generation"])]
+        target: Option<String>,
+        /// Provider driver slug (with --instance-id/--session-id/--generation)
+        #[arg(long)]
+        driver: Option<String>,
+        /// Provider instance identifier (with --driver/--session-id/--generation)
+        #[arg(long = "instance-id")]
+        instance_id: Option<String>,
+        /// Provider session identifier (with --driver/--instance-id/--generation)
+        #[arg(long = "session-id")]
+        session_id: Option<String>,
+        /// Session generation (with --driver/--instance-id/--session-id)
+        #[arg(long)]
+        generation: Option<u64>,
+        /// Full NIP-MP project coordinate (30621:<owner>:<slug>)
+        #[arg(long)]
+        project: String,
+        /// Full NIP-34 repository coordinate (30617:<owner>:<id>)
+        #[arg(long)]
+        repository: String,
+        /// Exact lowercase 40-hex commit
+        #[arg(long)]
+        commit: String,
+        /// Configured CI check name
+        #[arg(long)]
+        check: String,
+        /// External CI run identifier
+        #[arg(long)]
+        run: String,
+        /// External CI attempt number
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        attempt: u32,
+        /// Workflow UUID authorized to record this result
+        #[arg(long)]
+        workflow: String,
+        /// Completion phase; build completion never satisfies a deploy wait
+        #[arg(long, value_enum)]
+        phase: CiPhaseArg,
+        /// Text delivered alongside the verified result, or @path to read it
+        /// from a file (@- reads stdin). Must not be empty.
+        #[arg(long)]
+        continuation: String,
+        /// Registration horizon in seconds; a result recorded after this
+        /// many seconds have elapsed is refused rather than delivered.
+        #[arg(long, value_name = "SECONDS", default_value_t = 86400)]
+        expires_in: u64,
+        /// How long to wait for the relay's registration or refusal receipt
+        /// before reporting unconfirmed.
+        #[arg(long, value_name = "SECONDS", default_value_t = 60)]
+        ack_timeout: u64,
+    },
+    /// Inspect a CI-managed continuation registration (read-only)
+    #[command(subcommand)]
+    Continuation(CiContinuationCmd),
+}
+
+/// `bee ci continuation` subcommands.
+#[derive(Subcommand)]
+pub enum CiContinuationCmd {
+    /// Read the latest receipt stage for one registration commandId.
+    ///
+    /// Reads stored replay only — no wait, no write. Prints the latest stage
+    /// among `registered`, `queued`, `started`, `refused`, `dropped`, or
+    /// `none`, with the receipt event ids observed and any refusal code.
+    Status {
+        /// Channel UUID the registration was published into
+        #[arg(long)]
+        channel: String,
+        /// The registration's commandId (`cic-<64 hex>`)
+        #[arg(long = "command-id")]
+        command_id: String,
     },
 }
 
@@ -4520,7 +4614,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,
-        Cmd::Ci(sub) => commands::ci::dispatch(sub, &client).await,
+        Cmd::Ci(sub) => commands::ci::dispatch(sub, &client, &cli.format).await,
         Cmd::Messages(sub) => commands::messages::dispatch(sub, &client, &cli.format).await,
         Cmd::Channels(sub) => commands::channels::dispatch(sub, &client, &cli.format).await,
         Cmd::Canvas(sub) => commands::channels::dispatch_canvas(sub, &client).await,
