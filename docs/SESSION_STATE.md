@@ -33,7 +33,25 @@ rows with Previous/Next navigation. Role cards now precede revision history.
 A 1,000-report fixture checks the rendering bound; a queued-task test checks
 cold verification yields; mutation tests prevent cached signature acceptance
 of altered content or nested tags. Installed app remains the older build above
-until a new package is explicitly recorded. Live scrolling acceptance pending.
+until the following package replacement.
+
+**Performance test package installed:** `347e9e9a` is now installed at
+`/Users/brian/Applications/Beekeeper Dev.app`. All eight sidecars and deep strict
+signature checks passed. Previous app preserved as
+`Beekeeper Dev.app.before-347e9e9a-20260908`. App was quit with Cmd-Q and its
+process exit checked before replacement. The new process starts but Computer
+Use times out; a fresh sample shows `SecKeychainFindGenericPassword` during
+secret-store startup. User must handle the OS prompt; live scrolling acceptance
+is still pending. No Keychain interaction or bypass attempted.
+
+Validation: all 8,399 desktop tests pass; three rebuilt Packs browser tests
+pass; targeted store/remount tests 81/81; 1,000-report rendering bound and actual
+Previous/Next navigation pass. First full suite caught a shared-store sibling
+notification regression; revision tracking repaired it before the final suite.
+Logs are preserved in `../review-2026-09-08-packs-performance/`. Source is on
+`work/packs-scroll-performance` (5f192ea1c plus 347e9e9a), not landed or pushed.
+Repeated 1,000 same-object signature checks benchmark at 2.57ms versus fresh
+objects 1545.95ms; this is Node evidence, not a measured WebView frame rate.
 
 ### Follow-on evidence
 
