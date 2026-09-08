@@ -9289,6 +9289,9 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
   the same quota after ~60 events; NIP-ST's own per-kind limiter (20 inputs/s,
   `shell_observe.rs:49-54`) was meant to be the gate. Either exempt the NIP-ST
   ephemerals from the per-minute message quota or document the ceiling.
+  **Closed 2026-09-08 as "documented, not exempted" — see "Built 2026-09-08 —
+  relay admission split" below: Andy chose to keep ephemerals inside the
+  60/min, and the desktop broadcaster now throttles to fit.**
 - **All five slices are on `feat/mobile-interact`** (five commits, each
   gated: `flutter analyze`, `dart format`, `flutter test` — 1840 passed /
   0 failed at the end, up from 1747 — and `just file-size-check`).
@@ -9390,6 +9393,168 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
     passed / 0 failed (up from 1843), `just file-size-check` clean. Not yet
     exercised on a device: the next step is the simulator against the local
     relay with the desktop's provider advertising in the project's channel.
+
+### Built 2026-09-08 — relay admission split (reads / durable / ephemeral), per-connection bursts, and bundled client reads (`feat/relay-rate`)
+
+**Why.** Andy, 2026-09-07: "significantly reduce our relay packet rate to better
+allow connections from multiple devices on the same key". The paired phone signs
+with the desktop's nsec; that evening a desktop launch was refused with
+`rate-limited: quota exceeded; retry in 5s` because both devices had just
+reconnected to a restarted relay. The relay log put numbers on it: each client
+peaked at 48–50 REQs in one 5 s window (the whole per-key budget), both replays
+sent 8 REQs per 50 ms (160/s against 10/s), and the phone alone polled 16–18
+history REQs a minute from its 30 s timers (8,508 in ~3 h). Cold start was
+≈ N+27 REQs on the phone and ≈ 3N+50 on the desktop, one filter per REQ
+everywhere — although NIP-01 lets a REQ carry 10 filters for one admission unit
+(`crates/buzz-relay/src/protocol.rs:12`, `rejection.rs:68-78`) and `POST /query`
+takes any number of filters as one call against a separate 300/min budget
+(`api/bridge.rs:1096-1120`). EVENTs cannot be bundled: one per frame, no batch
+endpoint. Decisions: relay *and* both clients; **ephemeral kinds stay counted**
+against the per-key 60/min (Andy: no exemption — the broadcaster throttles to
+fit, the ceiling is documented); mobile and desktop in parallel lanes.
+
+**Relay (Lane R).** `enforce_ws_admission` (`crates/buzz-relay/src/rejection.rs:120-172`)
+now meters three per-**connection**, process-local 5 s budgets in
+`admission.rs` (`WindowBudget` `:120-148`, `Budget`/`budget_for` `:50-88`,
+`ConnectionBudgets` on `ConnectionState` `connection.rs:88-90`): reads (REQ+COUNT,
+default 30/s → 150 per window, **no Redis call**), durable EVENTs (10/s → 50,
+then the shared Redis `Messages` 60/min per (community, pubkey), 120 for agents),
+ephemeral EVENTs (100/s → 500, then the same shared 60/min — kept counted by
+decision). Per-kind 1 s ceilings for 20001 presence (5/s), 20002 typing (5/s)
+and other ephemeral kinds (10/s) sit in the event handler
+(`handlers/event.rs:1134-1146`, `state.rs:820`); NIP-ST's 60/10/20 per s and the
+observer 100/s now share one helper (`admission.rs:236-254`). A key may hold 8
+sockets per node (`handlers/auth.rs:416-456`, NOTICE
+`rate-limited: too many connections for this key`). Redis round-trips per frame:
+REQ/COUNT 1→0, durable EVENT 2→1, ephemeral EVENT 2→1; `LimitType::WsEvents` is
+gone. Redis loss now refuses only EVENTs (pinned by test). Rejection text is
+`rate-limited: {read|message|ephemeral|api} quota exceeded; retry in {n}s` — the
+prefix and the `retry in Ns` hint every parser keys on are unchanged (desktop
+`relayRateLimitGate.ts:39-42`, mobile `relay_closed_policy.dart:33-39`,
+`buzz-acp/src/relay.rs:4162-4167`, `buzz-cli/src/client.rs:155-163`). The first
+refusal in each window is now a `tracing::warn!` (conn_id, pubkey prefix, frame,
+kind, budget, window, limit, retry) and `buzz_admission_rejections_total` carries
+`budget`/`scope` labels — before this, quota refusals were invisible in the log.
+NIP-11 advertises `limitation.rate_limits` (`nip11.rs:131-187`; deploy check
+`curl -sH 'Accept: application/nostr+json' https://hive.agiterra.org/ | jq .limitation.rate_limits`).
+New env: `BUZZ_RATE_LIMIT_WS_READS_PER_SEC` (30),
+`BUZZ_RATE_LIMIT_WS_EPHEMERAL_PER_SEC` (100), `BUZZ_MAX_WS_CONNECTIONS_PER_PUBKEY`
+(8); `BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC` now means the per-connection
+durable burst (`.env.example:62-78`, `docs/INTEGRATION.md` § limitation.rate_limits).
+Finding: `check_ip_connection` (`buzz-auth/src/rate_limit.rs:221`) has no caller —
+nothing capped sockets before the new per-key cap. Tests: 112 buzz-auth, 1046
+buzz-relay passed, incl. `two_connections_on_one_pubkey_have_independent_read_budgets`,
+`req_is_admitted_locally_even_when_shared_admission_is_down`,
+`ephemeral_event_is_also_charged_to_the_shared_message_quota`,
+`a_req_with_ten_filters_costs_one_read`, `ninth_socket_on_one_key_in_one_community_is_over_the_cap`.
+
+**Documented ceiling (not exempted).** One shared terminal at the desktop's old
+100 ms cadence was 600 EVENTs/min against 60. The desktop broadcaster
+(`desktop/src-tauri/src/shell_sessions/broadcast.rs:49-64`) now emits at most one
+frame per second and 40 per rolling minute per session, only while a watcher is
+live, and doubles its interval (max 4 s) for 60 s after a `rate-limited:` OK;
+every frame carries a `["cadence", "<ms>"]` tag so observers can show the rate.
+`docs/nips/NIP-ST.md:131` now says ~1 frame/s sustained. A streaming terminal
+still takes up to 40 of the owner's 60 per minute; the knob is
+`BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN` and the warn line is how to know.
+
+**Mobile (Lanes M1–M3).** `relay_session.dart` (992 → 754, types and inbound
+handlers as `part` files) sends multi-filter REQs (`subscribeAll`/`fetchHistoryAll`,
+≤10), coalesces one-shot reads into one `POST /query` per 50 ms window
+(`query()`, `relay_query_coalescer.dart`, chunked at 128 aggregate `#h`, demuxed
+by `nostr_filter_match.dart`, WS fallback per filter), dedupes identical live
+subscriptions (`relay_subscription_registry.dart`, refcounted), paces every
+REQ/EVENT through `relay_send_budget.dart` (5 s window, capacity 50 /
+`deviceShare = 2` = 25, 8-frame write reserve, ephemeral lane droppable) — the
+replay's 8-per-50 ms constants are gone — awaits the rate-limit gate in
+`subscribe`, arms the gate on an unsolicited `rate-limited:` OK
+(`relay_session_inbound.dart:228`; before, a refused typing frame never armed
+it), jitters reconnect (`relay_reconnect_policy.dart`) and phase-offsets polls
+(`poll_schedule.dart`: `phaseOffset`, `alignedPollDelay`). `SessionState` gained
+`==` so bare watches stop rebuilding on every attempt. Channels: one live REQ per
+128 channels with `limit 0` instead of one per channel — the relay's 128 `#h` cap
+is **aggregate across a REQ's filters** (`handlers/req.rs:43,1345-1357`), so it is
+one filter per REQ; the four metadata reads coalesce into one `/query`; resume
+refreshes only when no reconnect is pending. Features: the coding-session
+observer's 10 history filters are one `/query` (per-filter limits intact) and its
+4 live filters one REQ; the four preference blobs one `/query`; read-state one
+fetch + one subscribe per connect; projects and terminals polls share one
+wall-clock phase and one `/query`; typing, presence and the terminal keepalive
+go through `SignedEventRelay.sendEphemeral` (droppable, never queued). Measured
+in tests: a 25-channel cold start is **2 REQ frames + 3 HTTP** (was 29 REQ + 2);
+opening a coding-session channel is 1 REQ + 1 `/query` (was 14 REQ). Matcher
+caveat (`nostr_filter_match.dart:53`): the relay resolves `#h` for h-less events
+(reactions, deletions) from stored `channel_id`; the client cannot, so those pass
+an `#h` clause rather than being dropped. Gate: `flutter analyze` clean, `dart
+format` clean, `flutter test` 1982 passed (from 1880).
+
+**Desktop (Lanes D1–D4).** `relayClientSession.ts` (1071 → 952; feature wrappers
+in `relayClientFeatureApi.ts`) gained the same transport: `subscribeLiveMany`
+(≤10 filters, one REQ, deduped through `relaySubscriptionRegistry.ts` so the two
+mounted coding-session catalogs now share one REQ), `fetchEventsCoalesced` (50 ms
+→ one `POST /query` through the new Tauri command `query_relay_filters`,
+`desktop/src-tauri/src/commands/relay_query.rs:54-64`, bound in
+`relayQueryBridge.ts` because `tauri.ts` is over the ratchet), `fetchEventsBatch`
+(chunked at 128 aggregate `#h`), a send budget (`relaySendBudget.ts`, reset in
+`resetCommunityState()`), the gate awaited in `subscribe`, the gate armed on an
+unsolicited `rate-limited:` OK, one retry after the gate in
+`publishSessionEvent`, replay paced by the bucket with per-channel since cursors
+(`REPLAY_BATCH_SIZE`/`REPLAY_INTER_BATCH_DELAY_MS` deleted), jittered reconnect,
+and `pollSchedule.ts`. The matcher accepts any `#name` tag key (the coding-session
+anchors `#cstx-genesis`/`#csat-genesis` were falling back to WS until the
+finalizer widened it, `relayFilterMatch.ts`). Channels: one live REQ per 128
+channels with the mention filter applied client-side to the same stream (it is a
+strict subset), the N unread catch-ups one `fetchEventsBatch`, the
+inactive-community observer 5+2N REQs → 2 + ⌈2N/10⌉ (its client is WS-only);
+`withChannelTagFallback` became `requireChannelTag`, which drops an h-less event
+with a warn rather than guessing its channel. Fixed reads (sidebar prefs, read
+state, personas, theme, join alerts, home feed, user status, coding-session
+create observations / mission evidence / policy, pulse, agent progress, project
+terminals) moved to the coalescer or to batches with per-filter limits; the
+30/60 s polls are phase-jittered and focus-gated. Shell: `ShellBroadcastPump`
+reports every publish verdict to `shell_broadcast_publish_result`; the owner's
+and the observer's screens show the cadence ("≤1 frame/s, ≤40/min — the relay's
+per-key quota", `shellBroadcastCadence.ts`); collaborator input coalesces at
+80 ms when the write lane is below twice the reserve. Measured in tests, N = 25,
+P = 3: the three channel producers 75 REQ → 1 REQ + 1 `/query`; the fixed
+one-shot reads 34 REQ → 0 REQ + ≈12 `/query`; polls ≈22 REQ/min → 0 REQ
+(≈12 `/query` focused, ≈4 unfocused). Gate: `tsc` clean, Biome clean on every
+changed file (the 9 remaining repo warnings pre-date this change and sit in
+files nobody touched), `pnpm check:px-text` clean, `pnpm test` 8377 passed
+(from 8349), `cargo test` on the Tauri crate 3131 passed.
+
+**Adversarial review, then fixed before landing.** (a) The desktop broadcast
+pump dropped a terminal's `end` frame while the gate was armed, although the
+Rust side never throttles it — observers would have kept a dead terminal open
+under a "≤1 frame/s" label; `end` is now never droppable
+(`ShellBroadcastPump.tsx`). (b) Both coalescers demuxed h-less events
+(reactions, deletions — the relay resolves those to one channel from a column
+the wire lacks) permissively, so a chunk mixing two callers' channel sets could
+hand one caller the other's reaction; a chunk whose filters name different
+channel sets now demuxes strictly and drops such an event instead
+(`relayQueryCoalescer.ts`, `relay_query_coalescer.dart`, tests on both).
+(c) The per-kind ephemeral refusal logged nothing; it now warns once per window
+like the other budgets (`handlers/event.rs`, `admission.rs` `KindWindowVerdict`),
+and `docs/INTEGRATION.md` now says the per-kind ceiling is applied *after* the
+frame was charged to the shared quota, which is what the code does. (d) The
+shared-quota retry hint could read `retry in 0s`; it is now ≥ 1
+(`admission.rs`). (e) Pulse and agent-progress live subscriptions sliced ten
+filters per REQ without the 128-`#h` aggregate cap; they use the shared chunker
+now. (f) A connection-cap NOTICE that cannot be queued is logged rather than
+silently lost (`handlers/auth.rs`). Residuals the review named and this change
+leaves: the Rust `attach_bundle` bypasses the frame cap (up to 3 extra EVENTs
+per refusal); at the 4 s back-off ceiling a further refusal does not re-emit the
+cadence event; the observer screen falls back to a literal 40 for the cap;
+`ReadOnlyRelayClient` (the inactive-community socket) is unbudgeted; a mobile
+live subscription registered during the gate wait can be sent twice by a
+replay; a keepalive no longer clears `lastWatchError`.
+
+**Not yet done, in order:** (1) live verification on the dev relay with phone and
+desktop on one key — the plan's five checks (`~/.claude/plans/graceful-hatching-valiant.md`
+§ Verification); (2) flip `deviceShare` to 1 in both clients once hive runs the
+per-connection budgets; (3) a shared filter-matcher fixture under `crates/buzz-core`
+that the two client matchers and the relay's `filter.rs` all read; (4) NIP-AA §135
+owner-aggregated quotas remain unimplemented.
 
 ## 2a. Direction settled 2026-08-18
 
