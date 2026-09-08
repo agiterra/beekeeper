@@ -5,6 +5,20 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## Latest installed test build — e71cb7ba (September 8)
+
+Combined performance + Roles usability package installed at
+`/Users/brian/Applications/Beekeeper Dev.app`; all eight sidecars/resources and
+deep strict signature checks pass. Previous347e9e9a app preserved as
+`Beekeeper Dev.app.before-e71cb7ba-20260908`. Final194 Roles tests pass after
+warm-refetch repair. Integrated rebuilt browser tests3/3 pass; Fable's full8455
+suite evidence verified. Logs `../review-2026-09-08-roles-integration/`.
+App was quit cleanly and absence checked before replacement. Relaunch process
+exists but Computer Use times out; startup sample again shows Keychain lookup.
+Live UI acceptance pending the user's OS prompt. Neither this candidate nor
+performance topic is pushed/landed. Next user test: Roles card readability,
+Check again busy state, Technical details disclosure and responsive pagination.
+
 ## September 8 Roles usability integration — candidate for live test
 
 Fable delivered clean signed-off `5b70f2d79`, integrated on the performance topic
