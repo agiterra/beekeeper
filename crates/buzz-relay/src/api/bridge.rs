@@ -21,13 +21,18 @@ use crate::state::AppState;
 
 use super::{api_error, internal_error, not_found};
 
+/// Charges one HTTP bridge call to the shared per-key `api` quota.
+///
+/// A refusal reads `rate-limited: api quota exceeded; retry in {n}s` with
+/// 429, or `rate-limited: shared admission unavailable` with 503 when Redis
+/// did not answer. The first refusal of a window is logged at warn.
 pub(crate) async fn enforce_http_admission(
     state: &AppState,
     tenant: &TenantContext,
     pubkey: &nostr::PublicKey,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     let limit = state.auth.config().rate_limits.human_api_calls_per_min;
-    match crate::admission::check_principal(
+    crate::admission::check_principal(
         state.admission_rate_limiter.as_ref(),
         tenant,
         pubkey,
@@ -36,23 +41,10 @@ pub(crate) async fn enforce_http_admission(
         limit,
     )
     .await
-    {
-        Ok(()) => Ok(()),
-        Err(crate::admission::AdmissionError::Exceeded { reset_in_secs }) => {
-            metrics::counter!("buzz_admission_rejections_total", "transport" => "http", "reason" => "quota").increment(1);
-            Err(api_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                &format!("rate-limited: quota exceeded; retry in {reset_in_secs}s"),
-            ))
-        }
-        Err(crate::admission::AdmissionError::Unavailable) => {
-            metrics::counter!("buzz_admission_rejections_total", "transport" => "http", "reason" => "unavailable").increment(1);
-            Err(api_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "rate-limited: shared admission unavailable",
-            ))
-        }
-    }
+    .map_err(|error| {
+        let (status, message) = crate::rejection::http_rejection(error, pubkey, limit);
+        api_error(status, &message)
+    })
 }
 
 /// Values retained from an already-verified bridge authentication event.

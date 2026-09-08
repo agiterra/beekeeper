@@ -1131,6 +1131,32 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             ));
             return;
         }
+        // Per-kind, per-pubkey 1 s ceiling (presence 5/s, typing 5/s, other
+        // 10/s): the per-connection ephemeral burst alone would admit a
+        // 100/s flood of one kind. Checked before the lifecycle lookup so a
+        // flood costs no DB round trip.
+        let kind_verdict =
+            ephemeral_kind_rate_limited(&state, conn.tenant.community(), &event, kind_u32);
+        if kind_verdict.limited {
+            if kind_verdict.first_over {
+                tracing::warn!(
+                    conn_id = %conn.conn_id,
+                    pubkey = %&event.pubkey.to_hex()[..8],
+                    kind = kind_u32,
+                    limit = crate::admission::ephemeral_kind_limit(kind_u32),
+                    window_secs = crate::admission::EPHEMERAL_KIND_WINDOW_SECS,
+                    tenant = %conn.tenant.community(),
+                    "ephemeral kind rate exceeded"
+                );
+            }
+            reject("rate_limited");
+            conn.send(RelayMessage::ok(
+                &event_id_hex,
+                false,
+                crate::admission::EPHEMERAL_KIND_REJECTION,
+            ));
+            return;
+        }
         match buzz_deletion::store(&state.db)
             .is_serving_active(conn.tenant.community())
             .await
@@ -1391,20 +1417,28 @@ fn observer_frame_rate_limited(
     community_id: CommunityId,
     agent_key: [u8; 32],
 ) -> bool {
-    let now = std::time::Instant::now();
-    let mut entry = state
-        .observer_rate_limiter
-        .entry((community_id, agent_key))
-        .or_insert((0, now));
-    let (count, window_start) = entry.value_mut();
-    if now.duration_since(*window_start).as_secs() >= 1 {
-        *count = 1;
-        *window_start = now;
-        false
-    } else {
-        *count += 1;
-        *count > 100
-    }
+    crate::admission::scoped_kind_window_limited(
+        &state.observer_rate_limiter,
+        community_id,
+        agent_key,
+        100,
+    )
+}
+
+/// Check + bump the per-(community, author, kind) 1 s ceiling for a generic
+/// ephemeral `event` (see `crate::admission::ephemeral_kind_limit`).
+fn ephemeral_kind_rate_limited(
+    state: &AppState,
+    community_id: CommunityId,
+    event: &Event,
+    kind_u32: u32,
+) -> crate::admission::KindWindowVerdict {
+    crate::admission::local_kind_window_check(
+        &state.ephemeral_kind_rate_limiter,
+        ((community_id, event.pubkey.to_bytes()), kind_u32),
+        crate::admission::ephemeral_kind_limit(kind_u32),
+        std::time::Instant::now(),
+    )
 }
 
 /// Handle encrypted agent observer frames (kind 24200).
@@ -1809,6 +1843,77 @@ mod tests {
         );
     }
 
+    /// The 6th presence update from one key in a second is refused; another
+    /// key, and another kind from the same key, are unaffected.
+    #[tokio::test]
+    async fn sixth_presence_update_in_a_second_is_refused_per_pubkey() {
+        let state = fanout_access::test_state().await;
+        let community = buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::from_u128(0xCCCC));
+        let alice = Keys::generate();
+        let bob = Keys::generate();
+        let presence = |keys: &Keys| {
+            EventBuilder::new(Kind::Custom(KIND_PRESENCE_UPDATE as u16), "")
+                .sign_with_keys(keys)
+                .expect("sign presence")
+        };
+        let typing = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_TYPING_INDICATOR as u16),
+            "",
+        )
+        .sign_with_keys(&alice)
+        .expect("sign typing");
+
+        for _ in 0..5 {
+            assert!(
+                !super::ephemeral_kind_rate_limited(
+                    &state,
+                    community,
+                    &presence(&alice),
+                    KIND_PRESENCE_UPDATE
+                )
+                .limited
+            );
+        }
+        let sixth = super::ephemeral_kind_rate_limited(
+            &state,
+            community,
+            &presence(&alice),
+            KIND_PRESENCE_UPDATE,
+        );
+        assert!(sixth.limited);
+        assert!(
+            sixth.first_over,
+            "the first refusal of a window is the one logged"
+        );
+        let seventh = super::ephemeral_kind_rate_limited(
+            &state,
+            community,
+            &presence(&alice),
+            KIND_PRESENCE_UPDATE,
+        );
+        assert!(seventh.limited && !seventh.first_over);
+        assert!(
+            !super::ephemeral_kind_rate_limited(
+                &state,
+                community,
+                &presence(&bob),
+                KIND_PRESENCE_UPDATE
+            )
+            .limited,
+            "another pubkey has its own presence window"
+        );
+        assert!(
+            !super::ephemeral_kind_rate_limited(
+                &state,
+                community,
+                &typing,
+                buzz_core::kind::KIND_TYPING_INDICATOR
+            )
+            .limited,
+            "typing is a separate per-kind window for the same pubkey"
+        );
+    }
+
     #[tokio::test]
     async fn observer_owner_cache_is_scoped_to_community() {
         let state = fanout_access::test_state().await;
@@ -1873,6 +1978,7 @@ mod tests {
             cancel: CancellationToken::new(),
             backpressure_count: Arc::new(AtomicU8::new(0)),
             grace_limit: 3,
+            budgets: Default::default(),
         });
 
         super::handle_agent_observer_event(

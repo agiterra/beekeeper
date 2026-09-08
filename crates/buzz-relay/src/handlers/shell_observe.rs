@@ -19,7 +19,6 @@
 //! the session owner's concern (it must see 24310 events to stream at all).
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use buzz_core::event::StoredEvent;
 use buzz_core::kind::{event_kind_u32, KIND_SHELL_INPUT, KIND_SHELL_WATCH};
@@ -349,25 +348,15 @@ fn tag_values(event: &Event, name: &str) -> Vec<String> {
         .collect()
 }
 
-/// Check + bump a per-(community, pubkey) fixed-window limit. Same shape as
-/// `observer_frame_rate_limited` in `event.rs`, with the limit parameterized.
+/// Check + bump a per-(community, pubkey) one-second window — the shared
+/// shape in `crate::admission::local_kind_window_limited`.
 fn rate_limited(
     limiter: &ScopedRateLimiter,
     community_id: CommunityId,
     pubkey: [u8; 32],
     limit: u32,
 ) -> bool {
-    let now = Instant::now();
-    let mut entry = limiter.entry((community_id, pubkey)).or_insert((0, now));
-    let (count, window_start) = entry.value_mut();
-    if now.duration_since(*window_start).as_secs() >= 1 {
-        *count = 1;
-        *window_start = now;
-        false
-    } else {
-        *count += 1;
-        *count > limit
-    }
+    crate::admission::scoped_kind_window_limited(limiter, community_id, pubkey, limit)
 }
 
 #[cfg(test)]

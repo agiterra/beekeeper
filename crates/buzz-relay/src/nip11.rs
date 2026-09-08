@@ -112,6 +112,77 @@ pub struct RelayLimitation {
     /// NIP-ER: maximum allowed `not_before` horizon in seconds from now.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_not_before_delta: Option<u64>,
+    /// The admission limits this relay enforces, so a client can pace itself
+    /// instead of discovering them from `rate-limited:` refusals. Absent only
+    /// in documents from relays that predate the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limits: Option<RelayRateLimits>,
+}
+
+/// The admission limits advertised under `limitation.rate_limits`.
+///
+/// Every value is the number the relay actually enforces: the
+/// per-connection figures are the configured per-second rates multiplied
+/// by the burst window, the per-key figures are the shared Redis quotas,
+/// and the per-kind ceilings are the relay's own constants. Built by
+/// [`Self::from_config`] from the live configuration — never retyped — so
+/// the document cannot drift from enforcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayRateLimits {
+    /// Length of the per-connection burst windows, in seconds.
+    pub window_secs: u64,
+    /// REQ + COUNT frames admitted per connection per window. A REQ carrying
+    /// several filters costs one.
+    pub reads_per_connection: u64,
+    /// Durable (stored) EVENTs admitted per connection per window, before
+    /// the shared per-key quota.
+    pub messages_per_connection: u64,
+    /// Ephemeral EVENTs (kinds 20000–29999) admitted per connection per
+    /// window, before the shared per-key quota.
+    pub ephemeral_per_connection: u64,
+    /// Durable **and** ephemeral EVENTs admitted per (community, pubkey) per
+    /// minute, shared across every connection the key holds.
+    pub messages_per_key_per_min: u64,
+    /// The same quota for agent logins.
+    pub agent_messages_per_key_per_min: u64,
+    /// HTTP bridge calls (`/events`, `/query`, `/count`) admitted per
+    /// (community, pubkey) per minute — a separate pool from the WebSocket.
+    pub api_calls_per_key_per_min: u64,
+    /// Concurrent WebSocket connections one pubkey may hold in one community.
+    pub max_connections_per_key: u64,
+    /// Presence updates (kind 20001) admitted per pubkey per second.
+    pub presence_per_key_per_sec: u32,
+    /// Typing indicators (kind 20002) admitted per pubkey per second.
+    pub typing_per_key_per_sec: u32,
+    /// Any other generic ephemeral kind admitted per pubkey per second.
+    pub ephemeral_kind_per_key_per_sec: u32,
+}
+
+impl RelayRateLimits {
+    /// Derives the advertised figures from the enforced configuration and
+    /// the per-kind constants in `crate::admission`.
+    pub fn from_config(limits: &buzz_auth::RateLimitConfig) -> Self {
+        use crate::admission::{ws_admission_budget, Budget};
+        let (window_secs, reads_per_connection) =
+            ws_admission_budget(crate::admission::per_second_rate(limits, Budget::Reads));
+        let (_, messages_per_connection) =
+            ws_admission_budget(crate::admission::per_second_rate(limits, Budget::Durable));
+        let (_, ephemeral_per_connection) =
+            ws_admission_budget(crate::admission::per_second_rate(limits, Budget::Ephemeral));
+        Self {
+            window_secs,
+            reads_per_connection,
+            messages_per_connection,
+            ephemeral_per_connection,
+            messages_per_key_per_min: limits.human_messages_per_min,
+            agent_messages_per_key_per_min: limits.agent_standard_messages_per_min,
+            api_calls_per_key_per_min: limits.human_api_calls_per_min,
+            max_connections_per_key: limits.max_ws_connections_per_pubkey,
+            presence_per_key_per_sec: crate::admission::EPHEMERAL_PRESENCE_PER_SEC,
+            typing_per_key_per_sec: crate::admission::EPHEMERAL_TYPING_PER_SEC,
+            ephemeral_kind_per_key_per_sec: crate::admission::EPHEMERAL_OTHER_PER_SEC,
+        }
+    }
 }
 
 /// Canonical `RelayLimitation` advertised by this relay.
@@ -125,7 +196,7 @@ pub struct RelayLimitation {
 /// unconditionally reject connections that are not in
 /// `AuthState::Authenticated`. This is independent of the REST API token
 /// toggle (`config.require_auth_token`).
-fn relay_limitation(max_message_length: usize) -> RelayLimitation {
+fn relay_limitation(max_message_length: usize, rate_limits: RelayRateLimits) -> RelayLimitation {
     let max_not_before_delta: u64 = std::env::var("SPROUT_MAX_NOT_BEFORE_DELTA")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -143,6 +214,7 @@ fn relay_limitation(max_message_length: usize) -> RelayLimitation {
         restricted_writes: true,
         due_delivery_mode: Some("push".to_string()),
         max_not_before_delta: Some(max_not_before_delta),
+        rate_limits: Some(rate_limits),
     }
 }
 
@@ -165,12 +237,16 @@ impl RelayInfo {
     /// gates on NIP-43 events — i.e. has a stable key AND enforces
     /// membership. NIP-43 events are verified against `self`, so it is a
     /// programmer error to advertise NIP-43 without a `relay_self`.
+    ///
+    /// `rate_limits` is the enforced admission configuration, pre-derived
+    /// by [`RelayRateLimits::from_config`] — a config scalar, not a lookup.
     pub fn build(
         relay_self: Option<&str>,
         icon: Option<&str>,
         advertise_nip43: bool,
         max_message_length: usize,
         pairing_relay_url: Option<&str>,
+        rate_limits: RelayRateLimits,
     ) -> Self {
         debug_assert!(
             !advertise_nip43 || relay_self.is_some(),
@@ -193,7 +269,7 @@ impl RelayInfo {
             push: None,
             software: "https://github.com/agiterra/beekeeper".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            limitation: Some(relay_limitation(max_message_length)),
+            limitation: Some(relay_limitation(max_message_length, rate_limits)),
             pairing_relay_url: pairing_relay_url.map(str::to_string),
             relay_self: relay_self.map(|s| s.to_string()),
             software_commit: crate::build_info::source_sha().to_string(),
@@ -265,8 +341,9 @@ fn push_descriptor(
 ///
 /// Centralised so the content-negotiated root handler and the dedicated
 /// `/info` endpoint can't drift apart. Every input to `RelayInfo::build`
-/// stays a pre-derived scalar: [`nip11_facts`] (config + keypair) plus the
-/// host-scoped workspace icon.
+/// stays a pre-derived scalar: [`nip11_facts`] (config + keypair), the
+/// enforced rate limits ([`RelayRateLimits::from_config`], config only), plus
+/// the host-scoped workspace icon.
 pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &str) -> RelayInfo {
     let (relay_self, advertise_nip43) = nip11_facts(state);
     let icon = workspace_icon_for_host(state, raw_host).await;
@@ -276,6 +353,7 @@ pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &st
         advertise_nip43,
         state.config.max_frame_bytes,
         state.config.pairing_relay_url.as_deref(),
+        RelayRateLimits::from_config(&state.auth.config().rate_limits),
     );
     let tenant_host = if state.config.push_gateway_delivery_url.is_some() {
         crate::tenant::bind_community(&state.db, raw_host)
@@ -351,7 +429,9 @@ pub(crate) fn nip11_facts(state: &crate::state::AppState) -> (Option<String>, bo
 /// (the workspace `icon`) arrives as a scalar from
 /// [`workspace_icon_for_host`], whose DB lookup is scoped through
 /// [`crate::tenant::bind_community`] and can therefore only ever surface the
-/// requesting host's own community state.
+/// requesting host's own community state. `RelayRateLimits` is a `Copy`
+/// struct of numbers derived from the process configuration — the same for
+/// every host, so it can name no community.
 ///
 /// This const binds `RelayInfo::build` to its **exact** allowed signature. The
 /// moment someone adds a `&Db`, `&AppState`, a search handle, an audit handle,
@@ -367,11 +447,97 @@ const _RELAY_INFO_BUILD_STATIC_INPUT_FENCE: fn(
     bool,
     usize,
     Option<&str>,
+    RelayRateLimits,
 ) -> RelayInfo = RelayInfo::build;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_rate_limits() -> RelayRateLimits {
+        RelayRateLimits::from_config(&buzz_auth::RateLimitConfig::default())
+    }
+
+    /// The advertised figures are the enforced ones: config × burst window
+    /// for the per-connection budgets, the per-kind consts for the ceilings.
+    #[test]
+    fn advertised_rate_limits_equal_the_enforced_config_and_consts() {
+        let config = buzz_auth::RateLimitConfig {
+            ws_reads_per_sec: 7,
+            human_ws_events_per_sec: 3,
+            ws_ephemeral_events_per_sec: 11,
+            human_messages_per_min: 61,
+            agent_standard_messages_per_min: 121,
+            human_api_calls_per_min: 301,
+            max_ws_connections_per_pubkey: 9,
+            ..buzz_auth::RateLimitConfig::default()
+        };
+
+        let limits = RelayRateLimits::from_config(&config);
+        assert_eq!(limits.window_secs, crate::admission::WS_BURST_WINDOW_SECS);
+        assert_eq!(
+            limits.reads_per_connection,
+            7 * crate::admission::WS_BURST_WINDOW_SECS
+        );
+        assert_eq!(
+            limits.messages_per_connection,
+            3 * crate::admission::WS_BURST_WINDOW_SECS
+        );
+        assert_eq!(
+            limits.ephemeral_per_connection,
+            11 * crate::admission::WS_BURST_WINDOW_SECS
+        );
+        assert_eq!(limits.messages_per_key_per_min, 61);
+        assert_eq!(limits.agent_messages_per_key_per_min, 121);
+        assert_eq!(limits.api_calls_per_key_per_min, 301);
+        assert_eq!(limits.max_connections_per_key, 9);
+        assert_eq!(
+            limits.presence_per_key_per_sec,
+            crate::admission::EPHEMERAL_PRESENCE_PER_SEC
+        );
+        assert_eq!(
+            limits.typing_per_key_per_sec,
+            crate::admission::EPHEMERAL_TYPING_PER_SEC
+        );
+        assert_eq!(
+            limits.ephemeral_kind_per_key_per_sec,
+            crate::admission::EPHEMERAL_OTHER_PER_SEC
+        );
+
+        // Defaults, as the document will read on an unconfigured relay.
+        let defaults = test_rate_limits();
+        assert_eq!(defaults.reads_per_connection, 150);
+        assert_eq!(defaults.messages_per_connection, 50);
+        assert_eq!(defaults.ephemeral_per_connection, 500);
+        assert_eq!(defaults.messages_per_key_per_min, 60);
+        assert_eq!(defaults.max_connections_per_key, 8);
+    }
+
+    /// The field ships under `limitation.rate_limits` with stable names.
+    #[test]
+    fn rate_limits_are_serialized_under_limitation() {
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
+        let json = serde_json::to_value(&info).expect("serialize");
+        let limits = &json["limitation"]["rate_limits"];
+        assert_eq!(limits["window_secs"], 5);
+        assert_eq!(limits["reads_per_connection"], 150);
+        assert_eq!(limits["messages_per_connection"], 50);
+        assert_eq!(limits["ephemeral_per_connection"], 500);
+        assert_eq!(limits["messages_per_key_per_min"], 60);
+        assert_eq!(limits["agent_messages_per_key_per_min"], 120);
+        assert_eq!(limits["api_calls_per_key_per_min"], 300);
+        assert_eq!(limits["max_connections_per_key"], 8);
+        assert_eq!(limits["presence_per_key_per_sec"], 5);
+        assert_eq!(limits["typing_per_key_per_sec"], 5);
+        assert_eq!(limits["ephemeral_kind_per_key_per_sec"], 10);
+    }
 
     #[test]
     fn push_descriptor_is_gated_by_gateway_configuration_and_tenant_binding() {
@@ -421,7 +587,14 @@ mod tests {
 
     #[test]
     fn build_advertises_buzz_repository_url() {
-        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         assert_eq!(info.software, "https://github.com/agiterra/beekeeper");
     }
 
@@ -432,7 +605,14 @@ mod tests {
     /// because `unknown` is itself the disclosed answer, not an absence.
     #[test]
     fn build_advertises_software_commit_and_build_time() {
-        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         assert_eq!(info.software_commit, crate::build_info::source_sha());
         assert_eq!(info.build_time, crate::build_info::build_time());
         // In this dev/test build the checkout's own `.git` is present, so
@@ -472,7 +652,14 @@ mod tests {
 
     #[test]
     fn software_commit_and_build_time_are_additive_and_always_present_in_json() {
-        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         let json = serde_json::to_value(&info).expect("serialize");
         assert!(
             json.get("software_commit")
@@ -508,6 +695,7 @@ mod tests {
             false,
             DEFAULT_MAX_FRAME_BYTES,
             Some("wss://pairing.buzz.xyz"),
+            test_rate_limits(),
         );
         let json = serde_json::to_value(&info).expect("serialize");
         assert_eq!(
@@ -516,7 +704,14 @@ mod tests {
             Some("wss://pairing.buzz.xyz")
         );
 
-        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         let json = serde_json::to_value(&info).expect("serialize");
         assert!(json.get("pairing_relay_url").is_none());
     }
@@ -532,6 +727,7 @@ mod tests {
             false,
             DEFAULT_MAX_FRAME_BYTES,
             None,
+            test_rate_limits(),
         );
         assert_eq!(
             info.icon.as_deref(),
@@ -544,7 +740,14 @@ mod tests {
         );
 
         for icon in [None, Some("")] {
-            let info = RelayInfo::build(None, icon, false, DEFAULT_MAX_FRAME_BYTES, None);
+            let info = RelayInfo::build(
+                None,
+                icon,
+                false,
+                DEFAULT_MAX_FRAME_BYTES,
+                None,
+                test_rate_limits(),
+            );
             assert!(info.icon.is_none());
             let json = serde_json::to_value(&info).expect("serialize");
             assert!(
@@ -559,12 +762,12 @@ mod tests {
         // REQ, EVENT, and COUNT all unconditionally require
         // `AuthState::Authenticated` (see `crates/buzz-relay/src/handlers/`),
         // so the NIP-11 doc must advertise it.
-        assert!(relay_limitation(DEFAULT_MAX_FRAME_BYTES).auth_required);
+        assert!(relay_limitation(DEFAULT_MAX_FRAME_BYTES, test_rate_limits()).auth_required);
     }
 
     #[test]
     fn max_message_length_uses_configured_frame_limit() {
-        let info = RelayInfo::build(None, None, false, 262_144, None);
+        let info = RelayInfo::build(None, None, false, 262_144, None, test_rate_limits());
         let limitation = info.limitation.expect("limitation");
         assert_eq!(limitation.max_message_length, Some(262_144));
     }
@@ -595,7 +798,14 @@ mod tests {
     /// Open relay, ephemeral key — both `self` and NIP-43 are absent.
     #[test]
     fn build_open_relay_ephemeral_key_omits_self_and_nip43() {
-        let info = RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            None,
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         assert!(info.relay_self.is_none());
         assert!(!info.supported_nips.contains(&NIP_RELAY_MEMBERSHIP));
     }
@@ -608,7 +818,14 @@ mod tests {
     #[test]
     fn build_open_relay_stable_key_advertises_self_but_not_nip43() {
         let pk = "0000000000000000000000000000000000000000000000000000000000000001";
-        let info = RelayInfo::build(Some(pk), None, false, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            Some(pk),
+            None,
+            false,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         assert_eq!(info.relay_self.as_deref(), Some(pk));
         assert!(!info.supported_nips.contains(&NIP_RELAY_MEMBERSHIP));
     }
@@ -617,7 +834,14 @@ mod tests {
     #[test]
     fn build_membership_relay_advertises_self_and_nip43() {
         let pk = "0000000000000000000000000000000000000000000000000000000000000001";
-        let info = RelayInfo::build(Some(pk), None, true, DEFAULT_MAX_FRAME_BYTES, None);
+        let info = RelayInfo::build(
+            Some(pk),
+            None,
+            true,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
         assert_eq!(info.relay_self.as_deref(), Some(pk));
         assert!(info.supported_nips.contains(&NIP_RELAY_MEMBERSHIP));
     }
@@ -628,6 +852,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "advertise_nip43=true requires relay_self=Some")]
     fn build_nip43_without_self_panics_in_debug() {
-        let _ = RelayInfo::build(None, None, true, DEFAULT_MAX_FRAME_BYTES, None);
+        let _ = RelayInfo::build(
+            None,
+            None,
+            true,
+            DEFAULT_MAX_FRAME_BYTES,
+            None,
+            test_rate_limits(),
+        );
     }
 }

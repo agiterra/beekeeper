@@ -661,6 +661,67 @@ Tauri command — for the community being edited, not necessarily the active
 one, so editing an inactive workspace still shows the truth about its own
 relay rather than the currently-connected one's.
 
+### `limitation.rate_limits`
+
+*Added 2026-09-07 (relay admission split).*
+
+The document also advertises the admission limits the relay enforces, so a
+client can pace itself instead of learning the numbers from `rate-limited:`
+refusals. The object is built from the live configuration and the relay's
+per-kind constants (`RelayRateLimits::from_config`,
+`crates/buzz-relay/src/nip11.rs`) — never retyped — so it cannot drift from
+enforcement. Absent only from relays that predate the field.
+
+```bash
+curl -s -H 'Accept: application/nostr+json' https://hive.agiterra.org/ \
+  | jq .limitation.rate_limits
+```
+
+```json
+{
+  "window_secs": 5,
+  "reads_per_connection": 150,
+  "messages_per_connection": 50,
+  "ephemeral_per_connection": 500,
+  "messages_per_key_per_min": 60,
+  "agent_messages_per_key_per_min": 120,
+  "api_calls_per_key_per_min": 300,
+  "max_connections_per_key": 8,
+  "presence_per_key_per_sec": 5,
+  "typing_per_key_per_sec": 5,
+  "ephemeral_kind_per_key_per_sec": 10
+}
+```
+
+- The three `*_per_connection` figures are **per WebSocket connection, per
+  `window_secs`**, kept in relay memory: a REQ or COUNT costs one read
+  however many filters it carries (up to NIP-11 `max_filters`); a stored
+  EVENT costs one message; an ephemeral EVENT (kinds 20000–29999) costs one
+  ephemeral. Two devices on one key each get their own set, and reads never
+  touch Redis.
+- `messages_per_key_per_min` is **shared across every connection a
+  (community, pubkey) holds**, in Redis, and is charged by durable *and*
+  ephemeral EVENTs — a streaming terminal spends the same pool as chat.
+  `api_calls_per_key_per_min` is a separate pool for `POST /events`,
+  `/query` and `/count`, which is why one-shot reads bundled into a single
+  `/query` leave the WebSocket budget alone.
+- `max_connections_per_key` is enforced after NIP-42 auth: the socket over
+  the cap receives `NOTICE rate-limited: too many connections for this key`
+  and is closed.
+- The `*_per_key_per_sec` ceilings are one-second per-kind windows on
+  generic ephemeral EVENTs, applied in the event handler — that is, *after*
+  admission has already charged the frame to the per-connection ephemeral
+  burst and to the shared per-key message quota. A refused sixth presence
+  update in a second has still spent one of the key's 60 per minute.
+
+A refusal always reads `rate-limited: {read|message|ephemeral|api} quota
+exceeded; retry in {n}s` — on `CLOSED` for REQ/COUNT, on `OK false` for
+EVENT, as HTTP 429 for the bridge — and the word names the pool that
+tripped. When Redis cannot be reached only EVENTs are refused, with
+`rate-limited: shared admission unavailable` (HTTP 503). The relay logs one
+`admission quota exceeded` warn line per window per connection, and counts
+every refusal in `buzz_admission_rejections_total{transport,reason,budget,scope}`.
+
 ## Verdict-gated refs
 
 *Added 2026-09-02 (batch 3 lane L6).*

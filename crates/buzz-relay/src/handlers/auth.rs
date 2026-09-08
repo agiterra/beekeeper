@@ -409,10 +409,59 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 nip_oa_owner = ?auth_ctx.agent_owner_pubkey.map(|o| o.to_hex()),
                 "NIP-42 auth successful"
             );
-            *conn.auth_state.write().await = AuthState::Authenticated(auth_ctx);
+            // Record the key first so the count below includes this socket,
+            // then refuse the one over the cap. Two sockets racing here may
+            // both count nine and both be refused; that errs on the side
+            // the cap exists for (the per-connection budgets multiply by
+            // socket count, and this is what bounds them).
+            let pubkey_bytes = pubkey.to_bytes().to_vec();
             state
                 .conn_manager
-                .set_authenticated_pubkey(conn_id, pubkey.to_bytes().to_vec());
+                .set_authenticated_pubkey(conn_id, pubkey_bytes.clone());
+            let live = state
+                .conn_manager
+                .connection_ids_for_pubkey_in_community(conn.tenant.community(), &pubkey_bytes)
+                .len();
+            let max = state
+                .auth
+                .config()
+                .rate_limits
+                .max_ws_connections_per_pubkey;
+            if crate::admission::connection_cap_exceeded(live, max) {
+                warn!(
+                    conn_id = %conn_id,
+                    pubkey = %pubkey.to_hex(),
+                    live,
+                    max,
+                    "refusing socket: too many connections for this key"
+                );
+                metrics::counter!(
+                    "buzz_admission_rejections_total",
+                    "transport" => "websocket",
+                    "reason" => "connections",
+                    "budget" => "connections",
+                    "scope" => "key"
+                )
+                .increment(1);
+                *conn.auth_state.write().await = AuthState::Failed;
+                // Control channel: drained ahead of queued data and the
+                // cancel branch, so the client learns why before the close.
+                if conn
+                    .ctrl_tx
+                    .try_send(WsMessage::Text(
+                        RelayMessage::notice(crate::admission::TOO_MANY_CONNECTIONS).into(),
+                    ))
+                    .is_err()
+                {
+                    tracing::warn!(
+                        conn_id = %conn.conn_id,
+                        "connection cap NOTICE could not be queued; closing without it"
+                    );
+                }
+                conn.cancel.cancel();
+                return;
+            }
+            *conn.auth_state.write().await = AuthState::Authenticated(auth_ctx);
             conn.send(RelayMessage::ok(&event_id_hex, true, ""));
         }
         Err(e) => {
@@ -740,6 +789,7 @@ mod tests {
                 cancel: CancellationToken::new(),
                 backpressure_count: Arc::new(AtomicU8::new(0)),
                 grace_limit: 3,
+                budgets: Default::default(),
             });
             (conn, send_rx)
         }

@@ -60,8 +60,6 @@ pub enum LimitType {
     Messages,
     /// HTTP REST API calls.
     ApiCalls,
-    /// All WebSocket events (broader than `Messages`).
-    WsEvents,
     /// Concurrent WebSocket connections from a single IP address.
     IpConnections,
 }
@@ -72,7 +70,6 @@ impl LimitType {
         match self {
             Self::Messages => "msg",
             Self::ApiCalls => "api",
-            Self::WsEvents => "ws",
             Self::IpConnections => "conn",
         }
     }
@@ -82,17 +79,41 @@ impl LimitType {
 ///
 /// All values are counts per the relevant time window (per-minute or per-second).
 /// Loaded from the relay config file; sensible defaults are provided for all fields.
+///
+/// Two families live here. The `*_per_min` message and API quotas are
+/// **shared per (community, pubkey)** in Redis, so every socket a key holds
+/// draws on the same pool. The `*_per_sec` WebSocket rates are
+/// **per connection**, kept in process memory by the relay and multiplied
+/// by a 5 s burst window there: two devices on one key each get their own
+/// read budget, and one device's read storm never spends the other's.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
-    /// Maximum messages per minute for human users. Default: 60.
+    /// Maximum durable (stored) and ephemeral EVENTs per minute for human
+    /// users, shared across every connection the key holds. Default: 60.
     #[serde(default = "default_human_msg")]
     pub human_messages_per_min: u64,
     /// Maximum HTTP API calls per minute for human users. Default: 300.
     #[serde(default = "default_human_api")]
     pub human_api_calls_per_min: u64,
-    /// Maximum WebSocket events per second for human users. Default: 10.
+    /// Per-connection durable EVENT burst rate, in events per second
+    /// (the relay applies it over a 5 s window, so 10/s is a burst of 50).
+    /// Reads and ephemeral EVENTs have their own budgets below. Default: 10.
     #[serde(default = "default_human_ws")]
     pub human_ws_events_per_sec: u64,
+    /// Per-connection REQ + COUNT burst rate, in frames per second (a REQ
+    /// carrying ten filters still costs one). Never touches Redis. Default: 30.
+    #[serde(default = "default_ws_reads")]
+    pub ws_reads_per_sec: u64,
+    /// Per-connection ephemeral EVENT (kinds 20000–29999) burst rate, in
+    /// events per second. Ephemeral EVENTs are additionally charged to
+    /// `human_messages_per_min`, so this only bounds the burst. Default: 100.
+    #[serde(default = "default_ws_ephemeral")]
+    pub ws_ephemeral_events_per_sec: u64,
+    /// Maximum concurrent WebSocket connections one pubkey may hold in one
+    /// community; the next socket is refused after NIP-42 auth. Bounds the
+    /// total the per-connection budgets can multiply to. Default: 8.
+    #[serde(default = "default_max_ws_connections_per_pubkey")]
+    pub max_ws_connections_per_pubkey: u64,
     /// Maximum messages per minute for standard-tier agent tokens. Default: 120.
     #[serde(default = "default_agent_std_msg")]
     pub agent_standard_messages_per_min: u64,
@@ -116,6 +137,15 @@ fn default_human_api() -> u64 {
 fn default_human_ws() -> u64 {
     10
 }
+fn default_ws_reads() -> u64 {
+    30
+}
+fn default_ws_ephemeral() -> u64 {
+    100
+}
+fn default_max_ws_connections_per_pubkey() -> u64 {
+    8
+}
 fn default_agent_std_msg() -> u64 {
     120
 }
@@ -135,6 +165,9 @@ impl Default for RateLimitConfig {
             human_messages_per_min: default_human_msg(),
             human_api_calls_per_min: default_human_api(),
             human_ws_events_per_sec: default_human_ws(),
+            ws_reads_per_sec: default_ws_reads(),
+            ws_ephemeral_events_per_sec: default_ws_ephemeral(),
+            max_ws_connections_per_pubkey: default_max_ws_connections_per_pubkey(),
             agent_standard_messages_per_min: default_agent_std_msg(),
             agent_standard_api_calls_per_min: default_agent_std_api(),
             agent_elevated_messages_per_min: default_agent_elev_msg(),

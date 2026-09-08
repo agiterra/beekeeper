@@ -815,6 +815,9 @@ pub struct AppState {
     /// interactive typing plus headroom without letting a collaborator
     /// flood the owner's PTY.
     pub shell_input_rate_limiter: Arc<ScopedRateLimiter>,
+    /// Per-(community, pubkey, kind) one-second limiter for generic ephemeral
+    /// EVENTs (presence 5/s, typing 5/s, other 10/s — `crate::admission`).
+    pub ephemeral_kind_rate_limiter: Arc<DashMap<(ScopedPubkeyKey, u32), SlidingWindowCounter>>,
     /// Per-uploader sliding-window rate limiter for media upload starts.
     /// Key: (community_id, uploader pubkey bytes). Value: (count, window_start).
     pub media_upload_rate_limiter: Arc<ScopedRateLimiter>,
@@ -1059,6 +1062,7 @@ impl AppState {
             shell_frame_rate_limiter: Arc::new(DashMap::new()),
             shell_watch_rate_limiter: Arc::new(DashMap::new()),
             shell_input_rate_limiter: Arc::new(DashMap::new()),
+            ephemeral_kind_rate_limiter: Arc::new(DashMap::new()),
             media_upload_rate_limiter: Arc::new(DashMap::new()),
             invite_claim_rate_limiter: Arc::new(
                 moka::sync::Cache::builder()
@@ -1931,6 +1935,7 @@ pub(crate) mod tests {
             cancel: cancel.clone(),
             backpressure_count: Arc::clone(&bp),
             grace_limit: 3,
+            budgets: Default::default(),
         };
 
         let mgr = ConnectionManager::new();

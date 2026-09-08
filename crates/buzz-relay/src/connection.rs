@@ -85,6 +85,9 @@ pub struct ConnectionState {
     pub backpressure_count: Arc<AtomicU8>,
     /// Configurable slow-client grace limit (from `Config::slow_client_grace_limit`).
     pub grace_limit: u8,
+    /// Process-local admission budgets (reads / durable / ephemeral) for
+    /// this socket alone. See `crate::admission`.
+    pub budgets: crate::admission::ConnectionBudgets,
 }
 
 impl ConnectionState {
@@ -193,6 +196,7 @@ async fn handle_active_connection(
         cancel: cancel.clone(),
         backpressure_count: Arc::clone(&backpressure_count),
         grace_limit: state.config.slow_client_grace_limit,
+        budgets: Default::default(),
     });
 
     info!(conn_id = %conn_id, addr = %addr, "WebSocket connection established");
@@ -678,6 +682,7 @@ pub(crate) mod tests {
             cancel: CancellationToken::new(),
             backpressure_count: Arc::new(AtomicU8::new(0)),
             grace_limit: 3,
+            budgets: Default::default(),
         };
         (Arc::new(conn), send_rx)
     }

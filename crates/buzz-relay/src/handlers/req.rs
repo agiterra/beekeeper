@@ -1993,6 +1993,7 @@ mod tests {
             false,
             crate::config::DEFAULT_MAX_FRAME_BYTES,
             None,
+            crate::nip11::RelayRateLimits::from_config(&buzz_auth::RateLimitConfig::default()),
         )
         .limitation
         .expect("limitation")
