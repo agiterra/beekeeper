@@ -9,74 +9,97 @@ import '../domain/coding_session_fixtures.dart';
 /// Tests for the mobile coding-session observer's state layer.
 ///
 /// The relay is stubbed with [_FakeRelaySession], which records every filter
-/// the notifier sends, answers `fetchHistory` from a canned event list, and
-/// delivers live events only to subscriptions whose filter actually matches —
-/// so a filter shape regression fails here rather than silently reading less.
+/// the notifier sends, answers `queryRelay` / `fetchHistoryAll` from a canned
+/// event list the way the relay does (each filter trimmed to its own limit,
+/// then one union), and delivers live events only to subscriptions whose
+/// filters actually match — so a filter shape regression fails here rather
+/// than silently reading less.
 void main() {
   const otherChannelId = 'd0d0d0d0-0000-4000-8000-000000000002';
 
   setUp(resetEventIds);
 
   group('history reads', () {
+    test('reads the contract filter set, every one #h-scoped, in one bridge '
+        'query', () async {
+      final session = _FakeRelaySession();
+      final container = _container(session);
+      addTearDown(container.dispose);
+
+      await _start(container);
+
+      // One REQ for the four live filters, one POST /query for the ten
+      // history filters; nothing on the socket's read lane.
+      expect(session.operations, ['subscribeAll', 'query']);
+      expect(session.queryBundles.single, hasLength(10));
+      expect(session.reqBundles, isEmpty);
+      for (final filter in session.historyFilters) {
+        expect(filter.kinds, isNotEmpty, reason: 'a filter without kinds 403s');
+        expect(filter.tags['#h'], [channelId]);
+        expect(filter.authors, isNull, reason: 'authority is channel-scoped');
+      }
+
+      expect(
+        session.historyFilters.map(_shape),
+        unorderedEquals([
+          '[44223, 44224, 44225] limit 1000',
+          '[44221] limit 1000',
+          '[44224] limit 1000',
+          '[44226] limit 1000',
+          '[44229] limit 1000',
+          '[44227] limit 1000',
+          '[44230] limit 1000',
+          '[24223] limit 1000',
+          '[44228] limit 500',
+          '[40099] limit 500',
+        ]),
+      );
+    });
+
+    test('opens facts, names, closures and leases as one live REQ', () async {
+      final session = _FakeRelaySession();
+      final container = _container(session);
+      addTearDown(container.dispose);
+
+      await _start(container);
+
+      expect(session.subscribeBundles.single, hasLength(4));
+      for (final filter in session.subscribeFilters) {
+        expect(filter.tags['#h'], [channelId]);
+        expect(filter.kinds, isNotEmpty);
+      }
+      expect(
+        session.subscribeFilters.map(_shape),
+        unorderedEquals([
+          '[44223, 44224, 44225] limit 0',
+          '[44229] limit 0',
+          '[44230] limit 0',
+          '[24223] limit 1000',
+        ]),
+      );
+    });
+
     test(
-      'sends exactly the contract filter set, every one #h-scoped',
+      'a failed bridge read falls back to one REQ of the same ten filters',
       () async {
-        final session = _FakeRelaySession();
+        final session = _FakeRelaySession(
+          events: _liveSession(),
+          failQuery: true,
+        );
         final container = _container(session);
         addTearDown(container.dispose);
 
-        await _start(container);
+        final snapshot = await _start(container);
 
-        for (final filter in session.historyFilters) {
-          expect(
-            filter.kinds,
-            isNotEmpty,
-            reason: 'a filter without kinds 403s',
-          );
-          expect(filter.tags['#h'], [channelId]);
-          expect(filter.authors, isNull, reason: 'authority is channel-scoped');
-        }
-
+        expect(session.operations, ['subscribeAll', 'query', 'fetchAll']);
         expect(
-          session.historyFilters.map(_shape),
-          unorderedEquals([
-            '[44223, 44224, 44225] limit 1000',
-            '[44221] limit 1000',
-            '[44224] limit 1000',
-            '[44226] limit 1000',
-            '[44229] limit 1000',
-            '[44227] limit 1000',
-            '[44230] limit 1000',
-            '[24223] limit 1000',
-            '[44228] limit 500',
-            '[40099] limit 500',
-          ]),
+          session.reqBundles.single.map(_shape),
+          unorderedEquals(session.queryBundles.single.map(_shape)),
         );
-      },
-    );
-
-    test(
-      'opens live subscriptions for facts, names, closures and leases',
-      () async {
-        final session = _FakeRelaySession();
-        final container = _container(session);
-        addTearDown(container.dispose);
-
-        await _start(container);
-
-        for (final filter in session.subscribeFilters) {
-          expect(filter.tags['#h'], [channelId]);
-          expect(filter.kinds, isNotEmpty);
-        }
-        expect(
-          session.subscribeFilters.map(_shape),
-          unorderedEquals([
-            '[44223, 44224, 44225] limit 0',
-            '[44229] limit 0',
-            '[44230] limit 0',
-            '[24223] limit 1000',
-          ]),
-        );
+        expect(session.reqBundles.single, hasLength(10));
+        expect(snapshot.connection, CodingSessionObserverConnection.open);
+        expect(snapshot.sessions, hasLength(1));
+        expect(snapshot.leasesRead, isTrue);
       },
     );
 
@@ -324,8 +347,11 @@ void main() {
     });
 
     test(
-      'a failed history read reports the error and keeps the read',
+      'a failed history read reports the error and keeps the live read',
       () async {
+        // One bundle, one answer: when both the bridge and the socket refuse
+        // it there is no partial page to show, so the page says error — and
+        // the live subscription, opened first, still delivers.
         final session = _FakeRelaySession(
           events: _liveSession(),
           failingKinds: {EventKind.codingSessionGoal},
@@ -333,15 +359,22 @@ void main() {
         final container = _container(session);
         addTearDown(container.dispose);
 
-        final snapshot = await _start(container);
+        final failed = await _start(container);
 
-        expect(snapshot.connection, CodingSessionObserverConnection.error);
-        expect(snapshot.lastError, contains('history failed'));
-        expect(
-          snapshot.sessions,
-          hasLength(1),
-          reason: 'a partial read still shows what it could read',
+        expect(failed.connection, CodingSessionObserverConnection.error);
+        expect(failed.lastError, contains('history failed'));
+        expect(failed.sessions, isEmpty);
+        expect(session.operations, ['subscribeAll', 'query', 'fetchAll']);
+
+        for (final event in _liveSession()) {
+          session.emit(event, force: true);
+        }
+        await pumpEventQueue();
+
+        final snapshot = container.read(
+          codingSessionChannelObserverProvider(channelId),
         );
+        expect(snapshot.sessions, hasLength(1));
       },
     );
 
@@ -418,7 +451,7 @@ void main() {
         codingSessionChannelObserverProvider(channelId),
       );
       expect(session.historyFilters.length, firstRead * 2);
-      expect(session.activeSubscriptionCount, 4);
+      expect(session.activeSubscriptionCount, 1);
       final items = snapshot
           .transcriptFor(snapshot.sessions.single)
           .single
@@ -495,7 +528,15 @@ void main() {
         final container = _container(session);
         addTearDown(container.dispose);
 
-        final snapshot = await _start(container);
+        await _start(container);
+        // The history bundle failed as a whole; the session arrives live.
+        for (final event in _liveSession()) {
+          session.emit(event, force: true);
+        }
+        await pumpEventQueue();
+        final snapshot = container.read(
+          codingSessionChannelObserverProvider(channelId),
+        );
         final verdict = snapshot.reachabilityFor(
           snapshot.sessions.single,
           now: DateTime.fromMillisecondsSinceEpoch(1410 * 1000, isUtc: true),
@@ -596,6 +637,7 @@ ProviderContainer _container(
   overrides: [
     relaySessionProvider.overrideWith(() => session),
     codingSessionObserverConfigProvider.overrideWithValue(config),
+    myPubkeyProvider.overrideWithValue('aabb'),
   ],
 );
 
@@ -616,18 +658,36 @@ class _FakeRelaySession extends RelaySessionNotifier {
     List<NostrEvent> events = const [],
     this.initialStatus = SessionStatus.connected,
     this.failingKinds = const {},
+    this.failQuery = false,
   }) : stored = [...events];
 
   final List<NostrEvent> stored;
   final SessionStatus initialStatus;
 
-  /// Filters whose first kind is in this set throw, standing in for a relay
-  /// that answers some reads and not others.
+  /// A read carrying a filter whose first kind is in this set throws,
+  /// standing in for a relay that refuses the bundle.
   final Set<int> failingKinds;
 
+  /// When true the bridge (`queryRelay`) throws and only the socket answers.
+  final bool failQuery;
+
+  /// Relay calls in order: `subscribeAll`, `query` (bridge), `fetchAll`
+  /// (socket REQ), `query1` (coalesced one-shot).
+  final List<String> operations = [];
+
+  /// Every filter read through any history path, in order.
   final List<NostrFilter> historyFilters = [];
+
+  /// Each `queryRelay` filter list.
+  final List<List<NostrFilter>> queryBundles = [];
+
+  /// Each `fetchHistoryAll` filter list.
+  final List<List<NostrFilter>> reqBundles = [];
+
   final List<NostrFilter> subscribeFilters = [];
-  final Map<int, (NostrFilter, void Function(NostrEvent))> _subscriptions = {};
+  final List<List<NostrFilter>> subscribeBundles = [];
+  final Map<int, (List<NostrFilter>, void Function(NostrEvent))>
+  _subscriptions = {};
   int _nextSubscriptionKey = 0;
 
   int get activeSubscriptionCount => _subscriptions.length;
@@ -642,39 +702,80 @@ class _FakeRelaySession extends RelaySessionNotifier {
   void setStatus(SessionStatus status) => state = SessionState(status: status);
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
+  Future<List<NostrEvent>> queryRelay(
+    List<NostrFilter> filters, {
     Duration timeout = const Duration(seconds: 8),
   }) async {
-    historyFilters.add(filter);
-    if (failingKinds.contains(filter.kinds.first)) {
-      throw StateError('relay refused kinds ${filter.kinds}');
-    }
-    final matches = [
-      for (final event in stored)
-        if (_matches(filter, event)) event,
-    ];
-    return matches.length > filter.limit
-        ? matches.sublist(0, filter.limit)
-        : matches;
+    operations.add('query');
+    queryBundles.add(List.of(filters));
+    historyFilters.addAll(filters);
+    if (failQuery) throw StateError('bridge unavailable');
+    return _answer(filters);
   }
 
   @override
-  Future<void Function()> subscribe(
-    NostrFilter filter,
+  Future<List<NostrEvent>> fetchHistoryAll(
+    List<NostrFilter> filters, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    operations.add('fetchAll');
+    reqBundles.add(List.of(filters));
+    historyFilters.addAll(filters);
+    return _answer(filters);
+  }
+
+  @override
+  Future<List<NostrEvent>> query(NostrFilter filter) async {
+    operations.add('query1');
+    historyFilters.add(filter);
+    return _answer([filter]);
+  }
+
+  /// What the relay does with a multi-filter read: each filter's page is
+  /// trimmed to its own limit, then the pages are unioned by id.
+  List<NostrEvent> _answer(List<NostrFilter> filters) {
+    for (final filter in filters) {
+      if (failingKinds.contains(filter.kinds.first)) {
+        throw StateError('relay refused kinds ${filter.kinds}');
+      }
+    }
+    final seen = <String>{};
+    final union = <NostrEvent>[];
+    for (final filter in filters) {
+      final matches = [
+        for (final event in stored)
+          if (_matches(filter, event)) event,
+      ];
+      final page = matches.length > filter.limit
+          ? matches.sublist(0, filter.limit)
+          : matches;
+      for (final event in page) {
+        if (seen.add(event.id)) union.add(event);
+      }
+    }
+    return union;
+  }
+
+  @override
+  Future<void Function()> subscribeAll(
+    List<NostrFilter> filters,
     void Function(NostrEvent) onEvent, {
     void Function(String message)? onClosed,
   }) async {
-    subscribeFilters.add(filter);
+    operations.add('subscribeAll');
+    subscribeFilters.addAll(filters);
+    subscribeBundles.add(List.of(filters));
     final key = ++_nextSubscriptionKey;
-    _subscriptions[key] = (filter, onEvent);
+    _subscriptions[key] = (filters, onEvent);
     return () => _subscriptions.remove(key);
   }
 
-  /// Deliver [event] to every subscription whose filter matches it.
+  /// Deliver [event] to every subscription one of whose filters matches it.
   void emit(NostrEvent event, {bool force = false}) {
-    for (final (filter, listener) in List.of(_subscriptions.values)) {
-      if (force || _matches(filter, event)) listener(event);
+    for (final (filters, listener) in List.of(_subscriptions.values)) {
+      if (force || filters.any((filter) => _matches(filter, event))) {
+        listener(event);
+      }
     }
   }
 

@@ -333,9 +333,7 @@ class ShellObserverNotifier extends Notifier<ShellObserverState> {
     }
     await _publishWatch(ShellWatchAction.watch);
     if (_stale(epoch)) return;
-    _keepalive = Timer.periodic(config.keepalive, (_) {
-      _publishWatch(ShellWatchAction.watch);
-    });
+    _keepalive = Timer.periodic(config.keepalive, (_) => _sendKeepalive());
     _handshake = Timer(config.handshake, () {
       if (_stale(epoch) || _lastFrameAt != null) return;
       _emit(status: ShellObserverStatus.stalled);
@@ -398,6 +396,30 @@ class ShellObserverNotifier extends Notifier<ShellObserverState> {
           ? ShellObserverStatus.ended
           : ShellObserverStatus.live,
       framesApplied: state.framesApplied + 1,
+    );
+  }
+
+  /// The periodic `watch` beat, as a droppable ephemeral.
+  ///
+  /// Same kind:24310 payload as the opening watch, but sent through
+  /// [RelaySessionNotifier.sendEphemeral] instead of a publish that waits
+  /// for OK: the owner expires a watcher after 45 s — three beats — so one
+  /// dropped under the rate-limit gate or a thin write lane is harmless,
+  /// and a beat never queues behind the user's own input.
+  void _sendKeepalive() {
+    if (_disposed || !_running) return;
+    final event = buildShellWatchEvent(
+      ownerPubkey: target.ownerPubkey,
+      sessionId: target.sessionId,
+      projectRef: target.projectRef,
+      action: ShellWatchAction.watch,
+    );
+    final relay = _relay;
+    if (relay == null) return;
+    relay.sendEphemeral(
+      kind: event.kind,
+      content: event.content,
+      tags: event.tags,
     );
   }
 

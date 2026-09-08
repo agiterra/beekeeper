@@ -75,7 +75,14 @@ class ReadStateNotifier extends Notifier<ReadStateState> {
     _forcedUnreadContexts.clear();
 
     final relayConfig = ref.watch(relayConfigProvider);
-    ref.watch(relaySessionProvider);
+    // Read, not watched: a status change must not rebuild this notifier.
+    // Watching it made every disconnected → connecting → connected step
+    // build a fresh manager (one fetch + one subscribe each) on top of the
+    // reconnect listener below, so one connect cost several of each. Now
+    // the manager reads the relay here only if the session is already
+    // connected, and the listener covers every later connect transition.
+    final connected =
+        ref.read(relaySessionProvider).status == SessionStatus.connected;
     final activeCommunity = ref.watch(activeCommunityProvider).value;
 
     final nsec = relayConfig.nsec?.trim();
@@ -135,7 +142,7 @@ class ReadStateNotifier extends Notifier<ReadStateState> {
     });
 
     Future.microtask(() async {
-      await manager.initialize();
+      await manager.initialize(remote: connected);
       if (_manager != manager) return;
       _isInitialized = true;
       _emitManagerState(manager);

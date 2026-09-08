@@ -1033,34 +1033,39 @@ void main() {
   test('simultaneous rate-limited CLOSED retries are replay-paced', () async {
     final retryTimers = <_ManualTimer>[];
     final gateTimers = <_ManualTimer>[];
-    final replayDelays = <Duration>[];
-    final replayDelayCompleters = <Completer<void>>[];
+    final budgetTimers = <_ManualTimer>[];
+    var now = DateTime(2026);
     final gate = RelayRateLimitGate(
-      now: () => DateTime(2026),
+      now: () => now,
       timerFactory: (duration, callback) {
         final timer = _ManualTimer(duration, callback);
         gateTimers.add(timer);
         return timer;
       },
     );
+    final budget = RelaySendBudget(
+      now: () => now,
+      timerFactory: (duration, callback) {
+        final timer = _ManualTimer(duration, callback);
+        budgetTimers.add(timer);
+        return timer;
+      },
+    );
     final socket = _RecordingRelaySocket();
     final session = RelaySessionNotifier(
+      now: () => now,
       rateLimitGate: gate,
+      sendBudget: budget,
       retryTimerFactory: (duration, callback) {
         final timer = _ManualTimer(duration, callback);
         retryTimers.add(timer);
         return timer;
       },
-      replayDelay: (duration) {
-        replayDelays.add(duration);
-        final completer = Completer<void>();
-        replayDelayCompleters.add(completer);
-        return completer.future;
-      },
     );
     session.debugAttachSocketForTest(socket);
 
     for (var i = 0; i < 30; i++) {
+      if (i % 15 == 0) now = now.add(const Duration(seconds: 6));
       final subscribe = session.subscribe(
         _filterForChannel('channel-$i'),
         (_) {},
@@ -1068,6 +1073,7 @@ void main() {
       session.debugHandleMessage(['EOSE', 'l-${i + 1}']);
       await subscribe;
     }
+    now = now.add(const Duration(seconds: 6));
     socket.messages.clear();
 
     for (var i = 0; i < 30; i++) {
@@ -1083,47 +1089,54 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(_reqs(socket), isEmpty);
 
+    now = now.add(const Duration(seconds: 4));
     gateTimers.single.fire();
     await Future<void>.delayed(Duration.zero);
-    expect(_reqs(socket), hasLength(8));
-    expect(replayDelays, [const Duration(milliseconds: 50)]);
+    // The read lane admits 17 REQs per window: the 25-frame device share
+    // minus the 8-frame write reserve. The rest park on the budget.
+    expect(_reqs(socket), hasLength(17));
+    expect(budgetTimers.where((timer) => timer.isActive), hasLength(1));
 
-    for (final expectedCount in [16, 24, 30]) {
-      replayDelayCompleters.last.complete();
-      await Future<void>.delayed(Duration.zero);
-      expect(_reqs(socket), hasLength(expectedCount));
+    now = now.add(const Duration(seconds: 6));
+    for (final timer in budgetTimers.where((t) => t.isActive).toList()) {
+      timer.fire();
     }
-    expect(replayDelays, [
-      const Duration(milliseconds: 50),
-      const Duration(milliseconds: 50),
-      const Duration(milliseconds: 50),
-    ]);
+    await Future<void>.delayed(Duration.zero);
+    expect(_reqs(socket), hasLength(30));
     session.debugDispose();
   });
 
-  test('active rate-limit gate does not delay a new live subscribe', () async {
-    final gateTimers = <_ManualTimer>[];
-    final gate = RelayRateLimitGate(
-      timerFactory: (duration, callback) {
-        final timer = _ManualTimer(duration, callback);
-        gateTimers.add(timer);
-        return timer;
-      },
-    );
-    final socket = _RecordingRelaySocket();
-    final session = RelaySessionNotifier(rateLimitGate: gate);
-    session.debugAttachSocketForTest(socket);
-    gate.activate(4);
+  test(
+    'a live subscribe waits for the rate-limit gate before sending',
+    () async {
+      final gateTimers = <_ManualTimer>[];
+      final gate = RelayRateLimitGate(
+        timerFactory: (duration, callback) {
+          final timer = _ManualTimer(duration, callback);
+          gateTimers.add(timer);
+          return timer;
+        },
+      );
+      final socket = _RecordingRelaySocket();
+      final session = RelaySessionNotifier(rateLimitGate: gate);
+      session.debugAttachSocketForTest(socket);
+      gate.activate(4);
 
-    final subscribe = session.subscribe(_channelFilter, (_) {});
+      final subscribe = session.subscribe(_channelFilter, (_) {});
+      await Future<void>.delayed(Duration.zero);
 
-    expect(_reqs(socket), hasLength(1));
-    expect(gateTimers.single.duration, const Duration(seconds: 4));
-    session.debugHandleMessage(['EOSE', 'l-1']);
-    final unsubscribe = await subscribe;
-    unsubscribe();
-    session.debugDispose();
-  });
+      expect(_reqs(socket), isEmpty);
+      expect(gateTimers.single.duration, const Duration(seconds: 4));
+
+      gateTimers.single.fire();
+      await Future<void>.delayed(Duration.zero);
+      expect(_reqs(socket), hasLength(1));
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      final unsubscribe = await subscribe;
+      unsubscribe();
+      session.debugDispose();
+    },
+  );
 
   test('rate-limited history CLOSED gates the next REQ', () async {
     final gateTimers = <_ManualTimer>[];
@@ -1193,16 +1206,19 @@ void main() {
     },
   );
 
-  test('replay is visible-first and batched eight at a time', () async {
-    final replayDelays = <Duration>[];
-    final replayDelayCompleter = Completer<void>();
-    final socket = _RecordingRelaySocket();
-    final session = RelaySessionNotifier(
-      replayDelay: (duration) {
-        replayDelays.add(duration);
-        return replayDelayCompleter.future;
+  test('replay is visible-first and paced through the send budget', () async {
+    var now = DateTime(2026);
+    final budgetTimers = <_ManualTimer>[];
+    final budget = RelaySendBudget(
+      now: () => now,
+      timerFactory: (duration, callback) {
+        final timer = _ManualTimer(duration, callback);
+        budgetTimers.add(timer);
+        return timer;
       },
     );
+    final socket = _RecordingRelaySocket();
+    final session = RelaySessionNotifier(now: () => now, sendBudget: budget);
     session.debugAttachSocketForTest(socket);
 
     for (var i = 0; i < 9; i++) {
@@ -1216,17 +1232,20 @@ void main() {
       _visibleChannelId,
     );
 
+    // The nine subscribes spent 9 of the 17 read slots; the replay needs
+    // nine more, so eight go now and the ninth parks on the budget.
     final replay = session.debugReplayLiveSubscriptions();
     await Future<void>.delayed(Duration.zero);
 
-    final firstBatch = _reqs(socket);
-    expect(firstBatch, hasLength(8));
-    expect((firstBatch.first[2] as Map<String, dynamic>)['#h'], [
+    final firstWindow = _reqs(socket);
+    expect(firstWindow, hasLength(8));
+    expect((firstWindow.first[2] as Map<String, dynamic>)['#h'], [
       _visibleChannelId,
     ]);
-    expect(replayDelays, [const Duration(milliseconds: 50)]);
+    expect(budgetTimers.where((timer) => timer.isActive), hasLength(1));
 
-    replayDelayCompleter.complete();
+    now = now.add(const Duration(seconds: 6));
+    budgetTimers.last.fire();
     await replay;
     expect(_reqs(socket), hasLength(9));
     releaseVisibleChannel();
@@ -1235,11 +1254,18 @@ void main() {
   test(
     'replay generation guard bails after a connection is superseded',
     () async {
-      final replayDelayCompleter = Completer<void>();
-      final socket = _RecordingRelaySocket();
-      final session = RelaySessionNotifier(
-        replayDelay: (_) => replayDelayCompleter.future,
+      var now = DateTime(2026);
+      final budgetTimers = <_ManualTimer>[];
+      final budget = RelaySendBudget(
+        now: () => now,
+        timerFactory: (duration, callback) {
+          final timer = _ManualTimer(duration, callback);
+          budgetTimers.add(timer);
+          return timer;
+        },
       );
+      final socket = _RecordingRelaySocket();
+      final session = RelaySessionNotifier(now: () => now, sendBudget: budget);
       session.debugAttachSocketForTest(socket);
 
       for (var i = 0; i < 9; i++) {
@@ -1257,7 +1283,8 @@ void main() {
       expect(_reqs(socket), hasLength(8));
 
       session.debugSupersedeConnection();
-      replayDelayCompleter.complete();
+      now = now.add(const Duration(seconds: 6));
+      budgetTimers.last.fire();
       await replay;
 
       expect(_reqs(socket), hasLength(8));
@@ -1377,7 +1404,7 @@ void main() {
       );
 
       gateTimers.single.fire();
-      await Future<void>.microtask(() {});
+      await Future<void>.delayed(Duration.zero);
 
       final events = socket.messages
           .where((message) => message.first == 'EVENT')

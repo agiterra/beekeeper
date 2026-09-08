@@ -107,7 +107,8 @@ void main() {
       final submitted = await signed.submitted.future.timeout(
         const Duration(seconds: 1),
       );
-      expect(relay.fetchCount, greaterThanOrEqualTo(4));
+      // Startup read, the failed preflight, and the retried preflight.
+      expect(relay.fetchCount, greaterThanOrEqualTo(3));
       final payload =
           jsonDecode(crypto.decrypt(submitted.content)) as Map<String, dynamic>;
       expect(payload['groups'], {'dms': 'recent'});
@@ -268,7 +269,7 @@ void main() {
     },
   );
 
-  test('retries failed startup and closes fetch-subscribe gap', () async {
+  test('retries a failed startup read once, then subscribes', () async {
     final relay = _FakeRelaySession()..fetchFailures = 1;
     final subject = manager(relay, _RecordingSignedEventRelay());
     await subject.initialize();
@@ -277,7 +278,9 @@ void main() {
     ];
     await Future<void>.delayed(const Duration(milliseconds: 40));
     expect(subject.sortModeFor('starred'), ChannelSortMode.recent);
-    expect(relay.fetchCount, greaterThanOrEqualTo(3));
+    // The failed read and its retry — no second read after the
+    // subscription, whose own `limit: 1` page closes that gap.
+    expect(relay.fetchCount, 2);
     subject.dispose();
   });
 
@@ -303,6 +306,13 @@ class _SubmittedEvent {
 }
 
 class _RecordingSignedEventRelay implements SignedEventRelay {
+  @override
+  bool sendEphemeral({
+    required int kind,
+    required String content,
+    required List<List<String>> tags,
+  }) => false;
+
   final submitted = Completer<_SubmittedEvent>();
   int submitCount = 0;
 
@@ -351,10 +361,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   void Function(NostrEvent)? _listener;
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
-    Duration timeout = const Duration(seconds: 8),
-  }) async {
+  Future<List<NostrEvent>> query(NostrFilter filter) async {
     fetchCount++;
     if (fetchFailures > 0) {
       fetchFailures--;

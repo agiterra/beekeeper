@@ -322,20 +322,22 @@ Future<_NonMemberMentionChoice?> _promptNonMemberMention(
 /// via HTTP. Ephemeral events like typing indicators are broadcast-only and
 /// the relay doesn't persist them, so the HTTP `/api/events` endpoint may
 /// silently discard them.
-void _sendTypingIndicator(
+///
+/// Returns false when nothing went out: the session is not connected, or
+/// [RelaySessionNotifier.sendEphemeral] dropped the frame (rate-limit gate
+/// active, ephemeral lane dry). A typing hint is worth less than the
+/// message it precedes, so it is never queued; the caller lets the next
+/// keystroke try again instead of starting the throttle.
+bool _sendTypingIndicator(
   WidgetRef ref, {
   required String channelId,
   String? threadHeadId,
   String? rootId,
 }) {
   try {
-    final config = ref.read(relayConfigProvider);
-    final nsec = config.nsec;
-    if (nsec == null || nsec.isEmpty) return;
-
-    final privkeyHex = nostr.Nip19.decode(payload: nsec).data;
-    if (privkeyHex.isEmpty) return;
-
+    if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
+      return false;
+    }
     final tags = <List<String>>[
       ['h', channelId],
       if (threadHeadId != null && rootId != null && rootId != threadHeadId) ...[
@@ -345,19 +347,14 @@ void _sendTypingIndicator(
         ['e', threadHeadId, '', 'reply'],
     ];
 
-    final event = nostr.Event.from(
-      kind: EventKind.typingIndicator,
-      content: '',
-      tags: tags,
-      secretKey: privkeyHex,
-      verify: false,
-    );
-
-    // Send directly over WebSocket — fire-and-forget, matching desktop.
-    final session = ref.read(relaySessionProvider.notifier);
-    session.sendRaw(['EVENT', event.toMap()]);
+    // Signed here, sent droppable — fire-and-forget, matching desktop.
+    return SignedEventRelay(
+      session: ref.read(relaySessionProvider.notifier),
+      nsec: ref.read(relayConfigProvider).nsec,
+    ).sendEphemeral(kind: EventKind.typingIndicator, content: '', tags: tags);
   } catch (_) {
     // Fire-and-forget — typing indicator failure is non-fatal.
+    return false;
   }
 }
 

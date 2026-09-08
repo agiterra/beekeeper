@@ -205,6 +205,13 @@ NostrEvent _stubAckEvent() => const NostrEvent(
 );
 
 class _FakeSignedEventRelay implements SignedEventRelay {
+  @override
+  bool sendEphemeral({
+    required int kind,
+    required String content,
+    required List<List<String>> tags,
+  }) => false;
+
   final Completer<_SubmittedEvent> submitted = Completer<_SubmittedEvent>();
   int submitCount = 0;
 
@@ -226,6 +233,13 @@ class _FakeSignedEventRelay implements SignedEventRelay {
 }
 
 class _UnsupportedKindSignedEventRelay implements SignedEventRelay {
+  @override
+  bool sendEphemeral({
+    required int kind,
+    required String content,
+    required List<List<String>> tags,
+  }) => false;
+
   int submitCount = 0;
 
   @override
@@ -245,6 +259,13 @@ class _UnsupportedKindSignedEventRelay implements SignedEventRelay {
 }
 
 class _MissingScopeSignedEventRelay implements SignedEventRelay {
+  @override
+  bool sendEphemeral({
+    required int kind,
+    required String content,
+    required List<List<String>> tags,
+  }) => false;
+
   int submitCount = 0;
 
   @override
@@ -290,10 +311,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   List<NostrEvent> historyEvents = [];
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
-    Duration timeout = const Duration(seconds: 8),
-  }) async => historyEvents;
+  Future<List<NostrEvent>> query(NostrFilter filter) async => historyEvents;
 
   @override
   Future<void Function()> subscribe(

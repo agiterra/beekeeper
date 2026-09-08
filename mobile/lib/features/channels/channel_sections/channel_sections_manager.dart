@@ -299,7 +299,9 @@ class ChannelSectionsManager {
   Future<bool> _fetchAndMerge({bool allowDisposed = false}) async {
     if (_relaySession == null) return false;
     try {
-      final events = await _relaySession.fetchHistory(
+      // Through the 50 ms coalescer: the four preference managers start in
+      // the same turn, so their fetches travel as one POST /query.
+      final events = await _relaySession.query(
         NostrFilter(
           kinds: const [EventKind.readState],
           authors: [pubkey],

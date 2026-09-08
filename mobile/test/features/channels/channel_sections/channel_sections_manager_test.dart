@@ -294,10 +294,7 @@ class _DelayedSubscribeRelaySession extends RelaySessionNotifier {
   int unsubscribeCalls = 0;
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
-    Duration timeout = const Duration(seconds: 8),
-  }) async => const [];
+  Future<List<NostrEvent>> query(NostrFilter filter) async => const [];
 
   @override
   Future<void Function()> subscribe(
@@ -373,10 +370,7 @@ class _RateLimitedRelaySession extends RelaySessionNotifier {
   }
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
-    Duration timeout = const Duration(seconds: 8),
-  }) async {
+  Future<List<NostrEvent>> query(NostrFilter filter) async {
     fetchCalls++;
     if (fetchCalls <= failuresBeforeSuccess) {
       throw Exception('rate-limited: quota exceeded; retry in 2s');

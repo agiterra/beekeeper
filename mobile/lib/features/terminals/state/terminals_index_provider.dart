@@ -144,7 +144,24 @@ class TerminalsIndexNotifier extends Notifier<TerminalsIndex> {
     }
     await _fetch(epoch);
     if (_stale(epoch)) return;
-    _poll = Timer.periodic(terminalsPollInterval, (_) => _fetch(epoch));
+    _armPoll(epoch);
+  }
+
+  /// First tick at the wall-clock phase the projects poll also uses
+  /// ([_indexPollDelay]), so the two 30 s reads share one coalescer flush.
+  void _armPoll(int epoch) {
+    _poll?.cancel();
+    final delay = alignedPollDelay(
+      key: 'mobile-index-poll',
+      period: terminalsPollInterval,
+      pubkey: ref.read(myPubkeyProvider) ?? '',
+      now: DateTime.now(),
+    );
+    _poll = Timer(delay, () {
+      if (_stale(epoch)) return;
+      _fetch(epoch);
+      _poll = Timer.periodic(terminalsPollInterval, (_) => _fetch(epoch));
+    });
   }
 
   void _scheduleRefetch(int epoch) {
@@ -160,7 +177,7 @@ class TerminalsIndexNotifier extends Notifier<TerminalsIndex> {
     if (_stale(epoch)) return;
     final session = ref.read(relaySessionProvider.notifier);
     try {
-      final events = await session.fetchHistory(NostrFilters.shellSessions());
+      final events = await session.query(NostrFilters.shellSessions());
       if (_stale(epoch)) return;
       // Nothing is excluded by owner: the paired desktop shares this key,
       // and watching your own terminal from the phone is the case NIP-ST

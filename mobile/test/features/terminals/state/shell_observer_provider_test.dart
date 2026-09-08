@@ -250,10 +250,41 @@ void main() {
       h.container.read(shellObserverProvider(target)).status,
       ShellObserverStatus.stalled,
     );
-    final watches = h.relay.published
+    // The opening watch is published and waited on; every later beat is a
+    // droppable ephemeral carrying the identical kind:24310 payload.
+    final opening = h.relay.published.where((event) => event.kind == 24310);
+    expect(opening, hasLength(1));
+    final beats = h.relay.ephemeralEvents
         .where((event) => event.kind == 24310)
-        .length;
-    expect(watches, greaterThanOrEqualTo(3));
+        .toList();
+    expect(beats.length, greaterThanOrEqualTo(2));
+    for (final beat in beats) {
+      expect(beat.content, opening.single.content);
+      expect(beat.tags, opening.single.tags);
+      expect(beat.pubkey, opening.single.pubkey);
+    }
+    expect(_watchContent(beats.first)['action'], 'watch');
+  });
+
+  test('a dropped keepalive beat is not retried as a publish', () async {
+    final h = _harness();
+    h.relay.acceptEphemeral = false;
+    final listener = h.container.listen(
+      shellObserverProvider(target),
+      (_, _) {},
+    );
+    addTearDown(listener.close);
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(
+      h.relay.ephemeralEvents.where((event) => event.kind == 24310).length,
+      greaterThanOrEqualTo(2),
+      reason: 'beats keep being offered; the transport decides',
+    );
+    expect(
+      h.relay.published.where((event) => event.kind == 24310),
+      hasLength(1),
+      reason: 'only the opening watch is a publish',
+    );
   });
 
   test('a watch the relay refuses is disclosed verbatim', () async {

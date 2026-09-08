@@ -292,13 +292,15 @@ class ComposeBar extends HookConsumerWidget {
         if (textChanged && text.isNotEmpty) {
           final now = DateTime.now().millisecondsSinceEpoch;
           if (now - lastTypingSentMs.value > _typingThrottleMs) {
-            lastTypingSentMs.value = now;
-            _sendTypingIndicator(
+            // A dropped indicator does not start the throttle: the next
+            // keystroke tries again once the session or budget allows.
+            final sent = _sendTypingIndicator(
               ref,
               channelId: channelId,
               threadHeadId: threadHeadId,
               rootId: rootId,
             );
+            lastTypingSentMs.value = sent ? now : 0;
           }
         }
 

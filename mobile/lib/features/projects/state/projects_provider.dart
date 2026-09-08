@@ -123,7 +123,23 @@ class ProjectsNotifier extends Notifier<ProjectsRead> {
     }
     await _fetch(epoch);
     if (_stale(epoch)) return;
-    _poll = Timer.periodic(projectsPollInterval, (_) => _fetch(epoch));
+    _armPoll(epoch);
+  }
+
+  /// First tick at the shared wall-clock phase, then every period.
+  void _armPoll(int epoch) {
+    _poll?.cancel();
+    final delay = alignedPollDelay(
+      key: 'mobile-index-poll',
+      period: projectsPollInterval,
+      pubkey: ref.read(myPubkeyProvider) ?? '',
+      now: DateTime.now(),
+    );
+    _poll = Timer(delay, () {
+      if (_stale(epoch)) return;
+      _fetch(epoch);
+      _poll = Timer.periodic(projectsPollInterval, (_) => _fetch(epoch));
+    });
   }
 
   void _scheduleRefetch(int epoch) {
@@ -139,19 +155,19 @@ class ProjectsNotifier extends Notifier<ProjectsRead> {
     if (_stale(epoch)) return;
     final session = ref.read(relaySessionProvider.notifier);
     try {
-      final heads = await session.fetchHistory(NostrFilters.projects());
+      // Heads and tombstones in the same tick: one POST /query carries both.
+      final pages = await Future.wait([
+        session.query(NostrFilters.projects()),
+        session.query(NostrFilters.projectTombstones()),
+      ]);
       if (_stale(epoch)) return;
-      final tombstones = await session.fetchHistory(
-        NostrFilters.projectTombstones(),
-      );
-      if (_stale(epoch)) return;
-      final projects = projectsFromEvents(heads, tombstones);
+      final projects = projectsFromEvents(pages[0], pages[1]);
       final wanted = <String>{
         for (final project in projects) ...project.channelIds,
       };
       var referenced = <String, ChannelData>{};
       if (wanted.isNotEmpty) {
-        final metadata = await session.fetchHistory(
+        final metadata = await session.query(
           NostrFilters.channelMetadata(wanted.toList()),
         );
         if (_stale(epoch)) return;
@@ -190,6 +206,10 @@ class ProjectsNotifier extends Notifier<ProjectsRead> {
     _unsubscribes.clear();
   }
 }
+
+/// When the next poll should fire so that every 30 s index poll on this
+/// device ticks at the same wall-clock instant.
+///
 
 /// Every project this reader may see, with the channels its heads name.
 final projectsProvider = NotifierProvider<ProjectsNotifier, ProjectsRead>(

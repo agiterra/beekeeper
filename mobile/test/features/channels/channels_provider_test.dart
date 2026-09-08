@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,15 +10,18 @@ import 'package:buzz/shared/relay/relay.dart';
 
 /// Tests for [ChannelsNotifier] in the pure-Nostr world.
 ///
-/// The provider performs a two-step WS query:
-///   1. kind:39002 memberships tagged `#p:<my-pubkey>`
-///   2. kind:39000 metadata for those channel ids
-/// then layers per-channel live subscriptions on the `#h` tag.
+/// The provider performs a two-step read:
+///   1. kind:39002 memberships tagged `#p:<my-pubkey>` over one WS REQ
+///   2. kind:39000 metadata, kind:39002 member lists, DM profiles and the
+///      hidden-DM list for those ids, started in one tick so they travel
+///      as one coalesced `POST /query`
+/// then layers one live subscription per 128 channels on the `#h` tag.
 ///
 /// Tests stub out the relay session by overriding [relaySessionProvider] with
-/// a [_FakeRelaySession] that returns canned events from [fetchHistory] and
-/// records [subscribe] calls so we can assert filter shapes and emit live
-/// events on demand.
+/// a [_FakeRelaySession] that answers reads from canned events, groups
+/// [query] calls per event-loop turn the way the real coalescer does, and
+/// records live subscriptions so we can assert filter shapes, count frames,
+/// and emit live events on demand.
 void main() {
   const myPk = 'me';
 
@@ -32,7 +36,7 @@ void main() {
       addTearDown(container.dispose);
 
       await container.read(channelsProvider.future);
-      final memberQueryCount = session.historyFilters
+      final memberQueryCount = session.readFilters
           .where(
             (filter) =>
                 filter.kinds.contains(39002) && filter.tags['#d'] != null,
@@ -46,7 +50,7 @@ void main() {
 
       expect(members.map((member) => member.pubkey), [myPk, 'alice']);
       expect(
-        session.historyFilters
+        session.readFilters
             .where(
               (filter) =>
                   filter.kinds.contains(39002) && filter.tags['#d'] != null,
@@ -58,7 +62,7 @@ void main() {
   );
 
   test(
-    'subscribes per-channel with #h tags (only joined, non-archived)',
+    'covers the joined, non-archived channels with one live filter',
     () async {
       final session = _FakeRelaySession(
         memberships: [
@@ -77,18 +81,88 @@ void main() {
 
       await container.read(channelsProvider.future);
 
-      // One subscription per joined, non-archived channel.
-      expect(session.subscribeFilters, hasLength(2));
-      expect(
-        session.subscribeFilters.map((f) => f.tags['#h']?.single).toSet(),
-        {_channelA, _channelB},
-      );
-      for (final filter in session.subscribeFilters) {
-        expect(filter.kinds, EventKind.channelEventKinds);
-        expect(filter.limit, 0);
-      }
+      // One REQ, one filter, every joined non-archived channel in its `#h`.
+      expect(session.liveFilterBundles, hasLength(1));
+      final filter = session.liveFilterBundles.single.single;
+      expect(filter.tags['#h']!.toSet(), {_channelA, _channelB});
+      expect(filter.kinds, EventKind.channelEventKinds);
+      expect(filter.limit, 0);
+      expect(filter.since, isNull);
     },
   );
+
+  test(
+    '25 channels cost one live REQ: two REQ frames and three HTTP calls',
+    () async {
+      final ids = _channelIds(25);
+      final session = _FakeRelaySession(
+        memberships: [for (final id in ids) _membership(id, myPk)],
+        metadata: [for (final id in ids) _meta(id: id, name: 'ch-$id')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+      await _waitUntil(() => session.queryBatches.length == 2);
+
+      expect(channels, hasLength(25));
+      expect(session.liveFilterBundles, hasLength(1));
+      final filter = session.liveFilterBundles.single.single;
+      expect(filter.tags['#h'], hasLength(25));
+      expect(filter.tags['#h']!.toSet(), ids.toSet());
+      expect(filter.kinds, EventKind.channelEventKinds);
+      expect(filter.limit, 0);
+
+      // WS: the membership page and the live bundle. HTTP: the coalesced
+      // metadata reads, the latest-message batch and the unread catch-up.
+      expect(session.reqFrames, 2);
+      expect(session.closeFrames, 0);
+      expect(session.httpCalls, 3);
+      expect(session.coalescedQueryGroups, hasLength(1));
+    },
+  );
+
+  test('300 channels open one live REQ per 128 channels', () async {
+    final ids = _channelIds(300);
+    final session = _FakeRelaySession(
+      memberships: [for (final id in ids) _membership(id, myPk)],
+      metadata: [for (final id in ids) _meta(id: id, name: 'ch-$id')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+
+    expect(session.liveFilterBundles.map((bundle) => bundle.length).toList(), [
+      1,
+      1,
+      1,
+    ]);
+    expect(
+      session.liveFilterBundles
+          .map((bundle) => bundle.single.tags['#h']!.length)
+          .toList(),
+      [128, 128, 44],
+    );
+    expect({
+      for (final bundle in session.liveFilterBundles)
+        ...bundle.single.tags['#h']!,
+    }, ids.toSet());
+    for (final bundle in session.liveFilterBundles) {
+      expect(bundle.single.kinds, EventKind.channelEventKinds);
+      expect(bundle.single.limit, 0);
+    }
+    expect(session.reqFrames, 1 + 3);
+  });
+
+  test('planLiveChannelFilters chunks at the relay #h cap', () {
+    expect(planLiveChannelFilters(const []), isEmpty);
+    expect(planLiveChannelFilters([_channelA]).single.single.tags['#h'], [
+      _channelA,
+    ]);
+    final plan = planLiveChannelFilters(_channelIds(129));
+    expect(plan.map((filters) => filters.single.tags['#h']!.length), [128, 1]);
+  });
 
   test('retains channel-list member snapshots for immediate reuse', () async {
     final joinedAt = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
@@ -129,15 +203,16 @@ void main() {
       final initialSubscribeCount = session.totalSubscribeCount;
 
       await container.read(channelsProvider.notifier).refresh();
+      await _settle();
 
       expect(session.totalSubscribeCount, initialSubscribeCount);
       expect(session.unsubscribeCount, 0);
-      expect(session.subscribeFilters, hasLength(2));
+      expect(session.activeChannels, {_channelA, _channelB});
     },
   );
 
   test(
-    'live subscription diff only removes and adds changed channels',
+    'a membership change opens the new bundle before closing the old one',
     () async {
       final session = _FakeRelaySession(
         memberships: [
@@ -163,48 +238,101 @@ void main() {
       ];
 
       await container.read(channelsProvider.notifier).refresh();
+      await _waitUntil(() => session.unsubscribeCount == 1);
 
-      expect(session.totalSubscribeCount, 3);
-      expect(session.unsubscribeCount, 1);
-      expect(
-        session.subscribeFilters
-            .map((filter) => filter.tags['#h']!.single)
-            .toSet(),
-        {_channelB, _channelD},
-      );
+      expect(session.liveFilterBundles, hasLength(2));
+      expect(session.liveFilterBundles.last.single.tags['#h']!.toSet(), {
+        _channelB,
+        _channelD,
+      });
+      expect(session.activeChannels, {_channelB, _channelD});
+      expect(session.activeSubscriptionCount, 1);
+      // Make-before-break: the new REQ went out before the old CLOSE, so
+      // the listener count never dropped to zero.
+      expect(session.liveOperations, ['subscribe', 'subscribe', 'close']);
+      expect(session.activeCountHistory, [1, 2, 1]);
+      expect(session.activeCountHistory.skip(1), isNot(contains(0)));
     },
   );
 
   test(
-    'empty channel refresh removes every retained live subscription',
+    'a burst of membership changes costs one rebuild after the debounce',
     () async {
       final session = _FakeRelaySession(
-        memberships: [
-          _membership(_channelA, myPk),
-          _membership(_channelB, myPk),
-        ],
-        metadata: [
-          _meta(id: _channelA, name: 'general'),
-          _meta(id: _channelB, name: 'random'),
-        ],
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'general')],
       );
-      final container = _buildContainer(session: session);
+      final container = _buildContainer(
+        session: session,
+        liveRebuildDebounce: ChannelsNotifier.liveRebuildDebounce,
+      );
       addTearDown(container.dispose);
 
       await container.read(channelsProvider.future);
-      session.memberships = [];
-      session.metadata = [];
+      final notifier = container.read(channelsProvider.notifier);
 
-      await container.read(channelsProvider.notifier).refresh();
+      session.memberships = [
+        _membership(_channelA, myPk),
+        _membership(_channelB, myPk),
+      ];
+      session.metadata = [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'random'),
+      ];
+      await notifier.refresh();
+      session.memberships = [
+        _membership(_channelA, myPk),
+        _membership(_channelB, myPk),
+        _membership(_channelD, myPk),
+      ];
+      session.metadata = [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'random'),
+        _meta(id: _channelD, name: 'support'),
+      ];
+      await notifier.refresh();
 
-      expect(session.activeChannels, isEmpty);
-      expect(session.activeSubscriptionCount, 0);
-      expect(session.unsubscribeCount, 2);
+      // The list is current at once; the bundle waits out the debounce.
+      expect(container.read(channelsProvider).value, hasLength(3));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(session.liveFilterBundles, hasLength(1));
+
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(session.liveFilterBundles, hasLength(2));
+      expect(session.liveFilterBundles.last.single.tags['#h']!.toSet(), {
+        _channelA,
+        _channelB,
+        _channelD,
+      });
+      expect(session.unsubscribeCount, 1);
     },
   );
 
+  test('an empty channel refresh closes the live bundle', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk), _membership(_channelB, myPk)],
+      metadata: [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'random'),
+      ],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+    session.memberships = [];
+    session.metadata = [];
+
+    await container.read(channelsProvider.notifier).refresh();
+    await _waitUntil(() => session.activeSubscriptionCount == 0);
+
+    expect(session.activeChannels, isEmpty);
+    expect(session.unsubscribeCount, 1);
+    expect(session.totalSubscribeCount, 1);
+  });
+
   test(
-    'overlapping refreshes retain one live subscription per desired channel',
+    'overlapping refreshes open one bundle for the final channel set',
     () async {
       final session = _FakeRelaySession(
         memberships: [
@@ -237,9 +365,11 @@ void main() {
       final secondRefresh = container.read(channelsProvider.notifier).refresh();
       session.resumePausedSubscribe();
       await Future.wait([firstRefresh, secondRefresh]);
+      await _waitUntil(() => session.unsubscribeCount == 1);
 
       expect(session.activeChannels, {_channelA, _channelB, _channelD});
-      expect(session.activeSubscriptionCount, 3);
+      expect(session.activeSubscriptionCount, 1);
+      expect(session.totalSubscribeCount, 2);
     },
   );
 
@@ -288,23 +418,39 @@ void main() {
     await container.read(channelsProvider.future);
 
     // Emit a live message event on channelA.
-    session.emit(
-      NostrEvent(
-        id: 'event-1',
-        pubkey: 'alice',
-        createdAt: 20,
-        kind: EventKind.streamMessageV2,
-        tags: const [
-          ['h', _channelA],
-        ],
-        content: 'new message',
-        sig: 'sig',
-      ),
-    );
+    session.emit(_message('event-1', channel: _channelA, createdAt: 20));
 
     final channels = container.read(channelsProvider).value!;
     expect(channels.single.lastMessageAt?.millisecondsSinceEpoch, 20 * 1000);
   });
+
+  test(
+    'events for an unknown channel refresh once, not once per event',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'general')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      await container.read(channelsProvider.future);
+      expect(session.historyFilters, hasLength(1));
+
+      // The relay fans out three events for a channel the list does not
+      // hold (its metadata never arrives, so every refresh comes back the
+      // same). Only the first may trigger a refresh.
+      for (var i = 0; i < 3; i++) {
+        session.emit(
+          _message('unknown-$i', channel: _channelD, createdAt: 20 + i),
+        );
+        await _settle();
+      }
+
+      expect(session.historyFilters, hasLength(2));
+      expect(session.totalSubscribeCount, 1);
+    },
+  );
 
   test(
     'loads all channel timestamps through one batched relay query',
@@ -318,29 +464,9 @@ void main() {
           _meta(id: _channelA, name: 'general'),
           _meta(id: _channelB, name: 'direct', channelType: 'dm'),
         ],
-        recentMessages: const [
-          NostrEvent(
-            id: 'stream-message',
-            pubkey: 'alice',
-            createdAt: 30,
-            kind: EventKind.streamMessageV2,
-            tags: [
-              ['h', _channelA],
-            ],
-            content: 'hello',
-            sig: 'sig',
-          ),
-          NostrEvent(
-            id: 'dm-message',
-            pubkey: 'alice',
-            createdAt: 40,
-            kind: 9,
-            tags: [
-              ['h', _channelB],
-            ],
-            content: 'hello privately',
-            sig: 'sig',
-          ),
+        recentMessages: [
+          _message('stream-message', channel: _channelA, createdAt: 30),
+          _message('dm-message', channel: _channelB, createdAt: 40, kind: 9),
         ],
       );
       final container = _buildContainer(session: session);
@@ -380,6 +506,96 @@ void main() {
         channels.firstWhere((channel) => channel.id == _channelB).lastMessageAt,
         DateTime.fromMillisecondsSinceEpoch(40 * 1000, isUtc: true),
       );
+    },
+  );
+
+  test(
+    'metadata, members, DM profiles and hidden DMs travel in one query',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [
+          _membership(_channelA, myPk),
+          _membership(_channelB, myPk, additionalPubkey: 'alice'),
+        ],
+        metadata: [
+          _meta(id: _channelA, name: 'general'),
+          _meta(
+            id: _channelB,
+            name: 'DM',
+            channelType: 'dm',
+            participants: const [myPk, 'alice'],
+          ),
+        ],
+        profiles: [_profile('alice', displayName: 'Alice')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      // Cold start: the DM's other member is known from the membership
+      // event, so its profile joins the first (and only) query.
+      expect(session.coalescedQueryGroups, hasLength(1));
+      _expectMetadataGroup(
+        session.coalescedQueryGroups.single,
+        channelIds: [_channelA, _channelB],
+        myPk: myPk,
+        profileAuthors: ['alice'],
+      );
+      expect(
+        channels.firstWhere((channel) => channel.id == _channelB).participants,
+        contains('Alice'),
+      );
+
+      // A refresh (the backstop, a resume, a pull) reads the same four in
+      // one query again, the DM participant now known from the list.
+      await container.read(channelsProvider.notifier).refresh();
+      expect(session.coalescedQueryGroups, hasLength(2));
+      _expectMetadataGroup(
+        session.coalescedQueryGroups.last,
+        channelIds: [_channelA, _channelB],
+        myPk: myPk,
+        profileAuthors: ['alice'],
+      );
+      expect(session.historyFilters, hasLength(2));
+      expect(
+        session.historyFilters.every((f) => f.kinds.single == 39002),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'a DM participant the memberships did not name costs one follow-up read',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelB, myPk)],
+        metadata: [
+          _meta(
+            id: _channelB,
+            name: 'DM',
+            channelType: 'dm',
+            participants: const [myPk, 'bob'],
+          ),
+        ],
+        profiles: [_profile('bob', displayName: 'Bob')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      expect(session.coalescedQueryGroups, hasLength(2));
+      _expectMetadataGroup(
+        session.coalescedQueryGroups.first,
+        channelIds: [_channelB],
+        myPk: myPk,
+        profileAuthors: null,
+      );
+      final followUp = session.coalescedQueryGroups.last.single;
+      expect(followUp.kinds, [0]);
+      expect(followUp.authors, ['bob']);
+      expect(channels.single.participants, contains('Bob'));
     },
   );
 
@@ -433,7 +649,7 @@ void main() {
 
     expect(channels.map((c) => c.id), [_channelB]);
     expect(
-      session.historyFilters.any(
+      session.readFilters.any(
         (filter) =>
             filter.kinds.contains(EventKind.dmVisibility) &&
             filter.tags['#p']?.single == myPk,
@@ -496,21 +712,18 @@ void main() {
       final container = _buildContainer(session: session);
       addTearDown(container.dispose);
 
+      int detailsFetches() => session.readFilters
+          .where((f) => f.kinds.contains(39000) && f.tags['#d'] != null)
+          .length;
+
       // Initial load.
       final initial = await container.read(channelsProvider.future);
       expect(initial.single.isArchived, isFalse);
 
       // Prime the detail cache.
-      final detailsFiltersBefore = session.historyFilters
-          .where((f) => f.kinds.contains(39000) && f.tags['#d'] != null)
-          .length;
+      final detailsFiltersBefore = detailsFetches();
       await container.read(channelDetailsProvider(_channelA).future);
-      final detailsFetchesAfterPrime =
-          session.historyFilters
-              .where((f) => f.kinds.contains(39000) && f.tags['#d'] != null)
-              .length -
-          detailsFiltersBefore;
-      expect(detailsFetchesAfterPrime, 1);
+      expect(detailsFetches() - detailsFiltersBefore, 1);
 
       // Simulate the reaper auto-archiving the channel by swapping the
       // metadata the fake returns, then refreshing the channels provider.
@@ -526,21 +739,14 @@ void main() {
       // we must not count that toward our invalidation assertion. Only the
       // fetch triggered by the second `channelDetailsProvider` read should be
       // attributed to invalidation.
-      final detailsFiltersAfterRefresh = session.historyFilters
-          .where((f) => f.kinds.contains(39000) && f.tags['#d'] != null)
-          .length;
+      final detailsFiltersAfterRefresh = detailsFetches();
 
       // Reading the details provider again must trigger a fresh fetch — proving
       // the prior cache was invalidated by the archive transition. Without
       // invalidation, Riverpod would return the cached pre-archive details and
       // no new `kinds:[39000], #d:[id]` filter would be sent.
       await container.read(channelDetailsProvider(_channelA).future);
-      final detailsFetchesFromInvalidation =
-          session.historyFilters
-              .where((f) => f.kinds.contains(39000) && f.tags['#d'] != null)
-              .length -
-          detailsFiltersAfterRefresh;
-      expect(detailsFetchesFromInvalidation, greaterThan(0));
+      expect(detailsFetches() - detailsFiltersAfterRefresh, greaterThan(0));
     },
   );
 
@@ -556,13 +762,14 @@ void main() {
 
       final initial = await container.read(channelsProvider.future);
       expect(initial.single.name, 'general');
-      expect(session.subscribeFilters, hasLength(1));
+      expect(session.liveFilterBundles, hasLength(1));
 
       session.setStatus(SessionStatus.reconnecting);
       final reconnecting = await container.read(channelsProvider.future);
 
       expect(reconnecting.single.name, 'general');
-      expect(session.subscribeFilters, hasLength(1));
+      expect(session.liveFilterBundles, hasLength(1));
+      expect(session.activeSubscriptionCount, 1);
       expect(session.unsubscribeCount, 0);
     },
   );
@@ -592,7 +799,9 @@ void main() {
       expect(container.read(channelsProvider).value?.single.name, 'general');
 
       session.setStatus(SessionStatus.connected);
-      await Future<void>.delayed(Duration.zero);
+      await _waitUntil(
+        () => container.read(channelsProvider).value?.single.name == 'random',
+      );
 
       expect(container.read(channelsProvider).value?.single.name, 'random');
     },
@@ -611,7 +820,9 @@ void main() {
 
     session.setStatus(SessionStatus.reconnecting);
     session.setStatus(SessionStatus.connected);
-    await Future<void>.delayed(Duration.zero);
+    // The connected transition's refresh reads through the coalescer, which
+    // answers at the end of the turn; wait for the value rather than a turn.
+    await _waitUntil(() => container.read(channelsProvider).hasValue);
 
     final recovered = await container.read(channelsProvider.future);
     expect(recovered.single.name, 'general');
@@ -625,40 +836,138 @@ void main() {
       addTearDown(container.dispose);
 
       expect(await container.read(channelsProvider.future), isEmpty);
-      final fetchCount = session.historyFilters.length;
+      final fetchCount = session.readFilters.length;
 
       session.setStatus(SessionStatus.reconnecting);
       expect(await container.read(channelsProvider.future), isEmpty);
-      expect(session.historyFilters, hasLength(fetchCount));
+      expect(session.readFilters, hasLength(fetchCount));
     },
   );
 
-  test('initial fetch issues membership + metadata queries', () async {
+  test(
+    'initial fetch issues the membership REQ then one coalesced query',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'general')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      await container.read(channelsProvider.future);
+
+      // The membership page is the one WebSocket read; it feeds the rest.
+      expect(session.historyFilters, hasLength(1));
+      expect(session.historyFilters.single.kinds, [39002]);
+      expect(session.historyFilters.single.tags['#p'], [myPk]);
+
+      // Everything keyed by the channel ids goes out as one `/query`.
+      expect(session.coalescedQueryGroups, hasLength(1));
+      _expectMetadataGroup(
+        session.coalescedQueryGroups.single,
+        channelIds: [_channelA],
+        myPk: myPk,
+        profileAuthors: null,
+      );
+
+      // And one live subscription on the resulting channel.
+      expect(session.liveFilterBundles, hasLength(1));
+      expect(session.liveFilterBundles.single.single.tags['#h'], [_channelA]);
+    },
+  );
+
+  test(
+    'resume does not refresh when the session is about to reconnect',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'general')],
+      );
+      final lifecycle = _FakeAppLifecycleNotifier();
+      final container = _buildContainer(session: session, lifecycle: lifecycle);
+      addTearDown(container.dispose);
+
+      await container.read(channelsProvider.future);
+      expect(session.historyFilters, hasLength(1));
+      expect(session.coalescedQueryGroups, hasLength(1));
+
+      // Ten seconds in the background: the socket is gone and the session
+      // will reconnect on resume, replaying the live subscriptions itself.
+      session.reconnectOnResume = true;
+      lifecycle.set(AppLifecycleState.paused);
+      lifecycle.set(AppLifecycleState.resumed);
+      await _settle();
+
+      expect(session.historyFilters, hasLength(1));
+      expect(session.coalescedQueryGroups, hasLength(1));
+
+      // The reconnect's connected transition is the one round that runs.
+      session.setStatus(SessionStatus.reconnecting);
+      session.setStatus(SessionStatus.connected);
+      await _waitUntil(() => session.historyFilters.length == 2);
+      await _settle();
+
+      expect(session.historyFilters, hasLength(2));
+      expect(session.coalescedQueryGroups, hasLength(2));
+    },
+  );
+
+  test('resume with a live socket refreshes once', () async {
     final session = _FakeRelaySession(
       memberships: [_membership(_channelA, myPk)],
       metadata: [_meta(id: _channelA, name: 'general')],
     );
-    final container = _buildContainer(session: session);
+    final lifecycle = _FakeAppLifecycleNotifier();
+    final container = _buildContainer(session: session, lifecycle: lifecycle);
     addTearDown(container.dispose);
 
     await container.read(channelsProvider.future);
 
-    // Two history fetches for channel loading, plus one per non-DM channel
-    // for high-priority event backfill.
-    expect(session.historyFilters.length, greaterThanOrEqualTo(2));
-    expect(session.historyFilters[0].kinds, [39002]);
-    expect(session.historyFilters[0].tags['#p'], [myPk]);
-    expect(session.historyFilters[1].kinds, [39000]);
-    expect(session.historyFilters[1].tags['#d'], [_channelA]);
+    session.reconnectOnResume = false;
+    lifecycle.set(AppLifecycleState.paused);
+    lifecycle.set(AppLifecycleState.resumed);
+    await _waitUntil(() => session.historyFilters.length == 2);
+    await _settle();
 
-    // And one live subscription on the resulting channel.
-    expect(session.subscribeFilters, hasLength(1));
+    expect(session.historyFilters, hasLength(2));
+    expect(session.coalescedQueryGroups, hasLength(2));
   });
 }
 
 const _channelA = '11111111-1111-4111-8111-111111111111';
 const _channelB = '22222222-2222-4222-8222-222222222222';
 const _channelD = '44444444-4444-4444-8444-444444444444';
+
+List<String> _channelIds(int count) => [
+  for (var i = 0; i < count; i++)
+    '${(i + 1).toRadixString(16).padLeft(8, '0')}-0000-4000-8000-000000000000',
+];
+
+/// The coalesced group every channel load sends: metadata by `#d`, member
+/// lists by `#d`, the hidden-DM list by `#p`, and — when a DM participant is
+/// already known — their kind:0 profiles by author.
+void _expectMetadataGroup(
+  List<NostrFilter> group, {
+  required List<String> channelIds,
+  required String myPk,
+  required List<String>? profileAuthors,
+}) {
+  expect(group, hasLength(profileAuthors == null ? 3 : 4));
+  final metadata = group.singleWhere((f) => f.kinds.contains(39000));
+  expect(metadata.tags['#d'], channelIds);
+  expect(metadata.limit, channelIds.length);
+  final members = group.singleWhere((f) => f.kinds.contains(39002));
+  expect(members.tags['#d'], channelIds);
+  expect(members.limit, channelIds.length);
+  final hidden = group.singleWhere(
+    (f) => f.kinds.contains(EventKind.dmVisibility),
+  );
+  expect(hidden.tags['#p'], [myPk]);
+  if (profileAuthors != null) {
+    final profiles = group.singleWhere((f) => f.kinds.contains(0));
+    expect(profiles.authors, profileAuthors);
+  }
+}
 
 /// Build a kind:39002 membership event tagged with the channel id and member.
 NostrEvent _membership(
@@ -702,6 +1011,7 @@ NostrEvent _meta({
   int createdAt = 1,
   int? ttlSeconds,
   bool archived = false,
+  List<String> participants = const [],
 }) => NostrEvent(
   id: 'meta-$id',
   pubkey: 'creator',
@@ -714,20 +1024,65 @@ NostrEvent _meta({
     ['public'],
     if (ttlSeconds != null) ['ttl', '$ttlSeconds'],
     if (archived) ['archived', 'true'],
+    for (final pubkey in participants) ['p', pubkey],
   ],
   content: '',
   sig: 'sig',
 );
 
-ProviderContainer _buildContainer({required _FakeRelaySession session}) {
+/// Build a kind:0 profile event.
+NostrEvent _profile(String pubkey, {required String displayName}) => NostrEvent(
+  id: 'profile-$pubkey',
+  pubkey: pubkey,
+  createdAt: 1,
+  kind: 0,
+  tags: const [],
+  content: jsonEncode({'display_name': displayName}),
+  sig: 'sig',
+);
+
+/// Build a channel message event.
+NostrEvent _message(
+  String id, {
+  required String channel,
+  required int createdAt,
+  int kind = EventKind.streamMessageV2,
+}) => NostrEvent(
+  id: id,
+  pubkey: 'alice',
+  createdAt: createdAt,
+  kind: kind,
+  tags: [
+    ['h', channel],
+  ],
+  content: 'hello',
+  sig: 'sig',
+);
+
+ProviderContainer _buildContainer({
+  required _FakeRelaySession session,
+  _FakeAppLifecycleNotifier? lifecycle,
+  Duration liveRebuildDebounce = Duration.zero,
+}) {
   return ProviderContainer(
     retry: (_, _) => null,
     overrides: [
-      appLifecycleProvider.overrideWith(() => _FakeAppLifecycleNotifier()),
+      appLifecycleProvider.overrideWith(
+        () => lifecycle ?? _FakeAppLifecycleNotifier(),
+      ),
       relaySessionProvider.overrideWith(() => session),
       myPubkeyProvider.overrideWithValue('me'),
+      channelsProvider.overrideWith(
+        () => ChannelsNotifier(liveRebuildDebounce: liveRebuildDebounce),
+      ),
     ],
   );
+}
+
+Future<void> _settle() async {
+  for (var i = 0; i < 10; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 Future<void> _waitUntil(bool Function() predicate) async {
@@ -738,14 +1093,16 @@ Future<void> _waitUntil(bool Function() predicate) async {
   fail('Timed out waiting for asynchronous provider work');
 }
 
-/// Fake [RelaySessionNotifier] that returns canned events from [fetchHistory]
-/// and records subscribe calls.
+/// Fake [RelaySessionNotifier] that answers reads from canned events, groups
+/// [query] calls per event-loop turn like the real coalescer, records live
+/// subscriptions, and counts frames.
 class _FakeRelaySession extends RelaySessionNotifier {
   _FakeRelaySession({
     required this.memberships,
     required this.metadata,
     this.hiddenDmEvents = const [],
     this.recentMessages = const [],
+    this.profiles = const [],
     this.membershipFailures = 0,
   });
 
@@ -753,20 +1110,57 @@ class _FakeRelaySession extends RelaySessionNotifier {
   List<NostrEvent> metadata;
   final List<NostrEvent> hiddenDmEvents;
   final List<NostrEvent> recentMessages;
+  final List<NostrEvent> profiles;
   int membershipFailures;
 
+  /// Filters read over a WebSocket REQ ([fetchHistory], [fetchHistoryAll]).
   final List<NostrFilter> historyFilters = [];
+
+  /// Filters read through the coalescer ([query]), in call order.
+  final List<NostrFilter> coalescedQueryFilters = [];
+
+  /// [query] filters grouped by event-loop turn — one `POST /query` each.
+  final List<List<NostrFilter>> coalescedQueryGroups = [];
+
+  /// Every one-shot read, WebSocket or coalesced, in call order.
+  final List<NostrFilter> readFilters = [];
+
+  /// Filter lists handed to [queryRelay].
   final List<List<NostrFilter>> queryBatches = [];
-  final List<NostrFilter> subscribeFilters = [];
-  final Map<int, (NostrFilter, void Function(NostrEvent))> _subscriptions = {};
+
+  /// Filter lists handed to [subscribeAll] (one REQ each), in order.
+  final List<List<NostrFilter>> liveFilterBundles = [];
+
+  /// `'subscribe'` / `'close'` in the order the live REQs and CLOSEs went out.
+  final List<String> liveOperations = [];
+
+  /// The number of open live subscriptions after each subscribe or close.
+  final List<int> activeCountHistory = [];
+
+  /// WebSocket REQ frames: every history read and every live subscription.
+  int reqFrames = 0;
+
+  /// WebSocket CLOSE frames: every live unsubscribe.
+  int closeFrames = 0;
+
+  /// HTTP calls: every [queryRelay] and every coalesced [query] group.
+  int httpCalls = 0;
+
+  /// What [willReconnectOnResume] reports.
+  bool reconnectOnResume = false;
+
+  final Map<int, (List<NostrFilter>, void Function(NostrEvent))>
+  _subscriptions = {};
   int _nextSubscriptionKey = 0;
   Completer<void>? _pausedSubscribe;
   Completer<void>? _subscribeStarted;
+  List<(NostrFilter, Completer<List<NostrEvent>>)>? _openQueryGroup;
   int unsubscribeCount = 0;
   int totalSubscribeCount = 0;
 
   Set<String> get activeChannels => {
-    for (final (filter, _) in _subscriptions.values) ?filter.tags['#h']?.single,
+    for (final (filters, _) in _subscriptions.values)
+      for (final filter in filters) ...?filter.tags['#h'],
   };
 
   int get activeSubscriptionCount => _subscriptions.length;
@@ -797,11 +1191,9 @@ class _FakeRelaySession extends RelaySessionNotifier {
   SessionState build() => const SessionState(status: SessionStatus.connected);
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
-    Duration timeout = const Duration(seconds: 8),
-  }) async {
-    historyFilters.add(filter);
+  bool get willReconnectOnResume => reconnectOnResume;
+
+  List<NostrEvent> _answer(NostrFilter filter) {
     if (filter.kinds.contains(39002) && filter.tags['#p'] != null) {
       if (membershipFailures > 0) {
         membershipFailures--;
@@ -816,6 +1208,12 @@ class _FakeRelaySession extends RelaySessionNotifier {
           )
           .toList();
     }
+    if (filter.kinds.contains(39002) && filter.tags['#d'] != null) {
+      final ids = filter.tags['#d']!.toSet();
+      return memberships
+          .where((e) => ids.contains(e.getTagValue('d')))
+          .toList();
+    }
     if (filter.kinds.contains(EventKind.dmVisibility)) {
       return hiddenDmEvents;
     }
@@ -824,7 +1222,60 @@ class _FakeRelaySession extends RelaySessionNotifier {
       final ids = (filter.tags['#d'] ?? const <String>[]).toSet();
       return metadata.where((e) => ids.contains(e.getTagValue('d'))).toList();
     }
+    if (filter.kinds.contains(0)) {
+      final authors = (filter.authors ?? const <String>[]).toSet();
+      return profiles.where((e) => authors.contains(e.pubkey)).toList();
+    }
     return const [];
+  }
+
+  @override
+  Future<List<NostrEvent>> fetchHistory(
+    NostrFilter filter, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    reqFrames++;
+    historyFilters.add(filter);
+    readFilters.add(filter);
+    return _answer(filter);
+  }
+
+  @override
+  Future<List<NostrEvent>> fetchHistoryAll(
+    List<NostrFilter> filters, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    reqFrames++;
+    historyFilters.addAll(filters);
+    readFilters.addAll(filters);
+    return [for (final filter in filters) ..._answer(filter)];
+  }
+
+  @override
+  Future<List<NostrEvent>> query(NostrFilter filter) {
+    coalescedQueryFilters.add(filter);
+    readFilters.add(filter);
+    var group = _openQueryGroup;
+    if (group == null) {
+      final newGroup = <(NostrFilter, Completer<List<NostrEvent>>)>[];
+      group = _openQueryGroup = newGroup;
+      coalescedQueryGroups.add([]);
+      httpCalls++;
+      Timer(Duration.zero, () {
+        _openQueryGroup = null;
+        for (final (pending, completer) in newGroup) {
+          try {
+            completer.complete(_answer(pending));
+          } catch (error, stack) {
+            completer.completeError(error, stack);
+          }
+        }
+      });
+    }
+    final completer = Completer<List<NostrEvent>>();
+    group.add((filter, completer));
+    coalescedQueryGroups.last.add(filter);
+    return completer.future;
   }
 
   @override
@@ -832,6 +1283,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
     List<NostrFilter> filters, {
     Duration timeout = const Duration(seconds: 8),
   }) async {
+    httpCalls++;
     queryBatches.add(filters);
     return recentMessages.where((event) {
       return filters.any((filter) {
@@ -859,9 +1311,17 @@ class _FakeRelaySession extends RelaySessionNotifier {
     NostrFilter filter,
     void Function(NostrEvent) onEvent, {
     void Function(String message)? onClosed,
+  }) => subscribeAll([filter], onEvent, onClosed: onClosed);
+
+  @override
+  Future<void Function()> subscribeAll(
+    List<NostrFilter> filters,
+    void Function(NostrEvent) onEvent, {
+    void Function(String message)? onClosed,
   }) async {
     totalSubscribeCount++;
-    subscribeFilters.add(filter);
+    reqFrames++;
+    liveFilterBundles.add(List.of(filters));
     final paused = _pausedSubscribe;
     if (paused != null) {
       _subscribeStarted!.complete();
@@ -870,12 +1330,16 @@ class _FakeRelaySession extends RelaySessionNotifier {
       _subscribeStarted = null;
     }
     final subscriptionKey = ++_nextSubscriptionKey;
-    _subscriptions[subscriptionKey] = (filter, onEvent);
+    _subscriptions[subscriptionKey] = (filters, onEvent);
+    liveOperations.add('subscribe');
+    activeCountHistory.add(_subscriptions.length);
     return () {
       final subscription = _subscriptions.remove(subscriptionKey);
       if (subscription == null) return;
       unsubscribeCount++;
-      subscribeFilters.remove(subscription.$1);
+      closeFrames++;
+      liveOperations.add('close');
+      activeCountHistory.add(_subscriptions.length);
     };
   }
 
@@ -894,4 +1358,10 @@ class _FakeRelaySession extends RelaySessionNotifier {
 class _FakeAppLifecycleNotifier extends AppLifecycleNotifier {
   @override
   AppLifecycleState build() => AppLifecycleState.resumed;
+
+  /// Drive the lifecycle by hand; the real notifier also pokes the session,
+  /// which these tests script through [_FakeRelaySession] directly.
+  void set(AppLifecycleState next) {
+    state = next;
+  }
 }

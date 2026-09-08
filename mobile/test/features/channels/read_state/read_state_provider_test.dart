@@ -140,10 +140,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
       const SessionState(status: SessionStatus.disconnected);
 
   @override
-  Future<List<NostrEvent>> fetchHistory(
-    NostrFilter filter, {
-    Duration timeout = const Duration(seconds: 8),
-  }) async => [];
+  Future<List<NostrEvent>> query(NostrFilter filter) async => [];
 
   @override
   Future<void Function()> subscribe(

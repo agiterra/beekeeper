@@ -56,4 +56,34 @@ class SignedEventRelay {
     onSigned?.call(nostrEvent);
     return _session.publish(nostrEvent);
   }
+
+  /// Sign an ephemeral event and hand it to the session's droppable path.
+  ///
+  /// Returns `false` — and sends nothing — when there is no signing key, the
+  /// key does not parse, or [RelaySessionNotifier.sendEphemeral] declined
+  /// (socket down, rate-limit gate active, or the ephemeral lane dry). Never
+  /// throws and never waits for an OK: this is for beats and indicators the
+  /// next tick will simply try again.
+  bool sendEphemeral({
+    required int kind,
+    required String content,
+    required List<List<String>> tags,
+  }) {
+    final nsec = _nsec;
+    if (nsec == null || nsec.isEmpty) return false;
+    try {
+      final privkeyHex = nostr.Nip19.decode(payload: nsec).data;
+      if (privkeyHex.isEmpty) return false;
+      final event = nostr.Event.from(
+        kind: kind,
+        content: content,
+        tags: tags,
+        secretKey: privkeyHex,
+        verify: false,
+      );
+      return _session.sendEphemeral(NostrEvent.fromJson(event.toMap()));
+    } catch (_) {
+      return false;
+    }
+  }
 }

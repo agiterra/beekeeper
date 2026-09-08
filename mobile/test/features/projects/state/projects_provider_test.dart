@@ -48,7 +48,7 @@ void main() {
     'reads heads, tombstones, then the metadata of referenced channels',
     () async {
       final relay = RecordingRelaySessionNotifier(
-        historyResults: [
+        queryResults: [
           [
             _head('beekeeper', channels: ['c-transport']),
             _head('gone'),
@@ -80,12 +80,17 @@ void main() {
       );
       await _settle();
 
-      expect(relay.operations, ['subscribe', 'fetch', 'fetch', 'fetch']);
+      // Heads and tombstones leave in one coalesced query; the metadata of
+      // the channels they name is a second, dependent one.
+      expect(relay.operations, ['subscribe', 'query1', 'query1']);
       expect(relay.liveFilters.single.kinds, [30621]);
-      expect(relay.historyFilters[0].kinds, [30621]);
-      expect(relay.historyFilters[1].kinds, [5]);
-      expect(relay.historyFilters[2].kinds, [39000]);
-      expect(relay.historyFilters[2].tags['#d'], ['c-transport']);
+      final [first, second] = relay.coalescedQueryGroups;
+      expect(first.map((filter) => filter.kinds), [
+        [30621],
+        [5],
+      ]);
+      expect(second.single.kinds, [39000]);
+      expect(second.single.tags['#d'], ['c-transport']);
 
       final read = container.read(projectsProvider);
       expect(read.connection, ProjectsConnection.open);
@@ -101,9 +106,9 @@ void main() {
 
   test('no referenced channels means no metadata read', () async {
     final relay = RecordingRelaySessionNotifier(
-      historyResults: [
+      queryResults: [
         [_head('beekeeper')],
-        const [],
+        const <NostrEvent>[],
       ],
     );
     final container = ProviderContainer(
@@ -112,8 +117,10 @@ void main() {
     addTearDown(container.dispose);
     container.read(projectsProvider);
     await _settle();
-    expect(relay.operations, ['subscribe', 'fetch', 'fetch']);
-    expect(container.read(projectsProvider).referencedChannels, isEmpty);
+    expect(relay.operations, ['subscribe', 'query1']);
+    final read = container.read(projectsProvider);
+    expect(read.connection, ProjectsConnection.open);
+    expect(read.referencedChannels, isEmpty);
   });
 
   test('a failed read is reported as such, not as no projects', () async {

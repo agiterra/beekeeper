@@ -5,7 +5,10 @@ import 'package:buzz/shared/theme/theme.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:nostr/nostr.dart' as nostr;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../helpers/recording_relay_session.dart';
 
 void main() {
   test(
@@ -60,6 +63,83 @@ void main() {
       expect(prefs.getString('buzz_presence_preference_aabb'), 'auto');
     },
   );
+
+  group('heartbeat', () {
+    test('beats are droppable ephemerals, never publishes', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final relay = RecordingRelaySessionNotifier();
+      final container = _buildHeartbeatContainer(prefs, relay);
+      addTearDown(container.dispose);
+
+      expect(await container.read(presenceProvider.future), 'online');
+      // The status change itself is a publish the notifier waits on.
+      expect(relay.published.map((event) => event.kind), [20001]);
+      expect(relay.published.single.content, 'online');
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final beats = relay.ephemeralEvents;
+      expect(beats.length, greaterThanOrEqualTo(2));
+      for (final beat in beats) {
+        expect(beat.kind, EventKind.presenceUpdate);
+        expect(beat.content, 'online');
+        expect(beat.sig, isNotEmpty);
+      }
+      expect(relay.published, hasLength(1), reason: 'no beat is a publish');
+
+      // Under the gate or a thin write lane the transport answers false and
+      // sends nothing; the notifier must not fall back to a publish.
+      relay.acceptEphemeral = false;
+      final offered = relay.ephemeralEvents.length;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(relay.ephemeralEvents.length, greaterThan(offered));
+      expect(relay.published, hasLength(1));
+    });
+
+    test('no beat while the session is not connected', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final relay = RecordingRelaySessionNotifier();
+      final container = _buildHeartbeatContainer(prefs, relay);
+      addTearDown(container.dispose);
+
+      expect(await container.read(presenceProvider.future), 'online');
+      relay.setConnected(false);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      expect(relay.ephemeralEvents, isEmpty);
+      expect(relay.published, hasLength(1));
+    });
+  });
+}
+
+ProviderContainer _buildHeartbeatContainer(
+  SharedPreferences prefs,
+  RecordingRelaySessionNotifier relay,
+) => ProviderContainer(
+  overrides: [
+    savedPrefsProvider.overrideWithValue(prefs),
+    myPubkeyProvider.overrideWithValue('aabb'),
+    profileProvider.overrideWith(_FakeProfileNotifier.new),
+    relaySessionProvider.overrideWith(() => relay),
+    relayConfigProvider.overrideWith(
+      () => _FakeRelayConfig(nostr.Keys.generate().nsec),
+    ),
+    appLifecycleProvider.overrideWith(_ResumedLifecycle.new),
+    presenceProvider.overrideWith(
+      () =>
+          PresenceNotifier(heartbeatInterval: const Duration(milliseconds: 20)),
+    ),
+  ],
+);
+
+class _FakeRelayConfig extends RelayConfigNotifier {
+  _FakeRelayConfig(this.nsec);
+
+  final String nsec;
+
+  @override
+  RelayConfig build() => RelayConfig(baseUrl: 'http://localhost:1', nsec: nsec);
 }
 
 ProviderContainer _buildContainer(SharedPreferences prefs) => ProviderContainer(

@@ -91,14 +91,21 @@ class ReadStateManager {
 
   int? getEffectiveTimestamp(String contextId) => _effectiveState[contextId];
 
-  Future<void> initialize() async {
+  /// Hydrate from local storage and, when [remote] is true, read the relay
+  /// and open the live subscription.
+  ///
+  /// Pass `remote: false` while the session is not connected: the owner
+  /// calls [reinitializeRemote] on the connect transition instead, so a
+  /// connect costs exactly one fetch and one subscribe rather than one of
+  /// each from here and another pair from the reconnect listener.
+  Future<void> initialize({bool remote = true}) async {
     if (_initialized || _disposed) return;
     _initialized = true;
     debugPrint(
       '[ReadStateManager] initialize pubkey=${pubkey.substring(0, 8)}… clientId=${_clientId.substring(0, 8)}… slotId=$_slotId',
     );
 
-    if (!_remoteEnabled || _relaySession == null) {
+    if (!remote || !_remoteEnabled || _relaySession == null) {
       _onChanged();
       return;
     }
@@ -202,7 +209,9 @@ class ReadStateManager {
 
   Future<void> _fetchAndMerge() async {
     try {
-      final events = await _relaySession!.fetchHistory(
+      // Through the coalescer: on connect this read shares one POST /query
+      // with whatever else starts in the same 50 ms.
+      final events = await _relaySession!.query(
         NostrFilter(
           kinds: const [EventKind.readState],
           authors: [pubkey],
@@ -457,7 +466,7 @@ class ReadStateManager {
     if (_relaySession == null) return;
 
     try {
-      final events = await _relaySession.fetchHistory(
+      final events = await _relaySession.query(
         NostrFilter(
           kinds: const [EventKind.readState],
           authors: [pubkey],

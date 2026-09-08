@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -46,13 +47,15 @@ final codingSessionObserverConfigProvider =
 /// Reads one channel's coding sessions and keeps them live. Read-only: this
 /// notifier has no publish path.
 ///
-/// On start it fetches one history page per contract filter (facts, the three
-/// creation kinds, names, goals, closures, leases and the roster kinds), runs
-/// the domain trust gate and folds, then opens live subscriptions for the
-/// facts plus names, closures and leases. Live subscriptions survive relay
-/// reconnects — [RelaySessionNotifier.subscribe] replays from
-/// `lastSeen - 5 s` — and a rebuild on reconnect re-reads history into the
-/// same store, so a replayed event is a duplicate, not a second fact.
+/// On start it reads one history page per contract filter (facts, the three
+/// creation kinds, names, goals, closures, leases and the roster kinds) in a
+/// single `POST /query` — every filter keeps its own limit there, which one
+/// multi-filter `REQ` could not promise — runs the domain trust gate and
+/// folds, then opens the four live filters (facts, names, closures, leases)
+/// as one `REQ`. Live subscriptions survive relay reconnects —
+/// [RelaySessionNotifier.subscribeAll] replays from `lastSeen - 5 s` — and a
+/// rebuild on reconnect re-reads history into the same store, so a replayed
+/// event is a duplicate, not a second fact.
 class CodingSessionChannelObserverNotifier
     extends Notifier<CodingSessionObserverSnapshot> {
   CodingSessionChannelObserverNotifier(this.channelId);
@@ -155,28 +158,26 @@ class CodingSessionChannelObserverNotifier
   ) async {
     // The facts stream plus the three per-session streams a page can change
     // under the reader: its name, its closure, and the leases that decide
-    // whether anyone is still answering.
+    // whether anyone is still answering. One REQ carries all four.
     final filters = <NostrFilter>[
       NostrFilters.codingSessionFactsLive(channelId),
       NostrFilters.codingSessionNames(channelId, limit: 0),
       NostrFilters.codingSessionClosures(channelId, limit: 0),
       NostrFilters.codingSessionLeases(channelId),
     ];
-    for (final filter in filters) {
-      try {
-        final unsubscribe = await session.subscribe(filter, _onLiveEvent);
-        if (_stale(epoch)) {
-          unsubscribe();
-          return;
-        }
-        _unsubscribes.add(unsubscribe);
-      } catch (error) {
-        if (_stale(epoch)) return;
-        failures.add('Coding session subscription failed: $error');
-        debugPrint(
-          '[CodingSessionObserver] live subscribe failed for $channelId: $error',
-        );
+    try {
+      final unsubscribe = await session.subscribeAll(filters, _onLiveEvent);
+      if (_stale(epoch)) {
+        unsubscribe();
+        return;
       }
+      _unsubscribes.add(unsubscribe);
+    } catch (error) {
+      if (_stale(epoch)) return;
+      failures.add('Coding session subscription failed: $error');
+      debugPrint(
+        '[CodingSessionObserver] live subscribe failed for $channelId: $error',
+      );
     }
   }
 
@@ -200,15 +201,20 @@ class CodingSessionChannelObserverNotifier
       ...NostrFilters.codingSessionRoster(channelId),
     ];
 
-    final pages = await Future.wait([
-      for (final filter in filters) _page(session, config, filter, failures),
-    ]);
+    final read = await _readPages(session, config, filters, failures);
     if (_stale(epoch)) return;
 
-    for (var index = 0; index < filters.length; index++) {
-      final filter = filters[index];
-      final page = pages[index];
-      if (page == null) continue;
+    for (final filter in filters) {
+      if (!read.answered.contains(filter)) continue;
+      // The relay answers a multi-filter read with one union, so each
+      // filter's page is recovered here by the same NIP-01 match the relay
+      // applied. A page is full when the union holds at least the filter's
+      // limit of its matches: a filter whose page came back short holds
+      // every event of its kinds, so no sibling filter can add to it.
+      final page = [
+        for (final event in read.events)
+          if (nostrFilterMatches(filter, event)) event,
+      ];
       if (identical(filter, leaseFilter)) {
         // A lease snapshot is not history. D2 reads 24223 at limit 1000 and
         // never paginates it, and a provider republishes its lease every few
@@ -237,27 +243,72 @@ class CodingSessionChannelObserverNotifier
     }
   }
 
-  Future<List<NostrEvent>?> _page(
+  /// Read every filter in one `POST /query`; when the bridge fails, fall
+  /// back to the WebSocket read lane in `REQ`s of at most
+  /// [relayMaxFiltersPerReq] filters. Returns the union the relay sent and
+  /// the filters it answered — a chunk that failed leaves its filters out,
+  /// and [failures] says so.
+  Future<({List<NostrEvent> events, Set<NostrFilter> answered})> _readPages(
     RelaySessionNotifier session,
     CodingSessionObserverConfig config,
-    NostrFilter filter,
+    List<NostrFilter> filters,
     List<String> failures,
   ) async {
     try {
-      return await session.fetchHistory(filter, timeout: config.historyTimeout);
-    } catch (error) {
-      failures.add('Coding session history failed: $error');
-      debugPrint(
-        '[CodingSessionObserver] history failed for $channelId: $error',
+      final events = await session.queryRelay(
+        filters,
+        timeout: config.historyTimeout,
       );
-      return null;
+      return (events: events, answered: filters.toSet());
+    } catch (error) {
+      debugPrint(
+        '[CodingSessionObserver] bridge read failed for $channelId, '
+        'falling back to the socket: $error',
+      );
     }
+    final events = <NostrEvent>[];
+    final answered = <NostrFilter>{};
+    for (
+      var start = 0;
+      start < filters.length;
+      start += relayMaxFiltersPerReq
+    ) {
+      final chunk = filters.sublist(
+        start,
+        min(start + relayMaxFiltersPerReq, filters.length),
+      );
+      try {
+        events.addAll(
+          await session.fetchHistoryAll(chunk, timeout: config.historyTimeout),
+        );
+        answered.addAll(chunk);
+      } catch (error) {
+        failures.add('Coding session history failed: $error');
+        debugPrint(
+          '[CodingSessionObserver] history failed for $channelId: $error',
+        );
+      }
+    }
+    return (events: events, answered: answered);
   }
 
   void _startLeaseTimer(CodingSessionObserverConfig config, int epoch) {
     _leaseTimer?.cancel();
-    _leaseTimer = Timer.periodic(config.leaseRefreshInterval, (_) {
+    // The first poll lands at a key-derived point of the period rather than
+    // one period after connect, so a paired phone and desktop reconnecting
+    // together do not re-read leases in the same second.
+    final phase = phaseOffset(
+      'coding-session-leases',
+      config.leaseRefreshInterval,
+      pubkey: ref.read(myPubkeyProvider) ?? '',
+      random: Random().nextDouble(),
+    );
+    _leaseTimer = Timer(phase, () {
+      if (_stale(epoch)) return;
       unawaited(_refreshLeases(config, epoch));
+      _leaseTimer = Timer.periodic(config.leaseRefreshInterval, (_) {
+        unawaited(_refreshLeases(config, epoch));
+      });
     });
   }
 
@@ -271,9 +322,8 @@ class CodingSessionChannelObserverNotifier
     }
     try {
       final session = ref.read(relaySessionProvider.notifier);
-      final leases = await session.fetchHistory(
+      final leases = await session.query(
         NostrFilters.codingSessionLeases(channelId),
-        timeout: config.historyTimeout,
       );
       if (_stale(epoch)) return;
       _leasesRead = true;

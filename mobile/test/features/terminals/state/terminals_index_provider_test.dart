@@ -35,7 +35,7 @@ void main() {
   test('subscribes to live announces, reads the history, and indexes by '
       'project', () async {
     final relay = RecordingRelaySessionNotifier(
-      historyResults: [
+      queryResults: [
         [_announce('s1'), _announce('s2'), _announce('s2', status: 'closed')],
       ],
     );
@@ -49,11 +49,12 @@ void main() {
     expect(first.hasRead, isFalse);
     await _settle();
 
-    expect(relay.operations, ['subscribe', 'fetch']);
+    // The announce read goes through the coalescer, not the socket.
+    expect(relay.operations, ['subscribe', 'query1']);
     expect(relay.liveFilters.single.kinds, [30623]);
     expect(relay.liveFilters.single.since, isNotNull);
-    expect(relay.historyFilters.single.kinds, [30623]);
-    expect(relay.historyFilters.single.limit, 500);
+    expect(relay.coalescedQueryFilters.single.kinds, [30623]);
+    expect(relay.coalescedQueryFilters.single.limit, 500);
 
     final index = container.read(terminalsIndexProvider);
     expect(index.connection, TerminalsConnection.open);
@@ -66,7 +67,7 @@ void main() {
 
   test('a live head re-reads the list', () async {
     final relay = RecordingRelaySessionNotifier(
-      historyResults: [
+      queryResults: [
         [_announce('s1')],
         [_announce('s1'), _announce('s3')],
       ],
@@ -81,7 +82,7 @@ void main() {
 
     relay.emit(_announce('s3'));
     await _settle();
-    expect(relay.operations, ['subscribe', 'fetch', 'fetch']);
+    expect(relay.operations, ['subscribe', 'query1', 'query1']);
     expect(container.read(terminalsIndexProvider).terminals.length, 2);
   });
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -23,7 +24,7 @@ class ProfileNotifier extends AsyncNotifier<UserProfile?> {
     if (myPk == null) return null;
 
     final session = ref.read(relaySessionProvider.notifier);
-    final events = await session.fetchHistory(NostrFilters.profile(myPk));
+    final events = await session.query(NostrFilters.profile(myPk));
     if (events.isEmpty) return null;
     final data = ProfileData.fromEvent(events.first);
     return UserProfile(
@@ -49,8 +50,20 @@ final profileProvider = AsyncNotifierProvider<ProfileNotifier, UserProfile?>(
 /// Sends a heartbeat every 60s while the app is active by publishing a
 /// kind:20001 presence event over the relay WebSocket. Watches
 /// [appLifecycleProvider] to send "away" when backgrounded.
+///
+/// A deliberate change of status ([setPresence], a lifecycle edge) is
+/// published and waited on. The periodic beat is not: it goes out through
+/// [RelaySessionNotifier.sendEphemeral], which sends nothing while the
+/// rate-limit gate is active or the send budget's write lane is below its
+/// reserve, so a beat never spends the frame the user's next message
+/// needs. The beat also starts at a key-derived phase of its period rather
+/// than exactly one period after connect.
 class PresenceNotifier extends AsyncNotifier<String> {
-  static const _heartbeatInterval = Duration(seconds: 60);
+  PresenceNotifier({
+    @visibleForTesting Duration heartbeatInterval = const Duration(seconds: 60),
+  }) : _heartbeatInterval = heartbeatInterval;
+
+  final Duration _heartbeatInterval;
   static const _preferenceKeyPrefix = 'buzz_presence_preference_';
 
   Timer? _heartbeatTimer;
@@ -103,9 +116,36 @@ class PresenceNotifier extends AsyncNotifier<String> {
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
-      _setPresence('online');
+    final phase = phaseOffset(
+      'presence-heartbeat',
+      _heartbeatInterval,
+      pubkey: _preferencePubkey ?? '',
+      random: Random().nextDouble(),
+    );
+    _heartbeatTimer = Timer(phase, () {
+      _heartbeat();
+      _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
+        _heartbeat();
+      });
     });
+  }
+
+  /// One periodic beat: the same kind:20001 `online` a status change
+  /// publishes, sent droppable. Skipped outright while the session is not
+  /// connected; dropped by the transport under the gate or a thin write
+  /// lane. Either way the next beat tries again.
+  void _heartbeat() {
+    if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
+      return;
+    }
+    SignedEventRelay(
+      session: ref.read(relaySessionProvider.notifier),
+      nsec: ref.read(relayConfigProvider).nsec,
+    ).sendEphemeral(
+      kind: EventKind.presenceUpdate,
+      content: 'online',
+      tags: const <List<String>>[],
+    );
   }
 
   /// Updates the current user's presence preference and publishes it.

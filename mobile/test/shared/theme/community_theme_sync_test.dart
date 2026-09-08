@@ -504,6 +504,13 @@ class _Submission {
 }
 
 class _FakeSignedRelay implements SignedEventRelay {
+  @override
+  bool sendEphemeral({
+    required int kind,
+    required String content,
+    required List<List<String>> tags,
+  }) => false;
+
   _FakeSignedRelay({
     this.failuresRemaining = 0,
     this.eventId = 'event',

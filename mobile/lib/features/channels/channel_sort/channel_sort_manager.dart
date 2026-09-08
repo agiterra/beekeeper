@@ -96,19 +96,18 @@ class ChannelSortManager {
   }
 
   Future<void> _syncWithRelay() async {
-    final firstFetch = await _fetchAndApply();
+    final fetched = await _fetchAndApply();
+    // No second fetch after the subscription: a `limit: 1` REQ returns the
+    // current blob before its EOSE, so anything published between the
+    // history read and the live setup arrives through the subscription.
     final subscribed = _unsubscribe != null || await _startLiveSubscription();
-    // Fetch again after the subscription is ready. This closes the event gap
-    // between history and live setup (and catches anything published while a
-    // rate-limited subscription was retrying).
-    final secondFetch = subscribed ? await _fetchAndApply() : null;
-    if (firstFetch == null || !subscribed || secondFetch == null) {
+    if (fetched == null || !subscribed) {
       _scheduleStartupRetry();
       return;
     }
     _startupRetryAttempt = 0;
     if (_syncState.hasPendingLocalChanges ||
-        (!firstFetch && !secondFetch && _store.groups.isNotEmpty)) {
+        (!fetched && _store.groups.isNotEmpty)) {
       _schedulePublish();
     }
   }
@@ -172,7 +171,7 @@ class ChannelSortManager {
   Future<bool?> _fetchAndApply() async {
     if (_relaySession == null) return null;
     try {
-      final events = await _relaySession.fetchHistory(_filter());
+      final events = await _relaySession.query(_filter());
       var found = false;
       for (final event in events) {
         if (event.pubkey != pubkey || event.getTagValue('d') != _dTag) continue;
