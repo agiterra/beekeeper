@@ -218,6 +218,22 @@ export function classifyCodingSessionCreateEvent(
   ) {
     return { kind: "malformed" };
   }
+  // The 2026-09-01 attribution amendment: `hireRef` names the 44221 hire this
+  // create answers. Trailing and independent of the seat pair and of routing,
+  // exactly as the strict validator and buzz-core enumerate it. It is
+  // attribution only and binds no authority here — but a create that carries
+  // it is exactly as governed as one that does not, and refusing it left every
+  // founder-fulfilled hire without an observation (no founder, no operator).
+  // Lowercase 64-hex only, byte-for-byte like the strict validator; uppercase
+  // is refused, never coerced.
+  const hasHireRef = Object.hasOwn(payload.action, "hireRef");
+  if (
+    hasHireRef &&
+    (typeof payload.action.hireRef !== "string" ||
+      !/^[0-9a-f]{64}$/.test(payload.action.hireRef))
+  ) {
+    return { kind: "malformed" };
+  }
   const createKeys = [
     "type",
     "projectRef",
@@ -230,6 +246,7 @@ export function classifyCodingSessionCreateEvent(
     "title",
     "initialTurn",
     ...(hasActor ? ["actor", "role"] : []),
+    ...(hasHireRef ? ["hireRef"] : []),
     ...(hasRouting ? ["routing"] : []),
   ];
   if (

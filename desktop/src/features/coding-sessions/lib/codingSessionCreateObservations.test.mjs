@@ -710,3 +710,43 @@ test("a routing object that is not the closed record is malformed", () => {
     );
   }
 });
+
+test("a create answering a hire classifies as a create; its hireRef binds nothing and must be lowercase hex", () => {
+  const allowed = new Set([CHANNEL_ID]);
+  const base = JSON.parse(createEvent().content);
+  const hired = createEvent({
+    overrideContent: JSON.stringify({
+      ...base,
+      action: { ...base.action, hireRef: "ab".repeat(32) },
+    }),
+  });
+  const classified = classifyCodingSessionCreateEvent(hired, allowed);
+  assert.equal(classified.kind, "create");
+  assert.equal(classified.providerAuthorityPubkey, PROVIDER_PUBKEY);
+  assert.equal(classified.sessionRef, SESSION_REF);
+  assert.equal(
+    Object.hasOwn(classified, "hireRef"),
+    false,
+    "attribution never becomes an authority fact on the observation",
+  );
+  const shouted = createEvent({
+    overrideContent: JSON.stringify({
+      ...base,
+      action: { ...base.action, hireRef: "AB".repeat(32) },
+    }),
+  });
+  assert.equal(
+    classifyCodingSessionCreateEvent(shouted, allowed).kind,
+    "malformed",
+  );
+  const notAnId = createEvent({
+    overrideContent: JSON.stringify({
+      ...base,
+      action: { ...base.action, hireRef: 7 },
+    }),
+  });
+  assert.equal(
+    classifyCodingSessionCreateEvent(notAnId, allowed).kind,
+    "malformed",
+  );
+});
