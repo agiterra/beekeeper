@@ -161,4 +161,37 @@ void main() {
       isNull,
     );
   });
+
+  test('among several transports the one with the newest session activity '
+      'wins, then the lowest id', () {
+    final project = projectFromEvent(_head(name: 'P'))!;
+    final transports = [
+      _channel('t3', type: 'transport'),
+      _channel('t2', type: 'transport'),
+      _channel('t1', type: 'transport'),
+    ];
+    // No activity anywhere: deterministic across members by id.
+    expect(pickProjectSessionsChannel(project, transports)!.id, 't1');
+    // The desktop's rule: the channel the sessions actually live in.
+    expect(
+      pickProjectSessionsChannel(
+        project,
+        transports,
+        sessionActivityByChannel: {'t3': 900, 't2': 950},
+      )!.id,
+      't2',
+    );
+    // A channel's own last-message time never outranks session activity.
+    expect(
+      pickProjectSessionsChannel(
+        project,
+        [
+          _channel('t9', type: 'transport', lastActivityAt: 5000),
+          _channel('t1', type: 'transport'),
+        ],
+        sessionActivityByChannel: {'t1': 10},
+      )!.id,
+      't1',
+    );
+  });
 }

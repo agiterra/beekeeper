@@ -192,17 +192,35 @@ String projectSessionsChannelName(String projectName) {
 /// Which of a project's channels carries its coding sessions.
 ///
 /// The desktop's derivation (`projectSessionsChannel.ts`), not a stored
-/// mapping: a `transport`-typed channel wins outright; failing that the
-/// channel named `<project> sessions`; failing that the channel with the most
-/// recent activity; failing that there is none yet.
+/// mapping: a `transport`-typed channel wins outright — among several, the
+/// one with the newest session activity in [sessionActivityByChannel] (unix
+/// seconds), then the lowest id, so every device that reads the same
+/// sessions picks the same channel; failing a transport, the channel named
+/// `<project> sessions`; failing that the channel with the most recent
+/// activity; failing that there is none yet.
+///
+/// Several transports exist because the desktop minted one per create until
+/// 2026-09-08 (its partitioner dropped transport channels, so it never found
+/// the one it had). Following activity is what lets both clients converge on
+/// the channel the provider is already advertising in, rather than on an
+/// empty one nobody has joined.
 ProjectChannel? pickProjectSessionsChannel(
   Project project,
-  Iterable<ProjectChannel> channels,
-) {
+  Iterable<ProjectChannel> channels, {
+  Map<String, int> sessionActivityByChannel = const {},
+}) {
   final list = channels.toList();
-  for (final channel in list) {
-    if (channel.isTransport) return channel;
-  }
+  final transports =
+      [
+        for (final channel in list)
+          if (channel.isTransport) channel,
+      ]..sort((left, right) {
+        final byActivity = (sessionActivityByChannel[right.id] ?? -1).compareTo(
+          sessionActivityByChannel[left.id] ?? -1,
+        );
+        return byActivity != 0 ? byActivity : left.id.compareTo(right.id);
+      });
+  if (transports.isNotEmpty) return transports.first;
   final wanted = _collapse(
     projectSessionsChannelName(project.name),
   ).toLowerCase();

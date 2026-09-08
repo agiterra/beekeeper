@@ -400,6 +400,11 @@ void main() {
         find.textContaining('no working directory is configured'),
         findsOneWidget,
       );
+      // The provider names the hole; the row says whose it is to fill.
+      expect(
+        find.textContaining("desktop app's project settings"),
+        findsOneWidget,
+      );
       await tester.tap(
         find.byKey(const ValueKey('project-pending-dismiss-csl-1')),
       );

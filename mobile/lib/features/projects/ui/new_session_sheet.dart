@@ -35,8 +35,9 @@ Future<void> showNewCodingSessionSheet(
     myChannels: myChannels,
     referenced: read.referencedChannels,
   );
-  final channel = pickProjectSessionsChannel(project, channels);
-  if (channel == null) {
+  // Whether there is a channel at all is decided here; which one, in the
+  // sheet's build, where the channels' session reads can be watched.
+  if (pickProjectSessionsChannel(project, channels) == null) {
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       const SnackBar(content: Text(projectNoSessionsChannelLabel)),
     );
@@ -46,8 +47,25 @@ Future<void> showNewCodingSessionSheet(
     context: context,
     title: 'New coding session',
     isScrollControlled: true,
-    builder: (_) => NewCodingSessionSheet(project: project, channel: channel),
+    builder: (_) => NewCodingSessionSheet(project: project, channels: channels),
   );
+}
+
+/// Newest session activity per transport channel, unix seconds — what
+/// [pickProjectSessionsChannel] orders several transports by.
+Map<String, int> projectSessionActivityByChannel(
+  Iterable<ProjectChannel> channels,
+  Iterable<CodingSessionUmbrella> Function(String channelId) sessionsOf,
+) {
+  final activity = <String, int>{};
+  for (final channel in channels) {
+    if (!channel.isTransport) continue;
+    for (final session in sessionsOf(channel.id)) {
+      final at = session.lastActivityAt;
+      if (at > (activity[channel.id] ?? -1)) activity[channel.id] = at;
+    }
+  }
+  return activity;
 }
 
 /// One offer a member may start a session under: a provider instance and
@@ -71,10 +89,46 @@ class _Offer {
 /// provider's refusal is what shows, under the project, in its words.
 class NewCodingSessionSheet extends HookConsumerWidget {
   final Project project;
-  final ProjectChannel channel;
+
+  /// The project's channels; the sessions channel is picked in [build] so
+  /// that, among several transports, the one with the newest session
+  /// activity — the one the provider is advertising in — wins.
+  final List<ProjectChannel> channels;
 
   const NewCodingSessionSheet({
     super.key,
+    required this.project,
+    required this.channels,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final binding = ref.watch(codingSessionObserverBindingProvider);
+    final channel = pickProjectSessionsChannel(
+      project,
+      channels,
+      sessionActivityByChannel: projectSessionActivityByChannel(
+        channels,
+        (id) => binding.watch(ref, id).sessions,
+      ),
+    );
+    if (channel == null) {
+      // The opener refused already; this is the same sentence for a channel
+      // list that changed between the tap and the frame.
+      return const Padding(
+        padding: EdgeInsets.all(Grid.md),
+        child: Text(projectNoSessionsChannelLabel),
+      );
+    }
+    return _NewCodingSessionSheetBody(project: project, channel: channel);
+  }
+}
+
+class _NewCodingSessionSheetBody extends HookConsumerWidget {
+  final Project project;
+  final ProjectChannel channel;
+
+  const _NewCodingSessionSheetBody({
     required this.project,
     required this.channel,
   });

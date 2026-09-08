@@ -1,5 +1,20 @@
 part of '../project_tree.dart';
 
+/// What a person can do about a refusal, when its code says so.
+///
+/// `PROJECT_CWD_UNRESOLVED` is the one a phone-issued create hits first: the
+/// provider's own words name the project and channel that have no directory,
+/// but not that the directory is the desktop's to record. Live finding
+/// 2026-09-08 — the refusal was read on the relay while the phone still said
+/// "waiting", and even once shown it would not have said where to fix it.
+String? pendingCreateRefusalHint(CodingSessionReceiptError? error) =>
+    switch (error?.code) {
+      'PROJECT_CWD_UNRESOLVED' =>
+        "Set the project's working directory in the desktop app's project "
+            'settings, then try again.',
+      _ => null,
+    };
+
 /// A create this device sent, with where it stands.
 class _PendingCreateRow {
   final CodingSessionPendingCreate pending;
@@ -35,7 +50,11 @@ class _PendingCreateTile extends StatelessWidget {
         'Waiting for $providerLabel to answer',
       CodingSessionPendingCreateKind.failed =>
         '$providerLabel refused'
-            '${error == null ? '' : ' (${error.code}): ${error.message}'}',
+            '${error == null ? '' : ' (${error.code}): ${error.message}'}'
+            '${switch (pendingCreateRefusalHint(error)) {
+              final hint? => ' $hint',
+              null => '',
+            }}',
       CodingSessionPendingCreateKind.created => 'Created',
     };
     return ListTile(
@@ -56,7 +75,7 @@ class _PendingCreateTile extends StatelessWidget {
       ),
       subtitle: Text(
         detail,
-        maxLines: failed ? 4 : 1,
+        maxLines: failed ? 6 : 1,
         overflow: TextOverflow.ellipsis,
         style: context.textTheme.bodySmall?.copyWith(
           color: failed ? colors.error : colors.onSurfaceVariant,

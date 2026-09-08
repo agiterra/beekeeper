@@ -286,6 +286,24 @@ abstract final class NostrFilters {
       ),
   ];
 
+  /// Live twin of [codingSessionCreates] for the two kinds
+  /// [codingSessionFactsLive] leaves out: creates (44221) and geneses
+  /// (44226), `limit: 0`. One two-kind filter is fine live — there is no page
+  /// for a chattier kind to starve — and it is what lets an observer see a
+  /// create published *after* its history read: this device's own, whose
+  /// refusal must settle the pending row, and another device's, whose
+  /// session must appear without a reload.
+  static NostrFilter codingSessionCreatesLive(String channelId) => NostrFilter(
+    kinds: const [
+      EventKind.codingSessionLifecycleCommand,
+      EventKind.codingSessionGenesis,
+    ],
+    tags: {
+      '#h': [channelId],
+    },
+    limit: 0,
+  );
+
   /// Umbrella-session display names (kind:44229).
   static NostrFilter codingSessionNames(String channelId, {int limit = 1000}) =>
       NostrFilter(

@@ -56,14 +56,15 @@ void main() {
       );
     });
 
-    test('opens facts, names, closures and leases as one live REQ', () async {
+    test('opens facts, creates, names, goals, closures and leases as one '
+        'live REQ', () async {
       final session = _FakeRelaySession();
       final container = _container(session);
       addTearDown(container.dispose);
 
       await _start(container);
 
-      expect(session.subscribeBundles.single, hasLength(4));
+      expect(session.subscribeBundles.single, hasLength(6));
       for (final filter in session.subscribeFilters) {
         expect(filter.tags['#h'], [channelId]);
         expect(filter.kinds, isNotEmpty);
@@ -72,7 +73,9 @@ void main() {
         session.subscribeFilters.map(_shape),
         unorderedEquals([
           '[44223, 44224, 44225] limit 0',
+          '[44221, 44226] limit 0',
           '[44229] limit 0',
+          '[44227] limit 0',
           '[44230] limit 0',
           '[24223] limit 1000',
         ]),
@@ -217,6 +220,73 @@ void main() {
       expect(blocks.single.items.single.text, 'first row');
       expect(snapshot.transcriptBlocksByExecution[target().key], hasLength(1));
     });
+
+    test('a session founded after the history read appears, verified, from '
+        'its live genesis and create', () async {
+      // Live finding 2026-09-08: the desktop created a session while the
+      // phone already watched the channel, and the phone never showed it —
+      // the live REQ carried facts but not the create or the genesis, so
+      // the execution had no readable founder and no umbrella to sit under.
+      final session = _FakeRelaySession();
+      final container = _container(session);
+      addTearDown(container.dispose);
+
+      final seeded = await _start(container);
+      expect(seeded.sessions, isEmpty);
+
+      for (final event in _liveSession()) {
+        session.emit(event);
+      }
+      await pumpEventQueue();
+
+      final snapshot = container.read(
+        codingSessionChannelObserverProvider(channelId),
+      );
+      expect(snapshot.sessions.single.sessionRef, sessionRefA);
+      expect(snapshot.executions.single.authority.verified, isTrue);
+    });
+
+    test(
+      'a refusal of a create sent after the history read settles it',
+      () async {
+        // The same finding from this device's side: its own 44221 went out
+        // after the observer's read, the provider's `failed` 44224 arrived
+        // live, and with no readable create the receipt was refused as an
+        // unknown author — the row said "waiting" forever.
+        final session = _FakeRelaySession();
+        final container = _container(session);
+        addTearDown(container.dispose);
+
+        await _start(container);
+        session.emit(
+          createEvent(
+            commandId: 'cmd-9',
+            sessionRef: sessionRefB,
+            genesisRef: genesisEventIdB,
+          ),
+        );
+        session.emit(
+          receiptEvent(
+            commandId: 'cmd-9',
+            status: 'failed',
+            error: const {
+              'code': 'PROJECT_CWD_UNRESOLVED',
+              'message': 'no working directory is configured for project p',
+            },
+          ),
+        );
+        await pumpEventQueue();
+
+        final snapshot = container.read(
+          codingSessionChannelObserverProvider(channelId),
+        );
+        final receipt = snapshot.lifecycleReceiptsByCommandId['cmd-9']!.single;
+        expect(receipt.status, CodingSessionReceiptStatus.failed);
+        expect(receipt.error?.code, 'PROJECT_CWD_UNRESOLVED');
+        expect(snapshot.counts.rejectedAuthor, 0);
+        expect(snapshot.sessions, isEmpty);
+      },
+    );
 
     test('ignores a live event scoped to another channel', () async {
       final session = _FakeRelaySession(events: _liveSession());

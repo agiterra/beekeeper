@@ -156,12 +156,19 @@ class CodingSessionChannelObserverNotifier
     int epoch,
     List<String> failures,
   ) async {
-    // The facts stream plus the three per-session streams a page can change
-    // under the reader: its name, its closure, and the leases that decide
-    // whether anyone is still answering. One REQ carries all four.
+    // The facts stream, the creation evidence the facts stream leaves out
+    // (creates and geneses — without them a create published after the
+    // history read is invisible: this device's own refusal never settles
+    // its pending row, and a session another device founds never appears
+    // until a reload; live finding, 2026-09-08), and the per-session streams
+    // a page can change under the reader: its name, its goal, its closure,
+    // and the leases that decide whether anyone is still answering. One REQ
+    // carries all six.
     final filters = <NostrFilter>[
       NostrFilters.codingSessionFactsLive(channelId),
+      NostrFilters.codingSessionCreatesLive(channelId),
       NostrFilters.codingSessionNames(channelId, limit: 0),
+      NostrFilters.codingSessionGoals(channelId, limit: 0),
       NostrFilters.codingSessionClosures(channelId, limit: 0),
       NostrFilters.codingSessionLeases(channelId),
     ];

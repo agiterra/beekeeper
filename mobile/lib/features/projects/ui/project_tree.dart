@@ -15,6 +15,7 @@ import '../../coding_sessions/domain/coding_sessions_domain.dart'
         CodingSessionPendingCreate,
         CodingSessionPendingCreateKind,
         CodingSessionPendingCreatePhase,
+        CodingSessionReceiptError,
         settleCodingSessionPendingCreate;
 import '../../coding_sessions/ui/coding_session_page.dart';
 import '../../coding_sessions/ui/coding_session_status_chip.dart';
