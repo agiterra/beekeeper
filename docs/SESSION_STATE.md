@@ -5,7 +5,35 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-## September 8 follow-on — report provenance and transcript count validated
+## Current checkpoint — September 8: report provenance and transcript count shipped
+
+Canonical relay `main` accepted `3dff54cd2f87749fe5e976374386823b397b9f3e`,
+verified with `git ls-remote`; local `main` was fast-forwarded. Every normal
+pre-push check passed (`provenance-final-push.log`, 226.96 seconds). The required
+signoff rebase changed commit IDs, not the validated final source.
+
+**Installed app:** `/Users/brian/Applications/Beekeeper Dev.app` is the complete
+packaged debug build from `3dff54cd`, built `2026-09-08T04:03:59Z`. All eight
+sidecars, role resources and deep strict signature verification passed
+(`provenance-packaged-build.log`, exit 0; `provenance-install.log`). Backup of the
+preceding `82eee723` bundle:
+`~/Applications/Beekeeper Dev.app.before-3dff54cd-20260908-000929`.
+
+**The remaining user step is macOS Keychain access.** Reopening the final app
+timed out in Computer Use; its fresh process sample again shows
+`read_blob_raw_keyring` → `SecKeychainFindGenericPassword`
+(`provenance-startup-sample.txt`). The prior paused startup had not reached the
+workspace or launched agents; SIGTERM did not finish, so only that identified
+Beekeeper process was force-quit and its absence checked before replacement.
+No SecurityAgent interaction, stored credential change or access bypass was
+performed. Computer Use explicitly blocks access to SecurityAgent. The final
+app is installed and launched, but its signed-in UI acceptance remains pending.
+
+First user check after handling the OS prompt: open Beekeeper project → Packs
+and Refresh. Check reported revision relation and source-confirmation labels.
+Confirmations identify the assigned reporter, not actual role execution.
+
+### Follow-on evidence
 
 Integrated Fable candidate `ab7571c00` and its separate `b71aec7f0` hireRef
 compatibility repair into Astra's finalizer tree. The latter accepts the
@@ -40,14 +68,20 @@ The signed mock-relay fixture serves real genesis/create/receipt facts through
 the ordinary query path. Screenshot:
 `review-2026-09-06-validation/role-provenance-ranked-rows.png`.
 
-These follow-on changes are ready for the final normal push checks. The installed
-bundle and Keychain acceptance status are recorded in the checkpoint below.
+These follow-on changes are shipped and installed as recorded above. The normal
+push floor also passed the full CLI suite and its three policy integration tests.
 The previous full `just ci`, `just test` and 1,264-case browser run cover the
 preceding shipment; they are not represented as a new full run of this follow-on.
 No new relay/provider protocol or production configuration changes are included
-in this follow-on. Both orchestrators have stopped opening new feature slices.
+in this follow-on. Both orchestrators have finished their bounded slices; no
+build/test workers remain active. Next implementation decisions are operator-grant
+proof, durable CI-to-session continuation with private-project read capability,
+and exact-proof recovery when the bounded 1,000-event channel reads truncate.
+The latter currently withholds confirmation for affected channels, rather than
+asserting that an incomplete evidence set is unique. Actual multi-machine role
+adoption and live CI webhook configuration remain separate acceptance work.
 
-## Current checkpoint — September 7 late night: CI results and role revisions shipped
+## Earlier checkpoint — September 7 late night: CI results and role revisions shipped
 
 Canonical relay `main` accepted `82eee7231296f89362e2a7c3e7ab7e45c0405efb`.
 `git ls-remote` confirmed it; local `main` was fast-forwarded to the same commit.
