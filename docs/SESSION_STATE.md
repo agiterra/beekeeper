@@ -5,6 +5,28 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 visual design pass and team-sync audit
+
+Brian confirmed functionality of e71cb7ba but rejected its visual quality.
+Fable received a new explicit visual-design brief in the existing t3 thread,
+with dedicated worktree `../review-roles-design-fable` based on 5234cfe6d.
+Scope: compact visual hierarchy and progressive detail, existing presentation
+surfaces only; preserve performance/recheck fixes. Root owns synchronization.
+
+Current gap verified: useProjectPacksView uses local useManagedAgentsQuery,
+not existing relay-agent discovery. Role cards join local homeRole preferences
+without project membership filtering. Shared session reports can include other
+members, but this does not constitute a complete shared agent roster. Design
+must disclose "On this computer" until backed by a project-scoped identity join.
+Additional scope defect: the Roles hook flattens all project shelf buckets before
+joining seats by role; other projects' sessions can leak into role cards despite
+correct revision snapshot scoping. Root owns a selected-project data-boundary fix
+and shared-identity join; Fable must not duplicate that logic in presentation.
+Product direction: project team default with Mine filter, owner/host/freshness
+where known, no inference of role adoption from published definitions. Shared
+source 30624 and moving-ref 30618 invalidation exist; pinned commits do not float.
+Running sessions retain staged role version until an execution boundary.
+
 ## Latest installed test build — e71cb7ba (September 8)
 
 Combined performance + Roles usability package installed at
