@@ -56,6 +56,15 @@ import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
 import type { NewCodingSessionHostPhase } from "../lib/newCodingSessionModel";
 
 /**
+ * What one press of Start came to: the create is on the relay, or it is not
+ * and here is why. `publishError` carries the same words for the screen;
+ * this is for the caller deciding what to do with the draft.
+ */
+export type NewCodingSessionSubmitOutcome =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/**
  * The create flow, in the one order that works.
  *
  * 0. An agent seat, when one was chosen, joins the channel and has its key
@@ -480,13 +489,18 @@ export function useNewCodingSessionCreate({
        */
       projectRef?: string | null;
       repoRef?: string | null;
-    }) => {
+    }): Promise<NewCodingSessionSubmitOutcome> => {
       // `transaction` only exists once prepare has resolved, so on its own it
       // leaves the whole in-flight window unguarded — and this flow puts
       // provisioning and a membership round-trip inside that window. Without
       // `isPublishing` a second submit mints a fresh commandId and creates a
       // duplicate session.
-      if (isPublishing || transaction) return;
+      if (isPublishing || transaction) {
+        return {
+          ok: false,
+          message: "A session request is already in flight.",
+        };
+      }
       setIsPublishing(true);
       setPublishError(null);
       setDurabilityError(null);
@@ -597,9 +611,14 @@ export function useNewCodingSessionCreate({
         // not say the same thing twice in two different tones.
         if (message !== durabilityRefusal) setPublishError(message);
         setHostPhase("idle");
+        // Said to the caller as well as the screen: the form clears its
+        // draft on success only, and a relay refusal such as
+        // `rate-limited: quota exceeded` used to eat the goal (2026-09-07).
+        return { ok: false, message };
       } finally {
         setIsPublishing(false);
       }
+      return { ok: true };
     },
     [
       isPublishing,

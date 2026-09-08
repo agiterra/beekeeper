@@ -53,7 +53,7 @@ test("N1: two clicks before the first submit resolves launch exactly one session
   const submit = () =>
     new Promise((resolve) => {
       submitCalls += 1;
-      resolveSubmit = resolve;
+      resolveSubmit = () => resolve({ ok: true });
     });
 
   const mounted = renderHook(() =>
@@ -112,6 +112,7 @@ test("N2: a click after the previous submit settled launches again", async () =>
   let submitCalls = 0;
   const submit = async () => {
     submitCalls += 1;
+    return { ok: true };
   };
 
   const mounted = renderHook(() =>
@@ -218,7 +219,7 @@ test("N3: a governed launch clears the draft and remembers the prompt", async ()
       setIsPreparingChannel: () => {},
       setLaunchError: () => {},
       setSetupError: () => {},
-      submit: async () => {},
+      submit: async () => ({ ok: true }),
       title: "",
       useWorktree: false,
       workdir: "",
@@ -273,7 +274,7 @@ test("N4: a refused governed launch keeps the draft and remembers nothing", asyn
       setIsPreparingChannel: () => {},
       setLaunchError: () => {},
       setSetupError: () => {},
-      submit: async () => {},
+      submit: async () => ({ ok: true }),
       title: "",
       useWorktree: false,
       workdir: "",
@@ -289,6 +290,109 @@ test("N4: a refused governed launch keeps the draft and remembers nothing", asyn
 
   assert.equal(cleared, 0, "a refused launch must not eat the goal");
   assert.deepEqual(remembered, []);
+
+  mounted.unmount();
+});
+
+test("N5: a refused ungoverned publish keeps the draft and remembers nothing", async () => {
+  // Live 2026-09-07: `rate-limited: quota exceeded; retry in 0s` under the
+  // form, and the goal gone with it.
+  const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
+
+  let cleared = 0;
+  const remembered = [];
+
+  const mounted = renderHook(() =>
+    useNewCodingSessionLaunchSubmit({
+      canLaunch: true,
+      candidates: [],
+      channelId: SELECTED_TARGET.channelId,
+      clearDraft: () => {
+        cleared += 1;
+      },
+      leadModel: null,
+      goCodingSession: () => {},
+      goal: "ping",
+      governed: false,
+      launch: async () => ({ ok: false, failureReason: "unused" }),
+      lead: YOU_LEAD,
+      onDone: () => {},
+      policySet: false,
+      projectContext: null,
+      refreshRuntimeTarget: async () => null,
+      rememberPrompt: (prompt) => remembered.push(prompt),
+      selectedTarget: SELECTED_TARGET,
+      setIsPreparingChannel: () => {},
+      setLaunchError: () => {},
+      setSetupError: () => {},
+      submit: async () => ({
+        ok: false,
+        message: "rate-limited: quota exceeded; retry in 0s",
+      }),
+      title: "",
+      useWorktree: false,
+      workdir: "",
+      worktreeName: "",
+      worktreeSource: null,
+    }),
+  );
+
+  await act(async () => {
+    mounted.result.current();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  });
+
+  assert.equal(cleared, 0);
+  assert.deepEqual(remembered, []);
+
+  mounted.unmount();
+});
+
+test("N6: an accepted ungoverned publish clears the draft and remembers the prompt", async () => {
+  const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
+
+  let cleared = 0;
+  const remembered = [];
+
+  const mounted = renderHook(() =>
+    useNewCodingSessionLaunchSubmit({
+      canLaunch: true,
+      candidates: [],
+      channelId: SELECTED_TARGET.channelId,
+      clearDraft: () => {
+        cleared += 1;
+      },
+      leadModel: null,
+      goCodingSession: () => {},
+      goal: "ping",
+      governed: false,
+      launch: async () => ({ ok: false, failureReason: "unused" }),
+      lead: YOU_LEAD,
+      onDone: () => {},
+      policySet: false,
+      projectContext: null,
+      refreshRuntimeTarget: async () => null,
+      rememberPrompt: (prompt) => remembered.push(prompt),
+      selectedTarget: SELECTED_TARGET,
+      setIsPreparingChannel: () => {},
+      setLaunchError: () => {},
+      setSetupError: () => {},
+      submit: async () => ({ ok: true }),
+      title: "",
+      useWorktree: false,
+      workdir: "",
+      worktreeName: "",
+      worktreeSource: null,
+    }),
+  );
+
+  await act(async () => {
+    mounted.result.current();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  });
+
+  assert.equal(cleared, 1);
+  assert.deepEqual(remembered, ["ping"]);
 
   mounted.unmount();
 });

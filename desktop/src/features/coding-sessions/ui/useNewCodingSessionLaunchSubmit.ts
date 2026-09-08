@@ -167,7 +167,7 @@ export function useNewCodingSessionLaunchSubmit(input: {
               setIsPreparingChannel(false);
             }
           }
-          await submit({
+          const outcome = await submit({
             target:
               launchChannelId && launchChannelId !== selectedTarget.channelId
                 ? { ...selectedTarget, channelId: launchChannelId }
@@ -184,6 +184,11 @@ export function useNewCodingSessionLaunchSubmit(input: {
             seat: null,
             seatLabel: null,
           });
+          // A refused publish keeps the goal: `publishError` shows the relay's
+          // words under the form, and the person retries with what they
+          // wrote. Clearing here on every outcome ate the goal on
+          // `rate-limited: quota exceeded` (2026-09-07).
+          if (!outcome.ok) return;
           rememberPrompt(goal);
           clearDraft();
           return;
