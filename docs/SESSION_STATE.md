@@ -64,6 +64,24 @@ thread visibly Working after send. Fable owns presentation in dedicated worktree
 owns session/provider metadata investigation, performance landing and final
 integration/build. Preserve unknown-version disclosures; do not invent adoption.
 
+### Metadata investigation result — September 8
+
+Read-only trace found that current channel-created sessions can legitimately
+lack role-version metadata: Keystone uses `bee sessions create --wait`, which
+publishes no actor/role (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:696`).
+The provider's unseated branch stages no role pack (`crates/buzz-session-provider/src/lib.rs:2314`).
+The existing UI conflates these sessions with a role whose version was not
+reported (`desktop/src/features/roles/lib/rolePackSnapshots.ts:343`). Fable's
+presentation model explicitly separates these cases. No provider fix was made:
+the desktop seated launch path propagates staged packRef to metadata, with an
+existing provider regression at `lib.rs:11203`. Remaining live test: launch an
+explicit Lead role via desktop and inspect its newest metadata for agentRef,
+role and packRef. A channel-created execution alone does not test that path.
+
+Fable status checked directly in t3: version-summary/E2E lane complete;
+components/copy lane still working on final polish. No final candidate commit
+or hand-back yet in `review-roles-usability-fable`. Do not call it integrated.
+
 ### Follow-on evidence
 
 Integrated Fable candidate `ab7571c00` and its separate `b71aec7f0` hireRef
