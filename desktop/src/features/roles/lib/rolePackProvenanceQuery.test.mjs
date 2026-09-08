@@ -236,3 +236,20 @@ test("the query key changes when a new report arrives", () => {
     "the key is order-insensitive, so a re-ordered channel list is one entry",
   );
 });
+
+test("cold history verification yields to queued UI work before completing", async () => {
+  const events = Array.from({ length: 32 }, (_, i) =>
+    signedNote(KIND_CODING_SESSION_METADATA, 1800000000 + i),
+  );
+  let inputHandled = false;
+  const input = setTimeout(() => {
+    inputHandled = true;
+  }, 0);
+  const result = await fetchRolePackProvenanceEvents([CHANNEL], {
+    fetchEvents: async (filter) =>
+      filter.kinds[0] === KIND_CODING_SESSION_METADATA ? events : [],
+  });
+  clearTimeout(input);
+  assert.equal(inputHandled, true);
+  assert.equal(result.events.length, 32);
+});

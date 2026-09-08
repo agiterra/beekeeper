@@ -207,6 +207,22 @@ test("creates ride their own subscription and only bind once the receipt lands",
   assert.equal(result.current.observations[0].sessionRef, SESSION_REF);
   assert.deepEqual(result.current.observations[0].target, TARGET);
 
+  const { fanOutObservedCodingSessionEvents } = await import(
+    "./codingSessionObservedEvents.ts"
+  );
+  const settledSnapshot = result.current;
+  await act(async () => {
+    fanOutObservedCodingSessionEvents([createEvent, receiptEvent]);
+    fanOutObservedCodingSessionEvents([
+      { ...receiptEvent, id: "unrelated", kind: 1 },
+    ]);
+  });
+  assert.equal(
+    result.current,
+    settledSnapshot,
+    "replayed and irrelevant bus events must not publish a new snapshot",
+  );
+
   unmount();
   queryClient.clear();
   ipcHandlers.clear();

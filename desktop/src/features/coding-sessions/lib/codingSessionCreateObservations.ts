@@ -429,11 +429,13 @@ export class CodingSessionCreateObservationStore {
   private malformedCount = 0;
   private invalidSignatureCount = 0;
 
+  /** Returns whether newly ingested evidence or diagnostics need publication. */
   ingestRelayEvents(
     events: readonly RelayEvent[],
     channelIds: readonly string[],
     authority: CodingSessionIngressAuthority,
-  ): void {
+  ): boolean {
+    let changed = false;
     const allowedChannels = new Set(channelIds);
     for (const event of events) {
       if (this.dispositions.has(event.id)) continue;
@@ -443,6 +445,7 @@ export class CodingSessionCreateObservationStore {
           allowedChannels,
         );
         this.dispositions.set(event.id, classified.kind);
+        if (classified.kind !== "irrelevant") changed = true;
         if (classified.kind === "malformed") this.malformedCount += 1;
         if (classified.kind === "invalid-signature") {
           this.invalidSignatureCount += 1;
@@ -458,6 +461,7 @@ export class CodingSessionCreateObservationStore {
           allowedChannels,
         );
         this.dispositions.set(event.id, classified.kind);
+        if (classified.kind !== "irrelevant") changed = true;
         if (classified.kind === "malformed") this.malformedCount += 1;
         if (classified.kind === "invalid-signature") {
           this.invalidSignatureCount += 1;
@@ -513,7 +517,9 @@ export class CodingSessionCreateObservationStore {
         target,
       });
       this.receiptTargets.set(key, bucket);
+      changed = true;
     }
+    return changed;
   }
 
   /**

@@ -1723,3 +1723,27 @@ test("a turn receipt from another provider is not this turn's answer", () => {
     null,
   );
 });
+
+test("ingestion signals only new relevant evidence, preserving duplicate and unrelated no-ops", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  const event = metadataEvent();
+  const ingest = (events) =>
+    store.ingestRelayEvents(events, [CHANNEL_ID], AUTHORITY);
+  assert.equal(ingest([]), false);
+  assert.equal(ingest([{ ...event, id: "unrelated", kind: 1 }]), false);
+  assert.equal(ingest([event]), true);
+  const before = store.snapshot([CHANNEL_ID]);
+  assert.equal(ingest([event, event]), false);
+  assert.deepEqual(store.snapshot([CHANNEL_ID]), before);
+  const invalid = {
+    ...event,
+    id: "new-invalid-evidence",
+    sig: "0".repeat(128),
+  };
+  assert.equal(
+    ingest([invalid]),
+    true,
+    "new validation failures must still notify readers",
+  );
+  assert.equal(ingest([invalid]), false);
+});

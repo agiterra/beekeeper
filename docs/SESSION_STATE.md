@@ -19,19 +19,21 @@ sidecars, role resources and deep strict signature verification passed
 preceding `82eee723` bundle:
 `~/Applications/Beekeeper Dev.app.before-3dff54cd-20260908-000929`.
 
-**The remaining user step is macOS Keychain access.** Reopening the final app
-timed out in Computer Use; its fresh process sample again shows
-`read_blob_raw_keyring` → `SecKeychainFindGenericPassword`
-(`provenance-startup-sample.txt`). The prior paused startup had not reached the
-workspace or launched agents; SIGTERM did not finish, so only that identified
-Beekeeper process was force-quit and its absence checked before replacement.
-No SecurityAgent interaction, stored credential change or access bypass was
-performed. Computer Use explicitly blocks access to SecurityAgent. The final
-app is installed and launched, but its signed-in UI acceptance remains pending.
+**September 8 live UI acceptance:** Brian opened the signed-in app. The prior
+Keychain startup block is resolved from the user's perspective. Packs loaded
+seven local roles at `edccf526`; older reports lack complete pack coordinates,
+so reporter confirmation does not establish role adoption. The earlier test
+instruction to click Refresh was incorrect: this screen has no Refresh button.
 
-First user check after handling the OS prompt: open Beekeeper project → Packs
-and Refresh. Check reported revision relation and source-confirmation labels.
-Confirmations identify the assigned reporter, not actual role execution.
+Brian reported severe scrolling lag on Packs. On topic branch
+`work/packs-scroll-performance`, the repair suppresses unchanged session-store
+notifications, memoizes signature checks by object plus exact signed bytes,
+yields between cold verification batches, and limits report rendering to 25
+rows with Previous/Next navigation. Role cards now precede revision history.
+A 1,000-report fixture checks the rendering bound; a queued-task test checks
+cold verification yields; mutation tests prevent cached signature acceptance
+of altered content or nested tags. Installed app remains the older build above
+until a new package is explicitly recorded. Live scrolling acceptance pending.
 
 ### Follow-on evidence
 

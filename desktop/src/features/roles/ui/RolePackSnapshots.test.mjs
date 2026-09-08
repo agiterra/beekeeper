@@ -347,3 +347,90 @@ test("the 'Proof reads' line is omitted entirely when there are no provenance no
   const html = renderReported([reportedRow()]);
   assert.doesNotMatch(html, /Proof reads:/);
 });
+
+test("large histories render a bounded page while disclosing the full count", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: null,
+        resolved: [],
+        comparison: null,
+        provenanceNotes: [],
+        reported: Array.from({ length: 1000 }, (_, i) =>
+          reportedRow({ generationId: `generation-${i}` }),
+        ),
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+    }),
+  );
+  assert.equal(
+    (html.match(/data-testid="role-pack-reported-row"/g) ?? []).length,
+    25,
+  );
+  assert.match(html, /of 1000 reports/);
+  assert.match(html, /Report history pages/);
+});
+
+test("history navigation reaches later reports and returns without growing the DOM", async () => {
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM("<div id='root'></div>");
+  const oldWindow = globalThis.window;
+  const oldDocument = globalThis.document;
+  const oldAct = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(document.getElementById("root"));
+  try {
+    await React.act(async () =>
+      root.render(
+        React.createElement(RolePackSnapshots, {
+          snapshots: {
+            resolvedAt: null,
+            resolved: [],
+            comparison: null,
+            provenanceNotes: [],
+            reported: Array.from({ length: 51 }, (_, i) =>
+              reportedRow({
+                generationId: `g-${i}`,
+                label: `Report number ${i}`,
+              }),
+            ),
+          },
+          resolvedError: null,
+          resolvedIsStale: false,
+          revisionsError: null,
+          reports: { isLoading: false, error: null, authorityError: null },
+        }),
+      ),
+    );
+    const rows = () =>
+      document.querySelectorAll('[data-testid="role-pack-reported-row"]');
+    const next = () =>
+      [...document.querySelectorAll("button")].find(
+        (b) => b.textContent === "Next",
+      );
+    assert.equal(rows().length, 25);
+    await React.act(async () => next().click());
+    assert.match(rows()[0].textContent, /Report number 25/);
+    await React.act(async () => next().click());
+    assert.equal(rows().length, 1);
+    assert.equal(next().disabled, true);
+    await React.act(async () =>
+      [...document.querySelectorAll("button")]
+        .find((b) => b.textContent === "Previous")
+        .click(),
+    );
+    assert.equal(rows().length, 25);
+  } finally {
+    await React.act(async () => root.unmount());
+    dom.window.close();
+    globalThis.window = oldWindow;
+    globalThis.document = oldDocument;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = oldAct;
+  }
+});

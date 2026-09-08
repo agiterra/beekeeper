@@ -171,14 +171,21 @@ export function rolePackProvenanceQueryKey(
  * silently turns a forged or corrupted row into "no proof exists" with no way
  * to tell the two apart.
  */
-function admissibleEvents(events: readonly RelayEvent[]): {
+async function admissibleEvents(events: readonly RelayEvent[]): Promise<{
   events: RelayEvent[];
   sourceErrors: RolePackProvenanceSourceError[];
-} {
+}> {
   const admitted: RelayEvent[] = [];
   const sourceErrors: RolePackProvenanceSourceError[] = [];
   const seen = new Set<string>();
+  let checked = 0;
   for (const event of events) {
+    // Yield to input/paint while validating a cold history. A microtask yield
+    // does not release the browser's main thread to scrolling.
+    if (checked > 0 && checked % 8 === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    checked += 1;
     if (seen.has(event.id)) continue;
     seen.add(event.id);
     if (!hasValidSignature(event)) {
@@ -234,7 +241,7 @@ export async function fetchRolePackProvenanceEvents(
     }
   }
 
-  const admissible = admissibleEvents(events);
+  const admissible = await admissibleEvents(events);
   return {
     events: admissible.events,
     sourceErrors: [...sourceErrors, ...admissible.sourceErrors],

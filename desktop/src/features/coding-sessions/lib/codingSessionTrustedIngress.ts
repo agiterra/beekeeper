@@ -477,11 +477,13 @@ export class TrustedCodingSessionIngressStore {
     this.maxRetainedRawEventsPerGeneration = maxRetainedRawEventsPerGeneration;
   }
 
+  /** Returns whether newly ingested evidence or diagnostics need publication. */
   ingestRelayEvents(
     events: readonly RelayEvent[],
     channelIds: readonly string[],
     authority: CodingSessionIngressAuthority,
-  ): void {
+  ): boolean {
+    let changed = false;
     const allowedChannels = new Set(channelIds);
     for (const event of events) {
       if (this.dispositions.has(event.id)) continue;
@@ -491,6 +493,7 @@ export class TrustedCodingSessionIngressStore {
         authority,
       );
       this.dispositions.set(event.id, classified.kind);
+      if (classified.kind !== "irrelevant") changed = true;
       switch (classified.kind) {
         case "receipt": {
           if (isCodingSessionTurnReceipt(classified.receipt)) {
@@ -606,6 +609,7 @@ export class TrustedCodingSessionIngressStore {
           break;
       }
     }
+    return changed;
   }
 
   snapshot(channelIds: readonly string[]): TrustedCodingSessionIngressSnapshot {

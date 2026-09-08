@@ -126,3 +126,24 @@ test("invalid relay event signature fails closed to the signer", () => {
     RELAY,
   );
 });
+
+test("signature memoization checks exact bytes after nested mutations", async () => {
+  const { hasValidSignature } = await import("./authors.ts");
+  const event = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 1700000000,
+      content: "original",
+      tags: [["h", "channel"]],
+    },
+    SIGNER_SECRET,
+  );
+  assert.equal(hasValidSignature(event), true);
+  assert.equal(hasValidSignature(event), true);
+  event.tags[0][1] = "different-channel";
+  assert.equal(hasValidSignature(event), false);
+  event.tags[0][1] = "channel";
+  assert.equal(hasValidSignature(event), true);
+  event.content = "tampered";
+  assert.equal(hasValidSignature(event), false);
+});

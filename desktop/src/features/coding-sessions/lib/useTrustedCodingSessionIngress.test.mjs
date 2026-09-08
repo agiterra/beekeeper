@@ -270,6 +270,22 @@ test("ingress re-arms when the trust set gains its first entry, and the pending 
     "First-ever coding session",
   );
 
+  const { fanOutObservedCodingSessionEvents } = await import(
+    "./codingSessionObservedEvents.ts"
+  );
+  const settledSnapshot = result.current;
+  await act(async () => {
+    fanOutObservedCodingSessionEvents([receiptEvent, metadataEvent]);
+    fanOutObservedCodingSessionEvents([
+      { ...receiptEvent, id: "unrelated", kind: 1 },
+    ]);
+  });
+  assert.equal(
+    result.current,
+    settledSnapshot,
+    "replayed and irrelevant bus events must not publish a new snapshot",
+  );
+
   unmount();
   queryClient.clear();
   ipcHandlers.clear();

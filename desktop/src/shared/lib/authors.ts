@@ -53,9 +53,16 @@ type AuthorResolutionEvent = {
  * Exported because the coding-session trusted-ingress path needs the same
  * signature gate before it will accept a provider-authored event.
  */
+// Cache only a cryptographic fact about exact signed bytes, never authority or
+// community state. Weak keys release entries with their relay event objects.
+const signatureChecks = new WeakMap<
+  AuthorResolutionEvent,
+  { bytes: string; valid: boolean }
+>();
+
 export function hasValidSignature(event: AuthorResolutionEvent) {
   try {
-    return verifyEvent({
+    const projected = {
       id: event.id,
       pubkey: event.pubkey,
       created_at: event.created_at,
@@ -63,7 +70,13 @@ export function hasValidSignature(event: AuthorResolutionEvent) {
       tags: event.tags,
       content: event.content,
       sig: event.sig,
-    });
+    };
+    const bytes = JSON.stringify(projected);
+    const previous = signatureChecks.get(event);
+    if (previous?.bytes === bytes) return previous.valid;
+    const valid = verifyEvent(projected);
+    signatureChecks.set(event, { bytes, valid });
+    return valid;
   } catch {
     return false;
   }

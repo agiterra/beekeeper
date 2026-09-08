@@ -1,3 +1,5 @@
+import * as React from "react";
+import { Button } from "@/shared/ui/button";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import type {
   RolePackCoordinate,
@@ -124,6 +126,17 @@ export function RolePackSnapshots({
     authorityError: string | null;
   };
 }) {
+  const [page, setPage] = React.useState(0);
+  const pageSize = 25;
+  const lastPage = Math.max(
+    0,
+    Math.ceil(snapshots.reported.length / pageSize) - 1,
+  );
+  const currentPage = Math.min(page, lastPage);
+  const visibleReports = snapshots.reported.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize,
+  );
   return (
     <section
       className="flex flex-col gap-3 rounded-lg border border-border/70 p-3"
@@ -241,7 +254,7 @@ export function RolePackSnapshots({
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {snapshots.reported.map((snapshot) => (
+            {visibleReports.map((snapshot) => (
               <li
                 className="flex flex-col gap-1 text-xs"
                 data-provenance={snapshot.provenance}
@@ -327,6 +340,35 @@ export function RolePackSnapshots({
             ))}
           </ul>
         )}
+        {snapshots.reported.length > pageSize ? (
+          <nav
+            aria-label="Report history pages"
+            className="flex items-center gap-3 text-sm"
+          >
+            <Button
+              variant="outline"
+              disabled={currentPage === 0}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              Previous
+            </Button>
+            <span>
+              {currentPage * pageSize + 1}–
+              {Math.min(
+                (currentPage + 1) * pageSize,
+                snapshots.reported.length,
+              )}{" "}
+              of {snapshots.reported.length} reports
+            </span>
+            <Button
+              variant="outline"
+              disabled={currentPage === lastPage}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              Next
+            </Button>
+          </nav>
+        ) : null}
       </div>
     </section>
   );

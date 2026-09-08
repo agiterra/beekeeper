@@ -505,8 +505,9 @@ export function useTrustedCodingSessionIngress(
     };
     const receiveObservedEvents = (events: readonly RelayEvent[]) => {
       if (cancelled) return;
-      store.ingestRelayEvents(events, stableChannelIds, authority);
-      publish();
+      if (store.ingestRelayEvents(events, stableChannelIds, authority)) {
+        publish();
+      }
     };
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
       receiveObservedEvents,

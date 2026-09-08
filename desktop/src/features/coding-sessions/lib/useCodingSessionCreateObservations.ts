@@ -154,12 +154,15 @@ export function useCodingSessionCreateObservations(
     };
     const receiveObservedEvents = (events: readonly RelayEvent[]) => {
       if (cancelled) return;
-      store.ingestRelayEvents(
-        events,
-        stableChannelIds,
-        OPEN_CODING_SESSION_INGRESS_AUTHORITY,
-      );
-      publish();
+      if (
+        store.ingestRelayEvents(
+          events,
+          stableChannelIds,
+          OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+        )
+      ) {
+        publish();
+      }
     };
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
       receiveObservedEvents,

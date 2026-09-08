@@ -163,13 +163,6 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
             {shelfState.detail ? ` — ${shelfState.detail}` : null}
           </p>
         ) : null}
-        <RolePackSnapshots
-          reports={executionReports}
-          resolvedError={error}
-          resolvedIsStale={packsResolutionIsStale}
-          revisionsError={revisionsError}
-          snapshots={rolePackSnapshots}
-        />
         <section className="flex flex-col gap-2" data-testid="roles-section">
           <h2 className="text-sm font-medium text-foreground">
             {ROLES_SECTION_TITLE}
@@ -195,6 +188,13 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           byProject={view.byProject}
           onOpenSeat={onOpenSeat}
           unplaced={view.unplaced}
+        />
+        <RolePackSnapshots
+          reports={executionReports}
+          resolvedError={error}
+          resolvedIsStale={packsResolutionIsStale}
+          revisionsError={revisionsError}
+          snapshots={rolePackSnapshots}
         />
       </div>
 
