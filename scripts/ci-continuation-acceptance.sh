@@ -46,6 +46,26 @@
 #      the raw ACP log at exactly one continuation prompt: the once-admission
 #      fence (§0) holds across both duplicate shapes, and the second
 #      registration is durably refused (DUPLICATE_OPERATION).
+#   6. Scenario A (docs/CI_CONTINUATION_RECOVERY_SPEC.md §5): a registration
+#      left `waiting`, the real provider process `kill -9`'d and restarted
+#      over the same state dir, THEN the 46008 arrives. Exactly one
+#      `turn_started` names the original commandId, the 44223 for the started
+#      generation still names the ORIGINAL target (no generation bump), a
+#      `session_restored_native` transcript row precedes the delivered
+#      prompt, the stub's `methods.log` shows `session/load` after the
+#      restart and never `session/new`, and the restarted provider's own log
+#      never shows `NO_LIVE_EXECUTION`.
+#   7. Scenario B: the 46008 arrives first (record reaches `ready` in
+#      `ci-continuations.json`), THEN the provider is killed before delivery
+#      and restarted. Same assertions as scenario A. The race between
+#      observing `ready` and the kill landing before admission is tight; a
+#      run where the kill lost that race (the store shows the record already
+#      `claimed` or gone) is retried, up to 3 attempts, and reported.
+#   8. Scenario C: the same waiting→kill→restart→result shape, but the ACP
+#      stub for this run advertises `session/load` and then REJECTS it. The
+#      result is a durable `turn_refused/NATIVE_RESTORE_REJECTED` naming the
+#      original commandId, with no `session/new` anywhere in the stub's
+#      method log after the restart and no `turn_started` ever.
 #
 # What this does NOT prove (named, not faked):
 #   - The private-project read path (§3f). This registers against a
@@ -55,6 +75,13 @@
 #     (crates/buzz-session-provider/src/tests/ci_continuation_tests.rs).
 #   - A real model. The ACP adapter is a bash stub; no network call to any
 #     LLM provider happens anywhere in this script.
+#   - Seated (agent-actor) restore. Every session this script creates is
+#     operator-created (unseated), so `native_restore`'s actor-seat lookup is
+#     never exercised here; that path is proven by the provider's own unit
+#     suite (`crates/buzz-session-provider/src/tests/ci_continuation_restore_tests.rs`).
+#
+# Set CI_CONTINUATION_SCENARIOS=basic to skip steps 6-8 (the restart
+# scenarios) and run only the original five steps; default is `all`.
 #
 # Usage: ./scripts/ci-continuation-acceptance.sh
 # Requires: hermit activated, Postgres+Redis+MinIO up (`just _ensure-services`),
@@ -89,10 +116,17 @@ WORKDIR="$(mktemp -d /tmp/ci-continuation-acceptance.XXXXXX)"
 DB_NAME="buzz_ci_continuation_$$_$(date +%s)"
 RELAY_PID=""
 PROVIDER_PID=""
+# Every provider generation this script has spawned (initial start, every
+# restart in scenarios A/B, and scenario C's separate provider identity) —
+# cleanup kills all of them, not just the most recent.
+PROVIDER_PIDS=()
 
 cleanup() {
   local status=$?
-  [[ -n "${PROVIDER_PID}" ]] && kill "${PROVIDER_PID}" 2>/dev/null || true
+  local pid
+  for pid in "${PROVIDER_PIDS[@]:-}"; do
+    [[ -n "${pid}" ]] && kill -9 "${pid}" 2>/dev/null || true
+  done
   [[ -n "${RELAY_PID}" ]] && kill "${RELAY_PID}" 2>/dev/null || true
   sleep 1
   docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q -d postgres \
@@ -111,6 +145,24 @@ trap cleanup EXIT
 free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'
 }
+
+# Shared python helpers (target-key encoding, JSON file loading) used by both
+# the original steps and the restart scenarios, written once so the encoding
+# rule (`crates/buzz-sdk/src/builders.rs::coding_session_target_key`) lives in
+# exactly one place in this script.
+cat > "${WORKDIR}/helpers.py" <<'PY'
+import json
+
+
+def target_to_key(target):
+    fields = [target["driver"], target["instanceId"], target["sessionId"], str(target["generation"])]
+    return "coding-session/v1|" + "".join(f"{len(field.encode('utf-8'))}:{field}" for field in fields)
+
+
+def load_json_file(path):
+    with open(path, encoding="utf-8") as source:
+        return json.load(source)
+PY
 
 # ── Scratch database (never the dev DB) ──────────────────────────────────────
 log "Creating scratch database ${DB_NAME}..."
@@ -216,16 +268,29 @@ FAKE_AGENT="${WORKDIR}/fake-agent.sh"
 cat > "${FAKE_AGENT}" <<'AGENT'
 #!/bin/bash
 # Minimal ACP-speaking stub — the same technique
-# crates/buzz-session-provider/src/session.rs's testing::GOOD_AGENT uses in
-# that crate's own unit suite. Answers initialize/session.new/session.prompt
-# over JSON-RPC on stdio; never calls a model. Logs each raw session/new and
-# session/prompt request so the caller can inspect the exact ACP payload.
+# crates/buzz-session-provider/src/session.rs's testing::GOOD_AGENT (and, for
+# the restart shape, testing::restorable_agent) uses in that crate's own unit
+# suite. Answers initialize/session.new/session.load/session.prompt over
+# JSON-RPC on stdio; never calls a model. Logs each raw session/new and
+# session/prompt request to FABLE_ACP_REQUEST_LOG so the caller can inspect
+# the exact ACP payload, and every method name it receives to
+# FABLE_METHODS_LOG so a restart scenario can prove session/load fired and
+# session/new did not. Always mints the SAME sessionId ("acp-session-1") so
+# the provider persists a stable resume_cursor, advertises `loadSession` at
+# initialize, and answers session/load for any cursor — this is the
+# "accepting" stub scenarios A and B restore against; scripts/
+# ci-continuation-acceptance.sh's scenario C spawns a second, rejecting stub
+# instead (see REJECT_AGENT below).
 LAST_PROMPT=""
 while IFS= read -r line; do
+  printf '%s\n' "$line" | sed -n 's/.*"method":"\([a-zA-Z_/]*\)".*/\1/p' >> "${FABLE_METHODS_LOG}"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true}}}\n' "$id" ;;
+    *'"method":"session/load"'*)
+      printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
     *'"method":"session/new"'*)
       printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
@@ -240,6 +305,37 @@ while IFS= read -r line; do
 done
 AGENT
 chmod +x "${FAKE_AGENT}"
+
+# FAKE_AGENT's rejecting twin: advertises `loadSession` (so the provider's strict
+# restore genuinely tries) and then rejects every session/load with a
+# JSON-RPC error — the exact shape that, before strict native restore
+# existed, silently fell through to a fresh session/new. It still answers
+# session/new (for the scenario's ORIGINAL open, before any kill) with a
+# visibly different sessionId, so a restore that fell through despite strict
+# mode would be caught by the cursor as well as by the method log. Used only
+# by scenario C, on its own separate provider process.
+REJECT_AGENT="${WORKDIR}/reject-agent.sh"
+cat > "${REJECT_AGENT}" <<'AGENT'
+#!/bin/bash
+while IFS= read -r line; do
+  printf '%s\n' "$line" | sed -n 's/.*"method":"\([a-zA-Z_/]*\)".*/\1/p' >> "${FABLE_METHODS_LOG}"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true}}}\n' "$id" ;;
+    *'"method":"session/load"'*)
+      printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"load rejected"}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"a-brand-new-conversation"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+  esac
+done
+AGENT
+chmod +x "${REJECT_AGENT}"
 
 STATE_DIR="${WORKDIR}/provider-state"
 mkdir -p "${STATE_DIR}" "${WORKDIR}/checkout"
@@ -259,16 +355,23 @@ print(json.dumps([{
 }]))
 ")"
 
+METHODS_LOG_1="${WORKDIR}/methods-1.log"
+: > "${METHODS_LOG_1}"
+PROJECTS_FILE="${WORKDIR}/projects.json"
+PROVIDER_LOG_1="${WORKDIR}/provider.log"
+
 log "Starting buzz-session-provider (fake ACP adapter, no model)..."
 BUZZ_PRIVATE_KEY="${PROVIDER_KEY}" \
   BUZZ_RELAY_URL="${RELAY_URL}" \
   BUZZ_CSP_STATE_DIR="${STATE_DIR}" \
-  BUZZ_CSP_PROJECTS_FILE="${WORKDIR}/projects.json" \
+  BUZZ_CSP_PROJECTS_FILE="${PROJECTS_FILE}" \
   BUZZ_CSP_RUNTIMES="${RUNTIMES_JSON}" \
   FABLE_ACP_REQUEST_LOG="${ACP_REQUEST_LOG}" \
+  FABLE_METHODS_LOG="${METHODS_LOG_1}" \
   RUST_LOG=info \
-  "${PROVIDER_BIN}" > "${WORKDIR}/provider.log" 2>&1 &
+  "${PROVIDER_BIN}" > "${PROVIDER_LOG_1}" 2>&1 &
 PROVIDER_PID=$!
+PROVIDER_PIDS+=("${PROVIDER_PID}")
 
 for _ in $(seq 1 30); do
   if ! kill -0 "${PROVIDER_PID}" 2>/dev/null; then
@@ -276,7 +379,11 @@ for _ in $(seq 1 30); do
     cat "${WORKDIR}/provider.log" >&2
     exit 1
   fi
-  grep -q 'pubkey=' "${WORKDIR}/provider.log" 2>/dev/null && break
+  # tracing's ANSI styling puts an escape code *between* "pubkey" and "="
+  # (`\x1b[3mpubkey\x1b[0m\x1b[2m=\x1b[0m...`), so a raw grep for the
+  # contiguous string never matches; strip codes first, same as the
+  # extraction below.
+  sed 's/\x1b\[[0-9;]*m//g' "${WORKDIR}/provider.log" 2>/dev/null | grep -q 'pubkey=' && break
   sleep 1
 done
 PROVIDER_PUBKEY="$(sed 's/\x1b\[[0-9;]*m//g' "${WORKDIR}/provider.log" | grep -o 'pubkey=[0-9a-f]\{64\}' | head -1 | cut -d= -f2)"
@@ -292,6 +399,235 @@ for _ in $(seq 1 30); do
 done
 [[ "${count}" -gt 0 ]] || { err "provider never advertised a catalog for the channel"; cat "${WORKDIR}/provider.log" >&2; exit 1; }
 ok "provider live: pubkey=${PROVIDER_PUBKEY}"
+
+# ── Shared helpers for scenarios 6-8 (kill/restart composition) ─────────────
+# Used only by the restart scenarios below; steps 1-5 above are unchanged.
+
+# Number of kind:44222 catalog events stored for the channel right now — a
+# monotonically increasing count, since 44222 is a regular (non-ephemeral,
+# non-replaceable) kind, so a fresh publish after a restart always grows it.
+channel_catalog_count() {
+  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44222 --channel "${CHANNEL}" \
+    | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
+}
+
+# Wait (up to 60s) for a `kill -9`'d pid to actually be gone, so the restart
+# that follows binds a genuinely new process rather than racing the old one's
+# teardown.
+wait_pid_exit() {
+  local pid="$1"
+  for _ in $(seq 1 120); do
+    kill -0 "${pid}" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  err "pid ${pid} did not exit within 60s of kill -9"
+  exit 1
+}
+
+# Spawn a buzz-session-provider generation with the given identity/state/ACP
+# stub, append its pid to PROVIDER_PIDS (so cleanup always finds it), and set
+# LAST_PID. Mirrors the initial provider1 spawn above, parameterized so
+# scenarios A/B (same identity, new log file each restart) and scenario C (a
+# second identity, its own stub, state dir and logs) can all use it.
+spawn_provider() {
+  local key="$1" state_dir="$2" projects_file="$3" runtimes_json="$4" \
+        log_file="$5" methods_log="$6" acp_log="$7"
+  BUZZ_PRIVATE_KEY="${key}" \
+    BUZZ_RELAY_URL="${RELAY_URL}" \
+    BUZZ_CSP_STATE_DIR="${state_dir}" \
+    BUZZ_CSP_PROJECTS_FILE="${projects_file}" \
+    BUZZ_CSP_RUNTIMES="${runtimes_json}" \
+    FABLE_ACP_REQUEST_LOG="${acp_log}" \
+    FABLE_METHODS_LOG="${methods_log}" \
+    RUST_LOG=info \
+    "${PROVIDER_BIN}" > "${log_file}" 2>&1 &
+  LAST_PID=$!
+  PROVIDER_PIDS+=("${LAST_PID}")
+}
+
+# Wait for a just-spawned provider's own startup log to print its pubkey
+# (proof of process liveness past `initialize`), and echo that pubkey.
+wait_provider_pubkey() {
+  local pid="$1" log="$2"
+  local i
+  for i in $(seq 1 30); do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      err "provider process died during startup; log: ${log}"
+      cat "${log}" >&2
+      exit 1
+    fi
+    # See the identical comment on the initial provider1 wait above: strip
+    # ANSI codes before matching, since tracing's styling splits "pubkey="
+    # with an escape sequence.
+    sed 's/\x1b\[[0-9;]*m//g' "${log}" 2>/dev/null | grep -q 'pubkey=' && break
+    sleep 1
+  done
+  local pubkey
+  pubkey="$(sed 's/\x1b\[[0-9;]*m//g' "${log}" | grep -o 'pubkey=[0-9a-f]\{64\}' | head -1 | cut -d= -f2)"
+  [[ -n "${pubkey}" ]] || { err "could not read provider pubkey from ${log}"; exit 1; }
+  echo "${pubkey}"
+}
+
+# Wait for the channel-wide 44222 catalog count to exceed `min_count` — proof
+# that a just-started provider completed its own discover/subscribe pass, not
+# just that its process is alive. Echoes the new count. Only valid for a
+# provider identity's FIRST-EVER spawn: `csp::catalog` skips re-advertising
+# an unchanged catalog, so this never fires after a restart (see
+# `wait_provider_relay_connected` below, which is what restarts wait on).
+wait_catalog_above() {
+  local min_count="$1"
+  local count=0
+  local i
+  for i in $(seq 1 30); do
+    count="$(channel_catalog_count)"
+    [[ "${count}" -gt "${min_count}" ]] && { echo "${count}"; return 0; }
+    sleep 1
+  done
+  err "channel catalog count did not exceed ${min_count} within 30s (stayed at ${count})"
+  exit 1
+}
+
+# Wait for a (re)started provider's own log to show it reached the network —
+# proof it is ready to observe the 46008 that scenarios A/B/C post right
+# after this returns. Used for every RESTART (unlike `wait_catalog_above`,
+# which only ever fires on a provider identity's first-ever spawn: a restart
+# publishes no new 44222, because `csp::catalog` correctly skips
+# re-advertising a catalog that has not changed — confirmed by direct
+# comparison of a restarted provider's log against its first spawn's, which
+# has exactly one `csp::catalog: advertised provider catalog` line, never
+# repeated after a kill -9/respawn). "witnessed relay identity" is the last
+# startup milestone that is plain text end to end (grep-safe without ANSI
+# stripping) and it precedes this provider observing or acting on any event.
+wait_provider_relay_connected() {
+  local pid="$1" log="$2"
+  local i
+  for i in $(seq 1 30); do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      err "provider process died during startup; log: ${log}"
+      cat "${log}" >&2
+      exit 1
+    fi
+    grep -q 'witnessed relay identity' "${log}" 2>/dev/null && return 0
+    sleep 1
+  done
+  err "${log} never logged 'witnessed relay identity' within 30s"
+  cat "${log}" >&2
+  exit 1
+}
+
+# Everything docs/CI_CONTINUATION_RECOVERY_SPEC.md §5 items 2-3 require of a
+# restart scenario's outcome, once the 46008 has been posted and a
+# turn_started is expected: exactly one turn_started receipt for
+# `command_id`; the 44223 published after the restart still names the
+# ORIGINAL `target_key` (no generation bump); a session_restored_native
+# transcript row precedes the delivered user_prompt in the transcript's own
+# sequence; the stub's method log shows session/load and never session/new
+# after `methods_mark` (the line count captured right before the kill); the
+# ACP prompt bytes equal the transcript's materialization; and the restarted
+# provider's own log never shows NO_LIVE_EXECUTION. Prints the turn_started
+# receipt event id on success (for the caller's PASS line).
+verify_native_restore_delivery() {
+  local label="$1" command_id="$2" target_key="$3" \
+        methods_log="$4" methods_mark="$5" acp_log="$6" baseline_prompts="$7" \
+        provider_log="$8" restart_epoch="$9"
+
+  if grep -q 'NO_LIVE_EXECUTION' "${provider_log}"; then
+    err "${label}: ${provider_log} shows NO_LIVE_EXECUTION — the restore did not reopen the \
+generation before delivery was attempted"
+    exit 1
+  fi
+
+  local post_restart_methods
+  post_restart_methods="$(tail -n +"$((methods_mark + 1))" "${methods_log}")"
+  if ! grep -q '^session/load$' <<<"${post_restart_methods}"; then
+    err "${label}: ${methods_log} shows no session/load after the restart (mark line ${methods_mark})"
+    exit 1
+  fi
+  if grep -q '^session/new$' <<<"${post_restart_methods}"; then
+    err "${label}: ${methods_log} shows session/new after the restart — the restore fell through \
+to a fresh conversation. Methods observed since restart:"
+    err "${post_restart_methods}"
+    exit 1
+  fi
+
+  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+    > "${WORKDIR}/${label}-receipts.json"
+  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44223 --channel "${CHANNEL}" \
+    > "${WORKDIR}/${label}-metadata.json"
+  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44225 --channel "${CHANNEL}" \
+    > "${WORKDIR}/${label}-transcript.json"
+
+  python3 - "${WORKDIR}" "${label}" "${command_id}" "${target_key}" "${restart_epoch}" \
+    "${acp_log}" "${baseline_prompts}" <<'PY'
+import json
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import helpers  # noqa: E402
+
+workdir = pathlib.Path(sys.argv[1])
+label, command_id, target_key, restart_epoch_raw, acp_log_path, baseline_raw = sys.argv[2:]
+restart_epoch = int(restart_epoch_raw)
+baseline_prompts = int(baseline_raw)
+
+receipts = helpers.load_json_file(workdir / f"{label}-receipts.json")
+started = [
+    event
+    for event in receipts
+    if (content := json.loads(event["content"])).get("commandId") == command_id
+    and content.get("status") == "turn_started"
+]
+assert len(started) == 1, f"expected exactly one turn_started receipt, found {len(started)}: {started!r}"
+
+metadata = helpers.load_json_file(workdir / f"{label}-metadata.json")
+matching_metadata = [
+    event
+    for event in metadata
+    if ["cs-target", target_key] in event.get("tags", []) and event.get("created_at", 0) >= restart_epoch
+]
+assert matching_metadata, (
+    f"no 44223 published at/after the restart (epoch {restart_epoch}) named cs-target {target_key}"
+)
+
+transcript = helpers.load_json_file(workdir / f"{label}-transcript.json")
+restored_seq = None
+prompt_seq = None
+materialized = None
+for event in transcript:
+    try:
+        envelope = json.loads(event["content"])
+    except (TypeError, json.JSONDecodeError):
+        continue
+    item = envelope.get("item", {})
+    if item.get("kind") == "status" and item.get("status") == "session_restored_native":
+        if restored_seq is None or envelope["eventSeq"] > restored_seq:
+            restored_seq = envelope["eventSeq"]
+    if item.get("kind") == "user_prompt" and item.get("commandId") == command_id:
+        prompt_seq = envelope["eventSeq"]
+        materialized = item["content"]
+assert restored_seq is not None, "no session_restored_native transcript item found"
+assert prompt_seq is not None, f"no materialized user_prompt transcript item for {command_id}"
+assert restored_seq < prompt_seq, (
+    f"session_restored_native (seq {restored_seq}) did not precede the delivered prompt (seq {prompt_seq})"
+)
+
+with open(acp_log_path, encoding="utf-8") as source:
+    requests = [json.loads(line) for line in source if line.strip()]
+prompt_requests = [request for request in requests if request.get("method") == "session/prompt"]
+assert len(prompt_requests) == baseline_prompts + 1, (
+    f"expected exactly one new ACP session/prompt after the restart, saw "
+    f"{len(prompt_requests) - baseline_prompts}"
+)
+delivered = prompt_requests[baseline_prompts]["params"]["prompt"][0]["text"]
+assert delivered == materialized, "ACP prompt bytes differ from the persisted transcript materialization"
+
+with open(workdir / f"{label}-started-id.txt", "w", encoding="utf-8") as sink:
+    sink.write(started[0]["id"])
+PY
+
+  cat "${WORKDIR}/${label}-started-id.txt"
+}
 
 # ── Step 1: real session create ──────────────────────────────────────────────
 log "bee sessions create --wait ..."
@@ -711,5 +1047,381 @@ assert matching, f"no provider-signed DUPLICATE_OPERATION receipt for {command_i
 assert all(event["id"] in status["receiptEventIds"] for event in matching), (matching, status)
 PY
 pass 5 "duplicate 46008 and second commandId ${SECOND_COMMAND_ID} produced an authenticated DUPLICATE_OPERATION refusal and no second ACP prompt"
+
+if [[ "${CI_CONTINUATION_SCENARIOS:-all}" != "basic" ]]; then
+
+# ── Shared helpers for scenarios 6-8 ─────────────────────────────────────────
+
+# Portable substitute for bash 4's `mapfile`/`readarray`: macOS ships bash
+# 3.2 as /bin/bash (and this script's `#!/usr/bin/env bash` resolves to it
+# even with hermit active), and 3.2 has neither builtin. Splits `text`
+# (already captured via command substitution, one field per line) into the
+# indexed array named by `array_name`. `read -d ''` reads to EOF rather than
+# a NUL byte (none of this script's values contain one) and returns nonzero
+# for hitting EOF instead of the delimiter — expected, not a failure, hence
+# `|| true`.
+split_lines_into() {
+  local array_name="$1" text="$2"
+  IFS=$'\n' read -r -d '' -a "${array_name}" <<< "${text}"$'\n' || true
+}
+
+# Create a fresh session (its own target/generation, isolated from steps
+# 1-5) against `provider_pubkey` and register a CI continuation on it, using
+# the same project/repository/workflow fixtures steps 1-5 already
+# established. Prints four lines: target key, commandId, the random commit
+# this continuation is waiting on, and the channel-wide ACP session/prompt
+# count at registration time (the baseline for "exactly one new prompt").
+register_fresh_continuation() {
+  local provider_pubkey="$1" acp_log="$2" brief="$3"
+  local create_json target_key baseline commit continue_json command_id
+  create_json="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee sessions create --channel "${CHANNEL}" \
+    --provider-instance claude-primary --provider-authority "${provider_pubkey}" \
+    --project "${PROJECT}" \
+    --brief - --wait --timeout-secs 30 <<< "${brief}")"
+  target_key="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['target'])" "${create_json}")"
+  [[ "${target_key}" != "None" && -n "${target_key}" ]] \
+    || { err "register_fresh_continuation: sessions create did not confirm a target: ${create_json}"; exit 1; }
+
+  baseline="$(python3 - "${acp_log}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(sum(json.loads(line).get("method") == "session/prompt" for line in source if line.strip()))
+PY
+)"
+
+  commit="$(openssl rand -hex 20)"
+  continue_json="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
+    --channel "${CHANNEL}" --provider "${provider_pubkey}" --target "${target_key}" \
+    --project "${PROJECT}" --repository "${REPO}" \
+    --commit "${commit}" --check "${CHECK_NAME}" --run "${RUN_ID}" --attempt "${ATTEMPT}" \
+    --workflow "${WORKFLOW_ID}" --phase "${PHASE}" \
+    --continuation "${CONTINUATION_TEXT}" \
+    --expires-in 86400 --ack-timeout 30)"
+  command_id="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['commandId'])" "${continue_json}")"
+
+  printf '%s\n%s\n%s\n%s\n' "${target_key}" "${command_id}" "${commit}" "${baseline}"
+}
+
+# The record's lifecycle-state `type` in the durable CI-continuation store
+# (`ci-continuations.json`) for `command_id`, or "missing" if it has no
+# record — read directly off disk so it works whether or not the provider
+# whose state dir this is happens to be alive right now.
+ci_continuation_store_state() {
+  local state_dir="$1" command_id="$2"
+  python3 -c "
+import json
+with open('${state_dir}/ci-continuations.json', encoding='utf-8') as source:
+    data = json.load(source)
+record = next((r for r in data.get('registrations', []) if r['commandId'] == '${command_id}'), None)
+print(record['state']['type'] if record else 'missing')
+"
+}
+
+# Poll `ci_continuation_store_state` for `command_id` to become "ready",
+# entirely inside ONE python process (rather than one `python3 -c` spawn per
+# bash-loop iteration, which costs ~20ms of interpreter startup alone —
+# measured, and enough on its own to blow past the ready→claimed window this
+# check exists to catch: with a fake ACP adapter and no network model call,
+# scenario B's admission-after-ready transition can complete before a
+# once-per-100ms, subprocess-per-check bash loop ever samples it). Prints the
+# LAST state observed before either seeing "ready" or the deadline — "ready"
+# on success, "missing"/"waiting"/"claimed" otherwise (the retry-vs-proceed
+# decision the caller makes on it).
+wait_for_ready_tight() {
+  local state_dir="$1" command_id="$2" deadline_secs="$3"
+  python3 -c "
+import json
+import time
+
+path = '${state_dir}/ci-continuations.json'
+command_id = '${command_id}'
+deadline = time.time() + ${deadline_secs}
+last = 'missing'
+while time.time() < deadline:
+    try:
+        with open(path, encoding='utf-8') as source:
+            data = json.load(source)
+    except (FileNotFoundError, json.JSONDecodeError):
+        continue
+    record = next((r for r in data.get('registrations', []) if r['commandId'] == command_id), None)
+    last = record['state']['type'] if record else 'missing'
+    if last == 'ready':
+        break
+print(last)
+"
+}
+
+# POST the workflow's real webhook for `commit`, producing a genuine
+# relay-signed 46008 — the same production path step 3 exercises, reused here
+# for every scenario's result.
+post_ci_result_webhook() {
+  local commit="$1"
+  local body status response_file
+  response_file="${WORKDIR}/hook-response-${commit}.json"
+  body="$(python3 -c "
+import json
+print(json.dumps({
+  'commit': '${commit}', 'run': '${RUN_ID}', 'attempt': ${ATTEMPT}, 'conclusion': 'success',
+  'evidence_url': '${EVIDENCE_URL}', 'summary': '${RESULT_SUMMARY}',
+}))
+")"
+  status="$(curl -s -o "${response_file}" -w '%{http_code}' \
+    -X POST "${RELAY_HTTP}/hooks/${WORKFLOW_ID}" \
+    -H "x-webhook-secret: ${WEBHOOK_SECRET}" -H 'Content-Type: application/json' \
+    -d "${body}")"
+  [[ "${status}" == "202" ]] \
+    || { err "webhook POST for commit ${commit} did not accept (status ${status}): $(cat "${response_file}")"; exit 1; }
+}
+
+# ── Step 6: Scenario A — waiting → kill -9 → restart → result ───────────────
+log "Scenario A: register a continuation, kill -9 the provider while it is still 'waiting', restart it, then deliver the result..."
+split_lines_into SCEN_A "$(register_fresh_continuation "${PROVIDER_PUBKEY}" "${ACP_REQUEST_LOG}" "scenario A: waiting-kill-restart")"
+TARGET_KEY_A="${SCEN_A[0]}"; COMMAND_ID_A="${SCEN_A[1]}"; COMMIT_A="${SCEN_A[2]}"; BASELINE_A="${SCEN_A[3]}"
+
+WAITING_STATE_A="$(ci_continuation_store_state "${STATE_DIR}" "${COMMAND_ID_A}")"
+[[ "${WAITING_STATE_A}" == "waiting" ]] \
+  || { err "scenario A: expected ${COMMAND_ID_A} to be 'waiting' before the kill, found '${WAITING_STATE_A}'"; exit 1; }
+
+METHODS_MARK_A="$(wc -l < "${METHODS_LOG_1}" | tr -d ' ')"
+log "Scenario A: kill -9 provider pid ${PROVIDER_PID}..."
+kill -9 "${PROVIDER_PID}"
+wait_pid_exit "${PROVIDER_PID}"
+
+PROVIDER_LOG_A="${WORKDIR}/provider-restart-a.log"
+RESTART_EPOCH_A="$(date +%s)"
+spawn_provider "${PROVIDER_KEY}" "${STATE_DIR}" "${PROJECTS_FILE}" "${RUNTIMES_JSON}" \
+  "${PROVIDER_LOG_A}" "${METHODS_LOG_1}" "${ACP_REQUEST_LOG}"
+PROVIDER_PID="${LAST_PID}"
+RESTARTED_PUBKEY_A="$(wait_provider_pubkey "${PROVIDER_PID}" "${PROVIDER_LOG_A}")"
+[[ "${RESTARTED_PUBKEY_A}" == "${PROVIDER_PUBKEY}" ]] \
+  || { err "scenario A: restarted provider pubkey ${RESTARTED_PUBKEY_A} != original ${PROVIDER_PUBKEY}"; exit 1; }
+wait_provider_relay_connected "${PROVIDER_PID}" "${PROVIDER_LOG_A}"
+ok "Scenario A: provider restarted (pid ${PROVIDER_PID}) over the same state dir ${STATE_DIR}"
+
+log "Scenario A: posting the 46008 for commit ${COMMIT_A}..."
+post_ci_result_webhook "${COMMIT_A}"
+
+STARTED_A=""
+for _ in $(seq 1 30); do
+  STARTED_A="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+    | python3 -c "
+import json, sys
+events = json.load(sys.stdin)
+for e in events:
+    c = json.loads(e['content'])
+    if c.get('commandId') == '${COMMAND_ID_A}' and c.get('status') == 'turn_started':
+        print(e['id']); break
+else:
+    print('')
+")"
+  [[ -n "${STARTED_A}" ]] && break
+  sleep 1
+done
+[[ -n "${STARTED_A}" ]] \
+  || { err "scenario A: no turn_started receipt for ${COMMAND_ID_A} within 30s"; cat "${PROVIDER_LOG_A}" >&2; exit 1; }
+
+STARTED_A="$(verify_native_restore_delivery "scenario-a" "${COMMAND_ID_A}" "${TARGET_KEY_A}" \
+  "${METHODS_LOG_1}" "${METHODS_MARK_A}" "${ACP_REQUEST_LOG}" "${BASELINE_A}" \
+  "${PROVIDER_LOG_A}" "${RESTART_EPOCH_A}")"
+pass 6 "scenario A: waiting → kill -9 → restart → 46008 delivered exactly one turn_started (${STARTED_A:0:16}...) to the original generation ${TARGET_KEY_A} via native restore (session/load observed, no session/new)"
+
+# ── Step 7: Scenario B — result ready → kill -9 before delivery → restart ──
+log "Scenario B: post the 46008 first, catch the record at 'ready', then kill -9 before admission and restart..."
+SCENARIO_B_OK=0
+for ATTEMPT_B in 1 2 3; do
+  split_lines_into SCEN_B "$(register_fresh_continuation "${PROVIDER_PUBKEY}" "${ACP_REQUEST_LOG}" "scenario B attempt ${ATTEMPT_B}: ready-kill-restart")"
+  TARGET_KEY_B="${SCEN_B[0]}"; COMMAND_ID_B="${SCEN_B[1]}"; COMMIT_B="${SCEN_B[2]}"; BASELINE_B="${SCEN_B[3]}"
+
+  post_ci_result_webhook "${COMMIT_B}"
+
+  # Single-process tight poll (see wait_for_ready_tight's comment): with a
+  # fake ACP adapter and no network model call, admission-after-ready can
+  # complete in well under a bash loop's subprocess-spawn overhead, so this
+  # sometimes never observes "ready" at all — that is the same lost race as
+  # the post-kill check below catching "claimed", just resolved before this
+  # host ever got a durable "ready" snapshot on disk. Either way, retry with
+  # a fresh registration rather than treating it as a hard failure.
+  READY_STATE_B="$(wait_for_ready_tight "${STATE_DIR}" "${COMMAND_ID_B}" 10)"
+  if [[ "${READY_STATE_B}" != "ready" ]]; then
+    log "scenario B attempt ${ATTEMPT_B}: ${COMMAND_ID_B} never observably reached 'ready' (last saw '${READY_STATE_B}'); admission likely completed before this host's first read — retrying"
+    continue
+  fi
+
+  # Kill first, measure second: every extra command between observing
+  # "ready" and the kill signal is more time for admission to win the race.
+  kill -9 "${PROVIDER_PID}" 2>/dev/null || true
+  METHODS_MARK_B="$(wc -l < "${METHODS_LOG_1}" | tr -d ' ')"
+  wait_pid_exit "${PROVIDER_PID}"
+
+  # The store moves `ready` → `claimed` (and later removes the record)
+  # strictly at admission, before any adapter call — see
+  # `admit_ci_turn_start`/`decide_ci_turn_start` in
+  # crates/buzz-session-provider/src/ci_continuation.rs. A record still
+  # `ready` on disk after the kill proves nothing was admitted before it;
+  # anything else means the kill lost the race and this attempt proves
+  # nothing about restart recovery, so it is retried with a fresh
+  # registration.
+  POST_KILL_STATE_B="$(ci_continuation_store_state "${STATE_DIR}" "${COMMAND_ID_B}")"
+  if [[ "${POST_KILL_STATE_B}" != "ready" ]]; then
+    log "scenario B attempt ${ATTEMPT_B}: admission won the pre-kill race (store shows '${POST_KILL_STATE_B}' for ${COMMAND_ID_B}); retrying"
+    RETRY_LOG_B="${WORKDIR}/provider-restart-b-retry-${ATTEMPT_B}.log"
+    spawn_provider "${PROVIDER_KEY}" "${STATE_DIR}" "${PROJECTS_FILE}" "${RUNTIMES_JSON}" \
+      "${RETRY_LOG_B}" "${METHODS_LOG_1}" "${ACP_REQUEST_LOG}"
+    PROVIDER_PID="${LAST_PID}"
+    wait_provider_pubkey "${PROVIDER_PID}" "${RETRY_LOG_B}" >/dev/null
+    wait_provider_relay_connected "${PROVIDER_PID}" "${RETRY_LOG_B}"
+    continue
+  fi
+
+  PROVIDER_LOG_B="${WORKDIR}/provider-restart-b.log"
+  RESTART_EPOCH_B="$(date +%s)"
+  spawn_provider "${PROVIDER_KEY}" "${STATE_DIR}" "${PROJECTS_FILE}" "${RUNTIMES_JSON}" \
+    "${PROVIDER_LOG_B}" "${METHODS_LOG_1}" "${ACP_REQUEST_LOG}"
+  PROVIDER_PID="${LAST_PID}"
+  RESTARTED_PUBKEY_B="$(wait_provider_pubkey "${PROVIDER_PID}" "${PROVIDER_LOG_B}")"
+  [[ "${RESTARTED_PUBKEY_B}" == "${PROVIDER_PUBKEY}" ]] \
+    || { err "scenario B: restarted provider pubkey ${RESTARTED_PUBKEY_B} != original ${PROVIDER_PUBKEY}"; exit 1; }
+  wait_provider_relay_connected "${PROVIDER_PID}" "${PROVIDER_LOG_B}"
+  ok "Scenario B attempt ${ATTEMPT_B}: killed before admission (store still 'ready'), provider restarted (pid ${PROVIDER_PID})"
+
+  STARTED_B=""
+  for _ in $(seq 1 30); do
+    STARTED_B="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+      | python3 -c "
+import json, sys
+events = json.load(sys.stdin)
+for e in events:
+    c = json.loads(e['content'])
+    if c.get('commandId') == '${COMMAND_ID_B}' and c.get('status') == 'turn_started':
+        print(e['id']); break
+else:
+    print('')
+")"
+    [[ -n "${STARTED_B}" ]] && break
+    sleep 1
+  done
+  [[ -n "${STARTED_B}" ]] \
+    || { err "scenario B attempt ${ATTEMPT_B}: no turn_started receipt for ${COMMAND_ID_B} within 30s"; cat "${PROVIDER_LOG_B}" >&2; exit 1; }
+
+  STARTED_B="$(verify_native_restore_delivery "scenario-b" "${COMMAND_ID_B}" "${TARGET_KEY_B}" \
+    "${METHODS_LOG_1}" "${METHODS_MARK_B}" "${ACP_REQUEST_LOG}" "${BASELINE_B}" \
+    "${PROVIDER_LOG_B}" "${RESTART_EPOCH_B}")"
+  SCENARIO_B_OK=1
+  pass 7 "scenario B (attempt ${ATTEMPT_B}/3): ready → kill -9 before admission → restart delivered exactly one turn_started (${STARTED_B:0:16}...) to the original generation ${TARGET_KEY_B} via native restore"
+  break
+done
+[[ "${SCENARIO_B_OK}" -eq 1 ]] \
+  || { err "scenario B: admission won the pre-kill race on all 3 attempts; could not exercise ready→kill→restart"; exit 1; }
+
+# ── Step 8: Scenario C — rejected load → durable NATIVE_RESTORE_REJECTED ────
+log "Scenario C: a second provider, whose ACP stub advertises then REJECTS session/load, proves a refused restore ends in a durable refusal, never a fresh conversation..."
+PROVIDER_KEY_C="$(openssl rand -hex 32)"
+STATE_DIR_C="${WORKDIR}/provider-state-c"
+mkdir -p "${STATE_DIR_C}" "${WORKDIR}/checkout-c"
+PROJECTS_FILE_C="${WORKDIR}/projects-c.json"
+cat > "${PROJECTS_FILE_C}" <<EOF
+{"version":1,"channels":{"${CHANNEL}":"${WORKDIR}/checkout-c"}}
+EOF
+RUNTIMES_JSON_C="$(python3 -c "
+import json
+print(json.dumps([{
+  'instanceRef': 'claude-primary',
+  'driver': 'claude-agent-acp',
+  'runtime': 'claude',
+  'agentCommand': 'bash',
+  'agentArgs': ['${REJECT_AGENT}'],
+  'defaultModel': 'default',
+  'allowedModels': ['default'],
+}]))
+")"
+ACP_REQUEST_LOG_C="${WORKDIR}/acp-requests-c.jsonl"
+: > "${ACP_REQUEST_LOG_C}"
+METHODS_LOG_C="${WORKDIR}/methods-c.log"
+: > "${METHODS_LOG_C}"
+
+BUZZ_PRIVATE_KEY="${PROVIDER_KEY_C}" bee channels join --channel "${CHANNEL}" >/dev/null
+
+PROVIDER_LOG_C="${WORKDIR}/provider-c.log"
+CATALOG_BEFORE_C_START="$(channel_catalog_count)"
+spawn_provider "${PROVIDER_KEY_C}" "${STATE_DIR_C}" "${PROJECTS_FILE_C}" "${RUNTIMES_JSON_C}" \
+  "${PROVIDER_LOG_C}" "${METHODS_LOG_C}" "${ACP_REQUEST_LOG_C}"
+PROVIDER_PID_C="${LAST_PID}"
+PROVIDER_PUBKEY_C="$(wait_provider_pubkey "${PROVIDER_PID_C}" "${PROVIDER_LOG_C}")"
+wait_catalog_above "${CATALOG_BEFORE_C_START}" >/dev/null
+ok "Scenario C: second provider live (pubkey=${PROVIDER_PUBKEY_C}, rejecting ACP stub)"
+
+split_lines_into SCEN_C "$(register_fresh_continuation "${PROVIDER_PUBKEY_C}" "${ACP_REQUEST_LOG_C}" "scenario C: rejected-load")"
+TARGET_KEY_C="${SCEN_C[0]}"; COMMAND_ID_C="${SCEN_C[1]}"; COMMIT_C="${SCEN_C[2]}"
+
+WAITING_STATE_C="$(ci_continuation_store_state "${STATE_DIR_C}" "${COMMAND_ID_C}")"
+[[ "${WAITING_STATE_C}" == "waiting" ]] \
+  || { err "scenario C: expected ${COMMAND_ID_C} to be 'waiting' before the kill, found '${WAITING_STATE_C}'"; exit 1; }
+
+METHODS_MARK_C="$(wc -l < "${METHODS_LOG_C}" | tr -d ' ')"
+kill -9 "${PROVIDER_PID_C}"
+wait_pid_exit "${PROVIDER_PID_C}"
+
+PROVIDER_LOG_C_RESTART="${WORKDIR}/provider-restart-c.log"
+spawn_provider "${PROVIDER_KEY_C}" "${STATE_DIR_C}" "${PROJECTS_FILE_C}" "${RUNTIMES_JSON_C}" \
+  "${PROVIDER_LOG_C_RESTART}" "${METHODS_LOG_C}" "${ACP_REQUEST_LOG_C}"
+PROVIDER_PID_C="${LAST_PID}"
+RESTARTED_PUBKEY_C="$(wait_provider_pubkey "${PROVIDER_PID_C}" "${PROVIDER_LOG_C_RESTART}")"
+[[ "${RESTARTED_PUBKEY_C}" == "${PROVIDER_PUBKEY_C}" ]] \
+  || { err "scenario C: restarted provider pubkey ${RESTARTED_PUBKEY_C} != original ${PROVIDER_PUBKEY_C}"; exit 1; }
+wait_provider_relay_connected "${PROVIDER_PID_C}" "${PROVIDER_LOG_C_RESTART}"
+ok "Scenario C: provider restarted (pid ${PROVIDER_PID_C}) with the rejecting ACP stub"
+
+log "Scenario C: posting the 46008 for commit ${COMMIT_C}..."
+post_ci_result_webhook "${COMMIT_C}"
+
+STAGE_C=""
+for _ in $(seq 1 30); do
+  STATUS_JSON_C="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
+    --channel "${CHANNEL}" --provider "${PROVIDER_PUBKEY_C}" --target "${TARGET_KEY_C}" \
+    --command-id "${COMMAND_ID_C}")"
+  STAGE_C="$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(f\"{d['stage']}:{d.get('refusalCode') or ''}\")" "${STATUS_JSON_C}")"
+  [[ "${STAGE_C}" == "refused:NATIVE_RESTORE_REJECTED" ]] && break
+  sleep 1
+done
+[[ "${STAGE_C}" == "refused:NATIVE_RESTORE_REJECTED" ]] \
+  || { err "scenario C: ${COMMAND_ID_C} did not reach refused/NATIVE_RESTORE_REJECTED within 30s (last: ${STAGE_C})"; cat "${PROVIDER_LOG_C_RESTART}" >&2; exit 1; }
+
+RECEIPTS_C_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}")"
+python3 -c "
+import json, sys
+events = json.loads(sys.argv[1])
+refusals = []
+started = []
+for e in events:
+    c = json.loads(e['content'])
+    if c.get('commandId') != '${COMMAND_ID_C}':
+        continue
+    if c.get('status') == 'turn_refused':
+        refusals.append(c)
+    if c.get('status') == 'turn_started':
+        started.append(c)
+assert not started, f'scenario C must never produce a turn_started, found {started!r}'
+assert len(refusals) == 1, f'expected exactly one turn_refused, found {len(refusals)}: {refusals!r}'
+assert refusals[0]['error']['code'] == 'NATIVE_RESTORE_REJECTED', refusals[0]
+" "${RECEIPTS_C_JSON}"
+
+POST_RESTART_METHODS_C="$(tail -n +"$((METHODS_MARK_C + 1))" "${METHODS_LOG_C}")"
+if ! grep -q '^session/load$' <<<"${POST_RESTART_METHODS_C}"; then
+  err "scenario C: ${METHODS_LOG_C} shows no session/load after the restart"
+  exit 1
+fi
+if grep -q '^session/new$' <<<"${POST_RESTART_METHODS_C}"; then
+  err "scenario C: ${METHODS_LOG_C} shows session/new after the restart — a rejected load must never fall through to a new conversation. Methods observed since restart:"
+  err "${POST_RESTART_METHODS_C}"
+  exit 1
+fi
+
+pass 8 "scenario C: rejecting stub → waiting → kill -9 → restart → 46008 produced a durable turn_refused/NATIVE_RESTORE_REJECTED for ${COMMAND_ID_C} (target ${TARGET_KEY_C}), no session/new after the restart, and no turn_started"
+
+else
+  log "CI_CONTINUATION_SCENARIOS=basic — skipping the kill/restart scenarios (steps 6-8)"
+fi
 
 ok "ALL STEPS PASSED"

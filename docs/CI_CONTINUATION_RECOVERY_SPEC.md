@@ -159,3 +159,9 @@ provider-local code in `ci_continuation.rs`; `mark_claimed` deliberately does no
 back on a failed write (the ledgers are already spent); `ProviderUnavailable` doubles for
 "no open record" with an exact message. `STORE_VERSION` stays 1 (old files remain
 readable). No `buzz-core` change.
+| `just test-ci-continuation` (real relay on scratch DB + Redis 14, built `bee`, real provider, bash ACP stub with `session/load`) | green twice (`laneA2-run4.log`, `laneA2-run5-just.log`): steps 1–5 as before; scenario A waiting → `kill -9` → restart → 46008 → exactly one `turn_started` to the original generation, `session_restored_native` before the prompt, `session/load` and no `session/new` after restart, prompt bytes match, no `NO_LIVE_EXECUTION`; scenario B ready → `kill -9` before admission → restart → same, attempt 1/3; scenario C rejecting stub → `turn_refused/NATIVE_RESTORE_REJECTED`, no `session/new`, no `turn_started` |
+
+Composition limits: the script's session is unseated (human), so seated restore across a
+real kill is proven by provider tests that write the seat entry the host re-stages
+(`ci_continuation_restore_tests.rs`), plus the host's own unit tests; the ACP adapter is a
+bash stub, not a model; fault injection is unit-level (cfg(test) seams), not process-level.
