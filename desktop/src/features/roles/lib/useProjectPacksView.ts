@@ -131,6 +131,12 @@ export type ProjectPacksViewState = {
   packsSource: PacksSourceSummary;
   /** True until the first packs read for this project resolves. */
   isLoading: boolean;
+  /**
+   * True while any read this page shows is in flight — including a warm
+   * re-read after "Check again" — so a recheck control can say so instead of
+   * looking idle over a read that has not answered.
+   */
+  isRefreshing: boolean;
   /** The backend's own sentence when the packs read failed; `null` otherwise. */
   error: string | null;
   /** What the sessions shelf could and could not read — surfaced, not hidden. */
@@ -376,6 +382,14 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     packs,
     packsSource,
     isLoading: packsPending,
+    isRefreshing:
+      sourceQuery.isFetching ||
+      packsQuery.isFetching ||
+      revisionsQuery.isFetching ||
+      provenance.isLoading ||
+      agentsQuery.isFetching ||
+      channelsQuery.isPending ||
+      executionCatalog.isLoading,
     error: packsError,
     shelfState: buckets.state,
     rolePackSnapshots,

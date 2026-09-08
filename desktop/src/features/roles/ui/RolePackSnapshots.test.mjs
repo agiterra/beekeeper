@@ -32,6 +32,7 @@ function reportedRow(overrides = {}) {
     provenance: "proof-unavailable",
     provenanceReason: "no accepted lifecycle proof for this generation",
     founderPubkey: null,
+    role: "builder",
     ...overrides,
   };
 }
@@ -78,7 +79,7 @@ test("states the checkout commit and when git answered, and marks every metadata
   assert.match(html, /from <span[^>]+>ffffffff…ffff<\/span>/);
   assert.match(html, /Same revision as this machine/);
   assert.match(html, /reported 5m ago/);
-  assert.match(html, /Reported revisions/);
+  assert.match(html, /Report history \(1\)/);
   assert.match(
     html,
     /Beekeeper checks who sent each report\. Confirming its source does not prove which role instructions were used\./,
@@ -87,6 +88,7 @@ test("states the checkout commit and when git answered, and marks every metadata
   assert.doesNotMatch(html, /verified execution|verified adoption/);
   // A current row never carries the adoption sentence.
   assert.doesNotMatch(html, /Keeps this revision until its next launch/);
+  assert.match(html, /Technical details/);
   assert.doesNotMatch(html, /Reported by sessions/);
   assert.doesNotMatch(html, /universally adopted|every machine is current/);
 });
@@ -433,4 +435,88 @@ test("history navigation reaches later reports and returns without growing the D
     globalThis.document = oldDocument;
     globalThis.IS_REACT_ACT_ENVIRONMENT = oldAct;
   }
+});
+
+// ── Technical details ────────────────────────────────────────────────────
+
+test("everything is inside a Technical details disclosure that is collapsed by default", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: 1_700_000_000_000,
+        resolved: [{ role: "builder", coordinate, reason: null }],
+        reported: [reportedRow(), reportedRow({ generationId: "g-2" })],
+        comparison: null,
+        provenanceNotes: [],
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+    }),
+  );
+
+  // One outer disclosure, three named groups, none of them open.
+  assert.match(html, /<details data-testid="roles-technical-details">/);
+  assert.match(html, /<summary[^>]*>Technical details<\/summary>/);
+  assert.match(html, /<details data-testid="roles-diagnostics-source">/);
+  assert.match(html, /<details data-testid="roles-diagnostics-history">/);
+  assert.match(html, /<details data-testid="roles-diagnostics-checks">/);
+  assert.doesNotMatch(html, /<details[^>]*data-testid="roles-[^"]*"[^>]*open/);
+  assert.doesNotMatch(html, /<details data-testid="roles-[^"]*" open/);
+
+  // The named group summaries, including the history's own count.
+  assert.match(html, /Where instructions come from/);
+  assert.match(html, /Report history \(2\)/);
+  assert.match(html, /How Beekeeper checks reports/);
+
+  // The rows themselves are unchanged and still inside the groups.
+  assert.match(html, /data-testid="role-pack-resolved"/);
+  assert.match(html, /data-testid="role-pack-resolved-row"/);
+  assert.match(html, /data-testid="role-pack-reported"/);
+  assert.equal(
+    (html.match(/data-testid="role-pack-reported-row"/g) ?? []).length,
+    2,
+  );
+});
+
+test("the checks group carries the subtitle, the proof reads and the sessions notice", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: null,
+        resolved: [],
+        reported: [],
+        comparison: null,
+        provenanceNotes: ["Lifecycle receipts could not be read: timed out."],
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+      shelfNotice: {
+        kind: "partial",
+        message: "Some sessions could not be read.",
+        detail: "one channel did not answer",
+      },
+    }),
+  );
+
+  assert.match(
+    html,
+    /Beekeeper checks who sent each report\. Confirming its source does not prove which role instructions were used\./,
+  );
+  assert.match(html, /data-testid="role-pack-provenance-notes"/);
+  assert.match(html, /Proof reads: Lifecycle receipts could not be read/);
+  assert.match(html, /data-testid="roles-shelf-notice"/);
+  assert.match(html, /data-shelf-state="partial"/);
+  assert.match(
+    html,
+    /Some sessions could not be read\. — one channel did not answer/,
+  );
+});
+
+test("no sessions notice renders when the shelf read nothing to disclose", () => {
+  const html = renderReported([reportedRow()]);
+  assert.doesNotMatch(html, /data-testid="roles-shelf-notice"/);
 });

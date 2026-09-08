@@ -6,23 +6,24 @@ import { InstallCrewRolesDialog } from "@/features/agents/ui/InstallCrewRolesDia
 import { crewRolesInstalledToast } from "@/features/agents/ui/installCrewRolesCopy";
 import { ProjectPageTabs } from "@/features/projects-container/ui/ProjectPageTabs";
 import { useFeatureEnabled } from "@/shared/features";
-import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
 
 import { useProjectPacksView } from "../lib/useProjectPacksView";
 import type { SeatRow } from "../lib/rolesViewModel";
+import {
+  rolesUncertaintySentence,
+  summarizeRoleReports,
+  summarizeRolesUncertainty,
+} from "../lib/roleVersionSummary";
 import { AgentsByProject } from "./AgentsByProject";
 import { RoleCard } from "./RoleCard";
 import { RolePackSnapshots } from "./RolePackSnapshots";
+import { RolesHeader } from "./RolesHeader";
 import {
-  INSTALL_ROLES_BUTTON_LABEL,
-  packsSourceSentence,
   PROJECT_PACKS_MISSING,
   ROLES_EMPTY,
   ROLES_LOADING,
-  ROLES_SECTION_TITLE,
-  ROLES_SUBTITLE,
-  ROLES_TITLE,
+  ROLES_UNCERTAINTY_NONE,
   rolesErrorSentence,
 } from "./rolesCopy";
 
@@ -49,12 +50,15 @@ function RolesSkeleton() {
 }
 
 /**
- * The project's Packs tab: what each role has, who carries it, and who is
- * seated in it — for the one project the route names. `RolesScreen` minus
- * the project picker (the route supplies the project now), plus the
- * Install-roles button that used to live on the Agents tab's picker toolbar
- * (§E "moved, not cut" — pack installation is project-scoped, and this route
- * finally names the project instead of resolving one nobody can see).
+ * The project's Roles tab: what each role is for, which agents can take it,
+ * which version of its instructions this computer has, and what running
+ * agents reported — for the one project the route names.
+ *
+ * The page answers those four questions in plain sentences and keeps the
+ * protocol's own vocabulary (coordinates, provenance labels, the full report
+ * history) in a collapsed Technical details section below. The uncertainty
+ * line between them is the one place a reader is told, without opening
+ * anything, that some of what is above could not be confirmed.
  */
 export function ProjectPacksScreen({ projectId }: { projectId: string }) {
   const state = useProjectPacksView(projectId);
@@ -66,6 +70,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
     project,
     view,
     isLoading,
+    isRefreshing,
     error,
     shelfState,
     packs,
@@ -73,6 +78,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
     rolePackSnapshots,
     packsResolutionIsStale,
     revisionsError,
+    provenanceError,
     executionReports,
   } = state;
 
@@ -87,6 +93,54 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
     [navigate],
   );
 
+  const { refetchAgents, refetchPacks } = state;
+  const onRecheck = React.useCallback(() => {
+    refetchPacks();
+    refetchAgents();
+  }, [refetchAgents, refetchPacks]);
+
+  // Grouped once for the whole grid: every card reads its own role's summary
+  // out of this map instead of walking the report list itself.
+  const reportSummaries = React.useMemo(
+    () => summarizeRoleReports(rolePackSnapshots),
+    [rolePackSnapshots],
+  );
+  const uncertainty = React.useMemo(
+    () =>
+      rolesUncertaintySentence(
+        summarizeRolesUncertainty({
+          snapshots: rolePackSnapshots,
+          resolvedError: error,
+          resolvedIsStale: packsResolutionIsStale,
+          revisionsError,
+          provenanceError,
+          reports: executionReports,
+          sessions: { kind: shelfState.kind },
+        }),
+      ),
+    [
+      error,
+      executionReports,
+      packsResolutionIsStale,
+      provenanceError,
+      revisionsError,
+      rolePackSnapshots,
+      shelfState.kind,
+    ],
+  );
+
+  // The version the built-in defaults agree on, for the source line. Two
+  // built-in versions in one project would make "v<version>" a guess, so the
+  // sentence then names none.
+  const shippedVersion = React.useMemo(() => {
+    const versions = new Set(
+      packs
+        .filter((pack) => pack.origin === "shipped")
+        .map((pack) => pack.version),
+    );
+    return versions.size === 1 ? ([...versions][0] ?? null) : null;
+  }, [packs]);
+
   if (!project) {
     return (
       <div
@@ -98,7 +152,29 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
     );
   }
 
-  const sentence = packsSourceSentence(project.name, packs.length, packsSource);
+  // Every read this page shows comes from the two refetches the button calls;
+  // `useProjectPacksView` exposes a pending flag for the packs read and a
+  // loading flag for the reports read, so those two are what "Checking…"
+  // reports. No new read and no polling is introduced here.
+  const busy = isLoading || isRefreshing || executionReports.isLoading;
+  const sourceDetail = {
+    checkedAgeSeconds:
+      rolePackSnapshots.resolvedAt === null
+        ? null
+        : Math.max(
+            0,
+            Math.floor((Date.now() - rolePackSnapshots.resolvedAt) / 1_000),
+          ),
+    shippedVersion,
+  };
+  const shelfNotice =
+    shelfState.kind !== "ready" && shelfState.kind !== "loading"
+      ? {
+          kind: shelfState.kind,
+          message: shelfState.message,
+          detail: shelfState.detail,
+        }
+      : null;
 
   return (
     <div
@@ -116,34 +192,15 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
         />
       </div>
       <div className="flex flex-col gap-4">
-        <header className="flex flex-col gap-1">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-medium text-foreground">
-              {ROLES_TITLE}
-            </h2>
-            <Button
-              data-testid="project-packs-install"
-              onClick={() => setInstallOpen(true)}
-              type="button"
-              variant="outline"
-            >
-              {INSTALL_ROLES_BUTTON_LABEL}
-            </Button>
-          </div>
-          <p
-            className="text-2xs text-muted-foreground"
-            data-testid="roles-subtitle"
-          >
-            {ROLES_SUBTITLE}
-          </p>
-          <p
-            className="min-w-0 truncate text-xs text-muted-foreground"
-            data-testid="packs-source-sentence"
-            title={sentence.shaTitle ?? sentence.text}
-          >
-            {sentence.text}
-          </p>
-        </header>
+        <RolesHeader
+          busy={busy}
+          onInstall={() => setInstallOpen(true)}
+          onRecheck={onRecheck}
+          packCount={packs.length}
+          packsSource={packsSource}
+          projectName={project.name}
+          sourceDetail={sourceDetail}
+        />
         {error ? (
           <p
             className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
@@ -153,25 +210,12 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
             {rolesErrorSentence(error)}
           </p>
         ) : null}
-        {shelfState.kind !== "ready" && shelfState.kind !== "loading" ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-shelf-state={shelfState.kind}
-            data-testid="roles-shelf-notice"
-          >
-            {shelfState.message}
-            {shelfState.detail ? ` — ${shelfState.detail}` : null}
-          </p>
-        ) : null}
         <section className="flex flex-col gap-2" data-testid="roles-section">
-          <h2 className="text-sm font-medium text-foreground">
-            {ROLES_SECTION_TITLE}
-          </h2>
           {isLoading && view.roles.length === 0 ? (
             <RolesSkeleton />
           ) : view.roles.length === 0 ? (
             <p
-              className="text-xs text-muted-foreground"
+              className="text-sm text-muted-foreground"
               data-testid="roles-empty"
             >
               {ROLES_EMPTY}
@@ -179,7 +223,12 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           ) : (
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {view.roles.map((role) => (
-                <RoleCard key={role.role} onOpenSeat={onOpenSeat} role={role} />
+                <RoleCard
+                  key={role.role}
+                  onOpenSeat={onOpenSeat}
+                  reports={reportSummaries.get(role.role) ?? null}
+                  role={role}
+                />
               ))}
             </div>
           )}
@@ -189,11 +238,19 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           onOpenSeat={onOpenSeat}
           unplaced={view.unplaced}
         />
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="roles-uncertainty-summary"
+          data-uncertain={uncertainty === "" ? "false" : "true"}
+        >
+          {uncertainty === "" ? ROLES_UNCERTAINTY_NONE : uncertainty}
+        </p>
         <RolePackSnapshots
           reports={executionReports}
           resolvedError={error}
           resolvedIsStale={packsResolutionIsStale}
           revisionsError={revisionsError}
+          shelfNotice={shelfNotice}
           snapshots={rolePackSnapshots}
         />
       </div>

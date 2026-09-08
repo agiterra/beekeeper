@@ -44,7 +44,7 @@ function agentSegment(seat: SeatRow): Segment {
  *
  * Every column is a disclosed value: an agent this computer does not manage
  * is "unmanaged agent" with its pubkey in the tooltip, a seat with no
- * `packRef` says "sha unknown", and the status word is the catalog's own.
+ * `packRef` says "version unknown", and the status word is the catalog's own.
  */
 export function SeatRowButton({
   seat,
@@ -76,9 +76,21 @@ export function SeatRowButton({
       title: seat.packSha ?? undefined,
     });
   }
+  // On a role card the row shares a narrow column with everything else the
+  // card says, so it wraps onto a second line instead of shortening every
+  // column to an unreadable stub ("unmanaged… · Ge… · idle (just… · sha
+  // unk…"). Only the two open-ended columns — the agent and the project —
+  // are capped; the status and the version always render whole. Under a
+  // project block the row keeps its single truncating line.
+  const wraps = columns === "role-card";
   return (
     <button
-      className="flex w-full min-w-0 items-center gap-1 rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/40"
+      className={cn(
+        "flex w-full min-w-0 rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/40",
+        wraps
+          ? "flex-wrap items-baseline gap-x-1 gap-y-0.5"
+          : "items-center gap-1",
+      )}
       data-seat-key={seat.key}
       data-seat-status={seat.status}
       data-testid="seat-row"
@@ -90,7 +102,14 @@ export function SeatRowButton({
         <React.Fragment key={segment.kind}>
           {index > 0 ? <span aria-hidden>·</span> : null}
           <span
-            className={cn("truncate", segment.className)}
+            className={cn(
+              wraps
+                ? segment.kind === "agent" || segment.kind === "project"
+                  ? "max-w-40 truncate"
+                  : "whitespace-nowrap"
+                : "truncate",
+              segment.className,
+            )}
             data-seat-column={segment.kind}
             title={segment.title}
           >

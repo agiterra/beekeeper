@@ -572,3 +572,23 @@ test("provenanceNotes is empty before any provenance answer exists", () => {
   const snapshots = build({ provenance: null });
   assert.deepEqual(snapshots.provenanceNotes, []);
 });
+
+// ── session.role passthrough ─────────────────────────────────────────────
+
+test("a row names its own role even with no version coordinate", () => {
+  const snapshots = build({
+    catalogEntries: [entry({ packRef: undefined, role: "lead" })],
+  });
+  const row = snapshots.reported[0];
+  assert.equal(row.role, "lead");
+  assert.equal(row.coordinate, null);
+});
+
+test("a row with neither a role nor a coordinate reports role: null", () => {
+  const snapshots = build({
+    catalogEntries: [entry({ packRef: undefined })],
+  });
+  const row = snapshots.reported[0];
+  assert.equal(row.role, null);
+  assert.equal(row.coordinate, null);
+});

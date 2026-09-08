@@ -5,7 +5,8 @@ import { PROJECT_TAB_TRIGGER_CLASS } from "@/features/projects/ui/ProjectWorkspa
 import { cn } from "@/shared/lib/cn";
 
 /** The project page's tab vocabulary. Overview/Pulse are the URL `tab` search
- * param on `/projects/$projectId`; Packs/Contributors are their own paths. */
+ * param on `/projects/$projectId`; the Roles (`packs`) and Contributors tabs
+ * are their own paths. */
 export type ProjectPageTab = "overview" | "pulse" | "packs" | "contributors";
 
 export function parseProjectPageTab(value: unknown): ProjectPageTab {
@@ -25,7 +26,10 @@ type PathTab = {
 };
 
 const PATH_TABS: readonly PathTab[] = [
-  { id: "packs", label: "Packs", to: "/projects/$projectId/packs" },
+  // The tab reads "Roles" — the page answers "what is this role for, who
+  // can take it, which version is here". Its id, path and testid stay
+  // `packs` so routes, links and existing selectors keep working.
+  { id: "packs", label: "Roles", to: "/projects/$projectId/packs" },
   {
     id: "contributors",
     label: "Contributors",

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
 import {
@@ -31,7 +30,11 @@ import { openDashboardTab } from "../helpers/dashboard";
 import { waitForAnimations } from "../helpers/animations";
 
 /**
- * The Agents tab says which project's role packs it will install.
+ * The Roles tab says which project's role instructions it will install, and
+ * — per `docs/ROLES_USABILITY_SPEC.md` — lets a person with no protocol
+ * knowledge answer, per role: what it is for, which agents can take it,
+ * which version is available on this computer, and what version running
+ * agents are actually reporting.
  *
  * Ledger 85 pre-chose `<checkout>/personas/roles` for the installer and then
  * found the pre-chosen folder unreachable: the Dashboard route names no
@@ -49,7 +52,7 @@ const IDENTITY = {
 };
 
 const PROJECT_FEATURES = JSON.stringify({ projects: true });
-const SNAPSHOTS = "test-results/role-pack-snapshots";
+const SNAPSHOTS = "test-results/roles-usability";
 
 /** Kind:30621 is not signature-checked by the client, like the other mock
  * fixtures, so a hand-built head is enough to give this viewer projects. */
@@ -141,47 +144,108 @@ test("the resolved project is named on the tab and in the installer, and switchi
   );
 });
 
-test("the Packs tab explains local versions and unverified metadata claims", async ({
-  page,
-}) => {
-  await page.addInitScript((features) => {
-    window.localStorage.setItem("buzz-feature-overrides-v1", features);
-  }, PROJECT_FEATURES);
-  await installMockBridge(page, {});
-  await page.setViewportSize({ width: 1280, height: 850 });
-  await page.goto("/");
+/**
+ * Opens the (renamed) Roles tab of the mock `general` project's own screen —
+ * `project-tab-packs` keeps its id and route; only its label changed.
+ */
+async function openRolesTab(page: Page) {
   const general = page.getByTestId("project-group-general");
   await expect(general).toBeVisible({ timeout: 15_000 });
   await general.hover();
   await page.getByTestId("project-open-general").click();
   await expect(page.getByTestId("project-page-tabs")).toBeVisible();
   await page.getByTestId("project-tab-packs").click();
+}
 
-  const snapshots = page.getByTestId("role-pack-snapshots");
-  await expect(snapshots).toBeVisible({ timeout: 15_000 });
-  await expect(snapshots).toContainText(
-    "Versions found on this machine and pack revisions reported in this project’s channels.",
+test("the Roles tab explains what a role is in plain language, and Technical details stays collapsed until opened", async ({
+  page,
+}) => {
+  await page.addInitScript((features) => {
+    window.localStorage.setItem("buzz-feature-overrides-v1", features);
+  }, PROJECT_FEATURES);
+  await installMockBridge(page, {});
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+  await openRolesTab(page);
+
+  // Tab label reads "Roles"; id/route are unchanged (project-tab-packs).
+  await expect(page.getByTestId("project-tab-packs")).toHaveText("Roles");
+
+  await expect(page.getByTestId("roles-subtitle")).toHaveText(
+    "Each role is a set of instructions an agent follows in this project. Here you can see what each role is for, which agents can take it, and which version of its instructions is available on this computer and reported by running agents.",
   );
-  await expect(snapshots).toContainText(
-    "Beekeeper checks who sent each report. Confirming its source does not prove which role instructions were used.",
+
+  // The mock fixture's two roles come from two different rungs (lead is
+  // "project", reviewer is "shipped"), so the source line names the mix
+  // rather than picking one.
+  await expect(page.getByTestId("packs-source-sentence")).toHaveText(
+    "Roles come from more than one place; see Technical details.",
   );
-  await expect(snapshots.getByText("Available here")).toBeVisible();
+
+  const recheck = page.getByTestId("roles-recheck");
+  await expect(recheck).toBeVisible();
+  await expect(recheck).toHaveText("Check again");
+
+  // Cards: no origin badge or bare version in the header, just name + slug.
+  const leadCard = page.getByTestId("role-card-lead");
+  await expect(leadCard).toBeVisible();
+  await expect(leadCard.getByTestId("role-origin-lead")).toHaveCount(0);
+  await expect(leadCard.getByTestId("role-version-lead")).toHaveCount(0);
+
+  const leadAvailable = page.getByTestId("role-available-lead");
+  await expect(leadAvailable).toHaveAttribute("data-availability", "available");
+  await expect(leadAvailable).toContainText("9f2e1d0c");
+  await expect(leadAvailable).toContainText("project's repository");
+
+  const reviewerAvailable = page.getByTestId("role-available-reviewer");
+  await expect(reviewerAvailable).toHaveAttribute(
+    "data-availability",
+    "available",
+  );
+  await expect(reviewerAvailable).toContainText("built-in defaults");
+
+  // No reports yet.
+  const leadReports = page.getByTestId("role-reports-lead");
+  await expect(leadReports).toHaveAttribute("data-reports", "none");
+  await expect(leadReports).toContainText(
+    "No agent has reported running this role yet.",
+  );
+
+  // Skills are collapsed behind a native <details>.
+  const skills = page.getByTestId("role-skills-lead");
+  await expect(skills).toBeVisible();
   await expect(
-    snapshots.getByText("Reported revisions", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByTestId("role-pack-resolved-row")).toHaveCount(2);
-  await expect(snapshots).toContainText("lead · 9f2e1d0c");
-  await expect(snapshots).toContainText("reviewer · 0.0.0-e");
-  await expect(page.getByTestId("role-pack-reports-empty")).toHaveText(
-    "No role-version metadata claims are visible for this project.",
-  );
-  await expect(snapshots).not.toContainText("44223");
+    page.locator('[data-testid="role-skills-lead"] summary'),
+  ).toHaveText("Skills (2)");
 
-  await waitForAnimations(page);
-  await snapshots.screenshot({ path: `${SNAPSHOTS}/available-and-empty.png` });
+  // Technical details is collapsed by default…
+  const details = page.getByTestId("roles-technical-details");
+  await expect(details).toBeVisible();
+  await expect(details).not.toHaveJSProperty("open", true);
+  // The view model's sentence is "" here (nothing is uncertain), but the
+  // uncertainty line always has a sentence (copy rule): it substitutes
+  // ROLES_UNCERTAINTY_NONE and marks itself `data-uncertain="false"`.
+  const uncertainty = page.getByTestId("roles-uncertainty-summary");
+  await expect(uncertainty).toBeVisible();
+  await expect(uncertainty).toHaveAttribute("data-uncertain", "false");
+  await expect(uncertainty).toHaveText(
+    "Nothing in this view is reported as missing or unconfirmed.",
+  );
+
+  // …and opens with the keyboard, natively (no click needed).
+  const summary = details.locator("summary").first();
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(details).toHaveJSProperty("open", true);
+
+  await expect(page.getByTestId("roles-diagnostics-source")).toBeVisible();
+  await expect(page.getByTestId("roles-diagnostics-history")).toContainText(
+    "Report history (0)",
+  );
+  await expect(page.getByTestId("roles-diagnostics-checks")).toBeVisible();
 });
 
-// ── Ranked reported revisions ────────────────────────────────────────────
+// ── Distinct report cases ────────────────────────────────────────────────
 
 /** `general` in the mock channel fixture; the `h` tag must match exactly. */
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
@@ -202,7 +266,7 @@ const RANKED_PROJECT_ADDRESS = `${KIND_PROJECT}:${RANKED_PROJECT_OWNER}:general`
  * (`makeLocalGeneral`, whose `channelIds` is always empty), this one
  * declares the mock `general` channel as its own with a `channel` tag, so
  * `useProjectPacksView`'s project-channel filter (`declared.has(channel.id)`
- * in `useProjectPacksView.ts`) admits it and the Packs tab reads that
+ * in `useProjectPacksView.ts`) admits it and the Roles tab reads that
  * channel's signed 44223 metadata for this project.
  */
 function generalProjectWithChannel(): RelayEvent {
@@ -237,6 +301,23 @@ const RANKED_RUNNING_TARGET = {
   driver: "claude-agent-acp",
   instanceId: "ranked-running-seat",
   sessionId: "cccccccc-dddd-eeee-ffff-000000000000",
+  generation: 1,
+};
+/** Names a role but ships no version coordinate at all (case (b) in the
+ * spec) — `role` requires an `agentRef`, so this is a seated report, unlike
+ * the two ranked targets above (`agentRef: null`). */
+const NO_VERSION_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "no-version-seat",
+  sessionId: "eeeeeeee-ffff-0000-1111-222222222222",
+  generation: 1,
+};
+/** Names no role and carries no coordinate (case (c)) — never rendered on a
+ * card, only counted in Report history and the uncertainty sentence. */
+const NO_ROLE_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "no-role-seat",
+  sessionId: "99999999-aaaa-bbbb-cccc-dddddddddddd",
   generation: 1,
 };
 
@@ -310,6 +391,76 @@ function rankedMetadataEvent(input: {
       }),
     },
     input.secret ?? generateSecretKey(),
+  ) as unknown as RelayEvent;
+}
+
+/**
+ * Case (b): names the "lead" role (which requires a seated `agentRef`) but
+ * omits `packRef` entirely — a report a card must count as "version not
+ * reported", never inventing a coordinate for it.
+ */
+function noVersionRoleMetadataEvent(): RelayEvent {
+  const agentSecret = generateSecretKey();
+  return finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_METADATA,
+      created_at: Math.floor(Date.now() / 1000) - 20,
+      tags: [
+        ["h", GENERAL_CHANNEL_ID],
+        ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+        ["cs-target", buildCodingSessionTargetKey(NO_VERSION_TARGET)],
+        ["csm-key", codingSessionMetadataSemanticKey(NO_VERSION_TARGET)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        session: NO_VERSION_TARGET,
+        projectRef: RANKED_PROJECT_ADDRESS,
+        repoRef: null,
+        title: "Lead with no version reported",
+        agentRef: getPublicKey(agentSecret),
+        provider: NO_VERSION_TARGET.driver,
+        runtime: NO_VERSION_TARGET.driver,
+        model: "sonnet",
+        status: "idle",
+        branch: null,
+        capabilities: RANKED_CAPABILITIES,
+        role: "lead",
+        // packRef intentionally omitted — see case (b) in the spec.
+      }),
+    },
+    generateSecretKey(),
+  ) as unknown as RelayEvent;
+}
+
+/** Case (c): no `role` key and no `packRef` at all. */
+function noRoleMetadataEvent(): RelayEvent {
+  return finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_METADATA,
+      created_at: Math.floor(Date.now() / 1000) - 10,
+      tags: [
+        ["h", GENERAL_CHANNEL_ID],
+        ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+        ["cs-target", buildCodingSessionTargetKey(NO_ROLE_TARGET)],
+        ["csm-key", codingSessionMetadataSemanticKey(NO_ROLE_TARGET)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        session: NO_ROLE_TARGET,
+        projectRef: RANKED_PROJECT_ADDRESS,
+        repoRef: null,
+        title: "No role named",
+        agentRef: null,
+        provider: NO_ROLE_TARGET.driver,
+        runtime: NO_ROLE_TARGET.driver,
+        model: "sonnet",
+        status: "idle",
+        branch: null,
+        capabilities: RANKED_CAPABILITIES,
+        // role and packRef both omitted — see case (c) in the spec.
+      }),
+    },
+    generateSecretKey(),
   ) as unknown as RelayEvent;
 }
 
@@ -416,7 +567,7 @@ function commissionedGenerationEvents(): {
   };
 }
 
-test("the Packs tab ranks reported pack revisions against this machine's checkout", async ({
+test("the Roles tab distinguishes a version, no version reported, and no role at all", async ({
   page,
 }) => {
   await page.addInitScript((features) => {
@@ -452,20 +603,20 @@ test("the Packs tab ranks reported pack revisions against this machine's checkou
     },
     { sha: RANKED_EARLIER_SHA, behind: 1 },
   );
-  await page.setViewportSize({ width: 1280, height: 850 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
+  await openRolesTab(page);
 
-  const general = page.getByTestId("project-group-general");
-  await expect(general).toBeVisible({ timeout: 15_000 });
-  await general.hover();
-  await page.getByTestId("project-open-general").click();
-  await expect(page.getByTestId("project-page-tabs")).toBeVisible();
-  await page.getByTestId("project-tab-packs").click();
+  const leadCard = page.getByTestId("role-card-lead");
+  await expect(leadCard).toBeVisible({ timeout: 15_000 });
 
-  const snapshots = page.getByTestId("role-pack-snapshots");
-  await expect(snapshots).toBeVisible({ timeout: 15_000 });
+  await waitForAnimations(page);
+  const pageBuffer = await page.screenshot({
+    path: `${SNAPSHOTS}/01-roles-page.png`,
+    fullPage: true,
+  });
 
-  // Seed the two generations only once the tab is open — the channel's live
+  // Seed the generations only once the tab is open — the channel's live
   // subscription (armed on navigation) must already exist for the seeded
   // events to be delivered rather than dropped.
   await page.evaluate(
@@ -489,49 +640,86 @@ test("the Packs tab ranks reported pack revisions against this machine's checkou
           sha: RANKED_EARLIER_SHA,
           reportedSecondsAgo: 120,
         }),
+        noVersionRoleMetadataEvent(),
+        noRoleMetadataEvent(),
       ] as unknown as never[],
     },
   );
 
+  // Case (a) + (b): the lead card's own reports sentence and version lines.
+  // 3 lead reports: current (same version as here), earlier (1 behind), and
+  // the no-coordinate report (no version reported). The no-role report is
+  // never counted here — it names no role at all.
+  const leadReports = page.getByTestId("role-reports-lead");
+  await expect(leadReports).toHaveAttribute("data-reports", "some", {
+    timeout: 15_000,
+  });
+  await expect(leadReports).toContainText("3 reports");
+  await expect(leadReports).toContainText(
+    "1 on the same version as this computer",
+  );
+  await expect(leadReports).toContainText("1 on an earlier version");
+  await expect(leadReports).toContainText("1 with no version reported");
+  await expect(leadReports).toContainText("same version as here");
+  await expect(leadReports).toContainText("earlier, 1 behind");
+  await expect(leadReports).toContainText("version not reported");
+
+  // Case (c): the no-role report never spawns a third card.
+  await expect(page.locator('[data-testid^="role-card-"]')).toHaveCount(2);
+
+  await waitForAnimations(page);
+  const cardBuffer = await leadCard.screenshot({
+    path: `${SNAPSHOTS}/02-card-lead.png`,
+  });
+
+  // Open Technical details and its nested groups to see Report history and
+  // the source coordinates — collapsed by default, but every reported row
+  // still exists in the DOM (and is countable) whether or not it is open.
+  const details = page.getByTestId("roles-technical-details");
+  await details.locator("summary").first().click();
+  await expect(details).toHaveJSProperty("open", true);
+
+  const sourceGroup = page.getByTestId("roles-diagnostics-source");
+  await sourceGroup.locator("summary").first().click();
+  const historyGroup = page.getByTestId("roles-diagnostics-history");
+  await historyGroup.locator("summary").first().click();
+
   const rows = page.getByTestId("role-pack-reported-row");
-  await expect(rows).toHaveCount(2, { timeout: 15_000 });
+  await expect(rows).toHaveCount(4, { timeout: 15_000 });
 
   const currentRow = page.locator(
     '[data-testid="role-pack-reported-row"][data-relation="current"]',
   );
   await expect(currentRow).toHaveCount(1);
-  await expect(currentRow).toContainText("Same revision as this machine");
-  await expect(currentRow).not.toContainText("Keeps this revision");
-  // No lifecycle chain was ever seeded for either ranked row — a signed 44223
-  // alone proves a signature and a channel, nothing about who commissioned
-  // the generation that sent it (constraint 3: missing is not disputed).
   await expect(currentRow).toHaveAttribute(
     "data-provenance",
     "proof-unavailable",
   );
-  await expect(currentRow).toContainText("Unverified · proof unavailable");
 
   const earlierRow = page.locator(
     '[data-testid="role-pack-reported-row"][data-relation="earlier"]',
   );
   await expect(earlierRow).toHaveCount(1);
-  await expect(earlierRow).toContainText(
-    "Earlier revision · 1 behind this machine",
-  );
   await expect(earlierRow).toContainText("running");
-  await expect(earlierRow).toContainText("reported");
-  await expect(earlierRow).toContainText(
-    "Keeps this revision until its next launch or resume.",
+
+  const incompleteRow = page.locator(
+    '[data-testid="role-pack-reported-row"][data-relation="incomplete"]',
   );
-  await expect(earlierRow).toHaveAttribute(
-    "data-provenance",
-    "proof-unavailable",
-  );
-  await expect(earlierRow).toContainText("Unverified · proof unavailable");
+  await expect(incompleteRow).toHaveCount(2); // the no-version-lead and no-role rows
 
   const checkoutStatus = page.getByTestId("role-pack-checkout-status");
   await expect(checkoutStatus).toContainText("On 9f2e1d0c");
   await expect(checkoutStatus).toContainText("git answered at");
+
+  // The uncertainty summary names the no-role report.
+  await expect(page.getByTestId("roles-uncertainty-summary")).toContainText(
+    "1 reports name no role",
+  );
+
+  await waitForAnimations(page);
+  const detailsBuffer = await details.screenshot({
+    path: `${SNAPSHOTS}/03-technical-details-open.png`,
+  });
 
   // Now seed a founder-signed genesis + generation-1 create + provider
   // receipt for a third generation, and confirm the mock relay's generic
@@ -550,7 +738,7 @@ test("the Packs tab ranks reported pack revisions against this machine's checkou
     },
   );
 
-  await expect(rows).toHaveCount(3, { timeout: 15_000 });
+  await expect(rows).toHaveCount(5, { timeout: 15_000 });
   const commissionedRow = page.locator(
     '[data-testid="role-pack-reported-row"][data-provenance="commissioned"]',
   );
@@ -562,19 +750,15 @@ test("the Packs tab ranks reported pack revisions against this machine's checkou
   await expect(commissionedRow).not.toContainText("verified execution");
   await expect(commissionedRow).not.toContainText("verified adoption");
 
-  await waitForAnimations(page);
-  const rankedBuffer = await snapshots.screenshot({
-    path: `${SNAPSHOTS}/ranked-rows.png`,
-  });
-  const rankedDigest = createHash("sha256").update(rankedBuffer).digest("hex");
-  const emptyPath = `${SNAPSHOTS}/available-and-empty.png`;
-  if (existsSync(emptyPath)) {
-    const emptyDigest = createHash("sha256")
-      .update(readFileSync(emptyPath))
-      .digest("hex");
-    expect(
-      rankedDigest,
-      "ranked-rows.png captured the same pixels as available-and-empty.png",
-    ).not.toBe(emptyDigest);
-  }
+  const digest = (buffer: Buffer) =>
+    createHash("sha256").update(buffer).digest("hex");
+  const distinctHashes = new Set([
+    digest(pageBuffer),
+    digest(cardBuffer),
+    digest(detailsBuffer),
+  ]);
+  expect(
+    distinctHashes.size,
+    "01-roles-page.png, 02-card-lead.png, and 03-technical-details-open.png must be visually distinct",
+  ).toBe(3);
 });

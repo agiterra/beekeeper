@@ -1,20 +1,26 @@
 import type * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
-import { Badge } from "@/shared/ui/badge";
 
 import { roleAgentPackState } from "../lib/rolesViewModel";
 import type { RoleAgentChip, RoleRow, SeatRow } from "../lib/rolesViewModel";
+import type { RoleReportSummary } from "../lib/roleVersionSummary";
+import { roleReportSentence } from "../lib/roleVersionSummary";
 import {
   AGENT_CHIP_NO_PACK_TITLE,
   AGENT_CHIP_SHARED_HOME_TITLE,
   ROLE_AGENTS_EMPTY,
   ROLE_AGENTS_TITLE,
-  ROLE_NO_PACK,
+  ROLE_REPORT_VERSION_LIMIT,
+  ROLE_REPORTS_EMPTY,
+  ROLE_REPORTS_TITLE,
   ROLE_SEATS_EMPTY,
   ROLE_SEATS_TITLE,
   ROLE_SKILLS_EMPTY,
-  ROLE_SKILLS_TITLE,
+  roleAvailabilitySentence,
+  roleReportsMoreText,
+  roleReportVersionLine,
+  roleSkillsSummary,
   SHARED_SKILL_MARK,
 } from "./rolesCopy";
 import { SeatRowButton } from "./SeatRowButton";
@@ -99,15 +105,111 @@ function AgentChip({
   );
 }
 
-/** One role: what it has, who carries it, who is seated in it. */
+/**
+ * What running agents said they were on, for this role only.
+ *
+ * Three cases stay distinct and none is inferred from the other: no report
+ * at all, a report that named a version, and a report that named this role
+ * without a version (`sha: null`, which the line words as "version not
+ * reported"). At most five version lines are drawn — the rest are counted
+ * and left to Report history, so a busy project cannot grow this card
+ * without bound.
+ */
+function RoleReports({
+  slug,
+  summary,
+}: {
+  slug: string;
+  summary: RoleReportSummary | null;
+}) {
+  const versions = summary?.versions ?? [];
+  const shown = versions.slice(0, ROLE_REPORT_VERSION_LIMIT);
+  const hidden = versions.length - shown.length;
+  return (
+    <div
+      className="flex flex-col gap-1"
+      data-reports={summary === null || summary.total === 0 ? "none" : "some"}
+      data-testid={`role-reports-${slug}`}
+    >
+      <h4 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        {ROLE_REPORTS_TITLE}
+      </h4>
+      {summary === null || summary.total === 0 ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid={`role-reports-${slug}-empty`}
+        >
+          {ROLE_REPORTS_EMPTY}
+        </p>
+      ) : (
+        <>
+          <p className="text-xs text-foreground">
+            {roleReportSentence(summary)}
+          </p>
+          <ul className="flex flex-col gap-0.5">
+            {shown.map((version) => {
+              const line = roleReportVersionLine({
+                sha: version.sha,
+                relation: version.relation,
+                behind: version.behind,
+                ahead: version.ahead,
+                count: version.count,
+                latestAgeSeconds: version.latestAgeSeconds,
+                provenance: version.provenance,
+              });
+              return (
+                <li
+                  className="text-xs text-muted-foreground"
+                  data-relation={version.relation}
+                  data-testid="role-report-version"
+                  key={`${version.sha ?? "no-version"}:${version.relation}`}
+                  title={line.title}
+                >
+                  {line.text}
+                </li>
+              );
+            })}
+          </ul>
+          {hidden > 0 ? (
+            <p
+              className="text-2xs text-muted-foreground"
+              data-testid={`role-reports-${slug}-more`}
+            >
+              {roleReportsMoreText(hidden)}
+            </p>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One role: what it is for, which agents can take it, which version of its
+ * instructions is on this computer, and what running agents reported.
+ *
+ * The version facts are the card's own (`packRef`, `version`, `origin`,
+ * `refusal`) and the report facts are the ones the reports themselves named
+ * for this role — neither side fills in for the other, and a role with no
+ * instructions here says so in the same place the version would have been.
+ */
 export function RoleCard({
   role,
+  reports = null,
   onOpenSeat,
 }: {
   role: RoleRow;
+  reports?: RoleReportSummary | null;
   onOpenSeat?: (seat: SeatRow) => void;
 }) {
   const slug = role.role;
+  const available = roleAvailabilitySentence({
+    hasPack: role.hasPack,
+    version: role.version,
+    origin: role.origin,
+    packRef: role.packRef,
+    refusal: role.refusal,
+  });
   return (
     <article
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3"
@@ -124,34 +226,10 @@ export function RoleCard({
         >
           {slug}
         </span>
-        {role.origin ? (
-          <Badge
-            data-testid={`role-origin-${slug}`}
-            variant={role.origin === "shipped" ? "outline" : "secondary"}
-          >
-            {role.origin}
-          </Badge>
-        ) : null}
-        {role.version ? (
-          <span
-            className="text-2xs text-muted-foreground"
-            data-testid={`role-version-${slug}`}
-          >
-            v{role.version}
-          </span>
-        ) : null}
       </header>
-      {role.hasPack ? null : (
-        <p
-          className="text-xs text-muted-foreground"
-          data-testid={`role-nopack-${slug}`}
-        >
-          {ROLE_NO_PACK}
-        </p>
-      )}
       {role.description ? (
         <p
-          className="truncate text-xs text-foreground"
+          className="line-clamp-2 text-sm text-foreground"
           data-testid={`role-description-${slug}`}
           title={role.description}
         >
@@ -160,42 +238,25 @@ export function RoleCard({
       ) : null}
       {role.summary ? (
         <p
-          className="line-clamp-3 text-xs text-muted-foreground"
+          className="line-clamp-3 text-sm text-muted-foreground"
           data-testid={`role-summary-${slug}`}
         >
           {role.summary}
         </p>
       ) : null}
-      <CardSection
-        empty={ROLE_SKILLS_EMPTY}
-        isEmpty={role.skills.length === 0}
-        testId={`role-skills-${slug}`}
-        title={ROLE_SKILLS_TITLE}
+      <p
+        className={cn(
+          "text-xs",
+          available.availability === "available"
+            ? "text-foreground"
+            : "text-amber-600 dark:text-amber-400",
+        )}
+        data-availability={available.availability}
+        data-testid={`role-available-${slug}`}
+        title={available.title ?? undefined}
       >
-        <ul className="flex flex-col gap-0.5">
-          {role.skills.map((skill) => (
-            <li
-              className="text-xs"
-              data-testid="role-skill"
-              key={`${skill.name}:${skill.shared ? "shared" : "own"}`}
-            >
-              <span className="font-medium text-foreground">{skill.name}</span>
-              {skill.description ? (
-                <span className="text-muted-foreground">
-                  {" — "}
-                  {skill.description}
-                </span>
-              ) : null}
-              {skill.shared ? (
-                <span className="text-muted-foreground">
-                  {" "}
-                  {SHARED_SKILL_MARK}
-                </span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </CardSection>
+        {available.text}
+      </p>
       <CardSection
         empty={ROLE_AGENTS_EMPTY}
         isEmpty={role.agents.length === 0}
@@ -213,6 +274,7 @@ export function RoleCard({
           ))}
         </ul>
       </CardSection>
+      <RoleReports slug={slug} summary={reports} />
       <CardSection
         empty={ROLE_SEATS_EMPTY}
         isEmpty={role.seats.length === 0}
@@ -231,14 +293,45 @@ export function RoleCard({
           ))}
         </ul>
       </CardSection>
-      {role.refusal ? (
-        <p
-          className="text-xs text-amber-600 dark:text-amber-400"
-          data-testid={`role-refusal-${slug}`}
-        >
-          {role.refusal}
-        </p>
-      ) : null}
+      <details data-testid={`role-skills-${slug}`}>
+        <summary className="cursor-pointer text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+          {roleSkillsSummary(role.skills.length)}
+        </summary>
+        {role.skills.length === 0 ? (
+          <p
+            className="mt-1 text-xs text-muted-foreground"
+            data-testid={`role-skills-${slug}-empty`}
+          >
+            {ROLE_SKILLS_EMPTY}
+          </p>
+        ) : (
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {role.skills.map((skill) => (
+              <li
+                className="text-xs"
+                data-testid="role-skill"
+                key={`${skill.name}:${skill.shared ? "shared" : "own"}`}
+              >
+                <span className="font-medium text-foreground">
+                  {skill.name}
+                </span>
+                {skill.description ? (
+                  <span className="text-muted-foreground">
+                    {" — "}
+                    {skill.description}
+                  </span>
+                ) : null}
+                {skill.shared ? (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    {SHARED_SKILL_MARK}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </article>
   );
 }

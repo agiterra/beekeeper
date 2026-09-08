@@ -114,6 +114,13 @@ export type ReportedRolePackSnapshot = {
   provenanceReason: string | null;
   /** The founder pubkey the lifecycle chain resolved, or null when unbound. */
   founderPubkey: string | null;
+  /**
+   * The reporting session's own role slug (`session.role`), independent of
+   * `coordinate.role`. Populated even when `coordinate` is `null` — a report
+   * can name a role while carrying no complete version coordinate. Never
+   * derived from `label` or `coordinate`.
+   */
+  role: string | null;
 };
 
 export type RolePackSnapshots = {
@@ -386,6 +393,7 @@ export function buildRolePackSnapshots(input: {
           ? disposition.reason
           : provenanceFallbackReason,
         founderPubkey: disposition?.founderPubkey ?? null,
+        role: session.role ?? null,
       } satisfies ReportedRolePackSnapshot;
     })
     .sort(

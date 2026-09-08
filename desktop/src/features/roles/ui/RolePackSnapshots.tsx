@@ -13,9 +13,13 @@ import {
   provenanceLabelText,
   provenanceNotesSentence,
   reportedAgoText,
+  reportHistorySummary,
   revisionComparisonUnavailableSentence,
   revisionRelationText,
   ROLE_PACK_SNAPSHOTS_SUBTITLE,
+  ROLES_DIAGNOSTICS_CHECKS_TITLE,
+  ROLES_DIAGNOSTICS_SOURCE_TITLE,
+  ROLES_TECHNICAL_DETAILS_TITLE,
 } from "./rolesCopy";
 
 /** Amber for unproven, red for a contradiction, plain for a commissioned
@@ -30,6 +34,9 @@ function provenanceLabelClassName(state: RolePackProvenanceState): string {
       return "font-medium text-destructive";
   }
 }
+
+const GROUP_SUMMARY_CLASS =
+  "cursor-pointer text-xs font-medium text-foreground";
 
 function timestamp(value: number | null): string {
   return value === null
@@ -105,53 +112,34 @@ function CheckoutStatus({
   return null;
 }
 
-/**
- * Project-scoped local version facts beside visibly unverified channel metadata
- * claims. Open ingress proves a signature, not provider commissioning.
- */
-export function RolePackSnapshots({
+/** What the sessions shelf could and could not read, as it words it. */
+export type RolesShelfNotice = {
+  kind: string;
+  message: string;
+  detail?: string | null;
+};
+
+/** The coordinates, commits and rows this machine actually read. */
+function SourceGroup({
   snapshots,
   resolvedError,
   resolvedIsStale,
   revisionsError,
-  reports,
 }: {
   snapshots: RolePackSnapshotModel;
   resolvedError: string | null;
   resolvedIsStale: boolean;
   revisionsError: string | null;
-  reports: {
-    isLoading: boolean;
-    error: string | null;
-    authorityError: string | null;
-  };
 }) {
-  const [page, setPage] = React.useState(0);
-  const pageSize = 25;
-  const lastPage = Math.max(
-    0,
-    Math.ceil(snapshots.reported.length / pageSize) - 1,
-  );
-  const currentPage = Math.min(page, lastPage);
-  const visibleReports = snapshots.reported.slice(
-    currentPage * pageSize,
-    (currentPage + 1) * pageSize,
-  );
   return (
-    <section
-      className="flex flex-col gap-3 rounded-lg border border-border/70 p-3"
-      data-testid="role-pack-snapshots"
-    >
-      <div>
-        <h2 className="text-sm font-medium text-foreground">
-          Revision snapshots
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          {ROLE_PACK_SNAPSHOTS_SUBTITLE}
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-1" data-testid="role-pack-resolved">
+    <details data-testid="roles-diagnostics-source">
+      <summary className={GROUP_SUMMARY_CLASS}>
+        {ROLES_DIAGNOSTICS_SOURCE_TITLE}
+      </summary>
+      <div
+        className="mt-1 flex flex-col gap-1"
+        data-testid="role-pack-resolved"
+      >
         <h3 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
           Available here
         </h3>
@@ -209,19 +197,117 @@ export function RolePackSnapshots({
           </ul>
         )}
       </div>
+    </details>
+  );
+}
 
-      <div className="flex flex-col gap-1" data-testid="role-pack-reported">
-        <h3 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-          Reported revisions
-        </h3>
-        {snapshots.provenanceNotes.length > 0 ? (
-          <p
-            className="text-xs text-muted-foreground"
-            data-testid="role-pack-provenance-notes"
-          >
-            {provenanceNotesSentence(snapshots.provenanceNotes)}
-          </p>
+/** One reported row, unchanged in structure from the pre-disclosure list. */
+function ReportedRow({
+  snapshot,
+}: {
+  snapshot: RolePackSnapshotModel["reported"][number];
+}) {
+  return (
+    <li
+      className="flex flex-col gap-1 text-xs"
+      data-provenance={snapshot.provenance}
+      data-relation={snapshot.relation}
+      data-testid="role-pack-reported-row"
+    >
+      <p>
+        <span className={provenanceLabelClassName(snapshot.provenance)}>
+          {provenanceLabelText(snapshot.provenance, snapshot.provenanceReason)}
+        </span>
+        {" from "}
+        <span
+          className="font-mono text-muted-foreground"
+          title={snapshot.claimedByPubkey ?? "Metadata signer unavailable"}
+        >
+          {snapshot.claimedByPubkey
+            ? truncatePubkey(snapshot.claimedByPubkey)
+            : "unknown signer"}
+        </span>
+        {" · "}
+        <span className="font-medium text-foreground">{snapshot.label}</span>
+        {" · "}
+        {snapshot.coordinate ? (
+          <span className="font-mono text-muted-foreground">
+            {snapshot.coordinate.role} {versionSummary(snapshot.coordinate)}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">{snapshot.reason}</span>
+        )}
+        {" · "}
+        <span className="text-muted-foreground">
+          {revisionRelationText(
+            snapshot.relation,
+            snapshot.behind,
+            snapshot.ahead,
+          )}
+        </span>
+        {snapshot.note ? (
+          <>
+            {" · "}
+            <span className="text-muted-foreground">{snapshot.note}</span>
+          </>
         ) : null}
+        {" · "}
+        <span className="text-muted-foreground">
+          {reportedAgoText(snapshot.ageSeconds)}
+        </span>
+        {" · "}
+        <span className="text-muted-foreground">{snapshot.status}</span>
+        {snapshot.adoption === "keeps-until-next-generation" ? (
+          <>
+            {" · "}
+            <span className="text-muted-foreground">
+              {ADOPTION_KEEPS_UNTIL_NEXT_GENERATION}
+            </span>
+          </>
+        ) : null}
+      </p>
+      {snapshot.coordinate ? (
+        <VersionDetails
+          coordinate={snapshot.coordinate}
+          generationId={snapshot.generationId}
+        />
+      ) : null}
+    </li>
+  );
+}
+
+/** Every report this project's channels carried, 25 rows at a time. */
+function HistoryGroup({
+  snapshots,
+  reports,
+}: {
+  snapshots: RolePackSnapshotModel;
+  reports: {
+    isLoading: boolean;
+    error: string | null;
+    authorityError: string | null;
+  };
+}) {
+  const [page, setPage] = React.useState(0);
+  const pageSize = 25;
+  const lastPage = Math.max(
+    0,
+    Math.ceil(snapshots.reported.length / pageSize) - 1,
+  );
+  const currentPage = Math.min(page, lastPage);
+  const visibleReports = snapshots.reported.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize,
+  );
+  return (
+    <details data-testid="roles-diagnostics-history">
+      <summary className={GROUP_SUMMARY_CLASS}>
+        {reportHistorySummary(snapshots.reported.length)}
+      </summary>
+      <div
+        className="mt-1 flex flex-col gap-1"
+        data-testid="role-pack-reported"
+      >
         {reports.authorityError ? (
           <p
             className="text-xs text-amber-600 dark:text-amber-400"
@@ -255,88 +341,10 @@ export function RolePackSnapshots({
         ) : (
           <ul className="flex flex-col gap-2">
             {visibleReports.map((snapshot) => (
-              <li
-                className="flex flex-col gap-1 text-xs"
-                data-provenance={snapshot.provenance}
-                data-relation={snapshot.relation}
-                data-testid="role-pack-reported-row"
+              <ReportedRow
                 key={`${snapshot.channelId}:${snapshot.generationId}`}
-              >
-                <p>
-                  <span
-                    className={provenanceLabelClassName(snapshot.provenance)}
-                  >
-                    {provenanceLabelText(
-                      snapshot.provenance,
-                      snapshot.provenanceReason,
-                    )}
-                  </span>
-                  {" from "}
-                  <span
-                    className="font-mono text-muted-foreground"
-                    title={
-                      snapshot.claimedByPubkey ?? "Metadata signer unavailable"
-                    }
-                  >
-                    {snapshot.claimedByPubkey
-                      ? truncatePubkey(snapshot.claimedByPubkey)
-                      : "unknown signer"}
-                  </span>
-                  {" · "}
-                  <span className="font-medium text-foreground">
-                    {snapshot.label}
-                  </span>
-                  {" · "}
-                  {snapshot.coordinate ? (
-                    <span className="font-mono text-muted-foreground">
-                      {snapshot.coordinate.role}{" "}
-                      {versionSummary(snapshot.coordinate)}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      {snapshot.reason}
-                    </span>
-                  )}
-                  {" · "}
-                  <span className="text-muted-foreground">
-                    {revisionRelationText(
-                      snapshot.relation,
-                      snapshot.behind,
-                      snapshot.ahead,
-                    )}
-                  </span>
-                  {snapshot.note ? (
-                    <>
-                      {" · "}
-                      <span className="text-muted-foreground">
-                        {snapshot.note}
-                      </span>
-                    </>
-                  ) : null}
-                  {" · "}
-                  <span className="text-muted-foreground">
-                    {reportedAgoText(snapshot.ageSeconds)}
-                  </span>
-                  {" · "}
-                  <span className="text-muted-foreground">
-                    {snapshot.status}
-                  </span>
-                  {snapshot.adoption === "keeps-until-next-generation" ? (
-                    <>
-                      {" · "}
-                      <span className="text-muted-foreground">
-                        {ADOPTION_KEEPS_UNTIL_NEXT_GENERATION}
-                      </span>
-                    </>
-                  ) : null}
-                </p>
-                {snapshot.coordinate ? (
-                  <VersionDetails
-                    coordinate={snapshot.coordinate}
-                    generationId={snapshot.generationId}
-                  />
-                ) : null}
-              </li>
+                snapshot={snapshot}
+              />
             ))}
           </ul>
         )}
@@ -370,6 +378,99 @@ export function RolePackSnapshots({
           </nav>
         ) : null}
       </div>
+    </details>
+  );
+}
+
+/** What Beekeeper checked about the reports, and what it could not read. */
+function ChecksGroup({
+  snapshots,
+  shelfNotice,
+}: {
+  snapshots: RolePackSnapshotModel;
+  shelfNotice: RolesShelfNotice | null;
+}) {
+  return (
+    <details data-testid="roles-diagnostics-checks">
+      <summary className={GROUP_SUMMARY_CLASS}>
+        {ROLES_DIAGNOSTICS_CHECKS_TITLE}
+      </summary>
+      <div className="mt-1 flex flex-col gap-1">
+        <p className="text-xs text-muted-foreground">
+          {ROLE_PACK_SNAPSHOTS_SUBTITLE}
+        </p>
+        {snapshots.provenanceNotes.length > 0 ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="role-pack-provenance-notes"
+          >
+            {provenanceNotesSentence(snapshots.provenanceNotes)}
+          </p>
+        ) : null}
+        {shelfNotice ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-shelf-state={shelfNotice.kind}
+            data-testid="roles-shelf-notice"
+          >
+            {shelfNotice.message}
+            {shelfNotice.detail ? ` — ${shelfNotice.detail}` : null}
+          </p>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Technical details: the coordinates, commits, reports and limitations
+ * behind the sentences on the cards above.
+ *
+ * Everything here is collapsed by default and keyboard-operable natively
+ * (`<details>`/`<summary>`), because none of it is what a reader opening the
+ * tab is asking. Nothing is softened on the way in: the rows, ids and the
+ * 25-row pagination are the same ones the flat section carried, and the
+ * protocol's own long labels stay verbatim.
+ */
+export function RolePackSnapshots({
+  snapshots,
+  resolvedError,
+  resolvedIsStale,
+  revisionsError,
+  reports,
+  shelfNotice = null,
+}: {
+  snapshots: RolePackSnapshotModel;
+  resolvedError: string | null;
+  resolvedIsStale: boolean;
+  revisionsError: string | null;
+  reports: {
+    isLoading: boolean;
+    error: string | null;
+    authorityError: string | null;
+  };
+  shelfNotice?: RolesShelfNotice | null;
+}) {
+  return (
+    <section
+      className="flex flex-col gap-3 rounded-lg border border-border/70 p-3"
+      data-testid="role-pack-snapshots"
+    >
+      <details data-testid="roles-technical-details">
+        <summary className="cursor-pointer text-sm font-medium text-foreground">
+          {ROLES_TECHNICAL_DETAILS_TITLE}
+        </summary>
+        <div className="mt-2 flex flex-col gap-3">
+          <SourceGroup
+            resolvedError={resolvedError}
+            resolvedIsStale={resolvedIsStale}
+            revisionsError={revisionsError}
+            snapshots={snapshots}
+          />
+          <HistoryGroup reports={reports} snapshots={snapshots} />
+          <ChecksGroup shelfNotice={shelfNotice} snapshots={snapshots} />
+        </div>
+      </details>
     </section>
   );
 }
