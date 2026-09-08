@@ -34,7 +34,7 @@ struct WebhookCiFixture {
 async fn fixture(request_host: Option<String>) -> WebhookCiFixture {
     let mut state = bridge_handler_test_state()
         .await
-        .expect("local Postgres and Redis must be reachable");
+        .expect("configured Postgres, Redis and bridge test state must initialize");
     let owner = nostr::Keys::generate();
     let owner_hex = owner.public_key().to_hex();
     let bound_tcp = request_host.is_some();

@@ -4017,20 +4017,19 @@ mod tests {
     ///   OpenRelay without a DB lookup.
     /// - `nip98_replay` replaced with an always-fresh guard → no Redis needed
     ///   for replay detection.
-    /// - Redis pool points at the local dev instance for the admission check.
-    ///
-    /// Returns `None` when local Postgres is not reachable.
+    /// Uses configured test Postgres and Redis; returns `None` if setup fails.
     async fn bridge_handler_test_state() -> Option<Arc<crate::state::AppState>> {
         let mut config = crate::config::Config::from_env().ok()?;
-        config.database_url = TEST_DB_URL.to_string();
-        // Use the real local Redis so enforce_http_admission can pass.
+        config.database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| TEST_DB_URL.to_string());
         config.redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         config.relay_url = "wss://bridge-test.local".to_string();
         config.require_auth_token = false;
         config.require_relay_membership = false;
 
-        let pool = sqlx::PgPool::connect(TEST_DB_URL).await.ok()?;
+        let pool = sqlx::PgPool::connect(&config.database_url).await.ok()?;
         let db = buzz_db::Db::from_pool(pool.clone());
         let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))

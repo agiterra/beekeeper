@@ -5,6 +5,34 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 CI 140 — bridge test database configuration
+
+Brian's downloaded Rust log identifies three failures in the final relay
+`ci_result` integration command: all fail at `bridge_ci_result_tests.rs:37`,
+before feature assertions. Earlier workspace tests, 12 infrastructure-backed
+relay cases, three database CI-result cases, and the CLI build passed.
+The shared `bridge_handler_test_state` forcibly selected local Postgres instead
+of the CI-provided `postgres` hostname. Three serial connection timeouts consumed
+90.69 seconds. Source log: `../review-2026-09-08-ci140/pipeline-140-rust.log`.
+
+The helper now resolves `BUZZ_TEST_DATABASE_URL`, then `DATABASE_URL`, then its
+existing local fallback, and connects the pool to that resolved URL. This also
+repairs local isolation: `just test-ci-completion` supplied a scratch database
+which this helper previously ignored. Redis already honored `REDIS_URL`. The
+CI fixture's error wording now describes configured infrastructure. No runtime
+relay behavior or permission rule changes. Independent review agrees with the
+cause and minimal correction. `just test-ci-completion` passed with a throwaway
+Postgres database and Redis DB 13: **3/3 database cases and 6/6 relay cases**,
+including the three CI failures, real webhook publication, and live/stored `bee`
+subscription. The relay cases finished in 1.74 seconds. Formatting and the
+repository file-size gate pass. Logs: `../review-2026-09-08-ci140/`, especially
+`ci140-fix-acceptance.log`. This is a local test-setup fix; CI 140 itself remains
+failed until a new source push and run. No push or production deployment made.
+The root `.env` currently points at the shared `buzz` database (the earlier
+September 6 scratch-environment note is historical). The targeted recipe creates
+and drops its own scratch database; a future whole `just test` run must first
+establish an isolated environment because `run-tests.sh` loads `.env`.
+
 ## September 8 Andy mobile integration — local candidate
 
 Both remotes were fetched and agree on `9eb64eecf0d67fe43f95b708775f685f4b76c070`.
@@ -39,8 +67,7 @@ and `andy-integration-browser-final.log`.
 
 Remote CI reports failure for this main at Woodpecker pipeline 140, context
 `ci/woodpecker/push/gate`: https://ci.agiterra.org/repos/2/pipeline/140/1.
-Its detailed API returns 401; no authorized log-reading path was available in
-this environment. The failing step is unknown. Local passing client tests do not
+Brian supplied the full Rust log; the failing step is now diagnosed below. Local passing client tests do not
 establish a green repository-wide gate. No push, production deployment, native
 rebuild or installed-app replacement was performed; the installed Mac remains
 `497943d3`. Windows and phone runtime acceptance remain unverified.
