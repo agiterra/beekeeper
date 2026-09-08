@@ -1,0 +1,386 @@
+//! Reopen a generation this provider already owns, in place, or refuse.
+//!
+//! # The problem
+//!
+//! [`Provider::recover`](crate::Provider::recover) detaches every open
+//! execution: a restarted provider has no process behind any session it was
+//! running, so each open generation is published `disconnected` and its
+//! in-flight turn is closed. The durable record survives, but nothing reopens
+//! it — the only re-open path is the explicit `session.resume` lifecycle
+//! command, and that deliberately mints `generation + 1`, resets the sequence
+//! and lease counters, and needs its own one-shot seat entry keyed by the
+//! resume command.
+//!
+//! That is the right answer for an operator asking to reconnect. It is the
+//! wrong answer for a promise the provider already made. A CI continuation
+//! registered before the restart is owed **one** turn against the **exact**
+//! target it named; delivering it into generation N+1 would answer a different
+//! target than the one the sender is watching, and delivering it into a fresh
+//! `session/new` conversation would hand the agent a prompt about work it has
+//! no memory of while the metadata still says the generation continued.
+//!
+//! # What this does instead
+//!
+//! [`Provider::restore_generation`] reopens the **current** generation:
+//! same generation number, same `generation_command_id`, same seated identity,
+//! same transcript sequence, same lease sequence, same open-turn state. The
+//! ACP session is reattached natively (`session/resume`, else `session/load`)
+//! and the open is *strict* — [`crate::session::CreateRequest::strict_native`]
+//! — so an adapter that cannot reattach produces a named refusal rather than a
+//! new conversation.
+//!
+//! # Preconditions, in order, each a named obstacle
+//!
+//! 1. This provider holds an open (not closed) record for the session.
+//! 2. It has no live handle for it ([`RestoreObstacle::AlreadyLive`]).
+//! 3. The record holds a native session cursor
+//!    ([`RestoreObstacle::NoResumeCursor`]).
+//! 4. The generation's runtime is still installed
+//!    ([`RestoreObstacle::ProviderUnavailable`]).
+//! 5. For a **seated** record, the actor-seats file holds an entry under the
+//!    generation's command id whose pubkey is the record's actor
+//!    ([`RestoreObstacle::ActorUnavailable`]).
+//! 6. The adapter offers a native reattachment and accepts this cursor
+//!    ([`RestoreObstacle::Unsupported`], [`RestoreObstacle::Rejected`]).
+//!
+//! Five and six are in the opposite order from a naive reading of the spec's
+//! list, and necessarily so: an adapter's capabilities are only knowable by
+//! spawning it, and a seated generation's adapter cannot be spawned without
+//! the seat's key material. So a seated generation with no custody defers on
+//! `ACTOR_UNAVAILABLE` without ever asking the adapter anything — which is
+//! also the better answer, because that obstacle is the retryable one.
+//!
+//! # What a failure must not leave behind
+//!
+//! Nothing. No session record is written, no generation is advanced, no
+//! metadata or receipt claims an execution that does not exist, and the
+//! adapter child (if one was spawned at all) is shut down by
+//! [`crate::session::SessionManager::start`]'s own error path. The caller
+//! turns the obstacle into either a bounded retry (`ACTOR_UNAVAILABLE`, whose
+//! custody may still be re-staged before the registration expires) or a
+//! durable, visible refusal.
+
+use buzz_acp::relay::HarnessRelay;
+
+use crate::actor_seats::ActorSeatsFile;
+use crate::payload::{self, ACTOR_UNAVAILABLE, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED};
+use crate::session::{self, CreateRequest, SessionManager};
+use crate::{seat_skills, Priority, Provider, SessionStatus};
+
+/// The record names no native session cursor, so there is nothing to reattach
+/// to and the only way to obtain a process would be a new conversation.
+///
+/// Provider-local, like [`crate::ci_continuation::LOST_AFTER_CLAIM`]: it
+/// describes a fact about *this* host's stored state, not a rule the wire
+/// protocol has an opinion about, so `buzz-core` is left alone.
+pub const NO_RESUME_CURSOR: &str = "NO_RESUME_CURSOR";
+
+/// The adapter behind this generation advertises neither `session/resume` nor
+/// `session/load`, so no build of it can reopen the conversation.
+///
+/// Distinct from [`NATIVE_RESTORE_REJECTED`] on purpose: "this runtime has no
+/// such feature" and "this runtime has the feature and refused this session"
+/// lead to different remedies, and collapsing them would tell an operator to
+/// go looking for a session the adapter never claimed to have lost.
+pub const NATIVE_RESTORE_UNSUPPORTED: &str = "NATIVE_RESTORE_UNSUPPORTED";
+
+/// The adapter offered a native reattachment and refused this cursor.
+///
+/// The strict open's whole purpose: without it this case silently became
+/// `session/new`, and the generation carried on with a conversation that had
+/// none of its history behind it.
+pub const NATIVE_RESTORE_REJECTED: &str = "NATIVE_RESTORE_REJECTED";
+
+/// Why a generation could not be reopened in place.
+///
+/// Named rather than stringly-typed because the caller's decision turns on
+/// exactly one distinction: [`Self::ActorUnavailable`] is the obstacle whose
+/// remedy can still arrive (the desktop re-stages custody after a restart, and
+/// that may land after the first attempt), so it defers; every other obstacle
+/// is settled and refuses durably.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RestoreObstacle {
+    /// No stored ACP cursor, so no conversation can be named.
+    NoResumeCursor,
+    /// No open record, or the generation's runtime is not installed here.
+    ProviderUnavailable,
+    /// The adapter advertises no native reattachment at all.
+    Unsupported,
+    /// The adapter rejected the reattachment, with its own account of why.
+    Rejected(String),
+    /// A seated generation whose seat has not been re-staged on this host.
+    ActorUnavailable,
+    /// The generation already has a live process; there is nothing to restore.
+    AlreadyLive,
+}
+
+impl RestoreObstacle {
+    /// The receipt error code this obstacle publishes as.
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::NoResumeCursor => NO_RESUME_CURSOR,
+            Self::ProviderUnavailable => PROVIDER_UNAVAILABLE,
+            Self::Unsupported => NATIVE_RESTORE_UNSUPPORTED,
+            Self::Rejected(_) => NATIVE_RESTORE_REJECTED,
+            Self::ActorUnavailable => ACTOR_UNAVAILABLE,
+            Self::AlreadyLive => SESSION_ALREADY_ATTACHED,
+        }
+    }
+
+    /// The operator-facing sentence this obstacle publishes with.
+    ///
+    /// Every one of these says what was refused *and* states that nothing was
+    /// created in its place, because the failure this whole module exists to
+    /// prevent is a silent new conversation.
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::NoResumeCursor => "this execution has no saved native session cursor, so its \
+                                     generation could not be reopened; no new conversation was \
+                                     started"
+                .to_owned(),
+            Self::ProviderUnavailable => "this execution's runtime is no longer installed on the \
+                                          host that owns it, so its generation could not be \
+                                          reopened"
+                .to_owned(),
+            Self::Unsupported => "this execution's runtime advertises neither session resume nor \
+                                  session load, so its generation could not be reopened; no new \
+                                  conversation was started"
+                .to_owned(),
+            Self::Rejected(detail) => format!(
+                "this execution's runtime refused to reopen its generation ({detail}); no new \
+                 conversation was started"
+            ),
+            Self::ActorUnavailable => "no key material was staged for this execution's agent seat \
+                                       before the registration expired, so its generation could \
+                                       not be reopened as that agent"
+                .to_owned(),
+            Self::AlreadyLive => {
+                "this execution already has a live process on this provider".to_owned()
+            }
+        }
+    }
+}
+
+impl Provider {
+    /// Reopen the current generation of `session_id` in place, or name the
+    /// obstacle that stopped it.
+    ///
+    /// `Ok(Ok(()))` means the generation now has a live adapter attached to
+    /// the same ACP conversation it had before, and a
+    /// `session_restored_native` transcript row says so. `Ok(Err(obstacle))`
+    /// means nothing was created and nothing was changed. `Err` is reserved
+    /// for a durable write that failed after the adapter was already
+    /// attached — the caller cannot proceed, and the actor is shut down before
+    /// the error is returned so the provider does not hold a process it has no
+    /// record of.
+    ///
+    /// Deliberately not called at boot: reopening every idle session would
+    /// spawn one adapter per record for conversations nobody is waiting on.
+    /// The trigger is a promise coming due — today, a CI continuation whose
+    /// target has no live handle (`crate::ci_continuation`).
+    pub(crate) async fn restore_generation(
+        &mut self,
+        session_id: &str,
+        relay: Option<&HarnessRelay>,
+    ) -> anyhow::Result<Result<(), RestoreObstacle>> {
+        // 1. An open record. The delivery path checks this too, so reaching
+        //    here without one means the record vanished between the two; the
+        //    honest reading is that this host can no longer serve the target.
+        let Some(record) = self.state.session(session_id).cloned() else {
+            return Ok(Err(RestoreObstacle::ProviderUnavailable));
+        };
+        if record.closed {
+            return Ok(Err(RestoreObstacle::ProviderUnavailable));
+        }
+        // 2. No live process.
+        if self
+            .sessions
+            .handle(session_id)
+            .is_some_and(session::SessionHandle::is_live)
+        {
+            return Ok(Err(RestoreObstacle::AlreadyLive));
+        }
+        // 3. A cursor to reattach to.
+        let Some(resume_cursor) = record.resume_cursor.clone() else {
+            return Ok(Err(RestoreObstacle::NoResumeCursor));
+        };
+        // 4. A runtime to reattach with.
+        let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
+            return Ok(Err(RestoreObstacle::ProviderUnavailable));
+        };
+
+        // The *current* target: this reopens a generation, it does not mint
+        // one. Everything a consumer already has bound to this session — the
+        // 44223 it is rendering, the lease semantic key, the operation fence —
+        // keeps naming the same thing.
+        let target = self.target_for(&record);
+        // 5. Custody, under the command id that minted *this* generation. A
+        //    record from before generation commands were persisted had its
+        //    generation minted by the create.
+        let seat_command_id = record
+            .generation_command_id
+            .clone()
+            .unwrap_or_else(|| record.command_id.clone());
+        let (seat_identity, post_fence_env, seat_skills) = match record.actor.as_deref() {
+            // A human execution holds no seat and needs none: it restores with
+            // the cursor alone, exactly as it ran.
+            None => (None, Vec::new(), None),
+            Some(actor) => {
+                let seats = ActorSeatsFile::load(self.config.actor_seats_file.as_deref());
+                match seats.seat(&seat_command_id) {
+                    // An entry naming a different pubkey is not this seat's
+                    // custody. Refusing rather than substituting is the same
+                    // rule the create and resume paths hold.
+                    Some(seat) if seat.pubkey == actor => (
+                        Some(session::SeatIdentity {
+                            actor_pubkey: seat.pubkey.clone(),
+                            role: record.role.clone().unwrap_or_default(),
+                            relay_url: seat.relay_url.clone(),
+                        }),
+                        seat.post_fence_env_with_bee(
+                            record.role.as_deref(),
+                            record.project_ref.as_deref(),
+                            crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
+                            std::env::var_os("PATH").as_ref(),
+                        ),
+                        seat_skills(seat),
+                    ),
+                    _ => {
+                        tracing::info!(
+                            target: "csp::restore",
+                            %session_id,
+                            command_id = %seat_command_id,
+                            "no seat custody is staged for this generation yet; the restore \
+                             defers rather than reopening it without the agent's identity"
+                        );
+                        return Ok(Err(RestoreObstacle::ActorUnavailable));
+                    }
+                }
+            }
+        };
+
+        let outbox_before = self.outbox.pending_keys();
+        let request = CreateRequest {
+            media: self.media.clone(),
+            target: target.clone(),
+            channel_id: record.channel_id,
+            cwd: record.cwd.clone(),
+            title: record.title.clone(),
+            model: record.model.clone(),
+            resume_cursor: Some(resume_cursor),
+            // A native reattachment carries its own history. Building a
+            // verified-context package for it would spend the work and then
+            // brief the agent about a past it already remembers.
+            rehydration_mcp: None,
+            strict_native: true,
+            agent_command: descriptor.agent_command.clone(),
+            agent_args: descriptor.agent_args.clone(),
+            agent_env: descriptor
+                .cli_env
+                .iter()
+                .map(|env| (env.name.clone(), env.value.clone()))
+                .collect(),
+            seat: seat_identity,
+            post_fence_env,
+            seat_skills,
+            idle_timeout: self.config.idle_timeout,
+            answer_stall_timeout: self.config.answer_stall_timeout,
+            emit_raw_sdk_frames: self.config.emit_raw_sdk_frames,
+            max_turn_duration: self.config.max_turn_duration,
+            idle_shutdown: self.config.session_idle_shutdown,
+            include_thoughts: self.config.include_thoughts,
+        };
+        let events = self.sessions.event_sender();
+        let startup_future = SessionManager::start(request, events);
+        let started = self
+            .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
+            .await;
+        // One-shot, exactly as the create and resume paths treat it: the entry
+        // has been read and handed to a spawn, so it is spent whether or not
+        // that spawn opened anything. Leaving it would keep a usable key on
+        // disk for a generation that will be answered terminally.
+        if record.actor.is_some() {
+            self.forget_actor_seat(&seat_command_id);
+        }
+        // 6. What the adapter answered.
+        let started = match started {
+            Ok(started) => started,
+            Err(failure) => {
+                let obstacle = match failure.code {
+                    NATIVE_RESTORE_UNSUPPORTED => RestoreObstacle::Unsupported,
+                    NATIVE_RESTORE_REJECTED => RestoreObstacle::Rejected(failure.message),
+                    NO_RESUME_CURSOR => RestoreObstacle::NoResumeCursor,
+                    // Spawn, `initialize` and authentication failures all mean
+                    // the same thing here: no process, nothing created.
+                    _ => RestoreObstacle::ProviderUnavailable,
+                };
+                tracing::info!(
+                    target: "csp::restore",
+                    %session_id,
+                    code = %obstacle.code(),
+                    "a generation could not be reopened in place"
+                );
+                return Ok(Err(obstacle));
+            }
+        };
+        let startup = self.sessions.attach(started);
+        // Per-process capabilities, re-witnessed: this is a different adapter
+        // process than the one that opened the generation, and two builds of
+        // one adapter can legitimately disagree.
+        self.steering
+            .insert(record.session_id.clone(), startup.steering_supported);
+        self.prompt_image
+            .insert(record.session_id.clone(), startup.prompt_image_supported);
+
+        // The one write a restore is allowed to make, and the two fields it
+        // may touch. `generation`, `generation_command_id`, `next_seq`,
+        // `next_lease_sequence` and `open_turn` are deliberately absent: they
+        // describe the generation, and this reopened it rather than replacing
+        // it. `pack_ref` is absent too — no pack was re-resolved here, and
+        // restating one would claim a staging decision nobody made.
+        if let Err(error) = self.state.update_session(&record.session_id, |stored| {
+            if stored.resume_cursor.as_deref() != Some(startup.acp_session_id.as_str()) {
+                stored.resume_cursor = Some(startup.acp_session_id.clone());
+            }
+            if startup.model.is_some() {
+                stored.model = startup.model.clone();
+            }
+        }) {
+            // Never hold a live adapter the durable record does not describe.
+            self.sessions.shutdown(&record.session_id);
+            return Err(error.into());
+        }
+
+        // No lifecycle receipt: no command was issued. A transcript row is the
+        // right surface — somebody watching this session's timeline needs to
+        // know a gap in it was a restart, not the agent going quiet.
+        self.enqueue_transcript(
+            record.channel_id,
+            &target,
+            None,
+            payload::status_item(SESSION_RESTORED_NATIVE),
+            Priority::High,
+        )?;
+        self.publish_metadata(record.channel_id, &target, SessionStatus::Idle)?;
+        // Same handshake the resume path uses: the live lease is queued by the
+        // runtime tick once the facts this open enqueued have been published,
+        // so a consumer never sees `live` before the row that explains it.
+        self.record_first_lease_prerequisites(&target, &outbox_before);
+        tracing::info!(
+            target: "csp::restore",
+            session_id = %record.session_id,
+            generation = record.generation,
+            seated = record.actor.is_some(),
+            "generation reopened in place"
+        );
+        Ok(Ok(()))
+    }
+}
+
+/// Transcript status published when a generation is reopened in place.
+///
+/// Deliberately its own word rather than reusing `session_resumed`: that one
+/// answers a `session.resume` command and comes with a new generation, and a
+/// reader who saw it here would look for a lifecycle receipt and a generation
+/// bump that never happened.
+pub(crate) const SESSION_RESTORED_NATIVE: &str = "session_restored_native";

@@ -179,6 +179,23 @@ pub struct CreateRequest {
     /// Previously persisted ACP session id to reattach, or `None` for a fresh
     /// provider session. This value is host-private.
     pub resume_cursor: Option<String>,
+    /// Refuse this open rather than fall back to `session/new`.
+    ///
+    /// `false` for every ordinary create and resume, and their behaviour is
+    /// byte-for-byte what it was: the open helper tries `session/resume`, then
+    /// `session/load`, then starts a fresh conversation and says so through
+    /// [`SessionContinuity::RestartedWithoutContext`].
+    ///
+    /// `true` only for [`crate::native_restore`], where a fresh conversation
+    /// is the one outcome that must not happen. A restore reopens a generation
+    /// that already exists — same generation number, same seated identity,
+    /// same transcript — and an open that silently became `session/new` would
+    /// leave that generation's 44223 describing a conversation the agent has
+    /// no memory of. So the fallback is replaced by a named failure
+    /// ([`crate::native_restore::NATIVE_RESTORE_UNSUPPORTED`],
+    /// [`crate::native_restore::NATIVE_RESTORE_REJECTED`],
+    /// [`crate::native_restore::NO_RESUME_CURSOR`]) and nothing is created.
+    pub strict_native: bool,
     /// Private verified-history MCP for this execution, or `None` for no
     /// rehydrated context.
     pub rehydration_mcp: Option<RehydrationMcpDescriptor>,
@@ -240,6 +257,7 @@ impl std::fmt::Debug for CreateRequest {
             .field("title", &self.title)
             .field("model", &self.model)
             .field("has_resume_cursor", &self.resume_cursor.is_some())
+            .field("strict_native", &self.strict_native)
             .field("has_rehydration_mcp", &self.rehydration_mcp.is_some())
             .field("seat", &self.seat)
             .field("has_post_fence_env", &!self.post_fence_env.is_empty())
@@ -1227,7 +1245,15 @@ async fn start_agent(
     let opened = match opened {
         Ok(opened) => opened,
         Err(error) => {
-            let failure = classify_startup_error(&error, "open an agent session");
+            // A strict-restore refusal already names its own code; only an
+            // adapter error is classified. Both shut the child down — a
+            // refused restore must leave no process behind either.
+            let failure = match error {
+                OpenFailure::Adapter(error) => {
+                    classify_startup_error(&error, "open an agent session")
+                }
+                OpenFailure::Strict(failure) => failure,
+            };
             log_agent_stderr(&client, &request.target.session_id, "open an agent session");
             client.shutdown().await;
             return Err(failure);
@@ -1400,12 +1426,35 @@ fn seat_role_briefing(role: &str, pack: &SeatRoleBriefing) -> String {
     text
 }
 
+/// Why one [`open_agent_session`] did not produce a session.
+///
+/// Two arms because the two failures answer different questions. An
+/// [`Self::Adapter`] error is the adapter misbehaving and is classified the
+/// way every other startup error is ([`classify_startup_error`]). A
+/// [`Self::Strict`] failure is this provider *refusing* an open that would
+/// otherwise have succeeded as a new conversation, and it already carries the
+/// exact receipt code the caller must publish — classifying it would erase the
+/// distinction between "the adapter is broken" and "this generation cannot be
+/// restored in place".
+enum OpenFailure {
+    /// The adapter failed a call.
+    Adapter(AcpError),
+    /// A strict native restore had no native path to take.
+    Strict(CreateFailure),
+}
+
+impl From<AcpError> for OpenFailure {
+    fn from(error: AcpError) -> Self {
+        Self::Adapter(error)
+    }
+}
+
 async fn open_agent_session(
     client: &mut AcpClient,
     request: &CreateRequest,
     cwd: &str,
     seat_role: Option<&SeatRoleBriefing>,
-) -> Result<OpenedSession, AcpError> {
+) -> Result<OpenedSession, OpenFailure> {
     let mcp_servers = rehydration_mcp_servers(request)?;
     let attached = request.rehydration_mcp.as_ref();
     // "Rehydrated" is a claim about prior work, not about tooling: an
@@ -1441,6 +1490,17 @@ async fn open_agent_session(
     // the briefing from the open that created it.
     let pending_briefing = system_prompt.is_none().then(|| briefing.clone());
     let Some(cursor) = request.resume_cursor.as_deref() else {
+        // A strict restore has nothing to reattach *to*. Saying so before the
+        // adapter is asked anything keeps the refusal honest: this is a fact
+        // about this provider's own record, not about the adapter.
+        if request.strict_native {
+            return Err(OpenFailure::Strict(CreateFailure {
+                code: crate::native_restore::NO_RESUME_CURSOR,
+                message: "this execution has no saved native session cursor, so its generation \
+                          cannot be reopened without starting a new conversation"
+                    .to_owned(),
+            }));
+        }
         let response = client
             .session_new_full(cwd, mcp_servers, system_prompt, request.title.as_deref())
             .await?;
@@ -1503,6 +1563,26 @@ async fn open_agent_session(
                 };
             }
         }
+    }
+
+    // The whole difference strict mode makes, and the only one: the fallback
+    // below would open a *new* conversation for a generation that already has
+    // one. A restore refuses instead, naming which of the two facts stopped it
+    // — the adapter never offered a native reattachment, or it offered one and
+    // rejected this cursor.
+    if request.strict_native {
+        let unsupported = !client.session_resume_supported() && !client.session_load_supported();
+        return Err(OpenFailure::Strict(CreateFailure {
+            code: if unsupported {
+                crate::native_restore::NATIVE_RESTORE_UNSUPPORTED
+            } else {
+                crate::native_restore::NATIVE_RESTORE_REJECTED
+            },
+            message: format!(
+                "this generation could not be reopened in place ({fallback_reason}); no new \
+                 conversation was started"
+            ),
+        }));
     }
 
     let response = client
@@ -2492,6 +2572,98 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// An adapter that can reattach: it advertises `loadSession`, answers
+    /// `session/load` for any cursor, serves prompts, and — deliberately —
+    /// would happily answer `session/new` too.
+    ///
+    /// That last part is the point. A strict native restore must be proven by
+    /// the *absence* of `session/new`, and an agent that could not answer it
+    /// would prove nothing: the open would fail either way. This one records
+    /// every method it receives to `method_log`, so a test can assert on what
+    /// the provider actually asked for rather than on what it appears to ask
+    /// for. `session/new` returns a visibly different session id, so a record
+    /// that fell through would be caught by its cursor as well as by the log.
+    ///
+    /// The path is baked into the script for the same reason
+    /// [`env_dumping_agent`]'s is: the child's environment is fenced, so an
+    /// environment variable is not a channel a test can rely on.
+    pub(crate) fn restorable_agent(method_log: &str) -> String {
+        format!(
+            r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  printf '%s\n' "$line" | sed -n 's/.*"method":"\([a-z/_]*\)".*/\1/p' >> "{method_log}"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2,"agentCapabilities":{{"loadSession":true}}}}}}\n' "$id" ;;
+    *'"method":"session/load"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"a-brand-new-conversation"}}}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"stopReason":"end_turn"}}}}\n' "$id" ;;
+    *'"method":"session/cancel"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"stopReason":"cancelled"}}}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#
+        )
+    }
+
+    /// [`restorable_agent`]'s twin that *rejects* the reattachment.
+    ///
+    /// Advertises `loadSession`, so the provider genuinely tries, and then
+    /// errors — the exact shape that used to fall through to `session/new` and
+    /// hand a generation a conversation with none of its history. It still
+    /// answers `session/new` so the fallthrough would succeed if strict mode
+    /// ever stopped working.
+    pub(crate) fn load_rejecting_agent(method_log: &str) -> String {
+        format!(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" | sed -n 's/.*"method":"\([a-z/_]*\)".*/\1/p' >> "{method_log}"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2,"agentCapabilities":{{"loadSession":true}}}}}}\n' "$id" ;;
+    *'"method":"session/load"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":-32000,"message":"load rejected"}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"a-brand-new-conversation"}}}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"stopReason":"end_turn"}}}}\n' "$id" ;;
+  esac
+done
+"#
+        )
+    }
+
+    /// An adapter with no reattachment at all: `session/new` and nothing else.
+    ///
+    /// The `NATIVE_RESTORE_UNSUPPORTED` case, and the reason it is a separate
+    /// code from `NATIVE_RESTORE_REJECTED` — this runtime never claimed to be
+    /// able to reopen anything.
+    pub(crate) fn unreattachable_agent(method_log: &str) -> String {
+        format!(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" | sed -n 's/.*"method":"\([a-z/_]*\)".*/\1/p' >> "{method_log}"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"a-brand-new-conversation"}}}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"stopReason":"end_turn"}}}}\n' "$id" ;;
+  esac
+done
+"#
+        )
+    }
+
     /// Never answers the prompt, so the operator's interrupt is the only way out.
     pub(crate) const STALLING_AGENT: &str = r#"
 LAST_PROMPT=""
@@ -2648,6 +2820,7 @@ done
             title: Some("Ship it".into()),
             model: None,
             resume_cursor: None,
+            strict_native: false,
             rehydration_mcp: None,
             agent_command: command,
             agent_args: Vec::new(),

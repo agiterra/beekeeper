@@ -48,11 +48,13 @@ mod git_exclude;
 mod git_probe;
 mod lease;
 mod model_catalog;
+pub mod native_restore;
 pub mod payload;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
 pub mod seat_bee;
+pub mod seat_requests;
 pub mod session;
 pub mod state;
 mod team_wake;
@@ -1026,6 +1028,12 @@ impl Provider {
             })?;
             self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
         }
+        // Last, and the reason the file exists: this is the moment every open
+        // seated generation has lost its process and its one-shot custody, and
+        // the desktop's re-stage runs right after this provider comes up. The
+        // set is restated from the recovered records rather than trusted from
+        // whatever the previous process last wrote.
+        self.publish_seat_requests();
         Ok(())
     }
 
@@ -2267,6 +2275,28 @@ impl Provider {
     /// cleanup write did not land would be the worse outcome. A failure is
     /// logged with the `commandId` and the path only — never the file's
     /// contents.
+    /// Restate which open generations still need seat custody.
+    ///
+    /// Called wherever that set can change — a create, a resume, a stop or
+    /// close, and startup recovery. See [`crate::seat_requests`] for why the
+    /// file exists and what it is allowed to contain.
+    ///
+    /// Best-effort, and deliberately so: the consequence of a missed write is
+    /// that a seat is not re-staged after the next restart, which surfaces as
+    /// a visible `ACTOR_UNAVAILABLE` refusal on the promise that needed it.
+    /// The consequence of making it fatal would be refusing a create that
+    /// otherwise worked, which is strictly worse.
+    fn publish_seat_requests(&self) {
+        if let Err(error) =
+            crate::seat_requests::write_seat_requests(&self.config.state_dir, self.state.sessions())
+        {
+            tracing::warn!(
+                target: "csp::seats",
+                "could not record which generations still need seat custody: {error}"
+            );
+        }
+    }
+
     fn forget_actor_seat(&self, command_id: &str) {
         if let Err(error) =
             crate::actor_seats::consume_seat(self.config.actor_seats_file.as_deref(), command_id)
@@ -2442,6 +2472,9 @@ impl Provider {
             title: plan.title.clone(),
             model: plan.model.clone(),
             resume_cursor: None,
+            // Never strict: an ordinary create or resume may legitimately
+            // end up in a fresh conversation, and says so on the wire.
+            strict_native: false,
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
@@ -2531,6 +2564,10 @@ impl Provider {
             closed: false,
         };
         self.state.insert_session(record)?;
+        // A seated create is the first moment this generation's custody could
+        // ever need re-staging, so the request is stated as soon as the record
+        // that implies it is durable.
+        self.publish_seat_requests();
         // First create under an umbrella records who opened it. The D9 budget
         // exempts that pubkey and no other — an execution-scoped exemption
         // would let a delegated seat create its own session and buy itself an
@@ -3338,6 +3375,9 @@ impl Provider {
             title: record.title.clone(),
             model: record.model.clone(),
             resume_cursor: record.resume_cursor.clone(),
+            // Never strict: an ordinary create or resume may legitimately
+            // end up in a fresh conversation, and says so on the wire.
+            strict_native: false,
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
@@ -3403,6 +3443,10 @@ impl Provider {
             self.sessions.shutdown(&record.session_id);
             return Err(error.into());
         }
+        // The generation's command id just moved to this resume's, and that is
+        // the key custody is filed under. Restate it before anything else can
+        // read the old one.
+        self.publish_seat_requests();
         self.established_leases.remove(&previous_semantic_key);
         self.pending_leases.remove(&previous_semantic_key);
         self.state.consume_command(&plan.command_id, now_secs())?;
@@ -3577,6 +3621,11 @@ impl Provider {
                 "settled umbrella: execution stopped and its slot released"
             );
         }
+        // Same reason as `stop_session`: these generations are closed, so
+        // their rows go with them.
+        if !live.is_empty() {
+            self.publish_seat_requests();
+        }
         live.len()
     }
 
@@ -3612,6 +3661,10 @@ impl Provider {
                 }
             },
         )?;
+        // A stopped generation must stop asking for custody: re-staging a key
+        // for an execution that can never take another turn would leave usable
+        // key material on disk for nothing.
+        self.publish_seat_requests();
         let mut completion_errors = Vec::new();
         if let Err(error) = self.state.consume_command(&plan.command_id, now_secs()) {
             completion_errors.push(format!("consume stop command: {error}"));
@@ -4282,6 +4335,14 @@ impl Provider {
     /// (`commands.rs`'s `StaleGeneration` fence). A signed receipt that
     /// states a falsehood is worse than a blunt one, so the turn is recorded
     /// as refused and the message says the sender has to send it again.
+    ///
+    /// The receipt is queued **before** the refusal is recorded. Both writes
+    /// are crash-safe and the outbox fences on `(kind, semantic key)`, so
+    /// enqueuing first cannot produce a second answer; recording first could
+    /// produce *no* answer, because a durably refused command is never
+    /// re-derived on replay and this path is the only thing that would have
+    /// spoken for it. A ledger failure after a successful enqueue is returned
+    /// to the caller with the answer already on its way.
     fn report_no_live_execution(
         &mut self,
         channel_id: Uuid,
@@ -4290,11 +4351,6 @@ impl Provider {
         is_turn: bool,
     ) -> anyhow::Result<String> {
         let receipt = if is_turn {
-            // Refused, not consumed: the turn never ran, and it never will.
-            // Recording it terminally is also what lets the channel watermark
-            // move — an unanswered command holds the replay floor, an answered
-            // one does not.
-            self.state.record_refusal(command_id, now_secs())?;
             LifecycleReceipt::turn_dropped(
                 command_id,
                 target,
@@ -4305,7 +4361,6 @@ impl Provider {
         } else {
             // An interrupt of nothing is terminal — there is no later moment
             // at which it becomes meaningful.
-            self.state.record_refusal(command_id, now_secs())?;
             LifecycleReceipt::turn_refused(
                 command_id,
                 target,
@@ -4314,6 +4369,11 @@ impl Provider {
             )
         };
         self.enqueue_receipt(channel_id, command_id, &receipt)?;
+        // Refused, not consumed: the turn never ran, and it never will.
+        // Recording it terminally is also what lets the channel watermark
+        // move — an unanswered command holds the replay floor, an answered
+        // one does not.
+        self.state.record_refusal(command_id, now_secs())?;
         Ok(payload::NO_LIVE_EXECUTION.to_owned())
     }
 
@@ -5720,16 +5780,27 @@ impl Provider {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
-                // Terminal: the operator is told the turn was dropped, so a
-                // redelivery must not quietly run it later and make that
-                // receipt a lie.
-                self.state.record_refusal(&command_id, now_secs())?;
                 tracing::warn!(
                     target: "csp",
                     %session_id,
                     %command_id,
                     "turn dropped: the session's queue is full"
                 );
+                // Visible answer first, durable refusal second — the reverse
+                // of what this arm used to do.
+                //
+                // Terminal: the operator is told the turn was dropped, so a
+                // redelivery must not quietly run it later and make that
+                // receipt a lie. That is what the refusal ledger is for. But
+                // recording the refusal *before* the two enqueues below made a
+                // failing enqueue permanent silence: the command is fenced as
+                // answered, the replay never re-derives the drop, and the
+                // sender is left with a turn that vanished. Both the outbox
+                // and the ledger are crash-safe, and the outbox fences on
+                // `(kind, semantic key)`, so enqueuing first risks at most a
+                // duplicate of an identical receipt while removing the case
+                // where there is no receipt at all. A ledger failure after the
+                // enqueues returns the error with the answer already queued.
                 self.enqueue_transcript(
                     channel_id,
                     &target,
@@ -5747,6 +5818,7 @@ impl Provider {
                     "the execution's queue is full",
                 );
                 self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                self.state.record_refusal(&command_id, now_secs())?;
             }
             SessionEvent::Exited { session_id, reason } => {
                 // The process is gone and its mailbox with it. Turns it had
@@ -6760,6 +6832,8 @@ mod tests {
 
     use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
 
+    #[path = "ci_continuation_restore_tests.rs"]
+    mod ci_continuation_restore_tests;
     #[path = "ci_continuation_tests.rs"]
     mod ci_continuation_tests;
     #[path = "founder_wake_framing_tests.rs"]
