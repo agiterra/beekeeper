@@ -9327,6 +9327,62 @@ The plan is `~/.claude/plans/graceful-hatching-valiant.md` (five slices on
      revocation drops the bar without a reload. `restricted:` is kept
      verbatim as a revocation; `rate-limited:` pauses input for the
      relay's `retry in Ns` window and is not.
+- **Live finding 2026-09-08 (Andy, simulator + dev desktop, project
+  "Mobile Test").** The phone's "+" hung at "Waiting for 842a0556… to
+  answer", and a session the desktop created a minute later never appeared
+  on the phone. Relay data (dev relay log; dev DB `events`): the phone's
+  44226 `4ad6e087…` and 44221 `c2e93605…` were ingested at 08:43:38Z in
+  channel `968f7d25…`, and the provider answered in 40 ms with 44224
+  `7788d205…` — `status: failed`, `PROJECT_CWD_UNRESOLVED`, "no working
+  directory is configured for project …:mobile-test or channel 968f7d25…".
+  Three defects, all fixed in this branch:
+  1. **The observer's live REQ carried no 44221/44226**
+     (`coding_session_observer_provider.dart` `_subscribeLive`: facts, names,
+     closures, leases only). A create published *after* the history read was
+     invisible. The trust gate attributes a `failed` receipt by the command's
+     own `providerAuthorityPubkey` (`coding_session_trust.dart`
+     `_receiptAuthorized`), so with no readable create the refusal was
+     dropped as an unknown author and the row said "waiting" forever. The
+     same hole from the other side: the desktop's session was founded
+     (44226 + 44221) in a channel the phone already watched, so its
+     execution had no verified founder and no umbrella, and the tree listed
+     nothing until a reload. Now `NostrFilters.codingSessionCreatesLive`
+     (44221 + 44226, `limit 0`) and goals (44227) ride the same REQ — six
+     filters, still one frame. Two live regressions pin it
+     (`coding_session_observer_provider_test.dart`).
+  2. **The provider's projects file names no directory for any project**
+     (`session-provider/842a0556…/projects.json`: `projects: {}`,
+     `channels: {}`; `pending` holds only the desktop's own staged hints).
+     `by_project` is written only from project settings
+     (`ProjectSettingsLocalSection.tsx` → `set_coding_session_workdir`,
+     scope `project`), never by a desktop create, which stages a one-shot
+     `pending[commandId]` hint. So a phone create is refused until the
+     project's working directory is set on the desktop. The refusal now
+     reaches the row (fix 1) and carries the sentence that says where to set
+     it (`pending_rows.dart` `pendingCreateRefusalHint`). Open product
+     question: whether a desktop create should record its directory as the
+     project's default when none is set yet.
+  3. **The desktop minted a new transport channel at every project-scoped
+     create** — seven "Mobile Test sessions" transports on the dev relay
+     (`channels` rows with `project_ref …:mobile-test`, created 20:06Z Sep 7
+     through 08:44Z Sep 8), sessions in three of them.
+     `ProjectNewCodingSessionDialog.tsx` read its candidates from
+     `partitionChannels(...).channelsByProject`, which keeps only stream and
+     forum channels (`projects-container/hooks.ts`), so rule 0 of
+     `resolveProjectSessionsChannel` ("transport wins") could never fire and
+     step 3 created one. Fixed: `projectSessionsChannelCandidates` (every
+     channel the project claims, any type) feeds the resolution, and rule 0
+     among several transports prefers the newest session activity, then the
+     lowest id — the phone's `pickProjectSessionsChannel` follows the same
+     order (`sessionActivityByChannel`, computed in the sheet's build from
+     the channels' observers), so both clients converge on `8eccb033…`, the
+     channel the provider is advertising in, not on an empty lowest-id one.
+     The six empty transports stay on the relay; nothing here deletes a
+     channel.
+  Also observed: the dev relay started 19:18 local and the `.env` quota bump
+  was written 19:21, so the raised dev quotas have never been in force (the
+  `relay-quota-per-pubkey` memory says "next relay start"); the phone's REQ
+  rate around the create was 1–5 per 5 s, so quota was not a factor here.
 - **Not yet done, in order:** (1) exercise on a simulator against the
   local dev relay with a desktop that is actually streaming frames — the
   plan's verification steps; nothing above has run on a device; (2) land
