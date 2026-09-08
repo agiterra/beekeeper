@@ -167,6 +167,30 @@ listener discovers a missed terminal result. A small agent is invoked for
 triage only when interpretation is needed. No general-purpose agent daemon is
 introduced just to wait for a process.
 
+### 2a. Continue a managed session after a long CI wait
+
+The first CI slice returns a waiting process; it does not yet wake a coding
+session. A foreground `buzz-dev-mcp` shell defaults to 120 seconds and caps at
+600 seconds, with whole-process-group cleanup. The provider also enforces an
+870-second silence deadline and 7,200-second turn cap. Extending or evading
+those clocks is not durable continuation.
+
+Reuse the addressed kind-44220 turn and existing operation/target fencing.
+The next design must bind a verified exact CI result to an explicitly authorized
+continuation for one complete driver/instance/session/generation target. Current
+founder/grantee checks remain necessary: the relay's authority to sign a CI fact
+does not grant it authority to steer a coding session. Duplicate result delivery
+or different command IDs must not spend another turn for the same operation and
+target. Restart recovery must find missed results; stale generations must not be
+silently retargeted. The existing team-report wake is a reference, not evidence
+that CI wake already exists. No new generic agent daemon or parallel registry.
+
+Acceptance: a managed turn registers its continuation and ends; CI completes
+past the shell/prompt clocks, and exactly that authorized target receives one
+addressed continuation. Repeat across a provider restart, duplicate callback,
+revoked operator, and generation change. Each refusal remains observable while
+unrelated work proceeds. See SESSION_STATE for implementation status.
+
 ### 3. Coordinate work and decisions before integration
 
 Expose accepted intent, dependencies, current claimant, branch/base and

@@ -78,6 +78,13 @@ bee ci wait \
   --timeout 1800
 ```
 
+The 30-minute example is for a host terminal or a caller that genuinely supports
+that process lifetime. Beekeeper's `buzz-dev-mcp` shell currently defaults to
+120 seconds and caps requests at 600 seconds, then cleans up the entire process
+group; backgrounding with `&` does not preserve the waiter. The ACP/provider
+also impose prompt lifetime limits. This slice does not extend those limits or
+bridge a CI result to a new coding-session turn.
+
 Keep that one process waiting through the calling tool's supported long-running
 execution mechanism. The wait handles authenticated subscription, stored replay
 and reconnect in software. It does not launch a model, send a channel message,

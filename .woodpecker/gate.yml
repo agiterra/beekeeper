@@ -158,6 +158,11 @@ steps:
       # same shape `just test-genesis` uses). Extend the filters when you mark
       # another Postgres-gated buzz-relay test.
       - cargo test -p buzz-relay --lib -- --ignored api::media::tests api::admin::tests handlers::event::tests::fanout_access
+      # CI completion proves atomic storage and the real bee subscriber against
+      # a local relay. These are ignored in the infrastructure-free unit run.
+      - cargo test -p buzz-db --lib ci_result -- --ignored --test-threads=1
+      - cargo build -p buzz-cli --bin bee
+      - BUZZ_TEST_BEE_BIN="$CARGO_TARGET_DIR/debug/bee" cargo test -p buzz-relay --lib ci_result -- --ignored --test-threads=1
 
   desktop:
     image: buzz-ci:1

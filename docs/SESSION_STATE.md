@@ -47,10 +47,45 @@ ordering/error propagation, not a dedicated injected-failure test.
 `just test-ci-completion` is included in `just test`, using its own migrated
 throwaway database and an explicitly built CLI. No production configuration or
 new coding-turn wakeup is included: the feature returns a waiting process to its
-caller. Fable candidate `fc8c60018` passed its scoped tests; final shallow/error
-ancestry, refreshed comparison cache, and browser evidence are being finished.
-Aggregate repository checks remain pending; neither candidate is installed or
-deployed.
+caller. Fable's final `4714bb675` is integrated as `dfd97ac52`, including
+shallow/error ancestry disclosure, refreshed comparison cache, and browser
+proof. Its scoped validation passed 8 revision, 15 role-pack, 10 Git-helper,
+and 8,334 desktop unit tests plus six browser cases repeated twice; evidence is
+`review-role-adoption-fable-logs/final2-*.log`. Two hosts were simulated on one
+machine; actual multi-machine adoption and commissioning proof remain open.
+
+Aggregate checks are running in separate worktrees to prevent frontend build
+races. The first full `just ci` caught a needless delimiter iterator; the
+second caught the pinned CLI command inventory missing `ci`. Both are repaired,
+with original logs retained. The third run passed `just ci`, exit 0 (`ci-role-full-ci-validated.log`),
+including 3,129 native desktop tests and 1,734 mobile tests. The required
+`just test` integration run also passed, exit 0 (`ci-role-full-integration.log`).
+Full desktop smoke (`ci-role-full-smoke.log`) found the empty Inbox-edit case
+again. Its captured error occurs before deletion: `input.fill("")` leaves the
+original ProseMirror paragraph in place. The helper now uses the keyboard-clear
+transaction already used by `empty-edit-delete.spec.ts`; all downstream
+exact-target assertions remain. Both specs repeated three times passed 30/30
+(`ci-role-inbox-reruns.log`, exit 0). Full smoke finished with 1,262 passes,
+one existing skip and that one pre-repair failure in 42.3 minutes. It was not an
+all-green full run. The ranked-row screenshot was preserved under
+`review-2026-09-06-validation/validation/role-adoption-ranked-rows.png` and
+visually checked: current and one-commit-earlier reports remain explicitly
+unverified. Neither candidate
+is installed or deployed. The hosted Woodpecker Rust job now explicitly runs
+the ignored CI-result DB/relay cases using its freshly built CLI, matching the
+local `just test-ci-completion` coverage.
+
+**Managed continuation remains a separate increment.** `bee ci wait` returns a
+process; it does not yet wake a dormant coding session. The managed MCP shell
+has a 120-second default and 600-second maximum and kills its process group on
+timeout/parent exit (`crates/buzz-dev-mcp/src/shell.rs`). ACP/provider
+silence limits can also end a silent wait. Existing exact-target 44220 team
+wake commands and their persisted operation fences are the reuse boundary
+(`buzz-session-provider/src/team_wake.rs`, `commands.rs`, and `state.rs`), not
+an unbounded background shell or repeated model polls. CI facts do not grant
+steering authority. Step 2a of `COLLABORATIVE_WORKSPACE_PLAN.md` records the
+restart, exact-run, generation, authority and deduplication acceptance still
+required before claiming automatic continuation.
 Astra owns integration/review/final commits and shared ledger updates. Brian
 authorized continued autonomous work while away; reversible scoped decisions
 continue without a human dependency. No production deployment authorization is
@@ -205,7 +240,7 @@ reachability, runtime connection and project Packs. Full desktop unit tests pass
 (`continuity-desktop-tests.log`). Installed build and main landing evidence are recorded in the current checkpoint.
 No production relay deployment is implied by these checks.
 
-### Next increment investigated — deterministic CI completion (not implemented)
+### Earlier CI reuse audit — superseded by the active implementation above
 
 The Sol read-only audit proposes one immutable CI-result fact and an exact
 `bee ci wait`, not a new agent daemon. Existing workflow webhook handling in

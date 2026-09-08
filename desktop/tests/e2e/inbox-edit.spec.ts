@@ -158,7 +158,10 @@ async function submitEmptyEdit(
   await expect(detail.getByTestId("edit-target")).toBeVisible();
   const input = detail.getByTestId("message-input");
   await expect(input).not.toBeEmpty();
-  await input.fill("");
+  // Clear through the editor's keyboard transaction, as in empty-edit-delete.
+  await input.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
   await expect(input).toBeEmpty();
   await page.keyboard.press("Enter");
 }

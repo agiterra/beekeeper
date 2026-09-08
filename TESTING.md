@@ -20,7 +20,9 @@ cargo test -p buzz-test-client -- --ignored
 
 `just test-ci-completion` runs the CI-result atomic storage and authenticated
 webhook composition tests against a newly migrated throwaway database. It is
-included in `just test`. The default unit harness skips these Postgres cases;
+included in `just test`; the Woodpecker Rust job also runs them with its
+existing Postgres/Redis services and explicitly built CLI. The default unit
+harness skips these Postgres cases;
 core contracts and CLI replay/reconnect tests run without infrastructure.
 
 ### The desktop Playwright smoke suite is not in `just ci`
