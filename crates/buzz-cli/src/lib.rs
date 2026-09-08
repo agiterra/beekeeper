@@ -379,6 +379,9 @@ impl From<CiPhaseArg> for buzz_core::ci_result::CiPhase {
     }
 }
 
+// Parsed once per CLI invocation; the exact CI identity and target account
+// for this variant's size. This enum is not stored in a queue or hot collection.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum CiCmd {
     /// Block until the exact CI run has a durable terminal result

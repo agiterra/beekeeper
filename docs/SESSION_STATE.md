@@ -5,6 +5,27 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 release validation and next feature — active
+
+Fable acknowledged the declared-work Pulse assignment and created
+`../review-declared-work-fable` on `work/declared-work-fable` from `6a59eb45e`.
+Its implementation plan is being written in `docs/DECLARED_WORK_PULSE_IMPL.md` in
+that worktree; no completed UI or test result is claimed. The execution brief is
+`/Users/brian/Desktop/BEEKEEPER-FABLE-DECLARED-WORK-BRIEF.md` and acknowledgement is
+in the shared Astra/Fable coordination mailbox. Root owns release validation and
+packaging separately.
+
+The first repository-wide `just check` stopped at Clippy's `large_enum_variant`
+warning on the new `CiCmd::Continue` argument payload. `CiCmd` is parsed once per
+process and not held in a hot collection; the fix documents a narrowly scoped
+lint exception, following the existing `SessionPolicyCmd` convention, without
+changing parser behavior. The retry is running with three Cargo jobs and root's
+separate target. Logs: `../review-2026-09-08-release-candidate/check.log` and
+`check-retry.log`. This is the repository check recipe, not full `just ci` or a
+completed release. No new app bundle has been installed. The test packaging
+script in that evidence directory was adapted to the current root checkout and
+requires an exact clean commit before building all sidecars and resources.
+
 ## September 8 evening — recovery integrated and repaired
 
 Fable's four recovery commits are integrated on `work/team-role-evidence-astra`:
