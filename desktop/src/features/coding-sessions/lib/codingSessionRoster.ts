@@ -9,13 +9,26 @@ import {
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_SYSTEM_MESSAGE,
 } from "@/shared/constants/kinds";
-import {
-  hasDuplicateJsonKeys,
-  hasExactFields,
-} from "@/shared/coordination/sessionCoordinationStrictJson";
-import { hasValidSignature } from "@/shared/lib/authors";
 import type { EntityRole } from "@/shared/lib/entityRoles";
-import { parseExactTags } from "./codingSessionWireDecode";
+import {
+  analyzeCodingSessionAuthorityChain,
+  buildCodingSessionAcceptedAuthorityTimeline,
+  CODING_SESSION_AUTHORITY_RECEIPT_TYPE,
+  CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+  type CodingSessionAuthorityTransitionType,
+} from "./codingSessionAuthorityTimeline";
+
+export {
+  buildCodingSessionAcceptedAuthorityTimeline,
+  CODING_SESSION_AUTHORITY_RECEIPT_TYPE,
+  CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+};
+export type {
+  AcceptedCodingSessionAuthorityLink,
+  CodingSessionAuthorityTimeline,
+  CodingSessionAuthorityTimelineDisposition,
+  CodingSessionAuthorityTransitionType,
+} from "./codingSessionAuthorityTimeline";
 
 /**
  * Coding-session roster: the client-side fold of one session's NIP-CSAT
@@ -39,54 +52,6 @@ import { parseExactTags } from "./codingSessionWireDecode";
 const HEX64_REGEX = /^[0-9a-f]{64}$/;
 const ROLE_SLUG_REGEX = /^[a-z0-9-]{1,64}$/;
 const MAX_U32 = 0xffff_ffff;
-const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES = 512;
-const textEncoder = new TextEncoder();
-
-/** Version tag pinned on every 44228 transition (`csat-v`). */
-export const CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION =
-  "csat1-1" as const;
-
-/** `content.type` of the relay-signed kind:40099 acceptance receipt. */
-export const CODING_SESSION_AUTHORITY_RECEIPT_TYPE =
-  "coding_session_authority_transition_accepted" as const;
-
-/** Legacy transition vocabulary this display surface is allowed to emit. */
-export type CodingSessionAuthorityTransitionType =
-  | "grant-operator"
-  | "grant-viewer"
-  | "revoke"
-  | "grant-seat"
-  | "revoke-seat";
-
-type AcceptedCodingSessionAuthorityTransitionType =
-  CodingSessionAuthorityTransitionType;
-
-const ACCEPTED_TRANSITION_TYPES =
-  new Set<AcceptedCodingSessionAuthorityTransitionType>([
-    "grant-operator",
-    "grant-viewer",
-    "revoke",
-    "grant-seat",
-    "revoke-seat",
-  ]);
-
-const LEGACY_TRANSITION_FIELDS = [
-  "genesisRef",
-  "prevAccepted",
-  "seq",
-  "type",
-  "granteePubkey",
-] as const;
-const SEAT_TRANSITION_FIELDS = [...LEGACY_TRANSITION_FIELDS, "role"] as const;
-const LEGACY_RECEIPT_FIELDS = [
-  "type",
-  "genesisRef",
-  "acceptedEventId",
-  "seq",
-  "transitionType",
-  "granteePubkey",
-] as const;
-const SEAT_RECEIPT_FIELDS = [...LEGACY_RECEIPT_FIELDS, "role"] as const;
 
 /** Wire-grain role a live grant confers (`coding_session_authority_acl`). */
 export type CodingSessionRosterRole = "operator" | "viewer";
@@ -111,24 +76,6 @@ export type CodingSessionRosterEntry = {
   pubkey: string;
   role: EntityRole;
   pending?: boolean;
-};
-
-type ParsedTransition = {
-  eventId: string;
-  channelId: string;
-  seq: number;
-  prevAccepted: string | null;
-  type: AcceptedCodingSessionAuthorityTransitionType;
-  granteePubkey: string;
-  role: string | null;
-};
-
-type ParsedReceipt = {
-  channelId: string;
-  seq: number;
-  transitionType: AcceptedCodingSessionAuthorityTransitionType;
-  granteePubkey: string;
-  role: string | null;
 };
 
 /** UI vocabulary for a wire grant role: operator ⇒ collaborator. */
@@ -156,19 +103,8 @@ function rosterRoleForGrantType(type: string): CodingSessionRosterRole | null {
   return null;
 }
 
-function isAcceptedTransitionType(
-  value: unknown,
-): value is AcceptedCodingSessionAuthorityTransitionType {
-  return (
-    typeof value === "string" &&
-    ACCEPTED_TRANSITION_TYPES.has(
-      value as AcceptedCodingSessionAuthorityTransitionType,
-    )
-  );
-}
-
 function isSeatTransitionType(
-  value: AcceptedCodingSessionAuthorityTransitionType,
+  value: CodingSessionAuthorityTransitionType,
 ): value is "grant-seat" | "revoke-seat" {
   return value === "grant-seat" || value === "revoke-seat";
 }
@@ -180,135 +116,6 @@ function isU32Sequence(value: unknown): value is number {
     value >= 1 &&
     value <= MAX_U32
   );
-}
-
-function parseJsonObject(content: string, maxBytes?: number) {
-  if (
-    (maxBytes !== undefined && textEncoder.encode(content).length > maxBytes) ||
-    hasDuplicateJsonKeys(content)
-  ) {
-    return null;
-  }
-  try {
-    const value: unknown = JSON.parse(content);
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseTransition(
-  event: RelayEvent,
-  genesisRef: string,
-  expectedChannel: string,
-): ParsedTransition | null {
-  if (
-    event.kind !== KIND_CODING_SESSION_AUTHORITY_TRANSITION ||
-    !HEX64_REGEX.test(event.id) ||
-    !hasValidSignature(event)
-  ) {
-    return null;
-  }
-  const tagValues = parseExactTags(event.tags, ["h", "csat-v", "csat-genesis"]);
-  if (
-    !tagValues ||
-    tagValues[0] !== expectedChannel ||
-    tagValues[1] !== CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION ||
-    tagValues[2] !== genesisRef
-  ) {
-    return null;
-  }
-  const payload = parseJsonObject(
-    event.content,
-    MAX_AUTHORITY_TRANSITION_CONTENT_BYTES,
-  );
-  if (!payload || !isAcceptedTransitionType(payload.type)) return null;
-  const seatTransition = isSeatTransitionType(payload.type);
-  if (
-    !hasExactFields(payload, [
-      seatTransition ? SEAT_TRANSITION_FIELDS : LEGACY_TRANSITION_FIELDS,
-    ])
-  ) {
-    return null;
-  }
-  if (payload.genesisRef !== genesisRef) return null;
-  const seq = payload.seq;
-  if (!isU32Sequence(seq)) return null;
-  const prevAccepted = payload.prevAccepted;
-  if (
-    (prevAccepted !== null &&
-      (typeof prevAccepted !== "string" || !HEX64_REGEX.test(prevAccepted))) ||
-    (seq === 1) !== (prevAccepted === null) ||
-    typeof payload.granteePubkey !== "string" ||
-    !HEX64_REGEX.test(payload.granteePubkey) ||
-    (seatTransition &&
-      (typeof payload.role !== "string" || !ROLE_SLUG_REGEX.test(payload.role)))
-  ) {
-    return null;
-  }
-  return {
-    eventId: event.id,
-    channelId: tagValues[0],
-    seq,
-    prevAccepted: prevAccepted as string | null,
-    type: payload.type,
-    granteePubkey: payload.granteePubkey,
-    role: seatTransition ? (payload.role as string) : null,
-  };
-}
-
-function parseReceipt(
-  event: RelayEvent,
-  genesisRef: string,
-  expectedChannel: string,
-  trustedRelayPubkey: string,
-): { acceptedEventId: string; receipt: ParsedReceipt } | null {
-  if (
-    event.kind !== KIND_SYSTEM_MESSAGE ||
-    event.pubkey !== trustedRelayPubkey ||
-    !hasValidSignature(event)
-  ) {
-    return null;
-  }
-  const tagValues = parseExactTags(event.tags, ["h"]);
-  if (!tagValues || tagValues[0] !== expectedChannel) return null;
-  const payload = parseJsonObject(event.content);
-  if (!payload || !isAcceptedTransitionType(payload.transitionType)) {
-    return null;
-  }
-  const seatTransition = isSeatTransitionType(payload.transitionType);
-  if (
-    !hasExactFields(payload, [
-      seatTransition ? SEAT_RECEIPT_FIELDS : LEGACY_RECEIPT_FIELDS,
-    ])
-  ) {
-    return null;
-  }
-  if (payload.type !== CODING_SESSION_AUTHORITY_RECEIPT_TYPE) return null;
-  if (payload.genesisRef !== genesisRef) return null;
-  if (
-    typeof payload.acceptedEventId !== "string" ||
-    !HEX64_REGEX.test(payload.acceptedEventId) ||
-    !isU32Sequence(payload.seq) ||
-    typeof payload.granteePubkey !== "string" ||
-    !HEX64_REGEX.test(payload.granteePubkey) ||
-    (seatTransition &&
-      (typeof payload.role !== "string" || !ROLE_SLUG_REGEX.test(payload.role)))
-  ) {
-    return null;
-  }
-  return {
-    acceptedEventId: payload.acceptedEventId,
-    receipt: {
-      channelId: tagValues[0],
-      seq: payload.seq,
-      transitionType: payload.transitionType,
-      granteePubkey: payload.granteePubkey,
-      role: seatTransition ? (payload.role as string) : null,
-    },
-  };
 }
 
 /**
@@ -333,65 +140,15 @@ export function foldCodingSessionRoster(input: {
   transitions: readonly RelayEvent[];
   receipts: readonly RelayEvent[];
 }): CodingSessionRosterFold {
-  const receiptsByAcceptedId = new Map<string, ParsedReceipt>();
-  const duplicateReceiptIds = new Set<string>();
-  for (const event of input.receipts) {
-    const parsed = parseReceipt(
-      event,
-      input.genesisRef,
-      input.expectedChannel,
-      input.trustedRelayPubkey,
-    );
-    if (!parsed) continue;
-    if (receiptsByAcceptedId.has(parsed.acceptedEventId)) {
-      duplicateReceiptIds.add(parsed.acceptedEventId);
-      continue;
-    }
-    receiptsByAcceptedId.set(parsed.acceptedEventId, parsed.receipt);
-  }
-  for (const eventId of duplicateReceiptIds)
-    receiptsByAcceptedId.delete(eventId);
-
-  const parsedTransitions: ParsedTransition[] = [];
-  for (const event of input.transitions) {
-    const parsed = parseTransition(
-      event,
-      input.genesisRef,
-      input.expectedChannel,
-    );
-    if (parsed) parsedTransitions.push(parsed);
-  }
-
-  const acceptedBySeq = new Map<number, ParsedTransition[]>();
-  for (const transition of parsedTransitions) {
-    if (receiptsByAcceptedId.has(transition.eventId)) {
-      const candidates = acceptedBySeq.get(transition.seq) ?? [];
-      candidates.push(transition);
-      acceptedBySeq.set(transition.seq, candidates);
-    }
-  }
+  const analysis = analyzeCodingSessionAuthorityChain({
+    ...input,
+    founderPubkey: null,
+  });
 
   const accepted = new Map<string, CodingSessionRosterRole>();
   const activeSeats = new Map<string, string>();
   let acceptedHead: { eventId: string; seq: number } | null = null;
-  for (let seq = 1; ; seq += 1) {
-    const links = acceptedBySeq.get(seq);
-    if (links?.length !== 1) break;
-    const link = links[0];
-    const receipt = receiptsByAcceptedId.get(link.eventId);
-    if (
-      !receipt ||
-      receipt.channelId !== link.channelId ||
-      receipt.seq !== link.seq ||
-      receipt.transitionType !== link.type ||
-      receipt.granteePubkey !== link.granteePubkey ||
-      receipt.role !== link.role
-    ) {
-      break; // Receipt does not bind this link's facts — fail closed.
-    }
-    if (link.prevAccepted !== (acceptedHead?.eventId ?? null)) {
-      break; // Link does not extend the chain we folded — fail closed.
-    }
+  for (const link of analysis.links) {
     if (link.type === "revoke") {
       accepted.delete(link.granteePubkey);
     } else if (link.type === "revoke-seat") {
@@ -399,7 +156,7 @@ export function foldCodingSessionRoster(input: {
         link.role === null ||
         activeSeats.get(link.granteePubkey) !== link.role
       ) {
-        break;
+        break; // The strict analysis stops before this link.
       }
       activeSeats.delete(link.granteePubkey);
     } else if (link.type === "grant-seat" && link.role !== null) {
@@ -408,7 +165,7 @@ export function foldCodingSessionRoster(input: {
       const role = rosterRoleForGrantType(link.type);
       if (role) accepted.set(link.granteePubkey, role);
     }
-    acceptedHead = { eventId: link.eventId, seq };
+    acceptedHead = { eventId: link.transitionEventId, seq: link.seq };
   }
 
   const headSeq = acceptedHead?.seq ?? 0;
@@ -421,9 +178,9 @@ export function foldCodingSessionRoster(input: {
       seq: number;
     }
   >();
-  for (const transition of parsedTransitions) {
+  for (const transition of analysis.parsedTransitions) {
     if (transition.seq <= headSeq) continue;
-    if (receiptsByAcceptedId.has(transition.eventId)) continue;
+    if (analysis.receiptBackedTransitionIds.has(transition.eventId)) continue;
     const role = rosterRoleForGrantType(transition.type);
     if (!role) continue; // Pending revokes/unknowns are not "Inviting…" rows.
     const existing = pendingByPubkey.get(transition.granteePubkey);

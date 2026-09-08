@@ -159,6 +159,13 @@ export type SessionCoordinationFoldInput = {
    * {@link SessionCoordinationFold.ambiguities} rather than dropped in silence.
    */
   commissioners?: readonly string[];
+  /**
+   * Exact lifecycle events whose commissioning authority the caller verified
+   * independently (including historical operator/provider identity overlap).
+   * This does not bypass envelope, receipt, lineage or conflict checks. Callers
+   * without historical authority evidence must leave it unset.
+   */
+  commissionedCommandEventIds?: ReadonlySet<string>;
 };
 
 /** The fold's complete answer about coordination. */

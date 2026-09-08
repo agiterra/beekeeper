@@ -158,6 +158,7 @@ const ROW = {
 };
 
 const FULL_PROOF = [GENESIS, CREATE, RECEIPT, REPORT];
+const NO_LIVE_CLIENT = { subscribeLive: async () => () => {} };
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost",
@@ -189,6 +190,8 @@ async function mountHook({
   calls,
   initialRelayUrl,
   fetchEvents = null,
+  getRelaySelf = async () => null,
+  authorityLiveClient = NO_LIVE_CLIENT,
 }) {
   const React = await import("react");
   const { act, renderHook, waitFor } = await import("@testing-library/react");
@@ -212,6 +215,8 @@ async function mountHook({
           rows: [ROW],
         },
         {
+          getRelaySelf,
+          authorityLiveClient,
           fetchEvents:
             fetchEvents ?? fetcherFor(eventsByRelay, relayRef, calls),
         },
@@ -492,6 +497,118 @@ test("a manual warm recheck stays fetching until the deferred proof read answers
     assert.equal(stateOf(mounted), "commissioned");
   } finally {
     release?.();
+    const { cleanup } = await import("@testing-library/react");
+    cleanup();
+  }
+});
+
+test("leaving Roles stops the evidence scan after its in-flight read settles", async () => {
+  let release;
+  const pending = new Promise((resolve) => {
+    release = resolve;
+  });
+  const calls = [];
+  const { act, mounted, waitFor } = await mountHook({
+    initialRelayUrl: RELAY_A,
+    fetchEvents: async (filter) => {
+      calls.push(filter);
+      await pending;
+      return FULL_PROOF.filter((event) => event.kind === filter.kinds[0]);
+    },
+  });
+  try {
+    await waitFor(() => assert.equal(calls.length, 1));
+    mounted.unmount();
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(
+      calls.length,
+      1,
+      "no remaining proof kinds are fetched after unmount",
+    );
+  } finally {
+    release();
+    const { cleanup } = await import("@testing-library/react");
+    cleanup();
+  }
+});
+
+test("live operator receipt rechecks proof and a changed relay identity withdraws it", async () => {
+  const operatorSecret = generateSecretKey();
+  const relaySecret = generateSecretKey();
+  let relayKey = getPublicKey(relaySecret);
+  const operatorCreate = finalizeEvent(
+    {
+      kind: CREATE.kind,
+      created_at: CREATE.created_at,
+      tags: CREATE.tags,
+      content: CREATE.content,
+    },
+    operatorSecret,
+  );
+  const transition = finalizeEvent(
+    {
+      kind: 44228,
+      created_at: CREATE.created_at - 1,
+      tags: [
+        ["h", CHANNEL],
+        ["csat-v", "csat1-1"],
+        ["csat-genesis", GENESIS.id],
+      ],
+      content: JSON.stringify({
+        genesisRef: GENESIS.id,
+        prevAccepted: null,
+        seq: 1,
+        type: "grant-operator",
+        granteePubkey: getPublicKey(operatorSecret),
+      }),
+    },
+    FOUNDER_SECRET,
+  );
+  const receipt = finalizeEvent(
+    {
+      kind: 40099,
+      created_at: CREATE.created_at - 1,
+      tags: [["h", CHANNEL]],
+      content: JSON.stringify({
+        type: "coding_session_authority_transition_accepted",
+        genesisRef: GENESIS.id,
+        acceptedEventId: transition.id,
+        seq: 1,
+        transitionType: "grant-operator",
+        granteePubkey: getPublicKey(operatorSecret),
+      }),
+    },
+    relaySecret,
+  );
+  const events = [GENESIS, operatorCreate, RECEIPT, REPORT];
+  let onLive;
+  const { mounted, waitFor, act } = await mountHook({
+    initialRelayUrl: RELAY_A,
+    calls: [],
+    fetchEvents: async (filter) =>
+      events.filter((event) => filter.kinds.includes(event.kind)),
+    getRelaySelf: async () => relayKey,
+    authorityLiveClient: {
+      subscribeLive: async (_filter, callback) => {
+        onLive = callback;
+        return () => {};
+      },
+    },
+  });
+  try {
+    await waitFor(() => assert.equal(stateOf(mounted), "proof-unavailable"));
+    await act(async () => {
+      events.push(transition, receipt);
+      onLive(receipt);
+    });
+    await waitFor(() => assert.equal(stateOf(mounted), "commissioned"));
+    relayKey = getPublicKey(generateSecretKey());
+    await act(async () => mounted.result.current.refetch());
+    await waitFor(() => assert.equal(stateOf(mounted), "proof-unavailable"));
+  } finally {
     const { cleanup } = await import("@testing-library/react");
     cleanup();
   }

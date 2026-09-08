@@ -149,7 +149,9 @@ export function commissioned(
   command: CommissionableCommand,
   commissioners: readonly string[] | null,
   _hires: readonly LifecycleHireFacts[],
+  commissionedCommandEventIds?: ReadonlySet<string>,
 ): boolean {
+  if (commissionedCommandEventIds?.has(command.event.id)) return true;
   const signer = command.event.pubkey;
   return commissioners === null
     ? signer !== command.providerAuthorityPubkey

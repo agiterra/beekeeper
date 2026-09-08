@@ -264,3 +264,42 @@ test("a founder fulfils another seat's hire with a distinct provider", () => {
     PROVIDER,
   );
 });
+
+test("independently verified command IDs admit only that exact self-provider command", () => {
+  const command = create({
+    id: "11".repeat(32),
+    commandId: "same-key",
+    signer: HOST,
+    provider: HOST,
+  });
+  const answer = receipt({
+    id: "12".repeat(32),
+    commandId: "same-key",
+    signer: HOST,
+  });
+  const input = { now: NOW, events: [command, answer] };
+  assert.equal(foldSessionCoordination(input).sessions.length, 0);
+  assert.equal(
+    foldSessionCoordination({
+      ...input,
+      commissionedCommandEventIds: new Set([command.id]),
+    }).sessions.length,
+    1,
+  );
+  assert.equal(
+    foldSessionCoordination({
+      ...input,
+      commissionedCommandEventIds: new Set(["unrelated"]),
+    }).sessions.length,
+    0,
+  );
+  const conflicting = { ...command, id: "13".repeat(32) };
+  assert.equal(
+    foldSessionCoordination({
+      ...input,
+      events: [...input.events, conflicting],
+      commissionedCommandEventIds: new Set([command.id, conflicting.id]),
+    }).sessions.length,
+    0,
+  );
+});

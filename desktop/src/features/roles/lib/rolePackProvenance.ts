@@ -9,7 +9,7 @@
  * and admits exactly one claim:
  *
  * > **Reported by a commissioned provider.** The 44223 is signed by the
- * > provider that a founder-signed, exact-generation lifecycle chain
+ * > provider that an authorized, exact-generation lifecycle chain
  * > commissioned.
  *
  * It never claims the pack bytes ran. Staging is what the provider *said*; the
@@ -26,11 +26,10 @@
  * - **Founder means the signer of the genesis this create names, by exact event
  *   id.** No fallback to an umbrella projection, and none to execution
  *   metadata, both of which can be reached from provider-signed facts.
- * - **Missing is not contradicted.** A command signed by a key that is not the
- *   founder is `proof-unavailable` — operator authority (44228) has no
- *   TypeScript projection yet, so this module cannot tell an unauthorized key
- *   from a granted one and must not accuse. `disputed` is reserved for
- *   evidence that contradicts itself.
+ * - **Recorded authority is historical.** Each command must be founder-signed
+ *   or authorized by the receipt-backed operator timeline at its own timestamp.
+ *   Current grants cannot retroactively authorize an older command. Missing
+ *   history remains unavailable; contradictory bindings remain disputed.
  * - **An impostor row cannot overwrite a legitimate one.** Dispositions are
  *   keyed by {@link rolePackProvenanceKey} — channel, target, metadata event
  *   and signer — so two reports of one target from two signers keep two rows
@@ -54,6 +53,10 @@ import {
   type SessionCoordinationAmbiguity,
 } from "@/shared/coordination/sessionCoordinationFold";
 import { hasValidSignature } from "@/shared/lib/authors";
+import {
+  authorizeRoleOperatorCommand,
+  buildRoleOperatorAuthorityEvidence,
+} from "./roleOperatorCommissioning";
 
 /** What this app is willing to say about one reported pack revision. */
 export type RolePackProvenanceState =
@@ -141,6 +144,8 @@ export type RolePackProvenanceInput = {
   now: number;
   sourceErrors: readonly RolePackProvenanceSourceError[];
   rows: readonly RolePackProvenanceRow[];
+  /** Trusted active relay identity; absence affects operator evidence only. */
+  trustedRelayPubkey?: string | null;
 };
 
 /** The model's complete answer. */
@@ -169,8 +174,7 @@ const PROOF_OTHER_SESSION =
 const REPORT_NAMES_NO_SESSION = "This report names no session.";
 const REPORT_OTHER_SESSION =
   "This report echoes a different session than the one this generation was commissioned for.";
-const OPERATOR_NOT_PROJECTED =
-  "operator authority is not projected yet, so this cannot be read as a grant.";
+
 const CHAIN_LOOP =
   "The resume chain for this generation refers back to itself and proves nothing.";
 const INCOMPLETE_PROOF_READS =
@@ -260,7 +264,7 @@ type GenerationProof = {
   generationNumber: number;
 };
 
-type ChainSigner = { generation: number; pubkey: string };
+type ChainSigner = { generation: number; pubkey: string; event: RelayEvent };
 
 type CreateFacts = {
   channelId: string;
@@ -318,12 +322,6 @@ function ancestorMissing(generation: number): string {
   return `Generation ${generation} of this session has no accepted lifecycle proof, so the chain back to the first generation is incomplete.`;
 }
 
-function notFounder(generation: number): string {
-  return generation <= 1
-    ? `The create that founded this session was signed by a key that is not the founder; ${OPERATOR_NOT_PROJECTED}`
-    : `The command that started generation ${generation} was signed by a key that is not the founder; ${OPERATOR_NOT_PROJECTED}`;
-}
-
 /**
  * Walk the resume chain from this generation back to its generation-1 create,
  * collecting the signer of every command on the way.
@@ -372,6 +370,7 @@ function walkChain(
       signers.push({
         generation: current.generationNumber,
         pubkey: classified.signerPubkey,
+        event,
       });
       signers.reverse();
       return {
@@ -397,6 +396,7 @@ function walkChain(
     signers.push({
       generation: current.generationNumber,
       pubkey: event.pubkey,
+      event,
     });
     const previousKey = targetKeyOf(previousTarget);
     const previous = previousKey
@@ -541,7 +541,7 @@ function disputed(
  * evidence first: without an accepted generation nothing else can be asked;
  * with one, the signer of the report must be that generation's provider before
  * any question of authority arises; only then is the chain walked, and only a
- * complete, founder-signed chain earns the commissioned label.
+ * complete, authorized chain earns the commissioned label.
  */
 export function buildRolePackProvenance(
   input: RolePackProvenanceInput,
@@ -552,7 +552,7 @@ export function buildRolePackProvenance(
     if (!eventById.has(event.id)) eventById.set(event.id, event);
   }
 
-  const fold = foldSessionCoordination({
+  const foldInput = {
     now: input.now,
     // The fold's shape is the signed seven fields minus `sig`; the classifiers
     // keep the signed events and verify them again for themselves.
@@ -571,25 +571,116 @@ export function buildRolePackProvenance(
       message: error.message,
     })),
     commissioners: undefined,
-  });
-
-  const proofs = new Map<string, GenerationProof>();
-  for (const session of fold.sessions) {
-    for (const generation of session.generations) {
-      const command = eventById.get(generation.lifecycleCommandEventId);
-      const channelId = command ? tagValue(command, "h") : null;
-      const fields = decodeCodingSessionTargetKey(generation.targetKey);
-      if (!channelId || !fields) continue;
-      proofs.set(channelTargetKey(channelId, generation.targetKey), {
-        channelId,
-        targetKey: generation.targetKey,
-        generation,
-        sessionRef: session.sessionRef,
-        sessionId: fields.sessionId,
-        generationNumber: fields.generation,
+  };
+  const authorityCache = new Map<
+    string,
+    ReturnType<typeof buildRoleOperatorAuthorityEvidence>
+  >();
+  const authorize: DispositionContext["authorize"] = (genesis, command) => {
+    if (command.pubkey === genesis.founderPubkey)
+      return { authorized: true, reason: null };
+    const key = channelTargetKey(genesis.channelId, genesis.eventId);
+    let authority = authorityCache.get(key);
+    if (!authority) {
+      authority = buildRoleOperatorAuthorityEvidence({
+        events: input.events,
+        trustedRelayPubkey: input.trustedRelayPubkey ?? null,
+        scope: {
+          channelId: genesis.channelId,
+          genesisRef: genesis.eventId,
+          founderPubkey: genesis.founderPubkey,
+        },
+        sourceComplete: !input.sourceErrors.some(
+          (error) =>
+            ["authority-transitions", "authority-receipts"].includes(
+              error.scope,
+            ) &&
+            (!error.channelIds || error.channelIds.includes(genesis.channelId)),
+        ),
       });
+      authorityCache.set(key, authority);
+    }
+    return authorizeRoleOperatorCommand(authority, command);
+  };
+  // Creates name their exact genesis, so authorize them independently of
+  // target uniqueness. In particular, a competing authorized self-provider
+  // create must remain present when the final fold detects contradictions.
+  const commissionedCommandEventIds = new Set<string>();
+  const selfResumes = new Set<string>();
+  for (const event of input.events) {
+    if (event.kind !== 44221) continue;
+    const create = classifyCodingSessionCreateEvent(event, channels);
+    if (create.kind === "create" && create.genesisRef) {
+      const genesisEvent = eventById.get(create.genesisRef);
+      const genesis = genesisEvent
+        ? classifyCodingSessionGenesisEvent(genesisEvent, channels)
+        : null;
+      if (
+        genesis?.kind === "genesis" &&
+        genesis.channelId === create.channelId &&
+        genesis.sessionRef === create.sessionRef &&
+        authorize(genesis, event).authorized
+      ) {
+        commissionedCommandEventIds.add(event.id);
+      }
+    } else if (readResumePreviousTarget(event) !== null) {
+      const action = JSON.parse(event.content).action;
+      if (action.providerAuthorityPubkey === event.pubkey)
+        selfResumes.add(event.id);
     }
   }
+  let provisionalAmbiguities: readonly SessionCoordinationAmbiguity[] = [];
+  // Ordinary founder/operator commands need just the ordinary fold. Only a
+  // resume whose operator is also its provider needs private lineage discovery.
+  // This provisional answer is never exposed as confirmation.
+  if (selfResumes.size > 0) {
+    const candidates = foldSessionCoordination({
+      ...foldInput,
+      commissionedCommandEventIds: new Set([
+        ...commissionedCommandEventIds,
+        ...selfResumes,
+      ]),
+    });
+    const candidateProofs = collectProofs(candidates.sessions, eventById);
+    provisionalAmbiguities = candidates.ambiguities;
+    const candidateContext: DispositionContext = {
+      proofs: candidateProofs,
+      eventById,
+      channels,
+      authorize,
+      ambiguities: candidates.ambiguities,
+      provisionalAmbiguities: [],
+      noProofReason: NO_ACCEPTED_PROOF,
+    };
+    // Validate deepest lineages first; their verified command IDs cover earlier
+    // generations without walking those same ancestors again.
+    for (const proof of [...candidateProofs.values()].sort(
+      (a, b) => b.generationNumber - a.generationNumber,
+    )) {
+      const id = proof.generation.lifecycleCommandEventId;
+      if (!selfResumes.has(id) || commissionedCommandEventIds.has(id)) continue;
+      const result = disposeRow(
+        {
+          channelId: proof.channelId,
+          targetKey: proof.targetKey,
+          signerPubkey: proof.generation.providerAuthorityPubkey,
+          sessionRef: proof.sessionRef,
+          metadataEventId: null,
+        },
+        candidateContext,
+      );
+      if (result.state !== "commissioned") continue;
+      const chain = walkChain(proof, candidateProofs, eventById, channels);
+      if (chain.ok)
+        for (const signer of chain.signers)
+          commissionedCommandEventIds.add(signer.event.id);
+    }
+  }
+  const fold = foldSessionCoordination({
+    ...foldInput,
+    commissionedCommandEventIds,
+  });
+  const proofs = collectProofs(fold.sessions, eventById);
 
   const sourceSentences = [
     ...new Set(fold.errors.map((error) => endsAsSentence(error.message))),
@@ -606,6 +697,8 @@ export function buildRolePackProvenance(
     channels,
     ambiguities: fold.ambiguities,
     noProofReason,
+    provisionalAmbiguities,
+    authorize,
   };
   const dispositions = new Map<string, RolePackProvenanceDisposition>();
   for (const row of input.rows) {
@@ -637,12 +730,42 @@ export function buildRolePackProvenance(
   return { dispositions, notes };
 }
 
+function collectProofs(
+  sessions: ReturnType<typeof foldSessionCoordination>["sessions"],
+  eventById: ReadonlyMap<string, RelayEvent>,
+): Map<string, GenerationProof> {
+  const proofs = new Map<string, GenerationProof>();
+  for (const session of sessions) {
+    for (const generation of session.generations) {
+      const command = eventById.get(generation.lifecycleCommandEventId);
+      const channelId = command ? tagValue(command, "h") : null;
+      const fields = decodeCodingSessionTargetKey(generation.targetKey);
+      if (!channelId || !fields) continue;
+      proofs.set(channelTargetKey(channelId, generation.targetKey), {
+        channelId,
+        targetKey: generation.targetKey,
+        generation,
+        sessionRef: session.sessionRef,
+        sessionId: fields.sessionId,
+        generationNumber: fields.generation,
+      });
+    }
+  }
+
+  return proofs;
+}
+
 type DispositionContext = {
   proofs: ReadonlyMap<string, GenerationProof>;
   eventById: ReadonlyMap<string, RelayEvent>;
   channels: ReadonlySet<string>;
   ambiguities: readonly SessionCoordinationAmbiguity[];
   noProofReason: string;
+  provisionalAmbiguities: readonly SessionCoordinationAmbiguity[];
+  authorize: (
+    genesis: { eventId: string; channelId: string; founderPubkey: string },
+    command: RelayEvent,
+  ) => { authorized: boolean; reason: string | null };
 };
 
 function disposeRow(
@@ -664,6 +787,11 @@ function disposeRow(
     return unavailable(context.noProofReason);
   }
 
+  if (fields && ambiguityNamesTarget(context.provisionalAmbiguities, fields)) {
+    return unavailable(
+      "Competing lifecycle claims could not all be resolved against commissioning authority.",
+    );
+  }
   const commandEvent = context.eventById.get(
     proof.generation.lifecycleCommandEventId,
   );
@@ -723,8 +851,25 @@ function disposeRow(
   // not the founder is the one that broke the chain, and naming a later one
   // would send a reader looking in the wrong place.
   for (const signer of chain.signers) {
-    if (signer.pubkey !== genesis.founderPubkey) {
-      return unavailable(notFounder(signer.generation), founded);
+    const previous = targetKeyOf(readResumePreviousTarget(signer.event));
+    const previousFields = previous
+      ? decodeCodingSessionTargetKey(previous)
+      : null;
+    if (
+      previousFields &&
+      ambiguityNamesTarget(context.provisionalAmbiguities, previousFields)
+    ) {
+      return unavailable(
+        "An ancestor has competing lifecycle claims whose commissioning authority could not be resolved.",
+        founded,
+      );
+    }
+    const authority = context.authorize(genesis, signer.event);
+    if (!authority.authorized) {
+      return unavailable(
+        `Generation ${signer.generation}: ${authority.reason ?? "The command signer has no confirmed commissioning authority."}`,
+        founded,
+      );
     }
   }
 

@@ -5,6 +5,79 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 role evidence candidate validated
+
+On `work/team-role-evidence-astra`, based on985fca952: bounded history recovery
+now reads beyond the first1,000 events with inclusive timestamp pagination,
+eight-request budgets per kind/channel chunk, signature checks, browser yields
+and cancellation. Failed, saturated or exhausted scans preserve recovered bytes
+and disclose missing proof instead of confirming an incomplete history.
+
+Roles also verifies historical operator commissioning from the existing relay-
+receipted authority timeline. Each create/resume is checked at its own signed
+timestamp; later grants cannot authorize earlier commands, and later revocations
+do not erase previously valid commissioning. Founder evidence survives unavailable
+operator history. The extracted `codingSessionAuthorityTimeline.ts` verifier is
+shared with the existing roster. This adds no execution permission or human gate.
+Operator/provider identity overlap is admitted only through exact verified command
+IDs; competing claims stay visible. Live authority receipts trigger bounded reads,
+and reconnect, community switch, late subscription and unmount cases are covered.
+
+Adversarial review caught and closed a false confirmation when an authorized
+self-provider competitor disappeared between two folds. It also removed a redundant
+fold from ordinary histories: warm Node200-generation fixtures returned to the
+existing fold's roughly424ms cost, versus1,100ms in the rejected candidate. This
+is a Node benchmark, not a native responsiveness claim.
+
+Final frozen source passes **8,546/8,546 desktop tests**, **6/6 rebuilt Roles browser
+cases** (founder and operator commissioning, shared project identity isolation,
+light/dark,640px and250% zoom), and **23/23 shared-fold conformance vectors**.
+TypeScript, desktop checks and differential file-size checks pass; six design
+captures have distinct hashes. Evidence: `../review-2026-09-08-role-evidence/`,
+particularly `role-evidence-desktop-frozen.log`, `role-evidence-browser-frozen.log`
+and `role-evidence-conformance-frozen.log`. An earlier test invocation overlapped
+helper extraction; its transient parse failures are superseded by this frozen run.
+
+This is a source candidate, **not installed, pushed or landed**. The installed Mac
+app remains497943d3. Repository-wide `just ci` and full release smoke remain for
+landing. Fable's separate CI continuation slice is still underway; mailbox records
+its contract/decoder checkpoint and provider/CLI lanes.
+
+Remaining acceptance: Windows is on hive with another test account, but its build,
+identity and project membership are unverified. First establish access to the same
+project, then compare Roles, shared identity visibility and reported revisions at
+an execution boundary. No cross-machine adoption test has passed yet. A bounded
+conservative limitation remains in `rolePackProvenance.ts`'s `ambiguityNamesTarget`:
+it matches session ID/generation without channel/driver/instance, so colliding IDs
+can make an unrelated report unavailable; it cannot create a false confirmation.
+Recorded-timeline proof does not establish immutable real-time ordering or which
+role instruction bytes executed. Those limits remain disclosed in Technical details.
+
+## Active split — September 8 CI continuation and role evidence recovery
+
+Brian authorized two substantial parallel orchestration slices. Fable received
+plan step2a in t3 thread d5211a94-2560-4b54-b6fc-e2940601b807 and is Working.
+Worktree ../review-ci-managed-continuation-fable, branch
+work/ci-managed-continuation-fable, base985fca952; its execution contract is
+CI_MANAGED_CONTINUATION_SPEC.md. Owns core/CLI/provider continuation, with narrow
+schema parity claims coordinated before editing. No production deployment in this slice.
+
+Root uses work/team-role-evidence-astra, same base, for desktop role evidence
+recovery. Spec: ROLE_EVIDENCE_RECOVERY_SPEC.md. First implementation recovers
+complete bounded lifecycle history beyond1,000 events without skipping timestamp
+ties or turning partial evidence into confirmation. The authority audit selected desktop parity with the provider's existing
+recorded-timeline policy: relay-receipted grants evaluated at each lifecycle
+command's signed timestamp. Implementation is underway under
+ROLE_OPERATOR_COMMISSIONING_SPEC.md; this is not immutable real-time admission. No execution gate
+is introduced. Fable owns no Roles/staging/provenance files; root avoids its
+core/CLI/provider files. Both deliver candidates to root for integration.
+
+Brian also has Windows Beekeeper running on hive under **another test account**
+(confirmed in this conversation). This supports a real cross-machine and
+cross-owner acceptance test. Windows build, account identity and project membership
+are not yet verified; it is a test resource, not evidence that role sync passed.
+Do not claim remote UI control is available.
+
 ## Latest installed test build — 497943d3 (September 8)
 
 Combined Roles design + shared project identities installed at

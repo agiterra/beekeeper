@@ -447,6 +447,7 @@ function acceptedGenerations(
   acceptProjectRef: (projectRef: string | null) => boolean,
   ambiguities: SessionCoordinationAmbiguity[],
   commissioners: readonly string[] | null,
+  commissionedCommandEventIds?: ReadonlySet<string>,
 ): Map<string, AcceptedGeneration> {
   const commands = new Map<string, LifecycleCommandFacts[]>();
   const receipts = new Map<string, LifecycleReceiptFacts[]>();
@@ -501,7 +502,9 @@ function acceptedGenerations(
     // B1: and the command itself must have been issued by someone entitled to
     // issue it. Reported rather than swallowed — a self-signed create is
     // exactly the "evidence the fold refused to resolve" this list is for.
-    if (!commissioned(command, commissioners, hires)) {
+    if (
+      !commissioned(command, commissioners, hires, commissionedCommandEventIds)
+    ) {
       ambiguities.push({
         scope: "authority",
         message: `command ${command.commandId} was signed by ${command.event.pubkey}, which may not commission an execution of this session and answers no accepted hire; no generation was accepted`,
@@ -641,6 +644,7 @@ export function foldSessionCoordination(
     acceptProjectRef,
     rawAmbiguities,
     input.commissioners ?? null,
+    input.commissionedCommandEventIds,
   );
 
   const metadata = new Map<

@@ -5,6 +5,24 @@ Current findings, delivered changes and verification belong in
 [SESSION_STATE.md](SESSION_STATE.md). This plan defines work and acceptance;
 it is not a second deployment ledger or a handoff report.
 
+## Active parallel assignment — September 8
+
+Fable owns step2a: durable CI-to-managed-session continuation through the existing
+result contract, provider queue and exact-target authority/fences. Its isolated
+worktree is `../review-ci-managed-continuation-fable`; implementation contract is
+`docs/CI_MANAGED_CONTINUATION_SPEC.md` there. No new result producer or generic
+waiting daemon. Root owns integration and final packaging/landing checks.
+
+Astra owns the remaining step1 role-evidence work: bounded complete history
+recovery, then operator commissioning using the existing platform authority
+semantics where provable. See `ROLE_EVIDENCE_RECOVERY_SPEC.md`. A current roster
+must not be treated as historical authority. Root's files stay in desktop Roles
+and narrowly scoped evidence adapters; Fable owns core/CLI/provider continuation.
+Cross-client schema parity needs exact file claims before editing.
+
+This assignment supersedes the September7 owner split below. Current completion,
+installed state and concrete findings remain solely in SESSION_STATE.md.
+
 ## The acceptance story
 
 Brian and Andy work in one project from separate machines. Their agents see

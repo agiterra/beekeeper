@@ -30,13 +30,21 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import { subscribeToObservedCodingSessionEvents } from "@/features/coding-sessions/lib/codingSessionObservedEvents";
+import { getRelaySelf } from "@/features/moderation/lib/relaySelf";
 import type { RelayEvent } from "@/shared/api/types";
 import {
+  KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  KIND_SYSTEM_MESSAGE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
 } from "@/shared/constants/kinds";
+
+import {
+  useRoleAuthorityLive,
+  type RoleAuthorityLiveClient,
+} from "./useRoleAuthorityLive";
 
 import {
   buildRolePackProvenance,
@@ -64,6 +72,8 @@ const PROVENANCE_LIVE_KINDS = new Set<number>([
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_GENESIS,
+  KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  KIND_SYSTEM_MESSAGE,
 ]);
 
 /** A stable array from an unstable one, without a new identity per render. */
@@ -115,7 +125,11 @@ export function useRolePackProvenance(
     channelIds: readonly string[];
     rows: readonly RolePackProvenanceRow[];
   },
-  deps: { fetchEvents?: RolePackProvenanceFetcher } = {},
+  deps: {
+    fetchEvents?: RolePackProvenanceFetcher;
+    getRelaySelf?: () => Promise<string | null>;
+    authorityLiveClient?: RoleAuthorityLiveClient;
+  } = {},
 ): RolePackProvenanceQueryState {
   const { relayUrl, projectRef, rows } = input;
   const fetchEvents = deps.fetchEvents;
@@ -126,17 +140,32 @@ export function useRolePackProvenance(
   const enabled = relayUrl !== null && channelIds.length > 0 && rows.length > 0;
   const queryClient = useQueryClient();
 
+  // Identity is relay-scoped and part of the proof key. A missing or refreshing
+  // identity cannot preserve an old operator confirmation; founder evidence has
+  // no dependency on this request succeeding.
+  const relayIdentity = useQuery({
+    queryKey: [ROLE_PACK_PROVENANCE_QUERY_PREFIX, relayUrl, "relay-identity"],
+    queryFn: deps.getRelaySelf ?? getRelaySelf,
+    enabled,
+    staleTime: PROVENANCE_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+  });
+  const trustedRelayPubkey =
+    relayIdentity.fetchStatus === "idle" && !relayIdentity.isError
+      ? (relayIdentity.data ?? null)
+      : null;
   const query = useQuery({
     queryKey: rolePackProvenanceQueryKey(
       relayUrl,
       projectRef,
       channelIds,
       metadataEventIds,
+      trustedRelayPubkey,
     ),
-    queryFn: async (): Promise<RolePackProvenanceResult> => {
+    queryFn: async ({ signal }): Promise<RolePackProvenanceResult> => {
       const { events, sourceErrors } = await fetchRolePackProvenanceEvents(
         channelIds,
-        fetchEvents ? { fetchEvents } : {},
+        { ...(fetchEvents ? { fetchEvents } : {}), signal },
       );
       // Read once, after the last read returned: the clock the whole answer is
       // measured against.
@@ -147,11 +176,22 @@ export function useRolePackProvenance(
         now,
         sourceErrors,
         rows,
+        trustedRelayPubkey,
       });
     },
     enabled,
     staleTime: PROVENANCE_STALE_TIME_MS,
   });
+
+  const onAuthorityEvidence = React.useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: [ROLE_PACK_PROVENANCE_QUERY_PREFIX, relayUrl, projectRef],
+    });
+  }, [projectRef, queryClient, relayUrl]);
+  const authorityLiveError = useRoleAuthorityLive(
+    { relayUrl, channelIds, enabled, onEvidence: onAuthorityEvidence },
+    deps.authorityLiveClient,
+  );
 
   React.useEffect(() => {
     if (relayUrl === null || channelIds.length === 0) return;
@@ -159,6 +199,17 @@ export function useRolePackProvenance(
     return subscribeToObservedCodingSessionEvents((events) => {
       const affectsThisProject = events.some((event) => {
         if (!PROVENANCE_LIVE_KINDS.has(event.kind)) return false;
+        if (event.kind === KIND_SYSTEM_MESSAGE) {
+          try {
+            if (
+              JSON.parse(event.content)?.type !==
+              "coding_session_authority_transition_accepted"
+            )
+              return false;
+          } catch {
+            return false;
+          }
+        }
         const channelId = channelOf(event);
         return channelId !== null && scoped.has(channelId);
       });
@@ -172,10 +223,12 @@ export function useRolePackProvenance(
     });
   }, [channelIds, projectRef, queryClient, relayUrl]);
 
+  const identityRefetch = relayIdentity.refetch;
   const queryRefetch = query.refetch;
   const refetch = React.useCallback(() => {
+    void identityRefetch();
     void queryRefetch();
-  }, [queryRefetch]);
+  }, [identityRefetch, queryRefetch]);
 
   // A verdict is only as good as the read that produced it. The moment proof
   // changes (an invalidation above, a manual refetch, or a stale re-ask) the
@@ -186,8 +239,14 @@ export function useRolePackProvenance(
   // `fetchStatus` rather than `isFetching`: a re-read that React Query has
   // paused (offline) is not fetching, yet has confirmed nothing either.
   const settled = query.fetchStatus === "idle" && !query.isError;
+  const result = React.useMemo(() => {
+    if (!settled || !query.data) return null;
+    return authorityLiveError
+      ? { ...query.data, notes: [...query.data.notes, authorityLiveError] }
+      : query.data;
+  }, [authorityLiveError, query.data, settled]);
   return {
-    result: settled ? (query.data ?? null) : null,
+    result,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: errorSentence(query.error),

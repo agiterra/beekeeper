@@ -2,9 +2,9 @@
  * The reads behind pack-revision provenance: the signed lifecycle evidence a
  * reported 44223 has to be joined back to before it may claim anything.
  *
- * Four kinds, four reads, four budgets — 44221 commands, 44224 receipts, 44223
- * reports, 44226 genesis records — scoped by `#h` to the project's own
- * channels. One filter naming all four would share a single `limit` across
+ * Separate kinds, separate bounded history budgets — 44221 commands, 44224 receipts, 44223
+ * reports, 44226 genesis records, plus 44228 authority and 40099 receipts — scoped by `#h` to the project's own
+ * channels. One filter naming all kinds would share a single `limit` across
  * them, and receipts outrun commands by orders of magnitude on a channel that
  * has run real work, so the newest N rows would eventually be all receipts and
  * the commands and genesis records that prove anything would fall off the end.
@@ -21,6 +21,8 @@ import { relayClient } from "@/shared/api/relayClient";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
 import {
+  KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  KIND_SYSTEM_MESSAGE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
@@ -33,8 +35,15 @@ import {
   type RolePackProvenanceSourceError,
 } from "./rolePackProvenance";
 
-/** Upper bound on one kind's read; reaching it means older proof is missing. */
+/** Rows requested from the relay for each bounded history page. */
 export const ROLE_PACK_PROVENANCE_QUERY_LIMIT = 1000;
+
+/** Maximum dependent history requests for one kind and one channel chunk. */
+export const ROLE_PACK_PROVENANCE_MAX_REQUESTS = 8;
+
+/** Defense in depth for a fetcher that does not honor the requested page size. */
+export const ROLE_PACK_PROVENANCE_MAX_UNIQUE_EVENTS =
+  ROLE_PACK_PROVENANCE_QUERY_LIMIT * ROLE_PACK_PROVENANCE_MAX_REQUESTS;
 
 /**
  * Relay hard cap for the aggregate explicit `#h` values in one request — the
@@ -106,6 +115,16 @@ const PROVENANCE_READS: readonly ProvenanceRead[] = [
     scope: GENESIS_SCOPE,
     subject: "Session genesis records",
   },
+  {
+    kind: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+    scope: "authority-transitions",
+    subject: "Authority transitions",
+  },
+  {
+    kind: KIND_SYSTEM_MESSAGE,
+    scope: "authority-receipts",
+    subject: "Authority acceptance receipts",
+  },
 ];
 
 function channelChunks(channelIds: readonly string[]): string[][] {
@@ -127,6 +146,208 @@ function channelChunks(channelIds: readonly string[]): string[][] {
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.trim().replace(/\.+$/, "");
+}
+
+function abortError(): Error {
+  const error = new Error("Role provenance history recovery was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+async function yieldToBrowser(signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  throwIfAborted(signal);
+}
+
+function hasRequestedChannel(
+  event: RelayEvent,
+  channelIds: ReadonlySet<string>,
+): boolean {
+  return event.tags.some(
+    (tag) => tag[0] === "h" && channelIds.has(tag[1] ?? ""),
+  );
+}
+
+function invalidPageReason(
+  page: unknown,
+  read: ProvenanceRead,
+  channels: readonly string[],
+  until: number | undefined,
+): string | null {
+  if (!Array.isArray(page)) return "the relay response was not an event list";
+  if (page.length > ROLE_PACK_PROVENANCE_QUERY_LIMIT) {
+    return `the relay returned ${page.length} events for a ${ROLE_PACK_PROVENANCE_QUERY_LIMIT}-event page`;
+  }
+
+  const channelSet = new Set(channels);
+  for (const candidate of page) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof candidate.id !== "string" ||
+      candidate.id.length === 0 ||
+      typeof candidate.pubkey !== "string" ||
+      !Number.isSafeInteger(candidate.created_at) ||
+      candidate.created_at < 0 ||
+      !Number.isSafeInteger(candidate.kind) ||
+      !Array.isArray(candidate.tags) ||
+      !candidate.tags.every(
+        (tag: unknown) =>
+          Array.isArray(tag) && tag.every((value) => typeof value === "string"),
+      ) ||
+      typeof candidate.content !== "string" ||
+      typeof candidate.sig !== "string"
+    ) {
+      return "the relay returned a malformed event";
+    }
+    const event = candidate as RelayEvent;
+    if (event.kind !== read.kind) {
+      return `event ${event.id.slice(0, 8)}… had kind ${event.kind}, outside the requested kind ${read.kind}`;
+    }
+    if (!hasRequestedChannel(event, channelSet)) {
+      return `event ${event.id.slice(0, 8)}… was outside the requested channel chunk`;
+    }
+    if (until !== undefined && event.created_at > until) {
+      return `event ${event.id.slice(0, 8)}… was newer than the inclusive until cursor ${until}`;
+    }
+  }
+  return null;
+}
+
+function incompleteRead(
+  read: ProvenanceRead,
+  channels: readonly string[],
+  message: string,
+): RolePackProvenanceSourceError {
+  return {
+    scope: read.scope,
+    message,
+    channelIds: channels,
+  };
+}
+
+type ProvenanceHistory = {
+  events: RelayEvent[];
+  sourceError?: RolePackProvenanceSourceError;
+};
+
+/**
+ * Recover one kind/chunk stream backwards without stepping over timestamp ties.
+ * A short page proves exhaustion. Every full page keeps its oldest second as
+ * an inclusive cursor, and id de-duplication removes the resulting overlap.
+ */
+async function fetchProvenanceHistory(
+  read: ProvenanceRead,
+  channels: readonly string[],
+  fetchEvents: RolePackProvenanceFetcher,
+  signal?: AbortSignal,
+): Promise<ProvenanceHistory> {
+  const eventsById = new Map<string, RelayEvent>();
+  let until: number | undefined;
+
+  for (
+    let request = 1;
+    request <= ROLE_PACK_PROVENANCE_MAX_REQUESTS;
+    request += 1
+  ) {
+    throwIfAborted(signal);
+    let page: RelayEvent[];
+    try {
+      page = await fetchEvents({
+        kinds: [read.kind],
+        "#h": [...channels],
+        limit: ROLE_PACK_PROVENANCE_QUERY_LIMIT,
+        ...(until === undefined ? {} : { until }),
+      });
+    } catch (error) {
+      throwIfAborted(signal);
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      return {
+        events: [...eventsById.values()],
+        sourceError: incompleteRead(
+          read,
+          channels,
+          `${read.subject} could not be read: ${errorMessage(error)}.`,
+        ),
+      };
+    }
+    throwIfAborted(signal);
+
+    const invalidReason = invalidPageReason(page, read, channels, until);
+    if (invalidReason) {
+      return {
+        events: [...eventsById.values()],
+        sourceError: incompleteRead(
+          read,
+          channels,
+          `${read.subject} returned an invalid pagination response: ${invalidReason}; older proof may be missing.`,
+        ),
+      };
+    }
+
+    const before = eventsById.size;
+    for (const event of page) {
+      if (!eventsById.has(event.id)) eventsById.set(event.id, event);
+    }
+    if (eventsById.size > ROLE_PACK_PROVENANCE_MAX_UNIQUE_EVENTS) {
+      return {
+        events: [...eventsById.values()].slice(
+          0,
+          ROLE_PACK_PROVENANCE_MAX_UNIQUE_EVENTS,
+        ),
+        sourceError: incompleteRead(
+          read,
+          channels,
+          `${read.subject} exceeded the bounded recovery limit of ${ROLE_PACK_PROVENANCE_MAX_UNIQUE_EVENTS} unique events; older proof may be missing.`,
+        ),
+      };
+    }
+    if (page.length < ROLE_PACK_PROVENANCE_QUERY_LIMIT) {
+      return { events: [...eventsById.values()] };
+    }
+
+    const oldest = Math.min(...page.map((event) => event.created_at));
+    if (until !== undefined && oldest === until) {
+      return {
+        events: [...eventsById.values()],
+        sourceError: incompleteRead(
+          read,
+          channels,
+          `${read.subject} could not cross a full relay page at timestamp ${until}; older proof at that timestamp may be missing.`,
+        ),
+      };
+    }
+    if (eventsById.size === before) {
+      return {
+        events: [...eventsById.values()],
+        sourceError: incompleteRead(
+          read,
+          channels,
+          `${read.subject} pagination made no unique-event progress after ${request} requests; older proof may be missing.`,
+        ),
+      };
+    }
+    if (request === ROLE_PACK_PROVENANCE_MAX_REQUESTS) {
+      return {
+        events: [...eventsById.values()],
+        sourceError: incompleteRead(
+          read,
+          channels,
+          `${read.subject} reached the bounded recovery budget of ${ROLE_PACK_PROVENANCE_MAX_REQUESTS} requests after ${eventsById.size} unique events; older proof may be missing.`,
+        ),
+      };
+    }
+
+    until = oldest;
+    await yieldToBrowser(signal);
+  }
+
+  return { events: [...eventsById.values()] };
 }
 
 /** The prefix every provenance cache entry shares; also the reset selector. */
@@ -152,6 +373,7 @@ export function rolePackProvenanceQueryKey(
   projectRef: string | null,
   channelIds: readonly string[],
   metadataEventIds: readonly string[],
+  trustedRelayPubkey: string | null = null,
 ): readonly unknown[] {
   return [
     ROLE_PACK_PROVENANCE_QUERY_PREFIX,
@@ -159,6 +381,7 @@ export function rolePackProvenanceQueryKey(
     projectRef,
     [...new Set(channelIds)].sort(),
     [...new Set(metadataEventIds)].sort(),
+    trustedRelayPubkey,
   ] as const;
 }
 
@@ -171,7 +394,10 @@ export function rolePackProvenanceQueryKey(
  * silently turns a forged or corrupted row into "no proof exists" with no way
  * to tell the two apart.
  */
-async function admissibleEvents(events: readonly RelayEvent[]): Promise<{
+async function admissibleEvents(
+  events: readonly RelayEvent[],
+  signal?: AbortSignal,
+): Promise<{
   events: RelayEvent[];
   sourceErrors: RolePackProvenanceSourceError[];
 }> {
@@ -183,8 +409,9 @@ async function admissibleEvents(events: readonly RelayEvent[]): Promise<{
     // Yield to input/paint while validating a cold history. A microtask yield
     // does not release the browser's main thread to scrolling.
     if (checked > 0 && checked % 8 === 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await yieldToBrowser(signal);
     }
+    throwIfAborted(signal);
     checked += 1;
     if (seen.has(event.id)) continue;
     seen.add(event.id);
@@ -208,7 +435,10 @@ async function admissibleEvents(events: readonly RelayEvent[]): Promise<{
  */
 export async function fetchRolePackProvenanceEvents(
   channelIds: readonly string[],
-  deps: { fetchEvents?: RolePackProvenanceFetcher } = {},
+  deps: {
+    fetchEvents?: RolePackProvenanceFetcher;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<RolePackProvenanceEvents> {
   const fetchEvents: RolePackProvenanceFetcher =
     deps.fetchEvents ?? ((filter) => relayClient.fetchEvents(filter));
@@ -217,31 +447,19 @@ export async function fetchRolePackProvenanceEvents(
 
   for (const channels of channelChunks(channelIds)) {
     for (const read of PROVENANCE_READS) {
-      try {
-        const page = await fetchEvents({
-          kinds: [read.kind],
-          "#h": channels,
-          limit: ROLE_PACK_PROVENANCE_QUERY_LIMIT,
-        });
-        events.push(...page);
-        if (page.length >= ROLE_PACK_PROVENANCE_QUERY_LIMIT) {
-          sourceErrors.push({
-            scope: read.scope,
-            message: `${read.subject} were truncated at ${ROLE_PACK_PROVENANCE_QUERY_LIMIT} events; older proof may be missing.`,
-            channelIds: channels,
-          });
-        }
-      } catch (error) {
-        sourceErrors.push({
-          scope: read.scope,
-          message: `${read.subject} could not be read: ${errorMessage(error)}.`,
-          channelIds: channels,
-        });
-      }
+      const history = await fetchProvenanceHistory(
+        read,
+        channels,
+        fetchEvents,
+        deps.signal,
+      );
+      events.push(...history.events);
+      if (history.sourceError) sourceErrors.push(history.sourceError);
     }
   }
 
-  const admissible = await admissibleEvents(events);
+  throwIfAborted(deps.signal);
+  const admissible = await admissibleEvents(events, deps.signal);
   return {
     events: admissible.events,
     sourceErrors: [...sourceErrors, ...admissible.sourceErrors],

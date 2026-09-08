@@ -477,6 +477,11 @@ export function RolePackSnapshots({
           {ROLES_TECHNICAL_DETAILS_TITLE}
         </summary>
         <div className="flex flex-col gap-3 px-3 pb-3">
+          <p className="text-xs text-muted-foreground">
+            Sender confirmation checks the founder or an operator’s authority on
+            the recorded grant timeline at each command’s signed timestamp. It
+            does not prove which instructions executed or their real-time order.
+          </p>
           <SourceGroup
             resolvedError={resolvedError}
             resolvedIsStale={resolvedIsStale}
