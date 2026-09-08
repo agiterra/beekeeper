@@ -263,6 +263,14 @@ export function RolePackSnapshots({
                       snapshot.ahead,
                     )}
                   </span>
+                  {snapshot.note ? (
+                    <>
+                      {" · "}
+                      <span className="text-muted-foreground">
+                        {snapshot.note}
+                      </span>
+                    </>
+                  ) : null}
                   {" · "}
                   <span className="text-muted-foreground">
                     {reportedAgoText(snapshot.ageSeconds)}

@@ -17,8 +17,9 @@
 //!
 //! # What it refuses to do
 //!
-//! - **It never fetches.** Every command here is local: `rev-parse`,
-//!   `cat-file -e`, `merge-base --is-ancestor`, `rev-list --count`. Nothing
+//! - **It never fetches.** Every command here is local: `rev-parse`
+//!   (including `--is-shallow-repository`), `cat-file -e`, `merge-base
+//!   --is-ancestor`, `rev-list --count`. Nothing
 //!   clones, fetches, checks out, or writes. A comparison that quietly
 //!   refreshed the checkout would change the very fact the renderer is asking
 //!   about, and would make a read of the Packs tab a mutation of this host.
@@ -27,6 +28,20 @@
 //!   words, and every relation is
 //!   [`PackRevisionKind::UnknownHere`] — never `current`, which is the one
 //!   answer a reader would act on.
+//! - **It never reads a failure as an answer.** `git merge-base
+//!   --is-ancestor` says "no" with exit 1 and "I could not tell you" with
+//!   anything else; collapsing the two would publish a broken object store or
+//!   an unreadable checkout as [`PackRevisionKind::Unrelated`] — a confident
+//!   claim about history built out of a crash. Anything but a clean yes or no
+//!   is [`PackRevisionKind::UnknownHere`] carrying git's own words in
+//!   [`PackRevisionRelation::note`].
+//! - **It refuses to rank in a shallow checkout.** A `--depth`-limited clone
+//!   holds commits whose parents it does not have, so `--is-ancestor` answers
+//!   "no" for an ancestor it simply cannot see and `rev-list --count`
+//!   undercounts. The checkout is asked whether it is shallow *before* any
+//!   ranking, and if it is, every present commit that is not `HEAD` itself is
+//!   `unknown-here` with a note saying so — the one thing a shallow checkout
+//!   still knows for certain is which commit it is on.
 //! - **It never lets the wire name a revision `git` has not vetted.** Every
 //!   sha is 40 lowercase hex before it reaches a `git` argument, and a single
 //!   malformed one refuses the whole call rather than being dropped: a
@@ -40,7 +55,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::app_state::AppState;
-use crate::commands::project_git_exec::{run_git, GitAuthConfig};
+use crate::commands::project_git_exec::{run_git, run_git_status, GitAuthConfig};
 use crate::managed_agents::packs_cache;
 
 /// The reason [`ProjectPackRevisionComparison::current_sha`] is `null` because
@@ -52,6 +67,17 @@ const NO_SOURCE: &str = "this project names no packs repository, so this compute
 /// this computer has never resolved the project's packs repository.
 const NO_CHECKOUT: &str = "this computer has not resolved this project's packs repository yet, \
                            so there is no checkout here to compare reported revisions against.";
+
+/// The note on a revision this checkout's object store does not hold.
+const NOTE_ABSENT: &str = "this commit is not in this checkout's object store";
+
+/// The note on a revision a shallow checkout cannot rank.
+const NOTE_SHALLOW: &str = "this machine's packs checkout is shallow, so ancestry cannot be ranked";
+
+/// The note on a revision `git` failed to rank, carrying git's own words.
+fn note_indeterminate(error: &str) -> String {
+    format!("git could not rank this commit: {error}")
+}
 
 /// How one reported revision stands to the commit this machine's packs
 /// checkout is on.
@@ -93,6 +119,13 @@ pub struct PackRevisionRelation {
     /// of this machine the reported revision is. `null` otherwise, and `null`
     /// too when `git` could not count them.
     pub ahead: Option<u64>,
+    /// Why this row could not be ranked, when it could not be:
+    /// the commit is not in this checkout's object store, the checkout is
+    /// shallow, or `git` failed and said why. `null` when the relation is an
+    /// answer rather than an absence — a
+    /// [`PackRevisionKind::UnknownHere`] with no note would leave a reader
+    /// unable to tell "never seen here" from "git broke".
+    pub note: Option<String>,
 }
 
 /// This machine's answer about a set of reported pack revisions, at one
@@ -174,6 +207,9 @@ fn nothing_to_compare(
                 relation: PackRevisionKind::UnknownHere,
                 behind: None,
                 ahead: None,
+                // The whole comparison's `reason` already says why; a
+                // per-row note would only repeat it once per row.
+                note: None,
             })
             .collect(),
     }
@@ -189,19 +225,79 @@ fn holds_commit(checkout: &Path, sha: &str, auth: &GitAuthConfig) -> bool {
     .is_ok()
 }
 
-/// `true` when `ancestor` is an ancestor of `descendant` in `checkout`.
+/// What `git merge-base --is-ancestor` said, including "nothing usable".
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Ancestry {
+    /// Exit 0: it is an ancestor.
+    Yes,
+    /// Exit 1: git looked and it is not.
+    No,
+    /// Any other exit, or no invocation at all — git's own words, or the
+    /// status it left when it said nothing.
+    Indeterminate(String),
+}
+
+/// Ask whether `ancestor` is an ancestor of `descendant` in `checkout`.
 ///
-/// `git merge-base --is-ancestor` answers by exit status, so a `false` here
-/// covers both "no" and "git could not say"; both callers have already
-/// established that the two commits are present, and the fallthrough is
-/// [`PackRevisionKind::Unrelated`], which claims nothing about age.
-fn is_ancestor(checkout: &Path, ancestor: &str, descendant: &str, auth: &GitAuthConfig) -> bool {
-    run_git(
+/// `git merge-base --is-ancestor` answers by exit status: 0 for yes, **1 and
+/// only 1** for no. Every other status — a missing parent object, an
+/// unreadable object store, a git that refused to start — is a failure to
+/// answer, and this returns [`Ancestry::Indeterminate`] for it rather than
+/// letting it fall through as "not an ancestor". The caller turns that into
+/// [`PackRevisionKind::UnknownHere`] with the reason attached, because
+/// "different history" and "I could not read the history" are different
+/// claims and only one of them is true here.
+fn is_ancestor(
+    checkout: &Path,
+    ancestor: &str,
+    descendant: &str,
+    auth: &GitAuthConfig,
+) -> Ancestry {
+    match run_git_status(
         &["merge-base", "--is-ancestor", ancestor, descendant],
         Some(checkout),
         auth,
-    )
-    .is_ok()
+    ) {
+        Ok(outcome) if outcome.status.success() => Ancestry::Yes,
+        Ok(outcome) if outcome.status.code() == Some(1) => Ancestry::No,
+        Ok(outcome) => {
+            let stderr = outcome.stderr.trim().to_string();
+            Ancestry::Indeterminate(if stderr.is_empty() {
+                format!("git exited with status {}", outcome.status)
+            } else {
+                stderr
+            })
+        }
+        Err(error) => Ancestry::Indeterminate(error),
+    }
+}
+
+/// Whether the checkout's history is complete enough to rank commits in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Depth {
+    /// A full clone: ancestry answers can be trusted.
+    Full,
+    /// A `--depth`-limited clone: present commits may have absent parents.
+    Shallow,
+    /// git could not say which — its own words.
+    Unknown(String),
+}
+
+/// Ask the checkout, once per comparison, whether it is shallow.
+///
+/// One `git rev-parse --is-shallow-repository` for the whole call rather than
+/// one per revision: the answer cannot change while the store lock is held,
+/// and every row would otherwise pay for the same question.
+fn checkout_depth(checkout: &Path, auth: &GitAuthConfig) -> Depth {
+    match run_git(
+        &["rev-parse", "--is-shallow-repository"],
+        Some(checkout),
+        auth,
+    ) {
+        Ok(output) if output.trim() == "true" => Depth::Shallow,
+        Ok(_) => Depth::Full,
+        Err(error) => Depth::Unknown(error),
+    }
 }
 
 /// Commits in `from..to`, or `None` when `git` did not answer with a number.
@@ -227,6 +323,13 @@ fn count_commits(checkout: &Path, from: &str, to: &str, auth: &GitAuthConfig) ->
 /// `HEAD`: the refusal is carried verbatim rather than turned into a failed
 /// call, because the renderer has rows to draw either way and "this machine
 /// cannot say" is the honest label for them.
+///
+/// The same holds one row at a time. A revision this checkout does not hold,
+/// one it holds but cannot rank because the checkout is shallow, and one
+/// `git` failed on all come back as [`PackRevisionKind::UnknownHere`] with a
+/// [`PackRevisionRelation::note`] saying which of the three — never as
+/// [`PackRevisionKind::Unrelated`], which is a claim about history and would
+/// be a lie built from a failure.
 ///
 /// # Errors
 /// A sentence naming the offending value when any sha is not 40 lowercase
@@ -275,48 +378,71 @@ pub(crate) fn compare_pack_revisions(
         ));
     }
 
+    // Asked once, before any ranking: in a shallow checkout every answer
+    // below would be drawn from a history git only half has.
+    let depth = checkout_depth(checkout, auth);
+
     let relations = shas
         .into_iter()
         .map(|sha| {
+            let unrankable = |sha: String, note: String| PackRevisionRelation {
+                sha,
+                relation: PackRevisionKind::UnknownHere,
+                behind: None,
+                ahead: None,
+                note: Some(note),
+            };
             if sha == head {
+                // The one thing a shallow or damaged checkout still knows.
                 return PackRevisionRelation {
                     sha,
                     relation: PackRevisionKind::Current,
                     behind: None,
                     ahead: None,
+                    note: None,
                 };
             }
             if !holds_commit(checkout, &sha, auth) {
-                return PackRevisionRelation {
-                    sha,
-                    relation: PackRevisionKind::UnknownHere,
-                    behind: None,
-                    ahead: None,
-                };
+                return unrankable(sha, NOTE_ABSENT.to_string());
             }
-            if is_ancestor(checkout, &sha, &head, auth) {
-                let behind = count_commits(checkout, &sha, &head, auth);
-                return PackRevisionRelation {
-                    sha,
-                    relation: PackRevisionKind::Earlier,
-                    behind,
-                    ahead: None,
-                };
+            match &depth {
+                Depth::Shallow => return unrankable(sha, NOTE_SHALLOW.to_string()),
+                Depth::Unknown(error) => return unrankable(sha, note_indeterminate(error)),
+                Depth::Full => {}
             }
-            if is_ancestor(checkout, &head, &sha, auth) {
-                let ahead = count_commits(checkout, &head, &sha, auth);
-                return PackRevisionRelation {
-                    sha,
+            match is_ancestor(checkout, &sha, &head, auth) {
+                Ancestry::Yes => {
+                    return PackRevisionRelation {
+                        sha: sha.clone(),
+                        relation: PackRevisionKind::Earlier,
+                        behind: count_commits(checkout, &sha, &head, auth),
+                        ahead: None,
+                        note: None,
+                    }
+                }
+                Ancestry::Indeterminate(error) => {
+                    return unrankable(sha, note_indeterminate(&error))
+                }
+                Ancestry::No => {}
+            }
+            match is_ancestor(checkout, &head, &sha, auth) {
+                Ancestry::Yes => PackRevisionRelation {
+                    sha: sha.clone(),
                     relation: PackRevisionKind::Later,
                     behind: None,
-                    ahead,
-                };
-            }
-            PackRevisionRelation {
-                sha,
-                relation: PackRevisionKind::Unrelated,
-                behind: None,
-                ahead: None,
+                    ahead: count_commits(checkout, &head, &sha, auth),
+                    note: None,
+                },
+                Ancestry::Indeterminate(error) => unrankable(sha, note_indeterminate(&error)),
+                // Both commits are here and git looked both ways: this is a
+                // different history, not a failure to read one.
+                Ancestry::No => PackRevisionRelation {
+                    sha,
+                    relation: PackRevisionKind::Unrelated,
+                    behind: None,
+                    ahead: None,
+                    note: None,
+                },
             }
         })
         .collect();

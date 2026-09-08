@@ -6,12 +6,14 @@ import {
   projectPacksResolutionNeedsRefresh,
   projectPacksLiveEffect,
   projectPacksLiveFilters,
+  rolePackRevisionsQueryKey,
 } from "./rolePacksLiveInvalidation.ts";
 
 const PROJECT_REF = `30621:${"a".repeat(64)}:beekeeper`;
 const OTHER_PROJECT_REF = `30621:${"a".repeat(64)}:other-project`;
 const REPO_ID = "agiterra-packs";
 const REPO_REF = `30617:${"b".repeat(64)}:${REPO_ID}`;
+const OTHER_REPO_REF = `30617:${"b".repeat(64)}:other-packs`;
 
 function source(overrides = {}) {
   return {
@@ -38,6 +40,83 @@ function event({ id, kind, d, tags = [] }) {
     sig: "d".repeat(128),
   };
 }
+
+function revisionsKeyInput(overrides = {}) {
+  return {
+    projectRef: PROJECT_REF,
+    sourceEventId: "source-1",
+    sourceRepo: REPO_REF,
+    currentResolvedSha: "a".repeat(40),
+    packsUpdatedAt: 1_780_000_000_000,
+    shas: ["b".repeat(40), "c".repeat(40)],
+    ...overrides,
+  };
+}
+
+test("rolePackRevisionsQueryKey's first element identifies the query", () => {
+  assert.equal(
+    rolePackRevisionsQueryKey(revisionsKeyInput())[0],
+    "role-pack-revisions",
+  );
+});
+
+test("rolePackRevisionsQueryKey is stable for identical inputs", () => {
+  assert.deepEqual(
+    rolePackRevisionsQueryKey(revisionsKeyInput()),
+    rolePackRevisionsQueryKey(revisionsKeyInput()),
+  );
+});
+
+test("rolePackRevisionsQueryKey changes when the source repo changes — switching repositories must never reuse old data", () => {
+  assert.notDeepEqual(
+    rolePackRevisionsQueryKey(revisionsKeyInput()),
+    rolePackRevisionsQueryKey(
+      revisionsKeyInput({ sourceRepo: OTHER_REPO_REF }),
+    ),
+  );
+});
+
+test("rolePackRevisionsQueryKey changes when the source event revision changes", () => {
+  assert.notDeepEqual(
+    rolePackRevisionsQueryKey(revisionsKeyInput()),
+    rolePackRevisionsQueryKey(revisionsKeyInput({ sourceEventId: "source-2" })),
+  );
+});
+
+test("rolePackRevisionsQueryKey changes when the packs list's refresh completion moves forward, even with HEAD unchanged — a manual refresh must re-rank", () => {
+  const input = revisionsKeyInput();
+  assert.notDeepEqual(
+    rolePackRevisionsQueryKey(input),
+    rolePackRevisionsQueryKey({
+      ...input,
+      packsUpdatedAt: input.packsUpdatedAt + 1,
+    }),
+  );
+});
+
+test("rolePackRevisionsQueryKey changes when the resolved sha changes", () => {
+  assert.notDeepEqual(
+    rolePackRevisionsQueryKey(revisionsKeyInput()),
+    rolePackRevisionsQueryKey(
+      revisionsKeyInput({ currentResolvedSha: "d".repeat(40) }),
+    ),
+  );
+});
+
+test("rolePackRevisionsQueryKey changes when the compared sha set changes", () => {
+  assert.notDeepEqual(
+    rolePackRevisionsQueryKey(revisionsKeyInput()),
+    rolePackRevisionsQueryKey(revisionsKeyInput({ shas: ["b".repeat(40)] })),
+  );
+});
+
+test("rolePackRevisionsQueryKey does not re-sort shas — callers pass revisionShas's already-sorted output", () => {
+  const unsorted = ["c".repeat(40), "b".repeat(40)];
+  assert.deepEqual(
+    rolePackRevisionsQueryKey(revisionsKeyInput({ shas: unsorted })).at(-1),
+    unsorted,
+  );
+});
 
 test("live filters watch the source and only a configured moving ref", () => {
   assert.deepEqual(projectPacksLiveFilters(PROJECT_REF, source()), [

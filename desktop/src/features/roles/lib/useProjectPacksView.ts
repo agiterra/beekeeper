@@ -34,6 +34,7 @@ import {
 } from "./rolePackSnapshots";
 import {
   projectPacksResolutionNeedsRefresh,
+  rolePackRevisionsQueryKey,
   rolePacksQueryKey,
   useProjectPacksLiveInvalidation,
 } from "./rolePacksLiveInvalidation";
@@ -278,12 +279,14 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     [executionCatalog.entries, sourceRepo],
   );
   const revisionsQuery = useQuery({
-    queryKey: [
-      "role-pack-revisions",
+    queryKey: rolePackRevisionsQueryKey({
       projectRef,
+      sourceEventId: sourceQuery.data?.eventId ?? null,
+      sourceRepo,
       currentResolvedSha,
-      shasToCompare,
-    ],
+      packsUpdatedAt: packsQuery.dataUpdatedAt,
+      shas: shasToCompare,
+    }),
     queryFn: () => compareProjectPackRevisions(projectRef ?? "", shasToCompare),
     enabled: projectRef !== null && shasToCompare.length > 0,
     staleTime: 30_000,

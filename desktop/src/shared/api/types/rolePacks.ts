@@ -88,6 +88,13 @@ export type ProjectPackRevisionEntry = {
   behind: number | null;
   /** `git rev-list --count HEAD..sha`, set only when `relation` is `"later"`. */
   ahead: number | null;
+  /**
+   * A per-row disclosure git couldn't fold into `relation` itself — e.g.
+   * "git could not rank this commit: <git's words>" or "this machine's
+   * packs checkout is shallow, so ancestry cannot be ranked". `null` in the
+   * ordinary case.
+   */
+  note: string | null;
 };
 
 /**

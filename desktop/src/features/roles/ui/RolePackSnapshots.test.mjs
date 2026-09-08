@@ -25,6 +25,7 @@ function reportedRow(overrides = {}) {
     relation: "current",
     behind: null,
     ahead: null,
+    note: null,
     status: "running",
     ageSeconds: 300,
     adoption: "none",
@@ -135,6 +136,56 @@ test("shows the earlier/later distance and the terminal status without an adopti
   assert.match(html, /Earlier revision · 4 behind this machine/);
   assert.match(html, />completed</);
   assert.doesNotMatch(html, /Keeps this revision/);
+});
+
+test("renders the comparison's per-row note after the relation text", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: null,
+        resolved: [],
+        reported: [
+          reportedRow({
+            relation: "unrelated",
+            note: "this machine's packs checkout is shallow, so ancestry cannot be ranked",
+          }),
+        ],
+        comparison: null,
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+    }),
+  );
+
+  // The relation text and the note render as sibling spans (each joined by
+  // its own " · " separator), so they are matched independently rather than
+  // as one contiguous run of text. The apostrophe is skipped entirely —
+  // `renderToStaticMarkup` HTML-escapes it to `&#x27;`.
+  assert.match(html, /Different history from this machine/);
+  assert.match(html, /packs checkout is shallow, so ancestry cannot be ranked/);
+});
+
+test("omits the note segment entirely when the row carries none", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RolePackSnapshots, {
+      snapshots: {
+        resolvedAt: null,
+        resolved: [],
+        reported: [reportedRow({ relation: "current", note: null })],
+        comparison: null,
+      },
+      resolvedError: null,
+      resolvedIsStale: false,
+      revisionsError: null,
+      reports: { isLoading: false, error: null, authorityError: null },
+    }),
+  );
+
+  assert.match(html, /Same revision as this machine/);
+  assert.match(html, /reported 5m ago/);
+  assert.doesNotMatch(html, /checkout is shallow/);
 });
 
 test("does not turn a failed session discovery into a zero-report claim", () => {

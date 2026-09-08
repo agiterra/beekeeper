@@ -68,6 +68,18 @@ function revisions(overrides = {}) {
   };
 }
 
+/** One `ProjectPackRevisionEntry` — the wire shape, `note` included. */
+function relationEntry(overrides = {}) {
+  return {
+    sha: SHA,
+    relation: "current",
+    behind: null,
+    ahead: null,
+    note: null,
+    ...overrides,
+  };
+}
+
 function build(overrides = {}) {
   return buildRolePackSnapshots({
     projectRef: PROJECT,
@@ -132,7 +144,7 @@ test("a repository claim is a different source once the project is known to name
 test("marks a reported sha earlier than HEAD, disclosing the behind count", () => {
   const snapshots = build({
     revisions: revisions({
-      relations: [{ sha: SHA, relation: "earlier", behind: 4, ahead: null }],
+      relations: [relationEntry({ relation: "earlier", behind: 4 })],
     }),
   });
   const row = snapshots.reported[0];
@@ -144,7 +156,7 @@ test("marks a reported sha earlier than HEAD, disclosing the behind count", () =
 test("marks a reported sha later than HEAD, disclosing the ahead count", () => {
   const snapshots = build({
     revisions: revisions({
-      relations: [{ sha: SHA, relation: "later", behind: null, ahead: 2 }],
+      relations: [relationEntry({ relation: "later", ahead: 2 })],
     }),
   });
   const row = snapshots.reported[0];
@@ -162,7 +174,7 @@ test("falls back to unknown-here when no comparison has ever run", () => {
 test("falls back to unknown-here and drops stale data once the comparison errors", () => {
   const snapshots = build({
     revisions: revisions({
-      relations: [{ sha: SHA, relation: "current", behind: null, ahead: null }],
+      relations: [relationEntry({ relation: "current" })],
     }),
     revisionsError: "git exited 1",
   });
@@ -185,7 +197,7 @@ test("marks a shipped coordinate different-source even when its sha matches HEAD
       }),
     ],
     revisions: revisions({
-      relations: [{ sha: SHA, relation: "current", behind: null, ahead: null }],
+      relations: [relationEntry({ relation: "current" })],
     }),
   });
   assert.equal(snapshots.reported[0].relation, "different-source");
@@ -213,7 +225,7 @@ test("adds the adoption sentence for a running, non-current row", () => {
   const snapshots = build({
     catalogEntries: [entry({ status: "running" })],
     revisions: revisions({
-      relations: [{ sha: SHA, relation: "earlier", behind: 1, ahead: null }],
+      relations: [relationEntry({ relation: "earlier", behind: 1 })],
     }),
   });
   assert.equal(snapshots.reported[0].adoption, "keeps-until-next-generation");
@@ -224,7 +236,7 @@ for (const status of ["completed", "stopped", "failed"]) {
     const snapshots = build({
       catalogEntries: [entry({ status })],
       revisions: revisions({
-        relations: [{ sha: SHA, relation: "earlier", behind: 1, ahead: null }],
+        relations: [relationEntry({ relation: "earlier", behind: 1 })],
       }),
     });
     assert.equal(snapshots.reported[0].adoption, "none");
@@ -235,7 +247,7 @@ test("omits the adoption sentence for a current row even while running", () => {
   const snapshots = build({
     catalogEntries: [entry({ status: "running" })],
     revisions: revisions({
-      relations: [{ sha: SHA, relation: "current", behind: null, ahead: null }],
+      relations: [relationEntry({ relation: "current" })],
     }),
   });
   assert.equal(snapshots.reported[0].relation, "current");
@@ -310,4 +322,69 @@ test("revisionShas dedupes, sorts, and excludes shipped or foreign-repo coordina
 test("revisionShas answers nothing when the project names no source", () => {
   const shas = revisionShas([entry()], null);
   assert.deepEqual(shas, []);
+});
+
+test("carries the comparison's per-row note through to the reported snapshot", () => {
+  const snapshots = build({
+    revisions: revisions({
+      relations: [
+        relationEntry({
+          relation: "unrelated",
+          note: "this machine's packs checkout is shallow, so ancestry cannot be ranked",
+        }),
+      ],
+    }),
+  });
+  assert.equal(
+    snapshots.reported[0].note,
+    "this machine's packs checkout is shallow, so ancestry cannot be ranked",
+  );
+});
+
+test("carries a null note when the comparison entry has none", () => {
+  const snapshots = build({
+    revisions: revisions({
+      relations: [relationEntry({ relation: "current" })],
+    }),
+  });
+  assert.equal(snapshots.reported[0].note, null);
+});
+
+test("never carries a note for a row the comparison never ranked", () => {
+  const snapshots = build({ revisions: null });
+  assert.equal(snapshots.reported[0].relation, "unknown-here");
+  assert.equal(snapshots.reported[0].note, null);
+});
+
+test("never carries a note once the comparison errors and rows fall back to unknown-here", () => {
+  const snapshots = build({
+    revisions: revisions({
+      relations: [relationEntry({ relation: "unrelated", note: "stale note" })],
+    }),
+    revisionsError: "git exited 1",
+  });
+  assert.equal(snapshots.reported[0].relation, "unknown-here");
+  // The section-level "Revision comparison unavailable" line already
+  // discloses the failure; a row must not also surface a stale per-row note.
+  assert.equal(snapshots.reported[0].note, null);
+});
+
+test("never carries a note for an incomplete, different-source, or shipped-differs row", () => {
+  const incomplete = build({
+    catalogEntries: [entry({ packRef: { repo: REPO, sha: SHA } })],
+  });
+  assert.equal(incomplete.reported[0].note, null);
+
+  const differentSource = build({
+    catalogEntries: [entry({ packRef: coordinate({ repo: OTHER_REPO }) })],
+  });
+  assert.equal(differentSource.reported[0].note, null);
+
+  const shippedDiffers = build({
+    sourceRepo: null,
+    resolvedPacks: [pack({ origin: "shipped", packRef: SHIPPED })],
+    catalogEntries: [entry({ packRef: { ...SHIPPED, sha: "0.4.1-block" } })],
+  });
+  assert.equal(shippedDiffers.reported[0].relation, "shipped-differs");
+  assert.equal(shippedDiffers.reported[0].note, null);
 });

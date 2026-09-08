@@ -115,11 +115,33 @@ fn read_pipe_lossy(pipe: Option<impl Read>) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
-pub(crate) fn run_git(
+/// One finished `git` invocation, whatever it exited with.
+///
+/// [`run_git`] folds a non-zero exit into an `Err`, which is right for the
+/// callers that only want the output. It is wrong for the callers that
+/// distinguish *git said no* from *git could not say*: `merge-base
+/// --is-ancestor` answers "no" with exit 1 and "I failed" with 128, and a
+/// reader that sees only `Err` reports a failure as an answer.
+pub(crate) struct GitOutcome {
+    /// The exit status, success or not.
+    pub status: std::process::ExitStatus,
+    /// Everything git wrote to stdout, lossily decoded.
+    pub stdout: String,
+    /// Everything git wrote to stderr, lossily decoded.
+    pub stderr: String,
+}
+
+/// Run `git` and return what it did, without judging the exit status.
+///
+/// `Err` only when there was no invocation to judge: git could not be
+/// spawned, it timed out, or waiting on it failed. Every other outcome —
+/// including a fatal error from git itself — is `Ok` with the status and both
+/// streams, for callers that need to tell git's "no" from git's "I cannot".
+pub(crate) fn run_git_status(
     args: &[&str],
     cwd: Option<&std::path::Path>,
     auth: &GitAuthConfig,
-) -> Result<String, String> {
+) -> Result<GitOutcome, String> {
     let mut command = Command::new(&auth.git_path);
     command.args(args);
     if let Some(cwd) = cwd {
@@ -170,17 +192,33 @@ pub(crate) fn run_git(
         }
     };
 
-    let stdout = stdout_thread.join().unwrap_or_default();
-    let stderr = stderr_thread.join().unwrap_or_default();
-    if !status.success() {
-        let stderr = stderr.trim().to_string();
+    Ok(GitOutcome {
+        status,
+        stdout: stdout_thread.join().unwrap_or_default(),
+        stderr: stderr_thread.join().unwrap_or_default(),
+    })
+}
+
+/// Run `git` and return its stdout, or its complaint.
+///
+/// A thin reading of [`run_git_status`]: a non-zero exit becomes an `Err`
+/// carrying git's stderr, or `git exited with status <n>` when git said
+/// nothing.
+pub(crate) fn run_git(
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+    auth: &GitAuthConfig,
+) -> Result<String, String> {
+    let outcome = run_git_status(args, cwd, auth)?;
+    if !outcome.status.success() {
+        let stderr = outcome.stderr.trim().to_string();
         return Err(if stderr.is_empty() {
-            format!("git exited with status {status}")
+            format!("git exited with status {}", outcome.status)
         } else {
             stderr
         });
     }
-    Ok(stdout)
+    Ok(outcome.stdout)
 }
 
 fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credentials: bool) {

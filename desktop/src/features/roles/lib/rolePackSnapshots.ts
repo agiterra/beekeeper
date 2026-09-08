@@ -70,6 +70,14 @@ export type ReportedRolePackSnapshot = {
   behind: number | null;
   /** Commits this row is ahead of `HEAD`, set only when `relation` is `"later"`. */
   ahead: number | null;
+  /**
+   * The comparison's own per-row disclosure (e.g. why git couldn't rank this
+   * commit), verbatim. `null` for `different-source`, `shipped-differs` and
+   * `incomplete` rows, and for a row with no matching comparison entry — a
+   * failed comparison already discloses itself at the section level, so a
+   * row that fell back to `unknown-here` because of it carries no note here.
+   */
+  note: string | null;
   /** The catalog record's status word, verbatim. */
   status: CodingSessionStatus;
   /** Seconds since `reportedAt`, or `null` when no status was observed. */
@@ -151,7 +159,7 @@ function sameCoordinate(
   );
 }
 
-const NO_DISTANCE = { behind: null, ahead: null } as const;
+const NO_DISTANCE = { behind: null, ahead: null, note: null } as const;
 
 /**
  * A reported coordinate's relation to this machine, plus its distance.
@@ -173,7 +181,7 @@ function revisionRelation(
     resolvedByRole: ReadonlyMap<string, RolePackCoordinate>;
     revisions: ProjectPackRevisionComparison | null;
   },
-): Pick<ReportedRolePackSnapshot, "relation" | "behind" | "ahead"> {
+): Pick<ReportedRolePackSnapshot, "relation" | "behind" | "ahead" | "note"> {
   if (coordinate === null) {
     return { relation: "incomplete", ...NO_DISTANCE };
   }
@@ -201,9 +209,14 @@ function revisionRelation(
   const { revisions } = input;
   const entry = revisions?.relations.find((row) => row.sha === coordinate.sha);
   if (entry === undefined) {
-    return { relation: "unknown-here", behind: null, ahead: null };
+    return { relation: "unknown-here", ...NO_DISTANCE };
   }
-  return { relation: entry.relation, behind: entry.behind, ahead: entry.ahead };
+  return {
+    relation: entry.relation,
+    behind: entry.behind,
+    ahead: entry.ahead,
+    note: entry.note,
+  };
 }
 
 function adoptionFor(
@@ -290,7 +303,7 @@ export function buildRolePackSnapshots(input: {
     .filter(({ session }) => session.projectRef === input.projectRef)
     .map(({ channelId, session }) => {
       const coordinate = readRolePackCoordinate(session.packRef);
-      const { relation, behind, ahead } = revisionRelation(coordinate, {
+      const { relation, behind, ahead, note } = revisionRelation(coordinate, {
         sourceRepo: input.sourceRepo,
         sourceKnown: input.sourceKnown,
         resolvedByRole,
@@ -310,6 +323,7 @@ export function buildRolePackSnapshots(input: {
         relation,
         behind,
         ahead,
+        note,
         status: session.status,
         ageSeconds: seatAgeSeconds(session.statusAt, input.nowSeconds),
         adoption: adoptionFor(relation, session.status),

@@ -1,7 +1,20 @@
-import { expect, test, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 
+import { expect, test, type Page } from "@playwright/test";
+import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
+
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  CODING_SESSION_METADATA_TAG_VERSION,
+  codingSessionMetadataSemanticKey,
+} from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import type { RelayEvent } from "@/shared/api/types";
-import { KIND_PROJECT } from "@/shared/constants/kinds";
+import {
+  KIND_CODING_SESSION_METADATA,
+  KIND_PROJECT,
+} from "@/shared/constants/kinds";
 
 import { installMockBridge } from "../helpers/bridge";
 import { openDashboardTab } from "../helpers/dashboard";
@@ -156,4 +169,244 @@ test("the Packs tab explains local versions and unverified metadata claims", asy
 
   await waitForAnimations(page);
   await snapshots.screenshot({ path: `${SNAPSHOTS}/available-and-empty.png` });
+});
+
+// ── Ranked reported revisions ────────────────────────────────────────────
+
+/** `general` in the mock channel fixture; the `h` tag must match exactly. */
+const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+
+/**
+ * An owner pubkey for the hand-built kind:30621 below. Kind:30621 is not
+ * signature-checked by the client (see `projectHead` above), so any 64-hex
+ * value fixes this project's address (`30621:<owner>:general`)
+ * deterministically for this test.
+ */
+const RANKED_PROJECT_OWNER = "a1".repeat(32);
+const RANKED_PROJECT_ADDRESS = `${KIND_PROJECT}:${RANKED_PROJECT_OWNER}:general`;
+
+/**
+ * Publishes a real project under dtag `general` — the same tab the test
+ * above opens via `project-open-general`. Unlike the local synthetic
+ * placeholder the app shows before any real `general` project exists
+ * (`makeLocalGeneral`, whose `channelIds` is always empty), this one
+ * declares the mock `general` channel as its own with a `channel` tag, so
+ * `useProjectPacksView`'s project-channel filter (`declared.has(channel.id)`
+ * in `useProjectPacksView.ts`) admits it and the Packs tab reads that
+ * channel's signed 44223 metadata for this project.
+ */
+function generalProjectWithChannel(): RelayEvent {
+  return {
+    id: "project-general-ranked".padEnd(64, "0"),
+    pubkey: RANKED_PROJECT_OWNER,
+    created_at: Math.floor(Date.now() / 1000) - 7_200,
+    kind: KIND_PROJECT,
+    tags: [
+      ["d", "general"],
+      ["name", "General"],
+      ["channel", GENERAL_CHANNEL_ID],
+    ],
+    content: "",
+    sig: "mocksig".repeat(20).slice(0, 128),
+  };
+}
+
+/** The mock lead pack's own repo and sha (`handleListProjectRolePacks` in
+ * `e2eBridge.ts`) — the fixture's "current" answer for `compare_project_pack_revisions`. */
+const RANKED_REPO = `30617:${"c".repeat(64)}:packs`;
+const RANKED_CURRENT_SHA = "9f2e1d0c7b6a59483726150e4d3c2b1a0f9e8d7c";
+const RANKED_EARLIER_SHA = "aa11bb22cc33dd44ee55ff660011223344556677";
+
+const RANKED_IDLE_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "ranked-idle-seat",
+  sessionId: "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+  generation: 1,
+};
+const RANKED_RUNNING_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "ranked-running-seat",
+  sessionId: "cccccccc-dddd-eeee-ffff-000000000000",
+  generation: 1,
+};
+
+const RANKED_CAPABILITIES = {
+  threadTurnStart: true,
+  threadTurnInterrupt: true,
+  threadSteer: true,
+  context: false,
+  diff: false,
+  plan: true,
+};
+
+/**
+ * A real, signed kind:44223 for the general channel — this is what
+ * `useGlobalCodingSessionCatalog`'s "open" authority mode actually trusts
+ * (channel membership, read off signature-verified events), not a
+ * hand-waved fixture. Each generation is its own fresh keypair, matching how
+ * `coding-session-reachability.spec.ts` and `coding-session-seat-bee.spec.ts`
+ * seed provider metadata.
+ */
+function rankedMetadataEvent(input: {
+  target: typeof RANKED_IDLE_TARGET;
+  status: "idle" | "running";
+  sha: string;
+  reportedSecondsAgo: number;
+}): RelayEvent {
+  return finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_METADATA,
+      created_at: Math.floor(Date.now() / 1000) - input.reportedSecondsAgo,
+      tags: [
+        ["h", GENERAL_CHANNEL_ID],
+        ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+        ["cs-target", buildCodingSessionTargetKey(input.target)],
+        ["csm-key", codingSessionMetadataSemanticKey(input.target)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        session: input.target,
+        projectRef: RANKED_PROJECT_ADDRESS,
+        repoRef: null,
+        title: `Ranked ${input.status} seat`,
+        agentRef: null,
+        provider: input.target.driver,
+        runtime: input.target.driver,
+        model: "sonnet",
+        status: input.status,
+        branch: null,
+        capabilities: RANKED_CAPABILITIES,
+        packRef: {
+          repo: RANKED_REPO,
+          sha: input.sha,
+          role: "lead",
+          path: "personas/roles/lead",
+        },
+      }),
+    },
+    generateSecretKey(),
+  ) as unknown as RelayEvent;
+}
+
+test("the Packs tab ranks reported pack revisions against this machine's checkout", async ({
+  page,
+}) => {
+  await page.addInitScript((features) => {
+    window.localStorage.setItem("buzz-feature-overrides-v1", features);
+  }, PROJECT_FEATURES);
+  await page.addInitScript(
+    (events) => {
+      (
+        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+    },
+    [generalProjectWithChannel()],
+  );
+  await installMockBridge(page, {});
+  // Patch the mock's revision-comparison answer after `installMockBridge`'s
+  // own init script runs (it overwrites `window.__BUZZ_E2E__.mock` wholesale),
+  // so this merge survives rather than being clobbered by it. There is no
+  // typed knob for this in `tests/helpers/bridge.ts` — `packRevisionRelations`
+  // lives only on `e2eBridge.ts`'s own `E2eConfig`, which reads
+  // `window.__BUZZ_E2E__` directly.
+  await page.addInitScript(
+    (behind) => {
+      const testWindow = window as unknown as {
+        __BUZZ_E2E__?: { mock?: Record<string, unknown> };
+      };
+      if (!testWindow.__BUZZ_E2E__) return;
+      testWindow.__BUZZ_E2E__.mock = {
+        ...(testWindow.__BUZZ_E2E__.mock ?? {}),
+        packRevisionRelations: {
+          [behind.sha]: { relation: "earlier", behind: behind.behind },
+        },
+      };
+    },
+    { sha: RANKED_EARLIER_SHA, behind: 1 },
+  );
+  await page.setViewportSize({ width: 1280, height: 850 });
+  await page.goto("/");
+
+  const general = page.getByTestId("project-group-general");
+  await expect(general).toBeVisible({ timeout: 15_000 });
+  await general.hover();
+  await page.getByTestId("project-open-general").click();
+  await expect(page.getByTestId("project-page-tabs")).toBeVisible();
+  await page.getByTestId("project-tab-packs").click();
+
+  const snapshots = page.getByTestId("role-pack-snapshots");
+  await expect(snapshots).toBeVisible({ timeout: 15_000 });
+
+  // Seed the two generations only once the tab is open — the channel's live
+  // subscription (armed on navigation) must already exist for the seeded
+  // events to be delivered rather than dropped.
+  await page.evaluate(
+    ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("mock signed-event seam is missing");
+      for (const event of events as never[]) seed({ channelName, event });
+    },
+    {
+      channelName: "general",
+      events: [
+        rankedMetadataEvent({
+          target: RANKED_IDLE_TARGET,
+          status: "idle",
+          sha: RANKED_CURRENT_SHA,
+          reportedSecondsAgo: 300,
+        }),
+        rankedMetadataEvent({
+          target: RANKED_RUNNING_TARGET,
+          status: "running",
+          sha: RANKED_EARLIER_SHA,
+          reportedSecondsAgo: 120,
+        }),
+      ] as unknown as never[],
+    },
+  );
+
+  const rows = page.getByTestId("role-pack-reported-row");
+  await expect(rows).toHaveCount(2, { timeout: 15_000 });
+
+  const currentRow = page.locator(
+    '[data-testid="role-pack-reported-row"][data-relation="current"]',
+  );
+  await expect(currentRow).toHaveCount(1);
+  await expect(currentRow).toContainText("Same revision as this machine");
+  await expect(currentRow).not.toContainText("Keeps this revision");
+  await expect(currentRow).toContainText("Unverified metadata");
+
+  const earlierRow = page.locator(
+    '[data-testid="role-pack-reported-row"][data-relation="earlier"]',
+  );
+  await expect(earlierRow).toHaveCount(1);
+  await expect(earlierRow).toContainText(
+    "Earlier revision · 1 behind this machine",
+  );
+  await expect(earlierRow).toContainText("running");
+  await expect(earlierRow).toContainText("reported");
+  await expect(earlierRow).toContainText(
+    "Keeps this revision until its next launch or resume.",
+  );
+  await expect(earlierRow).toContainText("Unverified metadata");
+
+  const checkoutStatus = page.getByTestId("role-pack-checkout-status");
+  await expect(checkoutStatus).toContainText("On 9f2e1d0c");
+  await expect(checkoutStatus).toContainText("git answered at");
+
+  await waitForAnimations(page);
+  const rankedBuffer = await snapshots.screenshot({
+    path: `${SNAPSHOTS}/ranked-rows.png`,
+  });
+  const rankedDigest = createHash("sha256").update(rankedBuffer).digest("hex");
+  const emptyPath = `${SNAPSHOTS}/available-and-empty.png`;
+  if (existsSync(emptyPath)) {
+    const emptyDigest = createHash("sha256")
+      .update(readFileSync(emptyPath))
+      .digest("hex");
+    expect(
+      rankedDigest,
+      "ranked-rows.png captured the same pixels as available-and-empty.png",
+    ).not.toBe(emptyDigest);
+  }
 });

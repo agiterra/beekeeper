@@ -21,6 +21,7 @@ import type {
   AuthPreflightVerdict,
   ChannelTemplate,
   GlobalAgentConfig,
+  ProjectPackRevisionRelation,
   RelayEvent,
 } from "@/shared/api/types";
 import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
@@ -383,6 +384,24 @@ type E2eConfig = {
      * by `projectRef` so a spec can answer for one project's own create.
      */
     projectPacksInitByProject?: Record<string, Record<string, unknown>>;
+    /**
+     * Answer overrides for `compare_project_pack_revisions`, keyed by the
+     * requested sha. Opt-in, like the tables above: a sha with no entry here
+     * keeps `handleCompareProjectPackRevisions`'s own default (`current` for
+     * the mock lead pack's own sha, `unknown-here` for anything else), so
+     * every pre-existing spec that never sets this keeps its exact prior
+     * answer. Lets a spec rank a reported revision as `earlier`/`later`/
+     * `unrelated` against this machine's checkout without a real git repo.
+     */
+    packRevisionRelations?: Record<
+      string,
+      {
+        relation: ProjectPackRevisionRelation;
+        behind?: number | null;
+        ahead?: number | null;
+        note?: string | null;
+      }
+    >;
     /** Runtime table once a mocked connect (sign-in) has completed. */
     codingSessionProviderRuntimesAfterConnect?: RawCodingSessionProviderRuntime[];
     activePersonaIds?: string[];
@@ -8952,28 +8971,47 @@ function handleListProjectRolePacks() {
  * `compare_project_pack_revisions` under the mock bridge: this fixture has
  * no real git checkout, so every requested sha is reported `current` when it
  * equals the mock lead row's own sha and `unknown-here` otherwise — enough
- * for specs to exercise both branches without a real repository.
+ * for specs to exercise both branches without a real repository. A spec that
+ * needs a ranked answer (`earlier`/`later`/`unrelated`) opts in per-sha via
+ * `config.mock.packRevisionRelations` rather than this fixture guessing one.
  */
-function handleCompareProjectPackRevisions(args: {
-  projectRef: string;
-  shas: string[];
-}) {
+function handleCompareProjectPackRevisions(
+  args: {
+    projectRef: string;
+    shas: string[];
+  },
+  config?: E2eConfig,
+) {
   const leadPack = handleListProjectRolePacks().find(
     (pack) => pack.role === "lead",
   );
   const repo = leadPack?.packRef?.repo ?? null;
   const currentSha = leadPack?.packRef?.sha ?? null;
+  const overrides = config?.mock?.packRevisionRelations ?? {};
   return {
     repo,
     currentSha,
     comparedAt: Date.now(),
     reason: null,
-    relations: args.shas.map((sha) => ({
-      sha,
-      relation: sha === currentSha ? "current" : "unknown-here",
-      behind: null,
-      ahead: null,
-    })),
+    relations: args.shas.map((sha) => {
+      const override = overrides[sha];
+      if (override) {
+        return {
+          sha,
+          relation: override.relation,
+          behind: override.behind ?? null,
+          ahead: override.ahead ?? null,
+          note: override.note ?? null,
+        };
+      }
+      return {
+        sha,
+        relation: sha === currentSha ? "current" : "unknown-here",
+        behind: null,
+        ahead: null,
+        note: null,
+      };
+    }),
   };
 }
 
@@ -13827,6 +13865,7 @@ export function maybeInstallE2eTauriMocks() {
       case "compare_project_pack_revisions":
         return handleCompareProjectPackRevisions(
           payload as Parameters<typeof handleCompareProjectPackRevisions>[0],
+          activeConfig,
         );
       case "get_agent_memory":
         return handleGetAgentMemory(

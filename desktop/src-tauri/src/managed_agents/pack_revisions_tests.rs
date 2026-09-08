@@ -174,12 +174,22 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
         current_sha: Some("a".repeat(40)),
         compared_at: NOW_MS,
         reason: None,
-        relations: vec![PackRevisionRelation {
-            sha: "b".repeat(40),
-            relation: PackRevisionKind::Earlier,
-            behind: Some(2),
-            ahead: None,
-        }],
+        relations: vec![
+            PackRevisionRelation {
+                sha: "b".repeat(40),
+                relation: PackRevisionKind::Earlier,
+                behind: Some(2),
+                ahead: None,
+                note: None,
+            },
+            PackRevisionRelation {
+                sha: "c".repeat(40),
+                relation: PackRevisionKind::UnknownHere,
+                behind: None,
+                ahead: None,
+                note: Some(NOTE_SHALLOW.to_string()),
+            },
+        ],
     };
     let json = serde_json::to_value(&comparison).expect("serializes");
     assert_eq!(
@@ -190,11 +200,22 @@ fn the_wire_shape_is_camel_case_with_exactly_these_keys() {
     assert_eq!(json["reason"], serde_json::Value::Null);
     assert_eq!(
         keys(&json["relations"][0]),
-        ["ahead", "behind", "relation", "sha"]
+        ["ahead", "behind", "note", "relation", "sha"]
     );
     assert_eq!(json["relations"][0]["relation"], "earlier");
     assert_eq!(json["relations"][0]["behind"], 2);
     assert_eq!(json["relations"][0]["ahead"], serde_json::Value::Null);
+    assert_eq!(
+        json["relations"][0]["note"],
+        serde_json::Value::Null,
+        "a row that was ranked discloses nothing extra"
+    );
+    assert_eq!(json["relations"][1]["relation"], "unknown-here");
+    assert_eq!(
+        json["relations"][1]["note"],
+        "this machine's packs checkout is shallow, so ancestry cannot be ranked",
+        "a row that could not be ranked says why, on the wire"
+    );
 
     let spellings: Vec<serde_json::Value> = [
         PackRevisionKind::Current,
@@ -392,4 +413,105 @@ fn a_host_that_has_not_refreshed_reports_the_newer_revision_as_later() {
     );
     assert_eq!(later.ahead, Some(1), "one commit ahead of this machine");
     assert_eq!(later.behind, None);
+}
+
+#[test]
+fn a_git_failure_while_ranking_is_disclosed_not_reported_as_unrelated() {
+    let scratch = scratch();
+    let (origin, first) = packs_origin(&scratch.dir);
+    let middle = commit_pack(&origin, "builder", "You build. v2", "roles v2");
+    commit_pack(&origin, "builder", "You build. v3", "roles v3");
+
+    let host = scratch.dir.join("host-a/packs/aa11bb22-packs");
+    let tip = sync(&host, &origin, &source(Some("refs/heads/main"), None));
+
+    // Take out the commit object between `first` and HEAD. `first` itself is
+    // still readable — `cat-file -e` succeeds — but git cannot walk from HEAD
+    // to it, so `merge-base --is-ancestor` exits 128 rather than 1. A local
+    // clone hardlinks its objects, so this unlinks one name and leaves the
+    // fixture origin whole.
+    let object = host
+        .join(".git/objects")
+        .join(&middle[..2])
+        .join(&middle[2..]);
+    assert!(
+        object.is_file(),
+        "the fixture's commits must be loose objects for this to be removable: {}",
+        object.display()
+    );
+    std::fs::remove_file(&object).expect("remove the intervening commit object");
+
+    let comparison = compare(&host, &[first.as_str()]);
+    assert_eq!(comparison.current_sha.as_deref(), Some(tip.as_str()));
+    let row = relation_for(&comparison, &first);
+    assert_eq!(
+        row.relation,
+        PackRevisionKind::UnknownHere,
+        "a git that could not read the history has not established a different one"
+    );
+    assert_ne!(row.relation, PackRevisionKind::Unrelated);
+    let note = row.note.as_deref().unwrap_or_default();
+    assert!(
+        note.starts_with("git could not rank this commit: "),
+        "the row discloses that git failed: {note}"
+    );
+    assert!(
+        note.contains(&middle),
+        "the note carries git's own words, naming the object it could not read: {note}"
+    );
+}
+
+#[test]
+fn a_shallow_checkout_refuses_to_rank_the_commits_it_only_half_has() {
+    let scratch = scratch();
+    let (origin, first) = packs_origin(&scratch.dir);
+    let second = commit_pack(&origin, "builder", "You build. v2", "roles v2");
+    // A `file://` URL rather than a plain path: git only honours `--depth`
+    // over a transport, and a plain path is a local clone with full history.
+    let url = format!("file://{}", origin.display());
+    let host = scratch.dir.join("host-shallow");
+    let host_arg = host.to_str().expect("utf-8 scratch path").to_string();
+    git(
+        &["clone", "--quiet", "--depth", "1", "--", &url, &host_arg],
+        &scratch.dir,
+    );
+
+    // At depth 1 the older commit is not here at all, which is a different
+    // absence from the one below and says so.
+    let truncated = compare(&host, &[first.as_str(), second.as_str()]);
+    assert_eq!(
+        relation_for(&truncated, &second).relation,
+        PackRevisionKind::Current
+    );
+    let absent = relation_for(&truncated, &first);
+    assert_eq!(absent.relation, PackRevisionKind::UnknownHere);
+    assert_eq!(
+        absent.note.as_deref(),
+        Some("this commit is not in this checkout's object store")
+    );
+
+    // Deepened to 2, the older commit *is* in the object store, and git would
+    // answer `--is-ancestor` with a cheerful yes — from a history it only
+    // half has. The comparison refuses that answer.
+    git(
+        &["fetch", "--quiet", "--depth", "2", "--", &url, "main"],
+        &host,
+    );
+    let deepened = compare(&host, &[first.as_str(), second.as_str()]);
+    assert_eq!(
+        relation_for(&deepened, &second).relation,
+        PackRevisionKind::Current,
+        "a shallow checkout still knows for certain which commit it is on"
+    );
+    let unrankable = relation_for(&deepened, &first);
+    assert_eq!(
+        unrankable.relation,
+        PackRevisionKind::UnknownHere,
+        "present but unrankable is not `earlier`"
+    );
+    assert_eq!(
+        unrankable.note.as_deref(),
+        Some("this machine's packs checkout is shallow, so ancestry cannot be ranked")
+    );
+    assert_eq!((unrankable.behind, unrankable.ahead), (None, None));
 }

@@ -59,9 +59,20 @@ compare_project_pack_revisions(project_ref: string, shas: string[])
   "relations": [ { "sha": string,
                    "relation": "current" | "earlier" | "later" | "unrelated" | "unknown-here",
                    "behind": number | null,   // commits sha..HEAD when "earlier"
-                   "ahead": number | null } ] // commits HEAD..sha when "later"
+                   "ahead": number | null,    // commits HEAD..sha when "later"
+                   "note": string | null } ]  // per-row disclosure for "unknown-here" (git's own words, shallow checkout, absent object); null otherwise
 }
 ```
+
+Ancestry is three-way (added at Astra's review): `merge-base --is-ancestor`
+exit 0 = yes, exit 1 = no, anything else = indeterminate → `unknown-here`
+with git's stderr in `note`. `unrelated` is reachable only after git answered
+"no" both ways. `rev-parse --is-shallow-repository` runs once per comparison;
+in a shallow checkout every present commit other than HEAD is `unknown-here`
+with a shallow note (same-sha `current` stays knowable). Git status is read
+through the additive `run_git_status` in
+`desktop/src-tauri/src/commands/project_git_exec.rs`; `run_git` is a thin
+wrapper over it with unchanged behaviour.
 
 Rules:
 - Every `sha` must be 40 lowercase hex; otherwise the whole call is an
@@ -100,7 +111,10 @@ and the "Available here" heading says which commit this machine's checkout is
 on and when git answered.
 
 `useProjectPacksView` adds one React Query keyed by
-`["role-pack-revisions", projectRef, currentResolvedSha, sortedDistinctShas]`,
+`rolePackRevisionsQueryKey` (`["role-pack-revisions", projectRef,
+sourceEventId, sourceRepo, currentResolvedSha, packsUpdatedAt, sortedDistinctShas]`,
+so a source change, a repository switch, or a packs refresh that only changed
+object availability re-ranks; tested in `rolePacksLiveInvalidation.test.mjs`),
 enabled when the reported rows carry at least one git-shaped sha, calling
 `compareProjectPackRevisions`. A failed comparison leaves every row
 `unknown-here` with the error sentence disclosed in the section (never
@@ -188,6 +202,27 @@ machine, no relay deployment, no app rebuild is part of this slice. Lane R
 symlinked `desktop/src-tauri/binaries` to the main checkout's sidecars so the
 worktree could compile; it is gitignored and read-only.
 
+### 6a. Round two (Astra's source review + browser proof)
+
+Fixed: ancestry indeterminacy and shallow history (§3a), query-key
+invalidation (§3b), per-row `note` rendered on the Packs tab. Browser proof
+added: `role-packs-project.spec.ts` seeds two signed 44223 generations for the
+general project (fresh keys, the existing `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__`
+seam) and a per-sha mock ranking knob (`config.mock.packRevisionRelations`),
+then asserts the `current` and `earlier · 1 behind` rows, the age, the status
+word, the adoption sentence and the checkout header; screenshot
+`desktop/test-results/role-pack-snapshots/ranked-rows.png` (hash distinct from
+the empty-state capture, asserted in-test).
+
+| Check | Result | Log |
+| --- | --- | --- |
+| Tauri fmt / clippy all-targets | exit 0 / exit 0 | `final2-tauri-fmt.log`, `final2-tauri-clippy.log` |
+| `pack_revisions` / `role_packs` / `project_git_exec` tests | 8 / 15 / 10 passed, 0 failed | `final2-tauri-tests.log` |
+| desktop typecheck, `pnpm check`, file sizes | exit 0 | `final2-typecheck.log`, `final2-desktop-check.log` |
+| desktop unit suite | 8334 passed, 0 failed, 0 skipped | `final2-desktop-tests.log` |
+| Packs E2E spec, rebuilt bundle, `--repeat-each 2` | 6 passed | `final2-e2e.log` |
+| `just file-size-check` | exit 0 | `final2-file-size.log` |
+
 ## 7. Ledger text for Astra (factual, for SESSION_STATE)
 
 Role adoption evidence (Fable, topic `work/role-adoption-fable`): the Packs
@@ -200,6 +235,9 @@ checkout is on and when git answered. No fetch, no new store, no polling, no
 provider or seat change; the adoption boundary is the generation, as the
 provider already behaves (`crates/buzz-session-provider/src/lib.rs:3325-3332`).
 A simulated two-host Rust test shows the un-refreshed host answering
-`unknown-here` for the advanced commit rather than "current". Open-ingress
-44223 rows stay labelled unverified. Validation in §6 of
+`unknown-here` for the advanced commit rather than "current"; a git failure
+or a shallow checkout is disclosed per row as `unknown-here` with git's words,
+never as "unrelated". A browser test seeds two signed 44223 claims and shows
+the `current` and `earlier · 1 behind` rows. Open-ingress 44223 rows stay
+labelled unverified. Validation in §6 of
 `docs/ROLE_ADOPTION_EVIDENCE.md`.

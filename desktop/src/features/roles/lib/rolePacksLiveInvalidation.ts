@@ -18,6 +18,46 @@ export function rolePacksQueryKey(projectRef: string | null) {
   return ["role-packs", projectRef] as const;
 }
 
+/**
+ * The `compare_project_pack_revisions` query key — every input that can
+ * change *what this machine's checkout would answer* must be a key segment,
+ * or a stale answer survives past the change that invalidated it:
+ *
+ * - `sourceEventId`: the signed 30624 revision the comparison was measured
+ *   against. A source edit (even one that leaves `sourceRepo` unchanged,
+ *   e.g. a path or ref change) must re-rank.
+ * - `sourceRepo`: switching the configured repository must never reuse an
+ *   answer measured against the old one.
+ * - `currentResolvedSha` and `packsUpdatedAt`: a manual refresh can change
+ *   which commits this machine's checkout actually holds (a `git fetch`
+ *   that leaves `HEAD` itself unchanged) without moving either of those
+ *   shas — `packsUpdatedAt` is the packs list's own refresh completion, so
+ *   it catches that case too.
+ * - `shas`: the exact set being asked about.
+ *
+ * Pure key-shape only — does not sort `shas`. Callers pass
+ * {@link revisionShas}'s already-sorted output; sorting here as well would
+ * hide a caller regression instead of surfacing it as a cache miss.
+ */
+export function rolePackRevisionsQueryKey(input: {
+  projectRef: string | null;
+  sourceEventId: string | null;
+  sourceRepo: string | null;
+  currentResolvedSha: string | null;
+  packsUpdatedAt: number;
+  shas: readonly string[];
+}) {
+  return [
+    "role-pack-revisions",
+    input.projectRef,
+    input.sourceEventId,
+    input.sourceRepo,
+    input.currentResolvedSha,
+    input.packsUpdatedAt,
+    input.shas,
+  ] as const;
+}
+
 type RolePacksLiveClient = {
   subscribeLive(
     filter: RelaySubscriptionFilter,
