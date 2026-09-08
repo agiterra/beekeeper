@@ -7,7 +7,8 @@ import '../domain/coding_sessions_domain.dart';
 ///
 /// Mirrors the desktop's project sidebar (`projectSessionIndicator.ts`):
 /// green only while the provider last reported running, orange once the
-/// session is closed, and the calm blue for everything else — a fresh
+/// session is closed, and the calm blue (the scheme's tertiary, Catppuccin
+/// Blue in both modes — primary is near-black here) for everything else — a fresh
 /// session, an idle one, a waiting one, or a status nobody has read.
 enum CodingSessionDotState { running, idle, closed }
 
@@ -68,7 +69,7 @@ class CodingSessionStatusDot extends StatelessWidget {
     final state = codingSessionDotState(status: status, closed: closed);
     final color = switch (state) {
       CodingSessionDotState.running => context.appColors.success,
-      CodingSessionDotState.idle => context.colors.primary,
+      CodingSessionDotState.idle => context.colors.tertiary,
       CodingSessionDotState.closed => context.appColors.warning,
     };
     return Tooltip(
