@@ -752,6 +752,21 @@ pub fn decide_turn_command(
     if context.state.is_command_refused(&command.command_id) {
         return TurnDecision::Ignore(Ignored::AlreadyRefused);
     }
+    // The durable CI promise owns this id across action shapes too. An
+    // ordinary start must never substitute its text for a waiting promise.
+    // Provider-materialized delivery carries the original registration digest.
+    if context
+        .ci_continuations
+        .record(&command.command_id)
+        .is_some_and(|record| record.payload_digest != command.payload_digest)
+    {
+        return TurnDecision::Fail {
+            command_id: command.command_id,
+            target: command.target,
+            code: COMMAND_ID_CONFLICT,
+            message: "a different CI continuation is already durably registered under this commandId; the first durable record wins".into(),
+        };
+    }
     if context.in_flight.contains_key(&command.command_id) {
         return TurnDecision::Ignore(Ignored::AlreadyAccepted);
     }
@@ -802,7 +817,11 @@ pub fn decide_turn_command(
                 command_id: command.command_id,
                 target: command.target,
                 code: BUDGET_EXHAUSTED,
-                message: budget_exhausted_message(used, limit, source),
+                message: if reserved_ci_turns(context, record) > 0 {
+                    format!("this team session has used or committed {used} of its {limit} allowed turns, including CI starts awaiting their started report; the session founder can still send turns")
+                } else {
+                    budget_exhausted_message(used, limit, source)
+                },
             };
         }
     }
@@ -930,6 +949,19 @@ fn decide_ci_continuation(
     continuation: String,
     expires_at: u64,
 ) -> TurnDecision {
+    if context
+        .state
+        .session(&target.session_id)
+        .and_then(|record| record.project_ref.as_deref())
+        != Some(identity.project.as_str())
+    {
+        return TurnDecision::Fail {
+            command_id,
+            target,
+            code: crate::ci_continuation::CI_CONTINUATION_PROJECT_MISMATCH,
+            message: "the CI result project must match this execution's recorded project; an execution without a project cannot register a CI continuation".into(),
+        };
+    }
     let correlation_id = match correlation_id(&identity) {
         Ok(digest) => digest,
         // The relay validates the same identity before storing the command,
@@ -1083,7 +1115,7 @@ fn exhausted_turn_budget(
     context: &CommandContext<'_>,
     record: &crate::state::SessionRecord,
 ) -> Option<(u64, u64, TurnBudgetSource)> {
-    exhausted_umbrella_budget(
+    exhausted_umbrella_budget_with_reservations(
         context.state,
         context.turn_budget,
         record
@@ -1092,7 +1124,29 @@ fn exhausted_turn_budget(
             .and_then(|session_ref| context.policy_turn_budgets.get(session_ref).copied()),
         record.session_ref.as_deref(),
         context.operator_pubkey,
+        reserved_ci_turns(context, record),
     )
+}
+
+// A CI actor has durable start permission before it emits TurnStarted. Count
+// that brief reservation until the report records actual spend and removes the
+// in-flight entry. Ordinary queued commands have not been consumed yet.
+fn reserved_ci_turns(context: &CommandContext<'_>, record: &crate::state::SessionRecord) -> u64 {
+    let Some(session_ref) = record.session_ref.as_deref() else {
+        return 0;
+    };
+    context
+        .in_flight
+        .iter()
+        .filter(|(command_id, turn)| {
+            context.state.is_command_consumed(command_id)
+                && context
+                    .state
+                    .session(&turn.session_id)
+                    .and_then(|session| session.session_ref.as_deref())
+                    == Some(session_ref)
+        })
+        .count() as u64
 }
 
 /// Which ceiling refused a turn.
@@ -1158,6 +1212,24 @@ pub fn exhausted_umbrella_budget(
     session_ref: Option<&str>,
     operator_pubkey: &str,
 ) -> Option<(u64, u64, TurnBudgetSource)> {
+    exhausted_umbrella_budget_with_reservations(
+        state,
+        env_limit,
+        policy_turns,
+        session_ref,
+        operator_pubkey,
+        0,
+    )
+}
+
+fn exhausted_umbrella_budget_with_reservations(
+    state: &StateStore,
+    env_limit: u64,
+    policy_turns: Option<u32>,
+    session_ref: Option<&str>,
+    operator_pubkey: &str,
+    reserved: u64,
+) -> Option<(u64, u64, TurnBudgetSource)> {
     // The one thing a published session policy enforces (POLICY.md §4). It
     // *overrides* rather than tightens: a host ceiling and a session ceiling
     // answer different questions — how much this machine will spend on
@@ -1175,7 +1247,7 @@ pub fn exhausted_umbrella_budget(
     if state.umbrella_founder(session_ref).as_deref() == Some(operator_pubkey) {
         return None;
     }
-    let used = state.turns_used(session_ref);
+    let used = state.turns_used(session_ref).saturating_add(reserved);
     (used >= limit).then_some((used, limit, source))
 }
 

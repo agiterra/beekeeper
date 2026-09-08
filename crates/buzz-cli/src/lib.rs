@@ -417,20 +417,23 @@ pub enum CiCmd {
     /// delivery time: a private project must explicitly admit that identity,
     /// or a real result is reported the same as "not finished" until the
     /// registration expires. Durable, at-most-once admission: an exact retry
-    /// of this command (same target, identity, continuation text, and
-    /// --expires-in) reproduces the same commandId and names the same
-    /// registration rather than minting a second one.
-    #[command(after_help = "Examples:\n  \
-        bee ci continue --channel <uuid> \\\n    \
-        --driver claude-code --instance-id i-1 --session-id s-1 --generation 1 \\\n    \
-        --project '30621:<owner>:<id>' --repository '30617:<owner>:<id>' \\\n    \
-        --commit <40-hex> --check main-validation --run 136 --attempt 1 \\\n    \
-        --workflow <uuid> --phase build \\\n    \
-        --continuation 'CI passed; open the PR.' --expires-in 86400 --ack-timeout 60")]
+    /// with the printed absolute --expires-at plus the same target, provider,
+    /// identity, and continuation text reproduces the same commandId.
+    #[command(after_help = r#"Examples:
+  bee ci continue --channel <uuid> --provider <provider-pubkey> \
+    --driver claude-code --instance-id i-1 --session-id s-1 --generation 1 \
+    --project '30621:<owner>:<id>' --repository '30617:<owner>:<id>' \
+    --commit <40-hex> --check main-validation --run 136 --attempt 1 \
+    --workflow <uuid> --phase build \
+    --continuation 'Inspect the CI result; if it passed, open the PR; otherwise diagnose it.' \
+    --expires-in 86400 --ack-timeout 60"#)]
     Continue {
         /// Channel UUID the registration is published into
         #[arg(long)]
         channel: String,
+        /// Signing pubkey of the provider whose receipts this command trusts
+        #[arg(long)]
+        provider: String,
         /// Full `cs-target` key, in place of the four target flags below
         #[arg(long, conflicts_with_all = ["driver", "instance_id", "session_id", "generation"])]
         target: Option<String>,
@@ -475,9 +478,14 @@ pub enum CiCmd {
         #[arg(long)]
         continuation: String,
         /// Registration horizon in seconds; a result recorded after this
-        /// many seconds have elapsed is refused rather than delivered.
-        #[arg(long, value_name = "SECONDS", default_value_t = 86400)]
-        expires_in: u64,
+        /// many seconds have elapsed is refused rather than delivered. Defaults
+        /// to 86400 when neither expiry flag is supplied.
+        #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..), conflicts_with = "expires_at")]
+        expires_in: Option<u64>,
+        /// Absolute Unix expiry printed by an earlier attempt. Use this for an
+        /// exact retry that must reproduce the same commandId.
+        #[arg(long, value_name = "UNIX_SECONDS", value_parser = clap::value_parser!(u64).range(1..), conflicts_with = "expires_in")]
+        expires_at: Option<u64>,
         /// How long to wait for the relay's registration or refusal receipt
         /// before reporting unconfirmed.
         #[arg(long, value_name = "SECONDS", default_value_t = 60)]
@@ -493,9 +501,9 @@ pub enum CiCmd {
 pub enum CiContinuationCmd {
     /// Read the latest receipt stage for one registration commandId.
     ///
-    /// Reads stored replay only — no wait, no write. Prints the latest stage
-    /// among `registered`, `queued`, `started`, `refused`, `dropped`, or
-    /// `none`, with the receipt event ids observed and any refusal code.
+    /// Reads stored replay only — no wait, no write. Accepts only the named
+    /// provider's signed receipts for the exact target and reports conflicting
+    /// target or terminal facts as an error.
     Status {
         /// Channel UUID the registration was published into
         #[arg(long)]
@@ -503,6 +511,12 @@ pub enum CiContinuationCmd {
         /// The registration's commandId (`cic-<64 hex>`)
         #[arg(long = "command-id")]
         command_id: String,
+        /// Exact `cs-target` key named by the registration
+        #[arg(long)]
+        target: String,
+        /// Signing pubkey of the provider whose receipts this read trusts
+        #[arg(long)]
+        provider: String,
     },
 }
 

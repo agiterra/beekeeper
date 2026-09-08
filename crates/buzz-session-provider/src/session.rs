@@ -441,6 +441,12 @@ pub enum SessionCommand {
         /// a founder-sent turn, which is delivered exactly as it always was.
         framing: Option<TurnFraming>,
     },
+    /// A CI continuation that requires durable provider admission at its
+    /// execution boundary before any transcript or adapter prompt is emitted.
+    GuardedCiTurn {
+        /// The ordinary turn, carrying its unchanged prompt and attribution.
+        turn: Box<SessionCommand>,
+    },
     /// Cancel the in-flight turn.
     Interrupt {
         /// The command that requested it.
@@ -497,6 +503,16 @@ pub enum ExitReason {
 /// single ordered inbox with a single shutdown rule.
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
+    /// A queued CI turn reached its execution boundary. The actor waits for
+    /// this provider decision before sending any prompt to the adapter.
+    CiTurnAdmissionRequested {
+        /// The exact actor requesting admission.
+        session_id: String,
+        /// The durable registration to recheck and claim.
+        command_id: String,
+        /// Provider replies only after durable admission; closure denies.
+        decision: watch::Sender<bool>,
+    },
     /// A turn began.
     TurnStarted {
         /// Which session.
@@ -1694,16 +1710,12 @@ struct SessionActor {
     media: Option<crate::attachments::MediaFetcher>,
 }
 
-/// A turn that arrived while another was in flight, held until its turn.
-///
-/// Named rather than a tuple because it carries the operator attribution: a
-/// positional third `String` would be trivially swappable with the prompt text.
-struct QueuedTurn {
-    command_id: String,
-    text: String,
-    attachments: Vec<TurnAttachment>,
-    operator_pubkey: Option<String>,
-    framing: Option<TurnFraming>,
+/// Unwrap the CI-only admission marker while retaining it through actor queues.
+fn unwrap_ci_turn(command: Option<SessionCommand>) -> (Option<SessionCommand>, bool) {
+    match command {
+        Some(SessionCommand::GuardedCiTurn { turn }) => (Some(*turn), true),
+        other => (other, false),
+    }
 }
 
 /// How the select loop around an in-flight prompt ended.
@@ -1724,7 +1736,7 @@ impl SessionActor {
             session_id = %self.session_id,
             "session actor started"
         );
-        let mut queued: VecDeque<QueuedTurn> = VecDeque::new();
+        let mut queued: VecDeque<SessionCommand> = VecDeque::new();
         let mut reason = ExitReason::Requested;
 
         'actor: loop {
@@ -1732,13 +1744,7 @@ impl SessionActor {
                 break 'actor;
             }
             let next = match queued.pop_front() {
-                Some(turn) => Some(SessionCommand::Turn {
-                    command_id: turn.command_id,
-                    text: turn.text,
-                    attachments: turn.attachments,
-                    operator_pubkey: turn.operator_pubkey,
-                    framing: turn.framing,
-                }),
+                Some(turn) => Some(turn),
                 None => {
                     let idle = tokio::time::sleep(self.idle_shutdown);
                     tokio::pin!(idle);
@@ -1756,7 +1762,9 @@ impl SessionActor {
                     }
                 }
             };
+            let (next, guarded_ci) = unwrap_ci_turn(next);
             match next {
+                Some(SessionCommand::GuardedCiTurn { .. }) => continue,
                 None | Some(SessionCommand::Shutdown) => break 'actor,
                 Some(SessionCommand::Interrupt { command_id }) => {
                     tracing::debug!(
@@ -1783,6 +1791,7 @@ impl SessionActor {
                             attachments,
                             operator_pubkey,
                             framing,
+                            guarded_ci,
                         )
                         .await
                     {
@@ -1814,13 +1823,37 @@ impl SessionActor {
         &mut self,
         rx: &mut mpsc::Receiver<SessionCommand>,
         shutdown: &mut watch::Receiver<bool>,
-        queued: &mut VecDeque<QueuedTurn>,
+        queued: &mut VecDeque<SessionCommand>,
         command_id: String,
         text: String,
         attachments: Vec<TurnAttachment>,
         operator_pubkey: Option<String>,
         framing: Option<TurnFraming>,
+        guarded_ci: bool,
     ) -> Option<ExitReason> {
+        if guarded_ci {
+            let (decision, mut admission) = watch::channel(false);
+            if self
+                .events
+                .send(SessionEvent::CiTurnAdmissionRequested {
+                    session_id: self.session_id.clone(),
+                    command_id: command_id.clone(),
+                    decision,
+                })
+                .await
+                .is_err()
+            {
+                return Some(ExitReason::Requested);
+            }
+            let admitted = tokio::select! {
+                biased;
+                _ = shutdown.changed() => false,
+                changed = admission.changed() => changed.is_ok() && *admission.borrow(),
+            };
+            if !admitted {
+                return None;
+            }
+        }
         let turn_id = Uuid::new_v4().to_string();
         let started = Instant::now();
         self.client.set_observer_context(context_for(
@@ -1922,7 +1955,10 @@ impl SessionActor {
                     );
                     emit_items(&self.events, &self.session_id, &turn_id, items).await;
                 }
-                command = rx.recv() => match command {
+                command = rx.recv() => {
+                    let (command, guarded_ci) = unwrap_ci_turn(command);
+                    match command {
+                    Some(SessionCommand::GuardedCiTurn { .. }) => continue,
                     None | Some(SessionCommand::Shutdown) => break PromptInterruption::Shutdown,
                     Some(SessionCommand::Interrupt { .. }) => {
                         break PromptInterruption::Interrupted
@@ -1946,14 +1982,20 @@ impl SessionActor {
                             // The attribution rides the queue: a turn that
                             // waits behind another must still name the
                             // operator who sent it, not whoever ran last.
-                            queued.push_back(QueuedTurn {
+                            let turn = SessionCommand::Turn {
                                 command_id,
                                 text,
                                 attachments,
                                 operator_pubkey,
                                 framing,
+                            };
+                            queued.push_back(if guarded_ci {
+                                SessionCommand::GuardedCiTurn { turn: Box::new(turn) }
+                            } else {
+                                turn
                             });
                         }
+                    }
                     }
                 },
             }
@@ -3378,6 +3420,114 @@ done
         let with_bootstrap = session_briefing(Some("BOOTSTRAP"), Some(&seat), None);
         assert!(with_bootstrap.ends_with("BOOTSTRAP"));
         assert!(with_bootstrap.contains(&seat.actor_pubkey));
+    }
+
+    #[tokio::test]
+    async fn a_ci_turn_waits_for_admission_and_a_denial_sends_no_prompt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        let turn = |command_id: &str| SessionCommand::Turn {
+            command_id: command_id.into(),
+            text: "go".into(),
+            attachments: Vec::new(),
+            operator_pubkey: None,
+            framing: None,
+        };
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::GuardedCiTurn {
+                turn: Box::new(turn("denied")),
+            })
+            .expect("deliver");
+        let SessionEvent::CiTurnAdmissionRequested {
+            decision,
+            command_id,
+            ..
+        } = next_lifecycle_event(&mut rx).await
+        else {
+            panic!("admission must precede turn start");
+        };
+        assert_eq!(command_id, "denied");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
+            "no transcript or turn while admission is pending"
+        );
+        decision.send(false).expect("deny");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(turn("ordinary"))
+            .expect("deliver next");
+        assert!(matches!(next_lifecycle_event(&mut rx).await,
+            SessionEvent::TurnStarted { command_id, .. } if command_id == "ordinary"));
+        assert!(matches!(
+            next_lifecycle_event(&mut rx).await,
+            SessionEvent::TurnFinished { .. }
+        ));
+        manager.shutdown("s1");
+    }
+
+    #[tokio::test]
+    async fn a_ci_turn_keeps_its_admission_guard_behind_a_busy_turn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
+        let (tx, mut rx) = mpsc::channel(32);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        let turn = |id: &str| SessionCommand::Turn {
+            command_id: id.into(),
+            text: "go".into(),
+            attachments: Vec::new(),
+            operator_pubkey: None,
+            framing: None,
+        };
+        let handle = manager.handle("s1").expect("handle");
+        handle.deliver(turn("busy")).expect("busy turn");
+        assert!(matches!(
+            next_lifecycle_event(&mut rx).await,
+            SessionEvent::TurnStarted { .. }
+        ));
+        handle
+            .deliver(SessionCommand::GuardedCiTurn {
+                turn: Box::new(turn("ci-queued")),
+            })
+            .expect("queue CI");
+        handle
+            .deliver(SessionCommand::Interrupt {
+                command_id: "cancel-busy".into(),
+            })
+            .expect("boundary");
+        assert!(matches!(
+            next_lifecycle_event(&mut rx).await,
+            SessionEvent::TurnFinished { .. }
+        ));
+        let SessionEvent::CiTurnAdmissionRequested {
+            decision,
+            command_id,
+            ..
+        } = next_lifecycle_event(&mut rx).await
+        else {
+            panic!("queued CI must still ask for admission");
+        };
+        assert_eq!(command_id, "ci-queued");
+        decision.send(false).expect("deny queued turn");
+        manager.shutdown("s1");
+        assert!(matches!(
+            next_lifecycle_event(&mut rx).await,
+            SessionEvent::Exited { .. }
+        ));
     }
 
     #[tokio::test]

@@ -16,13 +16,12 @@
 //!
 //! Read the script's header comment for what each of its five numbered PASS
 //! steps proves (session creation, registration, a *real* webhook-produced
-//! 46008, exactly-once admission with the materialized §1c context, and the
-//! duplicate-result/duplicate-commandId once-admission fence) and what this
-//! composition does not cover (the private-project read path, §3f; a real
-//! model — the ACP adapter is a bash stub). It also surfaced a same-second
-//! receipt-ordering defect in `bee ci continuation status`, since repaired
-//! by ranking receipt stages rather than event ids; the assertions here
-//! read the raw 44224/44225 events, which need no such ordering.
+//! 46008, exactly-once admission with the materialized §1c context delivered
+//! byte-for-byte through ACP, authenticated `started` status, and the
+//! duplicate-result/duplicate-commandId once-admission fence with its durable
+//! `DUPLICATE_OPERATION` refusal) and what this composition does not cover
+//! (the private-project read path, §3f; a real model — the ACP adapter is a
+//! bash stub).
 //!
 //! Run directly:
 //! ```text

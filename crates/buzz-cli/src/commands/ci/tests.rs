@@ -6,13 +6,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::continuation::{
-    find_registration_ack, parse_target_key, read_continuation, resolve_continuation_status,
-    resolve_target, stage_str,
+    find_registration_ack, normalize_provider, parse_target_key, read_continuation,
+    registration_receipt_filter, resolve_continuation_status, resolve_expires_at, resolve_target,
+    stage_str,
 };
 use buzz_core::coding_session_command::CodingSessionTarget;
 use buzz_core::coding_session_payload::{LifecycleReceipt, ReceiptStatus};
 use buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT;
+use buzz_sdk::builders::build_coding_session_turn_receipt;
 use serde_json::Value;
+
+const CONTINUATION_CHANNEL: &str = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 
 fn cli_args() -> Vec<String> {
     vec![
@@ -38,6 +42,44 @@ fn cli_args() -> Vec<String> {
     ]
 }
 
+fn continue_cli_args() -> Vec<String> {
+    vec![
+        "bee".into(),
+        "ci".into(),
+        "continue".into(),
+        "--channel".into(),
+        CONTINUATION_CHANNEL.into(),
+        "--provider".into(),
+        continuation_provider(),
+        "--driver".into(),
+        "claude-code".into(),
+        "--instance-id".into(),
+        "inst-1".into(),
+        "--session-id".into(),
+        "sess-1".into(),
+        "--generation".into(),
+        "1".into(),
+        "--project".into(),
+        format!("30621:{}:beekeeper", "11".repeat(32)),
+        "--repository".into(),
+        format!("30617:{}:beekeeper", "22".repeat(32)),
+        "--commit".into(),
+        "33".repeat(20),
+        "--check".into(),
+        "server".into(),
+        "--run".into(),
+        "run-17".into(),
+        "--attempt".into(),
+        "2".into(),
+        "--workflow".into(),
+        CONTINUATION_CHANNEL.into(),
+        "--phase".into(),
+        "build".into(),
+        "--continuation".into(),
+        "ship it".into(),
+    ]
+}
+
 #[test]
 fn cli_requires_positive_attempt_and_closed_phase_vocabulary() {
     use clap::Parser;
@@ -52,6 +94,46 @@ fn cli_requires_positive_attempt_and_closed_phase_vocabulary() {
     let mut phase = cli_args();
     *phase.last_mut().unwrap() = "release".into();
     assert!(crate::Cli::try_parse_from(phase).is_err());
+}
+
+#[test]
+fn continue_cli_accepts_one_expiry_form_and_rejects_both() {
+    use clap::Parser;
+
+    assert!(crate::Cli::try_parse_from(continue_cli_args()).is_ok());
+    for (flag, value) in [("--expires-in", "60"), ("--expires-at", "1800000000")] {
+        let mut args = continue_cli_args();
+        args.extend([flag.into(), value.into()]);
+        assert!(crate::Cli::try_parse_from(args).is_ok());
+    }
+    let mut both = continue_cli_args();
+    both.extend([
+        "--expires-in".into(),
+        "60".into(),
+        "--expires-at".into(),
+        "1800000000".into(),
+    ]);
+    assert!(crate::Cli::try_parse_from(both).is_err());
+}
+
+#[test]
+fn absolute_expiry_is_stable_across_retry_time() {
+    assert_eq!(
+        resolve_expires_at(1_700_000_000, None, Some(1_800_000_000)).unwrap(),
+        resolve_expires_at(1_700_000_500, None, Some(1_800_000_000)).unwrap()
+    );
+    assert_eq!(
+        resolve_expires_at(1_700_000_000, None, None).unwrap(),
+        1_700_086_400
+    );
+    assert!(resolve_expires_at(1, Some(60), Some(100)).is_err());
+}
+
+#[test]
+fn provider_pubkey_is_validated_and_normalized() {
+    let upper = continuation_provider().to_ascii_uppercase();
+    assert_eq!(normalize_provider(&upper).unwrap(), continuation_provider());
+    assert!(normalize_provider("not-a-pubkey").is_err());
 }
 
 #[test]
@@ -491,16 +573,54 @@ fn ci_target() -> CodingSessionTarget {
     }
 }
 
-fn receipt_event(receipt: &LifecycleReceipt, created_at: i64, event_id: &str) -> Value {
-    json!({
-        "id": event_id,
-        "pubkey": "aa".repeat(32),
-        "created_at": created_at,
-        "kind": KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-        "tags": [],
-        "content": serde_json::to_string(receipt).expect("receipt serializes"),
-        "sig": "bb".repeat(64),
-    })
+fn continuation_provider_keys() -> nostr::Keys {
+    nostr::Keys::parse(&"44".repeat(32)).expect("provider key")
+}
+
+fn continuation_provider() -> String {
+    continuation_provider_keys().public_key().to_hex()
+}
+
+fn receipt_event(receipt: &LifecycleReceipt, created_at: i64, _label: &str) -> Value {
+    receipt_event_with_keys(&continuation_provider_keys(), receipt, created_at)
+}
+
+fn receipt_event_with_keys(
+    keys: &nostr::Keys,
+    receipt: &LifecycleReceipt,
+    created_at: i64,
+) -> Value {
+    let event = build_coding_session_turn_receipt(
+        uuid::Uuid::parse_str(CONTINUATION_CHANNEL).expect("channel"),
+        &receipt.command_id,
+        receipt.status,
+        &serde_json::to_string(receipt).expect("receipt serializes"),
+    )
+    .expect("receipt builder")
+    .custom_created_at(nostr::Timestamp::from_secs(
+        u64::try_from(created_at).expect("nonnegative timestamp"),
+    ))
+    .sign_with_keys(keys)
+    .expect("receipt sign");
+    serde_json::to_value(event).expect("event json")
+}
+
+fn receipt_id(event: &Value) -> String {
+    event["id"].as_str().expect("event id").to_owned()
+}
+
+fn receipt_with_wrong_envelope(receipt: &LifecycleReceipt, created_at: u64) -> Value {
+    let event = nostr::EventBuilder::new(
+        nostr::Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16),
+        serde_json::to_string(receipt).expect("receipt serializes"),
+    )
+    .tags(vec![
+        nostr::Tag::parse(["h", CONTINUATION_CHANNEL]).expect("tag")
+    ])
+    .custom_created_at(nostr::Timestamp::from_secs(created_at))
+    .sign_with_keys(&continuation_provider_keys())
+    .expect("receipt sign");
+    serde_json::to_value(event).expect("event json")
 }
 
 // ── `parse_target_key` / `resolve_target` ───────────────────────────────────
@@ -569,39 +689,31 @@ fn read_continuation_reads_literal_text_or_an_at_prefixed_file() {
 // ── `find_registration_ack` ──────────────────────────────────────────────────
 
 #[test]
-fn find_registration_ack_matches_registered_and_refused_but_ignores_wrong_target_and_wrong_command()
-{
+fn find_registration_ack_accepts_only_the_named_providers_signed_exact_receipt() {
     let target = ci_target();
-    let mut other_target = target.clone();
-    other_target.generation = 2;
-
     let registered = receipt_event(
         &LifecycleReceipt::continuation_registered("cic-a", &target),
         100,
         "receipt-registered",
-    );
-    let wrong_target = receipt_event(
-        &LifecycleReceipt::continuation_registered("cic-a", &other_target),
-        50,
-        "receipt-wrong-target",
     );
     let wrong_command = receipt_event(
         &LifecycleReceipt::continuation_registered("cic-other", &target),
         10,
         "receipt-wrong-command",
     );
-
-    // The wrong-target and wrong-commandId receipts are both present, but
-    // neither is this registration's answer.
-    let events = vec![wrong_target.clone(), wrong_command, registered.clone()];
-    let ack = find_registration_ack(&events, "cic-a", &target).expect("a match exists");
-    assert_eq!(ack.receipt_event_id, "receipt-registered");
+    let registered_id = receipt_id(&registered);
+    let events = vec![wrong_command, registered];
+    let ack = find_registration_ack(
+        &events,
+        CONTINUATION_CHANNEL,
+        "cic-a",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap()
+    .expect("a match exists");
+    assert_eq!(ack.receipt_event_id, registered_id);
     assert_eq!(ack.status, ReceiptStatus::ContinuationRegistered);
-
-    // With only the wrong-target receipt for this commandId, there is no
-    // match at all — it must not be mistaken for an answer.
-    let only_wrong_target = vec![wrong_target];
-    assert!(find_registration_ack(&only_wrong_target, "cic-a", &target).is_none());
 
     let refused = receipt_event(
         &LifecycleReceipt::turn_refused(
@@ -613,14 +725,22 @@ fn find_registration_ack_matches_registered_and_refused_but_ignores_wrong_target
         200,
         "receipt-refused",
     );
-    let ack = find_registration_ack(&[refused], "cic-b", &target).expect("a refusal matches");
+    let ack = find_registration_ack(
+        &[refused],
+        CONTINUATION_CHANNEL,
+        "cic-b",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap()
+    .expect("a refusal matches");
     assert_eq!(ack.status, ReceiptStatus::TurnRefused);
     assert_eq!(ack.refusal_code.as_deref(), Some("COMMAND_ID_CONFLICT"));
     assert_eq!(ack.refusal_message.as_deref(), Some("already registered"));
 }
 
 #[test]
-fn find_registration_ack_ignores_later_turn_stages_and_malformed_events() {
+fn find_registration_ack_ignores_bad_signatures_foreign_providers_and_later_stages() {
     let target = ci_target();
     // `turn_queued`/`turn_started` are delivery-time stages, not the initial
     // registration ack this function answers.
@@ -629,11 +749,90 @@ fn find_registration_ack_ignores_later_turn_stages_and_malformed_events() {
         100,
         "receipt-queued",
     );
-    assert!(find_registration_ack(&[queued], "cic-a", &target).is_none());
+    let foreign = nostr::Keys::generate();
+    let foreign_receipt = receipt_event_with_keys(
+        &foreign,
+        &LifecycleReceipt::continuation_registered("cic-a", &target),
+        101,
+    );
+    let mut bad_signature = receipt_event(
+        &LifecycleReceipt::continuation_registered("cic-a", &target),
+        102,
+        "bad-signature",
+    );
+    bad_signature["content"] = Value::String("tampered after signing".into());
+    let wrong_envelope = receipt_with_wrong_envelope(
+        &LifecycleReceipt::continuation_registered("cic-a", &target),
+        103,
+    );
 
     let malformed = json!({"kind": KIND_CODING_SESSION_LIFECYCLE_RECEIPT, "content": "not json"});
     let wrong_kind = json!({"kind": 1, "content": "{}"});
-    assert!(find_registration_ack(&[malformed, wrong_kind], "cic-a", &target).is_none());
+    assert!(find_registration_ack(
+        &[
+            queued,
+            foreign_receipt,
+            bad_signature,
+            wrong_envelope,
+            malformed,
+            wrong_kind,
+        ],
+        CONTINUATION_CHANNEL,
+        "cic-a",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn find_registration_ack_discloses_the_named_providers_conflicting_target() {
+    let target = ci_target();
+    let mut other_target = target.clone();
+    other_target.generation += 1;
+    let wrong_target = receipt_event(
+        &LifecycleReceipt::continuation_registered("cic-a", &other_target),
+        100,
+        "wrong-target",
+    );
+    let error = find_registration_ack(
+        &[wrong_target],
+        CONTINUATION_CHANNEL,
+        "cic-a",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap_err();
+    assert!(error.contains("conflicting target"));
+}
+
+#[test]
+fn delayed_exact_retry_queries_the_stored_ack_without_a_since_bound() {
+    let filter = registration_receipt_filter(
+        CONTINUATION_CHANNEL,
+        "cic-delayed-retry",
+        &continuation_provider(),
+    );
+    assert!(filter.get("since").is_none());
+    assert_eq!(filter["#csl-command"][0], "cic-delayed-retry");
+    assert_eq!(filter["authors"][0], continuation_provider());
+
+    let target = ci_target();
+    let old_receipt = receipt_event(
+        &LifecycleReceipt::continuation_registered("cic-delayed-retry", &target),
+        100,
+        "stored-before-retry",
+    );
+    assert!(find_registration_ack(
+        &[old_receipt],
+        CONTINUATION_CHANNEL,
+        "cic-delayed-retry",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap()
+    .is_some());
 }
 
 // ── `resolve_continuation_status` ────────────────────────────────────────────
@@ -660,28 +859,34 @@ fn continuation_status_resolves_the_latest_stage_with_receipt_ids() {
             "r-other",
         ),
     ];
-    let status = resolve_continuation_status(&events, "cic-s");
+    let expected_ids = events[..3].iter().map(receipt_id).collect::<Vec<_>>();
+    let status = resolve_continuation_status(
+        &events,
+        CONTINUATION_CHANNEL,
+        "cic-s",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap();
     assert_eq!(status.stage, "started");
-    assert_eq!(status.receipt_event_ids, vec!["r1", "r2", "r3"]);
+    assert_eq!(status.receipt_event_ids, expected_ids);
     assert_eq!(status.refusal_code, None);
 }
 
 #[test]
 fn continuation_status_ranks_same_second_receipts_by_stage_not_event_id() {
     let target = ci_target();
-    // Event ids are content hashes: "a…" sorts before "z…" whatever the order
-    // of delivery. Both orders must read as started.
-    for (queued_id, started_id) in [("aaaa", "zzzz"), ("zzzz", "aaaa")] {
+    for reverse in [false, true] {
         let events = vec![
             receipt_event(
                 &LifecycleReceipt::turn_started("cic-t", &target, "turn-1"),
                 500,
-                started_id,
+                "started",
             ),
             receipt_event(
                 &LifecycleReceipt::turn_queued("cic-t", &target),
                 500,
-                queued_id,
+                "queued",
             ),
             receipt_event(
                 &LifecycleReceipt::continuation_registered("cic-t", &target),
@@ -689,12 +894,27 @@ fn continuation_status_ranks_same_second_receipts_by_stage_not_event_id() {
                 "rrrr",
             ),
         ];
-        let status = resolve_continuation_status(&events, "cic-t");
-        assert_eq!(status.stage, "started", "ids {queued_id}/{started_id}");
-        assert_eq!(
-            status.receipt_event_ids.last().map(String::as_str),
-            Some(started_id)
-        );
+        let events = if reverse {
+            events.into_iter().rev().collect::<Vec<_>>()
+        } else {
+            events
+        };
+        let status = resolve_continuation_status(
+            &events,
+            CONTINUATION_CHANNEL,
+            "cic-t",
+            &target,
+            &continuation_provider(),
+        )
+        .unwrap();
+        assert_eq!(status.stage, "started");
+        let last_id = status.receipt_event_ids.last().expect("started event id");
+        let started_id = events
+            .iter()
+            .find(|event| event["content"].as_str().unwrap().contains("turn_started"))
+            .map(receipt_id)
+            .unwrap();
+        assert_eq!(last_id, &started_id);
     }
 }
 
@@ -706,7 +926,14 @@ fn continuation_status_is_none_with_no_matching_receipts() {
         100,
         "r1",
     )];
-    let status = resolve_continuation_status(&events, "cic-s");
+    let status = resolve_continuation_status(
+        &events,
+        CONTINUATION_CHANNEL,
+        "cic-s",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap();
     assert_eq!(status.stage, "none");
     assert!(status.receipt_event_ids.is_empty());
     assert_eq!(status.refusal_code, None);
@@ -726,10 +953,43 @@ fn continuation_status_reports_dropped_and_refused_with_their_codes() {
         ),
     ] {
         let events = vec![receipt_event(&build, 100, "r1")];
-        let status = resolve_continuation_status(&events, "cic-d");
+        let status = resolve_continuation_status(
+            &events,
+            CONTINUATION_CHANNEL,
+            "cic-d",
+            &target,
+            &continuation_provider(),
+        )
+        .unwrap();
         assert_eq!(status.stage, expected_stage);
         assert!(status.refusal_code.is_some());
     }
+}
+
+#[test]
+fn continuation_status_rejects_conflicting_terminal_facts() {
+    let target = ci_target();
+    let events = vec![
+        receipt_event(
+            &LifecycleReceipt::turn_started("cic-c", &target, "turn-1"),
+            500,
+            "started",
+        ),
+        receipt_event(
+            &LifecycleReceipt::turn_refused("cic-c", &target, "STALE_GENERATION", "moved"),
+            500,
+            "refused",
+        ),
+    ];
+    let error = resolve_continuation_status(
+        &events,
+        CONTINUATION_CHANNEL,
+        "cic-c",
+        &target,
+        &continuation_provider(),
+    )
+    .unwrap_err();
+    assert!(error.contains("conflicting terminal receipts"));
 }
 
 #[test]
@@ -852,7 +1112,7 @@ async fn run_continue(url: String, ack_timeout: u64) -> Result<(), CliError> {
     continuation::cmd_continue(
         &client,
         &crate::OutputFormat::Json,
-        "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+        CONTINUATION_CHANNEL,
         None,
         Some("claude-code"),
         Some("inst-1"),
@@ -867,8 +1127,10 @@ async fn run_continue(url: String, ack_timeout: u64) -> Result<(), CliError> {
         "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50".to_owned(),
         crate::CiPhaseArg::Build,
         "ship it",
-        86400,
+        Some(86400),
+        None,
         ack_timeout,
+        &continuation_provider(),
     )
     .await
 }
@@ -899,22 +1161,24 @@ async fn continue_with_no_receipt_is_unconfirmed_and_names_the_derived_command_i
         error.to_string().contains("cic-"),
         "unconfirmed error should name the derived commandId so a retry is recognizable: {error}"
     );
+    assert!(error.to_string().contains("--expires-at"));
 }
 
 #[tokio::test]
-async fn continue_ignores_a_receipt_naming_the_same_command_id_but_the_wrong_target() {
+async fn continue_discloses_a_trusted_receipt_with_the_wrong_target() {
     let url = serve_continuation_relay(build_wrong_target_receipt).await;
     let error = run_continue(url, 1).await.unwrap_err();
     assert_eq!(
         crate::error::exit_code(&error),
-        5,
-        "a wrong-target receipt must not be accepted as this registration's answer"
+        4,
+        "a trusted wrong-target receipt must be disclosed as contradictory"
     );
-    assert!(matches!(error, CliError::Unconfirmed(_)));
+    assert!(matches!(error, CliError::Other(_)));
+    assert!(error.to_string().contains("conflicting target"));
 }
 
 /// Two independently derived registrations for the same channel, CI identity,
-/// target, continuation text, and `--expires-in` must produce the same
+/// target, continuation text, and absolute expiry must produce the same
 /// `commandId` — the mechanism behind "an exact retry names the same
 /// registration rather than minting a second one" (§0). This pins the
 /// derivation the CLI actually calls (`ci_continuation_command_id` with the
@@ -971,8 +1235,10 @@ async fn continuation_status_status_reads_are_read_only_and_exit_zero() {
     let result = continuation::cmd_continuation_status(
         &client,
         &crate::OutputFormat::Json,
-        "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+        CONTINUATION_CHANNEL,
         "cic-s",
+        &buzz_core::coding_session_command::coding_session_target_key(&target),
+        &continuation_provider(),
     )
     .await;
     assert!(

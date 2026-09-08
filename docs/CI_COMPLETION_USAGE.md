@@ -129,15 +129,23 @@ sessionId, generation) and one CI correlation digest, the provider admits at
 most one continuation turn, durably, across restarts, duplicate result
 events, reconnect replays, and any number of registration command ids.
 `commandId` is derived from the registration's own inputs (channel, CI
-identity, target, `--expires-in`, continuation text), so an exact retry of
-the identical command reproduces the same `commandId` and names the same
-registration rather than minting a second one.
+identity, target, absolute expiry, continuation text). On the first attempt,
+`--expires-in` is converted to an absolute `expiresAt`, which is printed in
+both the registered and unconfirmed output. An exact retry uses that value as
+`--expires-at` with the same remaining inputs, reproducing the same
+`commandId` and naming the same registration.
+
+The durable fence provides at-most-once admission. If the provider process
+crashes after it durably records that the turn started but before the prompt
+reaches the model, delivery may be lost; this does not claim exactly-once
+model execution or side effects.
 
 Register a turn to run once the named CI run attempt records a result:
 
 ```sh
 bee ci continue \
   --channel <uuid> \
+  --provider <provider-signing-pubkey> \
   --driver claude-code --instance-id <instance-id> --session-id <session-id> --generation 1 \
   --project '30621:<project-owner-key>:<project-id>' \
   --repository '30617:<repo-owner-key>:<repo-id>' \
@@ -147,43 +155,53 @@ bee ci continue \
   --attempt 1 \
   --workflow '<workflow-uuid>' \
   --phase build \
-  --continuation 'CI passed; open the PR.' \
+  --continuation 'Inspect the CI result; if it passed, open the PR; otherwise diagnose it.' \
   --expires-in 86400 \
   --ack-timeout 60
 ```
 
 The target may be given as the four flags above, or as one `--target
-'coding-session/v1|...'` `cs-target` key in their place. `--continuation` may
-also be `@path/to/file` (or `@-` for stdin) instead of literal text.
+'coding-session/v1|...'` `cs-target` key in their place. `--provider` is the
+expected provider signing pubkey; only its cryptographically valid, exact
+channel/command/target receipts are accepted. `--continuation` may also be
+`@path/to/file` (or `@-` for stdin) instead of literal text.
 
 This publishes the registration and then waits, bounded by `--ack-timeout`,
-for the relay's own answer to it — never for the eventual CI-triggered turn,
-which can arrive hours later:
+for the named provider's signed receipt — never for the eventual CI-triggered
+turn, which can arrive hours later:
 
 - **Registered** (exit 0) — the registration is durably stored. Prints
-  `{commandId, target, operationId, expiresAt, registeredEventId,
+  `{commandId, target, provider, operationId, expiresAt, registeredEventId,
   receiptEventId}`.
 - **Refused** (exit 1) — a synchronous check rejected the registration (for
-  example `COMMAND_ID_CONFLICT`: an exact retry's derived `commandId` already
-  names a different registration, which means an input other than
-  `--continuation`/`--expires-in` changed). Prints `{commandId, target, code,
+  example `COMMAND_ID_CONFLICT`: the derived `commandId` already names a
+  different registration). Prints `{commandId, target, provider, code,
   message, receiptEventId}`.
 - **Unconfirmed** (exit 5) — no answer arrived within `--ack-timeout`. Prints
-  `{commandId, target}`. This is not a failure: re-running the identical
-  command reproduces the same `commandId`, so the retry names the same
-  registration rather than minting a second one.
+  `{commandId, target, provider, expiresAt}`. This is not a failure: retry
+  with the printed `--expires-at <expiresAt>`, omit `--expires-in`, and keep
+  the same remaining inputs.
+  The receipt read has no time cutoff, so a delayed exact retry can find the
+  original stored acknowledgement.
 
 Read the latest stage of a registration at any later time, without waiting:
 
 ```sh
-bee ci continuation status --channel <uuid> --command-id <commandId>
+bee ci continuation status \
+  --channel <uuid> \
+  --command-id <commandId> \
+  --target 'coding-session/v1|...' \
+  --provider <provider-signing-pubkey>
 ```
 
 Read-only, stored replay only, always exit 0 when the read succeeds (exit 2
-on relay failure). Prints `{commandId, stage, receiptEventIds, refusalCode}`,
-where `stage` is one of `registered`, `queued`, `started`, `refused`,
-`dropped`, or `none` — `none` means no receipt has named this `commandId` yet,
-which is expected right after registering and is not itself an error.
+on relay failure). Prints `{commandId, target, provider, stage,
+receiptEventIds, refusalCode}`, where `stage` is one of `registered`, `queued`,
+`started`, `refused`, `dropped`, or `none` — `none` means no trusted receipt
+has named this exact command and target yet. A valid receipt from another
+provider is ignored. Conflicting target or terminal facts signed by the named
+provider are reported as an error instead of selecting one by timestamp or
+event hash.
 
 ## Repeat the integration checks
 

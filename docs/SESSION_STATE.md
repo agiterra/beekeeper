@@ -5,6 +5,92 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 Fable CI-continuation integration — in progress
+
+### Commute checkpoint — source preserved, acceptance still blocked
+
+Brian is about to lose internet. Fable’s integrated base is `0f29cb88e` on
+`work/team-role-evidence-astra`; the 19-file repair diff is saved in the signed-off
+commit titled “Checkpoint CI continuation integration and remaining recovery gaps”
+and also saved as
+`../review-2026-09-08-fable-integration/commute-repairs.patch`.
+All three lanes are now source-frozen; root owns further changes and validation.
+This is an integration checkpoint, not a release.
+Provider and CLI formatting/diff checks passed. Latest completed checks:
+core 1,029 + SDK 318; relay ingest 238 (3 infrastructure cases ignored);
+mobile coding-session tests 322 plus full analyzer; earlier desktop 8,656.
+Logs are in the same evidence directory. Provider suite log is
+`/tmp/fable-integration-provider-final.log`; its intermediate binary passed 653 unit cases (1 ignored) and 2 integration
+cases, including the existing 5,121-source pressure test. Two later command-ID collision regressions require recompilation.
+CLI regression suite passed 1,078 unit tests and 3 integration tests (one doc-test
+ignored). Repaired composition and clippy remain to run. The original
+combined composition failed at the duplicate-registration script assumption; no
+final acceptance, source push, deployment or installed rebuild has happened.
+
+**New review blocker, do not call this slice complete:** `Provider::recover`
+(`crates/buzz-session-provider/src/lib.rs`, around 950) detaches open executions
+without restoring actor handles. A recovered waiting/ready CI registration then
+hits `NO_LIVE_EXECUTION` when its result is delivered. The two restart tests only
+check store/watch or nonempty receipt stages; neither proves a resumed ACP prompt.
+The SPEC requires restart delivery, so implement/test the actual continuation
+recovery path or explicitly resolve the contract before shipping. A second review
+finding concerns actor queue overflow: `TurnDropped` records a refusal before
+fallible transcript/receipt enqueues, potentially losing visible disposition on
+I/O failure. Lifecycle creation also does not count the new pre-prompt CI budget
+reservations; ordinary turn/CI admission does. These remain named limits/findings,
+not accepted product behavior or evidence of a finished feature.
+
+The restart gap is architectural, not a missing call: explicit resume always
+increments generation, the native-open helper can fall back to a fresh session,
+and the provider consumes staged agent custody after create. Same-target native
+restore therefore needs a strict resume/load-only path plus a real host restaging
+or retained-custody mechanism for seated agents. Never silently change generation,
+fall back to a fresh conversation, or substitute the provider key for the agent.
+
+Further failure-path review: `refuse_ci_continuation` writes the refusal ledger
+before fallible outbox writes, so a live I/O failure can suppress the visible
+receipt. The actor's `TurnDropped` path has the same ordering. In the new start
+handshake, store retirement failure after operation+command claims currently
+denies the actor despite durable consumption; denial-path I/O errors can also
+leave in-flight entries behind. These need focused fault-injection coverage and
+repair before declaring production-ready continuation. At-most-once admission
+alone does not prove successful delivery or durable visible disposition.
+
+Next: finish adversarial review; repair and prove real restart delivery; rerun
+provider/CLI suites, `just test-ci-continuation`, scoped clippy, format and size
+gates; update this ledger and make the root signed-off repair commit. Hermit first;
+`CARGO_TARGET_DIR=/tmp/astra-workspace-admission-target CARGO_BUILD_JOBS=3`.
+Do not run `just test` against the current shared `.env` database (see CI140 below).
+
+
+Fable's completed four-commit candidate (`313b62118`, `3582f15af`, `21f009801`,
+`eb1156729`) is integrated above `485da8c80` as `05ae16e14`, `bb54e18a6`,
+`e1ed55bcf`, `0f29cb88e`. All four range-diff patches are equivalent. Original
+root is preserved at `archive/before-fable-continuation-20260908`; Fable's own
+worktree is unchanged. Combined desktop 8,656/8,656, TypeScript, desktop checks,
+formatting and file-size gates passed before the integration repairs below.
+
+Initial real composition reached session creation, registration, genuine webhook
+CI result, and one continuation turn. It then failed because the test assumed a
+second registration must acknowledge before its duplicate refusal; the provider
+instead immediately returned `DUPLICATE_OPERATION`. This run is not acceptance.
+Logs are in `../review-2026-09-08-fable-integration/`.
+
+Integration review found repairable blockers: relative expiry makes the CLI's
+same-ID retry promise false; CLI receipt readers need signature/envelope/provider/
+exact-target checks; ready or queued continuations need expiry/conflict checks at
+actual adapter start; a different payload reusing a command ID must not poison the
+original registration; and source CI project must match the execution's project.
+The actor previously emitted TurnStarted without waiting for durable ledger
+admission, so CI needs a start handshake to substantiate the durable guarantee.
+These are being fixed in the integrated root, with strict file ownership: CLI and
+its tests/usage documentation; provider/store/actor and regression tests; acceptance
+script and composition test. No push, deployment, or installed build claimed.
+A crash after durable CI admission but before adapter delivery may lose execution;
+it must not admit a second turn. The acceptance script is also being strengthened
+to compare actual adapter prompt bytes with the transcript and verify duplicate
+refusal/status instead of claiming more than its assertions establish.
+
 ## September 8 CI 140 — bridge test database configuration
 
 Brian's downloaded Rust log identifies three failures in the final relay

@@ -120,6 +120,14 @@ fn answered_report(identity: &CiResultIdentity) -> CiListenerEvent {
     }
 }
 
+fn ci_create_event(provider: &Provider, channel_id: Uuid, command_id: &str) -> Event {
+    let original = create_event(provider, channel_id, command_id);
+    let mut content: serde_json::Value =
+        serde_json::from_str(&original.content).expect("create JSON");
+    content["action"]["projectRef"] = ci_identity("136").project.into();
+    signed_lifecycle_event(channel_id, content.to_string())
+}
+
 /// A provider with one live execution, and the target that addresses it.
 async fn provider_with_session(
     dir: &Path,
@@ -131,7 +139,10 @@ async fn provider_with_session(
     let state_dir = dir.join("state");
     let mut provider = provider(&state_dir, Some(&projects));
     provider
-        .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+        .handle_command_event(
+            channel_id,
+            &ci_create_event(&provider, channel_id, "create-1"),
+        )
         .await
         .expect("handle create");
     let target = provider
@@ -315,10 +326,82 @@ async fn a_command_id_reused_for_different_bytes_is_refused() {
         "first",
         "the first durable record wins"
     );
+    let conflict = sink
+        .all()
+        .into_iter()
+        .find(|event| {
+            serde_json::from_str::<serde_json::Value>(&event.content)
+                .ok()
+                .is_some_and(|body| {
+                    body["commandId"] == "cic-1" && body["error"]["code"] == "COMMAND_ID_CONFLICT"
+                })
+        })
+        .expect("conflict event");
+    conflict.verify().expect("valid signature");
+    let payload: LifecycleReceipt = serde_json::from_str(&conflict.content).expect("receipt");
+    let expected =
+        build_coding_session_turn_receipt(channel_id, "cic-1", payload.status, &conflict.content)
+            .expect("strict envelope")
+            .sign_with_keys(&provider.config.keys)
+            .expect("sign expected");
+    assert_eq!(
+        conflict.tags, expected.tags,
+        "outbox fence never replaces the wire command or semantic key"
+    );
+    assert!(!provider.state.is_command_refused("cic-1"));
+    provider
+        .handle_ci_listener_event(ready_report(&identity, CiConclusion::Success))
+        .await
+        .expect("resolve original");
+    let text = started_turn_text(&mut provider).await;
+    let prompt: serde_json::Value = serde_json::from_str(&text).expect("materialized prompt");
+    assert_eq!(prompt["continuation"], "first");
+    assert!(provider.state.is_command_consumed("cic-1"));
 }
 
 /// A bounded store refuses rather than displacing a promise somebody is
 /// already waiting on.
+#[tokio::test]
+async fn an_ordinary_start_cannot_replace_a_registered_ci_prompt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+    register_expiry_fixture(&mut provider, channel_id, &target).await;
+    provider.handle_command_event(channel_id, &command_event(channel_id, "cic-expiry", &target,
+        serde_json::json!({"type": "thread.turn.start", "text": "unrelated replacement", "deliver": "boundary"})))
+        .await.expect("conflicting ordinary start");
+    assert!(!provider.in_flight.contains_key("cic-expiry"));
+    assert!(!provider.state.is_command_refused("cic-expiry"));
+    provider
+        .handle_ci_listener_event(ready_report(&ci_identity("136"), CiConclusion::Success))
+        .await
+        .expect("resolve original");
+    let text = started_turn_text(&mut provider).await;
+    let prompt: serde_json::Value = serde_json::from_str(&text).expect("materialized original");
+    assert_eq!(prompt["continuation"], "carry on");
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert_eq!(
+        refusal_code(&sink, "cic-expiry").as_deref(),
+        Some("COMMAND_ID_CONFLICT")
+    );
+}
+
+#[tokio::test]
+async fn a_ci_registration_cannot_repurpose_an_ordinary_in_flight_command() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+    provider.handle_command_event(channel_id, &command_event(channel_id, "cic-expiry", &target,
+        serde_json::json!({"type": "thread.turn.start", "text": "ordinary original", "deliver": "boundary"})))
+        .await.expect("ordinary start");
+    assert!(provider.in_flight.contains_key("cic-expiry"));
+    register_expiry_fixture(&mut provider, channel_id, &target).await;
+    assert!(provider.ci_continuations.record("cic-expiry").is_none());
+    assert_eq!(started_turn_text(&mut provider).await, "ordinary original");
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert!(!receipt_stages(&sink, "cic-expiry").contains(&"continuation_registered".to_owned()));
+}
+
 #[tokio::test]
 async fn a_full_store_refuses_the_registration_before_acknowledging_it() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -790,6 +873,102 @@ async fn a_conflicting_result_before_the_turn_starts_refuses_the_registration() 
 // Authority, generation, closure — re-evaluated at delivery
 // -------------------------------------------------------------------------
 
+#[tokio::test]
+async fn a_conflict_after_queueing_denies_the_actor_before_its_prompt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+    register_expiry_fixture(&mut provider, channel_id, &target).await;
+    provider
+        .handle_ci_listener_event(ready_report(&ci_identity("136"), CiConclusion::Success))
+        .await
+        .expect("queue");
+    assert!(provider.in_flight.contains_key("cic-expiry"));
+    provider
+        .handle_ci_listener_event(CiListenerEvent::CiResultConflict {
+            digest: digest_of(&ci_identity("136")),
+        })
+        .await
+        .expect("conflict before admission");
+    pump_available(&mut provider).await;
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert_eq!(
+        refusal_code(&sink, "cic-expiry").as_deref(),
+        Some("CI_RESULT_CONFLICT")
+    );
+    assert!(!receipt_stages(&sink, "cic-expiry").contains(&"turn_started".to_owned()));
+    assert!(!provider.state.is_command_consumed("cic-expiry"));
+}
+
+#[tokio::test]
+async fn queued_ci_turns_recheck_authority_generation_closure_and_project_at_start() {
+    for (change, expected) in [
+        ("revoked", "UNAUTHORIZED_OPERATOR"),
+        ("generation", "STALE_GENERATION"),
+        ("closed", "SESSION_CLOSED"),
+        ("project", "CI_CONTINUATION_PROJECT_MISMATCH"),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+        register_expiry_fixture(&mut provider, channel_id, &target).await;
+        provider
+            .handle_ci_listener_event(ready_report(&ci_identity("136"), CiConclusion::Success))
+            .await
+            .expect("queue");
+        assert!(provider.in_flight.contains_key("cic-expiry"));
+        provider
+            .state
+            .update_session(&target.session_id, |record| match change {
+                "revoked" => {
+                    record.founder_pubkey = Some(Keys::generate().public_key().to_hex());
+                    record.granted_operators.clear();
+                }
+                "generation" => record.generation += 1,
+                "closed" => record.closed = true,
+                "project" => record.project_ref = None,
+                _ => unreachable!(),
+            })
+            .expect("state changes while queued");
+        pump_available(&mut provider).await;
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            refusal_code(&sink, "cic-expiry").as_deref(),
+            Some(expected),
+            "{change}"
+        );
+        assert!(
+            !receipt_stages(&sink, "cic-expiry").contains(&"turn_started".to_owned()),
+            "{change}"
+        );
+        assert!(
+            !provider.state.is_command_consumed("cic-expiry"),
+            "{change}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_and_other_projects_cannot_register_a_result_subscription() {
+    for project in [None, Some("30621:other:private-project".to_owned())] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+        provider
+            .state
+            .update_session(&target.session_id, |record| record.project_ref = project)
+            .expect("different project");
+        register_expiry_fixture(&mut provider, channel_id, &target).await;
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            refusal_code(&sink, "cic-expiry").as_deref(),
+            Some("CI_CONTINUATION_PROJECT_MISMATCH")
+        );
+        assert!(provider.ci_continuations.pending_identities().is_empty());
+        assert!(provider.ci_continuations.record("cic-expiry").is_none());
+    }
+}
+
 /// Steering authority is checked *now*, not when the registration was made,
 /// and a regrant does not resurrect a refused promise.
 #[tokio::test]
@@ -946,6 +1125,130 @@ async fn a_closed_execution_refuses_the_continuation() {
 // Expiry — the two observations, never a guess
 // -------------------------------------------------------------------------
 
+async fn register_expiry_fixture(
+    provider: &mut Provider,
+    channel_id: Uuid,
+    target: &CodingSessionTarget,
+) {
+    provider
+        .handle_command_event(
+            channel_id,
+            &continuation_event(
+                channel_id,
+                "cic-expiry",
+                target,
+                &ci_identity("136"),
+                "carry on",
+                now_secs() + 3_600,
+            ),
+        )
+        .await
+        .expect("register");
+}
+
+/// Results can arrive between expiry ticks. Admission must enforce the
+/// deadline itself instead of relying on a later pass to remove the promise.
+#[tokio::test]
+async fn a_result_arriving_after_expiry_never_reaches_the_mailbox() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+    register_expiry_fixture(&mut provider, channel_id, &target).await;
+    provider
+        .ci_continuations
+        .set_expiry_for_test("cic-expiry", now_secs() - 1)
+        .expect("expire");
+    provider
+        .handle_ci_listener_event(ready_report(&ci_identity("136"), CiConclusion::Success))
+        .await
+        .expect("late result");
+    provider.run_ci_continuation_tick().await.expect("tick");
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert_eq!(
+        refusal_code(&sink, "cic-expiry").as_deref(),
+        Some("CI_CONTINUATION_EXPIRED")
+    );
+    assert!(!provider.in_flight.contains_key("cic-expiry"));
+    assert!(!receipt_stages(&sink, "cic-expiry").contains(&"turn_queued".to_owned()));
+}
+
+/// Recovery may find a verified result whose admission window elapsed while
+/// the process was down. It must expire before ordinary turn admission.
+#[tokio::test]
+async fn an_expired_ready_record_is_refused_after_recovery() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut running, channel_id, target, projects) = provider_with_session(dir.path()).await;
+    register_expiry_fixture(&mut running, channel_id, &target).await;
+    let CiListenerEvent::CiResultReady {
+        digest,
+        event_id,
+        signer,
+        canonical_json,
+        observed_at,
+    } = ready_report(&ci_identity("136"), CiConclusion::Success)
+    else {
+        panic!("ready fixture");
+    };
+    running
+        .ci_continuations
+        .mark_ready(
+            &digest,
+            &ReadyResult {
+                result_event_id: event_id,
+                result_signer: signer,
+                result_canonical_json: canonical_json,
+                observed_at,
+            },
+        )
+        .expect("persist result before mailbox");
+    running
+        .ci_continuations
+        .set_expiry_for_test("cic-expiry", now_secs() - 1)
+        .expect("expire while down");
+    drop(running);
+
+    let mut restarted = provider(&dir.path().join("state"), Some(&projects));
+    restarted.recover().expect("recover");
+    restarted.run_ci_continuation_tick().await.expect("tick");
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
+    assert_eq!(
+        refusal_code(&sink, "cic-expiry").as_deref(),
+        Some("CI_CONTINUATION_EXPIRED")
+    );
+    assert!(!restarted.in_flight.contains_key("cic-expiry"));
+    assert!(!receipt_stages(&sink, "cic-expiry").contains(&"turn_queued".to_owned()));
+}
+
+/// A queued turn must still meet the deadline at its execution boundary.
+/// Expiry before the provider grants that start prevents the adapter prompt.
+#[tokio::test]
+async fn a_continuation_queued_before_expiry_is_denied_at_the_execution_boundary() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
+    register_expiry_fixture(&mut provider, channel_id, &target).await;
+    provider
+        .handle_ci_listener_event(ready_report(&ci_identity("136"), CiConclusion::Success))
+        .await
+        .expect("result before expiry");
+    assert!(provider.in_flight.contains_key("cic-expiry"));
+    provider
+        .ci_continuations
+        .set_expiry_for_test("cic-expiry", now_secs() - 1)
+        .expect("expire after admission");
+    pump_available(&mut provider).await;
+
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert_eq!(
+        refusal_code(&sink, "cic-expiry").as_deref(),
+        Some("CI_CONTINUATION_EXPIRED")
+    );
+    assert!(!receipt_stages(&sink, "cic-expiry").contains(&"turn_started".to_owned()));
+    assert!(!provider.state.is_command_consumed("cic-expiry"));
+}
+
 /// The relay never answered, so the honest fact is that the window closed
 /// before this provider could look.
 #[tokio::test]
@@ -1058,7 +1361,10 @@ async fn a_restart_before_the_result_keeps_the_registration_and_delivers_later()
     let target = {
         let mut provider = provider(&state_dir, Some(&projects));
         provider
-            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .handle_command_event(
+                channel_id,
+                &ci_create_event(&provider, channel_id, "create-1"),
+            )
             .await
             .expect("create");
         let target = provider
@@ -1114,7 +1420,10 @@ async fn a_restart_after_the_result_is_ready_still_delivers_the_turn() {
     {
         let mut provider = provider(&state_dir, Some(&projects));
         provider
-            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .handle_command_event(
+                channel_id,
+                &ci_create_event(&provider, channel_id, "create-1"),
+            )
             .await
             .expect("create");
         let target = provider
@@ -1195,7 +1504,10 @@ async fn recovery_drops_a_registration_whose_command_is_already_answered() {
     {
         let mut provider = provider(&state_dir, Some(&projects));
         provider
-            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .handle_command_event(
+                channel_id,
+                &ci_create_event(&provider, channel_id, "create-1"),
+            )
             .await
             .expect("create");
         let target = provider
@@ -1233,8 +1545,113 @@ async fn recovery_drops_a_registration_whose_command_is_already_answered() {
     );
 }
 
-/// The ledger order at `TurnStarted` is the thing that degrades well:
-/// operation, then command, then the durable promise.
+#[tokio::test]
+async fn simultaneous_ci_start_permissions_reserve_the_shared_turn_allowance() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, first, _projects) = provider_with_session(dir.path()).await;
+    provider
+        .handle_command_event(
+            channel_id,
+            &ci_create_event(&provider, channel_id, "create-2"),
+        )
+        .await
+        .expect("second actor");
+    let second = provider
+        .state
+        .sessions()
+        .find(|record| record.command_id == "create-2")
+        .expect("second session")
+        .target("instance-1");
+    provider
+        .state
+        .claim_umbrella_founder("ci-budget", &Keys::generate().public_key().to_hex())
+        .expect("umbrella founder");
+    for target in [&first, &second] {
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.session_ref = Some("ci-budget".into())
+            })
+            .expect("same umbrella");
+    }
+    provider.config.turn_budget = 1;
+    for (id, target, run) in [
+        ("ci-budget-1", &first, "136"),
+        ("ci-budget-2", &second, "137"),
+    ] {
+        let identity = ci_identity(run);
+        provider
+            .handle_command_event(
+                channel_id,
+                &continuation_event(channel_id, id, target, &identity, "go", now_secs() + 3_600),
+            )
+            .await
+            .expect("register");
+        provider
+            .handle_ci_listener_event(ready_report(&identity, CiConclusion::Success))
+            .await
+            .expect("queue");
+    }
+    assert!(provider
+        .admit_ci_turn_start(&first.session_id, "ci-budget-1")
+        .expect("first start permission"));
+    assert_eq!(
+        provider.state.turns_used("ci-budget"),
+        0,
+        "permission alone is not reported as a spent turn"
+    );
+    assert!(!provider
+        .admit_ci_turn_start(&second.session_id, "ci-budget-2")
+        .expect("second refused"));
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    assert_eq!(
+        refusal_code(&sink, "ci-budget-2").as_deref(),
+        Some("BUDGET_EXHAUSTED")
+    );
+    provider
+        .handle_session_event(SessionEvent::TurnStarted {
+            session_id: first.session_id,
+            turn_id: "budget-turn".into(),
+            command_id: "ci-budget-1".into(),
+            text: "go".into(),
+        })
+        .expect("started report");
+    assert_eq!(provider.state.turns_used("ci-budget"), 1);
+    assert!(!provider.in_flight.contains_key("ci-budget-1"));
+}
+
+/// The actor cannot receive start permission until both durable fences exist.
+#[tokio::test]
+async fn a_ci_start_claim_is_durable_before_prompt_permission_and_survives_a_crash() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut running, channel_id, target, projects) = provider_with_session(dir.path()).await;
+    register_expiry_fixture(&mut running, channel_id, &target).await;
+    running
+        .handle_ci_listener_event(ready_report(&ci_identity("136"), CiConclusion::Success))
+        .await
+        .expect("queue");
+    // Simulate the boundary handler's durable half, then lose the process
+    // before its yes can reach the actor. The execution can be lost; its
+    // command and operation must never be re-admitted on recovery.
+    assert!(running
+        .admit_ci_turn_start(&target.session_id, "cic-expiry")
+        .expect("claim"));
+    assert!(running.state.is_command_consumed("cic-expiry"));
+    assert!(running.ci_continuations.record("cic-expiry").is_none());
+    let operations = ledger_lines(&dir.path().join("state"), "operations.jsonl");
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0]["commandId"], "cic-expiry");
+    drop(running);
+    let mut restarted = provider(&dir.path().join("state"), Some(&projects));
+    restarted.recover().expect("recover");
+    assert!(restarted.state.is_command_consumed("cic-expiry"));
+    assert!(!restarted
+        .admit_ci_turn_start(&target.session_id, "cic-expiry")
+        .expect("retry denied"));
+    assert!(restarted.ci_continuations.pending_identities().is_empty());
+}
+
 #[tokio::test]
 async fn the_delivered_turn_writes_the_operation_ledger_before_the_command_ledger() {
     let dir = tempfile::tempdir().expect("tempdir");

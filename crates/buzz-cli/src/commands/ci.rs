@@ -320,6 +320,7 @@ pub async fn dispatch(
         }
         CiCmd::Continue {
             channel,
+            provider,
             target,
             driver,
             instance_id,
@@ -335,6 +336,7 @@ pub async fn dispatch(
             phase,
             continuation,
             expires_in,
+            expires_at,
             ack_timeout,
         } => {
             continuation::cmd_continue(
@@ -356,14 +358,28 @@ pub async fn dispatch(
                 phase,
                 &continuation,
                 expires_in,
+                expires_at,
                 ack_timeout,
+                &provider,
             )
             .await
         }
         CiCmd::Continuation(CiContinuationCmd::Status {
             channel,
             command_id,
-        }) => continuation::cmd_continuation_status(client, format, &channel, &command_id).await,
+            target,
+            provider,
+        }) => {
+            continuation::cmd_continuation_status(
+                client,
+                format,
+                &channel,
+                &command_id,
+                &target,
+                &provider,
+            )
+            .await
+        }
     }
 }
 

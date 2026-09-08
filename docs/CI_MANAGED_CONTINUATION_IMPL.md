@@ -14,9 +14,11 @@ duplicates and alternate command ids converge. Worktree
 For one exact target (driver, instanceId, sessionId, generation) and one CI correlation
 digest, the provider admits **at most one** continuation turn, durably, across restarts,
 duplicate result events, reconnect replays and any number of registration command ids —
-enforced by the existing operation ledger (first writer wins at `TurnStarted`). It does
-**not** promise exactly-once external effects of a model turn whose host crashes after
-`TurnStarted`; downstream work needs ordinary idempotence.
+enforced by the existing operation ledger. A CI-only actor handshake rechecks admission
+and durably claims the operation and command before releasing the adapter prompt.
+A crash after the claim but before prompt delivery can lose that execution; replay
+must not admit another one. This is not exactly-once delivery or exactly-once model
+effects; downstream work still needs ordinary idempotence.
 
 ## 1. Wire contract (buzz-core; kind numbers unchanged)
 
@@ -54,7 +56,9 @@ meanings at delivery. New refusal codes (constants in `coding_session_payload.rs
 
 ### 1c. Delivered turn (materialized context)
 When ready and admitted, the provider starts a turn under the **original commandId and
-signer** whose text is this JSON (pretty, deterministic key order), nothing else:
+signer** whose continuation payload is this JSON (pretty, deterministic key order).
+Existing actor framing for a non-founder operator or a first-turn continuity preamble
+may surround this payload; those normal attribution/bootstrap rules still apply:
 ```json
 { "type": "ci_result", "operationId": "<digest>",
   "registration": { "commandId": "cic-…", "signer": "<hex>", "registeredAt": 0, "expiresAt": 0 },
@@ -67,18 +71,22 @@ Operation fence key = `operation_fence_key(target, pointer)` with the pointer fr
 **not** the materialized text (so duplicates and other command ids converge).
 
 ## 2. CLI (`crates/buzz-cli`)
-- `bee ci continue --channel <uuid> --target <cs-target key | --driver/--instance/--session/--generation> --project --repository --commit --check --run --attempt --workflow --phase --continuation <text|@file> [--expires-in <secs, default 86400, max = provider horizon>] [--ack-timeout <secs, default 60>]`.
+- `bee ci continue --channel <uuid> --provider <expected-provider-pubkey> --target <cs-target key | --driver/--instance-id/--session-id/--generation> --project --repository --commit --check --run --attempt --workflow --phase --continuation <text|@file> [--expires-in <secs, default 86400> | --expires-at <absolute unix seconds>] [--ack-timeout <secs, default 60>]`.
   Publishes the 44220 (signed by the caller's key), then waits — bounded HTTP replay
   reads, the same helper `sessions create --wait` uses (`await_delivery`) — for a 44224
   for exactly that commandId and target:
   `continuation_registered` → exit 0 and print `{commandId, target, operationId, expiresAt,
   registeredEventId}`; `turn_refused` → exit 1 with the code; no receipt within
-  `--ack-timeout` → exit 5 (`unconfirmed`) printing the commandId so the caller can
-  re-run the exact same command (same id) rather than mint a second registration. The
+  `--ack-timeout` → exit 5 (`unconfirmed`) printing the commandId and expiresAt.
+  Retry with that same absolute `--expires-at` and all other inputs unchanged to
+  preserve the ID. Repeating a relative `--expires-in` later changes the ID. The
   caller's turn ends after this bounded handshake; no shell survives.
-- `bee ci continuation status --channel <uuid> --command-id <id>`: reads the 44224s for
+- `bee ci continuation status --channel <uuid> --provider <expected-provider-pubkey> --target <cs-target key> --command-id <id>`: reads the 44224s for
   that command and prints the latest stage (`registered|queued|started|refused|dropped|
-  none`) with the receipt event ids. Read-only.
+  none`) with the receipt event ids. Read-only. Both receipt readers verify the
+  Nostr signature, expected provider signer, exact target, command ID and envelope.
+  Conflicting authenticated terminal facts are disclosed rather than hidden by
+  event-ID ordering.
 - Compact/JSON output like the rest of `ci.rs`; exit codes per `error.rs`.
 
 ## 3. Provider (`crates/buzz-session-provider`)
@@ -105,8 +113,9 @@ command_horizon`; a pending record with the same commandId and same payload dige
 `COMMAND_ID_CONFLICT` (first durable record wins); store full → refusal. Persist the
 record **before** enqueueing the `continuation_registered` receipt into the outbox
 (semantic key = commandId + status). Do not consume the command id in the command ledger
-(it is consumed at `TurnStarted` of the eventual turn, like every turn); the store is the
-fence against re-registration on replay. Immediately request one listener check.
+(it is consumed by the CI start handshake of the eventual turn); the store is the
+fence against re-registration on replay. A conflicting payload gets an event-specific
+refusal without poisoning the original registration’s command refusal ledger. Immediately request one listener check.
 
 ### 3c. Result listener — new `ci_result_listener.rs`
 One task, started with the provider: `NostrWsConnection::connect_authenticated` with the
@@ -128,10 +137,11 @@ provider's identity before expiry; the project may be private to it, or CI never
 reported"); no relay answer for the digest during the whole window →
 `CI_CONTINUATION_EXPIRED` ("the registration expired before this provider could check
 the relay"). Both are durable (refusal ledger + outbox) and record which case applied.
-Results after admission: once the turn has started, a later duplicate result does
+Results after durable start admission: a later duplicate result does
 nothing (debug log); a later conflicting canonical result does nothing to the started
 turn (model effects are not undone; warn log); a conflict that arrives while the record
-is `ready` but not yet started converts it to `CI_RESULT_CONFLICT` instead of starting.
+is `ready`, including a queued actor turn not yet admitted, converts it to
+`CI_RESULT_CONFLICT` instead of starting.
 
 ### 3d. Delivery
 On `CiResultReady`: rebuild the `TurnCommand` from the record (original commandId,
@@ -141,8 +151,13 @@ current `granted_operators`), generation, closed, budget, mailbox and the operat
 ledger are re-evaluated **now**. Refusals are durable and published with the existing
 codes; revoked → `UNAUTHORIZED_OPERATOR` terminal (regrant does not resurrect); moved
 generation → `STALE_GENERATION` (never retarget); closed → `SESSION_CLOSED`. Mark the
-record `terminal` or remove it after the command ledger write at `TurnStarted`
-(`lib.rs:5354-5362` order preserved: operation ledger, then command ledger, then store).
+record `terminal` or remove it after the durable CI start claim. The actor carries
+a CI guard through its mailbox and pauses immediately before transcript/prompt delivery.
+The provider rechecks expiry, readiness/conflict, exact project, current authority,
+generation, closure, budget and operation ownership; only then does it persist the
+operation ledger, command ledger, and store retirement and authorize the actor.
+A denial or a dropped handshake never calls the adapter. Ordinary turns retain
+their existing delivery path.
 `TurnCommand` gains an optional `operation_key: Option<String>` used by the fence when
 present (existing turns keep `text`).
 
@@ -156,7 +171,9 @@ already synthesizes terminal results for an open turn; unchanged.
 
 ### 3f. Private read
 Results are relay-signed, carry no `h`, and are private-project gated for the reader.
-The listener reads with the provider's own key: public projects and private projects
+The source CI project must exactly match the target execution’s recorded project at
+registration, when choosing listener subscriptions, and at delivery/start admission. The listener
+reads with the provider's own key: public projects and private projects
 that explicitly admit the provider identity work; otherwise a hidden result is
 indistinguishable from "not finished" and expiry publishes
 `CI_RESULT_UNAVAILABLE_OR_HIDDEN`. No delegation, no borrowed credentials, no inference
@@ -173,6 +190,9 @@ that the CI signer may steer. Documented in the CLI help and the receipt code.
   as a non-terminal, non-mailbox stage and accept the action as an opaque known type.
   Tests beside each. Nothing else in desktop.
 - SDK: `crates/buzz-sdk/src/builders.rs` gets `build_coding_session_ci_continuation`.
+- Mobile: the strict receipt decoder recognizes `continuation_registered` as a
+  per-turn stage, without resolving a normal pending user turn or changing execution
+  lifecycle state. This is decoder compatibility, not a new mobile continuation UI.
 
 ## 5. Tests (all named; lanes add to these files)
 - core: `crates/buzz-core/src/coding_session_command.rs` tests (decode/validate/limits),
@@ -212,7 +232,12 @@ Gates per lane: `cargo fmt --check`, `cargo clippy -p <crate> --all-targets -- -
 `CARGO_TARGET_DIR=/tmp/fable-ci-continuation-target CARGO_BUILD_JOBS=4`. No push, no
 deploy, no production workflow/deployment settings.
 
-## 7. Validation record (2026-09-08 evening)
+## 7. Fable candidate validation record (before root integration)
+
+These are the handoff’s original reported results on Fable’s base. Root integration
+results and repairs are recorded in `docs/SESSION_STATE.md`. The original composition
+checked transcript materialization; the strengthened integration script additionally
+compares actual ACP prompt bytes for its founder-driven fixture.
 
 Logs: `/Users/brian/Projects/beekeeper/review-role-adoption-fable-logs/` (`finalCI-*.log`,
 `finalCI2-*.log`, lanes `laneK-*`, `laneP-*`, `laneC-*`, `laneA-*`).

@@ -13,9 +13,9 @@
 //! is refused `DUPLICATE_OPERATION` and spends no turn.
 //!
 //! It does **not** promise exactly-once external effects of a model turn whose
-//! host crashes after `TurnStarted`. Downstream work needs ordinary
-//! idempotence; the ledger promises the turn is started once, not that
-//! everything it does is.
+//! host crashes. CI start permission is durably claimed before the actor may
+//! send its prompt: a crash after that claim can lose execution, but cannot
+//! admit it twice. Downstream work still needs ordinary idempotence.
 //!
 //! # The order every write is in, and why
 //!
@@ -29,10 +29,10 @@
 //!   fence are re-evaluated **now** rather than at registration time. A grant
 //!   revoked while CI was running refuses the turn; a regrant does not
 //!   resurrect it.
-//! - **Retirement:** the record is removed only after the command ledger entry
-//!   at `TurnStarted`, preserving the existing operation-ledger-then-command-
-//!   ledger order. A crash anywhere before that replays the delivery, and the
-//!   ledgers make it once.
+//! - **Start permission:** at the actor's execution boundary the provider
+//!   repeats admission, writes operation then command ledgers, and retires the
+//!   record before allowing any prompt. A crash after these writes can lose
+//!   execution; recovery never grants this operation twice.
 //! - **Refusal:** the refusal ledger, then the outbox, then the terminal
 //!   record. The retained terminal record is what stops a relay redelivery of
 //!   the registration from resurrecting a refused promise.
@@ -48,13 +48,16 @@ use crate::ci_continuation_store::{
     CiContinuationRecord, ReadyResult, RecordState, RelayObservation,
 };
 use crate::ci_result_listener::{CiListenerEvent, CiResultListener, ListenerConfig};
-use crate::commands::{decide_turn_command, TurnAction, TurnCommand};
+use crate::commands::{decide_turn_command, TurnAction, TurnCommand, TurnDecision};
 use crate::payload::{
     LifecycleReceipt, CI_CONTINUATION_EXPIRED, CI_RESULT_CONFLICT, CI_RESULT_UNAVAILABLE_OR_HIDDEN,
     COMMAND_ID_CONFLICT,
 };
 use crate::state::now_secs;
 use crate::{commands::ProjectsFile, Provider, TurnDisposition};
+
+/// The requested CI project is not the execution's recorded project.
+pub const CI_CONTINUATION_PROJECT_MISMATCH: &str = "CI_CONTINUATION_PROJECT_MISMATCH";
 
 /// Await the next verified-result report, parking forever when there is none.
 ///
@@ -227,8 +230,23 @@ impl Provider {
     /// Tell the listener exactly which identities are still worth watching.
     pub(crate) fn sync_ci_listener(&self) {
         if let Some(listener) = &self.ci_listener {
-            listener.watch(self.ci_continuations.pending_identities());
+            listener.watch(self.watchable_ci_identities());
         }
+    }
+
+    fn watchable_ci_identities(&self) -> std::collections::BTreeMap<String, CiResultIdentity> {
+        self.ci_continuations
+            .pending()
+            .filter(|record| {
+                record.expires_at > now_secs()
+                    && self
+                        .state
+                        .session(&record.target.session_id)
+                        .and_then(|session| session.project_ref.as_deref())
+                        == Some(record.identity.project.as_str())
+            })
+            .map(|record| (record.correlation_id.clone(), record.identity.clone()))
+            .collect()
     }
 
     /// Durably register one continuation, then acknowledge it.
@@ -242,6 +260,10 @@ impl Provider {
         registration: Registration,
     ) -> anyhow::Result<TurnDisposition> {
         let now = now_secs();
+        let conflict_receipt_key = format!(
+            "{}:conflict:{}",
+            registration.command_id, registration.registration_event_id
+        );
         let record = CiContinuationRecord {
             command_id: registration.command_id.clone(),
             registration_event_id: registration.registration_event_id,
@@ -264,7 +286,6 @@ impl Provider {
             // Lost a race with a record carrying different bytes. The first
             // durable record wins, and the loser is told which fact it is.
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                self.state.record_refusal(&registration.command_id, now)?;
                 let receipt = LifecycleReceipt::turn_refused(
                     &registration.command_id,
                     &registration.target,
@@ -272,7 +293,12 @@ impl Provider {
                     "a different CI continuation is already durably registered under this \
                      commandId; the first durable record wins",
                 );
-                self.enqueue_receipt(registration.channel_id, &registration.command_id, &receipt)?;
+                self.enqueue_receipt_with_outbox_key(
+                    registration.channel_id,
+                    &registration.command_id,
+                    &receipt,
+                    Some(&conflict_receipt_key),
+                )?;
                 return Ok(TurnDisposition::Answered(COMMAND_ID_CONFLICT.to_owned()));
             }
             Err(error) => return Err(error.into()),
@@ -342,21 +368,6 @@ impl Provider {
                     .map(|record| record.command_id.clone())
                     .collect();
                 for command_id in contested {
-                    if self.in_flight.contains_key(&command_id) {
-                        // The turn is already in a mailbox. A model turn is not
-                        // undone by a later contradiction, and publishing a
-                        // refusal for a command that was queued would be a
-                        // second, contradictory answer to one command. Said out
-                        // loud in the log, and nowhere else.
-                        tracing::warn!(
-                            target: "csp::ci",
-                            %command_id,
-                            %digest,
-                            "a conflicting CI result arrived after this continuation's turn was \
-                             already accepted; the turn stands and no refusal is published"
-                        );
-                        continue;
-                    }
                     self.refuse_ci_continuation(
                         &command_id,
                         CI_RESULT_CONFLICT,
@@ -408,6 +419,24 @@ impl Provider {
         let RecordState::Ready(ready) = &record.state else {
             return Ok(());
         };
+        // Enforce the deadline on listener/recovery delivery too. The actor
+        // repeats admission at its execution boundary after a busy queue.
+        if record.expires_at <= now_secs() {
+            return self.expire_ci_continuation(command_id);
+        }
+        if self
+            .state
+            .session(&record.target.session_id)
+            .and_then(|session| session.project_ref.as_deref())
+            != Some(record.identity.project.as_str())
+        {
+            return self.refuse_ci_continuation(
+                command_id,
+                CI_CONTINUATION_PROJECT_MISMATCH,
+                "the CI result project no longer matches this execution's recorded project",
+                None,
+            );
+        }
         let text = match materialize(&record, ready) {
             Ok(text) => text,
             // The stored result cannot be turned into a prompt. Terminal and
@@ -456,8 +485,8 @@ impl Provider {
             )
             .await?;
         match disposition {
-            // The turn path owns the command now. The record is retired at
-            // `TurnStarted`, after the command ledger write.
+            // Queue custody is provisional. The actor requests final durable
+            // admission at its execution boundary before emitting a prompt.
             TurnDisposition::Delivered => Ok(()),
             TurnDisposition::Answered(code) => {
                 tracing::info!(
@@ -480,6 +509,92 @@ impl Provider {
                 Ok(())
             }
             TurnDisposition::Silent => self.settle_silent_delivery(&record),
+        }
+    }
+
+    /// Recheck a CI turn at the actor's execution boundary and durably claim it
+    /// before permitting any prompt. A crash after this claim may lose the
+    /// execution, but cannot admit this command or operation a second time.
+    pub(crate) fn admit_ci_turn_start(
+        &mut self,
+        session_id: &str,
+        command_id: &str,
+    ) -> anyhow::Result<bool> {
+        let Some(record) = self.ci_continuations.record(command_id).cloned() else {
+            self.in_flight.remove(command_id);
+            return Ok(false);
+        };
+        if record.target.session_id != session_id || !matches!(record.state, RecordState::Ready(_))
+        {
+            self.in_flight.remove(command_id);
+            return Ok(false);
+        }
+        if record.expires_at <= now_secs() {
+            self.expire_ci_continuation(command_id)?;
+            self.in_flight.remove(command_id);
+            return Ok(false);
+        }
+        if self
+            .state
+            .session(session_id)
+            .and_then(|session| session.project_ref.as_deref())
+            != Some(record.identity.project.as_str())
+        {
+            self.refuse_ci_continuation(
+                command_id,
+                CI_CONTINUATION_PROJECT_MISMATCH,
+                "the CI result project no longer matches this execution's recorded project",
+                None,
+            )?;
+            self.in_flight.remove(command_id);
+            return Ok(false);
+        }
+        let projects = ProjectsFile::default();
+        let actor_seats = crate::actor_seats::ActorSeatsFile::default();
+        let mut other_in_flight = self.in_flight.clone();
+        other_in_flight.remove(command_id);
+        let mut context = self.context(record.channel_id, &projects, &actor_seats, &record.signer);
+        context.in_flight = &other_in_flight;
+        let decision = decide_turn_command(
+            &context,
+            now_secs(),
+            TurnCommand {
+                command_id: command_id.to_owned(),
+                target: record.target.clone(),
+                action: TurnAction::Start {
+                    text: String::new(),
+                    attachments: Vec::new(),
+                    deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
+                },
+                operation_key: Some(ci_continuation_pointer(&record.correlation_id)),
+                payload_digest: record.payload_digest,
+            },
+        );
+        match decision {
+            TurnDecision::Start { operation_key, .. } => {
+                if let Some(key) = operation_key {
+                    self.state.consume_operation(&key, command_id, now_secs())?;
+                }
+                self.state.consume_command(command_id, now_secs())?;
+                self.retire_ci_continuation(command_id)?;
+                Ok(true)
+            }
+            TurnDecision::Fail { code, message, .. } => {
+                self.refuse_ci_continuation(command_id, code, &message, None)?;
+                self.in_flight.remove(command_id);
+                Ok(false)
+            }
+            TurnDecision::Ignore(reason) => {
+                if let Some(refusal) = reason.refusal() {
+                    self.refuse_ci_continuation(command_id, refusal.code, refusal.message, None)?;
+                }
+                self.in_flight.remove(command_id);
+                Ok(false)
+            }
+            _ => {
+                self.in_flight.remove(command_id);
+                Ok(false)
+            }
         }
     }
 
@@ -521,11 +636,6 @@ impl Provider {
         let Some(record) = self.ci_continuations.record(command_id).cloned() else {
             return Ok(());
         };
-        if self.in_flight.contains_key(command_id) {
-            // The turn is already in a mailbox; expiry bounds the wait, not a
-            // turn that has been accepted.
-            return Ok(());
-        }
         let (code, observation, message) = match (&record.state, record.relay_answered) {
             (RecordState::Ready(_), _) => (
                 CI_CONTINUATION_EXPIRED,
@@ -574,11 +684,10 @@ impl Provider {
         Ok(())
     }
 
-    /// Retire the registration behind a turn that has just started.
+    /// Retire a registration after durable start permission.
     ///
-    /// Called from the `TurnStarted` arm, *after* the operation ledger and the
-    /// command ledger writes. The record's only remaining job at that point
-    /// would be to promise a turn that is already running.
+    /// CI calls this after operation and command claims, before permitting the
+    /// actor's prompt. The ordinary `TurnStarted` arm may call it again.
     pub(crate) fn retire_ci_continuation(&mut self, command_id: &str) -> anyhow::Result<()> {
         if self.ci_continuations.record(command_id).is_none() {
             return Ok(());

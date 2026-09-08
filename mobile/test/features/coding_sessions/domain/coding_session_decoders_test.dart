@@ -134,6 +134,7 @@ void main() {
 
     test('every turn status decodes as a turn stage', () {
       for (final status in [
+        'continuation_registered',
         'turn_queued',
         'turn_started',
         'turn_degraded',

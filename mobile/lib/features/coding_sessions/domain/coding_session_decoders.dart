@@ -610,6 +610,7 @@ _ReceiptErrorExpectation? _receiptErrorExpectation(
   CodingSessionReceiptStatus.created ||
   CodingSessionReceiptStatus.resumed ||
   CodingSessionReceiptStatus.stopped ||
+  CodingSessionReceiptStatus.continuationRegistered ||
   CodingSessionReceiptStatus.turnQueued ||
   CodingSessionReceiptStatus.turnStarted => const _ReceiptErrorExpectation(
     mustHaveError: false,

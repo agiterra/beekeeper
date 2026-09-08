@@ -55,6 +55,7 @@ enum CodingSessionReceiptStatus {
   resumed('resumed'),
   resumedWithoutContext('resumed_without_context'),
   stopped('stopped'),
+  continuationRegistered('continuation_registered'),
   turnQueued('turn_queued'),
   turnStarted('turn_started'),
   turnDegraded('turn_degraded'),
@@ -67,7 +68,7 @@ enum CodingSessionReceiptStatus {
   /// The exact string the provider signs.
   final String wire;
 
-  /// Decode a wire status, or `null` when it is not one of the twelve.
+  /// Decode a wire status, or `null` when it is not recognized.
   static CodingSessionReceiptStatus? fromWire(Object? value) {
     if (value is! String) return null;
     for (final status in CodingSessionReceiptStatus.values) {
@@ -78,6 +79,7 @@ enum CodingSessionReceiptStatus {
 
   /// True for a per-turn stage rather than a generation lifecycle change.
   bool get isTurnStage =>
+      this == CodingSessionReceiptStatus.continuationRegistered ||
       this == CodingSessionReceiptStatus.turnQueued ||
       this == CodingSessionReceiptStatus.turnStarted ||
       this == CodingSessionReceiptStatus.turnDegraded ||

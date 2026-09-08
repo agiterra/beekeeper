@@ -3729,7 +3729,13 @@ impl Provider {
             } => {
                 // Refused, not consumed. Consuming would claim this command
                 // ran; it did not, and never will.
-                self.state.record_refusal(&command_id, now_secs())?;
+                // A conflicting registration is a rejected event, not a
+                // cancellation of the original promise sharing its command id.
+                let ci_conflict = code == payload::COMMAND_ID_CONFLICT
+                    && self.ci_continuations.record(&command_id).is_some();
+                if !ci_conflict {
+                    self.state.record_refusal(&command_id, now_secs())?;
+                }
                 let receipt = LifecycleReceipt::turn_refused(&command_id, &target, code, &message);
                 tracing::warn!(
                     target: "csp",
@@ -3738,7 +3744,17 @@ impl Provider {
                     code,
                     "turn command rejected: {message}"
                 );
-                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                let receipt_key = if ci_conflict {
+                    format!("{command_id}:conflict:{registration_event_id}")
+                } else {
+                    command_id.clone()
+                };
+                self.enqueue_receipt_with_outbox_key(
+                    channel_id,
+                    &command_id,
+                    &receipt,
+                    ci_conflict.then_some(receipt_key.as_str()),
+                )?;
                 return Ok(TurnDisposition::Answered(code.to_owned()));
             }
             TurnDecision::RegisterCiContinuation {
@@ -3898,6 +3914,11 @@ impl Provider {
             }
         }
 
+        if is_turn && self.ci_continuations.record(&command_id).is_some() {
+            message = SessionCommand::GuardedCiTurn {
+                turn: Box::new(message),
+            };
+        }
         let disposition = match self.sessions.handle(&session_id) {
             Some(handle) => match handle.deliver(message) {
                 // Custody, not execution: the provider has the turn, and the
@@ -4862,6 +4883,18 @@ impl Provider {
         command_id: &str,
         receipt: &LifecycleReceipt,
     ) -> anyhow::Result<()> {
+        self.enqueue_receipt_with_outbox_key(channel_id, command_id, receipt, None)
+    }
+
+    // A rejected conflicting event needs its own outbox fence without changing
+    // the command identity encoded into the signed receipt envelope.
+    fn enqueue_receipt_with_outbox_key(
+        &mut self,
+        channel_id: Uuid,
+        command_id: &str,
+        receipt: &LifecycleReceipt,
+        outbox_key: Option<&str>,
+    ) -> anyhow::Result<()> {
         let content = serde_json::to_string(receipt)?;
         let (event, semantic_key) = if receipt.status.is_turn_stage() {
             (
@@ -4882,7 +4915,7 @@ impl Provider {
         let event = event.sign_with_keys(&self.config.keys)?;
         self.outbox.enqueue(
             KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-            &semantic_key,
+            outbox_key.unwrap_or(&semantic_key),
             Priority::High,
             event,
         )?;
@@ -5452,6 +5485,15 @@ impl Provider {
     /// [`SessionEvent::WorktreeObserved`].
     pub(crate) fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
         match event {
+            SessionEvent::CiTurnAdmissionRequested {
+                session_id,
+                command_id,
+                decision,
+            } => {
+                let admitted = self.admit_ci_turn_start(&session_id, &command_id);
+                let _ = decision.send(matches!(&admitted, Ok(true)));
+                admitted?;
+            }
             SessionEvent::TurnStarted {
                 session_id,
                 turn_id,
@@ -5473,7 +5515,10 @@ impl Provider {
                         started_at_ms: now_ms(),
                     });
                 })?;
-                // **This** is where a turn command is consumed — the moment it
+                // CI continuations already claimed these ledgers before their
+                // actor received start permission; the writes below are
+                // idempotent. Ordinary turns retain their existing lifecycle.
+                // **This** is where an ordinary turn command is consumed — the moment it
                 // actually begins, not the moment it was accepted. Everything
                 // between accept and here is recoverable: a crash in that
                 // window leaves the command unconsumed, the channel watermark
@@ -5499,11 +5544,8 @@ impl Provider {
                         .consume_operation(&key, &command_id, now_secs())?;
                 }
                 self.state.consume_command(&command_id, now_secs())?;
-                // Third, and only third: the durable promise that produced
-                // this turn. The ledgers above are what make the turn once;
-                // this record's only remaining job would be to promise a turn
-                // that is already running, so it is retired here and nowhere
-                // earlier.
+                // CI normally retired its promise before actor permission.
+                // Reconciliation here is harmless after those durable claims.
                 self.retire_ci_continuation(&command_id)?;
                 // D9: the umbrella is charged where the turn is consumed, and
                 // for the same reason — this is the moment work actually

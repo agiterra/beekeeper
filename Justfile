@@ -567,7 +567,7 @@ test-ci-completion: _ensure-services
 # logical DB 14, never DB 0 or the dev database), the built `bee` CLI, and the
 # real buzz-session-provider binary (a fake ACP adapter script standing in for
 # the model — no network model call) to prove registration, real-webhook-
-# produced CI results, exactly-once turn admission, and the materialized-
+# produced CI results, at-most-once turn admission, and the materialized-
 # context contract end to end. See scripts/ci-continuation-acceptance.sh for
 # what each step proves and what this does not cover (the private-project
 # read path, §3f).
