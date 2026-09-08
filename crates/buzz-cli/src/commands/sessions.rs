@@ -764,7 +764,9 @@ pub fn render_markdown(row: Option<&SessionRow>, records: &[TranscriptRecord]) -
     if let Some(row) = row {
         out.push_str(&format!(
             "status **{}** · {} transcript items · signer `{}`\n\n",
-            row.status, row.transcript_items, row.signer
+            row.status,
+            sorted.len(),
+            row.signer
         ));
     }
 
@@ -4200,6 +4202,52 @@ mod tests {
         // A raw tool_result never renders on its own — it is already folded
         // into the call line above it.
         assert!(!markdown.contains("tool_result"), "{markdown}");
+    }
+
+    /// `sessions transcript` resolves its row from metadata and lifecycle
+    /// receipts before it fetches transcript events. That row therefore has a
+    /// zero item count even when the later exact-target query returns items.
+    /// The header describes the document being rendered, so its count must
+    /// come from that document's records rather than the earlier discovery row.
+    #[test]
+    fn markdown_header_counts_the_transcript_items_it_renders() {
+        let session = target("s-count", 1);
+        let signer = "a".repeat(64);
+        let metadata_events = vec![metadata_event(
+            &format!("{:064}", 1),
+            &signer,
+            1,
+            &metadata_payload(&session, SessionStatus::Idle, Some("count"), None),
+        )];
+        let (metadata, _) = decode_metadata(&metadata_events);
+        let rows = resolve_sessions(&metadata, &[], &[]);
+        assert_eq!(rows[0].transcript_items, 0);
+
+        let transcript_events = vec![
+            transcript_event(
+                &format!("{:064}", 2),
+                &signer,
+                2,
+                &session,
+                1,
+                Some("turn-1"),
+                json!({ "kind": "user_prompt", "content": "count these" }),
+            ),
+            transcript_event(
+                &format!("{:064}", 3),
+                &signer,
+                3,
+                &session,
+                2,
+                Some("turn-1"),
+                json!({ "kind": "assistant_text", "text": "two items" }),
+            ),
+        ];
+        let (records, _) = decode_transcripts(&transcript_events);
+        let markdown = render_markdown(rows.first(), &records);
+
+        assert!(markdown.contains("2 transcript items"), "{markdown}");
+        assert!(!markdown.contains("0 transcript items"), "{markdown}");
     }
 
     // ── Redaction markers in rendered markdown ───────────────────────────────
