@@ -13,11 +13,16 @@ All eight sidecars, role resources and deep strict signature verification pass.
 The old app was quit through its UI and process exit verified before replacement.
 Its bundle is preserved as `Beekeeper Dev.app.before-497943d3-20260908`.
 
-Relaunch process 48693 exists, but Computer Use timed out before the window.
-A fresh startup sample confirms SecKeychainFindGenericPassword on the wait path;
-Brian must handle the macOS Keychain prompt. No prompt bypass attempted. Installed
-native WebView acceptance is pending: overview/card readability, About/Skills and
-Technical details disclosures, Check again, scrolling and project-only sessions.
+Brian subsequently opened the installed app and reported: "Its looking better
+and appears to be responsive." His attached native screenshot shows the new
+summary/card layout, expanded About/Skills, seven roles, nine agents all marked
+"on this computer", four open sessions, and 57 reports (seven unconfirmed).
+Visual improvement and responsiveness have live user acceptance; the startup
+block is resolved from the user's perspective. Evidence: attached screenshot
+`ea9e8b9f-ef70-4397-8481-5229ae4aadc3.png` in this conversation. This does not
+establish teammate visibility or shared role adoption. Next live acceptance is
+an identified teammate agent appearing in the selected project with truthful
+shared status, followed by revision reporting at an execution boundary.
 
 Full combined desktop suite 8,501/8,501 and Roles browser suite 5/5 pass. Package
 log and startup sample are in `../review-2026-09-08-roles-design-integration/`.
