@@ -5,6 +5,23 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 Roles usability integration — candidate for live test
+
+Fable delivered clean signed-off `5b70f2d79`, integrated on the performance topic
+as `572375bc9`. Full desktop 8,455/8,455 and focused 477/477 logs checked;
+root rebuilt Roles E2E 3/3 passes, roles 193/193 passes before final busy-state fix.
+Independent review repaired a warm provenance-refetch busy-state omission:
+expose actual isFetching so Check again stays busy until that read settles;
+paused offline is not called actively fetching. All 6 mounted hook tests pass.
+A literal NUL in the new summary source was replaced with its equivalent escaped
+form so git treats it as text. No other blocker found in the bounded report
+summary, roleless distinction, 25-row history or performance preservation.
+
+Page now uses Roles, role cards with local/reported version information, collapsed
+Technical details and Check again. No protocol or staging change. Root owns the
+combined package rebuild; live UX acceptance and role adoption test still pending.
+Do not infer that reported sender confirmation proves instructions executed.
+
 ## Current checkpoint — September 8: report provenance and transcript count shipped
 
 Canonical relay `main` accepted `3dff54cd2f87749fe5e976374386823b397b9f3e`,

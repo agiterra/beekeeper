@@ -274,6 +274,7 @@ test("a null relay leaves the hook disabled rather than answering unattributably
     await act(async () => {});
     assert.equal(mounted.result.current.result, null);
     assert.equal(mounted.result.current.isLoading, false);
+    assert.equal(mounted.result.current.isFetching, false);
     assert.equal(calls.length, 0, "no read is issued without a relay");
   } finally {
     const { cleanup } = await import("@testing-library/react");
@@ -433,6 +434,7 @@ test("a re-read paused while offline confirms nothing, so the old positive stays
       ),
     );
     assert.equal(calls.length, beforePause, "nothing was read while offline");
+    assert.equal(mounted.result.current.isFetching, false);
 
     await act(async () => {
       onlineManager.setOnline(true);
@@ -441,6 +443,55 @@ test("a re-read paused while offline confirms nothing, so the old positive stays
     assert.ok(calls.length > beforePause, "the re-read ran once back online");
   } finally {
     onlineManager.setOnline(true);
+    const { cleanup } = await import("@testing-library/react");
+    cleanup();
+  }
+});
+
+test("a manual warm recheck stays fetching until the deferred proof read answers", async () => {
+  const relayRef = { current: RELAY_A };
+  const eventsByRelay = new Map([[RELAY_A, FULL_PROOF]]);
+  const calls = [];
+  const answer = fetcherFor(eventsByRelay, relayRef, calls);
+  let pending = null;
+  let release;
+  const { act, mounted, waitFor } = await mountHook({
+    eventsByRelay,
+    relayRef,
+    calls,
+    initialRelayUrl: RELAY_A,
+    fetchEvents: async (filter) => {
+      if (pending) await pending;
+      return answer(filter);
+    },
+  });
+  try {
+    await waitFor(() => assert.equal(stateOf(mounted), "commissioned"));
+    assert.equal(mounted.result.current.isFetching, false);
+    pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    await act(async () => {
+      mounted.result.current.refetch();
+    });
+    await waitFor(() => assert.equal(mounted.result.current.isFetching, true));
+    assert.equal(
+      mounted.result.current.isLoading,
+      false,
+      "cached data makes this a warm read",
+    );
+    assert.equal(
+      mounted.result.current.result,
+      null,
+      "old proof stays withdrawn during the read",
+    );
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => assert.equal(mounted.result.current.isFetching, false));
+    assert.equal(stateOf(mounted), "commissioned");
+  } finally {
+    release?.();
     const { cleanup } = await import("@testing-library/react");
     cleanup();
   }

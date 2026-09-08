@@ -96,6 +96,8 @@ export type RolePackProvenanceQueryState = {
   /** Null until the first answer; never a partially-computed one. */
   result: RolePackProvenanceResult | null;
   isLoading: boolean;
+  /** Any active read, including a warm refetch; false while offline-paused. */
+  isFetching: boolean;
   /** Readable, or null when the read succeeded. */
   error: string | null;
   refetch: () => void;
@@ -187,6 +189,7 @@ export function useRolePackProvenance(
   return {
     result: settled ? (query.data ?? null) : null,
     isLoading: query.isLoading,
+    isFetching: query.isFetching,
     error: errorSentence(query.error),
     refetch,
   };

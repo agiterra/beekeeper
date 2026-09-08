@@ -386,7 +386,7 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       sourceQuery.isFetching ||
       packsQuery.isFetching ||
       revisionsQuery.isFetching ||
-      provenance.isLoading ||
+      provenance.isFetching ||
       agentsQuery.isFetching ||
       channelsQuery.isPending ||
       executionCatalog.isLoading,
