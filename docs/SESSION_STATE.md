@@ -5,12 +5,20 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-## Current checkpoint — September 7 evening: live continuity passed, landing checks running
+## Current checkpoint — September 7 evening: continuity and Packs shipped
 
-Working tree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
-`work/session-continuity-2026-09-07`. Product topic commit:
-`4d56d978b36cc4d0542b40f745e05d4f080ee0cb`. It is committed locally and **not
-merged into main**. Main remains the prior shipped `b267662f2` checkpoint.
+Canonical relay `main` accepted `4803aed3e` after every normal pre-push check
+passed: file-size, formatting, desktop checks, TypeScript, scoped Rust and Tauri
+clippy, and 2,560 scoped tests. Evidence:
+`/Users/brian/Projects/beekeeper/review-2026-09-06-validation/continuity-push-retry.log`.
+The previous refused push remains recorded below; no hook was bypassed.
+Final product correction is `98f811f38`; `4803aed3e` adds the test-fixture repair
+and validation record. Working tree:
+`/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
+`work/session-continuity-2026-09-07`. Product origin before signoff rebase was
+`4d56d978b36cc4d0542b40f745e05d4f080ee0cb` (rebased as `8740b27bc`).
+Andy had no newer main commits at the pre-push check; his separate mobile huddle
+branch remained `093a847c5`, not included in this shipment.
 
 Installed `~/Applications/Beekeeper Dev.app` is now the complete packaged debug
 build from `4d56d978`, built `2026-09-07T14:05:56Z`. All eight sidecars, role
@@ -101,7 +109,7 @@ resolver and ref-event path rather than another agent polling loop.
 ### September 7 — continuity and Packs topic implementation
 
 The bounded Sol lanes are complete on `work/session-continuity-2026-09-07`.
-The current checkpoint above supersedes installation status; source is not merged. CLI bare creates carrying a
+The current checkpoint above supersedes installation and source landing status. CLI bare creates carrying a
 verified NIP-OA owner now publish a fresh genesis, founder-signed owner operator
 grant, then exactly one create naming that umbrella. Explicit joins gain no
 implicit grant. Caller fields validate before writes; setup failure prevents
@@ -133,8 +141,8 @@ all-target clippy passed (`continuity-clippy.log`); typecheck, Rust formatting,
 file-size checks and diff whitespace passed. Focused browser acceptance passed
 28/28 (`continuity-desktop-smoke.log`): coding sessions, founder actions,
 reachability, runtime connection and project Packs. Full desktop unit tests passed 8,292/8,292 with no skips
-(`continuity-desktop-tests.log`). Installed build evidence will follow below. No relay deployment or main
-landing is implied by these checks.
+(`continuity-desktop-tests.log`). Installed build and main landing evidence are recorded in the current checkpoint.
+No production relay deployment is implied by these checks.
 
 ### Next increment investigated — deterministic CI completion (not implemented)
 
