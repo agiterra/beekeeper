@@ -35,15 +35,20 @@
 //!   `ready` in the provider's `ci-continuations.json`), THEN the provider is
 //!   killed before admission and restarted. Same assertions as scenario A.
 //!   The race between observing `ready` and the kill landing before
-//!   admission is tight — the store transitions `ready` → `claimed` strictly
-//!   before any adapter call, so a record still `ready` immediately after the
-//!   kill proves nothing started; a run where the kill lost that race is
-//!   retried, up to 3 attempts.
+//!   admission is tight. Acceptance requires both a surviving Ready record
+//!   and no operation or command ledger claim after the process exits;
+//!   the ledger claims precede the fallible Ready-to-Claimed store write.
+//!   A run where the kill lost that race is retried up to 3 times.
 //! - **Scenario C** (step 8): the same waiting→kill→restart→result shape, but
 //!   against a second, independent provider process whose ACP stub
 //!   advertises `session/load` and then rejects it. The result is a durable
 //!   `turn_refused/NATIVE_RESTORE_REJECTED` naming the original commandId,
-//!   never a fresh conversation.
+//!   never a fresh conversation or an ACP prompt after the rejected load.
+//!
+//! Accepting stubs issue distinct conversation cursors and reject unknown
+//! cursors. Restore acceptance checks the load and prompt against the original
+//! target's persisted cursor, and scopes receipts, metadata and restore
+//! transcript rows to that target and provider.
 //!
 //! Every scenario's stub logs each JSON-RPC method it receives to its own
 //! `methods.log` in the script's scratch workdir (`FABLE_METHODS_LOG`,

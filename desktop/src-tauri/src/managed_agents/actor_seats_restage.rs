@@ -25,21 +25,21 @@
 //! An actor this computer does not manage, or whose secret the keyring cannot
 //! produce this boot, is skipped with the same sentence the create-time path
 //! would have refused it with — never a substitute identity, never a
-//! substitute pack. A project's pack source is always re-read from the relay
-//! rather than trusted from the row's own `packRef`: a pack can move between
-//! restarts, and the row's `packRef` is what was staged *before*, not a
-//! promise of what to stage now.
+//! substitute pack. Repository packs are re-staged at the generation's original
+//! resolved commit. A moving project branch cannot silently replace its skills;
+//! unavailable or unprovable original packs leave a named custody obstacle.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 use tauri::AppHandle;
 
 use crate::app_state::AppState;
 use crate::managed_agents::actor_seats::{
-    actor_seats_path, plan_seat_pack, read_actor_seats, seat_entry_for_plan, stage_actor_seat,
-    write_actor_seats, ActorSeatsFile, SeatPackPreview,
+    actor_seats_path, mutate_actor_seats_file, plan_seat_pack, read_actor_seats,
+    seat_entry_for_plan, stage_actor_seat, ActorSeatsFile, SeatPackPreview,
 };
 use crate::managed_agents::packs_cache;
 use crate::managed_agents::role_packs_view::fetch_project_pack_source;
@@ -90,11 +90,9 @@ pub(crate) struct SeatRequest {
     #[allow(dead_code)]
     pub generation: u64,
     /// The pack the provider staged this seat with before the restart.
-    /// Deliberately unused for the restaging decision (see the module docs):
-    /// the pack is always re-resolved, never trusted from this field. Parsed
-    /// so the row round-trips faithfully; unread today.
+    /// Recovery must reproduce this exact coordinate or refuse. It does not
+    /// follow a project branch that has advanced since the generation began.
     #[serde(default)]
-    #[allow(dead_code)]
     pub pack_ref: Option<packs_cache::PackRef>,
 }
 
@@ -106,6 +104,9 @@ pub(crate) struct SeatRequestsFile {
     #[serde(default)]
     #[allow(dead_code)]
     pub version: u32,
+    /// Process that last recovered and published this request snapshot.
+    #[serde(default, rename = "providerPid")]
+    pub provider_pid: u32,
     /// The open seated generations, one row each.
     #[serde(default)]
     pub requests: Vec<SeatRequest>,
@@ -215,6 +216,11 @@ pub(crate) fn restage_actor_seats_with(
                 continue;
             }
         };
+        if plan.pack_ref != request.pack_ref || (request.pack_ref.is_none() && plan.pack_staged) {
+            report.skipped.push((key.to_string(),
+                "ACTOR_UNAVAILABLE: the original generation's pack cannot be verified; refusing a substitute".to_string()));
+            continue;
+        }
         let entry = match seat_entry_for_plan(record, relay_url, plan) {
             Ok(entry) => entry,
             Err(reason) => {
@@ -229,6 +235,42 @@ pub(crate) fn restage_actor_seats_with(
         report.staged += 1;
     }
     (file, report)
+}
+
+/// Reconstruct the original resolved repository pin, never its moving branch.
+fn pinned_pack_source(
+    request: &SeatRequest,
+) -> Result<Option<packs_cache::ProjectPackSource>, String> {
+    let Some(pack) = &request.pack_ref else {
+        return Ok(None);
+    };
+    if pack.role != request.role {
+        return Err("ACTOR_UNAVAILABLE: the original pack names a different role".into());
+    }
+    if !pack.repo.starts_with("30617:") {
+        return Ok(None);
+    }
+    let suffix = format!("/{}", request.role);
+    let path = pack
+        .path
+        .strip_suffix(&suffix)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| {
+            "ACTOR_UNAVAILABLE: the original pack path cannot be reconstructed".to_string()
+        })?;
+    Ok(Some(packs_cache::ProjectPackSource {
+        repo: pack.repo.clone(),
+        git_ref: None,
+        sha: Some(pack.sha.clone()),
+        path: path.to_string(),
+    }))
+}
+
+fn ensure_restage_relay(current: &str, expected: &str) -> Result<(), String> {
+    if current != expected {
+        return Err("agent seat re-stage cancelled because the active community changed".into());
+    }
+    Ok(())
 }
 
 /// Re-stage custody for every open seated generation the provider's
@@ -254,12 +296,16 @@ pub(crate) async fn restage_actor_seats_for_provider(
     app: &AppHandle,
     state: &AppState,
     state_dir: &Path,
+    expected_relay: &str,
+    expected_pid: u32,
+    stop: &AtomicBool,
 ) -> Result<RestageReport, String> {
     let requests_file = read_seat_requests(&seat_requests_path(state_dir))?;
     if requests_file.requests.is_empty() {
         return Ok(RestageReport::default());
     }
     let relay_url = relay_ws_url_with_override(state);
+    ensure_restage_relay(&relay_url, expected_relay)?;
     let seats_path = actor_seats_path(state_dir);
     let (records, existing) = {
         let _store_guard = state
@@ -294,6 +340,15 @@ pub(crate) async fn restage_actor_seats_for_provider(
             },
             None => None,
         };
+        ensure_restage_relay(&relay_ws_url_with_override(state), expected_relay)?;
+        let pack_source = match pinned_pack_source(request) {
+            Ok(Some(source)) => Some(source),
+            Ok(None) => pack_source,
+            Err(error) => {
+                resolved_packs.insert(key, Err(error));
+                continue;
+            }
+        };
         let plan = plan_seat_pack(
             app,
             state,
@@ -306,16 +361,25 @@ pub(crate) async fn restage_actor_seats_for_provider(
         resolved_packs.insert(key, Ok(plan));
     }
 
-    let (updated, report) = restage_actor_seats_with(
-        &requests_file.requests,
-        &existing,
-        &records,
-        &relay_url,
-        &resolved_packs,
-    );
-    if report.staged > 0 {
-        write_actor_seats(&seats_path, &updated)?;
+    ensure_restage_relay(&relay_ws_url_with_override(state), expected_relay)?;
+    if stop.load(Ordering::Acquire) {
+        return Err("agent seat re-stage cancelled because the supervisor stopped".into());
     }
+    let report = mutate_actor_seats_file(&seats_path, |current| {
+        let latest = read_seat_requests(&seat_requests_path(state_dir))?;
+        if latest.provider_pid != expected_pid {
+            return Err("agent seat re-stage cancelled because the provider changed".into());
+        }
+        let (updated, report) = restage_actor_seats_with(
+            &latest.requests,
+            current,
+            &records,
+            &relay_url,
+            &resolved_packs,
+        );
+        *current = updated;
+        Ok(report)
+    })?;
     for (command_id, reason) in &report.skipped {
         tracing::debug!(command_id = %command_id, %reason, "seat re-stage: skipped a row");
     }

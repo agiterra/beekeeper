@@ -14,7 +14,9 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::managed_agents::actor_seats::{build_actor_seat_entry, SeatPackOrigin};
+use crate::managed_agents::actor_seats::{
+    build_actor_seat_entry, write_actor_seats, SeatPackOrigin,
+};
 
 const PUBKEY_A: &str = "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66";
 const PUBKEY_B: &str = "bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66aa11";
@@ -58,7 +60,16 @@ fn request(command_id: &str, actor: &str, role: &str, project_ref: Option<&str>)
         project_ref: project_ref.map(str::to_string),
         session_id: "sess-1".to_string(),
         generation: 1,
-        pack_ref: None,
+        pack_ref: Some(pack_ref(role)),
+    }
+}
+
+fn pack_ref(role: &str) -> packs_cache::PackRef {
+    packs_cache::PackRef {
+        repo: format!("30617:{PUBKEY_A}:packs"),
+        sha: "a".repeat(40),
+        role: role.to_string(),
+        path: format!("personas/roles/{role}"),
     }
 }
 
@@ -69,7 +80,7 @@ fn staged_plan(persona: &str) -> SeatPackPreview {
         role: Some("builder".into()),
         pack_dir: Some(format!("/tmp/{persona}-pack")),
         persona_id: Some(persona.to_string()),
-        pack_ref: None,
+        pack_ref: Some(pack_ref("builder")),
         refusal: None,
         reason: None,
     }
@@ -338,4 +349,43 @@ fn the_provider_wire_shape_parses() {
         file.requests[1].pack_ref.as_ref().map(|p| p.role.as_str()),
         Some("architect")
     );
+}
+
+#[test]
+fn recovery_rejects_newer_or_unverifiable_role_instructions() {
+    let records = vec![agent_record(PUBKEY_A, "nsec1secret")];
+    let mut req = request("restore", PUBKEY_A, "builder", None);
+    let mut newer = staged_plan("builder");
+    newer.pack_ref.as_mut().expect("pack").sha = "b".repeat(40);
+    for plan in [newer, {
+        let mut local = staged_plan("builder");
+        local.pack_ref = None;
+        local
+    }] {
+        let resolved = BTreeMap::from([("restore".into(), Ok(plan))]);
+        let (file, report) = restage_actor_seats_with(
+            &[req.clone()],
+            &ActorSeatsFile::default(),
+            &records,
+            RELAY,
+            &resolved,
+        );
+        assert!(file.pending.is_empty());
+        assert!(report.skipped[0].1.contains("ACTOR_UNAVAILABLE"));
+        req.pack_ref = None;
+    }
+}
+
+#[test]
+fn original_repository_pin_survives_a_moving_project_source() {
+    let req = request("restore", PUBKEY_A, "builder", None);
+    let original = req.pack_ref.as_ref().expect("pack");
+    let pinned = pinned_pack_source(&req)
+        .expect("valid")
+        .expect("repository pin");
+    assert_eq!(pinned.repo, original.repo);
+    assert_eq!(pinned.sha.as_deref(), Some(original.sha.as_str()));
+    assert!(pinned.git_ref.is_none());
+    assert_eq!(pinned.path, "personas/roles");
+    assert!(ensure_restage_relay("wss://other.test", RELAY).is_err());
 }

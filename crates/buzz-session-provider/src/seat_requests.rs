@@ -87,6 +87,9 @@ pub struct SeatRequest {
 pub struct SeatRequestsFile {
     /// Schema version, so an incompatible future shape is distinguishable.
     pub version: u32,
+    /// Process that published the recovered request snapshot.
+    #[serde(default)]
+    pub provider_pid: u32,
     /// The open seated generations, one row each.
     pub requests: Vec<SeatRequest>,
 }
@@ -95,6 +98,7 @@ impl Default for SeatRequestsFile {
     fn default() -> Self {
         Self {
             version: SEAT_REQUESTS_VERSION,
+            provider_pid: std::process::id(),
             requests: Vec::new(),
         }
     }
@@ -154,6 +158,7 @@ where
 {
     let file = SeatRequestsFile {
         version: SEAT_REQUESTS_VERSION,
+        provider_pid: std::process::id(),
         requests: derive_seat_requests(records),
     };
     let body = serde_json::to_vec_pretty(&file)

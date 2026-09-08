@@ -59,8 +59,8 @@
 #      `ci-continuations.json`), THEN the provider is killed before delivery
 #      and restarted. Same assertions as scenario A. The race between
 #      observing `ready` and the kill landing before admission is tight; a
-#      run where the kill lost that race (the store shows the record already
-#      `claimed` or gone) is retried, up to 3 attempts, and reported.
+#      run is accepted only when the store is still Ready and neither start
+#      ledger has a claim. A lost race is retried up to 3 times and reported.
 #   8. Scenario C: the same waiting→kill→restart→result shape, but the ACP
 #      stub for this run advertises `session/load` and then REJECTS it. The
 #      result is a durable `turn_refused/NATIVE_RESTORE_REJECTED` naming the
@@ -275,13 +275,16 @@ cat > "${FAKE_AGENT}" <<'AGENT'
 # session/prompt request to FABLE_ACP_REQUEST_LOG so the caller can inspect
 # the exact ACP payload, and every method name it receives to
 # FABLE_METHODS_LOG so a restart scenario can prove session/load fired and
-# session/new did not. Always mints the SAME sessionId ("acp-session-1") so
-# the provider persists a stable resume_cursor, advertises `loadSession` at
-# initialize, and answers session/load for any cursor — this is the
+# session/new did not. Mints a distinct sessionId per new conversation, records
+# issued cursors beside the request log, and rejects unknown load cursors.
+# The assertions below also compare load/prompt identity to the exact cursor
+# persisted before the kill; accepting another known cursor cannot pass.
+# Advertises `loadSession` at initialize — this is the
 # "accepting" stub scenarios A and B restore against; scripts/
 # ci-continuation-acceptance.sh's scenario C spawns a second, rejecting stub
 # instead (see REJECT_AGENT below).
 LAST_PROMPT=""
+SESSION_ID=""
 while IFS= read -r line; do
   printf '%s\n' "$line" | sed -n 's/.*"method":"\([a-zA-Z_/]*\)".*/\1/p' >> "${FABLE_METHODS_LOG}"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -290,14 +293,27 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true}}}\n' "$id" ;;
     *'"method":"session/load"'*)
       printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
-      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
+      requested=$(printf '%s' "$line" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')
+      if [[ -n "$requested" ]] && grep -Fxq -- "$requested" "${FABLE_ACP_REQUEST_LOG}.cursors"; then
+        SESSION_ID="$requested"
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"unknown cursor"}}\n' "$id"
+      fi ;;
     *'"method":"session/new"'*)
       printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+      SESSION_ID="acp-$(openssl rand -hex 16)"
+      printf '%s\n' "$SESSION_ID" >> "${FABLE_ACP_REQUEST_LOG}.cursors"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"%s"}}\n' "$id" "$SESSION_ID" ;;
     *'"method":"session/prompt"'*)
       LAST_PROMPT="$id"
       printf '%s\n' "$line" >> "${FABLE_ACP_REQUEST_LOG}"
-      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working"}}}}\n'
+      requested=$(printf '%s' "$line" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')
+      if [[ -z "$SESSION_ID" || "$requested" != "$SESSION_ID" ]]; then
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"prompt cursor mismatch"}}\n' "$id"
+        continue
+      fi
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"%s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working"}}}}\n' "$SESSION_ID"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
     *'"method":"session/cancel"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
@@ -402,6 +418,43 @@ ok "provider live: pubkey=${PROVIDER_PUBKEY}"
 
 # ── Shared helpers for scenarios 6-8 (kill/restart composition) ─────────────
 # Used only by the restart scenarios below; steps 1-5 above are unchanged.
+
+# Read the exact persisted target's cursor before killing its provider.
+saved_cursor() {
+  python3 - "${WORKDIR}" "$1" "$2" "$3" <<'PY'
+import pathlib
+import sys
+sys.path.insert(0, sys.argv[1])
+import helpers
+state = helpers.load_json_file(pathlib.Path(sys.argv[2]) / "state.json")
+matches = [record for record in state["sessions"].values()
+           if helpers.target_to_key({**record, "instanceId": sys.argv[4][:16]}) == sys.argv[3]]
+assert len(matches) == 1, matches
+assert matches[0]["resumeCursor"], matches[0]
+print(matches[0]["resumeCursor"])
+PY
+}
+
+# Ready alone does not establish an unclaimed crash window: claims are
+# appended before the ready-to-claimed store write. Check both ledgers too.
+has_start_claim() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import pathlib
+import sys
+for name in ("commands.jsonl", "operations.jsonl"):
+    path = pathlib.Path(sys.argv[1]) / name
+    if path.exists():
+        for line in path.read_text().splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                sys.exit(0)  # uncertainty must not pass as an unclaimed crash window
+            if record.get("commandId") == sys.argv[2]:
+                sys.exit(0)
+sys.exit(1)
+PY
+}
 
 # Number of kind:44222 catalog events stored for the channel right now — a
 # monotonically increasing count, since 44222 is a regular (non-ephemeral,
@@ -523,13 +576,14 @@ wait_provider_relay_connected() {
 # transcript row precedes the delivered user_prompt in the transcript's own
 # sequence; the stub's method log shows session/load and never session/new
 # after `methods_mark` (the line count captured right before the kill); the
-# ACP prompt bytes equal the transcript's materialization; and the restarted
+# ACP load and prompt name the original persisted cursor, prompt bytes equal
+# the exact target's transcript materialization; and the restarted
 # provider's own log never shows NO_LIVE_EXECUTION. Prints the turn_started
 # receipt event id on success (for the caller's PASS line).
 verify_native_restore_delivery() {
   local label="$1" command_id="$2" target_key="$3" \
         methods_log="$4" methods_mark="$5" acp_log="$6" baseline_prompts="$7" \
-        provider_log="$8" restart_epoch="$9"
+        provider_log="$8" restart_epoch="$9" expected_cursor="${10}" provider_pubkey="${11}"
 
   if grep -q 'NO_LIVE_EXECUTION' "${provider_log}"; then
     err "${label}: ${provider_log} shows NO_LIVE_EXECUTION — the restore did not reopen the \
@@ -558,7 +612,7 @@ to a fresh conversation. Methods observed since restart:"
     > "${WORKDIR}/${label}-transcript.json"
 
   python3 - "${WORKDIR}" "${label}" "${command_id}" "${target_key}" "${restart_epoch}" \
-    "${acp_log}" "${baseline_prompts}" <<'PY'
+    "${acp_log}" "${baseline_prompts}" "${expected_cursor}" "${provider_pubkey}" <<'PY'
 import json
 import pathlib
 import sys
@@ -567,7 +621,7 @@ sys.path.insert(0, sys.argv[1])
 import helpers  # noqa: E402
 
 workdir = pathlib.Path(sys.argv[1])
-label, command_id, target_key, restart_epoch_raw, acp_log_path, baseline_raw = sys.argv[2:]
+label, command_id, target_key, restart_epoch_raw, acp_log_path, baseline_raw, expected_cursor, provider = sys.argv[2:]
 restart_epoch = int(restart_epoch_raw)
 baseline_prompts = int(baseline_raw)
 
@@ -579,12 +633,16 @@ started = [
     and content.get("status") == "turn_started"
 ]
 assert len(started) == 1, f"expected exactly one turn_started receipt, found {len(started)}: {started!r}"
+assert started[0]["pubkey"] == provider, started
+assert helpers.target_to_key(json.loads(started[0]["content"])["session"]) == target_key, started
 
 metadata = helpers.load_json_file(workdir / f"{label}-metadata.json")
 matching_metadata = [
     event
     for event in metadata
-    if ["cs-target", target_key] in event.get("tags", []) and event.get("created_at", 0) >= restart_epoch
+    if event["pubkey"] == provider and ["cs-target", target_key] in event.get("tags", [])
+    and helpers.target_to_key(json.loads(event["content"])["session"]) == target_key
+    and event.get("created_at", 0) >= restart_epoch
 ]
 assert matching_metadata, (
     f"no 44223 published at/after the restart (epoch {restart_epoch}) named cs-target {target_key}"
@@ -598,6 +656,10 @@ for event in transcript:
     try:
         envelope = json.loads(event["content"])
     except (TypeError, json.JSONDecodeError):
+        continue
+    if event["pubkey"] != provider or helpers.target_to_key(envelope["session"]) != target_key:
+        continue
+    if event.get("created_at", 0) < restart_epoch:
         continue
     item = envelope.get("item", {})
     if item.get("kind") == "status" and item.get("status") == "session_restored_native":
@@ -619,7 +681,13 @@ assert len(prompt_requests) == baseline_prompts + 1, (
     f"expected exactly one new ACP session/prompt after the restart, saw "
     f"{len(prompt_requests) - baseline_prompts}"
 )
-delivered = prompt_requests[baseline_prompts]["params"]["prompt"][0]["text"]
+delivered_request = prompt_requests[baseline_prompts]
+assert delivered_request["params"]["sessionId"] == expected_cursor, delivered_request
+loads = [request for request in requests if request.get("method") == "session/load"
+         and request["params"].get("sessionId") == expected_cursor]
+assert len(loads) == 1, f"expected one restore of the original cursor {expected_cursor}: {loads!r}"
+assert delivered_request["params"]["prompt"] == [{"type": "text", "text": materialized}], delivered_request
+delivered = delivered_request["params"]["prompt"][0]["text"]
 assert delivered == materialized, "ACP prompt bytes differ from the persisted transcript materialization"
 
 with open(workdir / f"{label}-started-id.txt", "w", encoding="utf-8") as sink:
@@ -900,7 +968,10 @@ prompt_requests = [request for request in requests if request.get("method") == "
 assert len(prompt_requests) == baseline_prompts + 1, prompt_requests
 delivered_request = prompt_requests[baseline_prompts]
 assert delivered_request["method"] == "session/prompt", delivered_request
-assert delivered_request["params"]["sessionId"] == "acp-session-1", delivered_request
+state = load("provider-state/state.json")
+original = exactly_one([record for record in state["sessions"].values()
+    if target_to_key({**record, "instanceId": provider[:16]}) == target_key], "original target")
+assert delivered_request["params"]["sessionId"] == original["resumeCursor"], delivered_request
 delivered_blocks = delivered_request["params"]["prompt"]
 assert delivered_blocks == [{"type": "text", "text": materialized}], delivered_blocks
 delivered = delivered_blocks[0]["text"]
@@ -1184,6 +1255,7 @@ WAITING_STATE_A="$(ci_continuation_store_state "${STATE_DIR}" "${COMMAND_ID_A}")
 [[ "${WAITING_STATE_A}" == "waiting" ]] \
   || { err "scenario A: expected ${COMMAND_ID_A} to be 'waiting' before the kill, found '${WAITING_STATE_A}'"; exit 1; }
 
+CURSOR_A="$(saved_cursor "${STATE_DIR}" "${TARGET_KEY_A}" "${PROVIDER_PUBKEY}")"
 METHODS_MARK_A="$(wc -l < "${METHODS_LOG_1}" | tr -d ' ')"
 log "Scenario A: kill -9 provider pid ${PROVIDER_PID}..."
 kill -9 "${PROVIDER_PID}"
@@ -1224,7 +1296,7 @@ done
 
 STARTED_A="$(verify_native_restore_delivery "scenario-a" "${COMMAND_ID_A}" "${TARGET_KEY_A}" \
   "${METHODS_LOG_1}" "${METHODS_MARK_A}" "${ACP_REQUEST_LOG}" "${BASELINE_A}" \
-  "${PROVIDER_LOG_A}" "${RESTART_EPOCH_A}")"
+  "${PROVIDER_LOG_A}" "${RESTART_EPOCH_A}" "${CURSOR_A}" "${PROVIDER_PUBKEY}")"
 pass 6 "scenario A: waiting → kill -9 → restart → 46008 delivered exactly one turn_started (${STARTED_A:0:16}...) to the original generation ${TARGET_KEY_A} via native restore (session/load observed, no session/new)"
 
 # ── Step 7: Scenario B — result ready → kill -9 before delivery → restart ──
@@ -1234,6 +1306,7 @@ for ATTEMPT_B in 1 2 3; do
   split_lines_into SCEN_B "$(register_fresh_continuation "${PROVIDER_PUBKEY}" "${ACP_REQUEST_LOG}" "scenario B attempt ${ATTEMPT_B}: ready-kill-restart")"
   TARGET_KEY_B="${SCEN_B[0]}"; COMMAND_ID_B="${SCEN_B[1]}"; COMMIT_B="${SCEN_B[2]}"; BASELINE_B="${SCEN_B[3]}"
 
+  CURSOR_B="$(saved_cursor "${STATE_DIR}" "${TARGET_KEY_B}" "${PROVIDER_PUBKEY}")"
   post_ci_result_webhook "${COMMIT_B}"
 
   # Single-process tight poll (see wait_for_ready_tight's comment): with a
@@ -1255,16 +1328,10 @@ for ATTEMPT_B in 1 2 3; do
   METHODS_MARK_B="$(wc -l < "${METHODS_LOG_1}" | tr -d ' ')"
   wait_pid_exit "${PROVIDER_PID}"
 
-  # The store moves `ready` → `claimed` (and later removes the record)
-  # strictly at admission, before any adapter call — see
-  # `admit_ci_turn_start`/`decide_ci_turn_start` in
-  # crates/buzz-session-provider/src/ci_continuation.rs. A record still
-  # `ready` on disk after the kill proves nothing was admitted before it;
-  # anything else means the kill lost the race and this attempt proves
-  # nothing about restart recovery, so it is retried with a fresh
-  # registration.
+  # Both stores matter: operation/command claims precede mark_claimed, whose
+  # write may fail. Retry unless Ready survives and neither ledger has a claim.
   POST_KILL_STATE_B="$(ci_continuation_store_state "${STATE_DIR}" "${COMMAND_ID_B}")"
-  if [[ "${POST_KILL_STATE_B}" != "ready" ]]; then
+  if [[ "${POST_KILL_STATE_B}" != "ready" ]] || has_start_claim "${STATE_DIR}" "${COMMAND_ID_B}"; then
     log "scenario B attempt ${ATTEMPT_B}: admission won the pre-kill race (store shows '${POST_KILL_STATE_B}' for ${COMMAND_ID_B}); retrying"
     RETRY_LOG_B="${WORKDIR}/provider-restart-b-retry-${ATTEMPT_B}.log"
     spawn_provider "${PROVIDER_KEY}" "${STATE_DIR}" "${PROJECTS_FILE}" "${RUNTIMES_JSON}" \
@@ -1284,7 +1351,7 @@ for ATTEMPT_B in 1 2 3; do
   [[ "${RESTARTED_PUBKEY_B}" == "${PROVIDER_PUBKEY}" ]] \
     || { err "scenario B: restarted provider pubkey ${RESTARTED_PUBKEY_B} != original ${PROVIDER_PUBKEY}"; exit 1; }
   wait_provider_relay_connected "${PROVIDER_PID}" "${PROVIDER_LOG_B}"
-  ok "Scenario B attempt ${ATTEMPT_B}: killed before admission (store still 'ready'), provider restarted (pid ${PROVIDER_PID})"
+  ok "Scenario B attempt ${ATTEMPT_B}: killed before admission (Ready and neither start ledger claimed), provider restarted (pid ${PROVIDER_PID})"
 
   STARTED_B=""
   for _ in $(seq 1 30); do
@@ -1307,7 +1374,7 @@ else:
 
   STARTED_B="$(verify_native_restore_delivery "scenario-b" "${COMMAND_ID_B}" "${TARGET_KEY_B}" \
     "${METHODS_LOG_1}" "${METHODS_MARK_B}" "${ACP_REQUEST_LOG}" "${BASELINE_B}" \
-    "${PROVIDER_LOG_B}" "${RESTART_EPOCH_B}")"
+    "${PROVIDER_LOG_B}" "${RESTART_EPOCH_B}" "${CURSOR_B}" "${PROVIDER_PUBKEY}")"
   SCENARIO_B_OK=1
   pass 7 "scenario B (attempt ${ATTEMPT_B}/3): ready → kill -9 before admission → restart delivered exactly one turn_started (${STARTED_B:0:16}...) to the original generation ${TARGET_KEY_B} via native restore"
   break
@@ -1353,7 +1420,8 @@ wait_catalog_above "${CATALOG_BEFORE_C_START}" >/dev/null
 ok "Scenario C: second provider live (pubkey=${PROVIDER_PUBKEY_C}, rejecting ACP stub)"
 
 split_lines_into SCEN_C "$(register_fresh_continuation "${PROVIDER_PUBKEY_C}" "${ACP_REQUEST_LOG_C}" "scenario C: rejected-load")"
-TARGET_KEY_C="${SCEN_C[0]}"; COMMAND_ID_C="${SCEN_C[1]}"; COMMIT_C="${SCEN_C[2]}"
+TARGET_KEY_C="${SCEN_C[0]}"; COMMAND_ID_C="${SCEN_C[1]}"; COMMIT_C="${SCEN_C[2]}"; BASELINE_C="${SCEN_C[3]}"
+CURSOR_C="$(saved_cursor "${STATE_DIR_C}" "${TARGET_KEY_C}" "${PROVIDER_PUBKEY_C}")"
 
 WAITING_STATE_C="$(ci_continuation_store_state "${STATE_DIR_C}" "${COMMAND_ID_C}")"
 [[ "${WAITING_STATE_C}" == "waiting" ]] \
@@ -1391,6 +1459,8 @@ done
 RECEIPTS_C_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}")"
 python3 -c "
 import json, sys
+sys.path.insert(0, '${WORKDIR}')
+import helpers
 events = json.loads(sys.argv[1])
 refusals = []
 started = []
@@ -1398,6 +1468,8 @@ for e in events:
     c = json.loads(e['content'])
     if c.get('commandId') != '${COMMAND_ID_C}':
         continue
+    assert e['pubkey'] == '${PROVIDER_PUBKEY_C}', e
+    assert helpers.target_to_key(c['session']) == '${TARGET_KEY_C}', c
     if c.get('status') == 'turn_refused':
         refusals.append(c)
     if c.get('status') == 'turn_started':
@@ -1417,6 +1489,16 @@ if grep -q '^session/new$' <<<"${POST_RESTART_METHODS_C}"; then
   err "${POST_RESTART_METHODS_C}"
   exit 1
 fi
+
+python3 - "${ACP_REQUEST_LOG_C}" "${BASELINE_C}" "${CURSOR_C}" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    requests = [json.loads(line) for line in source if line.strip()]
+assert sum(row.get("method") == "session/prompt" for row in requests) == int(sys.argv[2]), requests
+loads = [row for row in requests if row.get("method") == "session/load"]
+assert len(loads) == 1 and loads[0]["params"]["sessionId"] == sys.argv[3], loads
+PY
 
 pass 8 "scenario C: rejecting stub → waiting → kill -9 → restart → 46008 produced a durable turn_refused/NATIVE_RESTORE_REJECTED for ${COMMAND_ID_C} (target ${TARGET_KEY_C}), no session/new after the restart, and no turn_started"
 

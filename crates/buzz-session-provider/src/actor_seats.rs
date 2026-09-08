@@ -343,6 +343,21 @@ pub fn consume_seat(path: Option<&Path>, command_id: &str) -> std::io::Result<()
     let Some(path) = path else {
         return Ok(());
     };
+    // The host stages/restages under this same stable sibling lock. Reading
+    // before acquiring it could resurrect consumed entries or lose new seats.
+    let mut lock_options = OpenOptions::new();
+    lock_options
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false);
+    restrict_new_file(&mut lock_options);
+    let lock = match lock_options.open(path.with_extension("lock")) {
+        Ok(lock) => lock,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    lock.lock()?;
     let body = match std::fs::read_to_string(path) {
         Ok(body) => body,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -421,6 +436,34 @@ mod tests {
             r#"{{"version":1,"pending":{{"{command_id}":{{"pubkey":"{}","nsec":"{NSEC}","authTag":"[\"auth\"]","relayUrl":"wss://relay.example"}}}}}}"#,
             "cd".repeat(32)
         )
+    }
+
+    #[test]
+    fn concurrent_consumers_do_not_resurrect_other_consumed_seats() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut body: serde_json::Value = serde_json::from_str(&seats_body("seed")).expect("json");
+        let entry = body["pending"]["seed"].take();
+        let pending = body["pending"].as_object_mut().expect("pending");
+        pending.clear();
+        for index in 0..16 {
+            pending.insert(format!("command-{index}"), entry.clone());
+        }
+        let path = write_seats(dir.path(), &body.to_string());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+        let workers: Vec<_> = (0..16)
+            .map(|index| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    consume_seat(Some(&path), &format!("command-{index}")).expect("consume");
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("worker");
+        }
+        assert!(ActorSeatsFile::load(Some(&path)).pending.is_empty());
     }
 
     #[test]

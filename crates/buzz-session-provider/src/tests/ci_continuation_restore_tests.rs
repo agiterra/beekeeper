@@ -116,6 +116,16 @@ fn registration(
     .expect("sign registration")
 }
 
+// Restore credentials must name the same relay as the preserved provider.
+fn write_restore_seat(dir: &Path, command_id: &str, actor: &str) -> std::path::PathBuf {
+    write_actor_seats_with(
+        dir,
+        command_id,
+        actor,
+        serde_json::Map::from_iter([("relayUrl".into(), serde_json::json!("ws://localhost:3000"))]),
+    )
+}
+
 /// A create inside the CI project, seated or not.
 fn create_in_ci_project(
     provider: &Provider,
@@ -158,7 +168,7 @@ async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed
     let projects = write_projects(dir, channel_id, &cwd);
     let state_dir = dir.join("state");
     if let Some(actor) = seat {
-        write_actor_seats(dir, "create-1", actor);
+        write_restore_seat(dir, "create-1", actor);
     }
     let mut provider = provider(&state_dir, Some(&projects));
     let create = create_in_ci_project(&provider, channel_id, "create-1", seat);
@@ -260,7 +270,7 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
     let killed = register_and_die(dir.path(), Some(&actor), false).await;
     // The host's re-stage, stood in for: custody under the *generation's*
     // command id, which for a never-resumed execution is the create's.
-    write_actor_seats(dir.path(), "create-1", &actor);
+    write_restore_seat(dir.path(), "create-1", &actor);
     let log = dir.path().join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
@@ -355,7 +365,7 @@ async fn a_ready_registration_restores_the_generation_and_delivers_one_turn() {
     let dir = tempfile::tempdir().expect("tempdir");
     let actor = "cd".repeat(32);
     let killed = register_and_die(dir.path(), Some(&actor), true).await;
-    write_actor_seats(dir.path(), "create-1", &actor);
+    write_restore_seat(dir.path(), "create-1", &actor);
     let log = dir.path().join("restore-methods.log");
     let mut restarted = restarted_with(
         dir.path(),
@@ -512,7 +522,7 @@ async fn a_seat_that_has_not_been_restaged_defers_and_then_delivers_once() {
     }
 
     // The desktop re-stages custody, and the backoff window passes.
-    write_actor_seats(dir.path(), "create-1", &actor);
+    write_restore_seat(dir.path(), "create-1", &actor);
     restarted
         .ci_continuations
         .note_attempt("cic-1", 0)
@@ -748,7 +758,7 @@ async fn the_seat_request_ledger_follows_create_resume_and_stop() {
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let state_dir = dir.path().join("state");
     let actor = "cd".repeat(32);
-    write_actor_seats(dir.path(), "create-1", &actor);
+    write_restore_seat(dir.path(), "create-1", &actor);
     let mut provider = provider(&state_dir, Some(&projects));
 
     let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
@@ -774,7 +784,7 @@ async fn the_seat_request_ledger_follows_create_resume_and_stop() {
     // A resume moves the generation, and the key custody is filed under moves
     // with it.
     provider.sessions.shutdown(&target.session_id);
-    write_actor_seats(dir.path(), "resume-1", &actor);
+    write_restore_seat(dir.path(), "resume-1", &actor);
     let resume =
         lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
     provider
@@ -806,4 +816,80 @@ fn seat_requests(state_dir: &Path) -> Vec<crate::seat_requests::SeatRequest> {
     serde_json::from_str::<crate::seat_requests::SeatRequestsFile>(&body)
         .expect("parse seat requests")
         .requests
+}
+
+#[tokio::test]
+async fn restore_rejects_a_different_pack_or_relay_before_spawning() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let actor = "cd".repeat(32);
+    let killed = register_and_die(dir.path(), Some(&actor), true).await;
+    let log = dir.path().join("restore-methods.log");
+    let mut restarted = restarted_with(
+        dir.path(),
+        &killed,
+        "restorable-agent",
+        &restorable_agent(&log.to_string_lossy()),
+    );
+    restarted.recover().expect("recover");
+    for extra in [
+        serde_json::json!({"relayUrl":"wss://wrong.example"}),
+        serde_json::json!({"relayUrl":"ws://localhost:3000", "packRef":{
+            "repo":format!("30617:{}:packs", "11".repeat(32)), "sha":"a".repeat(40),
+            "role":"lead", "path":"personas/roles/lead"}}),
+    ] {
+        write_actor_seats_with(
+            dir.path(),
+            "create-1",
+            &actor,
+            extra.as_object().expect("object").clone(),
+        );
+        assert_eq!(
+            restarted
+                .restore_generation(&killed.target.session_id, None)
+                .await
+                .expect("restore"),
+            Err(crate::native_restore::RestoreObstacle::ActorUnavailable)
+        );
+        assert!(methods(&log).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn restore_refuses_an_adapter_that_cannot_keep_the_recorded_model() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let killed = register_and_die(dir.path(), None, true).await;
+    let log = dir.path().join("restore-methods.log");
+    let mut restarted = restarted_with(
+        dir.path(),
+        &killed,
+        "restorable-agent",
+        &restorable_agent(&log.to_string_lossy()),
+    );
+    restarted.recover().expect("recover");
+    restarted
+        .state
+        .update_session(&killed.target.session_id, |record| {
+            record.model = Some("unavailable-model".into())
+        })
+        .expect("record model");
+    let outcome = restarted
+        .restore_generation(&killed.target.session_id, None)
+        .await
+        .expect("restore");
+    assert!(matches!(
+        outcome,
+        Err(crate::native_restore::RestoreObstacle::Rejected(_))
+    ));
+    assert!(!methods(&log)
+        .iter()
+        .any(|method| method == "session/new" || method == "session/prompt"));
+    assert_eq!(
+        restarted
+            .state
+            .session(&killed.target.session_id)
+            .expect("record")
+            .model
+            .as_deref(),
+        Some("unavailable-model")
+    );
 }

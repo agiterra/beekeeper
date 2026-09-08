@@ -7,11 +7,12 @@ it is not a second deployment ledger or a handoff report.
 
 ## Active parallel assignment — September 8
 
-Fable owns step2a: durable CI-to-managed-session continuation through the existing
-result contract, provider queue and exact-target authority/fences. Its isolated
-worktree is `../review-ci-managed-continuation-fable`; implementation contract is
-`docs/CI_MANAGED_CONTINUATION_SPEC.md` there. No new result producer or generic
-waiting daemon. Root owns integration and final packaging/landing checks.
+Fable delivered step 2a and its recovery slice. Root now owns their integrated
+CI-to-managed-session continuation, recovery repairs, and final packaging/landing
+checks. The preserved recovery worktree is `../review-ci-recovery-fable`;
+`CI_CONTINUATION_RECOVERY_SPEC.md` includes the integration amendments. No new
+result producer or generic waiting daemon is part of this slice. Fable has no
+new execution assignment until root issues a non-overlapping brief.
 
 Astra owns the remaining step1 role-evidence work: bounded complete history
 recovery, then operator commissioning using the existing platform authority
@@ -20,12 +21,12 @@ must not be treated as historical authority. Root's files stay in desktop Roles
 and narrowly scoped evidence adapters; Fable owns core/CLI/provider continuation.
 Cross-client schema parity needs exact file claims before editing.
 
-While CI recovery is in flight, root prepares step 3 through
+The next prepared implementation slice is step 3 through
 `WORK_COORDINATION_VISIBILITY_SPEC.md`: expose existing plans and accepted
 assignments in Pulse before adding repository-bound overlap comparisons. The
 paired native acceptance sequence is in `COLLABORATION_TWO_MACHINE_ACCEPTANCE.md`.
-This preparation does not touch Fable's provider/host recovery ownership or
-replace the remaining integration and installed-build acceptance.
+Declared-work visibility can be delegated independently of root's recovery
+validation; it does not replace the remaining installed-build acceptance.
 
 This assignment supersedes the September7 owner split below. Current completion,
 installed state and concrete findings remain solely in SESSION_STATE.md.

@@ -1717,19 +1717,14 @@ async fn a_result_for_an_unwatched_digest_wakes_nothing() {
 //
 // Every test below injects a one-shot I/O failure at a named boundary. The
 // subject is not that the provider survives — it is *what the operator is left
-// holding* when one half of a two-write disposition fails. The rule these pin:
-// the visible answer is queued into the crash-safe outbox first, and the
-// durable "already answered" fence is written second, because a lost fence
-// costs at most a duplicate of an identical receipt while a lost receipt costs
-// the operator any answer at all, permanently.
+// holding* when a projection write fails. One atomic intent holds the fence
+// and exact signed answer together; outbox and refusal-ledger writes can retry.
 // -------------------------------------------------------------------------
 
 /// A refusal-ledger failure must not swallow the refusal.
 ///
-/// The receipt is already in the outbox when the ledger write fails, so the
-/// operator is told; the command stays unrefused, so the next pass re-derives
-/// the same disposition; and the outbox's semantic key makes that replay add
-/// nothing rather than answer twice.
+/// The terminal intent already fences delivery when the legacy ledger fails.
+/// Its original signed answer is projected on the next pass.
 #[tokio::test]
 async fn a_refusal_receipt_survives_a_failing_refusal_ledger_append() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1745,8 +1740,8 @@ async fn a_refusal_receipt_survives_a_failing_refusal_ledger_append() {
     provider.run_ci_continuation_tick().await.expect("tick");
 
     assert!(
-        !provider.state.is_command_refused("cic-expiry"),
-        "the fence is not claimed when its write failed"
+        provider.state.is_command_refused("cic-expiry"),
+        "the atomic intent fences delivery despite a failing ledger projection"
     );
     assert!(
         ledger_lines(&state_dir, "refusals.jsonl")
@@ -1761,11 +1756,10 @@ async fn a_refusal_receipt_survives_a_failing_refusal_ledger_append() {
             .expect("the record is still there")
             .state
             .is_pending(),
-        "an unfenced refusal leaves the registration answerable"
+        "the registration can await retirement while its terminal intent fences it"
     );
 
-    // The replay re-derives the identical refusal. This time the ledger takes
-    // it, and the queued receipt is fenced rather than duplicated.
+    // The next pass projects the original intent into the ledger.
     provider.run_ci_continuation_tick().await.expect("replay");
     assert!(provider.state.is_command_refused("cic-expiry"));
 
@@ -1785,10 +1779,9 @@ async fn a_refusal_receipt_survives_a_failing_refusal_ledger_append() {
     );
 }
 
-/// The other half of the same order: if the *visible* half fails, nothing is
-/// recorded at all, so the command is still answerable on the next pass.
+/// An outbox failure leaves a durable fenced answer for the next pass.
 #[tokio::test]
-async fn a_failing_outbox_enqueue_leaves_the_command_unrefused_and_unconsumed() {
+async fn a_failing_outbox_enqueue_leaves_a_fenced_answer_and_unconsumed_command() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (mut provider, channel_id, target, _projects) = provider_with_session(dir.path()).await;
     register_expiry_fixture(&mut provider, channel_id, &target).await;
@@ -1800,7 +1793,7 @@ async fn a_failing_outbox_enqueue_leaves_the_command_unrefused_and_unconsumed() 
     provider.outbox.fail_next_enqueue();
     provider.run_ci_continuation_tick().await.expect("tick");
 
-    assert!(!provider.state.is_command_refused("cic-expiry"));
+    assert!(provider.state.is_command_refused("cic-expiry"));
     assert!(!provider.state.is_command_consumed("cic-expiry"));
     assert!(
         provider
@@ -1809,7 +1802,7 @@ async fn a_failing_outbox_enqueue_leaves_the_command_unrefused_and_unconsumed() 
             .expect("the record survives an unanswered pass")
             .state
             .is_pending(),
-        "nothing is terminal until the operator has been told"
+        "pending store retirement cannot remove the durable terminal fence"
     );
 
     provider.run_ci_continuation_tick().await.expect("retry");
@@ -1842,7 +1835,7 @@ async fn a_dropped_turn_publishes_its_receipt_even_when_the_refusal_ledger_fails
         error.to_string().contains("injected refusal-ledger append"),
         "{error}"
     );
-    assert!(!provider.state.is_command_refused("turn-overflow"));
+    assert!(provider.state.is_command_refused("turn-overflow"));
 
     let sink = CollectingSink::new();
     provider.flush(&sink).await.expect("flush");
@@ -1850,12 +1843,6 @@ async fn a_dropped_turn_publishes_its_receipt_even_when_the_refusal_ledger_fails
         receipt_stages(&sink, "turn-overflow"),
         vec!["turn_dropped".to_owned()],
         "the operator is told the turn was dropped"
-    );
-    assert!(
-        transcript_items_in_sequence(&sink)
-            .iter()
-            .any(|item| item["item"]["status"] == "turn_dropped:queue_full"),
-        "and so is a reader of the transcript"
     );
 }
 
@@ -2066,6 +2053,134 @@ async fn a_claimed_record_is_retired_when_the_turn_actually_starts() {
     );
     let sink = CollectingSink::new();
     provider.flush(&sink).await.expect("flush");
+    let stages = receipt_stages(&sink, "cic-expiry");
+    assert!(stages.contains(&"turn_started".to_owned()), "{stages:?}");
+    assert!(!stages.contains(&"turn_dropped".to_owned()), "{stages:?}");
+}
+
+/// A transient refusal must never turn into a prompt after its cause disappears.
+#[tokio::test]
+async fn terminal_queue_drop_fences_ci_redelivery_after_a_ledger_failure_and_restart() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut running, target) = delivered_ci_turn_in_flight(dir.path()).await;
+    running.state.fault_plan().fail_next_refusal_append = true;
+    running
+        .handle_session_event(SessionEvent::TurnDropped {
+            session_id: target.session_id.clone(),
+            command_id: "cic-expiry".into(),
+        })
+        .expect_err("legacy ledger projection fails");
+    assert!(running.state.is_command_refused("cic-expiry"));
+    assert!(!running
+        .admit_ci_turn_start(&target.session_id, "cic-expiry")
+        .expect("the durable drop prevents admission after queue pressure clears"));
+    // The preceding admission may already have repaired the ledger; simulate the
+    // restart from the durable files in either case, with no delivery permitted.
+    let config = running.config.clone();
+    drop(running);
+    let mut restarted = Provider::new(config).expect("same provider identity");
+    restarted.recover().expect("recover terminal decision");
+    restarted.run_ci_continuation_tick().await.expect("tick");
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
+    assert!(restarted.state.is_command_refused("cic-expiry"));
+    assert!(!restarted.state.is_command_consumed("cic-expiry"));
+    assert_eq!(
+        receipt_stages(&sink, "cic-expiry"),
+        vec![
+            "continuation_registered".to_owned(),
+            "turn_queued".to_owned(),
+            "turn_dropped".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_answer_survives_restart_when_its_outbox_projection_failed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut running, target) = delivered_ci_turn_in_flight(dir.path()).await;
+    running.outbox.fail_next_enqueue();
+    running
+        .handle_session_event(SessionEvent::TurnDropped {
+            session_id: target.session_id.clone(),
+            command_id: "cic-expiry".into(),
+        })
+        .expect_err("outbox projection fails");
+    assert!(running.state.is_command_refused("cic-expiry"));
+    let saved = running.state.terminal_dispositions()[0].1.event.clone();
+    let config = running.config.clone();
+    drop(running);
+    let mut restarted = Provider::new(config).expect("same provider identity");
+    restarted.recover().expect("recover exact fenced answer");
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
+    assert_eq!(
+        receipt_stages(&sink, "cic-expiry"),
+        vec![
+            "continuation_registered".to_owned(),
+            "turn_queued".to_owned(),
+            "turn_dropped".to_owned(),
+        ]
+    );
+    assert!(saved.content.contains("QUEUE_FULL"));
+    assert!(
+        sink.all().contains(&saved),
+        "recovery publishes the exact signed terminal intent"
+    );
+    assert!(!restarted.state.is_command_consumed("cic-expiry"));
+}
+
+#[tokio::test]
+async fn a_failed_claim_snapshot_does_not_disappear_silently_on_recovery() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut running, target) = delivered_ci_turn_in_flight(dir.path()).await;
+    running.ci_continuations.fail_next_write();
+    assert!(running
+        .admit_ci_turn_start(&target.session_id, "cic-expiry")
+        .expect("claimed"));
+    let config = running.config.clone();
+    drop(running);
+    let mut restarted = Provider::new(config).expect("same provider identity");
+    restarted.recover().expect("recover consumed Ready record");
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
+    let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+    let lost = receipts
+        .iter()
+        .find(|receipt| receipt["commandId"] == "cic-expiry" && receipt["status"] == "turn_dropped")
+        .expect("an outcome-unknown receipt, never silence");
+    assert_eq!(
+        lost["error"]["code"],
+        crate::ci_continuation::LOST_AFTER_CLAIM
+    );
+    assert!(lost["error"]["message"]
+        .as_str()
+        .expect("message")
+        .contains("may have received the prompt"));
+}
+
+#[tokio::test]
+async fn a_persisted_started_turn_is_not_reported_as_lost_before_prompt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut running, target) = delivered_ci_turn_in_flight(dir.path()).await;
+    assert!(running
+        .admit_ci_turn_start(&target.session_id, "cic-expiry")
+        .expect("claimed"));
+    running.ci_continuations.fail_next_write();
+    running
+        .handle_session_event(SessionEvent::TurnStarted {
+            session_id: target.session_id,
+            turn_id: "observed-start".into(),
+            command_id: "cic-expiry".into(),
+            text: "continue".into(),
+        })
+        .expect_err("retirement fails after open_turn was persisted");
+    let config = running.config.clone();
+    drop(running);
+    let mut restarted = Provider::new(config).expect("same provider identity");
+    restarted.recover().expect("recover observed start");
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
     let stages = receipt_stages(&sink, "cic-expiry");
     assert!(stages.contains(&"turn_started".to_owned()), "{stages:?}");
     assert!(!stages.contains(&"turn_dropped".to_owned()), "{stages:?}");

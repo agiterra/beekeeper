@@ -165,3 +165,39 @@ Composition limits: the script's session is unseated (human), so seated restore 
 real kill is proven by provider tests that write the seat entry the host re-stages
 (`ci_continuation_restore_tests.rs`), plus the host's own unit tests; the ACP adapter is a
 bash stub, not a model; fault injection is unit-level (cfg(test) seams), not process-level.
+
+## 8. Astra integration amendments — September 8
+
+The integrated baseline passed the eight-step process composition. Independent
+review then found faults that happy-path restart acceptance did not exercise.
+These amendments supersede the corresponding implementation claims above:
+
+- Terminal disposition is now an atomic snapshot intent containing the exact
+  signed receipt and its semantic key. The intent itself fences admission;
+  outbox and refusal-ledger writes are retryable projections. A transient refusal
+  (such as queue pressure) cannot disappear between the visible answer and a
+  failed ledger write and later become a prompt.
+- A recovered claim without a persisted start observation means prompt delivery
+  is **unknown**, not proven absent. `LOST_AFTER_CLAIM` discloses this and does
+  not recommend registering the same consumed operation again. A matching
+  persisted open turn gets normal interrupted-turn recovery instead.
+- Host staging, clearing, restaging and provider consumption serialize their
+  read/mutate/write under the same stable sibling `actor-seats.lock`. Network
+  and pack resolution happen before locking; restaging then reads the latest
+  request and custody maps. Atomic rename alone did not prevent lost updates.
+- Restaging reconstructs the original repository pin from its PackRef and
+  requires exact resolved identity. A local legacy pack with no verifiable
+  revision is not silently substituted. Strict native restore also checks the
+  pack reference, relay and reported model against the preserved generation.
+- `seat-requests.json` includes `providerPid`. The desktop waits at most 30 seconds
+  for the spawned process's snapshot, with cancellation on supervisor shutdown,
+  and binds restaging to the captured community. This is a bounded software
+  startup handshake; no agent spends context polling.
+- The composition adapter gives distinct conversations distinct cursors, rejects
+  unknown loads and mismatched prompt cursors, and assertions scope receipts and
+  transcript evidence to the exact signer/target. Ready-window classification
+  checks both durable start ledgers as well as the continuation store. Rejection
+  also asserts that no actual ACP prompt was sent.
+
+Validation and any remaining failures belong in `SESSION_STATE.md`; this section
+is an implementation contract, not a claim of a packaged or deployed release.

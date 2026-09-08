@@ -932,6 +932,7 @@ impl Provider {
             );
         }
         self.sweep_redaction_vault();
+        self.flush_terminal_dispositions()?;
         self.recover_ci_continuations()?;
         let orphans: Vec<(String, String)> = self
             .state
@@ -4368,12 +4369,11 @@ impl Provider {
                 "this execution has no live process, so there is no turn to interrupt",
             )
         };
-        self.enqueue_receipt(channel_id, command_id, &receipt)?;
+        self.enqueue_terminal_receipt(channel_id, command_id, &receipt)?;
         // Refused, not consumed: the turn never ran, and it never will.
         // Recording it terminally is also what lets the channel watermark
         // move — an unanswered command holds the replay floor, an answered
         // one does not.
-        self.state.record_refusal(command_id, now_secs())?;
         Ok(payload::NO_LIVE_EXECUTION.to_owned())
     }
 
@@ -4944,6 +4944,41 @@ impl Provider {
         receipt: &LifecycleReceipt,
     ) -> anyhow::Result<()> {
         self.enqueue_receipt_with_outbox_key(channel_id, command_id, receipt, None)
+    }
+
+    /// Atomically fence a terminal decision together with its recoverable answer.
+    fn enqueue_terminal_receipt(
+        &mut self,
+        channel_id: Uuid,
+        command_id: &str,
+        receipt: &LifecycleReceipt,
+    ) -> anyhow::Result<()> {
+        let content = serde_json::to_string(receipt)?;
+        let event =
+            build_coding_session_turn_receipt(channel_id, command_id, receipt.status, &content)?
+                .sign_with_keys(&self.config.keys)?;
+        self.state.stage_terminal_disposition(
+            command_id,
+            state::TerminalDisposition {
+                semantic_key: coding_session_turn_receipt_semantic_key(command_id, receipt.status),
+                event,
+            },
+        )?;
+        self.flush_terminal_dispositions()
+    }
+
+    /// Retry projections of fenced decisions, preserving the original signed bytes.
+    fn flush_terminal_dispositions(&mut self) -> anyhow::Result<()> {
+        for (command_id, disposition) in self.state.terminal_dispositions() {
+            self.outbox.enqueue(
+                KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+                &disposition.semantic_key,
+                Priority::High,
+                disposition.event,
+            )?;
+            self.state.finish_terminal_disposition(&command_id)?;
+        }
+        Ok(())
     }
 
     // A rejected conflicting event needs its own outbox fence without changing
@@ -5786,21 +5821,16 @@ impl Provider {
                     %command_id,
                     "turn dropped: the session's queue is full"
                 );
-                // Visible answer first, durable refusal second — the reverse
-                // of what this arm used to do.
-                //
-                // Terminal: the operator is told the turn was dropped, so a
-                // redelivery must not quietly run it later and make that
-                // receipt a lie. That is what the refusal ledger is for. But
-                // recording the refusal *before* the two enqueues below made a
-                // failing enqueue permanent silence: the command is fenced as
-                // answered, the replay never re-derives the drop, and the
-                // sender is left with a turn that vanished. Both the outbox
-                // and the ledger are crash-safe, and the outbox fences on
-                // `(kind, semantic key)`, so enqueuing first risks at most a
-                // duplicate of an identical receipt while removing the case
-                // where there is no receipt at all. A ledger failure after the
-                // enqueues returns the error with the answer already queued.
+                // Fence the decision and exact answer atomically before any
+                // visible report. A failed outbox or ledger projection is retried
+                // without re-admitting this turn when queue pressure disappears.
+                let receipt = LifecycleReceipt::turn_dropped(
+                    &command_id,
+                    &target,
+                    payload::QUEUE_FULL,
+                    "the execution's queue is full",
+                );
+                self.enqueue_terminal_receipt(channel_id, &command_id, &receipt)?;
                 self.enqueue_transcript(
                     channel_id,
                     &target,
@@ -5808,17 +5838,6 @@ impl Provider {
                     payload::status_item("turn_dropped:queue_full"),
                     Priority::High,
                 )?;
-                // The transcript item says it to a reader of the session; the
-                // receipt says it to the operator whose turn it was, keyed by
-                // the command they sent.
-                let receipt = LifecycleReceipt::turn_dropped(
-                    &command_id,
-                    &target,
-                    payload::QUEUE_FULL,
-                    "the execution's queue is full",
-                );
-                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
-                self.state.record_refusal(&command_id, now_secs())?;
             }
             SessionEvent::Exited { session_id, reason } => {
                 // The process is gone and its mailbox with it. Turns it had
@@ -6283,10 +6302,12 @@ impl Provider {
 
     /// Drain the outbox into `sink`.
     pub async fn flush<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
+        self.flush_terminal_dispositions()?;
         Ok(self.outbox.flush(sink).await?)
     }
 
     async fn flush_one<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
+        self.flush_terminal_dispositions()?;
         Ok(self.outbox.flush_one(sink).await?)
     }
 

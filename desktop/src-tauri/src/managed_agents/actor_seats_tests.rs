@@ -906,3 +906,41 @@ fn a_local_plan_is_told_with_no_pack_ref() {
     let json = serde_json::to_value(&told).expect("serialize");
     assert!(json.get("packRef").is_none(), "{json}");
 }
+
+#[test]
+fn concurrent_custody_mutations_keep_every_new_seat() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = actor_seats_path(dir.path());
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+    let workers: Vec<_> = (0..16)
+        .map(|index| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let entry = build_actor_seat_entry(
+                    PUBKEY,
+                    "test-secret",
+                    None,
+                    "wss://relay.test",
+                    None,
+                    None,
+                    None,
+                )
+                .expect("entry");
+                barrier.wait();
+                mutate_actor_seats_file(&path, |file| {
+                    stage_actor_seat(file, &format!("command-{index}"), entry)
+                })
+                .expect("atomic stage");
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().expect("worker");
+    }
+    let file = read_actor_seats(&path).expect("read");
+    assert_eq!(file.pending.len(), 16);
+    for index in 0..16 {
+        assert!(file.pending.contains_key(&format!("command-{index}")));
+    }
+}

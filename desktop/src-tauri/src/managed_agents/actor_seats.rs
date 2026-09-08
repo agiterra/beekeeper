@@ -395,6 +395,35 @@ pub(crate) fn write_actor_seats(path: &Path, file: &ActorSeatsFile) -> Result<()
     atomic_write_json_restricted(path, &payload)
 }
 
+/// Mutate the latest custody map under the lock shared with the provider.
+///
+/// Lock a stable sibling, never the atomically replaced JSON inode. Hold it
+/// only for local read/mutate/write; resolve packs and keyring data beforehand.
+pub(crate) fn mutate_actor_seats_file<T>(
+    path: &Path,
+    update: impl FnOnce(&mut ActorSeatsFile) -> Result<T, String>,
+) -> Result<T, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options
+        .open(path.with_extension("lock"))
+        .map_err(|error| format!("cannot open seat custody lock: {error}"))?;
+    lock.lock()
+        .map_err(|error| format!("cannot lock seat custody: {error}"))?;
+    let mut file = read_actor_seats(path)?;
+    let result = update(&mut file)?;
+    write_actor_seats(path, &file)?;
+    Ok(result)
+}
+
 /// Stage one seat under its create's `commandId`, replacing any prior entry.
 pub(crate) fn stage_actor_seat(
     file: &mut ActorSeatsFile,
@@ -807,9 +836,7 @@ pub async fn stage_coding_session_actor_seat(
         seat_entry_for_plan(record, &relay_url, plan)?
     };
     let staged = StagedActorSeat::of(&entry);
-    let mut file = read_actor_seats(&path)?;
-    stage_actor_seat(&mut file, &command_id, entry)?;
-    write_actor_seats(&path, &file)?;
+    mutate_actor_seats_file(&path, |file| stage_actor_seat(file, &command_id, entry))?;
     Ok(staged)
 }
 
@@ -873,11 +900,10 @@ pub async fn clear_coding_session_actor_seat(
     let Some(path) = actor_seats_file_path(&app, &state)? else {
         return Ok(());
     };
-    let mut file = read_actor_seats(&path)?;
-    if !clear_actor_seat(&mut file, &command_id) {
-        return Ok(());
-    }
-    write_actor_seats(&path, &file)
+    mutate_actor_seats_file(&path, |file| {
+        clear_actor_seat(file, &command_id);
+        Ok(())
+    })
 }
 
 #[cfg(test)]

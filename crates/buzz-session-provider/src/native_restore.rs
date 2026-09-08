@@ -231,20 +231,27 @@ impl Provider {
                     // An entry naming a different pubkey is not this seat's
                     // custody. Refusing rather than substituting is the same
                     // rule the create and resume paths hold.
-                    Some(seat) if seat.pubkey == actor => (
-                        Some(session::SeatIdentity {
-                            actor_pubkey: seat.pubkey.clone(),
-                            role: record.role.clone().unwrap_or_default(),
-                            relay_url: seat.relay_url.clone(),
-                        }),
-                        seat.post_fence_env_with_bee(
-                            record.role.as_deref(),
-                            record.project_ref.as_deref(),
-                            crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
-                            std::env::var_os("PATH").as_ref(),
-                        ),
-                        seat_skills(seat),
-                    ),
+                    Some(seat)
+                        if seat.pubkey == actor
+                            && seat.pack_ref == record.pack_ref
+                            && (record.pack_ref.is_some() || seat.pack_dir.is_none())
+                            && seat.relay_url == self.config.relay_url =>
+                    {
+                        (
+                            Some(session::SeatIdentity {
+                                actor_pubkey: seat.pubkey.clone(),
+                                role: record.role.clone().unwrap_or_default(),
+                                relay_url: seat.relay_url.clone(),
+                            }),
+                            seat.post_fence_env_with_bee(
+                                record.role.as_deref(),
+                                record.project_ref.as_deref(),
+                                crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
+                                std::env::var_os("PATH").as_ref(),
+                            ),
+                            seat_skills(seat),
+                        )
+                    }
                     _ => {
                         tracing::info!(
                             target: "csp::restore",

@@ -343,6 +343,9 @@ pub struct CatalogState {
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
     version: u32,
+    /// Terminal decisions awaiting outbox and legacy-ledger projection.
+    #[serde(default)]
+    terminal_dispositions: BTreeMap<String, TerminalDisposition>,
     #[serde(default)]
     watermarks: BTreeMap<Uuid, u64>,
     #[serde(default)]
@@ -375,6 +378,7 @@ impl Default for Snapshot {
     fn default() -> Self {
         Self {
             version: STATE_VERSION,
+            terminal_dispositions: BTreeMap::new(),
             watermarks: BTreeMap::new(),
             sessions: BTreeMap::new(),
             catalog: CatalogState::default(),
@@ -399,6 +403,15 @@ struct OperationRecord {
     key: String,
     command_id: String,
     at: u64,
+}
+
+/// One atomic terminal decision and the exact signed answer it promises.
+/// Retained until both the outbox and the refusal ledger contain the decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TerminalDisposition {
+    pub semantic_key: String,
+    pub event: nostr::Event,
 }
 
 /// Durable provider state rooted at one directory.
@@ -567,24 +580,51 @@ impl StateStore {
     /// Whether this command was already answered with a refusal.
     pub fn is_command_refused(&self, command_id: &str) -> bool {
         self.refusals.contains(command_id)
+            || self.snapshot.terminal_dispositions.contains_key(command_id)
     }
 
-    /// Record a command as refused, durably, once its refusal is queued.
+    /// Fence a terminal decision and its exact answer in one atomic write.
+    pub(crate) fn stage_terminal_disposition(
+        &mut self,
+        command_id: &str,
+        disposition: TerminalDisposition,
+    ) -> io::Result<()> {
+        if self.snapshot.terminal_dispositions.contains_key(command_id)
+            || self.refusals.contains(command_id)
+        {
+            return Ok(());
+        }
+        let previous = self.snapshot.clone();
+        self.snapshot
+            .terminal_dispositions
+            .insert(command_id.to_owned(), disposition);
+        self.persist_or_restore(previous)
+    }
+
+    /// Pending terminal answers; callers must project these before retiring them.
+    pub(crate) fn terminal_dispositions(&self) -> Vec<(String, TerminalDisposition)> {
+        self.snapshot
+            .terminal_dispositions
+            .iter()
+            .map(|(id, disposition)| (id.clone(), disposition.clone()))
+            .collect()
+    }
+
+    /// Retire an intent only after its answer reached the durable outbox.
+    pub(crate) fn finish_terminal_disposition(&mut self, command_id: &str) -> io::Result<()> {
+        self.record_refusal(command_id, now_secs())?;
+        let previous = self.snapshot.clone();
+        self.snapshot.terminal_dispositions.remove(command_id);
+        self.persist_or_restore(previous)
+    }
+
+    /// Record that a command has a terminal answer and must not be re-admitted.
     ///
-    /// A refused command never ran, so it must not be *consumed* — consumed
-    /// means "this one started". It must also never be answered twice: the
-    /// outbox fences duplicates only within one process lifetime, so without a
-    /// durable set a restart plus a relay redelivery republishes the same
-    /// refusal under the same semantic key.
-    ///
-    /// This is written *after* the receipt reaches the outbox, not before.
-    /// Both files are crash-safe, so the question is only which failure is
-    /// worse. Ledger-first turns a failing outbox write into a command that is
-    /// permanently recorded as answered and never actually answered — silence
-    /// the operator cannot even retry into. Outbox-first turns a failing
-    /// ledger write into at worst a second copy of the identical receipt on
-    /// replay, which the semantic key fences while the row is queued and which
-    /// a consumer deduplicates in any case.
+    /// CI and mailbox terminal paths first persist the exact signed answer as
+    /// a snapshot intent, then project the outbox and this legacy ledger. The
+    /// intent remains an admission fence if either projection fails. A consumed
+    /// command may also be terminal after recovery: consumption proves a claim,
+    /// not whether the adapter actually received its prompt.
     pub fn record_refusal(&mut self, command_id: &str, at: u64) -> io::Result<()> {
         #[cfg(test)]
         if std::mem::take(&mut self.fault_plan.fail_next_refusal_append) {

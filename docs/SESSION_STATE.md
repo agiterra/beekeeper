@@ -5,6 +5,66 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 evening — recovery integrated and repaired
+
+Fable's four recovery commits are integrated on `work/team-role-evidence-astra`:
+`ecc33bced` → `23b98302d`, `106f3dfc8` → `d6435546b`,
+`10422a1fa` → `04a548e11`, `994377b9d` → `afdd7b9a8`.
+`archive/before-fable-recovery-20260908` preserves root `dbc6a0990` before these
+landings. Fable's original worktree remains untouched and unpushed. The recovery
+source and the integration repairs are local topic work, not a release.
+
+Root's baseline composition passed all eight steps, then independent review found
+additional correctness faults. Repairs in the commit titled “Preserve recovery
+identity and fence terminal continuation decisions” address:
+
+- Refusal receipt enqueue followed by a failed ledger write could allow a later
+  prompt after a transient obstacle cleared. An atomic snapshot intent now stores
+  the admission fence and exact signed answer together; outbox and ledger writes
+  are retryable projections (`state.rs::stage_terminal_disposition`,
+  `lib.rs::enqueue_terminal_receipt`). Fault/restart regressions cover queue drop,
+  failed outbox, failed claim snapshot and persisted started-turn recovery.
+- A claimed operation does not prove that no prompt reached the adapter.
+  Recovery distinguishes persisted start from unknown delivery and does not tell
+  the agent to retry an already consumed CI operation (`recover_ci_continuations`).
+- Host restaging could resolve a new pack while metadata still named the old
+  version. It now reconstructs the original repository pin and requires exact
+  PackRef agreement. Strict restore also checks the relay and the recorded model;
+  unverifiable legacy local packs are not silently substituted.
+- Atomic JSON replacement alone lost concurrent custody-map updates. All host
+  staging/clearing/restaging and provider consumption now mutate under the same
+  stable sibling file lock. Concurrent producer/consumer regressions cover this.
+- One-shot restaging could precede the new provider's request file or outlive a
+  community switch. A bounded 30-second `providerPid` snapshot handshake, captured
+  relay checks and supervisor cancellation now bind the operation to its spawn.
+- Composition now uses distinct native cursors, verifies exact signer/target and
+  prompt cursor, checks both claim ledgers for its Ready crash window, and proves
+  rejected restoration sends no actual prompt. The first strengthened run found
+  a test helper conflating runtime `providerInstanceRef` with provider `instanceId`;
+  corrected before the passing run.
+
+Evidence directory: `../review-2026-09-08-recovery-integration/`.
+`composition-verified.log`: all eight steps passed on repaired source in 34.61s,
+using real relay/provider/CLI, scratch Postgres and Redis14, bash ACP adapter.
+`provider-tests-final.log`: 689 unit tests passed, one existing unit case ignored;
+startup integration results are in the same log. `native-seats-final.log`:37 passed.
+`native-supervisor.log`:2 passed, including current-snapshot/cancellation.
+`provider-clippy.log` and `native-clippy.log`: all-target clippy clean. Both Rust
+format checks, diff check and `file-size-final.log` passed. The interrupted lanes'
+partial patch is also preserved in that evidence directory; root finished the
+repairs locally after all three review agents hit a service usage limit.
+
+**Limits and next:** composition remains unseated with a stub adapter. Seated
+restoration, pinned-pack refusal and model preservation have targeted tests, not
+an installed-app process-kill proof. Full `just ci`, desktop release smoke and
+Mac/Windows/real-adapter acceptance have not been rerun for this integration.
+No push, production deploy or installed-app replacement happened in this turn.
+The earlier lifecycle-create budget-reservation finding remains a separate open
+follow-up. Next is packaged-candidate validation using
+`COLLABORATION_TWO_MACHINE_ACCEPTANCE.md`; the prepared independent feature slice
+is declared work in existing Pulse (`WORK_COORDINATION_VISIBILITY_SPEC.md`).
+This section supersedes the in-progress recovery statuses below.
+
 ## September 8 parallel work — coordination visibility preparation
 
 Brian authorized useful parallel work while Fable finishes recovery. Root completed

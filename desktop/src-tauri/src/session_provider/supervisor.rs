@@ -14,8 +14,11 @@ use tauri::{AppHandle, Manager};
 
 use crate::app_state::AppState;
 use crate::managed_agents::{
-    actor_seats_restage::restage_actor_seats_for_provider, append_log_marker,
-    known_acp_runtime_exact, open_log_file, resolve_command, should_skip_claude_executable,
+    actor_seats_restage::{
+        read_seat_requests, restage_actor_seats_for_provider, seat_requests_path,
+    },
+    append_log_marker, known_acp_runtime_exact, open_log_file, resolve_command,
+    should_skip_claude_executable,
 };
 use crate::session_provider::env::{
     build_provider_env, ProviderEnvInputs, INHERITED_KEYS_TO_CLEAR,
@@ -349,7 +352,14 @@ fn start_supervisor(
         &binary, &record, &relay_url, &state_dir, &log_path, settings,
     )?;
     child_pid.store(child.id(), Ordering::Release);
-    spawn_seat_restage(app, state_dir.clone(), log_path.clone());
+    spawn_seat_restage(
+        app,
+        state_dir.clone(),
+        log_path.clone(),
+        relay_url.clone(),
+        child.id(),
+        Arc::clone(&stop),
+    );
 
     state.install(SupervisorHandle {
         id,
@@ -402,7 +412,14 @@ fn start_supervisor(
                 Ok(next) => {
                     child_pid.store(next.id(), Ordering::Release);
                     child = next;
-                    spawn_seat_restage(&app, state_dir.clone(), log_path.clone());
+                    spawn_seat_restage(
+                        &app,
+                        state_dir.clone(),
+                        log_path.clone(),
+                        relay_url.clone(),
+                        child.id(),
+                        Arc::clone(&stop),
+                    );
                 }
                 Err(error) => {
                     eprintln!("buzz-desktop: session-provider: respawn failed: {error}");
@@ -430,11 +447,27 @@ fn start_supervisor(
 /// [`append_log_marker`] so the file the operator already reads after a crash
 /// carries this too — never a key, only the counts
 /// [`crate::managed_agents::actor_seats_restage::RestageReport`] carries.
-fn spawn_seat_restage(app: &AppHandle, state_dir: PathBuf, log_path: PathBuf) {
+fn spawn_seat_restage(
+    app: &AppHandle,
+    state_dir: PathBuf,
+    log_path: PathBuf,
+    relay_url: String,
+    pid: u32,
+    stop: Arc<AtomicBool>,
+) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        if !wait_for_seat_snapshot(&state_dir, pid, &stop).await {
+            let _ = append_log_marker(
+                &log_path,
+                "=== agent seat re-stage cancelled or provider recovery snapshot unavailable ===",
+            );
+            return;
+        }
         let state = app.state::<AppState>();
-        match restage_actor_seats_for_provider(&app, &state, &state_dir).await {
+        match restage_actor_seats_for_provider(&app, &state, &state_dir, &relay_url, pid, &stop)
+            .await
+        {
             Ok(report) => {
                 let _ = append_log_marker(
                     &log_path,
@@ -452,6 +485,26 @@ fn spawn_seat_restage(app: &AppHandle, state_dir: PathBuf, log_path: PathBuf) {
             }
         }
     });
+}
+
+/// A bounded startup handshake, not a recurring model or provider poll.
+/// The pid distinguishes a new recovery snapshot from a stale pre-upgrade file.
+async fn wait_for_seat_snapshot(state_dir: &Path, pid: u32, stop: &AtomicBool) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return false;
+        }
+        if read_seat_requests(&seat_requests_path(state_dir))
+            .is_ok_and(|file| file.provider_pid == pid)
+        {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// Poll the child until it exits or a stop is requested.
@@ -839,6 +892,24 @@ pub(crate) fn shutdown_coding_session_provider(app: &AppHandle) {
 #[cfg(test)]
 mod readiness_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn restage_waits_for_current_snapshot_and_obeys_cancellation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stop = AtomicBool::new(false);
+        let path = seat_requests_path(dir.path());
+        std::fs::write(&path, r#"{"version":1,"providerPid":1,"requests":[]}"#).expect("stale");
+        let waiting = wait_for_seat_snapshot(dir.path(), 42, &stop);
+        let publisher = async {
+            tokio::task::yield_now().await;
+            std::fs::write(&path, r#"{"version":1,"providerPid":42,"requests":[]}"#)
+                .expect("current");
+        };
+        let (ready, _) = tokio::join!(waiting, publisher);
+        assert!(ready);
+        stop.store(true, Ordering::Release);
+        assert!(!wait_for_seat_snapshot(dir.path(), 42, &stop).await);
+    }
 
     #[test]
     fn readiness_process_state_distinguishes_backoff_from_live_child() {

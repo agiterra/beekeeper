@@ -1283,6 +1283,18 @@ async fn start_agent(
     let model = apply_model(&mut client, &response, request.model.as_deref())
         .await
         .or_else(|| buzz_acp::acp::reported_model(&response.raw));
+    if request.strict_native
+        && request
+            .model
+            .as_ref()
+            .is_some_and(|expected| model.as_ref() != Some(expected))
+    {
+        client.shutdown().await;
+        return Err(CreateFailure {
+            code: crate::native_restore::NATIVE_RESTORE_REJECTED,
+            message: "the adapter could not restore the generation's recorded model; no continuation was delivered".into(),
+        });
+    }
     let agent_version = client.agent_version().map(str::to_owned);
     // Read before the client moves into the return value: this is the one
     // place the `initialize` result is still reachable.
