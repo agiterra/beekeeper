@@ -419,6 +419,22 @@ void main() {
       final sessions = groupCodingSessionUmbrellas(executions: executions);
       expect(sessions.single.displayName, 'Fallback title');
     });
+
+    test(
+      'an unnamed, untitled session is "Coding session", not its driver',
+      () {
+        final executions = resolveCodingSessionGenerations(
+          receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+          metadata: const [],
+        );
+        final sessions = groupCodingSessionUmbrellas(executions: executions);
+        expect(sessions.single.displayName, 'Coding session');
+        expect(
+          sessions.single.executions.single.label,
+          isNot('Coding session'),
+        );
+      },
+    );
   });
 
   group('closure authority', () {

@@ -251,18 +251,17 @@ class CodingSessionUmbrella {
 
   /// What to call this session on screen.
   ///
-  /// The newest signed name wins; failing that the newest execution's title or
-  /// label. Never invented — the fallback is always something a provider or a
-  /// member signed.
+  /// The newest signed name wins; failing that the newest execution's title;
+  /// failing that the same "Coding session" the desktop shows for an unnamed
+  /// session. The execution's driver is deliberately not a title — it is
+  /// still shown as detail — because a row headed "claude-agent-acp" reads as
+  /// a name nobody gave (live finding 2026-09-08).
   String get displayName {
     final signed = name;
     if (signed != null && signed.trim().isNotEmpty) return signed;
     for (final execution in executions) {
       final title = execution.metadata?.title;
       if (title != null && title.trim().isNotEmpty) return title;
-    }
-    for (final execution in executions) {
-      return execution.label;
     }
     return 'Coding session';
   }

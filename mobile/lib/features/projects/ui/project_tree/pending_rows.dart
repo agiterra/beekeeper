@@ -7,11 +7,15 @@ part of '../project_tree.dart';
 /// but not that the directory is the desktop's to record. Live finding
 /// 2026-09-08 — the refusal was read on the relay while the phone still said
 /// "waiting", and even once shown it would not have said where to fix it.
+/// The desktop records the directory the first time it starts a session for
+/// the project, so that is the other way to make the next phone create
+/// resolve.
 String? pendingCreateRefusalHint(CodingSessionReceiptError? error) =>
     switch (error?.code) {
       'PROJECT_CWD_UNRESOLVED' =>
         "Set the project's working directory in the desktop app's project "
-            'settings, then try again.',
+            'settings, or start one session for it from the desktop, then '
+            'try again.',
       _ => null,
     };
 
