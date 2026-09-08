@@ -23,6 +23,7 @@ import {
 import type { Community } from "@/features/communities/types";
 import { withReadOnlyRelayClient } from "@/shared/api/readOnlyRelayClient";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import { demuxForFilter } from "@/shared/api/relayQueryCoalescer";
 import { nip44DecryptFromSelf } from "@/shared/api/tauri";
 import type { ChannelType, RelayEvent } from "@/shared/api/types";
 import {
@@ -95,7 +96,18 @@ export type CommunityUnreadObserverResult = {
   mentionCount: number;
 };
 
+/**
+ * The poll's relay surface: every read is a bundle. The read-only client
+ * packs a bundle into as few REQs as the relay allows (10 filters, 128
+ * aggregate `#h` per frame) and returns the deduplicated union, which this
+ * module splits back per filter with {@link demuxForFilter}.
+ */
 type CommunityUnreadRelay = {
+  fetchEventsBatch(filters: RelaySubscriptionFilter[]): Promise<RelayEvent[]>;
+};
+
+/** The one-filter-at-a-time surface `communityMarkRead` still drives. */
+type ObservedChannelsRelay = {
   fetchEvents(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
 };
 
@@ -105,44 +117,77 @@ type ObservedChannel = {
   archived: boolean;
 };
 
-/**
- * List the channels this pubkey is a member of on the observed relay,
- * excluding archived channels and hidden DMs — the same visibility set the
- * unread poll and "mark all as read" must agree on.
- */
-export async function fetchObservedChannels(
-  client: CommunityUnreadRelay,
-  pubkey: string,
-): Promise<ObservedChannel[]> {
-  const memberEvents = await client.fetchEvents({
+/** Membership listing for `pubkey`: the ids come from the `d` tags. */
+export function memberChannelsFilter(pubkey: string): RelaySubscriptionFilter {
+  return {
     kinds: [KIND_NIP29_GROUP_MEMBERS],
     "#p": [pubkey],
     limit: MEMBER_CHANNEL_LIMIT,
-  });
-  const channelIds = extractMemberChannelIds(memberEvents);
-  if (channelIds.length === 0) {
-    return [];
-  }
+  };
+}
 
-  const [metadataEvents, visibilityEvents] = await Promise.all([
-    client.fetchEvents({
+/**
+ * The two reads that turn a membership list into a visibility set: channel
+ * metadata (type, archived) for those ids, and the user's DM visibility
+ * snapshot. Independent of each other, so they travel in one bundle.
+ */
+export function observedChannelFilters(
+  channelIds: string[],
+  pubkey: string,
+): { metadata: RelaySubscriptionFilter; visibility: RelaySubscriptionFilter } {
+  return {
+    metadata: {
       kinds: [KIND_NIP29_GROUP_METADATA],
       "#d": channelIds,
       limit: METADATA_LIMIT,
-    }),
-    client.fetchEvents({
+    },
+    visibility: {
       kinds: [KIND_DM_VISIBILITY],
       "#p": [pubkey],
       limit: 1,
-    }),
-  ]);
+    },
+  };
+}
 
+/**
+ * The visibility rule itself: exclude archived channels and hidden DMs. The
+ * unread poll and "mark all as read" both go through here, so they cannot
+ * disagree about which channels count.
+ */
+export function resolveVisibleChannels(
+  channelIds: string[],
+  metadataEvents: RelayEvent[],
+  visibilityEvents: RelayEvent[],
+): ObservedChannel[] {
   const hiddenDmIds = extractHiddenDmIds(visibilityEvents);
   return resolveObservedChannels(channelIds, metadataEvents).filter(
     (channel) =>
       !channel.archived &&
       (channel.channelType !== "dm" || !hiddenDmIds.has(channel.id)),
   );
+}
+
+/**
+ * List the channels this pubkey is a member of on the observed relay,
+ * excluding archived channels and hidden DMs — the same visibility set the
+ * unread poll and "mark all as read" must agree on.
+ */
+export async function fetchObservedChannels(
+  client: ObservedChannelsRelay,
+  pubkey: string,
+): Promise<ObservedChannel[]> {
+  const memberEvents = await client.fetchEvents(memberChannelsFilter(pubkey));
+  const channelIds = extractMemberChannelIds(memberEvents);
+  if (channelIds.length === 0) {
+    return [];
+  }
+
+  const { metadata, visibility } = observedChannelFilters(channelIds, pubkey);
+  const [metadataEvents, visibilityEvents] = await Promise.all([
+    client.fetchEvents(metadata),
+    client.fetchEvents(visibility),
+  ]);
+  return resolveVisibleChannels(channelIds, metadataEvents, visibilityEvents);
 }
 
 export async function pollCommunityUnread(
@@ -154,6 +199,73 @@ export async function pollCommunityUnread(
   );
 }
 
+/** The per-channel pair of the unread bundle; `unread` is null once the dot is already lit. */
+export type ChannelUnreadFilters = {
+  channel: ObservedChannel;
+  readAt: number | null;
+  unread: RelaySubscriptionFilter | null;
+  mention: RelaySubscriptionFilter;
+};
+
+/**
+ * Build one channel's existence and mention filters, both `since` the
+ * channel's read marker. `includeUnread` is false when an earlier gate (a
+ * forced-unread channel) has already decided the dot, so only the mention
+ * count still needs the relay.
+ */
+export function buildChannelUnreadFilters(
+  channel: ObservedChannel,
+  pubkey: string,
+  readAt: number | null,
+  includeUnread: boolean,
+): ChannelUnreadFilters {
+  const since = readAt === null ? 0 : readAt + 1;
+  return {
+    channel,
+    readAt,
+    unread: includeUnread
+      ? {
+          kinds: unreadKindsForChannel(channel.channelType),
+          "#h": [channel.id],
+          since,
+          limit: UNREAD_EXISTENCE_LIMIT,
+        }
+      : null,
+    mention: {
+      kinds: [...HOME_MENTION_EVENT_KINDS],
+      "#h": [channel.id],
+      "#p": [pubkey],
+      since,
+      limit: MENTION_COUNT_LIMIT,
+    },
+  };
+}
+
+function isForcedUnread(
+  forcedUnreadMap: ForcedUnreadMap,
+  channelId: string,
+  readAt: number | null,
+): boolean {
+  // Forced-unread lights the dot without a relay fetch, but only if the
+  // synced read marker has NOT advanced past the stored baseline. This
+  // prevents stale forced-unread from lighting the rail after a cross-device
+  // read has covered the channel (the drain path in useUnreadChannels only
+  // runs while the community is active, so the store may not be pruned for
+  // inactive communities).
+  if (!Object.hasOwn(forcedUnreadMap, channelId)) return false;
+  const markerAtWhenForced = forcedUnreadMarker(forcedUnreadMap[channelId]);
+  return (
+    readAt === null ||
+    (markerAtWhenForced !== null && readAt <= markerAtWhenForced)
+  );
+}
+
+/**
+ * One poll of an inactive community: three bundles instead of `5 + 2N`
+ * frames — the membership list; then metadata, DM visibility, read state and
+ * mutes together (the metadata `#d` needs the member ids, which is why the
+ * list travels alone); then every channel's existence and mention filter.
+ */
 export async function fetchCommunityUnread(args: {
   client: CommunityUnreadRelay;
   pubkey: string;
@@ -172,34 +284,52 @@ export async function fetchCommunityUnread(args: {
   const readForcedUnread =
     args.readForcedUnread ?? ((pk) => forcedUnreadStore.read(pk));
 
-  const channels = await fetchObservedChannels(client, pubkey);
+  const memberEvents = await client.fetchEventsBatch([
+    memberChannelsFilter(pubkey),
+  ]);
+  const channelIds = extractMemberChannelIds(memberEvents);
+  if (channelIds.length === 0) {
+    return { hasUnread: false, mentionCount: 0 };
+  }
+
+  const { metadata, visibility } = observedChannelFilters(channelIds, pubkey);
+  const readStateFilter: RelaySubscriptionFilter = {
+    kinds: [KIND_READ_STATE],
+    authors: [pubkey],
+    "#t": ["read-state"],
+    since: nowSeconds - READ_STATE_HORIZON_SECONDS,
+    limit: READ_STATE_FETCH_LIMIT,
+  };
+  const mutesFilter: RelaySubscriptionFilter = {
+    kinds: [KIND_CHANNEL_MUTES],
+    authors: [pubkey],
+    "#d": ["channel-mutes"],
+    limit: 1,
+  };
+  const stateEvents = await client.fetchEventsBatch([
+    metadata,
+    visibility,
+    readStateFilter,
+    mutesFilter,
+  ]);
+
+  const channels = resolveVisibleChannels(
+    channelIds,
+    demuxForFilter(stateEvents, metadata),
+    demuxForFilter(stateEvents, visibility),
+  );
   if (channels.length === 0) {
     return { hasUnread: false, mentionCount: 0 };
   }
 
-  const [readStateEvents, mutesEvents] = await Promise.all([
-    client.fetchEvents({
-      kinds: [KIND_READ_STATE],
-      authors: [pubkey],
-      "#t": ["read-state"],
-      since: nowSeconds - READ_STATE_HORIZON_SECONDS,
-      limit: READ_STATE_FETCH_LIMIT,
-    }),
-    client.fetchEvents({
-      kinds: [KIND_CHANNEL_MUTES],
-      authors: [pubkey],
-      "#d": ["channel-mutes"],
-      limit: 1,
-    }),
-  ]);
-
   const readState = await mergeReadStateEvents(
-    readStateEvents,
+    demuxForFilter(stateEvents, readStateFilter),
     pubkey,
     args.decryptReadState,
   );
 
   let mutedIds = new Set<string>();
+  const mutesEvents = demuxForFilter(stateEvents, mutesFilter);
   if (mutesEvents.length > 0) {
     try {
       const plaintext = await decryptMutes(mutesEvents[0].content);
@@ -224,57 +354,29 @@ export async function fetchCommunityUnread(args: {
   // whether a cross-device read has since advanced past the stored baseline.
   const forcedUnreadMap = readForcedUnread(normalizedPubkey);
 
-  let hasUnread = false;
+  const observed = channels
+    .filter((channel) => !mutedIds.has(channel.id))
+    .map((channel) => ({
+      channel,
+      readAt: readState.get(channel.id) ?? null,
+    }));
+
+  // The forced-unread gate needs no relay round-trip, so it decides first:
+  // once the dot is lit, only the mention count still needs the relay.
+  let hasUnread = observed.some(({ channel, readAt }) =>
+    isForcedUnread(forcedUnreadMap, channel.id, readAt),
+  );
+  const plans = observed.map(({ channel, readAt }) =>
+    buildChannelUnreadFilters(channel, pubkey, readAt, !hasUnread),
+  );
+  const filters = plans.flatMap((plan) =>
+    plan.unread ? [plan.unread, plan.mention] : [plan.mention],
+  );
+  const events =
+    filters.length === 0 ? [] : await client.fetchEventsBatch(filters);
+
   let mentionCount = 0;
-
-  for (const channel of channels) {
-    if (mutedIds.has(channel.id)) continue;
-
-    // Compute readAt first so the forced-unread gate can compare against it.
-    const readAt = readState.get(channel.id) ?? null;
-
-    // Forced-unread lights the dot without a relay fetch, but only if the
-    // synced read marker has NOT advanced past the stored baseline. This
-    // prevents stale forced-unread from lighting the rail after a cross-device
-    // read has covered the channel (the drain path in useUnreadChannels only
-    // runs while the community is active, so the store may not be pruned for
-    // inactive communities).
-    if (!hasUnread && Object.hasOwn(forcedUnreadMap, channel.id)) {
-      const markerAtWhenForced = forcedUnreadMarker(
-        forcedUnreadMap[channel.id],
-      );
-      if (
-        readAt === null ||
-        (markerAtWhenForced !== null && readAt <= markerAtWhenForced)
-      ) {
-        hasUnread = true;
-      }
-    }
-
-    const since = readAt === null ? 0 : readAt + 1;
-    const kinds = unreadKindsForChannel(channel.channelType);
-
-    const unreadEventsPromise: Promise<RelayEvent[]> = hasUnread
-      ? Promise.resolve([])
-      : client.fetchEvents({
-          kinds,
-          "#h": [channel.id],
-          since,
-          limit: UNREAD_EXISTENCE_LIMIT,
-        });
-    const mentionEventsPromise: Promise<RelayEvent[]> = client.fetchEvents({
-      kinds: [...HOME_MENTION_EVENT_KINDS],
-      "#h": [channel.id],
-      "#p": [pubkey],
-      since,
-      limit: MENTION_COUNT_LIMIT,
-    });
-
-    const [unreadEvents, mentionEvents] = await Promise.all([
-      unreadEventsPromise,
-      mentionEventsPromise,
-    ]);
-
+  for (const { channel, readAt, unread, mention } of plans) {
     // Both queries use kind sets whose kind:9 members may be coding-session
     // lane chat, which renders inside a session umbrella rather than in the
     // channel — counting it here would light a rail dot with nothing behind
@@ -285,8 +387,8 @@ export async function fetchCommunityUnread(args: {
     const isHiddenLaneMessage = (event: RelayEvent) =>
       isCodingSessionLaneMessageHiddenFromChannel(channel.id, event);
 
-    if (!hasUnread) {
-      hasUnread = unreadEvents.some(
+    if (!hasUnread && unread !== null) {
+      hasUnread = demuxForFilter(events, unread).some(
         (event) =>
           !isHiddenLaneMessage(event) &&
           isUnreadExternalEvent(event, readState, readAt, normalizedPubkey) &&
@@ -301,7 +403,7 @@ export async function fetchCommunityUnread(args: {
       );
     }
 
-    mentionCount += mentionEvents.filter(
+    mentionCount += demuxForFilter(events, mention).filter(
       (event) =>
         !isHiddenLaneMessage(event) &&
         isUnreadExternalEvent(event, readState, readAt, normalizedPubkey),

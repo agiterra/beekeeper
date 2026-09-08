@@ -8,6 +8,7 @@ import { getOsIdleSeconds } from "@/shared/api/osIdle";
 import { getPresence } from "@/shared/api/tauri";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { useFocusedRefetchInterval } from "@/shared/lib/useDocumentVisible";
+import { phaseJitteredPeriodMs, phaseOffset } from "@/shared/lib/pollSchedule";
 import {
   activePresencePubkeys,
   mergePresenceUpdate,
@@ -35,6 +36,8 @@ export const presenceFocusRefetchPolicy = {
   refetchOnWindowFocus: false,
 } as const;
 const PRESENCE_ACTIVITY_THROTTLE_MS = 1_000;
+/** Poll name hashed with the identity to phase the heartbeat timer. */
+const PRESENCE_HEARTBEAT_POLL_KEY = "presence-heartbeat";
 const PRESENCE_PREFERENCE_STORAGE_KEY = "buzz-presence-preference";
 
 type PresencePreference = "auto" | "away" | "offline" | null;
@@ -401,17 +404,41 @@ export function usePresenceSession(pubkey?: string) {
       return;
     }
 
-    const intervalId = window.setInterval(() => {
+    const tick = () => {
       // Skip heartbeat ticks while the relay is unavailable or rate-limited —
       // the publish would fail anyway and consumes quota the recovery needs.
       if (relayClient.getConnectionState() !== "connected" || isRateLimited()) {
         return;
       }
       syncPresence(currentStatus);
-    }, PRESENCE_HEARTBEAT_INTERVAL_MS);
+    };
+    // Phase-offset by (identity, poll): every device sharing this key would
+    // otherwise heartbeat in the same second, and so would every other 60 s
+    // timer in this app. The first beat lands at a stable point inside the
+    // period; the period itself is nudged ±10 % so equal periods drift apart.
+    let intervalId: number | null = null;
+    const firstTick = window.setTimeout(
+      () => {
+        tick();
+        intervalId = window.setInterval(
+          tick,
+          phaseJitteredPeriodMs(
+            PRESENCE_HEARTBEAT_POLL_KEY,
+            PRESENCE_HEARTBEAT_INTERVAL_MS,
+            normalizedPubkey,
+          ),
+        );
+      },
+      phaseOffset(
+        PRESENCE_HEARTBEAT_POLL_KEY,
+        PRESENCE_HEARTBEAT_INTERVAL_MS,
+        normalizedPubkey,
+      ),
+    );
 
     return () => {
-      window.clearInterval(intervalId);
+      window.clearTimeout(firstTick);
+      if (intervalId !== null) window.clearInterval(intervalId);
     };
   }, [currentStatus, normalizedPubkey]);
 

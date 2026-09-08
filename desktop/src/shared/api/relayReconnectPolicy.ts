@@ -43,6 +43,23 @@ export function shouldWaitForScheduledReconnect(inputs: {
   return inputs.hasPendingReconnect;
 }
 
+/**
+ * Reconnect delay with ±25 % jitter, capped at `maxDelayMs`.
+ *
+ * Spreads a fleet's AUTH storms across a 50 % window instead of hitting the
+ * relay at the same instant — two devices on one key that lost the relay
+ * together must not come back together. `random` is injectable for tests and
+ * is expected in [0, 1).
+ */
+export function jitteredReconnectDelayMs(
+  baseDelayMs: number,
+  maxDelayMs: number,
+  random: () => number = Math.random,
+): number {
+  const jittered = baseDelayMs * (0.75 + random() * 0.5);
+  return Math.min(jittered, maxDelayMs);
+}
+
 /** Whether `ensureConnected()` should refuse with a terminal error. */
 export function shouldRefuseConnect(inputs: { terminal: boolean }): boolean {
   return inputs.terminal;

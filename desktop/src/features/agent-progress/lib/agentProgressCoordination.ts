@@ -21,8 +21,14 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
-import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import {
+  MAX_FILTERS_PER_REQ,
+  type RelaySubscriptionFilter,
+} from "@/shared/api/relayClientShared";
+import { chunkFiltersForRequest } from "@/shared/api/relayQueryCoalescer";
+import { phaseJitteredPeriodMs } from "@/shared/lib/pollSchedule";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   foldSessionCoordination,
@@ -45,6 +51,8 @@ export const AGENT_PROGRESS_CHANNELS_PER_QUERY = 128;
 export const AGENT_PROGRESS_SESSION_QUERY_LIMIT = 1000;
 /** One-shot cap for current lease keys; reaching it is a partial read. */
 export const AGENT_PROGRESS_LEASE_QUERY_LIMIT = 1000;
+/** Fallback poll for a missed live event or a reconnect; jittered per identity. */
+export const AGENT_PROGRESS_REFETCH_INTERVAL_MS = 60_000;
 
 /** One source query that failed, was truncated, or yielded an unreadable event. */
 export type AgentProgressReadError = { scope: string; message: string };
@@ -81,10 +89,47 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The one relay read this module needs; injectable so tests fold real bytes. */
-export type AgentProgressEventFetcher = (
-  filter: RelaySubscriptionFilter,
+/**
+ * The one relay read this module needs — a bundle of filters as one
+ * `POST /query`, each keeping its own `limit`, resolved as the deduplicated
+ * union; injectable so tests fold real bytes and see the bundles.
+ */
+export type AgentProgressBatchFetcher = (
+  filters: RelaySubscriptionFilter[],
 ) => Promise<RelayEvent[]>;
+
+/** One source read inside a bundle, and how it reports truncation. */
+type AgentProgressSourceRead = {
+  scope: string;
+  filter: RelaySubscriptionFilter & { kinds: number[]; limit: number };
+  truncation: string;
+};
+
+/** The two reads one 128-channel chunk needs, each with its own budget. */
+export function agentProgressChunkReads(
+  channels: string[],
+): AgentProgressSourceRead[] {
+  return [
+    {
+      scope: "sessions",
+      filter: {
+        kinds: [...SESSION_COORDINATION_DURABLE_KINDS],
+        "#h": channels,
+        limit: AGENT_PROGRESS_SESSION_QUERY_LIMIT,
+      },
+      truncation: `session read truncated at ${AGENT_PROGRESS_SESSION_QUERY_LIMIT} events`,
+    },
+    {
+      scope: "leases",
+      filter: {
+        kinds: [KIND_SESSION_LEASE],
+        "#h": channels,
+        limit: AGENT_PROGRESS_LEASE_QUERY_LIMIT,
+      },
+      truncation: `lease snapshot truncated at ${AGENT_PROGRESS_LEASE_QUERY_LIMIT} events`,
+    },
+  ];
+}
 
 /**
  * Keep only events this client can trust and understand — valid signature, and
@@ -136,12 +181,13 @@ function admissibleEvents(events: readonly RelayEvent[]): {
 export async function fetchAgentProgressCoordination(
   channelIds: readonly string[],
   dependencies: {
-    fetchEvents?: AgentProgressEventFetcher;
+    fetchEventsBatch?: AgentProgressBatchFetcher;
     channelsUnresolved?: boolean;
   } = {},
 ): Promise<AgentProgressCoordinationRead> {
-  const fetchEvents: AgentProgressEventFetcher =
-    dependencies.fetchEvents ?? ((filter) => relayClient.fetchEvents(filter));
+  const fetchEventsBatch: AgentProgressBatchFetcher =
+    dependencies.fetchEventsBatch ??
+    ((filters) => relayClient.fetchEventsBatch(filters));
   const errors: AgentProgressReadError[] = [];
   const events: RelayEvent[] = [];
 
@@ -155,43 +201,31 @@ export async function fetchAgentProgressCoordination(
     });
   }
 
+  // One bundled `POST /query` per 128-channel chunk carrying two filters with
+  // two budgets: the durable facts, and — its own filter, its own limit — the
+  // kind 24223 lease snapshot, an ephemeral view of the relay's current lease
+  // keys that must not share the durable limit or be paginated as history.
+  // Rows are attributed back by kind, exact because the kind sets are
+  // disjoint; a bundle that failed is both reads not happening.
   for (const channels of channelChunks(channelIds)) {
+    const reads = agentProgressChunkReads(channels);
+    let bundle: RelayEvent[];
     try {
-      const durable = await fetchEvents({
-        kinds: [...SESSION_COORDINATION_DURABLE_KINDS],
-        "#h": channels,
-        limit: AGENT_PROGRESS_SESSION_QUERY_LIMIT,
-      });
-      events.push(...durable);
-      if (durable.length >= AGENT_PROGRESS_SESSION_QUERY_LIMIT) {
-        errors.push({
-          scope: "sessions",
-          message: `session read truncated at ${AGENT_PROGRESS_SESSION_QUERY_LIMIT} events`,
-        });
-      }
+      bundle = await fetchEventsBatch(reads.map((read) => read.filter));
     } catch (error) {
-      errors.push({ scope: "sessions", message: errorMessage(error) });
+      for (const read of reads) {
+        errors.push({ scope: read.scope, message: errorMessage(error) });
+      }
+      continue;
     }
-  }
-  for (const channels of channelChunks(channelIds)) {
-    try {
-      // Kind 24223 is an ephemeral snapshot of the relay's current lease keys.
-      // One REQ obtains them; it must not share the durable limit or be
-      // paginated as history.
-      const leases = await fetchEvents({
-        kinds: [KIND_SESSION_LEASE],
-        "#h": channels,
-        limit: AGENT_PROGRESS_LEASE_QUERY_LIMIT,
-      });
-      events.push(...leases);
-      if (leases.length >= AGENT_PROGRESS_LEASE_QUERY_LIMIT) {
-        errors.push({
-          scope: "leases",
-          message: `lease snapshot truncated at ${AGENT_PROGRESS_LEASE_QUERY_LIMIT} events`,
-        });
+    events.push(...bundle);
+    for (const read of reads) {
+      const rows = bundle.filter((event) =>
+        read.filter.kinds.includes(event.kind),
+      ).length;
+      if (rows >= read.filter.limit) {
+        errors.push({ scope: read.scope, message: read.truncation });
       }
-    } catch (error) {
-      errors.push({ scope: "leases", message: errorMessage(error) });
     }
   }
 
@@ -268,24 +302,30 @@ export function useAgentProgressCoordination(
     let disposed = false;
     const unsubscribes = new Set<() => void>();
     const since = Math.floor(Date.now() / 1_000);
-    for (const channels of channelChunks(
+    const filters: RelaySubscriptionFilter[] = channelChunks(
       channelKey === "" ? [] : channelKey.split(","),
-    )) {
+    ).map((channels) => ({
+      kinds: [...SESSION_COORDINATION_KINDS],
+      "#h": channels,
+      since,
+      limit: 100,
+    }));
+    // Every 128-channel chunk shares one REQ (one admission unit) up to the
+    // relay's ten filters per REQ.
+    // Ten filters per REQ *and* 128 channels per REQ: the relay counts `#h`
+    // across every filter in the frame.
+    const groups = chunkFiltersForRequest(
+      filters.map((filter) => ({ filter })),
+      { maxFilters: MAX_FILTERS_PER_REQ },
+    ).map((group) => group.map((entry) => entry.filter));
+    for (const group of groups) {
       void relayClient
-        .subscribeLive(
-          {
-            kinds: [...SESSION_COORDINATION_KINDS],
-            "#h": channels,
-            since,
-            limit: 100,
-          },
-          () => {
-            void queryClient.invalidateQueries({ queryKey: key });
-          },
-        )
+        .subscribeLiveMany(group, () => {
+          void queryClient.invalidateQueries({ queryKey: key });
+        })
         .then((handle) => {
           if (!handle) return;
-          if (disposed) handle();
+          if (disposed) void handle();
           else unsubscribes.add(handle);
         })
         .catch(() => {
@@ -300,9 +340,16 @@ export function useAgentProgressCoordination(
     };
   }, [channelKey, key, queryClient]);
 
+  // Nudged ±10 % per identity so this poll drifts apart from every other
+  // 60 s timer in the app and on the other device sharing this key.
+  const identity = useIdentityQuery();
   const query = useQuery({
     queryKey: key,
-    refetchInterval: 60_000,
+    refetchInterval: phaseJitteredPeriodMs(
+      "agent-progress-coordination",
+      AGENT_PROGRESS_REFETCH_INTERVAL_MS,
+      identity.data?.pubkey,
+    ),
     queryFn: () =>
       fetchAgentProgressCoordination(stableChannelIds, { channelsUnresolved }),
   });

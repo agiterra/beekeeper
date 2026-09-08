@@ -13,7 +13,16 @@ type PublishSession = {
   recoverSocketFailure: (error: unknown, fallback: string) => Error;
 };
 
-/** Publish once, with one reconnect retry, without crossing session ownership. */
+/**
+ * Publish once, with one reconnect retry and one rate-limit retry, without
+ * crossing session ownership.
+ *
+ * The rate-limit retry: the relay refuses an over-quota EVENT with
+ * `["OK", id, false, "rate-limited: …"]`. `handleOk` arms the shared gate and
+ * rejects the pending entry; this wrapper waits the gate out and re-sends the
+ * same signed event once, so a message typed during a reconnect storm lands
+ * instead of failing the user. A second refusal is final.
+ */
 export async function publishSessionEvent(
   session: PublishSession,
   event: RelayEvent,
@@ -21,6 +30,41 @@ export async function publishSessionEvent(
   sendErrorMessage: string,
 ): Promise<RelayEvent> {
   const publishOwnership = session.ownership();
+  try {
+    return await publishSessionEventOnce(
+      session,
+      event,
+      timeoutMessage,
+      sendErrorMessage,
+      publishOwnership,
+    );
+  } catch (error) {
+    if (!isRateLimitedRejection(error)) throw error;
+    await waitForRateLimit();
+    if (publishOwnership !== session.ownership()) {
+      throw new Error("Relay disconnected for community switch.");
+    }
+    return publishSessionEventOnce(
+      session,
+      event,
+      timeoutMessage,
+      sendErrorMessage,
+      publishOwnership,
+    );
+  }
+}
+
+function isRateLimitedRejection(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("rate-limited:");
+}
+
+async function publishSessionEventOnce(
+  session: PublishSession,
+  event: RelayEvent,
+  timeoutMessage: string,
+  sendErrorMessage: string,
+  publishOwnership: number,
+): Promise<RelayEvent> {
   await waitForRateLimit();
   if (publishOwnership !== session.ownership()) {
     throw new Error("Relay disconnected for community switch.");

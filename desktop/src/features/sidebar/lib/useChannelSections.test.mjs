@@ -26,10 +26,10 @@ test("assignChannel refreshes an existing assignment before the next eviction", 
   );
   const { useChannelSections } = await import("./useChannelSections.ts");
 
-  const originalFetchEvents = relayClient.fetchEvents;
+  const originalFetchEvents = relayClient.fetchEventsCoalesced;
   const originalSubscribeLive = relayClient.subscribeLive;
   const originalSubscribeToReconnects = relayClient.subscribeToReconnects;
-  relayClient.fetchEvents = async () => [];
+  relayClient.fetchEventsCoalesced = async () => [];
   relayClient.subscribeLive = async () => async () => {};
   relayClient.subscribeToReconnects = () => () => {};
 
@@ -71,7 +71,7 @@ test("assignChannel refreshes an existing assignment before the next eviction", 
     unmount();
   } finally {
     cleanup();
-    relayClient.fetchEvents = originalFetchEvents;
+    relayClient.fetchEventsCoalesced = originalFetchEvents;
     relayClient.subscribeLive = originalSubscribeLive;
     relayClient.subscribeToReconnects = originalSubscribeToReconnects;
   }

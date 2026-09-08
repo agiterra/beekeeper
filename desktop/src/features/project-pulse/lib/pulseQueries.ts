@@ -20,7 +20,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRelaySelf } from "@/features/moderation/lib/relaySelf";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
-import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import {
+  MAX_FILTERS_PER_REQ,
+  type RelaySubscriptionFilter,
+} from "@/shared/api/relayClientShared";
+import { chunkFiltersForRequest } from "@/shared/api/relayQueryCoalescer";
+import { phaseJitteredPeriodMs } from "@/shared/lib/pollSchedule";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_CLOSURE,
@@ -66,6 +71,8 @@ export const PULSE_SESSION_QUERY_LIMIT = 1000;
 export const PULSE_LEASE_QUERY_LIMIT = 1000;
 /** Relay hard cap for the aggregate explicit `#h` values in one request. */
 export const PULSE_CHANNELS_PER_QUERY = 128;
+/** Fallback poll for a missed live event or a reconnect; jittered per identity. */
+export const PULSE_DIGEST_REFETCH_INTERVAL_MS = 60_000;
 
 function channelChunks(channelIds: readonly string[]): string[][] {
   const sorted = [...new Set(channelIds)].sort();
@@ -144,10 +151,88 @@ const LIVE_SESSION_FACT_KINDS = [
   ...DURABLE_SESSION_FACT_KINDS,
 ];
 
-/** The one relay read this module needs; injectable so tests fold real bytes. */
+/** One relay read; injectable so tests fold real bytes. */
 export type PulseEventFetcher = (
   filter: RelaySubscriptionFilter,
 ) => Promise<RelayEvent[]>;
+
+/**
+ * A bundle of filters as one `POST /query`, each keeping its own `limit`,
+ * resolved as the deduplicated union; injectable so tests see the bundles.
+ */
+export type PulseBatchFetcher = (
+  filters: RelaySubscriptionFilter[],
+) => Promise<RelayEvent[]>;
+
+/** One source read inside a bundle, and how it reports truncation. */
+type PulseSourceRead = {
+  scope: string;
+  filter: RelaySubscriptionFilter & { kinds: number[]; limit: number };
+  truncation: string;
+};
+
+/** The three reads one 128-channel chunk needs, each with its own budget. */
+function pulseChunkReads(channels: string[]): PulseSourceRead[] {
+  const sessions = (kinds: number[]): PulseSourceRead => ({
+    scope: "sessions",
+    filter: { kinds, "#h": channels, limit: PULSE_SESSION_QUERY_LIMIT },
+    truncation: `session read truncated at ${PULSE_SESSION_QUERY_LIMIT} events`,
+  });
+  return [
+    // Two reads, two budgets, so per-turn receipt volume cannot evict the
+    // 44221 commands and 44223 metadata a session is proven from. That is
+    // half the problem: a generation is proven from the command *and* the
+    // 44224 receipt answering it, and a create receipt is itself a 44224
+    // sharing this budget with unbounded turn receipts, so enough turn
+    // traffic still drops a proven session from the digest. Narrowing the
+    // receipt read is owed.
+    sessions(GENERATION_FACT_KINDS),
+    sessions(RECEIPT_FACT_KINDS),
+    // Kind 24223 is an ephemeral Redis snapshot. Its own filter obtains the
+    // current keys; it must not share the durable limit or be paginated as
+    // history.
+    {
+      scope: "leases",
+      filter: {
+        kinds: [KIND_CODING_SESSION_LEASE],
+        "#h": channels,
+        limit: PULSE_LEASE_QUERY_LIMIT,
+      },
+      truncation: `lease snapshot truncated at ${PULSE_LEASE_QUERY_LIMIT} events`,
+    },
+  ];
+}
+
+/**
+ * Run one bundle and attribute its rows back to each read by kind — exact,
+ * because the reads in a bundle name disjoint kinds. A bundle that failed is
+ * every read in it not happening, so each of its scopes records the failure.
+ */
+async function readPulseBundle(
+  reads: PulseSourceRead[],
+  fetchEventsBatch: PulseBatchFetcher,
+  events: RelayEvent[],
+  sourceErrors: PulseDigestError[],
+): Promise<void> {
+  let bundle: RelayEvent[];
+  try {
+    bundle = await fetchEventsBatch(reads.map((read) => read.filter));
+  } catch (error) {
+    for (const scope of new Set(reads.map((read) => read.scope))) {
+      sourceErrors.push({ scope, message: errorMessage(error) });
+    }
+    return;
+  }
+  events.push(...bundle);
+  for (const read of reads) {
+    const rows = bundle.filter((event) =>
+      read.filter.kinds.includes(event.kind),
+    ).length;
+    if (rows >= read.filter.limit) {
+      sourceErrors.push({ scope: read.scope, message: read.truncation });
+    }
+  }
+}
 
 /**
  * React Query key for one project's folded Pulse.
@@ -232,7 +317,7 @@ export async function fetchProjectPulseDigest(
   coordinate: string,
   channelIds: readonly string[],
   dependencies: {
-    fetchEvents?: PulseEventFetcher;
+    fetchEventsBatch?: PulseBatchFetcher;
     /**
      * True when the caller could not resolve the project's channel set (the
      * channels query is pending or failed). The set below is then a floor, not
@@ -241,30 +326,14 @@ export async function fetchProjectPulseDigest(
     channelsUnresolved?: boolean;
   } = {},
 ): Promise<ProjectPulseDigest> {
-  const fetchEvents: PulseEventFetcher =
-    dependencies.fetchEvents ?? ((filter) => relayClient.fetchEvents(filter));
+  const fetchEventsBatch: PulseBatchFetcher =
+    dependencies.fetchEventsBatch ??
+    ((filters) => relayClient.fetchEventsBatch(filters));
   const sourceErrors: PulseDigestError[] = [];
   const events: RelayEvent[] = [];
 
-  try {
-    const entries = await fetchEvents({
-      kinds: [KIND_PULSE_ENTRY],
-      "#a": [coordinate],
-      limit: PULSE_ENTRY_QUERY_LIMIT,
-    });
-    events.push(...entries);
-    if (entries.length >= PULSE_ENTRY_QUERY_LIMIT) {
-      sourceErrors.push({
-        scope: "entries",
-        message: `entry read truncated at ${PULSE_ENTRY_QUERY_LIMIT} events`,
-      });
-    }
-  } catch (error) {
-    sourceErrors.push({ scope: "entries", message: errorMessage(error) });
-  }
-
   // An unresolved channel set is a read that did not happen, not a project
-  // with no channels. Recorded before the guard below so it lands in `errors[]`
+  // with no channels. Recorded before the reads so it lands in `errors[]`
   // whether or not a partial set came back — mirroring the CLI's
   // `scan_project_sessions`, which pushes a `{scope:"channels"}` error and
   // flips `complete` on both failure and truncation.
@@ -278,58 +347,30 @@ export async function fetchProjectPulseDigest(
     });
   }
 
+  const entries: PulseSourceRead = {
+    scope: "entries",
+    filter: {
+      kinds: [KIND_PULSE_ENTRY],
+      "#a": [coordinate],
+      limit: PULSE_ENTRY_QUERY_LIMIT,
+    },
+    truncation: `entry read truncated at ${PULSE_ENTRY_QUERY_LIMIT} events`,
+  };
+  // One bundled `POST /query` per 128-channel chunk — every filter keeps its
+  // own limit — with the entry read riding the first bundle, so a project of
+  // up to 128 channels is one call instead of four REQs against the per-key
+  // burst the paired phone shares.
   const chunks = channelChunks(channelIds);
-  if (chunks.length > 0) {
-    for (const channels of chunks) {
-      // Two reads, two budgets, so per-turn receipt volume cannot evict the
-      // 44221 commands and 44223 metadata a session is proven from. That is
-      // half the problem: a generation is proven from the command *and* the
-      // 44224 receipt answering it, and a create receipt is itself a 44224
-      // sharing this budget with unbounded turn receipts, so enough turn
-      // traffic still drops a proven session from the digest. Narrowing the
-      // receipt read is owed.
-      for (const kinds of [GENERATION_FACT_KINDS, RECEIPT_FACT_KINDS]) {
-        try {
-          const sessions = await fetchEvents({
-            kinds,
-            "#h": channels,
-            limit: PULSE_SESSION_QUERY_LIMIT,
-          });
-          events.push(...sessions);
-          if (sessions.length >= PULSE_SESSION_QUERY_LIMIT) {
-            sourceErrors.push({
-              scope: "sessions",
-              message: `session read truncated at ${PULSE_SESSION_QUERY_LIMIT} events`,
-            });
-          }
-        } catch (error) {
-          sourceErrors.push({
-            scope: "sessions",
-            message: errorMessage(error),
-          });
-        }
-      }
-    }
-    for (const channels of chunks) {
-      try {
-        // Kind 24223 is an ephemeral Redis snapshot. One REQ obtains the current
-        // keys; it must not share the durable limit or be paginated as history.
-        const leases = await fetchEvents({
-          kinds: [KIND_CODING_SESSION_LEASE],
-          "#h": channels,
-          limit: PULSE_LEASE_QUERY_LIMIT,
-        });
-        events.push(...leases);
-        if (leases.length >= PULSE_LEASE_QUERY_LIMIT) {
-          sourceErrors.push({
-            scope: "leases",
-            message: `lease snapshot truncated at ${PULSE_LEASE_QUERY_LIMIT} events`,
-          });
-        }
-      } catch (error) {
-        sourceErrors.push({ scope: "leases", message: errorMessage(error) });
-      }
-    }
+  const bundles =
+    chunks.length === 0
+      ? [[entries]]
+      : chunks.map((channels, index) =>
+          index === 0
+            ? [entries, ...pulseChunkReads(channels)]
+            : pulseChunkReads(channels),
+        );
+  for (const reads of bundles) {
+    await readPulseBundle(reads, fetchEventsBatch, events, sourceErrors);
   }
 
   // `now` is read once, after the last source query returned — the digest's
@@ -387,14 +428,33 @@ export function useProjectPulseDigest(
     if (coordinate === null) return;
     let disposed = false;
     const unsubscribes = new Set<() => void>();
-    const subscribe = (filter: RelaySubscriptionFilter) => {
+    const since = Math.floor(Date.now() / 1_000);
+    const subscribedChannelIds = channelKey === "" ? [] : channelKey.split(",");
+    const filters: RelaySubscriptionFilter[] = [
+      { kinds: [KIND_PULSE_ENTRY], "#a": [coordinate], since, limit: 100 },
+      ...channelChunks(subscribedChannelIds).map((channels) => ({
+        kinds: LIVE_SESSION_FACT_KINDS,
+        "#h": channels,
+        since,
+        limit: 100,
+      })),
+    ];
+    // The entry fan-out and every 128-channel chunk share one REQ (one
+    // admission unit) up to the relay's ten filters per REQ.
+    // Ten filters per REQ *and* 128 channels per REQ: the relay counts `#h`
+    // across every filter in the frame.
+    const groups = chunkFiltersForRequest(
+      filters.map((filter) => ({ filter })),
+      { maxFilters: MAX_FILTERS_PER_REQ },
+    ).map((group) => group.map((entry) => entry.filter));
+    for (const group of groups) {
       void relayClient
-        .subscribeLive(filter, () => {
+        .subscribeLiveMany(group, () => {
           void queryClient.invalidateQueries({ queryKey: key });
         })
         .then((handle) => {
           if (!handle) return;
-          if (disposed) handle();
+          if (disposed) void handle();
           else unsubscribes.add(handle);
         })
         .catch(() => {
@@ -402,22 +462,6 @@ export function useProjectPulseDigest(
           // digest.errors; a live-subscription transport failure does not
           // manufacture a durable read result.
         });
-    };
-    const since = Math.floor(Date.now() / 1_000);
-    const subscribedChannelIds = channelKey === "" ? [] : channelKey.split(",");
-    subscribe({
-      kinds: [KIND_PULSE_ENTRY],
-      "#a": [coordinate],
-      since,
-      limit: 100,
-    });
-    for (const channels of channelChunks(subscribedChannelIds)) {
-      subscribe({
-        kinds: LIVE_SESSION_FACT_KINDS,
-        "#h": channels,
-        since,
-        limit: 100,
-      });
     }
     return () => {
       disposed = true;
@@ -426,10 +470,17 @@ export function useProjectPulseDigest(
     };
   }, [channelKey, coordinate, key, queryClient]);
 
+  // Nudged ±10 % per (identity, project) so this poll drifts apart from every
+  // other 60 s timer in the app and on the other device sharing this key.
+  const identity = useIdentityQuery();
   const query = useQuery({
     queryKey: key,
     enabled: coordinate !== null,
-    refetchInterval: 60_000,
+    refetchInterval: phaseJitteredPeriodMs(
+      `project-pulse:${coordinate ?? "none"}`,
+      PULSE_DIGEST_REFETCH_INTERVAL_MS,
+      identity.data?.pubkey,
+    ),
     queryFn: () =>
       fetchProjectPulseDigest(coordinate ?? "", stableChannelIds, {
         channelsUnresolved,
@@ -578,7 +629,7 @@ export async function fetchPulseMissionRows(
     {
       fetchEvents:
         dependencies.fetchEvents ??
-        ((filter) => relayClient.fetchEvents(filter)),
+        ((filter) => relayClient.fetchEventsCoalesced(filter)),
       relaySelf: dependencies.relaySelf ?? getRelaySelf,
     },
   );

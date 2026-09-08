@@ -20,9 +20,11 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const MAX_ERROR_MESSAGE_LENGTH = 4096;
 
 export type CodingSessionMissionEvidenceClient = {
-  fetchEvents(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
-  subscribeLive(
-    filter: RelaySubscriptionFilter,
+  /** Every filter as one `POST /query`; each keeps its own `limit`. */
+  fetchEventsBatch(filters: RelaySubscriptionFilter[]): Promise<RelayEvent[]>;
+  /** Every filter on one REQ (one admission unit), OR-ed by the relay. */
+  subscribeLiveMany(
+    filters: RelaySubscriptionFilter[],
     onEvent: (event: RelayEvent) => void,
   ): Promise<() => void>;
 };
@@ -211,43 +213,28 @@ export function useCodingSessionMissionEvidence(
           0,
           relayPubkey,
         );
-        const liveResults = await Promise.allSettled(
-          liveFilters.map((filter) =>
-            client.subscribeLive(filter, (event) => ingest([event])),
-          ),
+        // The live fence is one REQ carrying all three filters, opened
+        // before the history read so nothing lands in the gap; the history
+        // is one bundled `POST /query` (three filters, three limits).
+        const unsubscribe = await client.subscribeLiveMany(
+          liveFilters,
+          (event) => ingest([event]),
         );
-        for (const result of liveResults) {
-          if (result.status === "fulfilled") {
-            if (cancelled) result.value();
-            else unsubscribes.push(result.value);
-          }
+        if (cancelled) {
+          unsubscribe();
+          return;
         }
-        if (cancelled) return;
-        const liveFailure = liveResults.find(
-          (result): result is PromiseRejectedResult =>
-            result.status === "rejected",
-        );
-        if (liveFailure) {
-          for (const unsubscribe of unsubscribes.splice(0)) unsubscribe();
-          throw liveFailure.reason;
-        }
+        unsubscribes.push(unsubscribe);
 
-        const historyResults = await Promise.allSettled(
+        const history = await client.fetchEventsBatch(
           buildCodingSessionMissionEvidenceFilters(
             stableScope,
             MISSION_EVIDENCE_HISTORY_LIMIT,
             relayPubkey,
-          ).map((filter) => client.fetchEvents(filter)),
+          ),
         );
         if (cancelled) return;
-        for (const result of historyResults) {
-          if (result.status === "fulfilled") store.ingest(result.value);
-        }
-        const historyFailure = historyResults.find(
-          (result): result is PromiseRejectedResult =>
-            result.status === "rejected",
-        );
-        if (historyFailure) throw historyFailure.reason;
+        store.ingest(history);
         historySettled = true;
         await project();
       } catch (error) {

@@ -596,7 +596,7 @@ function pageOfEvents(count, startId, createdAt) {
 
 function stubPagedRelay(pages) {
   const filters = [];
-  mock.method(relayClient, "fetchEvents", (filter) => {
+  mock.method(relayClient, "fetchEventsCoalesced", (filter) => {
     filters.push(filter);
     return Promise.resolve(pages[filters.length - 1] ?? []);
   });

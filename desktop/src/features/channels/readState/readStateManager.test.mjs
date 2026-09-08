@@ -79,7 +79,7 @@ function makeFakeTimers() {
 
 function makeFakeRelay() {
   return {
-    fetchEvents: async () => [],
+    fetchEventsCoalesced: async () => [],
     publishEvent: async () => {},
     subscribeLive: () => () => {},
   };
@@ -279,7 +279,7 @@ test("destroyed manager cannot persist after an in-flight fetch resolves", async
   });
   const staleManager = new ReadStateManager(pubkey, {
     ...makeFakeRelay(),
-    fetchEvents: () => fetchPending,
+    fetchEventsCoalesced: () => fetchPending,
   });
 
   try {
@@ -790,7 +790,7 @@ test("publishSplitSlots_noopSuppression_skipsWhenUnchanged", async () => {
   globalThis.window.localStorage = makeLocalStorage();
 
   const fakeRelay = {
-    fetchEvents: async () => [],
+    fetchEventsCoalesced: async () => [],
     publishEvent: async () => {},
     subscribeLive: () => () => {},
   };

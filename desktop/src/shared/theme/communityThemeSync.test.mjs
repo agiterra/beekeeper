@@ -86,7 +86,7 @@ function relayEvent(overrides = {}) {
 }
 
 test("fetch distinguishes absent remote state from unreadable existing state", async () => {
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   try {
     const manager = new CommunityThemeSyncManager("alice");
     assert.deepEqual(await manager.fetchRemote(), { status: "absent" });
@@ -94,7 +94,7 @@ test("fetch distinguishes absent remote state from unreadable existing state", a
     mock.reset();
   }
 
-  mock.method(relayClient, "fetchEvents", () =>
+  mock.method(relayClient, "fetchEventsCoalesced", () =>
     Promise.resolve([relayEvent()]),
   );
   try {
@@ -123,7 +123,7 @@ test("live replacement delivered during empty onboarding fetch prevents default 
     onReady("eose");
     return Promise.resolve(async () => {});
   });
-  mock.method(relayClient, "fetchEvents", async () => {
+  mock.method(relayClient, "fetchEventsCoalesced", async () => {
     liveCallback(
       relayEvent({
         id: "existing-theme",
@@ -161,7 +161,7 @@ test("failed live setup cannot authorize hydration publishing", async () => {
   mock.method(relayClient, "subscribeLive", () =>
     Promise.reject(new Error("subscription failed")),
   );
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   try {
     const manager = new CommunityThemeSyncManager("alice");
     const { result } = await manager.subscribeAndFetch(() => {});
@@ -180,7 +180,7 @@ test("EOSE-confirmed absence authorizes hydration seeding after live delivery dr
     onReady("eose");
     return Promise.resolve(async () => {});
   });
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   try {
     const manager = new CommunityThemeSyncManager("alice");
     const { result, unsubscribe } = await manager.subscribeAndFetch(() => {});
@@ -210,7 +210,7 @@ test("unreadable live state cannot authorize hydration publishing", async () => 
     onReady("eose");
     return Promise.resolve(async () => {});
   });
-  mock.method(relayClient, "fetchEvents", async () => {
+  mock.method(relayClient, "fetchEventsCoalesced", async () => {
     liveCallback(relayEvent({ content: "future-ciphertext" }));
     return [];
   });
@@ -233,7 +233,7 @@ test("apparently ready live setup cannot authorize hydration publishing", async 
     onReady("timeout");
     return Promise.resolve(async () => {});
   });
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   try {
     const manager = new CommunityThemeSyncManager("alice");
     const { result, unsubscribe } = await manager.subscribeAndFetch(() => {});
@@ -247,7 +247,7 @@ test("apparently ready live setup cannot authorize hydration publishing", async 
 });
 
 test("fetch reports relay failures as unavailable rather than absent", async () => {
-  mock.method(relayClient, "fetchEvents", () =>
+  mock.method(relayClient, "fetchEventsCoalesced", () =>
     Promise.reject(new Error("offline")),
   );
   try {

@@ -46,7 +46,8 @@ export type CodingSessionPolicyScope = {
 
 /** What a caller needs to fetch for a policy read; `relayClient` satisfies it. */
 export type CodingSessionPolicyClient = {
-  fetchEvents(filter: RelaySubscriptionFilter): Promise<RelayEvent[]>;
+  /** Every filter as one `POST /query`; each keeps its own `limit`. */
+  fetchEventsBatch(filters: RelaySubscriptionFilter[]): Promise<RelayEvent[]>;
 };
 
 export type CodingSessionSessionPolicyResult = {
@@ -97,13 +98,21 @@ export async function readCodingSessionSessionPolicy(input: {
   client: CodingSessionPolicyClient;
   invoke?: (command: string, args: Record<string, unknown>) => Promise<unknown>;
 }): Promise<CodingSessionPolicyFoldResult> {
-  const [records, transitions, receipts] = await Promise.all(
+  // One bundled read instead of three REQs. The union comes back split by
+  // kind, which recovers each filter's own rows exactly because the three
+  // filters name disjoint kinds.
+  const events = await input.client.fetchEventsBatch(
     buildCodingSessionPolicyFilters(
       input.scope,
       CODING_SESSION_POLICY_HISTORY_LIMIT,
       input.relayPubkey,
-    ).map((filter) => input.client.fetchEvents(filter)),
+    ),
   );
+  const records = events.filter((e) => e.kind === KIND_CODING_SESSION_POLICY);
+  const transitions = events.filter(
+    (e) => e.kind === KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  );
+  const receipts = events.filter((e) => e.kind === KIND_SYSTEM_MESSAGE);
   const authority = projectCodingSessionMissionAuthority({
     channelRef: input.scope.channelRef,
     genesisRef: input.scope.genesisRef,

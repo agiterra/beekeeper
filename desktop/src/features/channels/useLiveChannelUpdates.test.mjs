@@ -29,6 +29,7 @@ import {
   resetCodingSessionLaneVisibility,
 } from "@/features/messages/lib/codingSessionLaneVisibility";
 import { relayClient } from "@/shared/api/relayClient";
+import { CHANNEL_EVENT_KINDS } from "@/shared/constants/kinds";
 import { useLiveChannelUpdates } from "./useLiveChannelUpdates.ts";
 
 const CHANNEL_ID = "9f1c0b1a-2d3e-4f50-8a61-7b2c3d4e5f60";
@@ -56,50 +57,61 @@ const laneTag = [["cs-session", SESSION_REF]];
 
 /**
  * Mount the hook with the relay client stubbed so tests can push events
- * straight into the live and mention subscription callbacks.
+ * straight into the live subscription callback. There is one bundle per
+ * 128 channels and no separate mention REQ — mentions are matched on the
+ * live stream — so `emitMention` is the same delivery path as `emitLive`.
+ * `requests` records every filter list handed to the transport and `log`
+ * the open/close order per bundle, so tests can pin the REQ shapes and the
+ * make-before-break sequence.
  */
 async function mountLiveUpdates(channels, options) {
   const liveCallbacks = new Map();
-  const mentionCallbacks = new Map();
-  const originalSubscribeLive = relayClient.subscribeLive;
-  const originalSubscribeMentions = relayClient.subscribeToChannelMentionEvents;
+  const requests = [];
+  const log = [];
+  const originalSubscribeLiveMany = relayClient.subscribeLiveMany;
 
-  relayClient.subscribeLive = async (filter, onEvent) => {
-    for (const channelId of filter["#h"] ?? []) {
+  relayClient.subscribeLiveMany = async (filters, onEvent) => {
+    requests.push(filters);
+    const ids = filters.flatMap((filter) => filter["#h"] ?? []);
+    for (const channelId of ids) {
       liveCallbacks.set(channelId, onEvent);
     }
-    return async () => {};
-  };
-  relayClient.subscribeToChannelMentionEvents = async (
-    channelId,
-    _pubkey,
-    onEvent,
-  ) => {
-    mentionCallbacks.set(channelId, onEvent);
-    return async () => {};
+    log.push(`open:${ids.join(",")}`);
+    return async () => {
+      log.push(`close:${ids.join(",")}`);
+    };
   };
 
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 
-  function Inner() {
-    useLiveChannelUpdates(channels, null, options);
+  function Inner(props) {
+    useLiveChannelUpdates(props.channels, null, options);
     return null;
   }
 
   const root = createRoot(document.createElement("div"));
-  await act(async () => {
+  const render = (nextChannels) =>
     root.render(
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
-        React.createElement(Inner),
+        React.createElement(Inner, { channels: nextChannels }),
       ),
     );
+  await act(async () => {
+    render(channels);
   });
 
   return {
+    requests,
+    log,
+    rerender: async (nextChannels) => {
+      await act(async () => {
+        render(nextChannels);
+      });
+    },
     emitLive: async (channelId, event) => {
       await act(async () => {
         liveCallbacks.get(channelId)?.(event);
@@ -107,13 +119,12 @@ async function mountLiveUpdates(channels, options) {
     },
     emitMention: async (channelId, event) => {
       await act(async () => {
-        mentionCallbacks.get(channelId)?.(event);
+        liveCallbacks.get(channelId)?.(event);
       });
     },
     unmount: async () => {
       await act(async () => root.unmount());
-      relayClient.subscribeLive = originalSubscribeLive;
-      relayClient.subscribeToChannelMentionEvents = originalSubscribeMentions;
+      relayClient.subscribeLiveMany = originalSubscribeLiveMany;
       queryClient.clear();
     },
   };
@@ -227,6 +238,105 @@ test("the mention subscription does not chime for a hidden lane mention", async 
     chatEvent({ tags: [["p", ME], ...laneTag] }),
   );
   assert.equal(calls.liveMention, 1);
+
+  await harness.unmount();
+});
+
+test("every member channel rides one live REQ, limit 0 since now, and nothing else", async () => {
+  const { options } = recorder();
+  const before = Math.floor(Date.now() / 1_000);
+  const harness = await mountLiveUpdates(
+    [
+      { id: CHANNEL_ID, name: "engineering", channelType: "stream" },
+      { id: DM_CHANNEL_ID, name: "dm", channelType: "dm" },
+    ],
+    options,
+  );
+  const after = Math.floor(Date.now() / 1_000);
+
+  assert.equal(harness.requests.length, 1);
+  const live = harness.requests[0];
+  assert.equal(live.length, 1);
+  assert.ok(live[0].since >= before && live[0].since <= after);
+  assert.deepEqual(
+    { ...live[0], since: "now" },
+    {
+      kinds: [...CHANNEL_EVENT_KINDS],
+      "#h": [CHANNEL_ID, DM_CHANNEL_ID].sort(),
+      limit: 0,
+      since: "now",
+    },
+  );
+
+  await harness.unmount();
+});
+
+test("a mention on the live stream chimes once, and also counts as channel activity", async () => {
+  const { calls, options } = recorder();
+  const harness = await mountLiveUpdates(
+    [{ id: CHANNEL_ID, name: "engineering", channelType: "stream" }],
+    options,
+  );
+
+  const mention = chatEvent({ tags: [["p", ME]] });
+  await harness.emitLive(CHANNEL_ID, mention);
+  assert.equal(calls.liveMention, 1);
+  assert.equal(calls.channelMessage, 1);
+
+  // A reconnect replay of the same event neither chimes nor counts again.
+  await harness.emitLive(CHANNEL_ID, mention);
+  assert.equal(calls.liveMention, 1);
+  assert.equal(calls.channelMessage, 1);
+
+  // A message that mentions someone else, or nobody, never chimes.
+  await harness.emitLive(CHANNEL_ID, chatEvent({ tags: [["p", OTHER]] }));
+  await harness.emitLive(CHANNEL_ID, chatEvent());
+  assert.equal(calls.liveMention, 1);
+  assert.equal(calls.channelMessage, 3);
+
+  await harness.unmount();
+});
+
+test("a membership change opens the new bundle before closing the old one", async () => {
+  const { options } = recorder();
+  const first = { id: CHANNEL_ID, name: "engineering", channelType: "stream" };
+  const second = { id: DM_CHANNEL_ID, name: "dm", channelType: "dm" };
+  const harness = await mountLiveUpdates([first], options);
+
+  await harness.rerender([first, second]);
+
+  const grown = [CHANNEL_ID, DM_CHANNEL_ID].sort().join(",");
+  const opened = harness.log.indexOf(`open:${grown}`);
+  const closed = harness.log.indexOf(`close:${CHANNEL_ID}`);
+  assert.ok(opened >= 0, "bundle for both channels was opened");
+  assert.ok(closed >= 0, "bundle for the lone channel was closed");
+  assert.ok(opened < closed, "make before break");
+
+  // Same membership again: nothing is reopened.
+  const logLength = harness.log.length;
+  await harness.rerender([second, first]);
+  assert.equal(harness.log.length, logLength);
+
+  await harness.unmount();
+});
+
+test("a live event without an h tag is dropped with a warning, never attributed", async () => {
+  const { calls, options } = recorder();
+  const harness = await mountLiveUpdates(
+    [{ id: CHANNEL_ID, name: "engineering", channelType: "stream" }],
+    options,
+  );
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    await harness.emitLive(CHANNEL_ID, { ...chatEvent(), tags: [] });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(calls.channelMessage, 0);
+  assert.equal(warnings.length, 1);
 
   await harness.unmount();
 });

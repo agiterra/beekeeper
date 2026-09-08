@@ -5,6 +5,16 @@ import { relayClient } from "@/shared/api/relayClient";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_SHELL_SESSION } from "@/shared/constants/kinds";
+import { phaseJitteredPeriodMs } from "@/shared/lib/pollSchedule";
+import { useFocusedRefetchInterval } from "@/shared/lib/useDocumentVisible";
+
+/**
+ * Poll backstop for a missed announce (reconnects, replaceable-head races);
+ * the live subscription is the freshness path. Paused while the app is not
+ * focused and nudged ±10 % per identity so it drifts apart from the other
+ * 30 s timers here and on the other device sharing this key.
+ */
+export const TERMINALS_REFETCH_INTERVAL_MS = 30_000;
 
 /** One roster member parsed from an announce's arity-4 `p` tag. */
 export type RemoteTerminalRosterEntry = {
@@ -137,12 +147,19 @@ export function useProjectTerminals(projectAddress: string | null) {
     };
   }, [projectAddress, queryClient]);
 
+  const refetchInterval = useFocusedRefetchInterval(
+    phaseJitteredPeriodMs(
+      "project-terminals",
+      TERMINALS_REFETCH_INTERVAL_MS,
+      myPubkey ?? "",
+    ),
+  );
   return useQuery({
     queryKey: projectTerminalsQueryKey(projectAddress ?? "none"),
     enabled: projectAddress !== null,
-    refetchInterval: 30_000,
+    refetchInterval,
     queryFn: async () => {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_SHELL_SESSION],
         "#a": [projectAddress ?? ""],
         limit: 100,
@@ -201,12 +218,19 @@ export function useRemoteTerminalsIndex(
     };
   }, [enabled, queryClient]);
 
+  const refetchInterval = useFocusedRefetchInterval(
+    phaseJitteredPeriodMs(
+      "remote-terminals-index",
+      TERMINALS_REFETCH_INTERVAL_MS,
+      myPubkey ?? "",
+    ),
+  );
   const query = useQuery({
     queryKey: remoteTerminalsIndexQueryKey,
     enabled,
-    refetchInterval: 30_000,
+    refetchInterval,
     queryFn: async () => {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_SHELL_SESSION],
         limit: 200,
       });

@@ -19,8 +19,8 @@ import {
 } from "./useUnreadChannels.ts";
 import {
   isChannelUnreadTriggerKind,
+  requireChannelTag,
   trackSeenEvent,
-  withChannelTagFallback,
 } from "./useLiveChannelUpdates.ts";
 import {
   KIND_HUDDLE_ENDED,
@@ -63,7 +63,9 @@ test("receiveThenReopen_frontierAtLatestArrival_clobbersDivider", () => {
   assert.equal(marker.unreadCount, 0);
 });
 
-test("live reaction without h tag inherits its subscription channel", () => {
+test("live event without h tag is dropped, visibly, not filed under a guess", () => {
+  // The live REQ now covers every channel at once, so an h-less reaction has
+  // no single channel to inherit; the guard drops it and says so.
   const reaction = {
     id: "reaction",
     kind: 7,
@@ -72,11 +74,16 @@ test("live reaction without h tag inherits its subscription channel", () => {
     content: "👀",
     tags: [["e", "message"]],
   };
-
-  assert.deepEqual(withChannelTagFallback(reaction, "channel-a").tags, [
-    ["e", "message"],
-    ["h", "channel-a"],
-  ]);
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    assert.equal(requireChannelTag(reaction), null);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.deepEqual(warnings[0][1], { id: "reaction", kind: 7 });
 });
 
 test("live event with h tag is preserved", () => {
@@ -89,7 +96,7 @@ test("live event with h tag is preserved", () => {
     tags: [["h", "channel-from-event"]],
   };
 
-  assert.equal(withChannelTagFallback(message, "other-channel"), message);
+  assert.equal(requireChannelTag(message), message);
 });
 
 test("notification event guard suppresses reconnect replay and stays bounded", () => {

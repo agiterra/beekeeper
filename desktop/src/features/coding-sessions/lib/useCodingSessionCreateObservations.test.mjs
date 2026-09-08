@@ -135,10 +135,15 @@ test("creates ride their own subscription and only bind once the receipt lands",
   }));
 
   const historyCalls = [];
+  const historyBatches = [];
   const liveSubscriptions = [];
   const client = {
-    fetchEvents: async (filter) => {
-      historyCalls.push(filter);
+    fetchEvents: async () => {
+      throw new Error("history must go through the bundled read");
+    },
+    fetchEventsBatch: async (filters) => {
+      historyBatches.push(filters);
+      historyCalls.push(...filters);
       return [createEvent];
     },
     subscribeLive: async (filter, onEvent) => {
@@ -175,6 +180,8 @@ test("creates ride their own subscription and only bind once the receipt lands",
   // across every kind it names, and 44224 now grows by two receipts per turn,
   // so a shared budget would eventually return only receipts and no creates.
   // The live subscription has no budget to share, so it stays a single filter.
+  // The three history filters ride one bundled `POST /query`, not three REQs.
+  assert.equal(historyBatches.length, 1);
   assert.deepEqual(
     historyCalls.map((filter) => filter.kinds),
     [[44221], [44224], [44226]],
@@ -285,8 +292,11 @@ test("a member who runs no providers still sees who founded the session", async 
 
   const historyCalls = [];
   const client = {
-    fetchEvents: async (filter) => {
-      historyCalls.push(filter);
+    fetchEvents: async () => {
+      throw new Error("history must go through the bundled read");
+    },
+    fetchEventsBatch: async (filters) => {
+      historyCalls.push(...filters);
       return [createEvent, receiptEvent];
     },
     subscribeLive: async () => () => {},

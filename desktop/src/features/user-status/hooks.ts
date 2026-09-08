@@ -61,7 +61,7 @@ export function useUserStatusQuery(pubkeys: string[]) {
     enabled,
     queryKey: userStatusQueryKey(normalizedPubkeys),
     queryFn: async () => {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_USER_STATUS],
         authors: normalizedPubkeys,
         "#d": ["general"],

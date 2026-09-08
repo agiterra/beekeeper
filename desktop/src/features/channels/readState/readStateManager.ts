@@ -435,7 +435,7 @@ export class ReadStateManager {
   private async fetchAndMerge(): Promise<void> {
     let events: RelayEvent[];
     try {
-      events = await this.relayClient.fetchEvents({
+      events = await this.relayClient.fetchEventsCoalesced({
         kinds: [KIND_READ_STATE],
         authors: [this.pubkey],
         "#t": ["read-state"],
@@ -809,7 +809,7 @@ export class ReadStateManager {
     const allSlotIds = [this.slotId, ...this.extraSlotIds];
     const dTags = allSlotIds.map((id) => `${READ_STATE_D_TAG_PREFIX}${id}`);
     try {
-      const events = await this.relayClient.fetchEvents({
+      const events = await this.relayClient.fetchEventsCoalesced({
         kinds: [KIND_READ_STATE],
         authors: [this.pubkey],
         "#d": dTags,

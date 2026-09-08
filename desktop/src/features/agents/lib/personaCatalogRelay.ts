@@ -397,7 +397,7 @@ export async function fetchPersonaCatalogPublications(): Promise<
   let until: number | undefined;
 
   for (let page = 0; page < MAX_CATALOG_PAGES; page += 1) {
-    const events = await relayClient.fetchEvents({
+    const events = await relayClient.fetchEventsCoalesced({
       kinds: [KIND_PERSONA],
       limit: CATALOG_PAGE_SIZE,
       ...(until === undefined ? {} : { until }),

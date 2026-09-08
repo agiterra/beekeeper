@@ -267,7 +267,7 @@ test("live readiness distinguishes EOSE from CLOSED", () => {
       "live-eose",
       {
         mode: "live",
-        filter: { kinds: [9], limit: 0 },
+        filters: [{ kinds: [9], limit: 0 }],
         onEvent: () => {},
         resolveReady: (result) => readiness.push(result),
       },
@@ -276,7 +276,7 @@ test("live readiness distinguishes EOSE from CLOSED", () => {
       "live-closed",
       {
         mode: "live",
-        filter: { kinds: [9], limit: 0 },
+        filters: [{ kinds: [9], limit: 0 }],
         onEvent: () => {},
         resolveReady: (result) => readiness.push(result),
       },
@@ -305,7 +305,7 @@ test("production CLOSED handler removes terminal live subscriptions", () => {
       "live-1",
       {
         mode: "live",
-        filter: { kinds: [9], limit: 50 },
+        filters: [{ kinds: [9], limit: 50 }],
         onEvent: () => {},
         resolveReady: () => {
           readyCalls += 1;
@@ -332,7 +332,7 @@ test("rate-limited CLOSED keeps live subscription in the map", () => {
       "live-1",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
         onEvent: () => {},
         resolveReady: () => {},
       },
@@ -358,7 +358,7 @@ test("rate-limited CLOSED activates the rate-limit gate with the parsed hint", (
       "live-1",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
         onEvent: () => {},
         resolveReady: () => {},
       },
@@ -392,7 +392,7 @@ test("rate-limited CLOSED retry delay is max(backoff, gate remaining), not just 
       "live-1",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
         onEvent: () => {},
         resolveReady: () => {},
       },
@@ -429,7 +429,7 @@ test("non-rate-limited retryable CLOSED still schedules a retry", () => {
       "live-1",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
         onEvent: () => {},
         resolveReady: () => {},
       },
@@ -462,7 +462,7 @@ test("terminal CLOSED deletes subscription and does not retry", () => {
       "live-1",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
         onEvent: () => {},
         resolveReady: () => {},
       },

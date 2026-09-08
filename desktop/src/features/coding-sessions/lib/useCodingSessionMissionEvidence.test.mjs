@@ -223,21 +223,40 @@ function nativeResponse(request) {
   };
 }
 
+/**
+ * A fake client at the transport's bundled surface: every history read is one
+ * `fetchEventsBatch` (recorded filter by filter in `fetches`) and the live
+ * fence is one `subscribeLiveMany` (recorded filter by filter in
+ * `subscriptions`, all sharing the one REQ's callback and close).
+ */
 function clientFor(history) {
   const fetches = [];
   const subscriptions = [];
+  const batches = [];
   return {
     fetches,
     subscriptions,
-    fetchEvents: async (filter) => {
-      fetches.push(filter);
-      return history.filter((event) => filter.kinds.includes(event.kind));
+    batches,
+    fetchEventsBatch: async (filters) => {
+      batches.push(filters);
+      fetches.push(...filters);
+      return history.filter((event) =>
+        filters.some((filter) => filter.kinds.includes(event.kind)),
+      );
     },
-    subscribeLive: async (filter, onEvent) => {
-      const subscription = { filter, onEvent, closed: false };
-      subscriptions.push(subscription);
+    subscribeLiveMany: async (filters, onEvent) => {
+      const shared = { closed: false };
+      for (const filter of filters) {
+        subscriptions.push({
+          filter,
+          onEvent,
+          get closed() {
+            return shared.closed;
+          },
+        });
+      }
       return () => {
-        subscription.closed = true;
+        shared.closed = true;
       };
     },
   };
@@ -305,6 +324,7 @@ test("filters are explicit and history plus live evidence stays exactly scoped",
     ),
   );
   assert.deepEqual(client.fetches[2].authors, [RELAY]);
+  assert.equal(client.batches.length, 1, "three filters, one bundled read");
   assert.equal(client.subscriptions.length, 3);
   assert.equal(mounted.result.current.retainedEventCount, 2);
   assert.equal(mounted.result.current.inspectorInput.rejectedEventCount, 2);
@@ -349,8 +369,8 @@ test("live is buffered until every history read settles and supplies its causal 
   });
   let resolveTransactions;
   const client = clientFor([]);
-  client.fetchEvents = (filter) =>
-    filter.kinds[0] === KIND_CODING_SESSION_TEAM_TRANSACTION
+  client.fetchEventsBatch = (filters) =>
+    filters.some((f) => f.kinds[0] === KIND_CODING_SESSION_TEAM_TRANSACTION)
       ? new Promise((resolve) => {
           resolveTransactions = resolve;
         })
@@ -390,8 +410,8 @@ test("history failure remains explicit and never folds buffered live evidence", 
   });
   let rejectTransactions;
   const client = clientFor([]);
-  client.fetchEvents = (filter) =>
-    filter.kinds[0] === KIND_CODING_SESSION_TEAM_TRANSACTION
+  client.fetchEventsBatch = (filters) =>
+    filters.some((f) => f.kinds[0] === KIND_CODING_SESSION_TEAM_TRANSACTION)
       ? new Promise((_, reject) => {
           rejectTransactions = reject;
         })
@@ -709,10 +729,10 @@ test("a late native result from an old scope cannot overwrite the new scope", as
   });
   const client = {
     ...clientFor([]),
-    fetchEvents: async (filter) =>
-      filter["#d"]?.includes(SESSION_A)
+    fetchEventsBatch: async (filters) =>
+      filters.some((filter) => filter["#d"]?.includes(SESSION_A))
         ? [assignmentA, reportA]
-        : filter["#d"]?.includes(SESSION_B)
+        : filters.some((filter) => filter["#d"]?.includes(SESSION_B))
           ? [assignmentB, reportB]
           : [],
   };

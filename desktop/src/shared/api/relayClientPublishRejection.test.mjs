@@ -38,7 +38,7 @@ globalThis.window = {
 };
 Date.now = () => fakeNow;
 
-const { RelayClient } = await import("./relayClientSession.ts");
+const { RelayClient } = await import("./relayClientFeatureApi.ts");
 const { activateRateLimit, isRateLimited, resetRateLimitGate } = await import(
   "./relayRateLimitGate.ts"
 );

@@ -1,11 +1,13 @@
 import * as React from "react";
 
 import { relayClient } from "@/shared/api/relayClient";
+import { isRateLimited } from "@/shared/api/relayRateLimitGate";
 import { buildShellWatchEvent } from "@/shared/api/tauriShell";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_SHELL_FRAME } from "@/shared/constants/kinds";
 
 import { ObserveStream, parseShellFrame } from "./shellObserveProtocol";
+import { cadenceTagMs } from "./shellBroadcastCadence";
 
 /** Keepalive cadence; the owner expires a watcher after 45 s (3 beats). */
 const KEEPALIVE_MS = 15_000;
@@ -36,6 +38,8 @@ export function useShellObserver(
   },
 ) {
   const [status, setStatus] = React.useState<ObserverStatus>("connecting");
+  /** The owner's current frame spacing, from the last frame's `cadence` tag. */
+  const [cadenceMs, setCadenceMs] = React.useState<number | null>(null);
   const callbacksRef = React.useRef(callbacks);
   callbacksRef.current = callbacks;
 
@@ -46,6 +50,7 @@ export function useShellObserver(
     const stream = new ObserveStream();
     let lastFrameAt = 0;
     setStatus("connecting");
+    setCadenceMs(null);
 
     const publishWatch = async (action: "watch" | "stop" | "resync") => {
       try {
@@ -75,6 +80,8 @@ export function useShellObserver(
       });
       if (!frame) return;
       lastFrameAt = Date.now();
+      const cadence = cadenceTagMs(event);
+      if (cadence !== null) setCadenceMs(cadence);
       const action = stream.apply(frame);
       if (action.resize) {
         callbacksRef.current.onResize(action.resize.rows, action.resize.cols);
@@ -112,6 +119,10 @@ export function useShellObserver(
     })();
 
     const keepalive = window.setInterval(() => {
+      // Droppable: while the relay's rate-limit gate is armed a beat would
+      // only queue behind it and burst out with everything else; the owner
+      // tolerates two missed beats before expiring a watcher.
+      if (isRateLimited()) return;
       void publishWatch("watch");
     }, KEEPALIVE_MS);
 
@@ -151,5 +162,5 @@ export function useShellObserver(
     );
   }, [target]);
 
-  return { status, resync };
+  return { status, resync, cadenceMs };
 }

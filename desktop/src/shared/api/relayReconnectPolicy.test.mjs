@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isServiceRestartClose,
   isWebSocketClose,
+  jitteredReconnectDelayMs,
   shouldRefuseConnect,
   shouldScheduleReconnect,
   shouldWaitForScheduledReconnect,
@@ -116,4 +117,27 @@ test("only a close frame with code 1012 is a service restart", () => {
     false,
   );
   assert.equal(isServiceRestartClose(null), false);
+});
+
+// ── jitteredReconnectDelayMs ──────────────────────────────────────────────────
+
+test("jitteredReconnectDelayMs spreads the delay across ±25 % and caps it", () => {
+  assert.equal(
+    jitteredReconnectDelayMs(1_000, 30_000, () => 0),
+    750,
+  );
+  assert.equal(
+    jitteredReconnectDelayMs(1_000, 30_000, () => 0.5),
+    1_000,
+  );
+  assert.ok(jitteredReconnectDelayMs(1_000, 30_000, () => 0.999_999) < 1_250);
+  assert.equal(
+    jitteredReconnectDelayMs(30_000, 30_000, () => 0.9),
+    30_000,
+    "never above the cap",
+  );
+  for (let i = 0; i < 100; i++) {
+    const delay = jitteredReconnectDelayMs(4_000, 30_000);
+    assert.ok(delay >= 3_000 && delay < 5_000, `sample ${delay}`);
+  }
 });

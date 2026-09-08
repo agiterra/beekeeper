@@ -40,8 +40,11 @@ import type { Channel, RelayEvent } from "@/shared/api/types";
 import { useStableMap, useStableSet } from "@/shared/hooks/useStableReference";
 import { normalizeRelayUrl } from "@/features/profile/lib/selfProfileStorage";
 import {
+  buildCatchUpFilters,
+  groupEventsByChannel,
+} from "@/features/channels/channelCatchUpFilters";
+import {
   CATCH_UP_LIMIT,
-  channelCatchUpEventKinds,
   resolveObservedUnreadRootId,
   scanChannelCatchUpEvents,
   type ChannelCatchUpScan,
@@ -600,107 +603,119 @@ export function useUnreadChannels(
       | ({ channelId: string; ok: true } & ChannelCatchUpScan)
       | { channelId: string; ok: false };
 
-    void Promise.all(
-      toFetch.map(async (channelId): Promise<CatchUpResult> => {
-        try {
-          const readAt = getEffectiveTimestamp(channelId);
-          const channel = channels.find((c) => c.id === channelId);
-          // NIP-01 `since` is inclusive of `created_at >= since`. The +1
-          // makes the relay-side filter strict-newer; the client-side
-          // `> readAt` check below is the belt to the suspenders.
-          const sinceParam = readAt === null ? 0 : readAt + 1;
+    const channelById = new Map(
+      channels.map((channel) => [channel.id, channel]),
+    );
+    const targets = toFetch.map((channelId) => ({
+      channelId,
+      channel: channelById.get(channelId),
+      readAt: getEffectiveTimestamp(channelId),
+    }));
 
-          const events = await relayClient.fetchEvents({
-            kinds: [...channelCatchUpEventKinds(channel?.channelType)],
-            "#h": [channelId],
-            since: sinceParam,
-            limit: CATCH_UP_LIMIT,
-          });
-
-          const scan = scanChannelCatchUpEvents(events, {
+    // One `POST /query` carrying every channel's filter instead of one REQ
+    // per channel. Each filter keeps its own `since` (that channel's read
+    // marker) and limit; the union comes back grouped by `h` for the scan.
+    void relayClient
+      .fetchEventsBatch(
+        buildCatchUpFilters(
+          targets.map(({ channelId, channel, readAt }) => ({
             channelId,
-            channelName: channel?.name ?? "",
             channelType: channel?.channelType,
             readAt,
-            normalizedPubkey,
-            // Pass 1 grows these in place; persisting them stays here so the
-            // scan itself has no storage side effects.
-            participatedRootIds: participatedRootIdsRef.current,
-            authoredRootIds: authoredRootIdsRef.current,
-            followedRootIds: options.followedRootIds ?? EMPTY_SET,
-            mutedRootIds: mutedRootIdsRef.current,
-            mutedChannelIds: mutedChannelIdsRef.current,
-            recordMentionedRoot,
-          });
-
-          if (normalizedPubkey !== null) {
-            participationStore.write(
+          })),
+        ),
+      )
+      .then((events): CatchUpResult[] => {
+        const byChannel = groupEventsByChannel(events);
+        const results = targets.map(
+          ({ channelId, channel, readAt }): CatchUpResult => ({
+            channelId,
+            ok: true,
+            ...scanChannelCatchUpEvents(byChannel.get(channelId) ?? [], {
+              channelId,
+              channelName: channel?.name ?? "",
+              channelType: channel?.channelType,
+              readAt,
               normalizedPubkey,
-              participatedRootIdsRef.current,
-            );
-            authoredStore.write(normalizedPubkey, authoredRootIdsRef.current);
+              // Pass 1 grows these in place; persisting them stays here so
+              // the scan itself has no storage side effects.
+              participatedRootIds: participatedRootIdsRef.current,
+              authoredRootIds: authoredRootIdsRef.current,
+              followedRootIds: options.followedRootIds ?? EMPTY_SET,
+              mutedRootIds: mutedRootIdsRef.current,
+              mutedChannelIds: mutedChannelIdsRef.current,
+              recordMentionedRoot,
+            }),
+          }),
+        );
+        if (normalizedPubkey !== null) {
+          participationStore.write(
+            normalizedPubkey,
+            participatedRootIdsRef.current,
+          );
+          authoredStore.write(normalizedPubkey, authoredRootIdsRef.current);
+        }
+        return results;
+      })
+      .catch((): CatchUpResult[] =>
+        // Transient relay failure — the batch is one call, so release every
+        // claim and retry them all on the next effect run instead of staying
+        // stuck until identity reset.
+        targets.map(({ channelId }) => ({ channelId, ok: false })),
+      )
+      .then((results) => {
+        if (isCancelled) return;
+        // Guard: don't merge catch-up results into a ref whose scope has drifted
+        // (relay/pubkey changed while this async fetch was in flight). Use the
+        // observed owner's loaded-scope predicate — one scope authority, not two.
+        if (!observedPersistence.isScopeLoaded()) return;
+        let didAdvance = false;
+        const allThreadReplies: ThreadActivityItem[] = [];
+        for (const result of results) {
+          if (!result.ok) {
+            caughtUpChannelsRef.current.delete(result.channelId);
+            continue;
           }
-
-          return { channelId, ok: true, ...scan };
-        } catch {
-          // Transient relay failure for this channel — release the claim
-          // so we retry on the next effect run instead of staying stuck
-          // until identity reset.
-          return { channelId, ok: false };
-        }
-      }),
-    ).then((results) => {
-      if (isCancelled) return;
-      // Guard: don't merge catch-up results into a ref whose scope has drifted
-      // (relay/pubkey changed while this async fetch was in flight). Use the
-      // observed owner's loaded-scope predicate — one scope authority, not two.
-      if (!observedPersistence.isScopeLoaded()) return;
-      let didAdvance = false;
-      const allThreadReplies: ThreadActivityItem[] = [];
-      for (const result of results) {
-        if (!result.ok) {
-          caughtUpChannelsRef.current.delete(result.channelId);
-          continue;
-        }
-        const { channelId, maxExternal, unreadEvents, threadReplies } = result;
-        allThreadReplies.push(...threadReplies);
-        if (unreadEvents.length > 0) {
-          for (const event of unreadEvents) {
-            recordUnreadEvent(channelId, event);
+          const { channelId, maxExternal, unreadEvents, threadReplies } =
+            result;
+          allThreadReplies.push(...threadReplies);
+          if (unreadEvents.length > 0) {
+            for (const event of unreadEvents) {
+              recordUnreadEvent(channelId, event);
+            }
+            didAdvance = true;
           }
-          didAdvance = true;
-        }
-        if (maxExternal > 0) {
-          const readAtNow = getEffectiveTimestamp(channelId) ?? 0;
-          if (maxExternal > readAtNow) {
-            const current = latestByChannelRef.current.get(channelId) ?? 0;
-            if (maxExternal > current) {
-              latestByChannelRef.current.set(channelId, maxExternal);
-              didAdvance = true;
+          if (maxExternal > 0) {
+            const readAtNow = getEffectiveTimestamp(channelId) ?? 0;
+            if (maxExternal > readAtNow) {
+              const current = latestByChannelRef.current.get(channelId) ?? 0;
+              if (maxExternal > current) {
+                latestByChannelRef.current.set(channelId, maxExternal);
+                didAdvance = true;
+              }
             }
           }
         }
-      }
-      if (allThreadReplies.length > 0) {
-        const added = addThreadActivityItems(
-          threadActivityRef.current,
-          allThreadReplies,
-        );
-        if (added.didAdd) {
-          threadActivityRef.current = added.items;
-          activityPersistence.schedule(currentActivityScope);
-          didAdvance = true;
+        if (allThreadReplies.length > 0) {
+          const added = addThreadActivityItems(
+            threadActivityRef.current,
+            allThreadReplies,
+          );
+          if (added.didAdd) {
+            threadActivityRef.current = added.items;
+            activityPersistence.schedule(currentActivityScope);
+            didAdvance = true;
+          }
         }
-      }
-      if (didAdvance) bumpLatestVersion();
-      if (
-        participatedRootIdsRef.current.size !== participatedSizeBefore ||
-        authoredRootIdsRef.current.size !== authoredSizeBefore ||
-        mentionedRootIdsRef.current.size !== mentionedSizeBefore
-      ) {
-        bumpMembershipVersion();
-      }
-    });
+        if (didAdvance) bumpLatestVersion();
+        if (
+          participatedRootIdsRef.current.size !== participatedSizeBefore ||
+          authoredRootIdsRef.current.size !== authoredSizeBefore ||
+          mentionedRootIdsRef.current.size !== mentionedSizeBefore
+        ) {
+          bumpMembershipVersion();
+        }
+      });
 
     return () => {
       isCancelled = true;

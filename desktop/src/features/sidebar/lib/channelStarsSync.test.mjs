@@ -22,7 +22,7 @@ function makeStore(channels = {}) {
 // no publish should fire.
 test("destroy: cancels pending publish without flushing to the relay", () => {
   const publishCalls = [];
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   mock.method(relayClient, "publishEvent", (...args) => {
     publishCalls.push(args);
     return Promise.resolve();
@@ -46,7 +46,7 @@ test("destroy: aborts in-flight doPublish after fetchOwnBlobBeforePublish resolv
   const publishCalls = [];
   mock.method(
     relayClient,
-    "fetchEvents",
+    "fetchEventsCoalesced",
     () =>
       new Promise((res) => {
         releaseFetch = () => res([]);
@@ -91,7 +91,7 @@ test("destroy: is safe to call with no pending publish", () => {
 
 // 1. fetch failed → hold, pendingStore null (mutation: remove failed guard → seed queued)
 test("revert-fix: fetch failed (error) does not trigger seed-publish via bootstrap", async () => {
-  mock.method(relayClient, "fetchEvents", () =>
+  mock.method(relayClient, "fetchEventsCoalesced", () =>
     Promise.reject(new Error("relay timeout")),
   );
   mock.method(relayClient, "publishEvent", () => Promise.resolve());
@@ -112,7 +112,7 @@ test("revert-fix: fetch failed (error) does not trigger seed-publish via bootstr
 
 // 2. absent + prior watermark → hold, pendingStore null (mutation: clear watermark → seed queued)
 test("revert-fix: absent fetch with prior watermark blocks seed-publish via bootstrap", async () => {
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   mock.method(relayClient, "publishEvent", () => Promise.resolve());
   const fw = makeFakeWindow();
   fw.localStorage.setItem(
@@ -142,7 +142,7 @@ test("revert-fix: absent fetch with prior watermark blocks seed-publish via boot
 
 // 3. absent + zero watermark + non-empty → seed queued (mutation: remove seed call → pendingStore null)
 test("revert-fix: absent fetch with zero watermark seeds via bootstrap (first-sync preserved)", async () => {
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   mock.method(relayClient, "publishEvent", () => Promise.resolve());
   const fw = makeFakeWindow();
   const restore = installFakeWindow(fw);
@@ -170,7 +170,7 @@ test("revert-fix: absent fetch with zero watermark seeds via bootstrap (first-sy
 test("revert-fix: relay-A watermark does not suppress first-sync seed on relay-B", async () => {
   const relayA = "wss://a.relay.test";
   const relayB = "wss://b.relay.test";
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   mock.method(relayClient, "publishEvent", () => Promise.resolve());
   const fw = makeFakeWindow();
   fw.localStorage.setItem(

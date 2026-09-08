@@ -56,7 +56,7 @@ export class ChannelMuteSyncManager {
 
   async fetchRemoteMutes(): Promise<FetchResult<RemoteMutes>> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_MUTES],
         authors: [this.pubkey],
         "#d": [D_TAG],
@@ -115,7 +115,7 @@ export class ChannelMuteSyncManager {
     store: ChannelMuteStore,
   ): Promise<ChannelMuteStore> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_MUTES],
         authors: [this.pubkey],
         "#d": [D_TAG],

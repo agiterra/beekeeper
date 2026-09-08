@@ -100,7 +100,7 @@ export class CommunityThemeSyncManager {
 
   async fetchRemote(): Promise<RemoteCommunityThemeResult> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_COMMUNITY_THEME],
         authors: [this.pubkey],
         "#d": [D_TAG],

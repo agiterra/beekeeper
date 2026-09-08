@@ -38,6 +38,22 @@ export type RelaySubscriptionFilter = {
   until?: number;
 } & Partial<Record<`#${string}`, string[]>>;
 
+/** NIP-11 `max_filters`: the relay rejects a REQ carrying more than this. */
+export const MAX_FILTERS_PER_REQ = 10;
+
+/**
+ * Aggregate `#h` values the relay accepts per request (WebSocket REQ and
+ * `POST /query` alike): `MAX_EXPLICIT_CHANNEL_VALUES` in
+ * `crates/buzz-relay/src/handlers/req.rs`, summed across every filter in the
+ * request.
+ */
+export const MAX_CHANNEL_VALUES_PER_REQUEST = 128;
+
+/** Number of `#h` values a filter contributes to the per-request channel cap. */
+export function filterChannelValueCount(filter: RelaySubscriptionFilter) {
+  return filter["#h"]?.length ?? 0;
+}
+
 type HistorySubscription = {
   mode: "history";
   events: RelayEvent[];
@@ -58,10 +74,23 @@ export type LiveSubscriptionReadiness = "eose" | "closed" | "timeout";
 
 type LiveSubscription = {
   mode: "live";
-  filter: RelaySubscriptionFilter;
+  /**
+   * The NIP-01 filters this REQ carries (OR-ed by the relay, 1–10 per frame).
+   * One REQ can cover many channels through a multi-value `#h`, which is how
+   * the desktop keeps one live subscription per 128 channels instead of one
+   * per channel.
+   */
+  filters: RelaySubscriptionFilter[];
   onEvent: (event: RelayEvent) => void;
   resolveReady?: (readiness: LiveSubscriptionReadiness) => void;
   lastSeenCreatedAt?: number;
+  /**
+   * Newest `created_at` seen per `h` tag on this subscription. A multi-`#h`
+   * REQ shares one `limit`, so a reconnect cannot ask the relay for "what I
+   * missed" in one filter; replay backfills each channel from its own cursor
+   * instead (`relayReconnectReplay.ts`).
+   */
+  lastSeenByChannel?: Record<string, number>;
   /**
    * Lower bound of a reconnect backfill window that has not yet completed.
    *

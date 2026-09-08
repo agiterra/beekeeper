@@ -5,7 +5,6 @@ import {
   buildReconnectReplayFilter,
   PAGE_REPLAY_MAX_ATTEMPTS,
   replayLiveSubscriptions,
-  REPLAY_BATCH_SIZE,
   shouldPageReconnectReplay,
 } from "./relayReconnectReplay.ts";
 import { buildChannelFilter } from "./relayChannelFilters.ts";
@@ -184,79 +183,91 @@ test("initial subscription replay preserves the original filter", () => {
   assert.equal(replayFilter(filter, undefined), filter);
 });
 
-// ── Batching: REPLAY_BATCH_SIZE cap ──────────────────────────────────────────
+// ── Pacing through the send budget ───────────────────────────────────────────
 
-test("replay sends all subs in one batch when count equals REPLAY_BATCH_SIZE", async () => {
-  resetGate();
-  let delayCount = 0;
-  const sentIds = [];
+async function settle() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
 
-  const subscriptions = new Map(
-    Array.from({ length: REPLAY_BATCH_SIZE }, (_, i) => [
-      `sub-${i}`,
-      {
-        mode: "live",
-        filter: { kinds: [9], "#h": [`ch-${i}`], limit: 50 },
-        onEvent: () => {},
-        lastSeenCreatedAt: undefined,
-      },
-    ]),
+test("replay paces live REQs through the send budget: no 5 s window exceeds the read lane", async () => {
+  resetGate(0);
+  const { RelaySendBudget, LOCAL_BURST_CAPACITY, WRITE_RESERVE } = await import(
+    "./relaySendBudget.ts"
   );
-
-  await replayLiveSubscriptions({
-    subscriptions,
-    sendRaw: async (payload) => {
-      sentIds.push(payload[1]);
-    },
-    requestHistory: async () => [],
-    setTimeoutFn: (fn, _ms) => {
-      delayCount++;
-      fn();
-      return 0;
-    },
+  const budget = new RelaySendBudget({
+    now: () => fakeNow,
+    setTimeoutFn: fakeSetTimeout,
+    clearTimeoutFn: fakeClearTimeout,
   });
-
-  assert.equal(sentIds.length, REPLAY_BATCH_SIZE);
-  assert.equal(delayCount, 0, "no inter-batch delay for exactly one batch");
-});
-
-test("replay splits subscriptions into batches of REPLAY_BATCH_SIZE", async () => {
-  resetGate();
-  let delayCount = 0;
-  const sentIds = [];
-  const batchBreakpoints = []; // indices where a delay fired
-
-  const subCount = REPLAY_BATCH_SIZE + 3;
+  const subCount = 60;
+  const sentAtMs = [];
   const subscriptions = new Map(
     Array.from({ length: subCount }, (_, i) => [
       `sub-${i}`,
       {
         mode: "live",
-        filter: { kinds: [9], "#h": [`ch-${i}`], limit: 50 },
+        filters: [{ kinds: [9], "#h": [`ch-${i}`], limit: 0 }],
         onEvent: () => {},
-        lastSeenCreatedAt: undefined,
       },
     ]),
   );
 
+  const replayPromise = replayLiveSubscriptions({
+    subscriptions,
+    // The session's sendRaw charges the read lane before every REQ frame.
+    sendRaw: async () => {
+      await budget.acquire("read");
+      sentAtMs.push(fakeNow);
+    },
+    requestHistoryBatch: async () => [],
+  });
+
+  // Drive the fake clock until every REQ is out; the budget wakes waiters on
+  // fake timers as the window slides.
+  for (let step = 0; sentAtMs.length < subCount && step < 10_000; step++) {
+    await settle();
+    tickTo(fakeNow + 100);
+  }
+  await replayPromise;
+
+  assert.equal(sentAtMs.length, subCount, "every subscription was replayed");
+  const readCap = LOCAL_BURST_CAPACITY - WRITE_RESERVE;
+  for (const start of sentAtMs) {
+    const inWindow = sentAtMs.filter(
+      (ms) => ms >= start && ms < start + 5_000,
+    ).length;
+    assert.ok(
+      inWindow <= readCap,
+      `${inWindow} REQs in the 5 s window from ${start} ms exceeds the read lane cap ${readCap}`,
+    );
+  }
+  assert.ok(
+    sentAtMs[sentAtMs.length - 1] >= 5_000,
+    "60 REQs cannot fit in one window; the tail must have waited",
+  );
+});
+
+test("replay sends one REQ per subscription carrying all its filters", async () => {
+  resetGate();
+  const sent = [];
+  const filters = [
+    { kinds: [9], "#h": ["ch-a", "ch-b"], limit: 0 },
+    { kinds: [7], "#p": ["me"], limit: 0 },
+    { kinds: [40002], limit: 0 },
+  ];
+  const subscriptions = new Map([
+    ["sub-many", { mode: "live", filters, onEvent: () => {} }],
+  ]);
+
   await replayLiveSubscriptions({
     subscriptions,
     sendRaw: async (payload) => {
-      sentIds.push(payload[1]);
+      sent.push(payload);
     },
-    requestHistory: async () => [],
-    setTimeoutFn: (fn, _ms) => {
-      delayCount++;
-      batchBreakpoints.push(sentIds.length);
-      fn();
-      return 0;
-    },
+    requestHistoryBatch: async () => [],
   });
 
-  assert.equal(delayCount, 1, "one inter-batch delay between two batches");
-  assert.equal(sentIds.length, subCount, "all subs sent");
-  // The delay fired after the first batch (REPLAY_BATCH_SIZE subs sent).
-  assert.equal(batchBreakpoints[0], REPLAY_BATCH_SIZE);
+  assert.deepEqual(sent, [["REQ", "sub-many", ...filters]]);
 });
 
 // ── Visible-channel priority ──────────────────────────────────────────────────
@@ -270,7 +281,7 @@ test("visible channel subscription is sent first", async () => {
       "other-1",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-other"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-other"], limit: 50 }],
         onEvent: () => {},
         lastSeenCreatedAt: undefined,
       },
@@ -279,7 +290,7 @@ test("visible channel subscription is sent first", async () => {
       "visible-sub",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-visible"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-visible"], limit: 50 }],
         onEvent: () => {},
         lastSeenCreatedAt: undefined,
       },
@@ -288,7 +299,7 @@ test("visible channel subscription is sent first", async () => {
       "other-2",
       {
         mode: "live",
-        filter: { kinds: [9], "#h": ["ch-other2"], limit: 50 },
+        filters: [{ kinds: [9], "#h": ["ch-other2"], limit: 50 }],
         onEvent: () => {},
         lastSeenCreatedAt: undefined,
       },
@@ -300,7 +311,7 @@ test("visible channel subscription is sent first", async () => {
     sendRaw: async (payload) => {
       sentOrder.push(payload[1]);
     },
-    requestHistory: async () => [],
+    requestHistoryBatch: async () => [],
     visibleChannelId: "ch-visible",
   });
 
@@ -322,7 +333,7 @@ test("replay waits for rate-limit gate before sending REQs", async () => {
         "sub-1",
         {
           mode: "live",
-          filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+          filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
           onEvent: () => {},
           lastSeenCreatedAt: undefined,
         },
@@ -331,7 +342,7 @@ test("replay waits for rate-limit gate before sending REQs", async () => {
     sendRaw: async (payload) => {
       sentIds.push(payload[1]);
     },
-    requestHistory: async () => [],
+    requestHistoryBatch: async () => [],
     setTimeoutFn: (fn, _ms) => {
       fn();
       return 0;
@@ -361,7 +372,7 @@ test("stale replay sends no REQs when generation advances while gate was active"
         "sub-1",
         {
           mode: "live",
-          filter: { kinds: [9], "#h": ["ch-1"], limit: 50 },
+          filters: [{ kinds: [9], "#h": ["ch-1"], limit: 50 }],
           onEvent: () => {},
           lastSeenCreatedAt: undefined,
         },
@@ -370,7 +381,7 @@ test("stale replay sends no REQs when generation advances while gate was active"
     sendRaw: async (payload) => {
       sentIds.push(payload[1]);
     },
-    requestHistory: async () => [],
+    requestHistoryBatch: async () => [],
     isActive: () => generationActive,
   });
 
@@ -403,7 +414,7 @@ test("channel reconnect replay pages the missed window until a short page", asyn
       "live-1",
       {
         mode: "live",
-        filter,
+        filters: [filter],
         onEvent: (event) => delivered.push(event),
         lastSeenCreatedAt: 1000,
       },
@@ -416,7 +427,7 @@ test("channel reconnect replay pages the missed window until a short page", asyn
     sendRaw: async (payload) => {
       sentPayloads.push(payload);
     },
-    requestHistory: async (filter) => {
+    requestHistoryBatch: async ([filter]) => {
       historyFilters.push(filter);
       return pages.shift() ?? [];
     },
@@ -482,7 +493,7 @@ test("reconnect replay starts live REQs in parallel and preserves per-sub page o
       "live-1",
       {
         mode: "live",
-        filter: buildChannelFilter("channel-1", 50),
+        filters: [buildChannelFilter("channel-1", 50)],
         onEvent: () => {},
         lastSeenCreatedAt: 1000,
       },
@@ -491,7 +502,7 @@ test("reconnect replay starts live REQs in parallel and preserves per-sub page o
       "live-2",
       {
         mode: "live",
-        filter: buildChannelFilter("channel-2", 50),
+        filters: [buildChannelFilter("channel-2", 50)],
         onEvent: () => {},
         lastSeenCreatedAt: 1000,
       },
@@ -508,7 +519,7 @@ test("reconnect replay starts live REQs in parallel and preserves per-sub page o
         sendResolvers.push(resolve);
       });
     },
-    requestHistory: async (filter) => {
+    requestHistoryBatch: async ([filter]) => {
       const channelId = filter["#h"]?.[0];
       historyFiltersByChannel[channelId].push(filter.until);
       return pagesByChannel[channelId].shift() ?? [];
@@ -538,68 +549,167 @@ test("reconnect replay starts live REQs in parallel and preserves per-sub page o
   });
 });
 
-// ── Per-batch gate re-check (F2 fix) ─────────────────────────────────────────
+// ── Per-REQ gate re-check ─────────────────────────────────────────────────────
 
-test("batch-1 arms gate mid-replay: batch-2 is withheld until gate expires", async () => {
-  // Gate is inactive at the start of replay. Batch 1 fires and (simulating the
-  // relay's admission control) activates the gate. Batch 2 must wait until the
-  // gate clears before its REQs are sent.
+test("a refusal mid-replay arms the gate: the remaining REQs wait until it expires", async () => {
+  // The gate is inactive when replay starts. The third REQ (simulating the
+  // relay's admission control) arms it; every later REQ must wait until the
+  // gate clears before it is sent.
   resetGate(0);
-
-  const BATCH = REPLAY_BATCH_SIZE;
-  const sentAtMs = []; // record the fakeNow when each REQ fires
-
-  // Build BATCH+1 subscriptions so there are exactly two batches.
+  const sentAtMs = [];
+  let armGate;
+  const gateArmed = new Promise((resolve) => {
+    armGate = resolve;
+  });
   const subscriptions = new Map(
-    Array.from({ length: BATCH + 1 }, (_, i) => [
+    Array.from({ length: 6 }, (_, i) => [
       `sub-${i}`,
       {
         mode: "live",
-        filter: { kinds: [9], "#h": [`ch-${i}`], limit: 50 },
+        filters: [{ kinds: [9], "#h": [`ch-${i}`], limit: 50 }],
         onEvent: () => {},
-        lastSeenCreatedAt: undefined,
       },
     ]),
   );
 
-  let _batchCount = 0;
   const replayPromise = replayLiveSubscriptions({
     subscriptions,
-    sendRaw: async (payload) => {
-      sentAtMs.push({ id: payload[1], ms: fakeNow });
-      // After the first full batch is sent, arm the gate for 5 s.
-      // This simulates the relay responding to batch-1 traffic with back-pressure.
-      if (sentAtMs.length === BATCH) {
-        _batchCount += 1;
+    sendConcurrency: 1,
+    sendRaw: async () => {
+      sentAtMs.push(fakeNow);
+      if (sentAtMs.length === 3) {
         activateRateLimit(5);
+        armGate();
       }
     },
-    requestHistory: async () => [],
-    setTimeoutFn: (fn, _ms) => {
-      fn();
-      return 0;
+    requestHistoryBatch: async () => [],
+  });
+
+  await gateArmed;
+  tickTo(5_001);
+  await replayPromise;
+
+  assert.equal(
+    sentAtMs.filter((ms) => ms < 5_001).length,
+    3,
+    "three REQs went out before the refusal",
+  );
+  assert.equal(
+    sentAtMs.filter((ms) => ms >= 5_001).length,
+    3,
+    "the rest waited for the gate to expire",
+  );
+});
+
+// ── Per-channel cursors and batched backfill ─────────────────────────────────
+
+test("multi-#h subscription replays from the earliest channel cursor with limit 0 and backfills each channel in one batch", async () => {
+  resetGate(0);
+  const delivered = [];
+  const batches = [];
+  const filter = {
+    kinds: [...buildChannelFilter("x", 0).kinds],
+    "#h": ["ch-1", "ch-2", "ch-3"],
+    limit: 0,
+    since: 900,
+  };
+  const subscription = {
+    mode: "live",
+    filters: [filter],
+    onEvent: (event) => delivered.push(event.id),
+    lastSeenCreatedAt: 1500,
+  };
+  // ch-1 and ch-2 saw events at different times; ch-3 only inherits the
+  // subscription-wide cursor.
+  prepareSubscriptionEvent(subscription, {
+    ...event("seen-1", 1200),
+    tags: [["h", "ch-1"]],
+  });
+  prepareSubscriptionEvent(subscription, {
+    ...event("seen-2", 1500),
+    tags: [["h", "ch-2"]],
+  });
+  const sent = [];
+  const subscriptions = new Map([["live-many", subscription]]);
+
+  await replayLiveSubscriptions({
+    subscriptions,
+    now: 2000,
+    sendRaw: async (payload) => {
+      sent.push(payload);
+    },
+    requestHistoryBatch: async (filters) => {
+      batches.push(filters);
+      return [
+        { ...event("missed-1", 1300), tags: [["h", "ch-1"]] },
+        { ...event("missed-2", 1600), tags: [["h", "ch-2"]] },
+      ];
     },
   });
 
-  // Advance time to expire the gate while the replay is suspended in the
-  // per-batch gate await. This unblocks the second batch.
-  tickTo(5_001);
-
-  await replayPromise;
-
-  const batch1Ids = sentAtMs.filter((r) => r.ms < 5_001).map((r) => r.id);
-  const batch2Ids = sentAtMs.filter((r) => r.ms >= 5_001).map((r) => r.id);
-
-  assert.equal(
-    batch1Ids.length,
-    BATCH,
-    "batch 1 must send exactly REPLAY_BATCH_SIZE REQs",
+  assert.deepEqual(sent, [
+    ["REQ", "live-many", { ...filter, since: 1195, limit: 0 }],
+  ]);
+  assert.equal(batches.length, 1, "one batched read for all channels");
+  assert.deepEqual(
+    batches[0].map((f) => [f["#h"][0], f.since, f.until, f.limit]),
+    [
+      ["ch-1", 1195, 2000, 500],
+      ["ch-2", 1495, 2000, 500],
+      ["ch-3", 1495, 2000, 500],
+    ],
   );
+  assert.deepEqual(delivered, ["missed-1", "missed-2"]);
   assert.equal(
-    batch2Ids.length,
-    1,
-    "batch 2 must send the remaining sub after the gate expires",
+    subscription.pendingReplaySince,
+    undefined,
+    "a completed batch backfill clears the pinned floor",
   );
+});
+
+test("multi-#h backfill keeps paging only the channels that filled their page", async () => {
+  resetGate(0);
+  const batches = [];
+  const filter = {
+    kinds: [...buildChannelFilter("x", 0).kinds],
+    "#h": ["ch-full", "ch-short"],
+    limit: 0,
+  };
+  const subscription = {
+    mode: "live",
+    filters: [filter],
+    onEvent: () => {},
+    lastSeenCreatedAt: 1000,
+  };
+  const subscriptions = new Map([["live-many", subscription]]);
+  const fullPage = eventRange("full", 1501, 500).map((e) => ({
+    ...e,
+    tags: [["h", "ch-full"]],
+  }));
+
+  await replayLiveSubscriptions({
+    subscriptions,
+    now: 2000,
+    sendRaw: async () => {},
+    requestHistoryBatch: async (filters) => {
+      batches.push(filters.map((f) => [f["#h"][0], f.since, f.until]));
+      if (batches.length === 1) {
+        return [
+          ...fullPage,
+          { ...event("short", 1400), tags: [["h", "ch-short"]] },
+        ];
+      }
+      return [{ ...event("older", 1100), tags: [["h", "ch-full"]] }];
+    },
+  });
+
+  assert.deepEqual(batches, [
+    [
+      ["ch-full", 995, 2000],
+      ["ch-short", 995, 2000],
+    ],
+    [["ch-full", 995, 1501]],
+  ]);
 });
 
 // ── Backfill failure containment ─────────────────────────────────────────────
@@ -612,7 +722,7 @@ test("history backfill rejection never escapes replayLiveSubscriptions", async (
       "live-1",
       {
         mode: "live",
-        filter,
+        filters: [filter],
         onEvent: () => {},
         lastSeenCreatedAt: 1000,
       },
@@ -625,7 +735,7 @@ test("history backfill rejection never escapes replayLiveSubscriptions", async (
     subscriptions,
     now: 2000,
     sendRaw: async () => {},
-    requestHistory: async () => {
+    requestHistoryBatch: async () => {
       historyCalls++;
       throw new Error("rate-limited: quota exceeded; retry in 4s");
     },
@@ -647,7 +757,7 @@ test("backfill retry waits out the armed gate, then succeeds", async () => {
       "live-1",
       {
         mode: "live",
-        filter,
+        filters: [filter],
         onEvent: (event) => delivered.push(event),
         lastSeenCreatedAt: 1000,
       },
@@ -663,7 +773,7 @@ test("backfill retry waits out the armed gate, then succeeds", async () => {
     subscriptions,
     now: 2000,
     sendRaw: async () => {},
-    requestHistory: async () => {
+    requestHistoryBatch: async () => {
       attemptAtMs.push(fakeNow);
       if (attemptAtMs.length === 1) {
         // Mirror relayClosedRecovery: the CLOSED handler arms the gate
@@ -699,7 +809,7 @@ test("backfill retry aborts when the subscription was replaced", async () => {
   const filter = buildChannelFilter("channel-1", 50);
   const subscription = {
     mode: "live",
-    filter,
+    filters: [filter],
     onEvent: () => {},
     lastSeenCreatedAt: 1000,
   };
@@ -710,7 +820,7 @@ test("backfill retry aborts when the subscription was replaced", async () => {
     subscriptions,
     now: 2000,
     sendRaw: async () => {},
-    requestHistory: async () => {
+    requestHistoryBatch: async () => {
       historyCalls++;
       // Simulate the subscription being torn down while the REQ is in flight.
       subscriptions.delete("live-1");
@@ -734,7 +844,7 @@ test("exhausted backfill pins the floor: next replay still requests the original
   const filter = buildChannelFilter("channel-1", 50);
   const subscription = {
     mode: "live",
-    filter,
+    filters: [filter],
     onEvent: () => {},
     lastSeenCreatedAt: 1000,
   };
@@ -745,7 +855,7 @@ test("exhausted backfill pins the floor: next replay still requests the original
     subscriptions,
     now: 2000,
     sendRaw: async () => {},
-    requestHistory: async () => {
+    requestHistoryBatch: async () => {
       throw new Error("rate-limited: quota exceeded; retry in 4s");
     },
   });
@@ -765,7 +875,7 @@ test("exhausted backfill pins the floor: next replay still requests the original
     subscriptions,
     now: 2200,
     sendRaw: async () => {},
-    requestHistory: async (filter) => {
+    requestHistoryBatch: async ([filter]) => {
       historyFilters.push(filter);
       return [];
     },
@@ -789,7 +899,7 @@ test("exhausted backfill pins the floor: next replay still requests the original
     subscriptions,
     now: 2300,
     sendRaw: async () => {},
-    requestHistory: async (filter) => {
+    requestHistoryBatch: async ([filter]) => {
       laterFilters.push(filter);
       return [];
     },
@@ -812,7 +922,7 @@ test("in-flight stale abort keeps the pinned floor for the superseding connectio
   const filter = buildChannelFilter("channel-1", 50);
   const subscription = {
     mode: "live",
-    filter,
+    filters: [filter],
     onEvent: () => {},
     lastSeenCreatedAt: 1000,
   };
@@ -825,7 +935,7 @@ test("in-flight stale abort keeps the pinned floor for the superseding connectio
     now: 2000,
     sendRaw: async () => {},
     isActive: () => generationActive,
-    requestHistory: async () => {
+    requestHistoryBatch: async () => {
       historyCalls++;
       // Connection A is superseded while the REQ is in flight: the generation
       // advances, but the subscription keeps its key AND object identity —

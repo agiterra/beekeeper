@@ -4,9 +4,11 @@ import { createAuthEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   getTextPayload,
+  MAX_FILTERS_PER_REQ,
   sortEvents,
   type RelaySubscriptionFilter,
 } from "@/shared/api/relayClientShared";
+import { chunkFiltersForRequest } from "@/shared/api/relayQueryCoalescer";
 import { closeWebSocket } from "@/shared/api/relayWebSocketClose";
 import {
   activateRateLimitIfSignalled,
@@ -105,7 +107,41 @@ export class ReadOnlyRelayClient {
 
   async fetchEvents(filter: RelaySubscriptionFilter): Promise<RelayEvent[]> {
     await this.connect();
-    return this.requestHistory(filter);
+    return this.requestHistory([filter]);
+  }
+
+  /**
+   * Several filters as as few REQs as the relay allows: up to
+   * {@link MAX_FILTERS_PER_REQ} filters and 128 aggregate `#h` values per
+   * frame, each frame one admission unit. Resolves the deduplicated,
+   * oldest-first union. This observer has no HTTP bridge to the inactive
+   * relay, so the bundle stays on the WebSocket; each filter keeps its own
+   * `limit` under the frame's single EOSE.
+   */
+  async fetchEventsBatch(
+    filters: RelaySubscriptionFilter[],
+  ): Promise<RelayEvent[]> {
+    if (filters.length === 0) return [];
+    await this.connect();
+    const chunks = chunkFiltersForRequest(
+      filters.map((filter) => ({ filter })),
+      { maxFilters: MAX_FILTERS_PER_REQ },
+    );
+    const pages = await Promise.all(
+      chunks.map((chunk) =>
+        this.requestHistory(chunk.map((entry) => entry.filter)),
+      ),
+    );
+    const seen = new Set<string>();
+    const union: RelayEvent[] = [];
+    for (const page of pages) {
+      for (const event of page) {
+        if (seen.has(event.id)) continue;
+        seen.add(event.id);
+        union.push(event);
+      }
+    }
+    return sortEvents(union);
   }
 
   async publishEvent(event: RelayEvent): Promise<void> {
@@ -166,7 +202,7 @@ export class ReadOnlyRelayClient {
   }
 
   private requestHistory(
-    filter: RelaySubscriptionFilter,
+    filters: RelaySubscriptionFilter[],
   ): Promise<RelayEvent[]> {
     if (this.wsId === null) {
       return Promise.reject(
@@ -184,7 +220,7 @@ export class ReadOnlyRelayClient {
 
       this.histories.set(subId, { events: [], resolve, reject, timeout });
 
-      void this.sendRaw(["REQ", subId, filter]).catch((error) => {
+      void this.sendRaw(["REQ", subId, ...filters]).catch((error) => {
         window.clearTimeout(timeout);
         this.histories.delete(subId);
         reject(

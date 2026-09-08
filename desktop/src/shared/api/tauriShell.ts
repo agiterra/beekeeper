@@ -249,3 +249,49 @@ export function buildShellWatchEvent(input: {
 export const SHELL_BROADCAST_PUBLISH_EVENT = "shell-broadcast-publish";
 /** `{ sessionId, watchers }` roster updates for the owner's indicator. */
 export const SHELL_BROADCAST_WATCHERS_EVENT = "shell-broadcast-watchers";
+
+/** The frame cadence of one shared session — the answer to
+ * `shell_broadcast_cadence` and the payload of
+ * {@link SHELL_BROADCAST_CADENCE_EVENT}. */
+export type BroadcastCadence = {
+  sessionId: string;
+  /** Current minimum spacing between content frames, in milliseconds. */
+  intervalMs: number;
+  /** The baseline the cadence returns to (1000). */
+  baseIntervalMs: number;
+  /** Hard cap on frames per rolling minute (40). */
+  capPerMinute: number;
+  /** Frames of any type sent inside the current rolling minute. */
+  framesLastMinute: number;
+  /** Milliseconds until a relay-induced back-off releases; 0 at baseline. */
+  backingOffMs: number;
+  /** Why the stream is throttled at all: frames spend the owner's quota. */
+  reason: "quota";
+};
+
+/** Report the relay's OK for one published frame so the broadcaster can back
+ * off on a `rate-limited:` refusal. `sessionId` is the frame's `d` tag. */
+export function shellBroadcastPublishResult(
+  sessionId: string,
+  accepted: boolean,
+  message: string,
+): Promise<void> {
+  return invokeTauri("shell_broadcast_publish_result", {
+    sessionId,
+    accepted,
+    message,
+  });
+}
+
+/** The current frame cadence of a shared session (pull; live changes ride
+ * {@link SHELL_BROADCAST_CADENCE_EVENT}). */
+export function shellBroadcastCadence(
+  sessionId: string,
+): Promise<BroadcastCadence> {
+  return invokeTauri<BroadcastCadence>("shell_broadcast_cadence", {
+    sessionId,
+  });
+}
+
+/** `BroadcastCadence` updates whenever a session's cadence changes. */
+export const SHELL_BROADCAST_CADENCE_EVENT = "shell-broadcast-cadence";

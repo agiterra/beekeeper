@@ -467,9 +467,12 @@ export function useCommunityJoinAlerts({ enabled }: { enabled: boolean }) {
     };
 
     const fetchSnapshot = () => {
+      // One coalesced `POST /query` rather than a WebSocket REQ: the snapshot
+      // is a one-shot read and must not spend the per-key burst budget.
       void relayClient
-        .fetchFirstEvent({ kinds: [KIND_NIP43_MEMBERSHIP_LIST], limit: 1 })
-        .then((snapshot) => {
+        .fetchEventsCoalesced({ kinds: [KIND_NIP43_MEMBERSHIP_LIST], limit: 1 })
+        .then((events) => {
+          const snapshot = events.at(-1) ?? null;
           if (!disposed && snapshot) void handleSnapshot(snapshot);
         })
         .catch(() => {
@@ -495,24 +498,26 @@ export function useCommunityJoinAlerts({ enabled }: { enabled: boolean }) {
       }, MEMBER_REFRESH_DEBOUNCE_MS);
     };
 
+    // One REQ carrying both filters (one admission unit instead of two).
+    // The relay ORs them, so the handler dispatches on kind: a 13534 snapshot
+    // is applied; a kind:8000 delta is an accelerator only — it refetches the
+    // authoritative snapshot instead of being trusted, so the ledger only ever
+    // sees one consistent roster view.
     void relayClient
-      .subscribeLive({ kinds: [KIND_NIP43_MEMBERSHIP_LIST], limit: 1 }, (e) => {
-        if (!disposed) void handleSnapshot(e);
-      })
+      .subscribeLiveMany(
+        [
+          { kinds: [KIND_NIP43_MEMBERSHIP_LIST], limit: 1 },
+          { kinds: [KIND_NIP43_MEMBER_ADDED], limit: 0 },
+        ],
+        (e) => {
+          if (disposed) return;
+          if (e.kind === KIND_NIP43_MEMBERSHIP_LIST) void handleSnapshot(e);
+          else if (e.kind === KIND_NIP43_MEMBER_ADDED) refreshSnapshot();
+        },
+      )
       .then(track)
       .catch((error) => {
         console.error("Couldn’t subscribe to community membership", error);
-      });
-
-    // Accelerator only: refetch the authoritative snapshot instead of trusting
-    // the delta, so the ledger only ever sees one consistent roster view.
-    void relayClient
-      .subscribeLive({ kinds: [KIND_NIP43_MEMBER_ADDED], limit: 0 }, () => {
-        if (!disposed) refreshSnapshot();
-      })
-      .then(track)
-      .catch((error) => {
-        console.error("Couldn’t subscribe to community joins", error);
       });
 
     // A reconnect can span joins that landed while the socket was down, and

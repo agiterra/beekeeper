@@ -66,7 +66,7 @@ export class ChannelSortSyncManager {
 
   async fetchRemoteSortPrefs(): Promise<FetchResult<RemoteSortPrefs>> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_SORT],
         authors: [this.pubkey],
         "#d": [D_TAG],
@@ -125,7 +125,7 @@ export class ChannelSortSyncManager {
     store: ChannelSortStore,
   ): Promise<ChannelSortStore> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_SORT],
         authors: [this.pubkey],
         "#d": [D_TAG],

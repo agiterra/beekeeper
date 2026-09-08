@@ -41,6 +41,7 @@ import {
   upsertShellSession,
   useShellSessions,
 } from "../hooks/useShellSessions";
+import { ShellBroadcastCadenceLine } from "./ShellBroadcastCadenceLine";
 import { ShellTerminal } from "./ShellTerminal";
 
 /** Roster size cap, matching the relay's ingest limit for the announce. */
@@ -484,6 +485,9 @@ export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
             <FolderGit2 className="size-3 shrink-0" />
             {session.currentDirectory}
           </p>
+          {session.projectRef ? (
+            <ShellBroadcastCadenceLine sessionId={sessionId} />
+          ) : null}
         </div>
         {!session.running ? (
           <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground">

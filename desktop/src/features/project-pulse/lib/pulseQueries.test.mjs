@@ -12,6 +12,16 @@ const PROJECT = `30621:${OWNER}:pulse-demo`;
 
 const noEvents = async () => [];
 
+/** A batch fake that records each bundle and answers per filter. */
+function recordingBatch(batches, answer = async () => []) {
+  return async (filters) => {
+    batches.push(filters);
+    const rows = [];
+    for (const filter of filters) rows.push(...(await answer(filter)));
+    return rows;
+  };
+}
+
 /**
  * An unresolved channel set is a read that did not happen, not a project with
  * no channels. Without this the digest comes back `complete: true` with
@@ -21,7 +31,7 @@ const noEvents = async () => [];
  */
 test("an unresolved channel set makes the read partial, never quiet", async () => {
   const digest = await fetchProjectPulseDigest(PROJECT, [], {
-    fetchEvents: noEvents,
+    fetchEventsBatch: noEvents,
     channelsUnresolved: true,
   });
   assert.equal(digest.complete, false);
@@ -52,7 +62,7 @@ test("a stale persisted channel floor remains unresolved during revalidation", (
 
 test("a resolved but empty channel set is a complete, confirmed-empty read", async () => {
   const digest = await fetchProjectPulseDigest(PROJECT, [], {
-    fetchEvents: noEvents,
+    fetchEventsBatch: noEvents,
     channelsUnresolved: false,
   });
   assert.equal(digest.complete, true);
@@ -60,13 +70,14 @@ test("a resolved but empty channel set is a complete, confirmed-empty read", asy
 });
 
 test("cold reads split durable history from the one-shot lease snapshot", async () => {
-  const filters = [];
+  const batches = [];
   await fetchProjectPulseDigest(PROJECT, ["channel-1"], {
-    fetchEvents: async (filter) => {
-      filters.push(filter);
-      return [];
-    },
+    fetchEventsBatch: recordingBatch(batches),
   });
+  // One bundled `POST /query` for the whole project: four filters, four
+  // budgets, one call against the relay instead of four REQs.
+  assert.equal(batches.length, 1);
+  const filters = batches[0];
   assert.equal(filters.length, 4);
   assert.deepEqual(filters[0], {
     kinds: [44240],
@@ -101,25 +112,34 @@ test("cold reads sort, dedupe, and chunk explicit channels at the relay cap", as
     ),
     "channel-000",
   ].reverse();
+  const batches = [];
   await fetchProjectPulseDigest(PROJECT, channels, {
-    fetchEvents: async (filter) => {
-      filters.push(filter);
-      return [];
-    },
+    fetchEventsBatch: recordingBatch(batches),
   });
-  const channelFilters = filters.filter((filter) => filter["#h"]);
-  // Two chunks x (generation facts, receipts) durable reads, then one lease
-  // snapshot per chunk.
-  assert.equal(channelFilters.length, 6);
+  // One bundle per chunk: (generation facts, receipts, lease snapshot) each
+  // as its own filter with its own budget; the entry read rides the first.
+  assert.equal(batches.length, 2);
+  assert.deepEqual(
+    batches.map((bundle) => bundle.map((filter) => filter["#h"]?.length)),
+    [
+      [undefined, 128, 128, 128],
+      [1, 1, 1],
+    ],
+  );
+  assert.deepEqual(
+    batches.map((bundle) => bundle.map((filter) => filter.kinds[0])),
+    [
+      [44240, 44221, 44224, 24223],
+      [44221, 44224, 24223],
+    ],
+  );
+  const channelFilters = batches.flat().filter((filter) => filter["#h"]);
+  filters.push(...channelFilters);
   assert.ok(channelFilters.every((filter) => filter["#h"].length <= 128));
   assert.deepEqual(channelFilters[0]["#h"].slice(0, 2), [
     "channel-000",
     "channel-001",
   ]);
-  assert.deepEqual(
-    channelFilters.map((filter) => filter["#h"].length),
-    [128, 128, 1, 1, 128, 1],
-  );
 });
 
 test("reachable lease schedules invalidation at its exact folded expiry", () => {
@@ -142,22 +162,44 @@ test("reachable lease schedules invalidation at its exact folded expiry", () => 
   assert.equal(pulseLeaseExpiryDelayMs({ sessions: [] }, 999_250), null);
 });
 
-test("a rejected lease snapshot makes the digest partial, never quiet", async () => {
+test("a rejected bundle makes the digest partial for every read in it, never quiet", async () => {
   const digest = await fetchProjectPulseDigest(PROJECT, ["channel-1"], {
-    fetchEvents: async (filter) => {
-      if (filter.kinds.includes(24223))
+    fetchEventsBatch: async (filters) => {
+      if (filters.some((filter) => filter.kinds.includes(24223)))
         throw new Error("lease snapshot timed out");
       return [];
     },
   });
   assert.equal(digest.complete, false);
   assert.deepEqual(digest.providerReachableSessions, []);
-  assert.ok(
-    digest.errors.some(
-      (error) =>
-        error.scope === "leases" &&
-        error.message === "lease snapshot timed out",
-    ),
+  // The bundle carried the entries, the session facts and the lease snapshot;
+  // a failed bundle is every one of those reads not happening.
+  assert.deepEqual(
+    digest.errors
+      .filter((error) => error.message === "lease snapshot timed out")
+      .map((error) => error.scope)
+      .sort(),
+    ["entries", "leases", "sessions"],
+  );
+});
+
+test("truncation is attributed to the read whose budget filled, not the bundle", async () => {
+  const receipt = (index) => ({
+    id: `receipt-${index}`,
+    pubkey: OWNER,
+    created_at: 2_000 + index,
+    kind: 44224,
+    tags: [],
+    content: "{}",
+    sig: "0".repeat(128),
+  });
+  const digest = await fetchProjectPulseDigest(PROJECT, ["channel-1"], {
+    fetchEventsBatch: async () =>
+      Array.from({ length: 1_000 }, (_, index) => receipt(index)),
+  });
+  assert.deepEqual(
+    digest.errors.filter((error) => error.message.includes("truncated")),
+    [{ scope: "sessions", message: "session read truncated at 1000 events" }],
   );
 });
 
@@ -168,20 +210,17 @@ test("a rejected lease snapshot makes the digest partial, never quiet", async ()
  */
 test("events excluded by client validation are recorded, not silently dropped", async () => {
   const digest = await fetchProjectPulseDigest(PROJECT, ["channel-1"], {
-    fetchEvents: async (filter) =>
-      filter.kinds.includes(44240)
-        ? []
-        : [
-            {
-              id: "f".repeat(64),
-              pubkey: OWNER,
-              created_at: 1_785_512_437,
-              kind: 44223,
-              tags: [],
-              content: "not json at all",
-              sig: "0".repeat(128),
-            },
-          ],
+    fetchEventsBatch: async () => [
+      {
+        id: "f".repeat(64),
+        pubkey: OWNER,
+        created_at: 1_785_512_437,
+        kind: 44223,
+        tags: [],
+        content: "not json at all",
+        sig: "0".repeat(128),
+      },
+    ],
   });
   assert.equal(digest.sessions.length, 0);
   assert.ok(
@@ -217,18 +256,20 @@ test("per-turn receipt volume cannot evict the facts a session is proven from", 
   // A relay returns the newest `limit` rows matching the filter, exactly as
   // `ORDER BY created_at DESC ... LIMIT` does. Nothing is folded here: this
   // test is about what the read can still *reach*.
-  const fetchEvents = async (filter) => {
-    const kinds = new Set(filter.kinds);
-    for (const event of pool
-      .filter((event) => kinds.has(event.kind))
-      .sort((left, right) => right.created_at - left.created_at)
-      .slice(0, filter.limit ?? 0)) {
-      read.add(event.id);
+  const fetchEventsBatch = async (filters) => {
+    for (const filter of filters) {
+      const kinds = new Set(filter.kinds);
+      for (const event of pool
+        .filter((event) => kinds.has(event.kind))
+        .sort((left, right) => right.created_at - left.created_at)
+        .slice(0, filter.limit ?? 0)) {
+        read.add(event.id);
+      }
     }
     return [];
   };
 
-  await fetchProjectPulseDigest(PROJECT, ["channel-1"], { fetchEvents });
+  await fetchProjectPulseDigest(PROJECT, ["channel-1"], { fetchEventsBatch });
   assert.equal(
     read.has("create-1"),
     true,

@@ -56,7 +56,7 @@ export class ChannelStarSyncManager {
 
   async fetchRemoteStars(): Promise<FetchResult<RemoteStars>> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_STARS],
         authors: [this.pubkey],
         "#d": [D_TAG],
@@ -115,7 +115,7 @@ export class ChannelStarSyncManager {
     store: ChannelStarStore,
   ): Promise<ChannelStarStore> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_STARS],
         authors: [this.pubkey],
         "#d": [D_TAG],

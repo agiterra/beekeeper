@@ -76,7 +76,7 @@ test("startup backfill keeps only the newest managed-agent head per coordinate",
 test("startPersonaSync backfills history including the deletion kind", () => {
   const fetchCalls = [];
   const liveCalls = [];
-  mock.method(relayClient, "fetchEvents", (filter) => {
+  mock.method(relayClient, "fetchEventsCoalesced", (filter) => {
     fetchCalls.push(filter);
     return Promise.resolve([]);
   });
@@ -129,7 +129,7 @@ test("startPersonaSync forwards its own relay as the event arrival relay", async
   const ownEvent = { id: "e1", pubkey: "owner-pubkey", kind: KIND_PERSONA };
   const foreignEvent = { id: "e2", pubkey: "someone-else", kind: KIND_PERSONA };
 
-  mock.method(relayClient, "fetchEvents", () =>
+  mock.method(relayClient, "fetchEventsCoalesced", () =>
     Promise.resolve([ownEvent, foreignEvent]),
   );
   mock.method(relayClient, "subscribeLive", () =>
@@ -172,7 +172,7 @@ test("startPersonaSync serializes inbound reconciliation in relay order", async 
   };
 
   let onEvent;
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
+  mock.method(relayClient, "fetchEventsCoalesced", () => Promise.resolve([]));
   mock.method(relayClient, "subscribeLive", (_filter, listener) => {
     onEvent = listener;
     return Promise.resolve(() => Promise.resolve());

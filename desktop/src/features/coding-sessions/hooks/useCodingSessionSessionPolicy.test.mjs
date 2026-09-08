@@ -65,9 +65,14 @@ test("L2.3: the read hands the native fold the records and the accepted chain", 
     scope: SCOPE,
     relayPubkey: RELAY,
     client: {
-      fetchEvents: async (filter) => {
-        fetched.push(filter.kinds[0]);
-        return filter.kinds[0] === 44245 ? [policyEvent()] : [];
+      // One bundled read for all three filters; the union comes back in
+      // one array and the read must split it by kind itself.
+      fetchEventsBatch: async (filters) => {
+        assert.equal(filters.length, 3, "all three filters ride one batch");
+        for (const filter of filters) fetched.push(filter.kinds[0]);
+        return filters.some((filter) => filter.kinds[0] === 44245)
+          ? [policyEvent()]
+          : [];
       },
     },
     invoke: async (command, args) => {
@@ -110,7 +115,7 @@ test("L2.3: an adapter response that is not the fold's own shape throws", async 
     readCodingSessionSessionPolicy({
       scope: SCOPE,
       relayPubkey: RELAY,
-      client: { fetchEvents: async () => [] },
+      client: { fetchEventsBatch: async () => [] },
       invoke: async () => ({
         schema: "buzz-coding-session-policy-adapter/v1",
         implementation: "buzz-core",

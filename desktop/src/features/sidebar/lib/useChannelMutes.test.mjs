@@ -25,13 +25,13 @@ test("same-second mute and unmute mutations survive at capacity", async () => {
     await import("./channelMutesStorage.ts");
   const { useChannelMutes } = await import("./useChannelMutes.ts");
 
-  const originalFetchEvents = relayClient.fetchEvents;
+  const originalFetchEvents = relayClient.fetchEventsCoalesced;
   const originalSubscribeLive = relayClient.subscribeLive;
   const originalSubscribeToReconnects = relayClient.subscribeToReconnects;
   const originalDateNow = Date.now;
   const updatedAt = 1_234_567;
   Date.now = () => updatedAt * 1_000;
-  relayClient.fetchEvents = async () => [];
+  relayClient.fetchEventsCoalesced = async () => [];
   relayClient.subscribeLive = async () => async () => {};
   relayClient.subscribeToReconnects = () => () => {};
 
@@ -72,7 +72,7 @@ test("same-second mute and unmute mutations survive at capacity", async () => {
   } finally {
     cleanup();
     Date.now = originalDateNow;
-    relayClient.fetchEvents = originalFetchEvents;
+    relayClient.fetchEventsCoalesced = originalFetchEvents;
     relayClient.subscribeLive = originalSubscribeLive;
     relayClient.subscribeToReconnects = originalSubscribeToReconnects;
   }

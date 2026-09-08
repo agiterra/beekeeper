@@ -42,6 +42,7 @@ import {
 } from "../lib/codingSessionTeamWake";
 import type { CodingSessionUmbrellaRecord } from "../lib/codingSessionTypes";
 import type { CodingSessionMissionEvidenceClient } from "../lib/useCodingSessionMissionEvidence";
+import type { CodingSessionLeadWakeEvidenceClient } from "./useCodingSessionLeadWakeEvidence";
 import { useCodingSessionMissionEvidence } from "../lib/useCodingSessionMissionEvidence";
 import { useCodingSessionLeadWakeEvidence } from "./useCodingSessionLeadWakeEvidence";
 
@@ -66,7 +67,10 @@ export type CodingSessionTeamWakeResult = {
 
 /** Test seams. Production passes neither and uses the real relay and signer. */
 export type CodingSessionTeamWakeDependencies = {
-  evidenceClient?: CodingSessionMissionEvidenceClient;
+  /** Shared by the mission-evidence read (bundled surface) and the lead-wake
+   * read (per-filter surface); `relayClient` satisfies both. */
+  evidenceClient?: CodingSessionMissionEvidenceClient &
+    CodingSessionLeadWakeEvidenceClient;
   publishCommand?: typeof publishCodingSessionCommand;
 };
 

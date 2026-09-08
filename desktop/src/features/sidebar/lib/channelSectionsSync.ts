@@ -60,7 +60,7 @@ export class ChannelSectionSyncManager {
 
   async fetchRemoteSections(): Promise<FetchResult<RemoteSections>> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_SECTIONS],
         authors: [this.pubkey],
         "#d": [D_TAG],
@@ -123,7 +123,7 @@ export class ChannelSectionSyncManager {
     store: ChannelSectionStore,
   ): Promise<ChannelSectionStore> {
     try {
-      const events = await relayClient.fetchEvents({
+      const events = await relayClient.fetchEventsCoalesced({
         kinds: [KIND_CHANNEL_SECTIONS],
         authors: [this.pubkey],
         "#d": [D_TAG],

@@ -336,25 +336,34 @@ function installRelayStub() {
   /** When set, `fetchFirstEvent` parks here before resolving. */
   let fetchGate = null;
 
-  mock.method(relayClient, "subscribeLive", async (filter, onEvent) => {
+  // The hook opens one REQ carrying both filters (13534 snapshot, 8000
+  // delta) and dispatches on kind itself, so the stub registers the one
+  // callback under each filter's kind: `subscribeCount` counts REQs.
+  mock.method(relayClient, "subscribeLiveMany", async (filters, onEvent) => {
     subscribeCount++;
-    const kind = filter.kinds[0];
-    if (!liveByKind.has(kind)) liveByKind.set(kind, []);
-    liveByKind.get(kind).push(onEvent);
+    const kinds = filters.map((filter) => filter.kinds[0]);
+    for (const kind of kinds) {
+      if (!liveByKind.has(kind)) liveByKind.set(kind, []);
+      liveByKind.get(kind).push(onEvent);
+    }
     return async () => {
       unsubscribeCount++;
-      const list = liveByKind.get(kind) ?? [];
-      liveByKind.set(
-        kind,
-        list.filter((fn) => fn !== onEvent),
-      );
+      for (const kind of kinds) {
+        const list = liveByKind.get(kind) ?? [];
+        liveByKind.set(
+          kind,
+          list.filter((fn) => fn !== onEvent),
+        );
+      }
     };
   });
 
-  mock.method(relayClient, "fetchFirstEvent", async () => {
+  // The snapshot refetch is a coalesced one-shot read (`POST /query`), never
+  // a WebSocket REQ; it resolves to the newest matching event, or nothing.
+  mock.method(relayClient, "fetchEventsCoalesced", async () => {
     fetchFirstEventCalls++;
     if (fetchGate) await fetchGate;
-    return nextSnapshot;
+    return nextSnapshot ? [nextSnapshot] : [];
   });
 
   mock.method(relayClient, "subscribeToReconnects", (listener) => {

@@ -5,60 +5,27 @@ import {
   publishCodingSessionLaneRenderableRefs,
   resetCodingSessionLaneVisibility,
 } from "@/features/messages/lib/codingSessionLaneVisibility";
+import { KIND_READ_STATE } from "@/shared/constants/kinds";
 import {
   extractHiddenDmIds,
   extractMemberChannelIds,
   fetchCommunityUnread,
   resolveObservedChannels,
 } from "./communityUnreadObserver.ts";
-
-const PUBKEY = "a".repeat(64);
-const OTHER = "b".repeat(64);
-const CHANNEL_ID = "channel-1";
-const THREAD_ROOT = "c".repeat(64);
-const THREAD_ROOT_2 = "d".repeat(64);
-
-const EMPTY_RELATIONSHIPS = {
-  participatedRootIds: new Set(),
-  followedRootIds: new Set(),
-  authoredRootIds: new Set(),
-  mutedRootIds: new Set(),
-};
-
-function readRelationships(overrides = {}) {
-  return () => ({ ...EMPTY_RELATIONSHIPS, ...overrides });
-}
-
-function event(overrides = {}) {
-  return {
-    id: overrides.id ?? `${Math.random()}`.padEnd(64, "0").slice(0, 64),
-    pubkey: overrides.pubkey ?? OTHER,
-    created_at: overrides.created_at ?? 100,
-    kind: overrides.kind ?? 9,
-    tags: overrides.tags ?? [],
-    content: overrides.content ?? "",
-    sig: overrides.sig ?? "sig",
-  };
-}
-
-function relayFor(filters) {
-  return {
-    requests: [],
-    async fetchEvents(filter) {
-      this.requests.push(filter);
-      return filters.shift()?.(filter) ?? [];
-    },
-  };
-}
-
-// Helper: encode a mutes payload as JSON (decryptMutes stub returns content as-is)
-function mutesContent(mutedIds) {
-  const channels = {};
-  for (const id of mutedIds) {
-    channels[id] = { muted: true, updatedAt: 1 };
-  }
-  return JSON.stringify({ version: 1, channels });
-}
+import {
+  CHANNEL_ID,
+  OTHER,
+  PUBKEY,
+  THREAD_ROOT,
+  THREAD_ROOT_2,
+  event,
+  memberEvent,
+  metadataEvent,
+  mutesContent,
+  mutesEvent,
+  readRelationships,
+  relayFor,
+} from "./communityUnreadObserverFixtures.mjs";
 
 test("extractMemberChannelIds deduplicates d tags", () => {
   assert.deepEqual(
@@ -129,23 +96,9 @@ test("extractHiddenDmIds reads h tags from latest visibility snapshot", () => {
 test("fetchCommunityUnread returns dot and mention count without total unread count", async () => {
   const relay = relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
@@ -209,28 +162,15 @@ test("fetchCommunityUnread ignores self-authored and read thread/message events"
 
   const relay = relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
     () => [
       event({
+        kind: KIND_READ_STATE,
         pubkey: PUBKEY,
         created_at: 80,
         tags: [
@@ -272,34 +212,15 @@ test("fetchCommunityUnread excludes muted-only channel — returns hasUnread:fal
 
   const relay = relayFor([
     // 1. member events — one muted channel
-    () => [
-      event({
-        tags: [
-          ["d", MUTED_CHANNEL],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([MUTED_CHANNEL])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", MUTED_CHANNEL],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(MUTED_CHANNEL, "stream")],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
     () => [],
     // 5. mutes events — MUTED_CHANNEL is muted
-    () => [
-      event({
-        pubkey: PUBKEY,
-        content: mutesContent([MUTED_CHANNEL]),
-      }),
-    ],
+    () => [mutesEvent(mutesContent([MUTED_CHANNEL]))],
     // No per-channel fetches should follow — muted channel is skipped
   ]);
 
@@ -321,41 +242,18 @@ test("fetchCommunityUnread counts unmuted channel but skips muted channel", asyn
 
   const relay = relayFor([
     // 1. member events — two channels
-    () => [
-      event({
-        tags: [
-          ["d", UNMUTED_CHANNEL],
-          ["d", MUTED_CHANNEL],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([UNMUTED_CHANNEL, MUTED_CHANNEL])],
     // 2. metadata events (parallel with visibility)
     () => [
-      event({
-        tags: [
-          ["d", UNMUTED_CHANNEL],
-          ["t", "stream"],
-        ],
-      }),
-      event({
-        tags: [
-          ["d", MUTED_CHANNEL],
-          ["t", "stream"],
-        ],
-      }),
+      metadataEvent(UNMUTED_CHANNEL, "stream"),
+      metadataEvent(MUTED_CHANNEL, "stream"),
     ],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
     () => [],
     // 5. mutes events — only MUTED_CHANNEL is muted
-    () => [
-      event({
-        pubkey: PUBKEY,
-        content: mutesContent([MUTED_CHANNEL]),
-      }),
-    ],
+    () => [mutesEvent(mutesContent([MUTED_CHANNEL]))],
     // 6. unread events for UNMUTED_CHANNEL (muted channel loop iteration never fires)
     () => [
       event({
@@ -392,34 +290,15 @@ test("fetchCommunityUnread counts unmuted channel but skips muted channel", asyn
 test("fetchCommunityUnread treats decryption failure as empty mutes set", async () => {
   const relay = relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
     () => [],
     // 5. mutes events — present but decryption will throw
-    () => [
-      event({
-        pubkey: PUBKEY,
-        content: "corrupted-ciphertext",
-      }),
-    ],
+    () => [mutesEvent("corrupted-ciphertext")],
     // 6. unread events — channel is NOT muted (decryption failed → empty set)
     () => [
       event({
@@ -450,23 +329,9 @@ test("fetchCommunityUnread treats decryption failure as empty mutes set", async 
 test("fetchCommunityUnread treats absent mutes blob as empty mutes set", async () => {
   const relay = relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
@@ -517,30 +382,15 @@ function threadedReplyEvent(overrides = {}) {
 function baseRelay(unreadEvent, mutesPayload = null) {
   return relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events (parallel with metadata)
     () => [],
     // 4. read-state events (parallel with mutes)
     () => [],
     // 5. mutes events
-    () =>
-      mutesPayload ? [event({ pubkey: PUBKEY, content: mutesPayload })] : [],
+    () => (mutesPayload ? [mutesEvent(mutesPayload)] : []),
     // 6. unread events — the single event under test
     () => [unreadEvent],
     // 7. mention events
@@ -599,7 +449,12 @@ test("fetchCommunityUnread #p-mention reply in untracked root → hasUnread:true
     readThreadRelationships: readRelationships(),
   });
 
-  assert.deepEqual(result, { hasUnread: true, mentionCount: 0 });
+  // The same @-mention also satisfies the channel's mention filter (kind +
+  // `#h` + `#p`), so it is one unread mention as well as the dot. The
+  // per-REQ fixture used to hand the mention filter an empty page for an
+  // event the relay would have returned to it; demultiplexing the bundle
+  // applies the relay's own semantics instead.
+  assert.deepEqual(result, { hasUnread: true, mentionCount: 1 });
 });
 
 test("fetchCommunityUnread top-level post → hasUnread:true (no thread gate)", async () => {
@@ -652,23 +507,9 @@ test("fetchCommunityUnread threaded reply whose root is in mutedRootIds → hasU
 function quietRelay() {
   return relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events
     () => [],
     // 4. read-state events (parallel with mutes)
@@ -687,28 +528,15 @@ function quietRelay() {
 function quietRelayWithReadState(readAtSeconds) {
   return relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata events (parallel with visibility)
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility events
     () => [],
     // 4. read-state events (parallel with mutes)
     () => [
       event({
+        kind: KIND_READ_STATE,
         pubkey: PUBKEY,
         created_at: 200,
         tags: [
@@ -772,34 +600,15 @@ test("fetchCommunityUnread forced-unread channel not in member list → hasUnrea
 test("fetchCommunityUnread forced-unread channel that is also muted → hasUnread:false", async () => {
   const relay = relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility
     () => [],
     // 4. read-state (parallel with mutes)
     () => [],
     // 5. mutes — CHANNEL_ID is muted
-    () => [
-      event({
-        pubkey: PUBKEY,
-        content: mutesContent([CHANNEL_ID]),
-      }),
-    ],
+    () => [mutesEvent(mutesContent([CHANNEL_ID]))],
     // No per-channel fetches expected — muted channel is skipped
   ]);
 
@@ -821,23 +630,9 @@ test("fetchCommunityUnread readForcedUnread returns empty map → falls through 
   // No forced-unread, but there IS a real unread event → hasUnread:true via relay
   const relay = relayFor([
     // 1. member events
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["p", PUBKEY],
-        ],
-      }),
-    ],
+    () => [memberEvent([CHANNEL_ID])],
     // 2. metadata
-    () => [
-      event({
-        tags: [
-          ["d", CHANNEL_ID],
-          ["t", "stream"],
-        ],
-      }),
-    ],
+    () => [metadataEvent(CHANNEL_ID, "stream")],
     // 3. visibility
     () => [],
     // 4. read-state
@@ -929,23 +724,9 @@ test("fetchCommunityUnread ignores coding-session lane chat this client hides fr
   const laneRelay = () =>
     relayFor([
       // 1. member events
-      () => [
-        event({
-          tags: [
-            ["d", CHANNEL_ID],
-            ["p", PUBKEY],
-          ],
-        }),
-      ],
+      () => [memberEvent([CHANNEL_ID])],
       // 2. metadata events (parallel with visibility)
-      () => [
-        event({
-          tags: [
-            ["d", CHANNEL_ID],
-            ["t", "stream"],
-          ],
-        }),
-      ],
+      () => [metadataEvent(CHANNEL_ID, "stream")],
       // 3. visibility events (parallel with metadata)
       () => [],
       // 4. read-state events (parallel with mutes)

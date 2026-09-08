@@ -62,25 +62,31 @@ export function useLiveHomeFeedActions(
         return;
       }
 
+      // Both filters ride one REQ (one admission unit); the relay ORs them,
+      // so the handler dispatches on kind. Both may match one event only if
+      // the kind sets overlap, which they do not.
       void Promise.allSettled([
-        relayClient.subscribeLive(
-          {
-            kinds: [...HOME_FEED_ACTION_KINDS],
-            "#p": [normalizedPubkey],
-            limit: 50,
-            since,
-          },
-          handleLiveHomeFeedEvent,
-        ),
-        relayClient.subscribeLive(
-          {
-            authors: [normalizedPubkey],
-            kinds: [KIND_EVENT_REMINDER],
-            limit: 50,
-            since,
-          },
-          () => {
-            handleLiveReminderEvent(normalizedPubkey);
+        relayClient.subscribeLiveMany(
+          [
+            {
+              kinds: [...HOME_FEED_ACTION_KINDS],
+              "#p": [normalizedPubkey],
+              limit: 50,
+              since,
+            },
+            {
+              authors: [normalizedPubkey],
+              kinds: [KIND_EVENT_REMINDER],
+              limit: 50,
+              since,
+            },
+          ],
+          (event) => {
+            if (event.kind === KIND_EVENT_REMINDER) {
+              handleLiveReminderEvent(normalizedPubkey);
+            } else {
+              handleLiveHomeFeedEvent();
+            }
           },
         ),
       ]).then((results) => {

@@ -31,7 +31,7 @@ export function handleRelayClosed({
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
   message: string;
-  sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  sendReq: (subId: string, filters: RelaySubscriptionFilter[]) => Promise<void>;
 }) {
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
@@ -71,7 +71,7 @@ function recoverLiveSubscriptionFromClosed({
   subId: string;
   subscription: LiveSubscription;
   message: string;
-  sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  sendReq: (subId: string, filters: RelaySubscriptionFilter[]) => Promise<void>;
 }) {
   subscription.resolveReady?.("closed");
   subscription.resolveReady = undefined;
@@ -111,7 +111,7 @@ function recoverLiveSubscriptionFromClosed({
   subscription.closedRetryTimeout = window.setTimeout(() => {
     subscription.closedRetryTimeout = undefined;
     if (subscriptions.get(subId) !== subscription) return;
-    void sendReq(subId, subscription.filter).catch((error) => {
+    void sendReq(subId, subscription.filters).catch((error) => {
       if (subscriptions.get(subId) !== subscription) return;
       console.error("Failed to restore closed relay subscription", error);
       recoverLiveSubscriptionFromClosed({
@@ -142,6 +142,14 @@ export function prepareSubscriptionEvent(
     subscription.lastSeenCreatedAt ?? 0,
     event.created_at,
   );
+  for (const tag of event.tags) {
+    if (tag[0] !== "h" || tag[1] === undefined) continue;
+    if (subscription.lastSeenByChannel === undefined) {
+      subscription.lastSeenByChannel = {};
+    }
+    const cursors = subscription.lastSeenByChannel;
+    cursors[tag[1]] = Math.max(cursors[tag[1]] ?? 0, event.created_at);
+  }
   return true;
 }
 

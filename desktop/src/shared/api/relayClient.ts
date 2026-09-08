@@ -1,4 +1,4 @@
-import { RelayClient } from "@/shared/api/relayClientSession";
+import { RelayClient } from "@/shared/api/relayClientFeatureApi";
 
 export const relayClient = new RelayClient();
 

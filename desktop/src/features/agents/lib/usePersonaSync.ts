@@ -95,7 +95,11 @@ export function startPersonaSync(
   // One-shot backfill of existing heads + tombstones (closes the fresh-start
   // gap that live-only subscription + reconnect-replay cannot recover).
   void relayClient
-    .fetchEvents({ kinds: PERSONA_SYNC_KINDS, authors: [pubkey], limit: 500 })
+    .fetchEventsCoalesced({
+      kinds: PERSONA_SYNC_KINDS,
+      authors: [pubkey],
+      limit: 500,
+    })
     .then((events) => {
       if (onCancelled()) return;
       for (const event of coalesceManagedAgentBackfill(events))

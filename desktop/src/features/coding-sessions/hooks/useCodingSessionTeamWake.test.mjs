@@ -341,6 +341,22 @@ function clientFor(history, { wakeFetchFails = false } = {}) {
         subscription.closed = true;
       };
     },
+    // The mission-evidence hook reads through the bundled surface: one
+    // `POST /query` for its three history filters and one REQ for its three
+    // live filters. Delegate to the per-filter fakes above so every existing
+    // assertion on `fetches`/`subscriptions` keeps its meaning.
+    async fetchEventsBatch(filters) {
+      const pages = await Promise.all(filters.map((f) => this.fetchEvents(f)));
+      return pages.flat();
+    },
+    async subscribeLiveMany(filters, onEvent) {
+      const closes = await Promise.all(
+        filters.map((f) => this.subscribeLive(f, onEvent)),
+      );
+      return () => {
+        for (const close of closes) close();
+      };
+    },
   };
 }
 

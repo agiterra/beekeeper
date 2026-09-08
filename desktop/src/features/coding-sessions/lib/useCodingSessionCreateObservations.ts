@@ -14,6 +14,7 @@ import {
   OPEN_CODING_SESSION_INGRESS_AUTHORITY,
 } from "./codingSessionIngressAuthority";
 import type { CodingSessionIngressClient } from "./useTrustedCodingSessionIngress";
+import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import {
   fanOutObservedCodingSessionEvents,
   subscribeToObservedCodingSessionEvents,
@@ -66,9 +67,32 @@ function emptySnapshot(
  * precisely the permissive fallback in {@link groupCodingSessionCatalog}, where
  * founder and operator stay null and nothing is gated.
  */
+/**
+ * The ingress client plus the bundled read this hook prefers. `relayClient`
+ * provides `fetchEventsBatch`; a client without it (a test double built for
+ * the trusted-ingress hook) is read one filter at a time instead.
+ */
+export type CodingSessionCreateObservationClient =
+  CodingSessionIngressClient & {
+    fetchEventsBatch?(
+      filters: RelaySubscriptionFilter[],
+    ): Promise<RelayEvent[]>;
+  };
+
+async function fetchCreateHistory(
+  client: CodingSessionCreateObservationClient,
+  filters: RelaySubscriptionFilter[],
+): Promise<RelayEvent[]> {
+  if (client.fetchEventsBatch) return client.fetchEventsBatch(filters);
+  const pages = await Promise.all(
+    filters.map((filter) => client.fetchEvents(filter)),
+  );
+  return pages.flat();
+}
+
 export function useCodingSessionCreateObservations(
   channelIds: readonly string[],
-  client: CodingSessionIngressClient = defaultRelayClient,
+  client: CodingSessionCreateObservationClient = defaultRelayClient,
 ): CodingSessionCreateObservationSnapshot {
   const stableChannelIdentity = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -143,34 +167,24 @@ export function useCodingSessionCreateObservations(
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
-        // One read per kind, each with its own row budget: per-turn 44224
+        // One filter per kind, each with its own row budget — per-turn 44224
         // volume must never be able to push a channel's creates out of the
-        // newest-first window this store bootstraps from.
-        const errors: string[] = [];
-        for (const filter of buildCodingSessionCreateObservationHistoryFilters(
+        // newest-first window this store bootstraps from — bundled into one
+        // `POST /query` rather than three REQs against the per-key burst.
+        const events = await fetchCreateHistory(
+          client,
+          buildCodingSessionCreateObservationHistoryFilters(
+            stableChannelIds,
+            CREATE_OBSERVATION_HISTORY_LIMIT,
+          ),
+        );
+        if (cancelled) return;
+        store.ingestRelayEvents(
+          events,
           stableChannelIds,
-          CREATE_OBSERVATION_HISTORY_LIMIT,
-        )) {
-          try {
-            const events = await client.fetchEvents(filter);
-            if (cancelled) return;
-            store.ingestRelayEvents(
-              events,
-              stableChannelIds,
-              OPEN_CODING_SESSION_INGRESS_AUTHORITY,
-            );
-            fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
-          } catch (error) {
-            errors.push(
-              error instanceof Error
-                ? error.message
-                : "Failed to load coding-session create history.",
-            );
-          }
-        }
-        if (errors.length > 0) {
-          throw new Error([...new Set(errors)].join("\n"));
-        }
+          OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+        );
+        fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
       },
       onAttemptStart() {
         historyLoading = true;

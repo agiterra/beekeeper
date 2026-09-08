@@ -6,6 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
+import { relaySendBudget } from "@/shared/api/relaySendBudget";
 import { buildShellInputEvent } from "@/shared/api/tauriShell";
 import type { RelayEvent } from "@/shared/api/types";
 import { truncatePubkey } from "@/shared/lib/pubkey";
@@ -17,9 +18,11 @@ import {
   type ObserverStatus,
 } from "../observe/useShellObserver";
 import { useShellSessionAnnounce } from "../observe/useShellSessionAnnounce";
+import {
+  collaboratorInputCoalesceMs,
+  shellBroadcastCadenceLabel,
+} from "../observe/shellBroadcastCadence";
 
-/** Coalesce keystrokes for this long before sending one input event. */
-const INPUT_COALESCE_MS = 30;
 /** Raw bytes per input event — base64 expands 4/3, keeping each event's
  * content ≤ 8 KiB (the relay's and the owner host's cap). */
 const INPUT_CHUNK_BYTES = 6000;
@@ -60,7 +63,8 @@ function bytesToBase64(bytes: Uint8Array): string {
  *
  * Viewers are strictly read-only: stdin disabled, keystrokes dropped before
  * any send path. Collaborators (per the owner's announce roster) may type —
- * keystrokes are coalesced (~30 ms), chunked so each event's base64 stays
+ * keystrokes are coalesced (30 ms, widening to 80 ms while the send budget's
+ * write lane is below two reserves), chunked so each event's base64 stays
  * ≤ 8 KiB, signed as kind:24312 via the Rust builder, and published to the
  * owner, who re-verifies everything before the PTY. There is **no local
  * echo**: typed characters appear only when the owner's frames stream them
@@ -145,7 +149,7 @@ export function ShellObserveScreen({
       if (flushTimerRef.current === null) {
         flushTimerRef.current = window.setTimeout(
           flushInput,
-          INPUT_COALESCE_MS,
+          collaboratorInputCoalesceMs(relaySendBudget().available("write")),
         );
       }
     },
@@ -208,7 +212,7 @@ export function ShellObserveScreen({
     () => ({ ownerPubkey, sessionId, projectRef }),
     [ownerPubkey, sessionId, projectRef],
   );
-  const { status, resync } = useShellObserver(target, {
+  const { status, resync, cadenceMs } = useShellObserver(target, {
     onWrite: React.useCallback((bytes: Uint8Array) => {
       termRef.current?.write(bytes);
     }, []),
@@ -243,6 +247,13 @@ export function ShellObserveScreen({
               Read-only — you are observing this session
             </p>
           )}
+          <p
+            className="truncate text-2xs text-muted-foreground"
+            data-testid="shell-observe-cadence"
+            title="Frames are charged to the owner's relay message quota"
+          >
+            {shellBroadcastCadenceLabel(cadenceMs)}
+          </p>
         </div>
         <span
           className={cn(
