@@ -186,6 +186,24 @@ pub fn shell_broadcast_watchers(session_id: String) -> Vec<String> {
     crate::shell_sessions::broadcast::watchers(&session_id)
 }
 
+/// The TS pump reports the relay's OK for a frame it published (`accepted`
+/// plus the OK message). A `rate-limited:` refusal backs the session's frame
+/// cadence off; every other outcome is ignored here.
+#[tauri::command]
+pub fn shell_broadcast_publish_result(session_id: String, accepted: bool, message: String) {
+    crate::shell_sessions::broadcast::note_publish_result(&session_id, accepted, &message)
+}
+
+/// The current frame cadence of a shared session (interval, cap, back-off)
+/// for the owner's UI; live changes ride the `shell-broadcast-cadence`
+/// Tauri event with the same payload.
+#[tauri::command]
+pub fn shell_broadcast_cadence(
+    session_id: String,
+) -> crate::shell_sessions::broadcast::BroadcastCadence {
+    crate::shell_sessions::broadcast::cadence(&session_id)
+}
+
 /// Build + sign a NIP-ST kind:24310 watch event for the observer side (the
 /// relay requires signed events; signing lives in Rust with the keys).
 #[tauri::command]

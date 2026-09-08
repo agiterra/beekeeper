@@ -76,6 +76,7 @@ mod project_terminal;
 mod pulse_mission;
 mod qr_download;
 mod relay_members;
+mod relay_query;
 mod relay_reconnect;
 mod role_packs;
 #[cfg(unix)]
@@ -149,6 +150,7 @@ pub use project_terminal::*;
 pub use pulse_mission::*;
 pub use qr_download::*;
 pub use relay_members::*;
+pub use relay_query::*;
 pub use relay_reconnect::*;
 pub use role_packs::*;
 #[cfg(unix)]

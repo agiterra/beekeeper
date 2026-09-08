@@ -184,6 +184,8 @@ pub(crate) fn invoke_handler(
         read_clipboard_text,
         fetch_snapshot_bytes,
         relay_requires_membership,
+        // Generic multi-filter read over POST /query (commands/relay_query.rs).
+        query_relay_filters,
         list_relay_members,
         get_my_relay_membership,
         add_relay_member,
@@ -417,6 +419,10 @@ pub(crate) fn invoke_handler(
         shell_broadcast_watch,
         #[cfg(unix)]
         shell_broadcast_watchers,
+        #[cfg(unix)]
+        shell_broadcast_publish_result,
+        #[cfg(unix)]
+        shell_broadcast_cadence,
         #[cfg(unix)]
         build_shell_watch_event,
         #[cfg(unix)]
