@@ -5,7 +5,7 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-## Current checkpoint — September 7, 10:10 AM: topic build installed, live test pending OS approval
+## Current checkpoint — September 7 evening: live continuity passed, landing checks running
 
 Working tree: `/Users/brian/Projects/beekeeper/review-agents-chat-astra`, branch
 `work/session-continuity-2026-09-07`. Product topic commit:
@@ -20,33 +20,44 @@ The previous installed bundle is preserved at
 `~/Applications/Beekeeper Dev.app.before-4d56d978-20260907-100742`.
 The app was gracefully quit and its processes were absent before replacement.
 
-**Live acceptance is pending, not passed.** The new app process started at
-14:07 UTC alongside macOS SecurityAgent, but Computer Use app reads time out.
-An explicit SecurityAgent inspection returned: `Computer Use is not allowed to
-use the app 'com.apple.SecurityAgent' for safety reasons.` App logs stop at
-`2026-09-07T14:07:48.644132Z ... log file opened`. This is consistent with the
-new-signature Keychain prompt observed on prior rebuilds, but its exact prompt
-could not be inspected. Brian must handle that OS prompt after returning.
-Do not bypass Keychain protections, repeatedly rebuild, or claim startup/reconnect
-acceptance from the running process alone.
+**Live continuity acceptance passed.** Brian started the app and completed the
+fresh channel-created `Continuity acceptance` test. Read-only relay transcript
+queries independently confirm session `151b48de-1396-48a9-8aa5-4a1a482e4059`,
+channel `aa946c4e-acdc-43cb-9209-b0ef221d8d65`: generation 1 replied
+`Ready for continuation`, then `Follow-up received.`; generation 2 records
+`session_resumed` and another successful follow-up; generation 3 records
+`session_resumed` and correctly recalls both earlier phrases. Its latest
+recorded state is Idle. Generations 2 and 3 were created at
+2026-09-08T00:34:56Z and 00:36:16Z (September 7 local evening).
+Evidence is saved in `review-2026-09-06-validation/continuity-live-generation-{1,2,3}.txt`
+under `/Users/brian/Projects/beekeeper/`. Exact generation-3 command:
+`csc-dece3a80-b9f6-4464-b0be-8d296e11eb70`.
+This establishes successful message and resume behavior; the relay cannot prove
+how the desktop rendered its control labels. The earlier OS prompt is no longer
+blocking Brian. The old `bdfd25b4...` execution still has no sessionRef or
+genesisRef and is not retroactively granted authority by this repair.
 
-After startup, test a **fresh channel-created session**: ask Keystone to start
-`Continuity acceptance`, with an opening task to reply `Ready for continuation`
-without tools or project-file edits, and return its confirmed session link.
-Verify Brian has Can control and can send a follow-up. Then restart the app,
-reconnect that execution and verify another reply plus honest native-context
-continuity reporting. The old `bdfd25b4...` execution still has no sessionRef or
-genesisRef; its transcript remains preserved, but this patch does not retroactively
-grant Brian authority over it. Do not use it as the new-grant acceptance case.
+Follow-up disclosure finding: the CLI transcript header says `0 transcript items`
+while rendering these actual turns. This is a misleading count, not absence of
+the recorded conversation; investigate separately from the continuity landing.
 
-Validated: 8,292 desktop unit tests; 28 focused browser tests; 1,042 CLI tests
-plus the later added response-loss wire regression; 585 provider tests with one
-existing opt-in real-HOME diagnostic ignored; all-target clippy for CLI/provider/
-ACP; TypeScript, Rust formatting and file-size checks. Full repository `just ci`
-and the full browser smoke suite were **not rerun for this topic**; no PR or
-main landing has been made. Sol performed the bounded implementation lanes;
-Astra coordinated, reviewed and finalized. No coding agents or test/build jobs
-remain running. The product changes and next CI design are detailed below.
+Validation: full repository `just ci` passed (`continuity-full-ci.log`),
+including 1,734 mobile tests. The full desktop browser run produced 1,260 passes,
+one existing skip and two failures (`continuity-full-smoke.log`). Both failures
+(community switcher click stability; empty Inbox edit) passed three consecutive
+isolated reruns without product edits (`continuity-smoke-failure-reruns.log`).
+Do not describe the original full run as all-green.
+Earlier focused CLI/provider and browser evidence is detailed below.
+
+Final Sol review found and repaired two desktop issues: disabled Stop lacked its
+founder-only explanation; a source settings query could resolve before its relay
+event and leave the Packs result stale. Source events now refresh the authoritative
+source query, and native Packs results are refetched when their captured source
+revision differs, with attempts scoped to project and revision. Mounted tests
+cover an in-flight old result and project switching. Twenty-six direct tests,
+Biome and TypeScript passed. Final desktop checks (including the full desktop unit suite and file-size checks)
+and all 59 rebuilt affected browser cases passed before landing. Evidence:
+`continuity-final-desktop-check.log` and `continuity-final-focused-smoke.log`. No relay deployment is part of this shipment.
 
 ## 2026-09-06 — collaborative workspace foundation validated locally
 
@@ -74,7 +85,7 @@ provider's founder-only resume rule, not merely a frontend button repair.
 
 Implementation is committed on `work/session-continuity-2026-09-07`; Sol owned
 the bounded CLI, provider and UI lanes. The current checkpoint above names the
-installed build and pending live acceptance.
+installed build and verified live acceptance.
 Brian authorized continuing other plan increments while away. The next bounded
 increment is relevant pack-ref/source invalidation, reusing the existing Packs
 resolver and ref-event path rather than another agent polling loop.

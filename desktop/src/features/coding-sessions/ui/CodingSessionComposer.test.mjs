@@ -340,6 +340,11 @@ test("a collaborator may reconnect but cannot stop the founder's execution", () 
 
   assert.doesNotMatch(markup, /coding-session-composer-resume[^>]*disabled=""/);
   assert.match(markup, /coding-session-composer-session-stop[^>]*disabled=""/);
+  assert.match(markup, /Only the session founder can stop this execution\./);
+  assert.match(
+    markup,
+    /coding-session-composer-session-stop[^>]*title="Only the session founder can stop this execution\."/,
+  );
 });
 
 test("a disconnected execution explains missing reconnect prerequisites", () => {

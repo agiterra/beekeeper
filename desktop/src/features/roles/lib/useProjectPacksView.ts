@@ -29,6 +29,7 @@ import {
   type RolePackSnapshots,
 } from "./rolePackSnapshots";
 import {
+  projectPacksResolutionNeedsRefresh,
   rolePacksQueryKey,
   useProjectPacksLiveInvalidation,
 } from "./rolePacksLiveInvalidation";
@@ -44,12 +45,55 @@ const NO_CHANNEL_IDS: readonly string[] = [];
 export { rolePacksQueryKey };
 
 /** The ladder's answer for `projectRef`, cached per project. */
-export function useRolePacksQuery(projectRef: string | null) {
-  return useQuery({
+type ResolvedRolePacks = {
+  packs: RolePackSummary[];
+  sourceEventId: string | null | undefined;
+};
+
+export function useRolePacksQuery(
+  projectRef: string | null,
+  sourceEventId: string | null | undefined,
+) {
+  const query = useQuery({
     queryKey: rolePacksQueryKey(projectRef),
-    queryFn: () => listProjectRolePacks(projectRef),
+    queryFn: async (): Promise<ResolvedRolePacks> => ({
+      packs: await listProjectRolePacks(projectRef),
+      sourceEventId,
+    }),
     staleTime: 30_000,
   });
+  const attemptedRevision = React.useRef<{
+    projectRef: string | null;
+    sourceEventId: string | null;
+  } | null>(null);
+  React.useEffect(() => {
+    if (attemptedRevision.current?.projectRef !== projectRef) {
+      attemptedRevision.current = null;
+    }
+    const alreadyAttempted =
+      attemptedRevision.current?.projectRef === projectRef &&
+      attemptedRevision.current.sourceEventId === sourceEventId;
+    if (
+      query.data === undefined ||
+      query.isFetching ||
+      !projectPacksResolutionNeedsRefresh(
+        query.data.sourceEventId,
+        sourceEventId,
+      ) ||
+      alreadyAttempted
+    ) {
+      return;
+    }
+    // The mismatch helper excludes `undefined`, so the attempted revision is
+    // known here. Remember project + revision to avoid a failed auto-refresh
+    // loop without suppressing the same revision in another project.
+    attemptedRevision.current = {
+      projectRef,
+      sourceEventId: sourceEventId ?? null,
+    };
+    void query.refetch();
+  }, [projectRef, query.data, query.isFetching, query.refetch, sourceEventId]);
+  return query;
 }
 
 function useNowSeconds(): number {
@@ -157,8 +201,11 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     authorityMode: "open",
   });
 
-  const packsQuery = useRolePacksQuery(projectRef);
-  const packs = packsQuery.data ?? NO_PACKS;
+  const packsQuery = useRolePacksQuery(
+    projectRef,
+    sourceQuery.isSuccess ? (sourceQuery.data?.eventId ?? null) : undefined,
+  );
+  const packs = packsQuery.data?.packs ?? NO_PACKS;
   const packsError = React.useMemo(() => {
     const errors = [
       errorSentence(packsQuery.error),

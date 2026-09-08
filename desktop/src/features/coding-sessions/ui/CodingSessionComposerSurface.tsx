@@ -441,6 +441,13 @@ function ComposerLifecycleNotice({
       : !providerAuthorityPubkey
         ? "Reconnect is unavailable until provider authority is available."
         : null;
+  const stopDisabledReason = canSessionStop
+    ? null
+    : !isMember
+      ? "Join this channel to stop this execution."
+      : !providerAuthorityPubkey
+        ? "Stop is unavailable until provider authority is available."
+        : "Only the session founder can stop this execution.";
   return (
     <div className="relative z-0 mx-3 -mb-5 space-y-2 rounded-t-2xl border border-b-0 border-border/70 bg-muted/35 px-3 pt-3 pb-7">
       {error ? (
@@ -493,6 +500,10 @@ function ComposerLifecycleNotice({
                 disabled={!canSessionStop || isSending}
                 onClick={onSessionStop}
                 size="sm"
+                title={
+                  stopDisabledReason ??
+                  "Stop this provider execution; the session stays open."
+                }
                 type="button"
                 variant="outline"
               >
@@ -501,7 +512,7 @@ function ComposerLifecycleNotice({
             </div>
           }
         >
-          {`This provider execution is disconnected.${reconnectDisabledReason ? ` ${reconnectDisabledReason}` : ""}`}
+          {`This provider execution is disconnected.${reconnectDisabledReason ? ` ${reconnectDisabledReason}` : ""}${stopDisabledReason ? ` ${stopDisabledReason}` : ""}`}
         </LifecycleNoticeRow>
       ) : isEnded ? (
         <LifecycleNoticeRow

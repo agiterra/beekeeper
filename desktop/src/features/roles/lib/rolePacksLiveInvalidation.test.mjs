@@ -3,11 +3,13 @@ import { after, before, test } from "node:test";
 import { JSDOM } from "jsdom";
 
 import {
+  projectPacksResolutionNeedsRefresh,
   projectPacksLiveEffect,
   projectPacksLiveFilters,
 } from "./rolePacksLiveInvalidation.ts";
 
 const PROJECT_REF = `30621:${"a".repeat(64)}:beekeeper`;
+const OTHER_PROJECT_REF = `30621:${"a".repeat(64)}:other-project`;
 const REPO_ID = "agiterra-packs";
 const REPO_REF = `30617:${"b".repeat(64)}:${REPO_ID}`;
 
@@ -70,7 +72,7 @@ test("events are refresh hints scoped to the project and moving repository", () 
       ...context,
       event: event({ id: "source-2", kind: 30624, d: PROJECT_REF }),
     }),
-    "source-and-packs",
+    "source",
   );
   assert.equal(
     projectPacksLiveEffect({
@@ -95,6 +97,23 @@ test("events are refresh hints scoped to the project and moving repository", () 
       event: event({ id: "foreign", kind: 30618, d: "other-packs" }),
     }),
     "none",
+  );
+});
+
+test("native packs refresh only after the authoritative source revision changes", () => {
+  assert.equal(projectPacksResolutionNeedsRefresh(undefined, undefined), false);
+  assert.equal(projectPacksResolutionNeedsRefresh(undefined, "source-1"), true);
+  assert.equal(projectPacksResolutionNeedsRefresh(null, "source-1"), true);
+  assert.equal(projectPacksResolutionNeedsRefresh("source-1", null), true);
+  assert.equal(
+    projectPacksResolutionNeedsRefresh("source-1", "source-1"),
+    false,
+  );
+  // A failed or still-pending source read cannot supersede the revision that
+  // produced the currently displayed native result.
+  assert.equal(
+    projectPacksResolutionNeedsRefresh("source-1", undefined),
+    false,
   );
 });
 
@@ -183,9 +202,8 @@ test("mounted invalidation dedupes replay, refreshes on reconnect, rewires, and 
         event({ id: "source-2", kind: 30624, d: PROJECT_REF }),
       );
     });
-    assert.deepEqual(invalidations.slice(-2), [
+    assert.deepEqual(invalidations.slice(-1), [
       ["project-pack-source", PROJECT_REF],
-      ["role-packs", PROJECT_REF],
     ]);
 
     await act(async () => reconnect?.());
@@ -266,6 +284,84 @@ test("a failed live watch is disclosed and restarted on reconnect", async () => 
     await act(async () => reconnect?.());
     assert.equal(attempts, 2);
     assert.equal(mounted.result.current.error, null);
+    mounted.unmount();
+  } finally {
+    cleanup();
+    queryClient.clear();
+  }
+});
+
+test("an authoritative source update supersedes an older in-flight native resolution", async () => {
+  const React = await import("react");
+  const { act, cleanup, renderHook, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+
+  const pending = [];
+  const tauriInternals = {
+    invoke: (command) => {
+      assert.equal(command, "list_project_role_packs");
+      return new Promise((resolve) => pending.push(resolve));
+    },
+    transformCallback: () => Math.random(),
+  };
+  globalThis.__TAURI_INTERNALS__ = tauriInternals;
+  window.__TAURI_INTERNALS__ = tauriInternals;
+  const { useRolePacksQuery } = await import("./useProjectPacksView.ts");
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+
+  try {
+    const mounted = renderHook(
+      ({ projectRef, sourceEventId }) =>
+        useRolePacksQuery(projectRef, sourceEventId),
+      {
+        initialProps: { projectRef: PROJECT_REF, sourceEventId: "source-1" },
+        wrapper,
+      },
+    );
+    await waitFor(() => assert.equal(pending.length, 1));
+
+    // The source query wins the race before the native resolver's old read
+    // answers. No source event body is treated as pack data.
+    mounted.rerender({
+      projectRef: PROJECT_REF,
+      sourceEventId: "source-2",
+    });
+    await act(async () => pending[0]([{ slug: "old-pack" }]));
+    await waitFor(() => assert.equal(pending.length, 2));
+    await act(async () => pending[1]([{ slug: "new-pack" }]));
+    await waitFor(() =>
+      assert.equal(mounted.result.current.data?.sourceEventId, "source-2"),
+    );
+    assert.deepEqual(mounted.result.current.data?.packs, [
+      { slug: "new-pack" },
+    ]);
+
+    // The attempted revision belongs to its project. A fresh cached result
+    // for another project can need the same revision and must still refresh.
+    queryClient.setQueryData(["role-packs", OTHER_PROJECT_REF], {
+      packs: [{ slug: "other-old-pack" }],
+      sourceEventId: "source-1",
+    });
+    mounted.rerender({
+      projectRef: OTHER_PROJECT_REF,
+      sourceEventId: "source-2",
+    });
+    await waitFor(() => assert.equal(pending.length, 3));
+    await act(async () => pending[2]([{ slug: "other-new-pack" }]));
+    await waitFor(() =>
+      assert.deepEqual(mounted.result.current.data?.packs, [
+        { slug: "other-new-pack" },
+      ]),
+    );
+
     mounted.unmount();
   } finally {
     cleanup();

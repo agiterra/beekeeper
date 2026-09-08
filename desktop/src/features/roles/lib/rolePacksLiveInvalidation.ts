@@ -28,7 +28,21 @@ type RolePacksLiveClient = {
 
 const MAX_SEEN_EVENT_IDS = 64;
 
-export type ProjectPacksLiveEffect = "none" | "packs" | "source-and-packs";
+export type ProjectPacksLiveEffect = "none" | "packs" | "source";
+
+/**
+ * Whether a native pack result was resolved against a different authoritative
+ * source revision. `undefined` means the source read has not answered yet.
+ */
+export function projectPacksResolutionNeedsRefresh(
+  resolvedSourceEventId: string | null | undefined,
+  currentSourceEventId: string | null | undefined,
+): boolean {
+  return (
+    currentSourceEventId !== undefined &&
+    resolvedSourceEventId !== currentSourceEventId
+  );
+}
 
 function tagValue(event: RelayEvent, name: string): string | null {
   return event.tags.find((tag) => tag[0] === name)?.[1] ?? null;
@@ -47,7 +61,7 @@ export function projectPacksLiveEffect(input: {
     input.event.kind === KIND_PROJECT_PACK_SOURCE &&
     dTag === input.projectRef
   ) {
-    return input.event.id === input.sourceEventId ? "none" : "source-and-packs";
+    return input.event.id === input.sourceEventId ? "none" : "source";
   }
   if (
     input.event.kind === KIND_REPO_STATE &&
@@ -161,8 +175,15 @@ export function useProjectPacksLiveInvalidation(
       });
       if (effect === "none") return;
       rememberEvent(event.id);
-      if (effect === "source-and-packs") invalidateSourceAndPacks();
-      else invalidatePacks();
+      if (effect === "source") {
+        // The event is only a hint. Refresh the authoritative source first;
+        // useProjectPacksView refreshes native packs if that revision changed.
+        void queryClient.invalidateQueries({
+          queryKey: projectPackSourceQueryKey(projectRef),
+        });
+      } else {
+        invalidatePacks();
+      }
     };
 
     for (const filter of filters) {
