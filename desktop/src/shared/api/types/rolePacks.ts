@@ -64,3 +64,47 @@ export type RolePackSummary = {
   /** The backend's sentence for why this role cannot be staged for this project, or `null`. */
   refusal: string | null;
 };
+
+/**
+ * How a reported sha relates to this machine's packs checkout `HEAD`, as
+ * `compare_project_pack_revisions` (`desktop/src-tauri/src/managed_agents/pack_revisions.rs`)
+ * answers it. Mirrors the Rust `ProjectPackRevisionRelation` wire values
+ * exactly — the renderer's own `different-source` and `incomplete` outcomes
+ * are never sent over the wire and are added only on the
+ * `ReportedRolePackSnapshot` side.
+ */
+export type ProjectPackRevisionRelation =
+  | "current"
+  | "earlier"
+  | "later"
+  | "unrelated"
+  | "unknown-here";
+
+/** One requested sha's relation to `HEAD`, plus its distance when known. */
+export type ProjectPackRevisionEntry = {
+  sha: string;
+  relation: ProjectPackRevisionRelation;
+  /** `git rev-list --count sha..HEAD`, set only when `relation` is `"earlier"`. */
+  behind: number | null;
+  /** `git rev-list --count HEAD..sha`, set only when `relation` is `"later"`. */
+  ahead: number | null;
+};
+
+/**
+ * The wire shape of `compare_project_pack_revisions`: a read-only answer
+ * from the packs checkout `list_project_role_packs` already synced. No
+ * fetch, no checkout, no write — see `desktop/src-tauri/src/managed_agents/pack_revisions.rs`.
+ *
+ * Mirrors the Rust `ProjectPackRevisionComparison` (camelCase on the wire).
+ */
+export type ProjectPackRevisionComparison = {
+  /** The project's 30624 source repo coordinate, or `null` when it names none. */
+  repo: string | null;
+  /** `HEAD` of this machine's packs checkout, or `null` when no source or no checkout. */
+  currentSha: string | null;
+  /** Unix ms when git answered. */
+  comparedAt: number;
+  /** Why `currentSha` is `null` (no source / no checkout yet / git error), verbatim; `null` when `currentSha` is set. */
+  reason: string | null;
+  relations: ProjectPackRevisionEntry[];
+};

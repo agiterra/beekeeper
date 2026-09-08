@@ -4,7 +4,9 @@ import {
   AGENT_SHARED_HOME_LABEL,
   AGENT_SHARED_HOME_REMEDY,
 } from "@/features/agents/ui/AgentHomeRoleBadges";
+import { formatCoordinationAge } from "@/shared/coordination/sessionCoordinationFormat";
 
+import type { ReportedRolePackRelation } from "../lib/rolePackSnapshots";
 import type { PacksSourceSummary } from "../lib/rolesViewModel";
 
 /**
@@ -165,4 +167,61 @@ export function packsSourceSentence(
     text: `${prefix}, pinned to ${shaText(source.sha)}.`,
     shaTitle: isFullSha ? source.sha : null,
   };
+}
+
+/**
+ * A reported row's relation to this machine's packs checkout — the revision
+ * comparison's own vocabulary, plus the two outcomes it never answers
+ * (`different-source`, `incomplete`). Final wording from the design: nothing
+ * here claims a machine is "current" without a matching relation, and
+ * `earlier`/`later` always disclose the commit count rather than rounding it
+ * away.
+ */
+export function revisionRelationText(
+  relation: ReportedRolePackRelation,
+  behind: number | null,
+  ahead: number | null,
+): string {
+  switch (relation) {
+    case "current":
+      return "Same revision as this machine";
+    case "earlier":
+      return `Earlier revision · ${behind ?? "an unknown number"} behind this machine`;
+    case "later":
+      return `Newer than this machine's copy · ${ahead ?? "an unknown number"} ahead — this machine has not refreshed`;
+    case "unrelated":
+      return "Different history from this machine's copy";
+    case "unknown-here":
+      return "Revision unknown to this machine";
+    case "different-source":
+      return "Different pack source";
+    case "shipped-differs":
+      return "Shipped defaults from a different app version";
+    case "incomplete":
+      return "Version claim incomplete";
+  }
+}
+
+/** `reported 5m ago`, or the honest "time not reported" when `ageSeconds` is `null`. */
+export function reportedAgoText(ageSeconds: number | null): string {
+  return ageSeconds === null
+    ? "time not reported"
+    : `reported ${formatCoordinationAge(ageSeconds)} ago`;
+}
+
+/** The one sentence a non-current, non-terminal reported row adds. */
+export const ADOPTION_KEEPS_UNTIL_NEXT_GENERATION =
+  "Keeps this revision until its next launch or resume.";
+
+/** The "Available here" heading's own commit fact, once git has answered. */
+export function checkoutAnsweredSentence(
+  currentSha: string,
+  answeredAt: string,
+): string {
+  return `On ${shaText(currentSha)} · git answered at ${answeredAt}.`;
+}
+
+/** The revision comparison's disclosed failure, attributed. */
+export function revisionComparisonUnavailableSentence(error: string): string {
+  return `Revision comparison unavailable: ${error}`;
 }

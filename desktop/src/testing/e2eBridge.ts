@@ -8948,6 +8948,35 @@ function handleListProjectRolePacks() {
   ];
 }
 
+/**
+ * `compare_project_pack_revisions` under the mock bridge: this fixture has
+ * no real git checkout, so every requested sha is reported `current` when it
+ * equals the mock lead row's own sha and `unknown-here` otherwise — enough
+ * for specs to exercise both branches without a real repository.
+ */
+function handleCompareProjectPackRevisions(args: {
+  projectRef: string;
+  shas: string[];
+}) {
+  const leadPack = handleListProjectRolePacks().find(
+    (pack) => pack.role === "lead",
+  );
+  const repo = leadPack?.packRef?.repo ?? null;
+  const currentSha = leadPack?.packRef?.sha ?? null;
+  return {
+    repo,
+    currentSha,
+    comparedAt: Date.now(),
+    reason: null,
+    relations: args.shas.map((sha) => ({
+      sha,
+      relation: sha === currentSha ? "current" : "unknown-here",
+      behind: null,
+      ahead: null,
+    })),
+  };
+}
+
 async function handleListTeams(): Promise<RawTeam[]> {
   return mockTeams.map((team) => ({
     ...team,
@@ -13795,6 +13824,10 @@ export function maybeInstallE2eTauriMocks() {
         return handleListManagedAgents(activeConfig);
       case "list_project_role_packs":
         return handleListProjectRolePacks();
+      case "compare_project_pack_revisions":
+        return handleCompareProjectPackRevisions(
+          payload as Parameters<typeof handleCompareProjectPackRevisions>[0],
+        );
       case "get_agent_memory":
         return handleGetAgentMemory(
           (payload as Parameters<typeof handleGetAgentMemory>[0]) ?? {},

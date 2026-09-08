@@ -4,24 +4,18 @@ import type {
   RolePackSnapshots as RolePackSnapshotModel,
 } from "../lib/rolePackSnapshots";
 import { rolePackCoordinateText } from "../lib/rolePackSnapshots";
+import {
+  ADOPTION_KEEPS_UNTIL_NEXT_GENERATION,
+  checkoutAnsweredSentence,
+  reportedAgoText,
+  revisionComparisonUnavailableSentence,
+  revisionRelationText,
+} from "./rolesCopy";
 
 function timestamp(value: number | null): string {
   return value === null
     ? "time not reported"
     : new Date(value).toLocaleString();
-}
-
-function comparisonText(
-  value: "claims-match" | "claims-differ" | "unknown",
-): string {
-  switch (value) {
-    case "claims-match":
-      return "Claims same version";
-    case "claims-differ":
-      return "Claims different version";
-    case "unknown":
-      return "Version claim incomplete";
-  }
 }
 
 function versionSummary(coordinate: RolePackCoordinate): string {
@@ -51,6 +45,48 @@ function VersionDetails({
 }
 
 /**
+ * The "Available here" heading's own commit fact: which commit git answered
+ * for, and when — the reason it could not answer, or the revision
+ * comparison's own disclosed error. Never renders a checkout as current
+ * while the comparison failed (a stale successful answer never reaches this
+ * component: `buildRolePackSnapshots` nulls it out itself).
+ */
+function CheckoutStatus({
+  comparison,
+  revisionsError,
+}: {
+  comparison: RolePackSnapshotModel["comparison"];
+  revisionsError: string | null;
+}) {
+  if (comparison) {
+    return (
+      <p
+        className="text-xs text-muted-foreground"
+        data-testid="role-pack-checkout-status"
+      >
+        {comparison.currentSha
+          ? checkoutAnsweredSentence(
+              comparison.currentSha,
+              timestamp(comparison.comparedAt),
+            )
+          : (comparison.reason ?? "This machine's checkout has no commit yet.")}
+      </p>
+    );
+  }
+  if (revisionsError) {
+    return (
+      <p
+        className="text-xs text-amber-600 dark:text-amber-400"
+        data-testid="role-pack-checkout-status"
+      >
+        {revisionComparisonUnavailableSentence(revisionsError)}
+      </p>
+    );
+  }
+  return null;
+}
+
+/**
  * Project-scoped local version facts beside visibly unverified channel metadata
  * claims. Open ingress proves a signature, not provider commissioning.
  */
@@ -58,11 +94,13 @@ export function RolePackSnapshots({
   snapshots,
   resolvedError,
   resolvedIsStale,
+  revisionsError,
   reports,
 }: {
   snapshots: RolePackSnapshotModel;
   resolvedError: string | null;
   resolvedIsStale: boolean;
+  revisionsError: string | null;
   reports: {
     isLoading: boolean;
     error: string | null;
@@ -94,6 +132,10 @@ export function RolePackSnapshots({
             ? "No successful local version check has been recorded in this view."
             : `Checked at ${timestamp(snapshots.resolvedAt)}.`}
         </p>
+        <CheckoutStatus
+          comparison={snapshots.comparison}
+          revisionsError={revisionsError}
+        />
         {resolvedError ? (
           <p
             className="text-xs text-amber-600 dark:text-amber-400"
@@ -179,7 +221,7 @@ export function RolePackSnapshots({
             {snapshots.reported.map((snapshot) => (
               <li
                 className="flex flex-col gap-1 text-xs"
-                data-comparison={snapshot.comparison}
+                data-relation={snapshot.relation}
                 data-testid="role-pack-reported-row"
                 key={`${snapshot.channelId}:${snapshot.generationId}`}
               >
@@ -215,12 +257,28 @@ export function RolePackSnapshots({
                   )}
                   {" · "}
                   <span className="text-muted-foreground">
-                    {comparisonText(snapshot.comparison)}
+                    {revisionRelationText(
+                      snapshot.relation,
+                      snapshot.behind,
+                      snapshot.ahead,
+                    )}
                   </span>
-                  {" · reported "}
+                  {" · "}
                   <span className="text-muted-foreground">
-                    {timestamp(snapshot.reportedAt)}
+                    {reportedAgoText(snapshot.ageSeconds)}
                   </span>
+                  {" · "}
+                  <span className="text-muted-foreground">
+                    {snapshot.status}
+                  </span>
+                  {snapshot.adoption === "keeps-until-next-generation" ? (
+                    <>
+                      {" · "}
+                      <span className="text-muted-foreground">
+                        {ADOPTION_KEEPS_UNTIL_NEXT_GENERATION}
+                      </span>
+                    </>
+                  ) : null}
                 </p>
                 {snapshot.coordinate ? (
                   <VersionDetails

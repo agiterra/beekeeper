@@ -1,5 +1,8 @@
 import { invokeTauri } from "@/shared/api/tauri";
-import type { RolePackSummary } from "@/shared/api/types";
+import type {
+  ProjectPackRevisionComparison,
+  RolePackSummary,
+} from "@/shared/api/types";
 
 /**
  * Every role pack this computer would stage for `projectRef`, one row per
@@ -16,4 +19,20 @@ export async function listProjectRolePacks(
   return invokeTauri<RolePackSummary[]>("list_project_role_packs", {
     projectRef,
   });
+}
+
+/**
+ * How each of `shas` relates to this machine's packs checkout `HEAD`, for
+ * `projectRef` — read-only, no fetch, no checkout, no write. Each `sha` must
+ * be 40 lowercase hex; the caller filters shipped (`app:shipped`) refs out
+ * before calling.
+ */
+export async function compareProjectPackRevisions(
+  projectRef: string,
+  shas: readonly string[],
+): Promise<ProjectPackRevisionComparison> {
+  return invokeTauri<ProjectPackRevisionComparison>(
+    "compare_project_pack_revisions",
+    { projectRef, shas },
+  );
 }

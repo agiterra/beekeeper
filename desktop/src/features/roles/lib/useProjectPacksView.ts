@@ -11,7 +11,10 @@ import {
 } from "@/features/projects-container/hooks";
 import type { ProjectCodingSessionShelfState } from "@/features/projects-container/lib/projectCodingSessionShelf";
 import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
-import { listProjectRolePacks } from "@/shared/api/tauriRolePacks";
+import {
+  compareProjectPackRevisions,
+  listProjectRolePacks,
+} from "@/shared/api/tauriRolePacks";
 import type { RolePackSummary } from "@/shared/api/types";
 import {
   fetchProjectPackSource,
@@ -26,6 +29,7 @@ import {
 } from "./rolesViewModel";
 import {
   buildRolePackSnapshots,
+  revisionShas,
   type RolePackSnapshots,
 } from "./rolePackSnapshots";
 import {
@@ -132,6 +136,8 @@ export type ProjectPacksViewState = {
   rolePackSnapshots: RolePackSnapshots;
   /** When the most recent resolver refetch failed after a prior answer. */
   packsResolutionIsStale: boolean;
+  /** The revision comparison's own disclosed error, or `null`. */
+  revisionsError: string | null;
   /** The open metadata-claim read's disclosed state. */
   executionReports: {
     isLoading: boolean;
@@ -249,6 +255,41 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     [agents, nowSeconds, packs, projects, shelfEntries],
   );
   const packsSource = React.useMemo(() => describePacksSource(packs), [packs]);
+
+  // The project's current source repo comes from the signed 30624 itself, so
+  // a source this machine could not sync still names the repository the
+  // claims are measured against. The project-origin rung's own coordinate is
+  // the fallback (it can only exist once a source was read) and supplies the
+  // sha this machine last landed on; `currentResolvedSha` only busts the
+  // revisions query's cache when this machine's checkout advances — the
+  // comparison's own `currentSha` is the fact that lands on screen.
+  const projectOriginRef = React.useMemo(
+    () =>
+      packs.find((pack) => pack.origin === "project" && pack.packRef)
+        ?.packRef ?? null,
+    [packs],
+  );
+  const sourceRepo = sourceQuery.data?.repo ?? projectOriginRef?.repo ?? null;
+  const sourceKnown = sourceQuery.isSuccess || projectOriginRef !== null;
+  const currentResolvedSha = projectOriginRef?.sha ?? null;
+
+  const shasToCompare = React.useMemo(
+    () => revisionShas(executionCatalog.entries, sourceRepo),
+    [executionCatalog.entries, sourceRepo],
+  );
+  const revisionsQuery = useQuery({
+    queryKey: [
+      "role-pack-revisions",
+      projectRef,
+      currentResolvedSha,
+      shasToCompare,
+    ],
+    queryFn: () => compareProjectPackRevisions(projectRef ?? "", shasToCompare),
+    enabled: projectRef !== null && shasToCompare.length > 0,
+    staleTime: 30_000,
+  });
+  const revisionsError = errorSentence(revisionsQuery.error);
+
   const rolePackSnapshots = React.useMemo(
     () =>
       buildRolePackSnapshots({
@@ -256,8 +297,23 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
         resolvedAt: packsQuery.dataUpdatedAt || null,
         resolvedPacks: packs,
         catalogEntries: executionCatalog.entries,
+        sourceRepo,
+        sourceKnown,
+        revisions: revisionsQuery.data ?? null,
+        revisionsError,
+        nowSeconds,
       }),
-    [executionCatalog.entries, packs, packsQuery.dataUpdatedAt, projectRef],
+    [
+      executionCatalog.entries,
+      nowSeconds,
+      packs,
+      packsQuery.dataUpdatedAt,
+      projectRef,
+      revisionsError,
+      revisionsQuery.data,
+      sourceKnown,
+      sourceRepo,
+    ],
   );
   // The session catalog is scoped by channelsQuery.data. If that prerequisite
   // has not completed or fails, an empty catalog is not evidence that this
@@ -281,6 +337,7 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
     packsResolutionIsStale:
       packsQuery.dataUpdatedAt > 0 &&
       (packsQuery.isError || sourceQuery.isError || liveRefresh.error !== null),
+    revisionsError,
     executionReports: {
       isLoading: channelsQuery.isPending || executionCatalog.isLoading,
       error: executionReportsError,
@@ -291,6 +348,7 @@ export function useProjectPacksView(projectId: string): ProjectPacksViewState {
       liveRefresh.retry();
       void sourceQuery.refetch();
       void packsQuery.refetch();
+      void revisionsQuery.refetch();
     },
     refetchAgents: () => void agentsQuery.refetch(),
   };

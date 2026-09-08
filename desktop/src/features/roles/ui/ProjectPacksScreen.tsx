@@ -72,6 +72,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
     packsSource,
     rolePackSnapshots,
     packsResolutionIsStale,
+    revisionsError,
     executionReports,
   } = state;
 
@@ -166,6 +167,7 @@ export function ProjectPacksScreen({ projectId }: { projectId: string }) {
           reports={executionReports}
           resolvedError={error}
           resolvedIsStale={packsResolutionIsStale}
+          revisionsError={revisionsError}
           snapshots={rolePackSnapshots}
         />
         <section className="flex flex-col gap-2" data-testid="roles-section">

@@ -22,6 +22,7 @@ pub(crate) mod git_bash;
 pub(crate) mod global_config;
 mod managed_node_paths;
 mod nest;
+pub(crate) mod pack_revisions;
 pub(crate) mod packs_cache;
 pub(crate) mod packs_repo;
 pub(crate) mod parallelism;

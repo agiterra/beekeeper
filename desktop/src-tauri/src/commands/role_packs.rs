@@ -1,4 +1,5 @@
-//! `list_project_role_packs` — the Roles tab's one read.
+//! `list_project_role_packs` and `compare_project_pack_revisions` — the Roles
+//! tab's two reads.
 //!
 //! The renderer names a project; this computer answers, for every role it
 //! could stage there, the pack it *would* stage, the way
@@ -11,6 +12,9 @@
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
+use crate::managed_agents::pack_revisions::{
+    compare_project_pack_revisions_blocking, ProjectPackRevisionComparison,
+};
 use crate::managed_agents::role_packs_view::{
     fetch_project_pack_source, list_project_role_packs_blocking, RolePackSummary,
 };
@@ -49,4 +53,43 @@ pub async fn list_project_role_packs(
     })
     .await
     .map_err(|error| format!("spawn_blocking failed: {error}"))?
+}
+
+/// How each revision in `shas` — the `packRef.sha` values executions reported
+/// on their kind:44223 — relates to the commit this computer's packs checkout
+/// for `project_ref` is on.
+///
+/// Read-only in the strongest sense: the project's newest kind:30624 is read
+/// from the relay to find *which* checkout to look at, and then only local
+/// `git` runs. Nothing is fetched, nothing is checked out, nothing is staged,
+/// nothing is published — so opening the Packs tab cannot change the revision
+/// it is describing.
+///
+/// The answer is one row per distinct sha, in the order they were named,
+/// saying `current`, `earlier` (with how far behind this machine), `later`
+/// (with how far ahead), `unrelated`, or `unknown-here`. When this computer
+/// has no checkout — no source, nothing resolved yet, or a `git` that refused
+/// — every row is `unknown-here` and `reason` says which, because a reader
+/// acting on a wrong `current` is worse served than one told nothing.
+///
+/// # Errors
+/// A sentence when `project_ref` is blank, when the relay could not be read,
+/// when a reported sha is not 40-character lowercase hex, when this computer's
+/// packs cache or git could not be prepared, or when the blocking task failed
+/// to run.
+#[tauri::command]
+pub async fn compare_project_pack_revisions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ref: String,
+    shas: Vec<String>,
+) -> Result<ProjectPackRevisionComparison, String> {
+    let project_ref = project_ref.trim().to_owned();
+    if project_ref.is_empty() {
+        return Err("a pack revision comparison needs the project it is about".to_string());
+    }
+    let source = fetch_project_pack_source(&state, &project_ref).await?;
+    tokio::task::spawn_blocking(move || compare_project_pack_revisions_blocking(&app, source, shas))
+        .await
+        .map_err(|error| format!("spawn_blocking failed: {error}"))?
 }

@@ -8,15 +8,20 @@ import {
   AGENT_SHARED_HOME_REMEDY,
 } from "@/features/agents/ui/AgentHomeRoleBadges";
 import {
+  ADOPTION_KEEPS_UNTIL_NEXT_GENERATION,
   AGE_UNKNOWN,
   AGENT_CHIP_NO_PACK_TITLE,
   AGENT_CHIP_SHARED_HOME_TITLE,
+  checkoutAnsweredSentence,
   formatAge,
   INSTALL_ROLES_BUTTON_LABEL,
   packsSourceSentence,
   PROJECT_PACKS_MISSING,
   PROJECT_SEATS_EMPTY,
   projectSeatCount,
+  reportedAgoText,
+  revisionComparisonUnavailableSentence,
+  revisionRelationText,
   ROLE_AGENTS_EMPTY,
   ROLE_NO_PACK,
   ROLE_SEATS_EMPTY,
@@ -184,5 +189,66 @@ test("packsSourceSentence follows the brief's shape and refuses to average (Fix 
       text: "1 role pack for Beekeeper, from the shipped rung at /app/shipped, pinned to 0.4.2-block.",
       shaTitle: null,
     },
+  );
+});
+
+test("revisionRelationText is the design's final wording, verbatim", () => {
+  assert.equal(
+    revisionRelationText("current", null, null),
+    "Same revision as this machine",
+  );
+  assert.equal(
+    revisionRelationText("earlier", 3, null),
+    "Earlier revision · 3 behind this machine",
+  );
+  assert.equal(
+    revisionRelationText("later", null, 7),
+    "Newer than this machine's copy · 7 ahead — this machine has not refreshed",
+  );
+  assert.equal(
+    revisionRelationText("unrelated", null, null),
+    "Different history from this machine's copy",
+  );
+  assert.equal(
+    revisionRelationText("unknown-here", null, null),
+    "Revision unknown to this machine",
+  );
+  assert.equal(
+    revisionRelationText("different-source", null, null),
+    "Different pack source",
+  );
+  assert.equal(
+    revisionRelationText("shipped-differs", null, null),
+    "Shipped defaults from a different app version",
+  );
+  assert.equal(
+    revisionRelationText("incomplete", null, null),
+    "Version claim incomplete",
+  );
+});
+
+test("reportedAgoText discloses an unreported time rather than zeroing it", () => {
+  assert.equal(reportedAgoText(null), "time not reported");
+  assert.equal(reportedAgoText(300), "reported 5m ago");
+});
+
+test("checkoutAnsweredSentence names the commit and when git answered", () => {
+  assert.equal(
+    checkoutAnsweredSentence("a".repeat(40), "1/1/2026, 12:00:00 AM"),
+    "On aaaaaaaa · git answered at 1/1/2026, 12:00:00 AM.",
+  );
+});
+
+test("revisionComparisonUnavailableSentence attributes the failure", () => {
+  assert.equal(
+    revisionComparisonUnavailableSentence("git exited 1"),
+    "Revision comparison unavailable: git exited 1",
+  );
+});
+
+test("the adoption sentence is the design's final wording, verbatim", () => {
+  assert.equal(
+    ADOPTION_KEEPS_UNTIL_NEXT_GENERATION,
+    "Keeps this revision until its next launch or resume.",
   );
 });
