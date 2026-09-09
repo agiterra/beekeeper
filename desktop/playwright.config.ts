@@ -59,6 +59,8 @@ export default defineConfig({
         "**/coding-session-workspace-reuse.spec.ts",
         // L11 (worktree lifecycle) — registration line only.
         "**/coding-session-worktree-closure.spec.ts",
+        // Lane V — People/Agents selection clarity and the session roster.
+        "**/people-setup.spec.ts",
         "**/onboarding-docked-cta-screenshots.spec.ts",
         "**/identity-key-help.spec.ts",
         "**/key-import-reveal.spec.ts",
