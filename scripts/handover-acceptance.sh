@@ -19,6 +19,11 @@
 #     (`git-credential-nostr`), so the kind:30618 ref state a handover
 #     checkpoint points at is produced by the relay, not asserted by this
 #     script;
+#   - a **one-shot hint file** per reconstruction
+#     (`<dir of projects.json>/pending-hints/<createCommandId>.json`), which the
+#     CLI writes and the provider consumes on admission. Step 3 rewrites
+#     `projects.json` continuously while a reconstruction runs, because that is
+#     what erased the binding when it lived inside that file;
 #   - **two different working directories for B**: the folder its provider is
 #     configured to run this project and channel in (`checkout-b-default`, a
 #     plain clone) and the folder B recovers into (`checkout-b-work`). They are
@@ -545,9 +550,17 @@ PROJECTS_B="${WORKDIR}/projects-b.json"
 cat > "${PROJECTS_A}" <<EOF
 {"version":1,"pending":{},"projects":{"${PROJECT}":"${CHECKOUT_A}"},"channels":{"${CHANNEL}":"${CHECKOUT_A}"}}
 EOF
-cat > "${PROJECTS_B}" <<EOF
+# B's projects file has a canonical shape kept beside it, because step 3
+# rewrites the live file from it mid-reconstruction to imitate an unrelated
+# desktop save. It never contains a pending entry: the CLI does not write one,
+# and the hint it does write lives in `pending-hints/` precisely so a save like
+# this cannot erase it.
+PROJECTS_B_CANONICAL="${WORKDIR}/projects-b.canonical.json"
+PENDING_HINTS_B="${WORKDIR}/pending-hints"
+cat > "${PROJECTS_B_CANONICAL}" <<EOF
 {"version":1,"pending":{},"projects":{"${PROJECT}":"${CHECKOUT_B_DEFAULT}"},"channels":{"${CHANNEL}":"${CHECKOUT_B_DEFAULT}"}}
 EOF
+cp "${PROJECTS_B_CANONICAL}" "${PROJECTS_B}"
 ACP_LOG_A="${WORKDIR}/acp-a.jsonl"; : > "${ACP_LOG_A}"
 ACP_LOG_B="${WORKDIR}/acp-b.jsonl"; : > "${ACP_LOG_B}"
 METHODS_LOG_A="${WORKDIR}/methods-a.log"; : > "${METHODS_LOG_A}"
@@ -897,6 +910,58 @@ genesis = sys.argv[1]
 print(sum(1 for event in json.load(sys.stdin)
           if ['csat-genesis', genesis] in event.get('tags', [])))
 " "$1"
+}
+
+# Imitate the desktop rewriting `projects.json` for its own reasons, over and
+# over, for as long as a reconstruction is running.
+#
+# This is the failure the hint file exists for: the CLI used to write
+# `pending[commandId]` into `projects.json`, and any unrelated desktop save
+# between that write and the provider's admission erased it — after which the
+# create resolved to the project/channel entry and the model opened somewhere
+# else, while the continuation said "recovered".
+#
+# Each pass writes the canonical (pending-free) content through a temp file and
+# an atomic rename, so a provider reading concurrently never sees a torn file —
+# a real desktop save would do the same, and a torn read would degrade every
+# entry to "no mapping" and prove nothing. After each rename it checks whether a
+# hint file still exists: if one does, this save definitively landed *before*
+# the provider consumed it, which is the ordering the step needs. The count of
+# such passes goes to the marker file.
+start_desktop_saver() {
+  local marker="$1"
+  rm -f "${WORKDIR}/desktop-saver.stop"
+  (
+    overlaps=0
+    while [[ ! -e "${WORKDIR}/desktop-saver.stop" ]]; do
+      cp "${PROJECTS_B_CANONICAL}" "${PROJECTS_B}.saving"
+      mv -f "${PROJECTS_B}.saving" "${PROJECTS_B}"
+      for hint in "${PENDING_HINTS_B}"/*.json; do
+        if [[ -e "${hint}" ]]; then
+          overlaps=$(( overlaps + 1 ))
+        fi
+        break
+      done
+      sleep 0.01
+    done
+    printf '%s\n' "${overlaps}" > "${marker}"
+  ) &
+  DESKTOP_SAVER_PID=$!
+  record_pid "${DESKTOP_SAVER_PID}"
+}
+
+# Stop the saver and wait for it to write its count.
+stop_desktop_saver() {
+  local marker="$1"
+  : > "${WORKDIR}/desktop-saver.stop"
+  wait "${DESKTOP_SAVER_PID}" 2>/dev/null || true
+  local i
+  for i in $(seq 1 100); do
+    [[ -s "${marker}" ]] && return 0
+    sleep 0.1
+  done
+  err "the simulated desktop save never reported how many passes it made"
+  return 1
 }
 
 # Every commit id the relay's kind-30618 ref state currently names for the repo.
@@ -1249,16 +1314,25 @@ step_3() {
     return 1
   }
 
-  # ── the real run ────────────────────────────────────────────────────────
+  # ── the real run, under a desktop that keeps saving ─────────────────────
   # No --native, no --reconstruct: the point is that the DEFAULT plan picks
   # reconstruction because nothing is reachable. `--projects-file` is the seam
   # the create is bound through; B-work is NOT where this provider would
-  # otherwise run anything in this channel.
+  # otherwise run anything in this channel. Throughout, the desktop is
+  # rewriting `projects.json` from its own canonical state — the thing that
+  # used to erase the binding.
+  local projects_before projects_after saver_marker overlaps
+  projects_before="$(shasum -a 256 "${PROJECTS_B}" | cut -d' ' -f1)"
+  saver_marker="${WORKDIR}/desktop-saver.count"
+  start_desktop_saver "${saver_marker}"
   continue_json="$(bee_b_git sessions handover continue --channel "${CHANNEL}" \
     --session-ref "${S1}" --genesis "${G1}" --cwd "${CHECKOUT_B}" \
     --body "${PROVIDER_B_HEX}" --provider-instance "${INSTANCE}" \
     --projects-file "${PROJECTS_B}" \
     --remote origin --wait-secs 120 --json)"
+  stop_desktop_saver "${saver_marker}"
+  overlaps="$(cat "${saver_marker}")"
+  projects_after="$(shasum -a 256 "${PROJECTS_B}" | cut -d' ' -f1)"
   printf '%s\n' "${continue_json}" > "${WORKDIR}/continue-1.json"
   py -c "
 import json, sys
@@ -1343,33 +1417,85 @@ assert joined[0][2]['providerAuthorityPubkey'] == provider_b, joined[0][2]
 print(joined[0][1]['commandId'])
 " "${B_HEX}" "${S1}" "${G1}" "${PROVIDER_B_HEX}")"
 
-  # 3a. The create was bound to B-work through the provider's own seam.
+  # 3a. The binding survived a desktop that would not stop saving, and the
+  # provider consumed it.
+  #
+  #   - the save landed at least once while the hint was still on disk, so the
+  #     ordering this exists to test actually occurred;
+  #   - `projects.json` is byte-identical across the whole reconstruction: the
+  #     CLI never touched it, which is why the save could not undo anything;
+  #   - the hint file is gone now, consumed on admission rather than left
+  #     lying around binding some future create nobody asked it to.
+  [[ "${overlaps}" -ge 1 ]] || {
+    err "the simulated desktop save never landed while a pending hint existed (${overlaps} overlapping passes), so this run did not exercise the race"
+    return 1
+  }
+  [[ "${projects_before}" == "${projects_after}" ]] || {
+    err "projects.json changed across the reconstruction (${projects_before:0:12} -> ${projects_after:0:12}); the CLI must never write to it"
+    return 1
+  }
+  [[ ! -e "${PENDING_HINTS_B}/${create_command_id}.json" ]] || {
+    err "the hint ${PENDING_HINTS_B}/${create_command_id}.json is still live after the created receipt; a one-shot hint must be spent"
+    cat "${PENDING_HINTS_B}/${create_command_id}.json" >&2
+    return 1
+  }
+  # Spent, not vanished: the provider renames the hint to a `.consumed` marker
+  # once the record is persisted, and that marker is the durable answer to
+  # "which directory did this create actually get, and which execution came of
+  # it". An empty directory would be the wrong assertion — it would pass just as
+  # well if the hint had been deleted without ever being honoured.
+  [[ -e "${PENDING_HINTS_B}/${create_command_id}.consumed" ]] || {
+    err "no consumed marker at ${PENDING_HINTS_B}/${create_command_id}.consumed: the hint is gone with nothing recording what it resolved to"
+    ls -la "${PENDING_HINTS_B}" >&2
+    return 1
+  }
   py -c "
 import json, os, sys
-path, command_id, expected = sys.argv[1:]
+path, command_id, expected, target = sys.argv[1:]
+with open(path, encoding='utf-8') as source:
+    marker = json.load(source)
+assert marker['commandId'] == command_id, marker
+got = os.path.realpath(marker['path'])
+assert got == os.path.realpath(expected), (got, os.path.realpath(expected))
+session_id = marker.get('sessionId')
+assert session_id, ('the marker records no execution for a create that produced one', marker)
+assert session_id in target, (
+    'the marker names an execution that is not the reconstructed one', session_id, target)
+" "${PENDING_HINTS_B}/${create_command_id}.consumed" "${create_command_id}" "${CHECKOUT_B}" "${target_b}"
+  # …and the fallbacks still point somewhere else, or none of this proves
+  # anything about where the work went.
+  py -c "
+import json, os, sys
+path, recovered = sys.argv[1:]
 with open(path, encoding='utf-8') as source:
     projects = json.load(source)
-pending = projects.get('pending') or {}
-assert command_id in pending, (
-    f'the projects file carries no pending entry for create {command_id}', sorted(pending))
-got = os.path.realpath(pending[command_id])
-assert got == os.path.realpath(expected), (got, os.path.realpath(expected))
-# The fallbacks must still point somewhere else, or this proves nothing.
+assert not (projects.get('pending') or {}), (
+    'the projects file carries a pending entry; the CLI is still writing to it', projects['pending'])
+target = os.path.realpath(recovered)
 for key in ('projects', 'channels'):
     for value in (projects.get(key) or {}).values():
-        assert os.path.realpath(value) != got, (
-            f'{key} already points at the recovered checkout, so a pending hint was never needed')
-" "${PROJECTS_B}" "${create_command_id}" "${CHECKOUT_B}"
+        assert os.path.realpath(value) != target, (
+            f'{key} already points at the recovered checkout, so no hint was ever needed')
+" "${PROJECTS_B}" "${CHECKOUT_B}"
 
   q 44224 | py -c "
 import json, sys, helpers
 events = json.load(sys.stdin)
 provider_b, target_b = sys.argv[1:]
-created = [
-    event for event in events
-    if json.loads(event['content']).get('status') == 'created'
-    and helpers.target_to_key(json.loads(event['content'])['session']) == target_b
+for_target = [
+    (event, json.loads(event['content'])) for event in events
+    if helpers.target_to_key(json.loads(event['content'])['session']) == target_b
 ]
+created = [event for event, content in for_target if content.get('status') == 'created']
+if len(created) != 1:
+    # Print every receipt this execution got. created_with_failed_initial_turn
+    # can carry HANDOVER_FENCED or AUTHORITY_NOT_REVERIFIED when a claim lands
+    # during adapter startup, and the status alone would not say which.
+    # (No backticks in here: this block lives inside a double-quoted shell
+    # string, where they would be command substitution.)
+    for event, content in for_target:
+        print(json.dumps({'id': event['id'], 'signer': event['pubkey'], 'content': content}),
+              file=sys.stderr)
 assert len(created) == 1, f'expected exactly one created receipt for {target_b}, found {len(created)}'
 assert created[0]['pubkey'] == provider_b, created[0]
 " "${PROVIDER_B_HEX}" "${target_b}"
@@ -1477,7 +1603,7 @@ for line in body['missing']:
     assert 'not the recovered checkout' not in line, line
 " "${CONTINUATION_1}" "${B_HEX}" "${takeover_id}" "${target_b}"
 
-  pass 3 "P_A killed; with no live lease the default plan reconstructed: a run with no projects file was refused naming --projects-file and left the chain at ${links_before} links; takeover ${takeover_id:0:12}… then accepted with bodyPubkey=P_B; B's checkout is on ${branch} at ${HEAD_SHA_A:0:12} with tracked+staged+unstaged+untracked+binary bytes restored; the create ${create_command_id} was bound through the projects file's pending hint to B-work (while its project and channel entries still point at B-default), ACP opened the session on B-work, and P_B's first observed metadata reports branch handover/${S1:0:8} at ${HEAD_SHA_A:0:12}; one session.create joined ${S1} on P_B (created receipt, exactly one new ACP prompt carrying the task and next action), and continuation ${CONTINUATION_1:0:12}… records reconstructed with recovered lines and no relocation disclosure"
+  pass 3 "P_A killed; with no live lease the default plan reconstructed: a run with no projects file was refused naming --projects-file and left the chain at ${links_before} links; takeover ${takeover_id:0:12}… then accepted with bodyPubkey=P_B; B's checkout is on ${branch} at ${HEAD_SHA_A:0:12} with tracked+staged+unstaged+untracked+binary bytes restored; the create ${create_command_id} was bound through a one-shot hint file that survived ${overlaps} desktop saves of projects.json (byte-identical throughout, and its project/channel entries still point at B-default) and was spent on admission (its .consumed marker names B-work and the execution it minted), ACP opened the session on B-work, and P_B's first observed metadata reports branch handover/${S1:0:8} at ${HEAD_SHA_A:0:12}; one session.create joined ${S1} on P_B (created receipt, exactly one new ACP prompt carrying the task and next action), and continuation ${CONTINUATION_1:0:12}… records reconstructed with recovered lines and no relocation disclosure"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1570,23 +1696,47 @@ step_5() {
 # Step 6 — two claims at one chain head; the relay picks one
 # ═══════════════════════════════════════════════════════════════════════════
 step_6() {
-  local lines s2 g2 a_exit b_exit winner losers
+  local lines s2 g2 a_exit b_exit winner
   lines="$(found_umbrella a "${PROVIDER_A_HEX}" "the racing-claims umbrella")"
   s2="$(sed -n 1p <<< "${lines}")"; g2="$(sed -n 2p <<< "${lines}")"
   bee_a sessions grant --channel "${CHANNEL}" --genesis "${g2}" --pubkey "${B_HEX}" --role collaborator >/dev/null
 
-  set +e
-  ( bee_a sessions handover claim --channel "${CHANNEL}" --session-ref "${s2}" --genesis "${g2}" \
-      --body-self --json > "${WORKDIR}/claim-a.json" 2> "${WORKDIR}/claim-a.err"
-    echo $? > "${WORKDIR}/claim-a.exit" ) &
-  ( bee_b sessions handover claim --channel "${CHANNEL}" --session-ref "${s2}" --genesis "${g2}" \
-      --body "${PROVIDER_B_HEX}" --json > "${WORKDIR}/claim-b.json" 2> "${WORKDIR}/claim-b.err"
-    echo $? > "${WORKDIR}/claim-b.exit" ) &
-  wait
-  set -e
-  a_exit="$(cat "${WORKDIR}/claim-a.exit")"
-  b_exit="$(cat "${WORKDIR}/claim-b.exit")"
-  log "concurrent claims exited: A=${a_exit} B=${b_exit}"
+  # Retried, because "concurrent" is a hope rather than a guarantee: each claim
+  # is its own `bee` process, and if one completes before the other reads the
+  # chain then both are accepted at different seqs and nothing collided. That is
+  # not a failure of the relay's serialization — it is a run that did not test
+  # it — so it is retried on a fresh umbrella and, if it never collides, said
+  # so rather than counted.
+  local attempt raced=0
+  for attempt in 1 2 3; do
+    if [[ "${attempt}" -gt 1 ]]; then
+      lines="$(found_umbrella a "${PROVIDER_A_HEX}" "the racing-claims umbrella ${attempt}")"
+      s2="$(sed -n 1p <<< "${lines}")"; g2="$(sed -n 2p <<< "${lines}")"
+      bee_a sessions grant --channel "${CHANNEL}" --genesis "${g2}" --pubkey "${B_HEX}" --role collaborator >/dev/null
+    fi
+    set +e
+    ( bee_a sessions handover claim --channel "${CHANNEL}" --session-ref "${s2}" --genesis "${g2}" \
+        --body-self --json > "${WORKDIR}/claim-a.json" 2> "${WORKDIR}/claim-a.err"
+      echo $? > "${WORKDIR}/claim-a.exit" ) &
+    ( bee_b sessions handover claim --channel "${CHANNEL}" --session-ref "${s2}" --genesis "${g2}" \
+        --body "${PROVIDER_B_HEX}" --json > "${WORKDIR}/claim-b.json" 2> "${WORKDIR}/claim-b.err"
+      echo $? > "${WORKDIR}/claim-b.exit" ) &
+    wait
+    set -e
+    a_exit="$(cat "${WORKDIR}/claim-a.exit")"
+    b_exit="$(cat "${WORKDIR}/claim-b.exit")"
+    log "attempt ${attempt}: concurrent claims exited: A=${a_exit} B=${b_exit}"
+    if [[ "${a_exit}" -eq 0 && "${b_exit}" -eq 0 ]]; then
+      log "attempt ${attempt}: both claims were accepted, so they never met at one head; retrying on a fresh umbrella"
+      continue
+    fi
+    raced=1
+    break
+  done
+  [[ "${raced}" -eq 1 ]] || {
+    err "the two claims never collided at one chain head in 3 attempts, so the relay's serialization was not exercised"
+    return 1
+  }
 
   # Exactly one accepted takeover for this genesis, whichever won.
   winner="$(q 40099 | py -c "
@@ -1844,11 +1994,21 @@ assert len(wip) == 1 and wip[0]['sha'] == sys.argv[2], body['artifacts']
     return 1
   }
 
+  # Nothing is rewriting `projects.json` here, so this is the uncontaminated
+  # test of the same rule step 3 checks under a busy desktop: a reconstruction
+  # binds its checkout through a hint file and leaves the projects file alone.
+  local projects_hash_before projects_hash_after
+  projects_hash_before="$(shasum -a 256 "${PROJECTS_B}" | cut -d' ' -f1)"
   allowed_json="$(bee_b_git sessions handover continue --channel "${CHANNEL}" \
     --session-ref "${s3}" --genesis "${g3}" --cwd "${CHECKOUT_B9}" \
     --body "${PROVIDER_B_HEX}" --provider-instance "${INSTANCE}" \
     --projects-file "${PROJECTS_B}" \
     --reconstruct --allow-no-artifact --remote origin --wait-secs 120 --json)"
+  projects_hash_after="$(shasum -a 256 "${PROJECTS_B}" | cut -d' ' -f1)"
+  [[ "${projects_hash_before}" == "${projects_hash_after}" ]] || {
+    err "the CLI modified ${PROJECTS_B} during a reconstruction (${projects_hash_before:0:12} -> ${projects_hash_after:0:12})"
+    return 1
+  }
   printf '%s\n' "${allowed_json}" > "${WORKDIR}/continue-9-allowed.json"
   py -c "
 import json, sys
@@ -1859,7 +2019,7 @@ missing = out['continuation']['missing']
 assert any(sha in line for line in missing), f'{sha} is not listed under missing: {missing!r}'
 " "${allowed_json}" "${off_relay_sha}"
 
-  pass 9 "a checkpoint whose wip sha ${off_relay_sha:0:12} the relay's 30618 never named was refused by name (exit ${refused_exit}, message quotes the sha and the ref state it read); --allow-no-artifact proceeded and listed that sha under the continuation's missing"
+  pass 9 "a checkpoint whose wip sha ${off_relay_sha:0:12} the relay's 30618 never named was refused by name (exit ${refused_exit}, message quotes the sha and the ref state it read); --allow-no-artifact proceeded, listed that sha under the continuation's missing, and left projects.json byte-identical"
 }
 
 

@@ -145,9 +145,21 @@ the file name.
 Then confirm the work is where the agent can see it, which is a separate
 question from whether it was fetched:
 
-- the projects file gained a `pending` entry for the create's `commandId`
-  pointing at the recovered checkout, while its `projects`/`channels` entries
-  still point at B's ordinary folder;
+- a one-shot hint file appeared at
+  `<directory of the projects file>/pending-hints/<the create's commandId>.json`
+  naming the recovered checkout, while the projects file's own
+  `projects`/`channels` entries still point at B's ordinary folder — and the
+  **projects file itself is unchanged**, byte for byte. The CLI does not write
+  to it. That is deliberate: the binding used to live inside `projects.json`,
+  where any unrelated desktop save between writing it and the provider
+  admitting the create erased it, after which the model opened in B's default
+  folder and the continuation still said "recovered". If you want to see the
+  fix work, **save something in the desktop while the reconstruction is
+  running** — a project rename, anything that rewrites that file — and check
+  the outcome below is unaffected;
+- after the session appears, the hint file is **gone**. It is consumed on
+  admission; one left behind would bind some later create nobody pointed at
+  that folder;
 - the session's own view reports the recovered branch and commit — not B's
   default folder's — in the execution's status;
 - ask the agent, in its first reply, what branch it is on and whether it can
