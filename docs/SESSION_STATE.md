@@ -27,13 +27,15 @@ follow-up, and a successful 5528 ms answer beginning "Continuity confirmed" that
 correctly recalls the earlier report. No tool calls were requested or recorded.
 Evidence: `native-continuation-transcript.txt` in the build evidence directory.
 
-Open UI observation: the native accessibility tree showed empty generation-2
-conversation blocks, without the prompt/answer, both live and after navigating
-away/back. The relay contains them. Determine whether this is transcript rendering
-or off-screen accessibility behavior before claiming a display defect. The older
-`Continuity acceptance` generation 3 also showed unresolved genesis authority and
-no conversation, while the read-only inspection resolved authority successfully.
-These observations do not invalidate the provider continuation evidence.
+The suspected missing generation-2 response is closed: subsequent native AX and
+screenshot inspection show the continuity marker, prompt, and full answer in the
+installed app. The earlier absent AX bodies did not establish missing data or a
+rendering defect; no speculative transcript patch was made.
+
+The older `Continuity acceptance` entry is a separate deletion/recovery finding:
+its prior genesis/history were named in a signed deletion, yet later provider
+metadata advertised it as disconnected. Root is checking exact deletion authority
+and reader/recovery precedence; no grants or history were altered to make it open.
 
 Validation completed independently:
 
@@ -57,21 +59,50 @@ replaced dependency metadata while other tests ran. Finish Rust jobs serially
 when reusing a target; concurrent worktrees require separate targets. Windows
 cross-account acceptance remains deferred to September 9, not a development gate.
 
-Fable delivered declared-work Pulse candidate `83c32efab..cc08ac86b` on
-`work/declared-work-fable`, base `6a59eb45e`; not integrated or installed yet.
-Its final checkpoint and evidence paths are in the shared Desktop coordination
-mailbox. It projects canonical team facts and reads at most 32 visible sessions,
-with limitations disclosed; no scope comparison or automatic takeover.
+Declared work in Pulse is integrated on this topic as `eeb5af492`, `b7fd2d19c`,
+and `abfb760ad` (Fable originals `83c32efab`, `ca45629c8`, `cc08ac86b`). It shows
+accepted assignments, reports, dispositions, settlement and existing plans with
+bounded reads over up to 32 visible sessions. Closed sessions do not settle work;
+source navigation sends no instruction; no scope comparison or takeover is claimed.
+It is not yet installed or pushed.
 
-Root repaired the inherited `projectPulse.spec.ts` lease-subscription readiness
-failure: kind 24223 is the lease (44230 is closure). Observed outbound frames
-prove cold-start discovery consumes more than one five-second relay read-budget
-window before the subscription appears. The test now allows three budget
-windows; all original release/stale/live assertions remain intact. Three repeats
-passed (`pulse-lease-fixed.log`); the full file passed 12/13, with a separate
-project-creation timeout in the partial-read test (`pulse-full-browser.log`).
-That timeout left the New project dialog submitting; its cause is not yet
-established. No product or mock-bridge code changed for the readiness repair.
+Root integration review repaired two concrete faults: page cache identity now
+preserves session order and lifecycle, preventing omitted sessions after activity
+reorders page boundaries; failed refreshes retain prior rows but disclose stale
+results and suppress current-empty claims. Real InfiniteQueryObserver regressions
+cover reordering and closure; mounted UI tests cover populated/empty read failure
+and recovery. Evidence in `../review-2026-09-08-release-candidate/`:
+`declared-pagination-tests.log` (3/3), `declared-refresh-ui-tests.log` (22/22),
+`declared-integrated-desktop-tests.log` (8766/8766),
+`declared-integrated-core-tests.log` (13/13), and
+`declared-integrated-browser.log` (9/9 declared-work/mission cases). Integrated
+E2E build/typecheck passed. Native declared-work adapter tests passed 7/7
+(`declared-integrated-native-tests.log`); final desktop checks and size checks
+passed. Fable's full core/native Clippy and focused suites were inspected in its
+final logs; no Rust changes were needed during integration.
+
+The inherited Pulse browser failure is repaired independently. Lease kind 24223
+subscription readiness allows three actual five-second read-budget windows,
+retaining the original release/stale/live assertions. Frame tracing also found
+project creation's prerequisite discovery reads taking 10.062 and 12.172 seconds,
+longer than the test's ten-second setup allowance. Pulse behavior specs now seed
+an existing project; dedicated project-creation suites retain their own coverage.
+The whole Pulse file passed 13/13 with zero retries in 49.1 seconds
+(`pulse-seeded-full-browser.log`); the original failed runs and
+`pulse-creation-timeline.log` remain evidence. No product pacing was changed.
+The real cold-start creation delay is a performance follow-up, not a proven lost
+write or reason to expand this browser repair.
+
+Brian requested another substantial Fable orchestration slice. Fable acknowledged
+step 4's first complete absent-teammate handover and started
+`../review-handover-fable`, branch `work/handover-fable`, base `abfb760ad`.
+Brief: `/Users/brian/Desktop/BEEKEEPER-FABLE-HANDOVER-BRIEF.md`.
+Scope: existing grants/resource consent, preserved checkpoint/artifact references,
+authoritative execution claim and old-body fencing, authorized native resume or
+honestly labeled reconstruction, session UI, and isolated two-owner/two-host
+composition. Windows native acceptance stays deferred; no new routine human gate.
+Fable posts exact lane claims before editing; root owns Pulse integration and
+ledger changes. Its assignment/acknowledgement is in the existing Desktop mailbox.
 
 ## September 8 Mac bundle discovery — repair in progress
 

@@ -187,8 +187,10 @@ the control is replaced by the disclosure below.
 `pulseQueries.ts` gains `usePulseDeclaredWork(coordinate, channelIds, {digest, displayNames})`
 built on `useInfiniteQuery`, key
 `["project-pulse-declared", coordinate, sortedChannels, visibleSessionKey, viewerPubkey]`
-where `visibleSessionKey` is the sorted session-key list (a session appearing
-or closing changes what the read is about). `refetchInterval: 60_000`,
+where `visibleSessionKey` encodes the ordered `(sessionKey, lifecycle)` list
+(a session appearing, reordering across page boundaries, or closing starts a
+new consistent paged read). Timestamp-only changes that preserve this order and
+lifecycle do not invalidate the pages. `refetchInterval: 60_000`,
 `retry: false`, `enabled: coordinate !== null`. Refetch re-reads **loaded**
 pages only. A page error keeps earlier pages' rows and is disclosed. No
 module-level cache is added (no new `resetCommunityState` entry); if one is,

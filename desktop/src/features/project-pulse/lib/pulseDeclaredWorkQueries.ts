@@ -77,6 +77,20 @@ export function pulseDeclaredWorkQueryKey(
   ];
 }
 
+/**
+ * Bind every page to the same ordered session snapshot. Sorting these keys
+ * would alias different page boundaries; lifecycle changes also need a fresh
+ * read because the team-only gather takes that state from the digest.
+ * Observation timestamps need not churn the cache when the order is unchanged.
+ */
+export function pulseDeclaredWorkSnapshotKey(
+  sessions: ReturnType<typeof pulseDeclaredWorkSessions>,
+): string {
+  return JSON.stringify(
+    sessions.map(({ sessionKey, lifecycle }) => [sessionKey, lifecycle]),
+  );
+}
+
 /** One loaded page: which page it is, what came back, and what it asked about. */
 export type PulseDeclaredWorkPage = {
   pageIndex: number;
@@ -306,10 +320,7 @@ export function usePulseDeclaredWork(
     [digest],
   );
   const visibleSessionCount = visibleSessions.length;
-  const visibleSessionKey = visibleSessions
-    .map((session) => session.sessionKey)
-    .sort()
-    .join(",");
+  const visibleSessionKey = pulseDeclaredWorkSnapshotKey(visibleSessions);
   const key = React.useMemo(
     () => [
       ...pulseDeclaredWorkQueryKey(coordinate ?? "none", stableChannelIds),

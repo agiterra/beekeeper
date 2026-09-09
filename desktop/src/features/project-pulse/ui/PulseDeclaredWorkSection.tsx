@@ -455,6 +455,7 @@ export function PulseDeclaredWorkSection({
   // "the read is incomplete" over a section that is showing everything it
   // found is the failure this flag exists to prevent.
   const readIsComplete = model?.readIsComplete === true;
+  const updateFailed = state === "ready" && message !== null;
 
   return (
     <section
@@ -487,16 +488,26 @@ export function PulseDeclaredWorkSection({
         </button>
       </div>
 
-      {state === "unreadable" ? (
+      {state === "unreadable" || updateFailed ? (
         <p
           className="flex items-start gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive"
-          data-testid="pulse-declared-unreadable"
+          data-testid={
+            updateFailed
+              ? "pulse-declared-update-failed"
+              : "pulse-declared-unreadable"
+          }
+          role="status"
         >
           <TriangleAlert className="mt-0.5 size-3 shrink-0" aria-hidden />
           <span>
             <span className="font-medium">
-              Declared work could not be read.
+              {updateFailed
+                ? "Declared work could not be updated."
+                : "Declared work could not be read."}
             </span>{" "}
+            {updateFailed
+              ? "Showing previously read results; they may be out of date. "
+              : null}
             {message ?? "The read failed without a message."}
           </span>
         </p>
@@ -517,6 +528,7 @@ export function PulseDeclaredWorkSection({
           className="text-xs text-muted-foreground"
           data-testid="pulse-declared-scan"
         >
+          {updateFailed ? "Previous read: " : null}
           {model.scan.sentence}
         </p>
       ) : null}
@@ -552,13 +564,15 @@ export function PulseDeclaredWorkSection({
           className="text-sm text-muted-foreground"
           data-testid="pulse-declared-empty"
         >
-          {filterNote
-            ? "No declared work matches this filter. Clear it to see the rest."
-            : !readIsComplete
-              ? "No declared work appeared in what this read returned; the read is incomplete, so that is not a project-wide answer."
-              : settled.length > 0
-                ? `No unresolved declared work; ${settled.length} settled below.`
-                : "No declared work in this project's visible sessions."}
+          {updateFailed
+            ? "The previous read found no unresolved declared work in this view; the latest read failed, so current work is unknown."
+            : filterNote
+              ? "No declared work matches this filter. Clear it to see the rest."
+              : !readIsComplete
+                ? "No declared work appeared in what this read returned; the read is incomplete, so that is not a project-wide answer."
+                : settled.length > 0
+                  ? `No unresolved declared work; ${settled.length} settled below.`
+                  : "No declared work in this project's visible sessions."}
         </p>
       ) : null}
 

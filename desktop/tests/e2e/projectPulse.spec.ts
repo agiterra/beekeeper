@@ -642,10 +642,19 @@ async function waitForLeaseLiveSubscription(page: Page) {
     .toBe(true);
 }
 
-async function createProject(page: Page, name: string) {
-  await page.getByTestId("project-container-new").click();
-  await page.getByTestId("create-project-container-name").fill(name);
-  await page.getByTestId("create-project-container-submit").click();
+/** Pulse exercises existing project reads; creation has its own browser suites.
+ * Creating during cold boot also waits behind discovery's relay read budget,
+ * making a Pulse assertion race an unrelated project's asynchronous lookup. */
+async function bootPulseProject(
+  page: Page,
+  extras: RelayEvent[],
+  options: Parameters<typeof boot>[2] = {},
+) {
+  await boot(
+    page,
+    [projectHeadEvent({ dtag: PROJECT_DTAG, name: "Pulse Demo" }), ...extras],
+    options,
+  );
 }
 
 async function openProjectScreen(page: Page, dtag: string) {
@@ -696,8 +705,7 @@ async function captureLocator(page: Page, locator: Locator, name: string) {
 test("the project home card opens a Pulse that keeps every claim honest", async ({
   page,
 }) => {
-  await boot(page, seededEntries());
-  await createProject(page, "Pulse Demo");
+  await bootPulseProject(page, seededEntries());
   await openProjectScreen(page, PROJECT_DTAG);
 
   const card = page.getByTestId("project-pulse-card");
@@ -784,8 +792,7 @@ test("the project home card opens a Pulse that keeps every claim honest", async 
 test("the project page tab reaches the same Pulse the home card does", async ({
   page,
 }) => {
-  await boot(page, seededEntries());
-  await createProject(page, "Pulse Demo");
+  await bootPulseProject(page, seededEntries());
   // Pulse left the sidebar: the group lists channels and sessions only.
   const group = page.getByTestId(`project-group-${PROJECT_DTAG}`);
   await expect(group).toBeVisible({ timeout: 10_000 });
@@ -819,8 +826,9 @@ test("the project page tab reaches the same Pulse the home card does", async ({
 test("an empty project qualifies absence, never presenting it as a verdict", async ({
   page,
 }) => {
-  await boot(page, []);
-  await createProject(page, "Empty Demo");
+  await boot(page, [
+    projectHeadEvent({ dtag: EMPTY_DTAG, name: "Empty Demo" }),
+  ]);
   await openProjectScreen(page, EMPTY_DTAG);
   await page.getByTestId("project-screen-open-pulse").click();
 
@@ -1029,8 +1037,9 @@ test("a read still in flight says so, and offers no verdict in the meantime", as
 }) => {
   // The entries REQ is never answered, so the screen has no verdict yet — and
   // says exactly that, rather than borrowing the confirmed-empty sentence.
-  await boot(page, seededEntries(), { hangKinds: [KIND_PULSE_ENTRY] });
-  await createProject(page, "Pulse Demo");
+  await bootPulseProject(page, seededEntries(), {
+    hangKinds: [KIND_PULSE_ENTRY],
+  });
   await openPulseFromSidebar(page, PROJECT_DTAG);
   await expect(page.getByTestId("pulse-loading")).toBeVisible({
     timeout: 10_000,
@@ -1071,8 +1080,9 @@ test("a head this community cannot read never renders as an empty project", asyn
 test("a source that did not answer renders as a partial read, not an empty verdict", async ({
   page,
 }) => {
-  await boot(page, seededEntries(), { rejectKinds: [KIND_PULSE_ENTRY] });
-  await createProject(page, "Pulse Demo");
+  await bootPulseProject(page, seededEntries(), {
+    rejectKinds: [KIND_PULSE_ENTRY],
+  });
   await openPulseFromSidebar(page, PROJECT_DTAG);
   const partial = page.getByTestId("pulse-partial");
   await expect(partial).toBeVisible({ timeout: 10_000 });
@@ -1131,8 +1141,7 @@ test("a complete read that lost an event says so instead of looking exhaustive",
     branch: "wip/project-pulse",
     supersedes: "f".repeat(64),
   });
-  await boot(page, [...seededEntries(), dangling]);
-  await createProject(page, "Pulse Demo");
+  await bootPulseProject(page, [...seededEntries(), dangling]);
   await openPulseFromSidebar(page, PROJECT_DTAG);
   const excluded = page.getByTestId("pulse-excluded");
   await expect(excluded).toBeVisible({ timeout: 10_000 });

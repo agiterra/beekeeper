@@ -178,7 +178,7 @@ async function renderSection(props = {}) {
   const { PulseDeclaredWorkSection } = await import(
     "@/features/project-pulse/ui/PulseDeclaredWorkSection"
   );
-  return render(
+  const element = (overrides = {}) =>
     createElement(PulseDeclaredWorkSection, {
       authorNames: NAMES,
       entriesById: new Map(),
@@ -195,8 +195,76 @@ async function renderSection(props = {}) {
       sessionsByRef: new Map(),
       state: "ready",
       ...props,
-    }),
-  );
+      ...overrides,
+    });
+  const screen = render(element());
+  return {
+    ...screen,
+    rerenderSection: (overrides) => screen.rerender(element(overrides)),
+  };
+}
+
+for (const empty of [false, true]) {
+  test(`a failed refresh retains the previous ${empty ? "empty read" : "assignment"} and discloses stale results until recovery`, async () => {
+    const previous = model({
+      current: empty ? [] : [assignmentRow()],
+      scan: {
+        visibleSessions: 1,
+        scannedSessions: 1,
+        morePages: false,
+        sentence: "Scanned the 1 visible session.",
+      },
+    });
+    const screen = await renderSection({ model: previous });
+    const row = screen.queryByTestId("pulse-declared-row");
+    assert.equal(screen.queryByTestId("pulse-declared-update-failed"), null);
+    if (empty) {
+      assert.equal(
+        screen.getByTestId("pulse-declared-empty").textContent,
+        "No declared work in this project's visible sessions.",
+      );
+    } else {
+      assert.match(row.textContent, /Render the declared-work section/);
+    }
+
+    screen.rerenderSection({ refreshing: true });
+    assert.ok(screen.getByTestId("pulse-declared-refreshing"));
+    screen.rerenderSection({
+      refreshing: false,
+      message: "Relay connection closed during refresh",
+    });
+    const failure = screen.getByTestId("pulse-declared-update-failed");
+    assert.match(failure.textContent, /could not be updated/);
+    assert.match(failure.textContent, /previously read results/);
+    assert.match(failure.textContent, /may be out of date/);
+    assert.match(failure.textContent, /Relay connection closed during refresh/);
+    assert.equal(screen.queryByTestId("pulse-declared-refreshing"), null);
+    assert.match(
+      screen.getByTestId("pulse-declared-scan").textContent,
+      /^Previous read: Scanned the 1 visible session/,
+    );
+    if (empty) {
+      const sentence = screen.getByTestId("pulse-declared-empty").textContent;
+      assert.match(sentence, /current work is unknown/);
+      assert.doesNotMatch(sentence, /^No declared work in/);
+    } else {
+      assert.equal(screen.getByTestId("pulse-declared-row"), row);
+      assert.equal(screen.queryByTestId("pulse-declared-empty"), null);
+    }
+
+    screen.rerenderSection({ message: null, refreshing: false });
+    assert.equal(screen.queryByTestId("pulse-declared-update-failed"), null);
+    assert.equal(
+      screen.getByTestId("pulse-declared-scan").textContent,
+      "Scanned the 1 visible session.",
+    );
+    if (empty) {
+      assert.equal(
+        screen.getByTestId("pulse-declared-empty").textContent,
+        "No declared work in this project's visible sessions.",
+      );
+    }
+  });
 }
 
 test("a loading read says it is reading, never that there is no work", async () => {
