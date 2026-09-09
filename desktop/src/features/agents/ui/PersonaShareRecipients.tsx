@@ -1,6 +1,17 @@
 import { Search } from "lucide-react";
 import * as React from "react";
 
+import {
+  describeShareRecipientEmptyState,
+  describeShareRecipientRow,
+  hasResolvedShareRecipientProfile,
+  resolveShareRecipientKind,
+  SHARE_RECIPIENT_KIND_GROUP_LABEL,
+  SHARE_RECIPIENT_KIND_NOTES,
+  SHARE_RECIPIENT_KIND_TABS,
+  type ShareRecipientKind,
+} from "@/features/agents/lib/shareRecipientVocabulary";
+import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import {
   useFlattenedUserSearchResults,
@@ -15,9 +26,11 @@ import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { SelectedRecipientChip } from "@/features/profile/ui/SelectedRecipientChip";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { UserSearchResult } from "@/shared/api/types";
+import { cn } from "@/shared/lib/cn";
 import { parsePubkeyInput } from "@/shared/lib/nostrUtils";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { Popover, PopoverAnchor, PopoverContent } from "@/shared/ui/popover";
+import { PubKey } from "@/shared/ui/PubKey";
 import { Skeleton } from "@/shared/ui/skeleton";
 
 const RECIPIENT_LIMIT = 8;
@@ -31,6 +44,29 @@ export function formatShareRecipientName(user: UserSearchResult) {
 }
 
 /**
+ * Whether we hold agent evidence for this key.
+ *
+ * Strictly wider than the profile flag alone: `user.isAgent` is set only from
+ * a NIP-OA owner attestation the native side verified, so a managed agent on
+ * this disk or a relay-registered agent whose owner never attested reads as
+ * `false` there. `isKnownAgent` folds in that local baseline additively — it
+ * can only widen the flag, never contradict it (see `knownAgentPubkeys.ts`).
+ *
+ * The converse does not exist: nothing in this app positively establishes that
+ * a key is a person, so "not an agent" is an absence of evidence and the
+ * vocabulary in `shareRecipientVocabulary.ts` says so out loud.
+ */
+export function isShareRecipientAgent(
+  user: UserSearchResult,
+  isKnownAgent?: (pubkey: string) => boolean,
+): boolean {
+  return (
+    isKnownAgent?.(normalizePubkey(user.pubkey)) === true ||
+    user.isAgent === true
+  );
+}
+
+/**
  * Who may appear in the recipient picker.
  *
  * Agents are excluded unless the caller opts in: the persona-share surfaces
@@ -38,25 +74,48 @@ export function formatShareRecipientName(user: UserSearchResult) {
  * surface grants to seated agents by name. Everything else — yourself,
  * already-selected or excluded pubkeys, archived identities — is filtered the
  * same way regardless.
+ *
+ * `kind` is the caller's explicit view; omitted, it falls back to today's
+ * `allowAgents` behaviour exactly. Duplicates are dropped only when their
+ * normalised keys are identical — two candidates sharing a display name are
+ * two different keys and both stay.
  */
 export function filterShareRecipientCandidates(input: {
   allowAgents: boolean;
   currentPubkey: string | null;
   excludedPubkeys: ReadonlySet<string>;
   isArchived: (pubkey: string) => boolean;
+  isKnownAgent?: (pubkey: string) => boolean;
+  kind?: ShareRecipientKind;
   selectedPubkeys: ReadonlySet<string>;
   users: readonly UserSearchResult[];
 }): UserSearchResult[] {
-  return input.users.filter((user) => {
+  const kind = resolveShareRecipientKind(input);
+  const seen = new Set<string>();
+  const kept: UserSearchResult[] = [];
+
+  for (const user of input.users) {
     const pubkey = normalizePubkey(user.pubkey);
-    return (
-      (input.allowAgents || !user.isAgent) &&
-      pubkey !== input.currentPubkey &&
-      !input.excludedPubkeys.has(pubkey) &&
-      !input.selectedPubkeys.has(pubkey) &&
-      !input.isArchived(pubkey)
-    );
-  });
+    if (
+      seen.has(pubkey) ||
+      pubkey === input.currentPubkey ||
+      input.excludedPubkeys.has(pubkey) ||
+      input.selectedPubkeys.has(pubkey) ||
+      input.isArchived(pubkey)
+    ) {
+      continue;
+    }
+
+    const isAgent = isShareRecipientAgent(user, input.isKnownAgent);
+    if (kind === "agents" ? !isAgent : kind === "people" ? isAgent : false) {
+      continue;
+    }
+
+    seen.add(pubkey);
+    kept.push(user);
+  }
+
+  return kept;
 }
 
 export function PersonaShareRecipients({
@@ -64,6 +123,7 @@ export function PersonaShareRecipients({
   allowDirectPubkeyEntry = false,
   disabled,
   excludedPubkeys = [],
+  kind,
   limit = RECIPIENT_LIMIT,
   onSelectionChange,
   open,
@@ -86,6 +146,17 @@ export function PersonaShareRecipients({
   allowDirectPubkeyEntry?: boolean;
   disabled: boolean;
   excludedPubkeys?: readonly string[];
+  /**
+   * Which slice of the directory to open on, and an opt-in to the People /
+   * Agents / All filter above the results.
+   *
+   * The control renders *only* when this is passed, so the five surfaces that
+   * never asked for it keep their markup. Omitted, the view is derived from
+   * `allowAgents` (`allowAgents ? "all" : "people"`), which is what every
+   * caller gets today. Switching the filter is presentation: it changes what
+   * is shown, never what the query asks for.
+   */
+  kind?: ShareRecipientKind;
   /** Maximum number of selectable recipients. */
   limit?: number;
   onSelectionChange: (users: UserSearchResult[]) => void;
@@ -95,11 +166,25 @@ export function PersonaShareRecipients({
 }) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [isPickerOpen, setIsPickerOpen] = React.useState(false);
+  // `null` means "follow the caller"; a value means the reader pressed a
+  // filter button. Derived rather than synced, so a caller changing `kind`
+  // still moves the view and closing the picker forgets the override.
+  const [kindOverride, setKindOverride] =
+    React.useState<ShareRecipientKind | null>(null);
   const recipientFieldRef = React.useRef<HTMLDivElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim());
   const identityQuery = useIdentityQuery();
   const isArchived = useIsArchivedPredicate();
+  const activeKind =
+    kindOverride ?? resolveShareRecipientKind({ allowAgents, kind });
+  // Content-stable context (no new query observers), so this is safe as a
+  // memo dependency in a render-hot picker.
+  const knownAgentPubkeys = useKnownAgentPubkeys();
+  const isKnownAgent = React.useCallback(
+    (pubkey: string) => knownAgentPubkeys.has(normalizePubkey(pubkey)),
+    [knownAgentPubkeys],
+  );
   const selectedPubkeys = React.useMemo(
     () => new Set(selectedUsers.map((user) => normalizePubkey(user.pubkey))),
     [selectedUsers],
@@ -123,6 +208,8 @@ export function PersonaShareRecipients({
       currentPubkey,
       excludedPubkeys: excludedPubkeySet,
       isArchived,
+      isKnownAgent,
+      kind: activeKind,
       selectedPubkeys,
       users: userSearchResults,
     });
@@ -135,14 +222,27 @@ export function PersonaShareRecipients({
       query: deferredSearchQuery,
     });
   }, [
+    activeKind,
     allowAgents,
     currentPubkey,
     deferredSearchQuery,
     excludedPubkeySet,
     isArchived,
+    isKnownAgent,
     selectedPubkeys,
     userSearchResults,
   ]);
+  // Display names collide; keys do not. Every named row carries its short key
+  // so two "Builder"s are told apart, and an agent row names its owner when
+  // one of the loaded profiles resolves that key. Lookup only — no fetch.
+  const loadedNames = React.useMemo(() => {
+    const names = new Map<string, string>();
+    for (const user of userSearchResults) {
+      const name = user.displayName?.trim() || user.nip05Handle?.trim();
+      if (name) names.set(normalizePubkey(user.pubkey), name);
+    }
+    return names;
+  }, [userSearchResults]);
   // Someone without a kind:0 profile is invisible to search — offer a
   // synthetic result so they can still be added by pubkey/npub. Suppressed
   // against `searchResults` (the ranked, *displayed* list), not the raw
@@ -150,6 +250,11 @@ export function PersonaShareRecipients({
   // pubkey-matched hit (a raw hex string rarely fuzzy-matches a display
   // name), and checking the raw list would then hide the person from both
   // the ranked results and this synthetic fallback.
+  //
+  // It is deliberately *not* filtered by the active view: the reader typed
+  // this key, so it stays on offer. Its `isAgent: false` asserts nothing — the
+  // row is labelled from the evidence we actually hold, which for a key with
+  // no profile is "Unidentified", never a person.
   const directPubkeyUser = React.useMemo<UserSearchResult | null>(() => {
     if (!allowDirectPubkeyEntry) return null;
     const pubkey = parsePubkeyInput(deferredSearchQuery);
@@ -189,11 +294,20 @@ export function PersonaShareRecipients({
     userSearchQuery,
     selectedUsers.length < limit,
   );
+  // An exhausted-view string ("No people found." and its siblings) is a claim
+  // about the whole directory, so it is only allowed once the pages have
+  // actually run out. Each view names the population it searched.
+  const emptyState = describeShareRecipientEmptyState({
+    hasMoreResults: userSearchQuery.hasNextPage === true,
+    isLoadingMore: userSearchQuery.isFetchingNextPage === true,
+    kind: activeKind,
+  });
 
   React.useEffect(() => {
     if (!open) {
       setSearchQuery("");
       setIsPickerOpen(false);
+      setKindOverride(null);
     }
   }, [open]);
 
@@ -332,6 +446,47 @@ export function PersonaShareRecipients({
           onOpenAutoFocus={(event) => event.preventDefault()}
           sideOffset={6}
         >
+          {kind ? (
+            <div className="border-b border-border/60 px-2 py-2">
+              <fieldset
+                aria-label={SHARE_RECIPIENT_KIND_GROUP_LABEL}
+                className="flex items-center gap-1"
+                data-testid={`${testIdPrefix}-recipient-kind-filter`}
+              >
+                {SHARE_RECIPIENT_KIND_TABS.map((tab) => {
+                  const isActive = tab.kind === activeKind;
+                  return (
+                    <button
+                      aria-pressed={isActive}
+                      className={cn(
+                        "rounded-md px-2 py-1 text-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+                        isActive
+                          ? "bg-muted font-semibold text-foreground underline underline-offset-4"
+                          : "font-normal text-muted-foreground hover:bg-muted/50",
+                      )}
+                      data-testid={`${testIdPrefix}-recipient-kind-${tab.kind}`}
+                      key={tab.kind}
+                      onClick={() => {
+                        // Presentation only: no refetch, no change to what the
+                        // query asks for, and no page is fetched here.
+                        setKindOverride(tab.kind);
+                        searchInputRef.current?.focus({ preventScroll: true });
+                      }}
+                      type="button"
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </fieldset>
+              <p
+                className="mt-1.5 px-1 text-2xs text-muted-foreground"
+                data-testid={`${testIdPrefix}-recipient-kind-note`}
+              >
+                {SHARE_RECIPIENT_KIND_NOTES[activeKind]}
+              </p>
+            </div>
+          ) : null}
           <div
             className="max-h-64 overflow-y-auto overscroll-contain py-1"
             data-testid={`${testIdPrefix}-recipient-results`}
@@ -355,36 +510,104 @@ export function PersonaShareRecipients({
                 ))}
               </div>
             ) : visibleSearchResults.length > 0 ? (
-              visibleSearchResults.map((user) => (
-                <button
-                  aria-label={`Add ${formatShareRecipientName(user)}`}
-                  className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-hidden"
-                  data-testid={`${testIdPrefix}-recipient-option-${user.pubkey}`}
-                  key={user.pubkey}
-                  onClick={() => selectUser(user)}
-                  role="option"
-                  type="button"
-                >
-                  <ProfileAvatar
-                    avatarUrl={user.avatarUrl}
-                    className="h-8 w-8 text-xs shadow-none"
-                    iconClassName="h-4 w-4"
-                    label={formatShareRecipientName(user)}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                    {formatShareRecipientName(user)}
-                  </span>
-                  {directPubkeyUser?.pubkey === user.pubkey ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      by public key
+              visibleSearchResults.map((user) => {
+                const name = formatShareRecipientName(user);
+                const ownerPubkey = user.ownerPubkey
+                  ? normalizePubkey(user.ownerPubkey)
+                  : null;
+                const row = describeShareRecipientRow({
+                  hasProfile: hasResolvedShareRecipientProfile(user),
+                  isAgent: isShareRecipientAgent(user, isKnownAgent),
+                  ownerLabel: ownerPubkey
+                    ? (loadedNames.get(ownerPubkey) ??
+                      truncatePubkey(ownerPubkey))
+                    : null,
+                });
+                return (
+                  <button
+                    aria-label={`Add ${name}, key ${truncatePubkey(user.pubkey)}${row.label ? `, ${row.label.toLowerCase()}` : ""}`}
+                    className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-hidden"
+                    data-testid={`${testIdPrefix}-recipient-option-${user.pubkey}`}
+                    key={user.pubkey}
+                    onClick={() => selectUser(user)}
+                    role="option"
+                    type="button"
+                  >
+                    <ProfileAvatar
+                      avatarUrl={user.avatarUrl}
+                      className="h-8 w-8 text-xs shadow-none"
+                      iconClassName="h-4 w-4"
+                      label={name}
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-sm font-medium">
+                        {name}
+                      </span>
+                      {row.showShortKey || row.label ? (
+                        <span
+                          className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground"
+                          data-testid={`${testIdPrefix}-recipient-option-meta-${user.pubkey}`}
+                        >
+                          {row.showShortKey ? (
+                            <PubKey
+                              className="shrink-0 text-2xs"
+                              interactive={false}
+                              pubkey={user.pubkey}
+                            />
+                          ) : null}
+                          {row.label ? (
+                            <span className="shrink-0 rounded-sm border border-border/70 px-1 font-medium">
+                              {row.label}
+                            </span>
+                          ) : null}
+                          {row.detail ? (
+                            <span className="truncate">{row.detail}</span>
+                          ) : null}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </button>
-              ))
+                    {directPubkeyUser?.pubkey === user.pubkey ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        by public key
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
             ) : (
-              <p className="px-3 py-3 text-sm text-muted-foreground">
-                No people found.
-              </p>
+              <div
+                className="px-3 py-3"
+                data-testid={`${testIdPrefix}-recipient-empty`}
+              >
+                <p className="text-sm text-muted-foreground">
+                  {emptyState.message}
+                </p>
+                {emptyState.hint ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {emptyState.hint}
+                  </p>
+                ) : null}
+                {emptyState.loadMoreLabel ? (
+                  <button
+                    className="mt-2 rounded-md border border-input px-2 py-1 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+                    data-testid={`${testIdPrefix}-recipient-load-more`}
+                    disabled={userSearchQuery.isFetchingNextPage}
+                    onClick={() => {
+                      // Exactly one page per press. Never a loop, and never
+                      // triggered by switching the filter.
+                      if (
+                        userSearchQuery.hasNextPage &&
+                        !userSearchQuery.isFetchingNextPage
+                      ) {
+                        void userSearchQuery.fetchNextPage();
+                      }
+                    }}
+                    type="button"
+                  >
+                    {emptyState.loadMoreLabel}
+                  </button>
+                ) : null}
+              </div>
             )}
           </div>
         </PopoverContent>
