@@ -2,7 +2,7 @@
   "missionErrors": [
     {
       "message": "duplicate supplied team transaction 4c5d6e7f",
-      "scope": "missions:cc33dd44ee55ff6600778899aabbccddeeff0011223344556677889900112233"
+      "scope": "missions:cc33dd44-ee55-4f66-a077-8899aabbccdd"
     },
     {
       "message": "9 open sessions in scope; the newest 8 by observation time were read",
@@ -12,7 +12,7 @@
   "missionScope": "project channels · the newest 8 open sessions by observation time",
   "missions": [
     {
-      "channelId": "aa11bb22cc33dd44ee55ff6600778899aabbccddeeff00112233445566778899",
+      "channelId": "aa11bb22-cc33-4d44-ae55-ff6600778899",
       "latestObservationAt": 1756800600,
       "lines": [
         {
@@ -144,7 +144,7 @@
       ]
     },
     {
-      "channelId": "bb22cc33dd44ee55ff6600778899aabbccddeeff001122334455667788990011",
+      "channelId": "bb22cc33-dd44-4e55-af66-00778899aabb",
       "latestObservationAt": 1756800100,
       "lines": [
         {
@@ -194,7 +194,7 @@
       ]
     },
     {
-      "channelId": "cc33dd44ee55ff6600778899aabbccddeeff0011223344556677889900112233",
+      "channelId": "cc33dd44-ee55-4f66-a077-8899aabbccdd",
       "latestObservationAt": null,
       "lines": [
         {

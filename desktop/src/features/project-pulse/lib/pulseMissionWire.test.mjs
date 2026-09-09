@@ -55,6 +55,53 @@ test("the frozen fixture decodes and keeps every top-level key", () => {
   assert.equal(decoded.rulingsWaitingOnViewer.length, 1);
 });
 
+test("a native mission's channel UUID survives decoding unchanged", () => {
+  const payload = fixture();
+  const channel = "aa946c4e-acdc-43cb-9209-b0ef221d8d65";
+  payload.missions[0].channelId = channel;
+  const decoded = decodePulseMissionRows(payload);
+  assert.equal(decoded.missions[0].channelId, channel);
+  assert.deepEqual(decoded.missions[0].lines, payload.missions[0].lines);
+  assert.deepEqual(decoded.missions[0].seats, payload.missions[0].seats);
+});
+
+test("the Rust-produced fixture carries channel UUIDs rather than actor keys", () => {
+  for (const mission of fixture().missions) {
+    assert.match(
+      mission.channelId,
+      /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,
+    );
+  }
+});
+
+test("channel UUID support does not relax pubkey or event-id shapes", () => {
+  const uuid = "aa946c4e-acdc-43cb-9209-b0ef221d8d65";
+  assert.match(
+    String(
+      rejection((payload) => (payload.missions[0].seats[0].pubkey = uuid)),
+    ),
+    /seats\[0\].pubkey is not the expected shape/,
+  );
+  assert.match(
+    String(rejection((payload) => (payload.openRulings[0].requestId = uuid))),
+    /openRulings\[0\].requestId is not the expected shape/,
+  );
+});
+
+for (const channel of [
+  "a".repeat(64),
+  "AA946C4E-ACDC-43CB-9209-B0EF221D8D65",
+  "aa946c4eacdc43cb9209b0ef221d8d65",
+  "not-a-channel",
+]) {
+  test(`a noncanonical channel ${channel} is refused`, () => {
+    assert.match(
+      String(rejection((payload) => (payload.missions[0].channelId = channel))),
+      /missions\[0\].channelId is not the expected shape/,
+    );
+  });
+}
+
 test("one extra top-level key is refused by name", () => {
   const message = rejection((payload) => {
     payload.missionSurprise = 1;
@@ -220,7 +267,6 @@ test("every actor pubkey in the frozen contract is canonical 64-hex", () => {
   const payload = fixture();
   const actors = [
     payload.viewerPubkey,
-    payload.missions[0].channelId,
     payload.missions[0].seats[0].pubkey,
     payload.missions[0].seats[1].pubkey,
     payload.missions[0].moved[0].authorPubkey,

@@ -7,28 +7,33 @@ it is not a second deployment ledger or a handoff report.
 
 ## Active parallel assignment — September 8
 
-Fable delivered step 2a and its recovery slice. Root now owns their integrated
-CI-to-managed-session continuation, recovery repairs, and final packaging/landing
-checks. The preserved recovery worktree is `../review-ci-recovery-fable`;
-`CI_CONTINUATION_RECOVERY_SPEC.md` includes the integration amendments. No new
-result producer or generic waiting daemon is part of this slice. Fable has no
-new execution assignment until root issues a non-overlapping brief.
+Fable owns step 4's first absent-teammate handover, in
+`../review-handover-fable` on `work/handover-fable`. Its contract is
+`docs/HANDOVER_IMPL.md` in that worktree; the execution brief is
+`/Users/brian/Desktop/BEEKEEPER-FABLE-HANDOVER-BRIEF.md`.
 
-Astra owns the remaining step1 role-evidence work: bounded complete history
-recovery, then operator commissioning using the existing platform authority
-semantics where provable. See `ROLE_EVIDENCE_RECOVERY_SPEC.md`. A current roster
-must not be treated as historical authority. Root's files stay in desktop Roles
-and narrowly scoped evidence adapters; Fable owns core/CLI/provider continuation.
-Cross-client schema parity needs exact file claims before editing.
+The first version hands over a whole session: relay-accepted claims, preserved
+checkpoints and artifact bytes, fencing of competing old executions, authorized
+native continuation or explicitly labeled reconstruction, desktop/CLI controls,
+and two-owner/two-host composition. Shared types unblock provider and CLI lanes;
+UI proceeds alongside them. Revocation keeps the old execution fenced until a
+fresh accepted claim. Accepted session deletion takes precedence over recovery.
+Fable finalizes its lanes and sends a reviewable candidate to root.
 
-The next prepared implementation slice is step 3 through
-`WORK_COORDINATION_VISIBILITY_SPEC.md`: expose existing plans and accepted
-assignments in Pulse before adding repository-bound overlap comparisons. The
-paired native acceptance sequence is in `COLLABORATION_TWO_MACHINE_ACCEPTANCE.md`.
-Declared-work visibility can be delegated independently of root's recovery
-validation; it does not replace the remaining installed-build acceptance.
+Astra owns integration and installed Mac acceptance, including the declared-work
+Pulse read path and project-creation performance. Root lanes avoid Fable's
+provider, authority, and handover UI files. The shared mailbox records exact file
+claims; small shared registration changes must both survive integration.
+Windows cross-account acceptance uses Brian's separate test account when that
+machine returns. Independent implementation and automated acceptance continue.
 
-This assignment supersedes the September7 owner split below. Current completion,
+Step 3's follow-on repository-bound overlap comparison remains downstream of
+its existing declared-work visibility contract; this assignment does not add a
+second work registry. Remaining role-adoption evidence and operator commissioning
+must still use existing authority, not infer historical grants from a current
+roster. See `ROLE_EVIDENCE_RECOVERY_SPEC.md`.
+
+This assignment supersedes the September 7 owner split below. Current completion,
 installed state and concrete findings remain solely in SESSION_STATE.md.
 
 ## The acceptance story

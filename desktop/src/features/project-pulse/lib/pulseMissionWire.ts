@@ -190,7 +190,8 @@ const HEX40 = /^[0-9a-f]{40}$/;
  */
 const ACTOR_HEX = HEX64;
 /**
- * A session ref is matched on shape, not on RFC 4122 version and variant.
+ * Channel ids and session refs are lowercase canonical UUIDs, matched on
+ * shape rather than RFC 4122 version and variant, like the core team fold.
  *
  * `isCanonicalSessionRef` in the shared strict-JSON module pins those nibbles.
  * This reader deliberately does not: a `sessionRef` here is an opaque key it
@@ -198,7 +199,7 @@ const ACTOR_HEX = HEX64;
  * surface over a version nibble would be this reader disagreeing with its
  * producer about a field neither of them reads.
  */
-const SESSION_REF = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const CANONICAL_UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 /** A decode failure. The message names the field or token that caused it. */
 function fail(what: string): never {
@@ -353,9 +354,13 @@ function decodeMission(value: unknown, where: string): PulseMissionRow {
     sessionRef: requireNullableString(
       fields.sessionRef,
       `${where}.sessionRef`,
-      SESSION_REF,
+      CANONICAL_UUID,
     ),
-    channelId: requireString(fields.channelId, `${where}.channelId`, HEX64),
+    channelId: requireString(
+      fields.channelId,
+      `${where}.channelId`,
+      CANONICAL_UUID,
+    ),
     name: requireNullableString(fields.name, `${where}.name`),
     state: requireToken(fields.state, PULSE_MISSION_STATES, `${where}.state`),
     latestObservationAt: requireWholeSeconds(

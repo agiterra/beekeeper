@@ -48,7 +48,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
     let mut running = PulseMissionFacts {
         session_key: "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into(),
         session_ref: Some("0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into()),
-        channel_id: "aa11bb22cc33dd44ee55ff6600778899aabbccddeeff00112233445566778899".into(),
+        channel_id: "aa11bb22-cc33-4d44-ae55-ff6600778899".into(),
         name: Some("Route rail honesty".into()),
         latest_observation_at: Some(1_756_800_600),
         state: PulseMissionState::Running,
@@ -166,7 +166,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
     let blocked = PulseMissionFacts {
         session_key: "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9".into(),
         session_ref: Some("1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9".into()),
-        channel_id: "bb22cc33dd44ee55ff6600778899aabbccddeeff001122334455667788990011".into(),
+        channel_id: "bb22cc33-dd44-4e55-af66-00778899aabb".into(),
         name: None,
         latest_observation_at: Some(1_756_800_100),
         state: PulseMissionState::Blocked,
@@ -190,7 +190,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
     let unreadable = PulseMissionFacts {
         session_key: "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901".into(),
         session_ref: None,
-        channel_id: "cc33dd44ee55ff6600778899aabbccddeeff0011223344556677889900112233".into(),
+        channel_id: "cc33dd44-ee55-4f66-a077-8899aabbccdd".into(),
         name: Some("Unreadable umbrella".into()),
         latest_observation_at: None,
         state: PulseMissionState::Unreadable,
@@ -252,8 +252,7 @@ fn fixture_rows_for(viewer_pubkey: Option<&str>) -> PulseMissionRows {
             .collect(),
         mission_errors: vec![
             PulseMissionError {
-                scope: "missions:cc33dd44ee55ff6600778899aabbccddeeff0011223344556677889900112233"
-                    .into(),
+                scope: "missions:cc33dd44-ee55-4f66-a077-8899aabbccdd".into(),
                 message: "duplicate supplied team transaction 4c5d6e7f".into(),
             },
             pulse_mission_cap_disclosure(9).expect("the cap disclosure"),

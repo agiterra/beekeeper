@@ -5,37 +5,55 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-## September 8 installed Mac candidate — startup verified
+## September 8 installed Mac candidate — declared work integrated
 
-Installed `~/Applications/Beekeeper Dev.app` now contains source **22a60a24e**,
-CLI build time `2026-09-09T00:31:58Z`. All eight nonempty executable sidecars,
-role resources, source/CLI SHA agreement and strict ad-hoc signature verification
-passed. The previous `497943d3` bundle is preserved at
-`../review-2026-09-08-release-candidate/installed-app-backup-497943d3/Beekeeper Dev.app`.
-Logs: `build-fixed-retry.log`, `install.log` in that evidence directory.
+Installed `~/Applications/Beekeeper Dev.app` now contains source **c2195f1f8**,
+CLI build time `2026-09-09T01:18:31Z`. The complete packaged debug app passed
+all eight sidecar/resource/source checks and strict ad-hoc signature verification.
+The previous `22a60a24e` bundle is preserved at
+`../review-2026-09-08-release-candidate/installed-app-backup-22a60a24/Beekeeper Dev.app`.
+Logs: `declared-integrated-app-build.log`, `declared-integrated-install.log`.
+The idle previous app was quit normally. The replacement initially waited for
+Keychain (`declared-installed-provider.log`). Brian cleared it; the subsequent
+`declared-installed-provider-cleared.log` passes, proving desktop PID 4916
+launched provider PID 7209 from the installed bundle. Native AX inspection on
+c2195f1f8 reached Project Pulse and its Declared work section: 6 of 12 visible
+sessions scanned, 4 older unread, 2 unreadable, with the missing-genesis reasons
+shown. This is live native read-path evidence, not handover acceptance.
+Native inspection also exposed `pulse mission rows: response.missions[0].channelId
+is not the expected shape`: the client decoder requires HEX64, while the native
+producer returns a canonical UUID channel. Invalid hex-channel Rust fixtures
+hid that integration mismatch. The source decoder and both Rust-generated
+fixtures now use canonical UUID channels; event IDs and pubkeys remain strict
+64-hex. Focused wire/invoke/mission UI tests pass 38/38, Rust fixture parity 2/2,
+and TypeScript, Biome and Rust formatting checks pass. Evidence:
+`pulse-mission-channel-{diagnosis.json,desktop-final.log,core.log,tsc.log,
+fmt-final.log}`. The initial failed desktop log is retained (an old test also
+misclassified the channel as an actor). Installed c2195f1f8 still contains this
+mission-summary defect; source correction awaits the next combined build.
 
-Brian cleared the macOS Keychain prompt. The app opened signed in as Brian on
-hive; `installed-provider-verified.log` confirms the provider is a child of the
-installed desktop and runs from that same app bundle (CLI source `22a60a24`).
-Computer Use also confirms the native UI is responsive. The earlier
-`installed-provider-after.log` remains the failed startup observation, not a pass.
-Native resume and continuation passed against the real provider and hive:
-`Read-only project inspection`, session `320ab46d-c048-40fa-95e1-51900826b60d`,
-generation 2. UI Reconnect became Idle/Can control; the signed transcript records
-`session_resumed`, command `csc-4375da88-652d-422a-9153-21beb9fff45c`, the exact
-follow-up, and a successful 5528 ms answer beginning "Continuity confirmed" that
-correctly recalls the earlier report. No tool calls were requested or recorded.
-Evidence: `native-continuation-transcript.txt` in the build evidence directory.
+Prior installed source **22a60a24e** passed actual bundled-provider path verification
+and native resume/continuation before replacement. Session `320ab46d-c048-40fa-95e1-51900826b60d`,
+generation 2, returned a successful 5528 ms answer beginning "Continuity confirmed"
+and correctly recalled its prior report. Exact command:
+`csc-4375da88-652d-422a-9153-21beb9fff45c`.
+`native-continuation-transcript.txt` contains the signed-source rendered evidence;
+subsequent native AX and screenshot inspection showed marker, prompt and answer.
+The earlier absent AX bodies did not establish a rendering defect; no speculative
+transcript patch was made. This acceptance belongs to the prior build.
 
-The suspected missing generation-2 response is closed: subsequent native AX and
-screenshot inspection show the continuity marker, prompt, and full answer in the
-installed app. The earlier absent AX bodies did not establish missing data or a
-rendering defect; no speculative transcript patch was made.
-
-The older `Continuity acceptance` entry is a separate deletion/recovery finding:
-its prior genesis/history were named in a signed deletion, yet later provider
-metadata advertised it as disconnected. Root is checking exact deletion authority
-and reader/recovery precedence; no grants or history were altered to make it open.
+The older `Continuity acceptance` row is a deletion/recovery finding, independently
+traced in `continuity-diagnosis.md` and its signed-fact files in the build evidence
+directory. Retrievable authorized kind5 `6afbfaad…797e0a` named 34 exact records,
+including genesis `b205c161…5491b2`; all 34 are absent in an exact-ID query. Four
+newer provider metadata records nevertheless advertise native session
+`151b48de-1396-48a9-8aa5-4a1a482e4059` generation 3 as disconnected. The unchanged
+reader correctly finds no genesis founder. `Provider::recover` republishes local
+nonclosed records before reconciling deletions, and its subscription excludes kind5.
+No original acceptance OK or database deleted_at was read; the report states the
+observational limit. Fable's handover lifecycle lane is assigned durable accepted
+deletion retirement before recovery/restaging/publication, plus live handling.
+No grants or deleted history were reconstructed to make the old test reopen.
 
 Validation completed independently:
 
@@ -64,7 +82,7 @@ and `abfb760ad` (Fable originals `83c32efab`, `ca45629c8`, `cc08ac86b`). It show
 accepted assignments, reports, dispositions, settlement and existing plans with
 bounded reads over up to 32 visible sessions. Closed sessions do not settle work;
 source navigation sends no instruction; no scope comparison or takeover is claimed.
-It is not yet installed or pushed.
+It is installed and running in c2195f1f8 as verified above; not pushed.
 
 Root integration review repaired two concrete faults: page cache identity now
 preserves session order and lifecycle, preventing omitted sessions after activity
@@ -90,8 +108,23 @@ an existing project; dedicated project-creation suites retain their own coverage
 The whole Pulse file passed 13/13 with zero retries in 49.1 seconds
 (`pulse-seeded-full-browser.log`); the original failed runs and
 `pulse-creation-timeline.log` remain evidence. No product pacing was changed.
-The real cold-start creation delay is a performance follow-up, not a proven lost
-write or reason to expand this browser repair.
+The real cold-start creation delay is repaired in source at **54cc50211**:
+`useCreateProjectContainer.ts` now checks the exact owner+slug head and address
+tombstone through the existing authenticated batched query, preserving collision,
+deletion, failed-read refusal and paced WS fallback. Focused creation/transport
+tests passed 44/44; dedicated browser cases passed 6/6 over three repeats, then
+2/2 with an explicit old-project-outside-discovery-page assertion. Cold-start
+browser cases completed in 1.0–1.2 seconds. E2E build/typecheck, Biome, file sizes
+and diff checks passed. Final review caught an inherited timestamp-blind deletion
+helper: an older tombstone could hide a newer recreated head and permit Create
+to overwrite it. The shared helper now follows the relay timestamp rule, with
+77/77 creation/model/transport tests passing after this correction
+(`project-create-shared-tombstone-focused.log`). The complete projects-container
+suite also passes 307/307 (`project-create-all-project-tests.log`). Logs:
+`project-create-{focused,e2e-build,browser,browser-final,file-size}.log` in the
+same evidence directory. It does not claim
+atomic create-if-absent across concurrent machines. This follow-up is not in
+installed c2195f1f8; browser measurements are mock-bridge evidence.
 
 Brian requested another substantial Fable orchestration slice. Fable acknowledged
 step 4's first complete absent-teammate handover and started
