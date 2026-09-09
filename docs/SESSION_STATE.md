@@ -5,6 +5,57 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 8 installed Mac candidate — OS authorization pending
+
+Installed `~/Applications/Beekeeper Dev.app` now contains source **22a60a24e**,
+CLI build time `2026-09-09T00:31:58Z`. All eight nonempty executable sidecars,
+role resources, source/CLI SHA agreement and strict ad-hoc signature verification
+passed. The previous `497943d3` bundle is preserved at
+`../review-2026-09-08-release-candidate/installed-app-backup-497943d3/Beekeeper Dev.app`.
+Logs: `build-fixed-retry.log`, `install.log` in that evidence directory.
+
+The old app was quit normally with no adapter children running. The replacement
+was launched, but its provider did not appear within 30 seconds; macOS
+SecurityAgent launched alongside it and app-state reads timed out. Startup
+appears to await Keychain authorization. Computer Use explicitly refuses access
+to SecurityAgent; Brian has been asked to handle the OS prompt locally. This is
+**not** a successful native reconnect/continuation acceptance. After authorization,
+rerun `verify-installed-provider.py` in the evidence directory and require the
+provider path to be the installed bundle, then exercise a read-only session.
+`installed-provider-before.log` proves the old checkout-path launch;
+`installed-provider-after.log` records the pending startup, not a pass.
+
+Validation completed independently:
+
+- Desktop8656/8656, web176/176, mobile1993/1993; desktop and web production builds
+  passed (`client-suites.log`).
+- Native runtime suites3257 passed,19 existing ignored, including3156 desktop
+  library tests (`native-full-tests.log`). That first native command failed only
+  at rustdoc with missing-crate metadata during competing cache rebuilds;
+  serialized root-native documentation retry passed (`native-doctests-retry.log`).
+- Workspace runtime run6950 passed; its12 credential-helper spawn failures from
+  zero-byte artifact contamination passed on retry. Remaining git-sign tests and
+  workspace documentation passed (`rust-tail-tests.log`, `rust-doctests.log`).
+- Focused discovery126, native all-target Clippy, fmt and size checks passed;
+  isolated relay-backed desktop release smoke3/3 passed as recorded below.
+
+The original `just ci` command remains a failed run; these are individually
+completed components, not a claim of one uninterrupted green recipe. Root's
+validation mistake was sharing a Cargo target across worktrees with different
+Hermit `CARGO_HOME` directories: this both recopied placeholder sidecars and
+replaced dependency metadata while other tests ran. Finish Rust jobs serially
+when reusing a target; concurrent worktrees require separate targets. Windows
+cross-account acceptance remains deferred to September9, not a development gate.
+
+Fable's declared-work Pulse slice is still in review fixes, not integrated. Its
+single-pass event/payload/evidence indexing addresses root's complexity finding;
+Fable reports1042 core tests passing. Extra fixture/query files are ownership
+splits, not new feature scope. Fable also reproduced an inherited browser failure
+in `projectPulse.spec.ts:837` at `waitForLeaseLiveSubscription` (2/2 on base6a59eb45e;
+`../review-role-adoption-fable-logs/verify-base-pulse.log`) and a whole-file flake
+at1021. Root is taking the lease-subscription failure for separate diagnosis;
+no cause or repair is established yet.
+
 ## September 8 Mac bundle discovery — repair in progress
 
 Windows cross-account acceptance is deferred until September 9 at Brian's request;
