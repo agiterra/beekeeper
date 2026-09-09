@@ -35,19 +35,102 @@ import { installMockBridge } from "../helpers/bridge";
 
 const CHANNEL = "general";
 
-async function waitForMockLiveSubscription(
+// Observe completion at the IPC boundary, after the mock installed the exact
+// channel-window subscription. Any channel/global subscription (even kind 9)
+// can belong to unread tracking rather than appendMessage's window store.
+async function observeChannelWindowSubscription(
   page: import("@playwright/test").Page,
-  channelName: string,
+  hold = false,
+) {
+  const channelId = await page
+    .getByTestId(`channel-${CHANNEL}`)
+    .getAttribute("data-channel-id");
+  if (!channelId) throw new Error("mock channel row has no channel id");
+  await page.evaluate(
+    ({ channelId, hold }) => {
+      const target = window as typeof window & {
+        __TAURI_INTERNALS__: {
+          invoke: (command: string, payload?: unknown) => Promise<unknown>;
+        };
+        __WINDOW_SUBSCRIPTION_PROBE__?: {
+          requested: boolean;
+          ready: boolean;
+          release: () => void;
+        };
+      };
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const probe = { requested: false, ready: false, release };
+      target.__WINDOW_SUBSCRIPTION_PROBE__ = probe;
+      const invoke = target.__TAURI_INTERNALS__.invoke;
+      target.__TAURI_INTERNALS__.invoke = async (command, payload) => {
+        const message = (
+          payload as { message?: { type?: string; data?: string } } | undefined
+        )?.message;
+        let isWindowRequest = false;
+        if (
+          command === "plugin:websocket|send" &&
+          message?.type === "Text" &&
+          message.data
+        ) {
+          const [type, id, ...filters] = JSON.parse(message.data) as [
+            string,
+            string,
+            ...Array<{
+              kinds?: number[];
+              "#h"?: string[];
+              "#e"?: string[];
+            }>,
+          ];
+          isWindowRequest =
+            type === "REQ" &&
+            id.startsWith("live-") &&
+            filters.length === 1 &&
+            filters[0].kinds?.includes(9) === true &&
+            filters[0].kinds?.includes(39005) === true &&
+            filters[0]["#h"]?.length === 1 &&
+            filters[0]["#h"][0] === channelId &&
+            !filters[0]["#e"];
+        }
+        if (isWindowRequest) {
+          probe.requested = true;
+          if (hold) await held;
+        }
+        const result = await invoke(command, payload);
+        // Mock live REQ installs the subscription and emits EOSE before its
+        // invoke resolves. Do not announce readiness merely on invocation.
+        if (isWindowRequest) probe.ready = true;
+        return result;
+      };
+    },
+    { channelId, hold },
+  );
+}
+
+async function waitForChannelWindow(
+  page: import("@playwright/test").Page,
+  phase: "requested" | "ready" = "ready",
 ) {
   await expect
-    .poll(() =>
-      page.evaluate(
-        (ch) =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
-            channelName: ch,
-          }) ?? false,
-        channelName,
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          (phase) =>
+            (
+              window as typeof window & {
+                __WINDOW_SUBSCRIPTION_PROBE__?: {
+                  requested: boolean;
+                  ready: boolean;
+                };
+              }
+            ).__WINDOW_SUBSCRIPTION_PROBE__?.[phase] ?? false,
+          phase,
+        ),
+      // Actual per-device admission remains enabled (17 reads / 5 seconds).
+      // Wait for this relevant REQ, not every background startup request.
+      { timeout: 20_000 },
     )
     .toBe(true);
 }
@@ -111,6 +194,7 @@ test("a live broadcast depth-1 reply enters the authoritative channel window sto
   const now = Math.floor(Date.now() / 1000);
   const root = await emit(page, { content: "timeline root", createdAt: now });
 
+  await observeChannelWindowSubscription(page);
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText(CHANNEL);
   await expect(
@@ -120,7 +204,7 @@ test("a live broadcast depth-1 reply enters the authoritative channel window sto
   // The live subscription must be established before we emit, or the event is
   // delivered before appendMessage is listening — that would be a cold-load
   // test, not a live-append test.
-  await waitForMockLiveSubscription(page, CHANNEL);
+  await waitForChannelWindow(page);
 
   // LIVE broadcast depth-1 reply: parent is the root, carries ["broadcast","1"].
   await emit(page, {
@@ -148,4 +232,72 @@ test("a live broadcast depth-1 reply enters the authoritative channel window sto
   expect(await liveOverlayContents(page)).not.toContain(
     "ordinary thread reply",
   );
+});
+
+test("a broadcast received before the channel window subscribes is recovered by catch-up", async ({
+  page,
+}) => {
+  await installMockBridge(page);
+  await page.goto("/");
+  await page.waitForFunction(
+    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+  );
+  const root = await emit(page, { content: "catch-up root" });
+  await observeChannelWindowSubscription(page, true);
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByText("catch-up root", { exact: true })).toBeVisible();
+  await waitForChannelWindow(page, "requested");
+
+  // The exact window REQ is held before the mock sees it. This is a real
+  // snapshot/subscription gap, regardless of how quickly startup completes.
+  await emit(page, {
+    content: "broadcast during subscription gap",
+    parentEventId: root.id,
+    extraTags: [["broadcast", "1"]],
+  });
+  await emit(page, {
+    content: "ordinary reply during subscription gap",
+    parentEventId: root.id,
+  });
+  expect(await liveOverlayContents(page)).not.toContain(
+    "broadcast during subscription gap",
+  );
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __WINDOW_SUBSCRIPTION_PROBE__?: { release: () => void };
+      }
+    ).__WINDOW_SUBSCRIPTION_PROBE__?.release();
+  });
+  await waitForChannelWindow(page);
+
+  // Catch-up belongs in history pages, not the liveOverlay assertion above.
+  // Verify the ordinary reply still stays out of the channel's top-level rows.
+  const pageContents = () =>
+    page.evaluate(() => {
+      const client = window.__BUZZ_E2E_QUERY_CLIENT__ as unknown as {
+        getQueriesData: (
+          filter: unknown,
+        ) => Array<[readonly unknown[], unknown]>;
+      };
+      const store = client
+        .getQueriesData({ queryKey: [] })
+        .find(([key]) => key[0] === "channel-window")?.[1] as
+        | { pages?: Array<{ rows?: Array<{ event: { content: string } }> }> }
+        | undefined;
+      return (store?.pages ?? []).flatMap((page) =>
+        (page.rows ?? []).map((row) => row.event.content),
+      );
+    });
+  await expect
+    .poll(pageContents)
+    .toContain("broadcast during subscription gap");
+  expect(await pageContents()).not.toContain(
+    "ordinary reply during subscription gap",
+  );
+  await expect(
+    page
+      .getByTestId("message-timeline")
+      .getByText("broadcast during subscription gap", { exact: true }),
+  ).toBeVisible();
 });
