@@ -59,6 +59,7 @@ export function CodingSessionPersonRow({
     seatRole,
     providerLabel,
     hasProfile,
+    pending: entry.pending,
   });
   const sentence =
     evidence === null ? capability : `${capability} · ${evidence}`;

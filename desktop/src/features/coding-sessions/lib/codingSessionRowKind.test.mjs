@@ -307,3 +307,34 @@ test("a seated row names the seat it holds", () => {
   });
   assert.equal(seated.evidence, "Holds the lead seat in this session");
 });
+
+test("pending requests name requested access without asserting an effective grant", () => {
+  for (const role of ["collaborator", "viewer"]) {
+    const result = codingSessionRowSentence({
+      kind: null,
+      role,
+      seatRole: null,
+      providerLabel: null,
+      hasProfile: false,
+      pending: true,
+    });
+    assert.match(result.capability, /Invitation pending/);
+    assert.match(result.capability, /access is not confirmed/);
+    assert.doesNotMatch(
+      result.capability,
+      /Can edit and interact|Read-only access/,
+    );
+  }
+});
+
+test("channel provider evidence never claims a current session association", () => {
+  const result = codingSessionRowSentence({
+    kind: "provider",
+    role: "collaborator",
+    seatRole: null,
+    providerLabel: "claude",
+    hasProfile: false,
+  });
+  assert.match(result.evidence, /observed in this channel/);
+  assert.doesNotMatch(result.evidence, /this session/);
+});

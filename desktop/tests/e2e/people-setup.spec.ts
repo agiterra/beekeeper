@@ -34,6 +34,7 @@ import {
   recipientOptionMeta,
   recipientPopover,
   recipientSearch,
+  recipientResults,
   rosterDetail,
   rosterKind,
   rosterRow,
@@ -90,6 +91,7 @@ async function openPicker(
   options: {
     viewport?: { width: number; height: number };
     textScale?: number;
+    mixedFirstPage?: boolean;
   } = {},
 ): Promise<void> {
   await openPeopleSetupSession(page, options);
@@ -170,6 +172,32 @@ test("S1: an agent-heavy first page never claims to be empty, never auto-pages, 
 
   await waitForAnimations(page);
   await capture(recipientPopover(page), "01-people-view-agents-present");
+});
+
+test("S1b: a short nonempty People page offers one bounded press for later people", async ({
+  page,
+}) => {
+  await openPicker(page, { mixedFirstPage: true });
+  await searchRecipients(page, FIXTURE_QUERY);
+  await expect(recipientOption(page, ZOE_PUBKEY)).toBeVisible();
+  await expect(recipientResults(page).getByRole("option")).toHaveCount(1);
+  await expect(recipientOption(page, SAM_ONE_PUBKEY)).toHaveCount(0);
+  const geometry = await recipientResults(page).evaluate((element) => ({
+    content: element.scrollHeight,
+    viewport: element.clientHeight,
+  }));
+  expect(geometry.content).toBeLessThanOrEqual(geometry.viewport);
+  await expect(loadMoreResults(page)).toBeVisible();
+
+  const settled = await searchUsersCount(page);
+  await page.waitForTimeout(2_000);
+  expect(await searchUsersCount(page)).toBe(settled);
+  await loadMoreResults(page).click();
+  await expect(recipientOption(page, SAM_ONE_PUBKEY)).toBeVisible();
+  await expect(recipientOption(page, SAM_TWO_PUBKEY)).toBeVisible();
+  expect(await searchUsersCount(page)).toBe(settled + 1);
+  await expect(loadMoreResults(page)).toHaveCount(0);
+  expect(await signedAuthorityTransitions(page)).toEqual([]);
 });
 
 test("S2: identical display names on different keys stay distinguishable", async ({
@@ -304,7 +332,7 @@ test("S7: the session roster names a provider, a seat, and an unidentified key â
   await expect(rosterKind(page, PROVIDER_PUBKEY)).toHaveText("Provider");
   const providerDetail = await rosterDetail(page, PROVIDER_PUBKEY).innerText();
   expect(providerDetail).toMatch(/provider runtime/i);
-  expect(providerDetail).toContain("a computer, not a person");
+  expect(providerDetail).toContain("observed in this channel");
   console.log(`[people-setup] provider row detail: ${providerDetail}`);
 
   // A receipt-backed seat names its role.
@@ -432,39 +460,9 @@ test("S8+S10a: keyboard selection carries exactly the selected key into the gran
   ).toBeVisible();
   expect(await signedAuthorityTransitions(page)).toEqual([]);
 
-  // Measured before anything is dismissed: with a recipient chosen, does the
-  // directory popover sit on top of the button that acts on the choice?
+  // Selecting a recipient closes the directory so Invite is directly
+  // reachable. Further typing reopens it; no Escape workaround is needed.
   const invite = page.getByTestId("coding-session-people-invite");
-  const overlap = await page.evaluate(() => {
-    const popover = document.querySelector(
-      '[data-testid="coding-session-people-invite-recipient-popover"]',
-    );
-    const button = document.querySelector(
-      '[data-testid="coding-session-people-invite"]',
-    );
-    if (!popover || !button) return null;
-    const a = popover.getBoundingClientRect();
-    const b = button.getBoundingClientRect();
-    const overlapPx = Math.round(
-      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top),
-    );
-    const midpoint = document.elementFromPoint(
-      b.left + b.width / 2,
-      b.top + b.height / 2,
-    );
-    return {
-      overlapPx: overlapPx > 0 ? overlapPx : 0,
-      hitTest:
-        midpoint?.closest('[data-testid="coding-session-people-invite"]') !==
-        null,
-    };
-  });
-  console.log(`[people-setup] invite overlap: ${JSON.stringify(overlap)}`);
-
-  // Escape closes the directory. Done here so the grant bytes below are proved
-  // whatever the answer to the overlap question is â€” that is asserted at the
-  // end, so a layout defect cannot swallow the evidence this test exists for.
-  await recipientSearch(page).press("Escape");
   await expect(recipientPopover(page)).toHaveCount(0);
 
   await invite.click();
@@ -478,18 +476,26 @@ test("S8+S10a: keyboard selection carries exactly the selected key into the gran
   const [grant] = await signedAuthorityTransitions(page);
   expect(grant.granteePubkey).toBe(ZOE_PUBKEY);
   expect(grant.type).toBe("grant-operator");
+});
 
-  // Choosing a recipient and then pressing Invite is this dialog's whole
-  // purpose, and it must not require guessing that the directory has to be
-  // dismissed first. A pointer aimed at the middle of the Invite button must
-  // land on the Invite button.
-  expect(overlap, "the invite popover or button was not on screen").not.toBe(
-    null,
-  );
-  expect(
-    overlap?.hitTest,
-    `the directory popover covers the Invite button by ${overlap?.overlapPx}px, so a click on Invite lands on the popover instead`,
-  ).toBe(true);
+test("typing after a selection reopens the picker for another recipient", async ({
+  page,
+}) => {
+  await openPicker(page);
+  await searchRecipients(page, ZOE_NAME);
+  await expect(recipientOption(page, ZOE_PUBKEY)).toBeVisible();
+  await recipientSearch(page).press("Enter");
+  await expect(recipientPopover(page)).toHaveCount(0);
+  await recipientSearch(page).fill(SAM_NAME);
+  await expect(recipientOption(page, SAM_ONE_PUBKEY)).toBeVisible();
+  await recipientOption(page, SAM_ONE_PUBKEY).click();
+  await expect(recipientPopover(page)).toHaveCount(0);
+  for (const key of [ZOE_PUBKEY, SAM_ONE_PUBKEY]) {
+    await expect(
+      page.getByTestId(`coding-session-people-invite-recipient-chip-${key}`),
+    ).toBeVisible();
+  }
+  expect(await signedAuthorityTransitions(page)).toEqual([]);
 });
 
 test("S9: opening, filtering and paging People mutates nothing", async ({
@@ -593,7 +599,7 @@ test("S10c: at the largest zoom this app allows, the roster still reads", async 
   await capture(dialog, "05-zoom-250");
 
   for (const [label, pubkey, sentence] of [
-    ["provider", PROVIDER_PUBKEY, "a computer, not a person"],
+    ["provider", PROVIDER_PUBKEY, "observed in this channel"],
     ["seat", SEATED_AGENT_PUBKEY, "Holds the builder seat in this session"],
   ] as const) {
     const geometry = await rosterRow(page, pubkey).evaluate((row) => {

@@ -437,7 +437,11 @@ test("a pending invite still says Inviting…, and claims no kind of its own", a
   });
   const row = rowText(STRANGER);
   assert.match(row, /Inviting…/);
-  assert.match(row, /Can edit and interact/);
+  assert.match(
+    row,
+    /Invitation pending — requested collaborator access is not confirmed/,
+  );
+  assert.doesNotMatch(row, /Can edit and interact/);
 });
 
 test("the surface says session access is not project membership", async () => {

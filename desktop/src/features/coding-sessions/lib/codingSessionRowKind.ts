@@ -1,5 +1,6 @@
 import {
   ENTITY_ROLE_DESCRIPTIONS,
+  ENTITY_ROLE_LABELS,
   type EntityRole,
 } from "@/shared/lib/entityRoles";
 
@@ -187,8 +188,11 @@ export function codingSessionRowSentence(input: {
   seatRole: string | null;
   providerLabel: string | null;
   hasProfile: boolean;
+  pending?: boolean;
 }): { capability: string; evidence: string | null } {
-  const capability = ENTITY_ROLE_DESCRIPTIONS[input.role];
+  const capability = input.pending
+    ? `Invitation pending — requested ${ENTITY_ROLE_LABELS[input.role].toLowerCase()} access is not confirmed`
+    : ENTITY_ROLE_DESCRIPTIONS[input.role];
   if (input.kind === null) return { capability, evidence: null };
   switch (input.kind) {
     case "owner":
@@ -197,8 +201,8 @@ export function codingSessionRowSentence(input: {
       return {
         capability,
         evidence: input.providerLabel
-          ? `Provider runtime (${input.providerLabel}) signing this session's facts — a computer, not a person`
-          : "A provider runtime signing this session's facts — a computer, not a person",
+          ? `Provider runtime (${input.providerLabel}) observed in this channel — a computer, not a person`
+          : "A provider runtime observed in this channel — a computer, not a person",
       };
     case "seated":
       return {

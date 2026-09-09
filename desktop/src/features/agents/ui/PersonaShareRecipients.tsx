@@ -315,8 +315,10 @@ export function PersonaShareRecipients({
     if (selectedUsers.length >= limit) return;
     onSelectionChange([...selectedUsers, user]);
     setSearchQuery("");
-    setIsPickerOpen(true);
     searchInputRef.current?.focus({ preventScroll: true });
+    // The chosen chip stays visible and the action below it stays reachable.
+    // Typing another name reopens the directory for another selection.
+    setIsPickerOpen(false);
   }
 
   function removeUser(pubkey: string) {
@@ -587,29 +589,31 @@ export function PersonaShareRecipients({
                     {emptyState.hint}
                   </p>
                 ) : null}
-                {emptyState.loadMoreLabel ? (
-                  <button
-                    className="mt-2 rounded-md border border-input px-2 py-1 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
-                    data-testid={`${testIdPrefix}-recipient-load-more`}
-                    disabled={userSearchQuery.isFetchingNextPage}
-                    onClick={() => {
-                      // Exactly one page per press. Never a loop, and never
-                      // triggered by switching the filter.
-                      if (
-                        userSearchQuery.hasNextPage &&
-                        !userSearchQuery.isFetchingNextPage
-                      ) {
-                        void userSearchQuery.fetchNextPage();
-                      }
-                    }}
-                    type="button"
-                  >
-                    {emptyState.loadMoreLabel}
-                  </button>
-                ) : null}
               </div>
             )}
           </div>
+          {!isSearchSettling && userSearchQuery.hasNextPage ? (
+            <div className="border-t border-border/60 px-3 py-2">
+              <button
+                className="rounded-md border border-input px-2 py-1 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+                data-testid={`${testIdPrefix}-recipient-load-more`}
+                disabled={userSearchQuery.isFetchingNextPage}
+                onClick={() => {
+                  // One page per press, also when filtered rows are too few
+                  // to scroll. The footer sits outside the scroll container.
+                  if (
+                    userSearchQuery.hasNextPage &&
+                    !userSearchQuery.isFetchingNextPage
+                  ) {
+                    void userSearchQuery.fetchNextPage();
+                  }
+                }}
+                type="button"
+              >
+                {emptyState.loadMoreLabel}
+              </button>
+            </div>
+          ) : null}
         </PopoverContent>
       </Popover>
     </div>

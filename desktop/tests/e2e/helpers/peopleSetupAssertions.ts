@@ -323,7 +323,7 @@ function sessionEvents(): RelayEvent[] {
  * the adversarial edges (identical names, an un-attested registry agent, a
  * profile that resolves to no name).
  */
-function searchProfiles() {
+function searchProfiles(mixedFirstPage = false) {
   return [
     { pubkey: FOUNDER_PUBKEY, displayName: "Tyler" },
     ...BUILDER_AGENT_PUBKEYS.map((pubkey, index) => ({
@@ -337,7 +337,12 @@ function searchProfiles() {
     { pubkey: NOMAD_AGENT_PUBKEY, displayName: NOMAD_NAME, isAgent: false },
     { pubkey: SAM_ONE_PUBKEY, displayName: SAM_NAME },
     { pubkey: SAM_TWO_PUBKEY, displayName: SAM_NAME },
-    { pubkey: ZOE_PUBKEY, displayName: ZOE_NAME },
+    {
+      pubkey: ZOE_PUBKEY,
+      // Sort after the first 49 builders: page one contains 49 agents and
+      // one person, leaving a nonempty People list too short to scroll.
+      displayName: mixedFirstPage ? "Beekeeper Builder 49 person" : ZOE_NAME,
+    },
     { pubkey: NAMELESS_PUBKEY, displayName: null },
     { pubkey: PRIYA_PUBKEY, displayName: PRIYA_NAME },
     {
@@ -354,6 +359,7 @@ export async function openPeopleSetupSession(
   options: {
     viewport?: { width: number; height: number };
     textScale?: number;
+    mixedFirstPage?: boolean;
   } = {},
 ): Promise<void> {
   await page.addInitScript(
@@ -375,7 +381,7 @@ export async function openPeopleSetupSession(
   );
   await installMockBridge(page, {
     relaySelf: RELAY_PUBKEY,
-    searchProfiles: searchProfiles(),
+    searchProfiles: searchProfiles(options.mixedFirstPage),
     // The registry fact that makes the un-attested agent an agent.
     relayAgents: [
       { pubkey: NOMAD_AGENT_PUBKEY, name: NOMAD_NAME, agentType: "goose" },
