@@ -1445,3 +1445,452 @@ test("no disk row at all leaves the existing Pulse exactly as it was", async () 
   const screen = await renderView({ kind: "ready", digest: digest() });
   assert.equal(screen.queryByTestId("pulse-disk-row"), null);
 });
+
+// ── Declared work: the section mounts, and plans are regrouped into it ──────
+
+/** A declared-work model built literally, per the projection contract §5. */
+function declaredModel(overrides = {}) {
+  return {
+    current: overrides.current ?? [],
+    settled: overrides.settled ?? [],
+    scan: {
+      visibleSessions: 1,
+      scannedSessions: 1,
+      unreadableSessions: 0,
+      morePages: false,
+      capped: false,
+      sentence: "Scanned 1 of 1 visible sessions, newest first.",
+      ...(overrides.scan ?? {}),
+    },
+    limitations: overrides.limitations ?? [],
+    readIsComplete: (overrides.limitations ?? []).length === 0,
+    noDeclaredWork:
+      (overrides.current ?? []).length === 0 &&
+      (overrides.settled ?? []).length === 0 &&
+      (overrides.limitations ?? []).length === 0,
+  };
+}
+
+function declaredWorkProp(overrides = {}) {
+  return {
+    model: declaredModel(),
+    state: "ready",
+    message: null,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    onLoadMore: () => {},
+    onRecheck: () => {},
+    refreshing: false,
+    ...overrides,
+  };
+}
+
+test("no declared-work read at all leaves the existing Pulse exactly as it was", async () => {
+  const entries = [
+    entry({ eventId: id("e1"), type: "plan", text: "Plan one." }),
+    entry({ eventId: id("e2"), type: "note", text: "A note." }),
+  ];
+  const screen = await renderView({
+    kind: "ready",
+    digest: digest({ entries }),
+  });
+  assert.equal(screen.queryByTestId("pulse-declared-work"), null);
+  assert.equal(screen.queryByTestId("pulse-entries-regrouped"), null);
+  assert.equal(
+    screen
+      .getByTestId("pulse-entries")
+      .querySelectorAll('[data-testid="pulse-entry-row"]').length,
+    2,
+  );
+});
+
+test("the declared-work section mounts between the entries and the sessions", async () => {
+  const screen = await renderView(
+    {
+      kind: "ready",
+      digest: digest({
+        entries: [entry({ eventId: id("e2"), type: "note", text: "A note." })],
+      }),
+    },
+    { declaredWork: declaredWorkProp() },
+  );
+  const section = screen.getByTestId("pulse-declared-work");
+  const entries = screen.getByTestId("pulse-entries");
+  const sessions = screen.getByTestId("pulse-sessions");
+  const order = dom.window.Node.DOCUMENT_POSITION_FOLLOWING;
+  assert.equal(
+    entries.compareDocumentPosition(section) & order,
+    order,
+    "declared work must follow the entries",
+  );
+  assert.equal(
+    section.compareDocumentPosition(sessions) & order,
+    order,
+    "the sessions must follow declared work",
+  );
+  assert.equal(
+    screen.getByTestId("pulse-declared-scan").textContent,
+    "Scanned 1 of 1 visible sessions, newest first.",
+  );
+});
+
+test("an active plan is rendered once: in declared work, not in the entries list", async () => {
+  const plan = entry({ eventId: id("e1"), type: "plan", text: "Plan one." });
+  const note = entry({ eventId: id("e2"), type: "note", text: "A note." });
+  const screen = await renderView(
+    { kind: "ready", digest: digest({ entries: [plan, note] }) },
+    {
+      declaredWork: declaredWorkProp({
+        model: declaredModel({
+          current: [
+            {
+              kind: "plan",
+              label: "Plan posted",
+              entry: plan,
+              createdAt: plan.createdAt,
+              dedupeKey: `plan:${plan.eventId}`,
+            },
+          ],
+        }),
+      }),
+    },
+  );
+  const listed = screen
+    .getByTestId("pulse-entries")
+    .querySelectorAll('[data-testid="pulse-entry-row"]');
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].getAttribute("data-entry-type"), "note");
+  const declared = screen
+    .getByTestId("pulse-declared-work")
+    .querySelectorAll('[data-testid="pulse-entry-row"]');
+  assert.equal(declared.length, 1);
+  assert.equal(declared[0].getAttribute("data-entry-type"), "plan");
+  // One declaration, one row on the whole screen.
+  assert.equal(screen.getAllByTestId("pulse-entry-row").length, 2);
+});
+
+test("an entries list emptied only by the regroup says where its plans went", async () => {
+  const plan = entry({ eventId: id("e1"), type: "plan", text: "Plan one." });
+  const screen = await renderView(
+    { kind: "ready", digest: digest({ entries: [plan] }) },
+    {
+      declaredWork: declaredWorkProp({
+        model: declaredModel({
+          current: [
+            {
+              kind: "plan",
+              label: "Plan posted",
+              entry: plan,
+              createdAt: plan.createdAt,
+              dedupeKey: `plan:${plan.eventId}`,
+            },
+          ],
+        }),
+      }),
+    },
+  );
+  assert.equal(screen.queryByTestId("pulse-entries-empty"), null);
+  assert.match(
+    screen.getByTestId("pulse-entries-regrouped").textContent,
+    /listed under Declared work below/,
+  );
+  // The count still describes the read, not one section of it: the plan is
+  // still on this screen.
+  assert.equal(
+    screen.getByTestId("pulse-count-entries").textContent,
+    "1 entry",
+  );
+});
+
+test("superseded plans stay in their existing disclosure, never in declared work", async () => {
+  const original = entry({ eventId: id("e1"), type: "plan", text: "First." });
+  const revision = entry({
+    eventId: id("e2"),
+    type: "plan",
+    text: "Second.",
+    supersedes: original.eventId,
+  });
+  const retired = {
+    ...original,
+    active: false,
+    supersededBy: [
+      { eventId: revision.eventId, pubkey: ALICE, honored: true, reason: null },
+    ],
+  };
+  const screen = await renderView(
+    { kind: "ready", digest: digest({ entries: [retired, revision] }) },
+    {
+      declaredWork: declaredWorkProp({
+        model: declaredModel({
+          current: [
+            {
+              kind: "plan",
+              label: "Plan posted",
+              entry: revision,
+              createdAt: revision.createdAt,
+              dedupeKey: `plan:${revision.eventId}`,
+            },
+          ],
+        }),
+      }),
+    },
+  );
+  assert.ok(screen.getByTestId("pulse-superseded"));
+  assert.match(
+    screen.getByTestId("pulse-superseded-toggle").textContent,
+    /1 superseded entry/,
+  );
+  assert.equal(
+    screen
+      .getByTestId("pulse-declared-work")
+      .querySelectorAll('[data-testid="pulse-entry-row"]').length,
+    1,
+  );
+});
+
+test("a declared-work read that failed is disclosed on the Pulse screen", async () => {
+  const screen = await renderView(
+    { kind: "ready", digest: digest() },
+    {
+      declaredWork: declaredWorkProp({
+        model: null,
+        state: "unreadable",
+        message: "pulse declared work: response missing key `sessions`",
+      }),
+    },
+  );
+  assert.match(
+    screen.getByTestId("pulse-declared-unreadable").textContent,
+    /missing key `sessions`/,
+  );
+});
+
+test("declared-work navigation is offered only where an execution is recorded", async () => {
+  const opened = [];
+  const sessionKey = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const assignmentRow = {
+    kind: "assignment",
+    label: "Assigned",
+    session: {
+      sessionKey,
+      sessionRef: sessionKey,
+      channelId: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+      genesisRef: "aa".repeat(32),
+      founderPubkey: "d4".repeat(32),
+      name: "Lane",
+      lifecycle: "open",
+      latestObservationAt: NOW - 120,
+    },
+    assignment: {
+      sourceEventId: id("a1"),
+      createdAt: NOW - 60,
+      assignerPubkey: ALICE,
+      assigneeActor: BOB,
+      assigneeRole: "builder",
+      objective: "Do the thing.",
+      brief: "",
+      branch: null,
+      baseSha: null,
+      fileOwnership: [],
+      acceptanceSteps: [],
+      supersedes: null,
+      reports: [],
+      dispositions: [],
+      settlement: {
+        settled: false,
+        governedReportEventId: null,
+        dispositionEventId: null,
+        acknowledgementEventId: null,
+      },
+      status: "unresolved",
+    },
+    createdAt: NOW - 60,
+    evidence: [],
+    responsible: { pubkey: BOB, role: "builder" },
+    assignedBy: ALICE,
+    dedupeKey: `channel:${sessionKey}:${id("a1")}`,
+  };
+  const props = {
+    declaredWork: declaredWorkProp({
+      model: declaredModel({ current: [assignmentRow] }),
+    }),
+    onOpenDeclaredSession: (key) => opened.push(key),
+  };
+
+  const closed = await renderView({ kind: "ready", digest: digest() }, props);
+  assert.equal(closed.queryByTestId("pulse-declared-open-session"), null);
+  assert.equal(
+    closed.getByTestId("pulse-declared-open-session-missing").textContent,
+    "No execution recorded to open",
+  );
+  const { cleanup, fireEvent } = await import("@testing-library/react");
+  cleanup();
+
+  const open = await renderView(
+    { kind: "ready", digest: digest() },
+    { ...props, declaredSessionOpenable: (key) => key === sessionKey },
+  );
+  fireEvent.click(open.getByTestId("pulse-declared-open-session"));
+  assert.deepEqual(opened, [sessionKey]);
+});
+
+test("the branch filter follows the plans it regrouped, and says what it did not filter", async () => {
+  const onBranch = entry({
+    eventId: id("e1"),
+    type: "plan",
+    text: "On the filtered branch.",
+    branch: "main",
+  });
+  const offBranch = entry({
+    eventId: id("e2"),
+    type: "plan",
+    text: "On another branch.",
+    branch: "wip/other",
+  });
+  const planRow = (plan) => ({
+    kind: "plan",
+    label: "Plan posted",
+    entry: plan,
+    createdAt: plan.createdAt,
+    dedupeKey: `plan:${plan.eventId}`,
+  });
+  const screen = await renderView(
+    { kind: "ready", digest: digest({ entries: [onBranch, offBranch] }) },
+    {
+      declaredWork: declaredWorkProp({
+        model: declaredModel({
+          current: [planRow(onBranch), planRow(offBranch)],
+        }),
+      }),
+    },
+  );
+  const { fireEvent } = await import("@testing-library/react");
+  // Unfiltered: both plans are in the section.
+  assert.equal(screen.getAllByTestId("pulse-declared-row").length, 2);
+  assert.equal(screen.queryByTestId("pulse-declared-filter"), null);
+
+  const chips = screen
+    .getAllByTestId("pulse-branch-chip")
+    .filter((chip) => chip.textContent.startsWith("main"));
+  fireEvent.click(chips[0]);
+
+  const rows = screen.getAllByTestId("pulse-declared-row");
+  assert.equal(rows.length, 1);
+  assert.match(
+    screen.getByTestId("pulse-entry-row").textContent,
+    /On the filtered branch/,
+  );
+  assert.match(
+    screen.getByTestId("pulse-declared-filter").textContent,
+    /Assignments are listed on every branch/,
+  );
+  // The chip's own promise still holds: one entry row on the whole screen.
+  assert.equal(screen.getAllByTestId("pulse-entry-row").length, 1);
+});
+
+test("a branch filter that hides every plan is never reported as no declared work", async () => {
+  const offBranch = entry({
+    eventId: id("e2"),
+    type: "plan",
+    text: "On another branch.",
+    branch: "wip/other",
+  });
+  const note = entry({
+    eventId: id("e3"),
+    type: "note",
+    text: "A note on main.",
+    branch: "main",
+  });
+  const screen = await renderView(
+    { kind: "ready", digest: digest({ entries: [offBranch, note] }) },
+    {
+      declaredWork: declaredWorkProp({
+        model: declaredModel({
+          current: [
+            {
+              kind: "plan",
+              label: "Plan posted",
+              entry: offBranch,
+              createdAt: offBranch.createdAt,
+              dedupeKey: `plan:${offBranch.eventId}`,
+            },
+          ],
+        }),
+      }),
+    },
+  );
+  const { fireEvent } = await import("@testing-library/react");
+  const chip = screen
+    .getAllByTestId("pulse-branch-chip")
+    .find((candidate) => candidate.textContent.startsWith("main"));
+  fireEvent.click(chip);
+  assert.equal(screen.queryAllByTestId("pulse-declared-row").length, 0);
+  assert.match(
+    screen.getByTestId("pulse-declared-empty").textContent,
+    /No declared work matches this filter/,
+  );
+});
+
+test("a regrouped plan keeps the cross-author claim the entries list would have shown", async () => {
+  const plan = entry({
+    eventId: id("e1"),
+    pubkey: ALICE,
+    type: "plan",
+    text: "Holding pool.rs while the migration lands.",
+  });
+  // Bob says Alice's plan is resolved. The fold refuses it — only an entry's
+  // own author can retire it — and both halves of that refusal are disclosures
+  // the screen must keep after the plan moves into the declared-work section.
+  const claimant = entry({
+    eventId: id("e2"),
+    pubkey: BOB,
+    type: "plan",
+    text: "Picking pool.rs back up.",
+    supersedes: plan.eventId,
+    supersededBy: [],
+  });
+  const claimed = {
+    ...claimant,
+    supersededBy: [
+      {
+        eventId: plan.eventId,
+        pubkey: ALICE,
+        honored: false,
+        reason: "cross-author",
+      },
+    ],
+  };
+  const planModelRow = (target) => ({
+    kind: "plan",
+    label: "Plan posted",
+    entry: target,
+    createdAt: target.createdAt,
+    dedupeKey: `plan:${target.eventId}`,
+  });
+  const screen = await renderView(
+    { kind: "ready", digest: digest({ entries: [plan, claimed] }) },
+    {
+      declaredWork: declaredWorkProp({
+        model: declaredModel({
+          current: [planModelRow(plan), planModelRow(claimed)],
+        }),
+      }),
+    },
+  );
+  const section = screen.getByTestId("pulse-declared-work");
+  // The target's half: "bob says this is resolved — not applied".
+  const claimedNote = section.querySelector(
+    '[data-testid="pulse-entry-supersession-claimed"]',
+  );
+  assert.ok(
+    claimedNote,
+    "the refused cross-author claim must survive the regroup",
+  );
+  assert.match(claimedNote.textContent, /bob/);
+  assert.match(claimedNote.textContent, /not applied/);
+  // The claimant's half rides on the claiming entry's own row.
+  assert.ok(
+    section.querySelector('[data-testid="pulse-entry-unhonored-claim"]'),
+    "the claimant's half must survive the regroup too",
+  );
+});

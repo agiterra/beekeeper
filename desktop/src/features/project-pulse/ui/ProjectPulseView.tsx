@@ -34,10 +34,15 @@ import {
   type PulseDigestError,
   type PulseDigestSession,
 } from "../lib/pulseFold.ts";
+import type { PulseDeclaredWorkModel } from "../lib/pulseDeclaredWork";
 import type { PulseDiskRow as PulseDiskRowModel } from "../lib/pulseDiskRow";
 import type { PulseMissionRowsState } from "../lib/pulseQueries";
 import { pulseMissionRowForSession } from "../lib/pulseMissionWire";
 import { PulseDiskRow } from "./PulseDiskRow";
+import {
+  PulseDeclaredWorkSection,
+  type PulseDeclaredWorkSectionState,
+} from "./PulseDeclaredWorkSection";
 import { PulseEntryRow } from "./PulseEntryRow";
 import { PulseMissionsSection } from "./PulseMissionRow";
 import { PulseOverlapCard } from "./PulseOverlapCard";
@@ -190,6 +195,34 @@ function crossAuthorClaimsByTarget(
 }
 
 /**
+ * The declared-work read, when the host performed one.
+ *
+ * Exactly what `PulseDeclaredWorkSection` renders, minus the props this view
+ * already owns (the clock, the author map, the entry and session indexes).
+ * Optional for the same reason `missions` is: this component renders models,
+ * it does not fetch them, and absent this one the screen is byte-for-byte the
+ * Pulse it was before declared work existed.
+ */
+export type ProjectPulseDeclaredWork = {
+  model: PulseDeclaredWorkModel | null;
+  state: PulseDeclaredWorkSectionState;
+  message: string | null;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  onLoadMore: () => void;
+  onRecheck: () => void;
+  refreshing: boolean;
+};
+
+/**
+ * The default answer to "can this session be opened": no.
+ *
+ * Module-level so the reference is stable across renders — a fresh arrow here
+ * would defeat the memoisation of every row below it.
+ */
+const NO_SESSION_OPENABLE = () => false;
+
+/**
  * The Pulse of one project, rendered from a folded digest and nothing else.
  *
  * Presentation only: every fact here was decided by `foldProjectPulseDigest`,
@@ -222,6 +255,16 @@ export function ProjectPulseView({
    * absent, the screen is exactly the Pulse it was before the row existed.
    */
   diskRow,
+  /**
+   * The sibling declared-work read. When present, active `plan` entries are
+   * *regrouped* into its section and leave the Entries list below — one
+   * declaration, rendered once. Absent, nothing on this screen moves.
+   */
+  declaredWork,
+  /** Opens one declared-work session's newest execution. Publishes nothing. */
+  onOpenDeclaredSession,
+  /** Whether an execution is recorded for a session key at all. */
+  declaredSessionOpenable,
 }: {
   state: ProjectPulseViewState;
   nowSeconds: number;
@@ -230,6 +273,9 @@ export function ProjectPulseView({
   authorNames?: PulseAuthorNames;
   missions?: PulseMissionRowsState;
   diskRow?: PulseDiskRowModel;
+  declaredWork?: ProjectPulseDeclaredWork;
+  onOpenDeclaredSession?: (sessionKey: string) => void;
+  declaredSessionOpenable?: (sessionKey: string) => boolean;
 }) {
   const [branch, setBranch] = React.useState<string | null | undefined>(
     undefined,
@@ -374,6 +420,28 @@ export function ProjectPulseView({
   const visibleActiveEntries = sortPulseEntriesByConsequence(
     visibleEntries(entries.active),
   );
+  // Regrouping, not filtering: an active plan is rendered by the declared-work
+  // section instead of here, so the same declaration never appears twice. With
+  // no declared-work read there is nowhere else for it to be, and the list is
+  // exactly the list it has always been.
+  const regroupedPlans = declaredWork
+    ? visibleActiveEntries.filter((entry) => entry.type === "plan")
+    : [];
+  const listedActiveEntries = declaredWork
+    ? visibleActiveEntries.filter((entry) => entry.type !== "plan")
+    : visibleActiveEntries;
+  // The branch filter follows the plans it used to hide. Without this a chip
+  // that promises "3 rows on this filter" would sit above a fourth, on another
+  // branch, in the section the plans moved to. Assignments are *not* filtered:
+  // an assignment that reported no branch would vanish under every chip, which
+  // would hide work rather than scope it — so the section says so instead.
+  const declaredBranchFilter = declaredWork && branch !== undefined;
+  const declaredModel = declaredBranchFilter
+    ? filterDeclaredPlansByBranch(declaredWork?.model ?? null, branch)
+    : (declaredWork?.model ?? null);
+  const declaredFilterNote = declaredBranchFilter
+    ? `Filtered to ${branchChipLabel(branch)}: plans only. Assignments are listed on every branch.`
+    : null;
   const sessionsHidden =
     readable.sessions.length > 0 &&
     visibleSessions.providerReachable.length === 0 &&
@@ -591,10 +659,22 @@ export function ProjectPulseView({
       {isConfirmedEmpty ? null : (
         <section data-testid="pulse-entries">
           <GroupHeading>Entries</GroupHeading>
-          {visibleActiveEntries.length > 0 ? (
+          {listedActiveEntries.length > 0 ? (
             <ul className="flex flex-col gap-2">
-              {visibleActiveEntries.map(entryRow)}
+              {listedActiveEntries.map(entryRow)}
             </ul>
+          ) : regroupedPlans.length > 0 ? (
+            // Not an empty project: the plans moved one section down, and
+            // saying "no entries" over a screen that is showing them would be
+            // the same lie in the other direction.
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="pulse-entries-regrouped"
+            >
+              {regroupedPlans.length === 1
+                ? "The one active entry here is a plan; it is listed under Declared work below."
+                : `The ${regroupedPlans.length} active entries here are plans; they are listed under Declared work below.`}
+            </p>
           ) : (
             <div data-testid="pulse-entries-empty">
               <p className="text-sm text-muted-foreground">
@@ -611,6 +691,29 @@ export function ProjectPulseView({
           )}
         </section>
       )}
+
+      {declaredWork ? (
+        <PulseDeclaredWorkSection
+          authorNames={authorNames}
+          // The same refused-claim map the Entries list reads: a plan that
+          // moved into this section keeps every qualifier it had above it.
+          claimedBy={claimedBy}
+          entriesById={entriesById}
+          hasNextPage={declaredWork.hasNextPage}
+          isFetchingNextPage={declaredWork.isFetchingNextPage}
+          filterNote={declaredFilterNote}
+          message={declaredWork.message}
+          model={declaredModel}
+          nowSeconds={nowSeconds}
+          onLoadMore={declaredWork.onLoadMore}
+          onOpenSession={onOpenDeclaredSession}
+          onRecheck={declaredWork.onRecheck}
+          refreshing={declaredWork.refreshing}
+          sessionOpenable={declaredSessionOpenable ?? NO_SESSION_OPENABLE}
+          sessionsByRef={sessionsByRef}
+          state={declaredWork.state}
+        />
+      ) : null}
 
       {visibleSupersededEntries.length > 0 ? (
         <section data-testid="pulse-superseded">
@@ -709,6 +812,29 @@ export function ProjectPulseView({
       {diskRow ? <PulseDiskRow row={diskRow} /> : null}
     </div>
   );
+}
+
+/**
+ * The same model with its plan rows scoped to one branch.
+ *
+ * Only plans: they are the rows the branch chip already counted before they
+ * were regrouped into the declared-work section, and `entry.branch` is the
+ * field it filtered on. Assignments keep their own branch on the row and are
+ * left alone, because a filter cannot tell "on another branch" from "reported
+ * no branch" and would silently drop the second.
+ */
+function filterDeclaredPlansByBranch(
+  model: PulseDeclaredWorkModel | null,
+  branch: string | null | undefined,
+): PulseDeclaredWorkModel | null {
+  if (!model) return null;
+  const keep = (row: PulseDeclaredWorkModel["current"][number]) =>
+    row.kind !== "plan" || matchesBranchFilter(row.entry.branch, branch);
+  return {
+    ...model,
+    current: model.current.filter(keep),
+    settled: model.settled.filter(keep),
+  };
 }
 
 /** One segment of the branch filter: a control that looks like a control. */

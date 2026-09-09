@@ -1,5 +1,7 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import {
   partitionChannels,
@@ -16,13 +18,17 @@ import type { ProjectContainer } from "@/features/projects-container/lib/project
 import { listCodingSessionSeatWorktrees } from "@/shared/api/tauriCodingSessionWorktrees";
 
 import { projectPulseChannelIds } from "../lib/pulseChannelSet";
+import { projectPulseDeclaredWork } from "../lib/pulseDeclaredWork";
 import { buildPulseDiskRow, type PulseDiskRow } from "../lib/pulseDiskRow";
 import type { PulseDigestSession } from "../lib/pulseFold.ts";
 import {
   projectPulseChannelSetUnresolved,
+  projectPulseQueryKey,
   useProjectPulseDigest,
+  usePulseDeclaredWork,
   usePulseMissionRows,
 } from "../lib/pulseQueries";
+import { pulseSessionRouteParams } from "../lib/pulseSessionRoute";
 import {
   ProjectPulseView,
   type ProjectPulseViewState,
@@ -278,11 +284,128 @@ export function ProjectPulseScreen({
     return () => window.clearInterval(timer);
   }, []);
 
+  // The declared-work read: plans regrouped out of the entries list, joined to
+  // the assignments the native projection folded over the visible sessions.
+  // Same coordinate, same channel floor, this paint's digest — and its own
+  // failure mode, disclosed on the section rather than rendered as "no work".
+  const declaredRead = usePulseDeclaredWork(coordinate, channelIds, {
+    digest: pulse.digest,
+  });
+  const declaredPages = declaredRead.pages;
+  // Destructured so the memoised props below depend on the stable functions
+  // rather than the state object, which is a new object every render.
+  const declaredFetchNextPage = declaredRead.fetchNextPage;
+  const declaredRefetch = declaredRead.refetch;
+  const queryClient = useQueryClient();
+  const { goCodingSession } = useAppNavigation();
+  const declaredModel = React.useMemo(
+    () =>
+      projectPulseDeclaredWork({
+        digest: pulse.digest ?? null,
+        pages: declaredPages,
+        pageErrors: declaredRead.pageErrors,
+        visibleSessionCount: declaredRead.visibleSessionCount,
+        loadedPageCount: declaredRead.loadedPageCount,
+        nowSeconds,
+        // The viewer the *response* was computed for, not one this screen
+        // reads independently: a mismatch would silently re-scope the model.
+        viewerPubkey: declaredPages[0]?.response.viewerPubkey ?? null,
+      }),
+    [
+      declaredPages,
+      declaredRead.loadedPageCount,
+      declaredRead.pageErrors,
+      declaredRead.visibleSessionCount,
+      nowSeconds,
+      pulse.digest,
+    ],
+  );
+
+  // Which channel each declared-work session was read from. Only the response
+  // knows: the digest session carries no channel, and guessing one from the
+  // project's floor would open the wrong channel's transcript.
+  const declaredChannelBySession = React.useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const page of declaredPages) {
+      for (const session of page.response.sessions) {
+        byKey.set(session.sessionKey, session.channelId);
+      }
+    }
+    return byKey;
+  }, [declaredPages]);
+  const digestSessionsByKey = React.useMemo(() => {
+    const byKey = new Map<string, PulseDigestSession>();
+    for (const session of pulse.digest?.sessions ?? []) {
+      byKey.set(session.sessionKey, session);
+    }
+    return byKey;
+  }, [pulse.digest]);
+  // The route this session's "Open session" would take, or null when no
+  // execution is recorded for it. One resolver, so the control and the
+  // sentence that replaces it can never disagree.
+  const declaredRoute = React.useCallback(
+    (sessionKey: string) => {
+      const channelId = declaredChannelBySession.get(sessionKey);
+      const session = digestSessionsByKey.get(sessionKey);
+      if (!channelId || !session) return null;
+      return pulseSessionRouteParams({ channelId, session });
+    },
+    [declaredChannelBySession, digestSessionsByKey],
+  );
+  const declaredSessionOpenable = React.useCallback(
+    (sessionKey: string) => declaredRoute(sessionKey) !== null,
+    [declaredRoute],
+  );
+  // Navigation only: it opens a route. It publishes no event, sends no turn,
+  // and starts nothing — reading a source is not scheduling an agent.
+  const openDeclaredSession = React.useCallback(
+    (sessionKey: string) => {
+      const params = declaredRoute(sessionKey);
+      if (!params) return;
+      goCodingSession(params.channelId, params.generationId);
+    },
+    [declaredRoute, goCodingSession],
+  );
+  // "Check again" re-reads what is already loaded: this hook's pages, and the
+  // digest they are a sibling of. It starts no model and no agent.
+  const recheckDeclaredWork = React.useCallback(() => {
+    declaredRefetch();
+    if (coordinate === null) return;
+    void queryClient.invalidateQueries({
+      queryKey: projectPulseQueryKey(coordinate, channelIds, unresolved),
+    });
+  }, [channelIds, coordinate, declaredRefetch, queryClient, unresolved]);
+  const declaredWork = React.useMemo(
+    () => ({
+      model: declaredModel,
+      state: declaredRead.kind,
+      message: declaredRead.message,
+      hasNextPage: declaredRead.hasNextPage,
+      isFetchingNextPage: declaredRead.isFetchingNextPage,
+      onLoadMore: declaredFetchNextPage,
+      onRecheck: recheckDeclaredWork,
+      refreshing: declaredRead.refreshing,
+    }),
+    [
+      declaredFetchNextPage,
+      declaredModel,
+      declaredRead.hasNextPage,
+      declaredRead.isFetchingNextPage,
+      declaredRead.kind,
+      declaredRead.message,
+      declaredRead.refreshing,
+      recheckDeclaredWork,
+    ],
+  );
+
   return (
     <ProjectPulseView
       authorNames={authorNames}
+      declaredSessionOpenable={declaredSessionOpenable}
+      declaredWork={declaredWork}
       diskRow={diskRow}
       nowSeconds={nowSeconds}
+      onOpenDeclaredSession={openDeclaredSession}
       // Named, not implied by a 300px-away sidebar selection: two projects'
       // Pulse screens are otherwise pixel-identical chrome, and "No Pulse yet"
       // read against the wrong project is a coordination lie. The heading
