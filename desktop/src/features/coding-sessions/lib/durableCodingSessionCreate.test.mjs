@@ -145,12 +145,17 @@ test("an ambiguous retry reuses the exact signed event and command id", async ()
     storage,
   });
   const publishedIds = [];
+  const publishedBytes = [];
   let attempts = 0;
   const publisher = {
     async publishEvent(event) {
       publishedIds.push(event.id);
+      publishedBytes.push(JSON.stringify(event));
       attempts += 1;
-      if (attempts === 1) throw new Error("socket closed after send");
+      if (attempts === 1)
+        throw new Error(
+          "Timed out waiting for relay acknowledgement after send",
+        );
       return event;
     },
   };
@@ -167,6 +172,10 @@ test("an ambiguous retry reuses the exact signed event and command id", async ()
     { publisher, storage },
   );
   assert.equal(accepted.accepted, true);
+  assert.deepEqual(publishedBytes, [
+    JSON.stringify(prepared.transaction.event),
+    JSON.stringify(prepared.transaction.event),
+  ]);
   assert.deepEqual(publishedIds, [
     prepared.transaction.event.id,
     prepared.transaction.event.id,

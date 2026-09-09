@@ -7,6 +7,24 @@ it is not a second deployment ledger or a handoff report.
 
 ## Active parallel assignment — September 8
 
+September 9 addition, explicitly requested by Brian: Fable owns a separate
+contextual-session-start slice alongside finishing the handover corrections.
+From a session menu, start a new conversation in its explicitly selected existing
+workspace. Ordinary New session preserves project checkout defaults. This reuses
+files and branch, not model context, and does not claim takeover or cross-machine
+path portability. Independent lanes cover shared menu/UX entry points, verified
+workspace resolution, and integration/browser evidence. Reuse the existing launch
+pipeline with an explicit local workspace override; no second session launcher.
+Brief: `/Users/brian/Desktop/BEEKEEPER-FABLE-CONTEXTUAL-SESSIONS-BRIEF.md`.
+
+Astra owns confirmed-directory-failure recovery and canonical-checkout defaults
+in the current launcher. Fable coordinates a narrow typed input seam through the
+mailbox and avoids those files. Success means another conversation can intentionally
+share a worktree while the next ordinary project session still starts from the
+project checkout. Unknown/missing/foreign-host workspaces must be explained;
+menu navigation does not create sessions or change authority. Current results
+and native Windows findings remain in SESSION_STATE.md.
+
 Fable owns step 4's first absent-teammate handover, in
 `../review-handover-fable` on `work/handover-fable`. Its contract is
 `docs/HANDOVER_IMPL.md` in that worktree; the execution brief is

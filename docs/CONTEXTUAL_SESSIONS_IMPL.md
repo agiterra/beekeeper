@@ -5,6 +5,14 @@ authority: `VISION_COLLABORATION.md`, `docs/SESSION_VISION.md`. This is an
 execution contract; status belongs in `docs/SESSION_STATE.md` (root's).
 Branch `work/contextual-sessions-fable`, base `f7b9d5542`.
 
+Implementation note (September 9): root has now implemented and enabled the
+seam below, including suppression for agent-led starts. The native hint accepts
+`rememberPath` to separate canonical checkout from execution directory. Source
+repository binding survives contextual draft storage; changing folder clears an
+unproven binding. Multiple recorded workspace paths require an explicit choice.
+The sections below retain the original lane contract; current results and limits
+are recorded only in SESSION_STATE.md.
+
 ## 0. What exists, and what is missing
 
 The launcher is already the whole creation pipeline, and it already reuses a

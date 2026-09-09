@@ -6,9 +6,13 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
+import { workspaceReuseRepoRef } from "../lib/codingSessionWorkspaceReuse.ts";
+import { selectLaunchRepoRef } from "../lib/codingSessionLaunchRepoRef.ts";
+import { resolveNewCodingSessionDialogRoute } from "../ui/NewCodingSessionDialogHost.tsx";
 import { useNewSessionInWorkspaceAction } from "./useNewSessionInWorkspaceAction.ts";
 import {
   closeNewCodingSessionDialog,
+  parseNewCodingSessionRequest,
   useNewCodingSessionRequest,
 } from "../newCodingSessionDialogStore.ts";
 
@@ -185,6 +189,7 @@ test("local execution: the draft opens seeded on that exact directory", async ()
     channelId: CHANNEL,
     projectId: PROJECT,
     sessionRef: SESSION,
+    sourceRepoRef: null,
     // The head read off disk right now. It travels as the branch, but never
     // as a *provenance* the draft could still be showing after a reload.
     workspace: { path: PATH, branch: "wt-a-live", branchSource: null },
@@ -352,4 +357,99 @@ test("a row with no session ref opens the ordinary draft and reads nothing", asy
   assert.deepEqual(host.calls, []);
   assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
   await view.unmount();
+});
+
+test("a contextual draft in a multi-repository project keeps repository B through reload", async () => {
+  const sourceRepoRef = `30617:${"b".repeat(64)}:repo-b`;
+  const otherRepoRef = `30617:${"a".repeat(64)}:repo-a`;
+  const firstProjectRepo = selectLaunchRepoRef({
+    repos: [
+      { name: "repo-a", dtag: "repo-a", repoAddress: otherRepoRef },
+      { name: "repo-b", dtag: "repo-b", repoAddress: sourceRepoRef },
+    ],
+    localRepos: [
+      { name: "repo-a", path: "/src/repo-a" },
+      { name: "repo-b", path: "/src/repo-b" },
+    ],
+  });
+  assert.equal(
+    firstProjectRepo,
+    otherRepoRef,
+    "ordinary project lookup selects A",
+  );
+  const view = await mount({
+    channelId: CHANNEL,
+    projectId: PROJECT,
+    sourceRepoRef,
+    sessionRef: SESSION,
+    executionProviderPubkey: LOCAL_PROVIDER,
+    deps: deps({
+      listSeatWorktrees: async () => [
+        row({ path: "/src/repo-b-wt-lane", repoRoot: "/src/repo-b" }),
+      ],
+    }).deps,
+  });
+  try {
+    await view.start();
+    const restored = parseNewCodingSessionRequest(
+      dom.window.sessionStorage.getItem("buzz.new-coding-session-dialog.v1"),
+    );
+    const route = resolveNewCodingSessionDialogRoute(restored);
+    assert.equal(route.projectId, PROJECT);
+    assert.equal(route.workspaceReuse.path, "/src/repo-b-wt-lane");
+    assert.equal(route.sourceRepoRef, sourceRepoRef);
+    assert.equal(
+      workspaceReuseRepoRef({
+        contextual: route.workspaceReuse !== null,
+        sourceRepoRef: route.sourceRepoRef,
+        projectRepoRef: firstProjectRepo,
+      }),
+      sourceRepoRef,
+    );
+    assert.equal(
+      workspaceReuseRepoRef({
+        contextual: true,
+        sourceRepoRef: null,
+        projectRepoRef: firstProjectRepo,
+      }),
+      null,
+      "unknown source never borrows A",
+    );
+    assert.equal(
+      workspaceReuseRepoRef({
+        contextual: false,
+        sourceRepoRef,
+        projectRepoRef: firstProjectRepo,
+      }),
+      firstProjectRepo,
+      "ordinary starts still use their project resolver",
+    );
+  } finally {
+    await view.unmount();
+  }
+});
+
+test("multiple seat directories open an unseeded draft instead of borrowing one", async () => {
+  const host = deps({
+    listSeatWorktrees: async () => [
+      row(),
+      row({ key: `${SESSION}/builder`, path: "/src/other-worktree" }),
+    ],
+  });
+  const view = await mount({
+    channelId: CHANNEL,
+    projectId: PROJECT,
+    sessionRef: SESSION,
+    executionProviderPubkey: LOCAL_PROVIDER,
+    deps: host.deps,
+  });
+  try {
+    await view.resolveNow();
+    assert.match(view.detail(), /multiple recorded workspaces/);
+    await view.start();
+    assert.deepEqual(view.request(), { kind: "channel", channelId: CHANNEL });
+    assert.ok(!host.calls.includes("validateWorkdir"));
+  } finally {
+    await view.unmount();
+  }
 });

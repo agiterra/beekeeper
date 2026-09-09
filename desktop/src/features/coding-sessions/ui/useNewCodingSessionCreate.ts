@@ -50,6 +50,9 @@ import {
 } from "../lib/codingSessionLoginWatch";
 import {
   bootstrapClaudeCodingSessionRuntime,
+  canRepairNewCodingSessionWorkdir,
+  canStartFreshNewCodingSessionCreate,
+  canRetryNewCodingSessionCreate,
   NEW_CODING_SESSION_STALL_MS,
   newCodingSessionWaitKey,
 } from "../lib/newCodingSessionModel";
@@ -463,17 +466,10 @@ export function useNewCodingSessionCreate({
       seat?: CodingSessionActorSeat | null;
       /** Display name for the seat, used only in failure copy. */
       seatLabel?: string | null;
-      /**
-       * The directory to *remember* for next time, when it differs from the
-       * one the session runs in.
-       *
-       * A worktree create runs the session in a directory that did not exist
-       * a moment ago. Promoting that to the head of the recent list would
-       * prefill the next session with the last one's worktree — and then a
-       * worktree of a worktree. What a person actually returns to is the
-       * checkout the worktree came from, so that is what is stored.
-       */
+      /** Remember the source checkout, rather than a generated execution worktree. */
       rememberWorkdir?: string | null;
+      /** False keeps a contextual workspace out of saved project defaults and recents. */
+      rememberWorkspace?: boolean;
       /**
        * Join an existing umbrella instead of founding one (design §B): the
        * create carries the umbrella's ref, so the provider mints a new
@@ -524,11 +520,17 @@ export function useNewCodingSessionCreate({
           await stageCodingSessionCreateHint({
             commandId,
             path: input.workdir,
-            projectRef: input.projectRef ?? null,
+            projectRef:
+              input.rememberWorkspace === false
+                ? null
+                : (input.projectRef ?? null),
+            rememberPath: input.rememberWorkdir ?? input.workdir,
           });
-          await recordCodingSessionWorkdirUse(
-            input.rememberWorkdir ?? input.workdir,
-          );
+          if (input.rememberWorkspace !== false) {
+            await recordCodingSessionWorkdirUse(
+              input.rememberWorkdir ?? input.workdir,
+            );
+          }
         }
 
         // Strict membership on 442xx means a provider that joins after the
@@ -635,10 +637,44 @@ export function useNewCodingSessionCreate({
   );
 
   const retryExact = React.useCallback(() => {
-    if (scoped) void publishTransaction(scoped);
-  }, [publishTransaction, scoped]);
+    if (
+      scoped &&
+      canRetryNewCodingSessionCreate({
+        isPublishing,
+        lifecycleIsLoading: lifecycleSnapshot.isLoading,
+        lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
+        lifecycleState: lifecycle?.state,
+        stalled,
+        publishState: scoped.publishState,
+      })
+    )
+      void publishTransaction(scoped);
+  }, [
+    isPublishing,
+    lifecycle,
+    lifecycleSnapshot.isLoading,
+    lifecycleSnapshot.errorMessage,
+    publishTransaction,
+    scoped,
+    stalled,
+  ]);
 
   const startFresh = React.useCallback(() => {
+    if (
+      !canStartFreshNewCodingSessionCreate({
+        isPublishing,
+        lifecycleIsLoading: lifecycleSnapshot.isLoading,
+        lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
+        lifecycleState: lifecycle?.state,
+        publishState: scoped?.publishState,
+      })
+    )
+      return false;
+    const cleared = clearDurableCodingSessionCreate(scopeId);
+    if (!cleared.ok) {
+      setDurabilityError(cleared.errorMessage);
+      return false;
+    }
     if (scoped) {
       void clearAbandonedCodingSessionCreate({
         commandId: scoped.input.commandId,
@@ -647,11 +683,6 @@ export function useNewCodingSessionCreate({
         clearSeat: codingSessionSeatDeps.clearSeat,
       });
     }
-    const cleared = clearDurableCodingSessionCreate(scopeId);
-    if (!cleared.ok) {
-      setDurabilityError(cleared.errorMessage);
-      return;
-    }
     setTransaction(null);
     setPublishError(null);
     setDurabilityError(null);
@@ -659,7 +690,40 @@ export function useNewCodingSessionCreate({
     setSeatPackStaged(null);
     setSeatPackRef(null);
     settledCommandRef.current = null;
-  }, [scoped, scopeId]);
+    return true;
+  }, [
+    isPublishing,
+    lifecycle,
+    lifecycleSnapshot.isLoading,
+    lifecycleSnapshot.errorMessage,
+    scoped,
+    scopeId,
+  ]);
+
+  const repairWorkdir = React.useCallback(() => {
+    if (
+      !scoped ||
+      !canRepairNewCodingSessionWorkdir({
+        isPublishing,
+        lifecycleIsLoading: lifecycleSnapshot.isLoading,
+        lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
+        lifecycleState: lifecycle?.state,
+        failureCode:
+          lifecycle?.state === "failed" ? lifecycle.error.code : undefined,
+      })
+    )
+      return null;
+    // Only a verified terminal refusal permits changing the signed command.
+    // A timeout retains the durable transaction and can only replay its bytes.
+    return startFresh() ? scoped.input : null;
+  }, [
+    isPublishing,
+    lifecycle,
+    lifecycleSnapshot.isLoading,
+    lifecycleSnapshot.errorMessage,
+    scoped,
+    startFresh,
+  ]);
 
   // The seat as the *signed* create carries it, not as the form holds it: a
   // rehydrated transaction has no form state left, and this is the pair that
@@ -686,6 +750,7 @@ export function useNewCodingSessionCreate({
     refreshProviderState,
     resolvedGenerationId,
     retryExact,
+    repairWorkdir,
     seat,
     /** What staging wrote for {@link seat}, or null when it never ran here. */
     seatPackStaged,

@@ -239,3 +239,43 @@ test("a seat whose staging named no repository prints no provenance", () => {
   assert.match(markup, /Seated: Ada · Builder</);
   assert.doesNotMatch(markup, /staged from/);
 });
+
+test("an uncertain timeout cannot start a duplicate request", () => {
+  for (const publishState of ["published", "ambiguous"]) {
+    const markup = render({
+      transaction: { ...makeTransaction(), publishState },
+      stalled: true,
+    });
+    const start = markup.match(
+      /<button[^>]*data-testid="pending-coding-session-start-fresh"[^>]*>/,
+    );
+    assert.ok(start);
+    assert.match(start[0], /\sdisabled=""/);
+  }
+});
+
+test("folder repair waits until the matching receipt read has settled", () => {
+  const markup = render({
+    lifecycleIsLoading: true,
+    lifecycle: {
+      state: "failed",
+      error: { code: "PROJECT_CWD_UNRESOLVED", message: "no cwd" },
+    },
+  });
+  const repair = markup.match(
+    /<button[^>]*data-testid="pending-coding-session-fix-workdir"[^>]*>/,
+  );
+  assert.ok(repair);
+  assert.match(repair[0], /\sdisabled=""/);
+});
+
+test("a signed but never-published draft can still be discarded", () => {
+  const markup = render({
+    transaction: { ...makeTransaction(), publishState: "prepared" },
+  });
+  const start = markup.match(
+    /<button[^>]*data-testid="pending-coding-session-start-fresh"[^>]*>/,
+  );
+  assert.ok(start);
+  assert.doesNotMatch(start[0], /\sdisabled=""/);
+});

@@ -81,11 +81,16 @@ const RUNTIME_TARGET = {
 async function harness({
   goalFailure = null,
   launchInput = LAUNCH_INPUT,
+  workdir = null,
+  rememberWorkspace,
   /** The project's 30624 the host's reader answers with, by project ref. */
   packSources = new Map(),
 } = {}) {
   /** Every custody and pack-source call this host made, in order. */
   const staging = [];
+  const worktrees = [];
+  const hints = [];
+  const rememberedWorkdirs = [];
   const { act, renderHook } = await import("@testing-library/react");
   const { useCodingSessionCrewLaunch } = await import(
     "./useCodingSessionCrewLaunch.ts"
@@ -113,7 +118,10 @@ async function harness({
 
   const deps = {
     runLaunch: launchCodingSessionCrew,
-    createWorktree: async (input) => ({ path: `/tmp/trees/${input.name}` }),
+    createWorktree: async (input) => {
+      worktrees.push(input);
+      return { path: `/tmp/trees/${input.name}` };
+    },
     newSessionRef: () => SESSION_REF,
     newSeatCommandId: () => "csl-seat-1",
     newTurnCommandId: () => "csc-turn-1",
@@ -123,8 +131,8 @@ async function harness({
       if (goalFailure !== null) throw new Error(goalFailure);
       return publishCodingSessionGoal(input, client);
     },
-    stageCreateHint: async () => {},
-    recordWorkdirUse: async () => {},
+    stageCreateHint: async (input) => hints.push(input),
+    recordWorkdirUse: async (path) => rememberedWorkdirs.push(path),
     seatDeps: {
       ensureMembership: async () => {},
       stageSeat: async (input) => {
@@ -163,7 +171,12 @@ async function harness({
   };
 
   const mounted = renderHook(() =>
-    useCodingSessionCrewLaunch({ workdir: null, title: null, deps }),
+    useCodingSessionCrewLaunch({
+      workdir,
+      rememberWorkspace,
+      title: null,
+      deps,
+    }),
   );
 
   let result = null;
@@ -177,9 +190,48 @@ async function harness({
     published,
     result,
     staging,
+    worktrees,
+    hints,
+    rememberedWorkdirs,
     teardown: () => mounted.unmount(),
   };
 }
+
+test("contextual governed launch stages the reused folder without remembering or copying it", async () => {
+  const path = "C:\\Users\\WinBrian\\Projects\\beekeeper-wt-existing";
+  const host = await harness({
+    workdir: path,
+    rememberWorkspace: false,
+    launchInput: { ...LAUNCH_INPUT, workdir: path, leadWorktree: null },
+  });
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(host.worktrees, []);
+  assert.deepEqual(host.hints, [{ commandId: "csl-seat-1", path }]);
+  assert.deepEqual(host.rememberedWorkdirs, []);
+  assert.equal(host.of(44221).length, 1);
+  host.teardown();
+});
+
+test("ordinary governed worktree creation remembers the checkout, not the new execution folder", async () => {
+  const checkout = "/repo/primary";
+  const host = await harness({
+    workdir: checkout,
+    launchInput: {
+      ...LAUNCH_INPUT,
+      workdir: checkout,
+      leadWorktree: { name: "fresh-work", source: "main" },
+    },
+  });
+  assert.equal(host.result.ok, true, host.result.failureReason ?? "");
+  assert.deepEqual(host.worktrees, [
+    { workdir: checkout, name: "fresh-work", source: "main" },
+  ]);
+  assert.deepEqual(host.hints, [
+    { commandId: "csl-seat-1", path: "/tmp/trees/fresh-work" },
+  ]);
+  assert.deepEqual(host.rememberedWorkdirs, [checkout]);
+  host.teardown();
+});
 
 test("A2.2: the launch publishes the goal, once, before the lead's create", async () => {
   const host = await harness();

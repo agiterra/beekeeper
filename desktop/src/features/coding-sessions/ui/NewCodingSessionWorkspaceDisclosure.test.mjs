@@ -279,7 +279,7 @@ test("a request that recorded no provenance still says so, not 'recorded'", asyn
   draft.unmount();
 });
 
-test("the dialog mounts no disclosure until root's launcher seam lands", async () => {
+test("the dialog enables workspace disclosure and keeps the fallback flag consistent", async () => {
   const React = (await import("react")).default;
   const { renderToStaticMarkup } = await import("react-dom/server");
   const {
@@ -291,12 +291,15 @@ test("the dialog mounts no disclosure until root's launcher seam lands", async (
   // While the form still starts empty with "Use a worktree" ticked, a block
   // naming one folder over a field about to use another is a draft that lies
   // about what Start will do.
-  assert.equal(WORKSPACE_REUSE_SEAM_LANDED, false);
+  assert.equal(WORKSPACE_REUSE_SEAM_LANDED, true);
   assert.equal(
-    newCodingSessionWorkspaceDisclosure({
-      path: PATH,
-      branch: RECORDED_BRANCH,
-    }),
+    newCodingSessionWorkspaceDisclosure(
+      {
+        path: PATH,
+        branch: RECORDED_BRANCH,
+      },
+      false,
+    ),
     null,
   );
 
@@ -304,10 +307,13 @@ test("the dialog mounts no disclosure until root's launcher seam lands", async (
     React.createElement(
       "div",
       null,
-      newCodingSessionWorkspaceDisclosure({
-        path: PATH,
-        branch: RECORDED_BRANCH,
-      }),
+      newCodingSessionWorkspaceDisclosure(
+        {
+          path: PATH,
+          branch: RECORDED_BRANCH,
+        },
+        false,
+      ),
     ),
   );
   assert.doesNotMatch(off, /coding-session-workspace-reuse/);
@@ -322,7 +328,7 @@ test("the dialog mounts no disclosure until root's launcher seam lands", async (
       null,
       newCodingSessionWorkspaceDisclosure(
         { path: PATH, branch: RECORDED_BRANCH },
-        true,
+        WORKSPACE_REUSE_SEAM_LANDED,
       ),
     ),
   );
@@ -337,6 +343,7 @@ test("the dialog mounts no disclosure until root's launcher seam lands", async (
     newCodingSessionDialogTitle({
       projectContext: null,
       workspaceReuse: reuse,
+      seamLanded: false,
     }),
     "New coding session",
   );
@@ -344,6 +351,7 @@ test("the dialog mounts no disclosure until root's launcher seam lands", async (
     newCodingSessionDialogTitle({
       projectContext: { projectName: "Buzz Glue" },
       workspaceReuse: reuse,
+      seamLanded: false,
     }),
     "New coding session in Buzz Glue",
   );

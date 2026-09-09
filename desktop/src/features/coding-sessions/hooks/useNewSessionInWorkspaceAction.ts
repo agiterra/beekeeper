@@ -43,6 +43,8 @@ export function useNewSessionInWorkspaceAction(input: {
   /** Null for a row with no durable session ref: nothing to look up. */
   sessionRef: string | null;
   projectId?: string | null;
+  /** Repository coordinate from the viewed execution's verified metadata. */
+  sourceRepoRef?: string | null;
   /**
    * The viewed execution's provider authority, when the caller holds it.
    *
@@ -63,6 +65,7 @@ export function useNewSessionInWorkspaceAction(input: {
 } {
   const { channelId, executionProviderPubkey = null, sessionRef } = input;
   const projectId = input.projectId ?? null;
+  const sourceRepoRef = input.sourceRepoRef ?? null;
   // Hooks are unconditional, so the read hook is always called; a session
   // with no ref is simply never asked to read (`hasSession` below).
   const reuse = useCodingSessionWorkspaceReuse(sessionRef ?? "", channelId, {
@@ -90,6 +93,7 @@ export function useNewSessionInWorkspaceAction(input: {
         openNewCodingSessionDialogInWorkspace({
           channelId,
           projectId,
+          sourceRepoRef,
           sessionRef: sessionRef ?? "",
           workspace: {
             path: workspace.path,
@@ -141,7 +145,7 @@ export function useNewSessionInWorkspaceAction(input: {
         );
       })
       .finally(finish);
-  }, [channelId, hasSession, projectId, resolve, sessionRef]);
+  }, [channelId, hasSession, projectId, resolve, sessionRef, sourceRepoRef]);
 
   return {
     detail: newSessionInWorkspaceMenuDetail(reuse.resolution, reuse.error),

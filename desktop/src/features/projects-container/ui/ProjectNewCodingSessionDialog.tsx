@@ -12,6 +12,7 @@ import {
   type NewCodingSessionWorkspaceReuse,
 } from "@/features/coding-sessions/ui/NewCodingSessionDialog";
 import { matchProjectCwdRepo } from "@/features/builtin-shell/lib/projectShellCwd";
+import { workspaceReuseRepoRef } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuse";
 import { selectLaunchRepoRef } from "@/features/coding-sessions/lib/codingSessionLaunchRepoRef";
 import { listProjectLocalRepositories } from "@/shared/api/projectGit";
 import { useCommunities } from "@/features/communities/useCommunities";
@@ -60,6 +61,7 @@ export function ProjectNewCodingSessionDialog({
   open,
   projectId,
   workspaceReuse = null,
+  sourceRepoRef = null,
 }: {
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -75,6 +77,8 @@ export function ProjectNewCodingSessionDialog({
    * where the session runs, not which project it belongs to.
    */
   workspaceReuse?: NewCodingSessionWorkspaceReuse | null;
+  /** Repository named by the source session; null is unknown, never the first repo. */
+  sourceRepoRef?: string | null;
 }) {
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   // Transports included: the resolver's rule 0 and the session buckets both
@@ -249,7 +253,11 @@ export function ProjectNewCodingSessionDialog({
               project.id === LOCAL_GENERAL_ID ? null : project.address,
             channelId: resolvedChannel?.channelId ?? null,
             defaultWorkdir: repoCheckout,
-            repoRef,
+            repoRef: workspaceReuseRepoRef({
+              contextual: workspaceReuse !== null,
+              sourceRepoRef,
+              projectRepoRef: repoRef,
+            }),
             defaultSeat,
             ensureChannelId,
           }
@@ -261,6 +269,8 @@ export function ProjectNewCodingSessionDialog({
       repoCheckout,
       repoRef,
       resolvedChannel,
+      sourceRepoRef,
+      workspaceReuse,
     ],
   );
 

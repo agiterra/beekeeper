@@ -81,6 +81,7 @@ test("a workspace request round-trips whole", () => {
       channelId: "c1",
       projectId: "30621:owner:p",
       sessionRef: "s1",
+      sourceRepoRef: null,
       workspace: {
         path: "/Users/x/Code/repo-wt-a",
         branch: "wt-a",
@@ -101,6 +102,7 @@ test("a workspace request with no channel, project, or branch still round-trips"
       channelId: null,
       projectId: null,
       sessionRef: "s1",
+      sourceRepoRef: null,
       workspace: {
         path: "/Users/x/Code/repo",
         branch: null,
@@ -116,6 +118,7 @@ test("a malformed workspace request is refused rather than half-read", () => {
     channelId: "c1",
     projectId: null,
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: { path: "/Users/x/Code/repo-wt-a", branch: "wt-a" },
   };
   const broken = [
@@ -131,6 +134,7 @@ test("a malformed workspace request is refused rather than half-read", () => {
     { ...whole, sessionRef: 7 },
     { ...whole, channelId: 7 },
     { ...whole, projectId: 7 },
+    { ...whole, sourceRepoRef: 7 },
     { ...whole, workspace: null },
     { ...whole, workspace: "/Users/x/Code/repo-wt-a" },
     { ...whole, workspace: { path: "", branch: null } },
@@ -163,6 +167,7 @@ test("what the opener stores is what the parser reads back", () => {
     channelId: "c1",
     projectId: "30621:owner:p",
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: { path: "/Users/x/Code/repo-wt-a", branch: "wt-a" },
   });
 
@@ -174,6 +179,7 @@ test("what the opener stores is what the parser reads back", () => {
     channelId: "c1",
     projectId: "30621:owner:p",
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: {
       path: "/Users/x/Code/repo-wt-a",
       branch: "wt-a",
@@ -194,6 +200,7 @@ test("the opener defaults an omitted channel and project to null, not undefined"
   // to store nulls or the request would not survive its own reload.
   openNewCodingSessionDialogInWorkspace({
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: { path: "/Users/x/Code/repo-wt-a", branch: null },
   });
 
@@ -205,6 +212,7 @@ test("the opener defaults an omitted channel and project to null, not undefined"
     channelId: null,
     projectId: null,
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: {
       path: "/Users/x/Code/repo-wt-a",
       branch: null,
@@ -227,6 +235,7 @@ test("a recorded branch source round-trips; an absent one reads as null", () => 
       channelId: null,
       projectId: null,
       sessionRef: "s1",
+      sourceRepoRef: null,
       workspace: {
         path: "/Users/x/Code/repo-wt-a",
         branch: "wt-a",
@@ -254,6 +263,7 @@ test("a stored live branch source is refused, not shown", () => {
       channelId: null,
       projectId: null,
       sessionRef: "s1",
+      sourceRepoRef: null,
       workspace: {
         path: "/Users/x/Code/repo-wt-a",
         branch: "wt-a",
@@ -267,6 +277,7 @@ test("a stored live branch source is refused, not shown", () => {
 test("the opener stores a recorded source and drops a live one", () => {
   openNewCodingSessionDialogInWorkspace({
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: {
       path: "/Users/x/Code/repo-wt-a",
       branch: "wt-a",
@@ -282,6 +293,7 @@ test("the opener stores a recorded source and drops a live one", () => {
 
   openNewCodingSessionDialogInWorkspace({
     sessionRef: "s1",
+    sourceRepoRef: null,
     workspace: {
       path: "/Users/x/Code/repo-wt-a",
       branch: "wt-a",

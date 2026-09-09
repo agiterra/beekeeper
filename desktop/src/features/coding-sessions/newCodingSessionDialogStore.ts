@@ -57,6 +57,8 @@ export type NewCodingSessionRequest =
       channelId: string | null;
       projectId: string | null;
       sessionRef: string;
+      /** Source execution repository; absent in older drafts means unknown. */
+      sourceRepoRef?: string | null;
       workspace: NewCodingSessionWorkspaceReuse;
     };
 
@@ -109,6 +111,8 @@ function parseWorkspaceRequest(parsed: object): NewCodingSessionRequest | null {
   const projectId = parsed.projectId;
   if (typeof channelId !== "string" && channelId !== null) return null;
   if (typeof projectId !== "string" && projectId !== null) return null;
+  const sourceRepoRef = "sourceRepoRef" in parsed ? parsed.sourceRepoRef : null;
+  if (sourceRepoRef !== null && typeof sourceRepoRef !== "string") return null;
   if (!("workspace" in parsed)) return null;
   const workspace = parsed.workspace;
   if (typeof workspace !== "object" || workspace === null) return null;
@@ -131,6 +135,7 @@ function parseWorkspaceRequest(parsed: object): NewCodingSessionRequest | null {
     channelId,
     projectId,
     sessionRef: parsed.sessionRef,
+    sourceRepoRef,
     workspace: {
       path: workspace.path,
       branch: workspace.branch,
@@ -202,6 +207,7 @@ export function openNewCodingSessionDialogInWorkspace(input: {
   channelId?: string | null;
   projectId?: string | null;
   sessionRef: string;
+  sourceRepoRef?: string | null;
   workspace: NewCodingSessionWorkspaceReuse;
 }): void {
   restored = true;
@@ -210,6 +216,7 @@ export function openNewCodingSessionDialogInWorkspace(input: {
     channelId: input.channelId ?? null,
     projectId: input.projectId ?? null,
     sessionRef: input.sessionRef,
+    sourceRepoRef: input.sourceRepoRef ?? null,
     workspace: {
       path: input.workspace.path,
       branch: input.workspace.branch,

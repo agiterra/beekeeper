@@ -1,4 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
+import { finalizeEvent } from "nostr-tools/pure";
+
+import {
+  CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+  lifecycleReceiptSemanticKey,
+} from "../../src/features/coding-sessions/lib/codingSessionIngressPayloads";
+import {
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+  KIND_CODING_SESSION_METADATA,
+} from "../../src/shared/constants/kinds";
 
 import { installMockBridge } from "../helpers/bridge";
 import { E2E_IDENTITY_OVERRIDE_STORAGE_KEY } from "../helpers/onboarding";
@@ -17,6 +28,7 @@ import {
   hintCalls,
   LOCAL_INSTANCE_ID,
   LOCAL_PROVIDER_PUBKEY,
+  LOCAL_PROVIDER_SECRET,
   PROJECT_DTAG,
   recordedCommands,
   REUSE_BRANCH,
@@ -255,6 +267,77 @@ async function submitDraft(page: Page, goal: string) {
   await page.getByTestId("new-coding-session-submit").click();
 }
 
+/** Settle the actual create through signed provider facts, as the UI expects. */
+async function settleCreatedDraft(
+  page: Page,
+  create: { commandId: string; sessionRef: string | null },
+) {
+  if (!create.sessionRef)
+    throw new Error("submitted create has no session ref");
+  const command = (await signedEvents(page)).find(
+    (event) =>
+      event.kind === 44221 &&
+      JSON.parse(event.content).commandId === create.commandId,
+  );
+  const channelId = command?.tags.find((tag) => tag[0] === "h")?.[1];
+  if (!channelId) throw new Error("submitted create has no channel");
+  const metadataTemplate = seededSessionEvents({
+    sessionRef: create.sessionRef,
+    sessionId: "a4444444-2222-4333-8444-555555555555",
+    title: "Second pass over the same files",
+  }).events.find((event) => event.kind === KIND_CODING_SESSION_METADATA);
+  if (!metadataTemplate) throw new Error("provider metadata fixture missing");
+  // A project launcher can prepare its own session transport. The original
+  // session's general-channel fixture must not put the new metadata there.
+  const metadata = finalizeEvent(
+    {
+      kind: metadataTemplate.kind,
+      created_at: metadataTemplate.created_at,
+      tags: metadataTemplate.tags.map((tag) =>
+        tag[0] === "h" ? ["h", channelId] : tag,
+      ),
+      content: metadataTemplate.content,
+    },
+    LOCAL_PROVIDER_SECRET,
+  );
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: metadata.created_at,
+      tags: [
+        ["h", channelId],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", create.commandId],
+        ["csl-key", lifecycleReceiptSemanticKey(create.commandId)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: create.commandId,
+        status: "created",
+        session: JSON.parse(metadata.content).session,
+        error: null,
+      }),
+    },
+    LOCAL_PROVIDER_SECRET,
+  );
+  await page.evaluate(
+    async ({ channelId, events }) => {
+      const query = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!query || !seed)
+        throw new Error("mock channel or event seam missing");
+      const result = await query("get_channels", {});
+      const channels = (
+        result as { channels: Array<{ id: string; name: string }> }
+      ).channels;
+      const channel = channels.find((entry) => entry.id === channelId);
+      if (!channel) throw new Error("created session's channel missing");
+      for (const event of events) seed({ channelName: channel.name, event });
+    },
+    { channelId, events: [receipt, metadata] },
+  );
+}
+
 test.describe("new session in this workspace", () => {
   // Tall enough that the draft's disclosure and the setup fields are both on
   // screen; a clipped dialog reads as a missing control.
@@ -357,9 +440,13 @@ test.describe("new session in this workspace", () => {
     expect(workdirUseCalls(commands)).not.toContain(REUSE_PATH);
     expect(hints[0].projectRef).toBeNull();
 
+    // Provider acceptance and metadata settle the durable create; dismissing
+    // a still-pending draft must not erase it merely to make this test pass.
+    await settleCreatedDraft(page, create);
+    await expect(page.getByTestId("new-coding-session-dialog")).toHaveCount(0, {
+      timeout: 25_000,
+    });
     // …and the consequence, which is what a person would actually notice.
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("new-coding-session-form")).toHaveCount(0);
     await openOrdinaryProjectDraft(page);
     await openSetup(page);
     await expect(
@@ -552,7 +639,20 @@ test.describe("new session in this workspace", () => {
     await expect(page.getByTestId("coding-session-workdir-input")).toHaveValue(
       REUSE_PATH,
     );
+    const heading = page
+      .getByTestId("new-coding-session-dialog")
+      .getByRole("heading");
+    const summary = page.getByTestId("coding-session-workspace-reuse");
+    const worktreeToggle = page.getByTestId("coding-session-worktree-toggle");
+    await worktreeToggle.check();
+    await expect(summary).toHaveCount(0);
+    await expect(heading).toContainText("New coding session");
+    await worktreeToggle.uncheck();
+    await expect(summary).toBeVisible();
+    await expect(heading).toHaveText(MENU_LABEL);
     await page.getByTestId("coding-session-workdir-input").fill(typed);
+    await expect(summary).toHaveCount(0);
+    await expect(heading).toContainText("New coding session");
     await submitDraft(page, "Run this one somewhere else.");
 
     await expect

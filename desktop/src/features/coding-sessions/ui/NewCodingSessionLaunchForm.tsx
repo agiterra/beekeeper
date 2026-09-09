@@ -35,8 +35,8 @@ import {
   isCodingSessionAuthFailure,
   isCodingSessionWorkdirFailure,
   isNewCodingSessionTargetReady,
-  canRetryNewCodingSessionCreate,
   newCodingSessionStatusMessage,
+  newCodingSessionRecoveryTargetKey,
   resolveNewCodingSessionTargets,
   resolveSelectedNewCodingSessionModel,
   resolveSelectedNewCodingSessionTarget,
@@ -80,7 +80,10 @@ import {
 import { useCodingSessionCrewLaunch } from "./useCodingSessionCrewLaunch";
 import { useNewCodingSessionLaunchSubmit } from "./useNewCodingSessionLaunchSubmit";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
-import type { NewCodingSessionProjectContext } from "./NewCodingSessionDialog";
+import type {
+  NewCodingSessionProjectContext,
+  NewCodingSessionWorkspaceReuse,
+} from "./NewCodingSessionDialog";
 
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 
@@ -114,11 +117,16 @@ export function NewCodingSessionForm({
   channelId: initialChannelId,
   onDone,
   projectContext = null,
+  workspaceReuse = null,
+  onWorkspaceReuseActiveChange,
 }: {
   channelId?: string;
   /** Close the surface holding this form — a landed create, or a dismissal. */
   onDone: () => void;
   projectContext?: NewCodingSessionProjectContext | null;
+  workspaceReuse?: NewCodingSessionWorkspaceReuse | null;
+  /** Keep the dialog claim aligned with edited folder/worktree choices. */
+  onWorkspaceReuseActiveChange?: (active: boolean) => void;
 }) {
   const { goCodingSession } = useAppNavigation();
   // Session transports are included on purpose: the provider-catalog
@@ -176,6 +184,7 @@ export function NewCodingSessionForm({
     providerModelsByInstanceRef,
     publishError,
     retryExact,
+    repairWorkdir,
     refreshProviderState,
     seat: signedSeat,
     seatPackRef,
@@ -392,8 +401,15 @@ export function NewCodingSessionForm({
   );
   const policySet = codingSessionPolicyDraftSetsAnything(policy);
 
-  const [workdir, setWorkdir] = React.useState("");
-  const [useWorktree, setUseWorktree] = React.useState(true);
+  const [workdir, setWorkdir] = React.useState(workspaceReuse?.path ?? "");
+  const [useWorktree, setUseWorktree] = React.useState(workspaceReuse === null);
+  React.useEffect(() => {
+    onWorkspaceReuseActiveChange?.(
+      workspaceReuse !== null &&
+        workdir.trim() === workspaceReuse.path &&
+        !useWorktree,
+    );
+  }, [onWorkspaceReuseActiveChange, workspaceReuse, workdir, useWorktree]);
   const [worktreeName, setWorktreeName] = React.useState("");
   const [worktreeSource, setWorktreeSource] = React.useState<string | null>(
     null,
@@ -450,6 +466,7 @@ export function NewCodingSessionForm({
   });
 
   const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
+    rememberWorkspace: workspaceReuse === null,
     ensureChannelId: projectContext?.ensureChannelId ?? null,
     workdir: workdir.trim().length > 0 ? workdir.trim() : null,
     title: title.trim().length > 0 ? title.trim() : null,
@@ -564,6 +581,8 @@ export function NewCodingSessionForm({
     lifecycle?.state === "failed" ? lifecycle.error.code : undefined;
 
   const handleLaunch = useNewCodingSessionLaunchSubmit({
+    workspaceSourcePath: workspaceReuse?.path ?? null,
+    rememberWorkspace: workspaceReuse === null,
     canLaunch,
     candidates,
     channelId,
@@ -591,16 +610,23 @@ export function NewCodingSessionForm({
     worktreeSource,
   });
 
-  const [editRequested, setEditRequested] = React.useState(false);
-  React.useEffect(() => {
-    if (transaction === null) setEditRequested(false);
-  }, [transaction]);
-  const handleStartFresh = React.useCallback(() => {
-    setEditRequested(false);
-    startFresh();
-  }, [startFresh]);
+  const handleRepairWorkdir = () => {
+    const original = repairWorkdir();
+    if (!original) return;
+    setGoal(original.initialTurn ?? "");
+    setTitle(original.title ?? "");
+    setChannelSelection(original.channelId);
+    setTargetSelection({
+      key: newCodingSessionRecoveryTargetKey(original),
+      explicit: true,
+    });
+    setModelSelection({ value: original.model, explicit: true });
+    setLeadActor(original.actor ?? null);
+    setSetupError(null);
+    setLaunchError(null);
+  };
 
-  if (transaction !== null && !editRequested) {
+  if (transaction !== null) {
     return (
       <NewCodingSessionPendingView
         beginLoginWatch={beginLoginWatch}
@@ -618,7 +644,7 @@ export function NewCodingSessionForm({
         lifecycleErrorMessage={lifecycleErrorMessage}
         lifecycleIsLoading={lifecycleIsLoading}
         onClose={onDone}
-        onEditRequest={() => setEditRequested(true)}
+        onEditRequest={handleRepairWorkdir}
         projectName={projectContext?.projectName ?? null}
         publishError={publishError}
         retryExact={retryExact}
@@ -632,7 +658,7 @@ export function NewCodingSessionForm({
         seatPackStaged={seatPackStaged}
         signedSeat={signedSeat}
         stalled={stalled}
-        startFresh={handleStartFresh}
+        startFresh={startFresh}
         transaction={transaction}
       />
     );
@@ -926,36 +952,6 @@ export function NewCodingSessionForm({
             </p>
           ) : null,
         )}
-        {transaction ? (
-          <>
-            <Button
-              data-testid="new-coding-session-start-fresh"
-              onClick={handleStartFresh}
-              type="button"
-              variant={stalled ? "outline" : "ghost"}
-            >
-              Start fresh
-            </Button>
-            <Button
-              data-testid="new-coding-session-retry"
-              disabled={
-                !canRetryNewCodingSessionCreate({
-                  isPublishing,
-                  lifecycleIsLoading,
-                  lifecycleErrorMessage,
-                  lifecycleState: lifecycle?.state ?? null,
-                  stalled,
-                  publishState: transaction?.publishState ?? null,
-                })
-              }
-              onClick={retryExact}
-              type="button"
-              variant="outline"
-            >
-              Retry this exact request
-            </Button>
-          </>
-        ) : null}
         <Button
           data-testid="new-coding-session-submit"
           disabled={!canLaunch}

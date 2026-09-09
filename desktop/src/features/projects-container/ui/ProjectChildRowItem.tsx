@@ -419,6 +419,7 @@ function NewSessionInWorkspaceMenuItem({
   entry: ProjectCodingSessionShelfEntry;
 }) {
   const action = useNewSessionInWorkspaceAction({
+    sourceRepoRef: entry.session.repoRef ?? null,
     channelId: entry.channelId,
     executionProviderPubkey: entry.session.providerAuthorityPubkey,
     projectId: entry.projectId,

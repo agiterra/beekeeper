@@ -897,8 +897,9 @@ test("retry is actionable only while the exact bytes could still help", async ()
     isPublishing: false,
     lifecycleIsLoading: false,
     lifecycleErrorMessage: null,
-    lifecycleState: "failed",
+    lifecycleState: "pending",
     stalled: false,
+    publishState: "ambiguous",
   };
   assert.equal(canRetryNewCodingSessionCreate(ready), true);
   for (const blocked of [
@@ -907,22 +908,23 @@ test("retry is actionable only while the exact bytes could still help", async ()
     { ...ready, lifecycleErrorMessage: "boom" },
     { ...ready, lifecycleState: "created" },
     { ...ready, lifecycleState: "created-with-failed-initial-turn" },
-    // A stalled wait means the relay already holds these bytes.
-    { ...ready, stalled: true },
+    { ...ready, lifecycleState: "failed" },
+    // Confirmed delivery cannot be repaired by replaying the same event.
+    { ...ready, publishState: "published" },
+    { ...ready, publishState: "published", stalled: true },
   ]) {
     assert.equal(canRetryNewCodingSessionCreate(blocked), false);
   }
 });
 
-test("an unconfirmed publish is reported as undelivered, never as a silent provider", async () => {
+test("an unconfirmed publish is reported as uncertain, never as a silent provider", async () => {
   const { newCodingSessionStatusMessage } = await import(
     "./newCodingSessionModel.ts"
   );
   const base = { hostPhase: "idle", isPublishing: false, publishError: null };
-  // A durable transaction whose relay OK never arrived ("ambiguous"), or that
-  // was signed but never sent ("prepared"), has not reached any provider. The
-  // stall clock must not convert that into "the provider has not accepted".
-  for (const publishState of ["ambiguous", "prepared"]) {
+  // Neither an absent relay OK nor an interrupted publication establishes
+  // what the provider saw. The stall clock must not invent a provider refusal.
+  for (const publishState of ["ambiguous", "prepared", "publishing"]) {
     for (const stalled of [false, true]) {
       const status = newCodingSessionStatusMessage({
         ...base,
@@ -973,7 +975,7 @@ test("an unconfirmed publish reads Status unknown and keeps retry actionable aft
     lifecycleState: "pending",
     stalled: true,
   };
-  // The relay does not hold these bytes, so retrying is exactly the remedy.
+  // Exact replay can resolve uncertain delivery without creating a new request.
   assert.equal(
     canRetryNewCodingSessionCreate({ ...ready, publishState: "ambiguous" }),
     true,
@@ -986,4 +988,70 @@ test("an unconfirmed publish reads Status unknown and keeps retry actionable aft
     canRetryNewCodingSessionCreate({ ...ready, publishState: "published" }),
     false,
   );
+});
+
+test("restored publishing can replay only its exact request, never start a duplicate", async () => {
+  const {
+    canRetryNewCodingSessionCreate,
+    canStartFreshNewCodingSessionCreate,
+    pendingCodingSessionWorkspaceStatus,
+  } = await import("./newCodingSessionModel.ts");
+  // Publishing was durably recorded before send. The app then exited before
+  // persisting either the acknowledgement or its ambiguous outcome.
+  const restored = {
+    isPublishing: false,
+    lifecycleIsLoading: false,
+    lifecycleErrorMessage: null,
+    lifecycleState: "pending",
+    publishState: "publishing",
+    stalled: true,
+  };
+  assert.equal(canRetryNewCodingSessionCreate(restored), true);
+  assert.equal(canStartFreshNewCodingSessionCreate(restored), false);
+  assert.deepEqual(
+    pendingCodingSessionWorkspaceStatus({
+      ...restored,
+      publishError: null,
+      hasInitialTurn: true,
+    }),
+    { kind: "unknown", label: "Status unknown" },
+  );
+  for (const change of [
+    { isPublishing: true },
+    { lifecycleIsLoading: true },
+    { lifecycleErrorMessage: "receipt read failed" },
+    { lifecycleState: "created" },
+    { lifecycleState: "failed" },
+  ])
+    assert.equal(
+      canRetryNewCodingSessionCreate({ ...restored, ...change }),
+      false,
+    );
+});
+
+test("directory repair requires a settled, readable terminal refusal, never a timeout", async () => {
+  const { canRepairNewCodingSessionWorkdir } = await import(
+    "./newCodingSessionModel.ts"
+  );
+  const failure = {
+    isPublishing: false,
+    lifecycleIsLoading: false,
+    lifecycleErrorMessage: null,
+    lifecycleState: "failed",
+    failureCode: "PROJECT_CWD_UNRESOLVED",
+  };
+  assert.equal(canRepairNewCodingSessionWorkdir(failure), true);
+  for (const change of [
+    { isPublishing: true },
+    { lifecycleIsLoading: true },
+    { lifecycleErrorMessage: "receipt read failed" },
+    { lifecycleState: "pending" },
+    { lifecycleState: null },
+    { lifecycleState: "created" },
+    { failureCode: "PROVIDER_AUTH_REQUIRED" },
+  ])
+    assert.equal(
+      canRepairNewCodingSessionWorkdir({ ...failure, ...change }),
+      false,
+    );
 });

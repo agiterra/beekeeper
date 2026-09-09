@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import {
+  hasAmbiguousWorkspaceRows,
   resolveWorkspaceDraftBranch,
   resolveWorkspaceReuse,
   type WorkspaceDirectoryRead,
@@ -161,7 +162,9 @@ export async function readCodingSessionWorkspaceReuse(
   // computer's disk for it would be two host calls spent on something the
   // resolution discards.
   const directory =
-    row !== null && executionIsLocal !== false
+    row !== null &&
+    executionIsLocal !== false &&
+    !hasAmbiguousWorkspaceRows(rowsRead.rows, target.sessionRef)
       ? await readWorkspaceDirectory(row.path, deps)
       : { validation: null, headBranch: null };
   const validation = directory.validation;

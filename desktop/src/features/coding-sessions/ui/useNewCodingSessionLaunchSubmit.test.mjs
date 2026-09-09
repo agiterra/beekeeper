@@ -45,6 +45,67 @@ const SELECTED_TARGET = {
 
 const YOU_LEAD = { kind: "you" };
 
+test("contextual ungoverned launch uses the exact workspace without changing remembered defaults", async () => {
+  const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
+  const path = "C:\\Users\\WinBrian\\Projects\\beekeeper-wt-existing";
+  for (const sourcePath of [path, "C:\\another-repository", null]) {
+    const contextual = sourcePath !== null;
+    const submissions = [];
+    const errors = [];
+    const mounted = renderHook(() =>
+      useNewCodingSessionLaunchSubmit({
+        canLaunch: true,
+        candidates: [],
+        channelId: SELECTED_TARGET.channelId,
+        clearDraft: () => {},
+        leadModel: "sonnet",
+        goCodingSession: () => {},
+        goal: "A new conversation using these files.",
+        governed: false,
+        launch: async () => assert.fail("must use the ungoverned path"),
+        lead: YOU_LEAD,
+        onDone: () => {},
+        policySet: false,
+        projectContext: {
+          projectRef: "30621:owner:project",
+          repoRef: "30617:owner:repo-b",
+        },
+        workspaceSourcePath: sourcePath,
+        refreshRuntimeTarget: async () => null,
+        rememberPrompt: () => {},
+        ...(contextual ? { rememberWorkspace: false } : {}),
+        selectedTarget: SELECTED_TARGET,
+        setIsPreparingChannel: () => {},
+        setLaunchError: (message) => message && errors.push(message),
+        setSetupError: (message) => message && errors.push(message),
+        submit: async (input) => {
+          submissions.push(input);
+          return { ok: true };
+        },
+        title: "New conversation",
+        useWorktree: false,
+        workdir: path,
+        // Existing values must not cut another worktree when the toggle is off.
+        worktreeName: "do-not-create",
+        worktreeSource: "main",
+      }),
+    );
+    await act(async () => mounted.result.current());
+    assert.deepEqual(errors, []);
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].workdir, path);
+    assert.equal(
+      submissions[0].repoRef,
+      sourcePath && sourcePath !== path ? null : "30617:owner:repo-b",
+    );
+    assert.equal(submissions[0].rememberWorkdir, path);
+    assert.equal(submissions[0].rememberWorkspace, !contextual);
+    assert.equal(submissions[0].sessionRef, undefined);
+    assert.equal(submissions[0].genesisRef, undefined);
+    mounted.unmount();
+  }
+});
+
 test("N1: two clicks before the first submit resolves launch exactly one session", async () => {
   const { act, renderHook, useNewCodingSessionLaunchSubmit } = await harness();
 

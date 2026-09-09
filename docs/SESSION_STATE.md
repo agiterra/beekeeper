@@ -5,9 +5,390 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 9 afternoon — contextual starts and handover integrated
+
+Root integrated Fable/Opus handover follow-ups through `69a2697a7` as
+`29167295e`, `65bbd71b5`, `945ea47d4`, `f6cf3511b`, `7b52afaa9`, and
+`6a9e89818`; contextual starts through `6e7e0ac36` as `33ba028fb`,
+`920f1ca10`, and `be85f1714`. Root's `bd76a3df2` closes the final fast-turn
+acknowledgement gap: actor completion no longer erases dequeue evidence before
+provider bookkeeping, so a takeover cannot describe completed work as never run.
+The deterministic regression failed before the fix and passed afterward.
+
+The launcher seam is implemented and enabled in source. Explicit reuse seeds
+the exact local folder with worktree creation off; both human-led and agent-led
+starts suppress MRU updates, and contextual human-led hints omit projectRef so
+they cannot become a project default. Ordinary worktree starts stage the exact
+execution folder but pass the source checkout as the native `rememberPath`.
+Existing explicit defaults remain untouched; previously promoted worktrees are
+not silently migrated. A changed folder or enabled worktree removes the stale
+reuse disclosure/title. Reuse carries the source repository through draft
+storage and the project wrapper instead of borrowing the first project repo;
+changing that folder clears the unproven repository binding. Multiple distinct
+recorded workspaces are explicitly ambiguous and require folder selection.
+
+Windows directory-failure recovery now restores the signed goal/title/runtime
+and permits a fresh command and edited hint only after a verified terminal
+refusal. Unknown delivery retains the original signed request; persisted
+`publishing` after interruption remains eligible for exact replay. Existing
+form worktree options survive a repair in that form; full restart-time recovery
+of those unsaved options is not claimed.
+
+Evidence directory: `../review-2026-09-08-release-candidate/`.
+- `integrated-handover-provider.log`: 751 passed, one ignored.
+- `integrated-handover-composition.log`: all 12 real-relay/CLI/two-provider
+  scenarios passed with the acknowledgement fix in root source. ACP adapters
+  remain stubs on one host; this is not native Windows or real-model handover.
+- `handover-ack-regression-before.log`, `handover-ack-regression-after.log`,
+  `handover-ack-related.log`, `handover-ack-clippy.log`: red/green proof,
+  54 related tests, provider clippy including tests clean in isolated checkout.
+- `workspace-canonical-native.log`: 24 native workdir-store tests passed.
+- `workspace-integration-unit-final.log`: 9041 desktop tests passed, zero skipped.
+- `contextual-edited-repo-test.log`: seven launch-hook tests passed after the
+  final edited-folder binding guard; its separate typecheck passed too.
+- `astra-contextual-repo-binding.log`: 76 focused resolver/storage/route tests.
+- `workspace-integration-browser-final.log`: all 14 contextual/recovery browser
+  cases passed, zero skipped, zero retries. The formerly skipped scenarios ran.
+- `workspace-native-clippy.log`: Tauri library clippy clean. Both Rust format
+  checks, desktop check/typecheck and differential size ratchet passed.
+- `workspace-submit-final.log`: both submit scenarios passed again against
+  a fresh E2E build after the final edited-folder repository guard (2/2).
+  `workspace-check-commitable.log` and `workspace-build-commitable.log` are
+  the final desktop check and build logs.
+
+Two browser fixture failures were diagnosed rather than hidden: exact hint
+expectations needed the new rememberPath; the new project session's provider
+metadata must use the newly created transport channel, not the template's
+original channel. The UI correctly kept waiting for matching signed metadata.
+The fixture now provides both signed receipt and metadata in the actual channel,
+without deleting durable pending state. Full broad smoke remains open:
+`handover-full-smoke.log` had 1116 passed, 165 failed, one skipped; those failures
+are not proven inherited and a green focused run does not clear that release gate.
+No push, production deploy, or app installation occurred in this integration.
+The installed Mac candidate remains c2195f1f8; Windows build remains unverified.
+
+Next independent delegation: Opus (formerly Fable) acknowledged
+`/Users/brian/Desktop/BEEKEEPER-OPUS-PEOPLE-SETUP-BRIEF.md` in the shared mailbox.
+Its isolated `review-people-setup-fable` / `work/people-setup-fable`, base
+be85f1714, owns recipient filtering, participant identity clarity and adversarial
+browser evidence, plus a read-only Windows agent setup walkthrough. It does not
+change grants, provider execution, or root's launcher files. Native Windows agent
+inventory/setup and project role evidence remain the next user walkthrough.
+
+## September 9 Windows returning-user walkthrough — WinBrian
+
+Brian is testing functionality and first-use setup/UX together, one screen at a
+time, on Windows signed in as the separate account **WinBrian** on hive. Brian
+clarified that WinBrian is an existing test user; its agents, memberships and
+session history must not be treated as fresh-account defaults. This walkthrough
+tests returning-user orientation and discoverability; fresh onboarding remains
+a separate acceptance case. This
+starts after sign-in; installation, account creation, and membership setup have
+not been tested by this walkthrough. Running Windows source/build is not yet
+verified. Screenshot evidence:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-672d27eb-c3fe-4797-bcb9-c2934355ad97.png`.
+
+Observed: Dashboard renders; WinBrian/hive identity and the Beekeeper project
+with two channels are visible. Four cards show Inbox, Agents, Agent progress,
+and Pulse. This proves visible navigation, not project access or agent readiness.
+Search displays a Mac Command-symbol shortcut on Windows; actual keyboard
+behavior remains untested. UX findings from this screen: no clear starting
+action for joining project work; agent/session counts do not explain their
+scope (this account, computer, or community); "personas" and "executions" are
+unexplained terminology. These are usability observations, not evidence that
+the counts are incorrect.
+
+Project Overview screenshot:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-38b69a0c-05ea-451a-805d-f73e632c1b0e.png`.
+The page opens and lists Andy and Brian as its two members; WinBrian is absent
+from that visible roster. Coding sessions, agents and terminals show zero;
+Pulse shows zero with an explicit partial-read warning. Two channels are listed.
+The screen does not explain WinBrian's effective project access or whether an
+empty list is complete for that account. No conclusion yet that the session or
+agent counts are incorrect, or that Pulse's read failure affects those lists.
+The tab still says "Packs", unlike the newer Mac candidate's "Roles"; obtain
+the actual Windows build before attributing missing newer functionality to a
+regression. UX observations: unlabeled plus icons offer creation without clear
+action names, and the Pulse partial-read disclosure gives no visible recovery
+action on Overview. Next manual step: open #bee-keeper and inspect visible
+history/access before changing grants or creating agents.
+
+Channel screenshot:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-276d5c48-6b26-4f45-b282-43ae9879b96d.png`.
+WinBrian can render #bee-keeper history, including Brian's Keystone mentions and
+thread reply counts. A composer is visible; sending and live synchronization
+are not yet tested. The channel header shows six participants and Sessions 0;
+channel participation need not equal the project's two-member roster, and
+historical requests do not prove current sessions in this channel. Session
+availability remains unresolved. Next: open the one-reply thread beneath
+"Yesterday at 7:11 AM" and inspect the result/link before attempting control.
+
+Thread screenshot:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-9641148f-fd96-4fc7-ae66-671817d6ac15.png`.
+WinBrian can open Keystone's reply, which reports a provider-confirmed creation
+of "Read-only project inspection" and exposes an "Open session" link. The reply
+says creation occurred in the separate Beekeeper sessions channel because this
+channel had no serving provider catalog. That is an agent-authored explanation,
+not independent verification of current session/provider state. It supplies a
+plausible channel-scope explanation for Sessions 0, but does not resolve the
+project-wide empty list or WinBrian's access to the destination. UX: verbose
+session/genesis/receipt IDs and CLI/provider routing details dominate a narrow
+thread; a named session/location/action summary would orient the user better.
+Next manual step: click Open session and observe destination/access behavior.
+
+Opening that link on WinBrian produced "Generation not found" with
+"restricted: not a channel member" and status unknown (screenshot
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-f65f0279-99bd-4ade-a2d0-5a7ab2e4d2cb.png`).
+This is a reported destination-channel access denial, not proof of a missing
+generation. The error surface misclassifies it and offers no visible recovery.
+Current source still renders the generic heading in CodingSessionWorkspace.tsx.
+
+Brian then inspected People on the Mac. Screenshot
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-bf8cc850-cdb4-4323-b429-1935b005c04e.png`
+shows Keystone as owner and Brian as collaborator, with owner-only editing text
+and no invite control. The companion `a0c765b0-e17d-4827-a064-0d89756e198e.png`
+in the same attachment directory shows Brian can control the execution. Source
+confirms invite UI requires self==founder (`CodingSessionPeoplePopover.tsx:80`).
+Agent-created ownership leaves the requesting human able to steer but unable
+to share via this dialog. A narrow diagnosis is assigned for existing agent
+grant/channel membership composition; no membership or session authority has
+been changed by root. Do not "fix" this by making every collaborator an owner.
+
+Brian sent the sharing request to Keystone and pasted its responses at 09:41–42.
+Keystone reports resolving WinBrian to
+`ffb3d397bde109027ba3362ec72087ce59fa445661fe840d4fcd1df7a3875df0`,
+adding member access to channel `aa946c4e-acdc-43cb-9209-b0ef221d8d65`
+(event prefix `70a72a83ab6ac9d9`), and granting viewer on genesis
+`cfb6dea93aa7dc17ee5ab9c3ad0674ecc54808ead7599f644ebb55c4d37f6a84`
+(prefix `8d898f2b456a781d`). Brian then explicitly requested collaborator;
+Keystone reports accepted grant-operator `21ab4f1b5aa288d5`, folded headSeq 3,
+WinBrian listed once as collaborator, no pending grant, no create/resume/stop,
+and the same native session `320ab46d-c048-40fa-95e1-51900826b60d` generation 3
+idle. These remain user-supplied agent reports, not independent root relay
+reads or Windows acceptance. Collaborator is now the requested test scope.
+Keystone also reports several same-named session channels and says it resolved
+the exact destination by session identity; names alone must not drive sharing.
+Next: reopen the original session link on Windows without restarting first,
+verify transcript and control state, then send a no-tools continuity check.
+
+Source review refines the earlier two-layer explanation: a live viewer/operator
+grant itself admits reads for a channel typed `transport` (`buzz-db/src/channel.rs:862`),
+at whole-channel grain, without inserting a channel-membership row. Ordinary
+channel membership is needed for legacy non-transport channels without other
+read authority. This destination's type is still unverified. Thus the two
+accepted changes are reported facts, not proof both were necessary. Transport
+channels are hidden from ordinary channel lists. Relay grant signing still
+requires the exact founder; enabling Brian's Invite UI alone would not repair
+sharing. Prefer a supported agent-mediated sharing action with disclosed scope.
+
+At 09:54 Brian supplied successful follow-up evidence:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-fed8f9d9-6392-4438-868d-c03d673d7dd2.png`.
+The rendered prompt is attributed to WinBrian and asks for a no-tools/no-edits
+continuity confirmation. The reply begins "WinBrian collaboration confirmed"
+and correctly summarizes the earlier Beekeeper orientation report; UI reports
+6.5 seconds. This demonstrates cross-account message/reply with retained report
+context after the grant. The cropped image does not independently establish
+current viewer identity, generation, absence of tools, or no app restart.
+It does not test moving execution onto Windows or absent-machine handover.
+The agent adds raw operator-key and identity uncertainty prose beyond the
+requested sentence. The visible local path has a "redacted for other viewers"
+annotation beside readable text; verify actual viewer identity and redaction
+implementation before classifying this as cross-viewer disclosure. Next manual
+test: inspect the same session on Brian's Mac for the WinBrian turn and reply
+without refresh, establishing shared visibility from the other participant.
+
+Brian's follow-up full Mac screenshot
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-d6cd46b1-5c95-4f30-bcb3-75c00dfa9a46.png`
+shows the Brian/hive identity, Read-only project inspection generation 3,
+People 3, the 09:54 WinBrian-authored prompt, and the matching 6.5-second reply.
+Shared transcript visibility and author attribution pass on the Mac. The image
+does not measure live arrival latency or independently prove no refresh.
+Next Windows UX test: navigate to Beekeeper Project Overview and see whether
+the newly accessible session is discoverable in Coding sessions without using
+the original thread link; the earlier list showed zero before the grant.
+
+Windows Project Overview after sharing:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-304742da-09f3-4625-a3ba-249ac2ac5524.png`.
+WinBrian/hive is visible. Coding sessions now lists three: Continuity acceptance
+(Disconnected), Inspect Beekeeper project structure (read-only) (Disconnected),
+and Read-only project inspection (Idle). Discoverability of the explicitly
+shared session passes. Two additional sessions also became visible after the
+reported channel membership plus target-session grants; this is consistent
+with channel-grained read access, not evidence of control grants on all three.
+Project Members remains Andy/Brian (2); Agents remains 0; Pulse still discloses
+a partial read. Sidebar says My sessions +1 hidden, so project visibility and
+sidebar filtering are visibly different concepts without much explanation.
+Next: inspect Inspect Beekeeper project structure (read-only) for clear
+view-only/control behavior without sending a turn or reconnecting it. Avoid
+the known deleted Continuity acceptance case for this authorization check.
+
+Windows view-only check screenshot:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-4d50a1f7-a6e2-45df-9c18-4e8ff660fe38.png`.
+WinBrian opens Inspect Beekeeper project structure (read-only), generation 1,
+sees its transcript and Disconnected status, and the composer explicitly reads
+View only. Reconnect/Stop execution appear disabled; the banner says only the
+founder may prompt/stop in this version. UI separation of visible history from
+execution control passes; no unauthorized command was attempted, so this is
+not a new server-enforcement test. UX mismatch: disabled composer still directs
+"Reconnect this execution to continue" to a viewer who cannot do so. The long
+banner mixes provider, execution, founder and session-lane terminology with no
+actionable request-access route. Exact Windows build remains unverified; this
+legacy session is not evidence about new handover behavior. Next manual test:
+open the project's Coding sessions + control and inspect creation setup before
+launching, preserving this shared session.
+
+Brian also supplied the legacy session's resume refusal text: "only the session
+founder or a granted operator may resume this execution", alongside the banner
+claiming only the founder can prompt/stop "in this version". These are different
+operations, but the combined UI does not clearly explain their authority rules;
+verify enforcement per operation before treating this as a permission defect.
+
+Windows new-session form screenshot:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-5b6c0b99-23bb-435b-971e-7e9085380eb4.png`.
+Brian believes WinBrian has no agents; actual named agents/runtime readiness
+remain unverified (earlier dashboard counted three agents/personas, which does
+not establish ready local execution). The form shows Goal, Use a worktree
+checked, worktree-name, custom-folder link, repository folder with Unix-shaped
+placeholder on Windows, collapsed Setup and advanced options (lead and runtime),
+and Start disabled. Before input it already shows a red "Write the goal — the
+lead's first turn carries it" validation sentence and one unchecked/not-enforced
+detail. UX findings: readiness/performer hidden with advanced choices, unexplained
+worktree/lead terminology, premature error styling, and OS-inappropriate path
+example. Next: expand lead/runtime setup and inspect effective defaults and
+readiness before assuming the user must create a named agent or launching.
+
+Brian proceeded with a new WinBrian session and reports the working-directory
+problem was easy to resolve. Evidence screenshots in the same attachment dir:
+`f2b21ba9-3d27-4e26-a930-529ba7af8ad3-a66b837f-656d-489f-8b1b-62c10dbedac7.png`
+shows pending/status unknown and a named working-directory failure after "ping",
+with Fix working directory / Start fresh / Retry this exact request controls;
+`f2b21ba9-3d27-4e26-a930-529ba7af8ad3-86f45f37-cf1b-4316-9f80-f3f44a731e47.png`
+shows the recovered form with blank Goal/folder, simultaneous in-flight and
+missing-goal errors, plus the original folder failure;
+`f2b21ba9-3d27-4e26-a930-529ba7af8ad3-f093bcd6-103b-4001-95e3-7af1fe2b6caa.png`
+shows WinBrian/hive, Coding session founded by WinBrian, generation 1 Idle,
+People 2, Can control, and a 2.5-second "pong" reply. The agent reports worktree
+beekeeper-wt-trashme, branch trashme at 9eb64eecf. This is reported checkout
+state, not proof of the installed app's build. Session start and recovery pass
+visibly; exact recovery controls used and runtime process location remain
+unverified. No named-agent creation was reported during this walkthrough.
+The session has a generic title and Add goal despite the launch goal having
+served as its initial prompt; persistent goal and initial instruction should
+be explained as separate concepts if they remain distinct. Project Members
+still omits WinBrian; read-only source diagnosis is assigned to distinguish
+project association from enrollment and actual creation authority. Next manual
+test: reopen the new-session form and check whether the chosen repository
+folder is remembered, without launching a second session yet.
+
+Reopened launcher screenshot:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-5c89acbc-6eb7-4660-bfef-ecc572dea053.png`.
+Repository folder defaults to `C:/Users/brian/Projects/BeeKeeper\beekeeper-wt-trashme`,
+the prior session's worktree. Recent folders still lists the original checkout
+`C:\Users\brian\Projects\BeeKeeper\beekeeper`. Use a worktree remains checked,
+with from main (default). Persistence therefore retains a path, but silently
+promotes the last execution worktree to the new session's repository default.
+This is a default-selection/UX finding; it does not prove Git would nest a new
+worktree or use the wrong branch (source ref is explicitly main). Added to the
+directory-recovery lane for tracing canonical checkout versus execution cwd.
+Next manual step: select the original checkout from Recent folders, then inspect
+the collapsed lead/runtime setup before another launch. No folder is deleted.
+
+Windows restart continuity: Brian followed the restart test and pasted the
+12:31 reply, "Windows restart confirmed — worktree beekeeper-wt-trashme, branch
+trashme", matching the earlier pong. Reported restart/continuity acceptance
+passes for WinBrian's own session; no screenshot/event IDs establish generation,
+native resume versus reconstruction, actual provider process, or absence of
+tools. Do not generalize this into offline-Mac handover acceptance. Next manual
+test: open People on this WinBrian-founded session and inspect whether owner
+sharing controls are discoverable; unlike the Keystone-founded session, WinBrian
+should be the founder. Check the displayed roster before changing access.
+
+Brian reports the WinBrian-owned People invite flow was easier but the picker
+is crowded with agents. He then shared Mac screenshots
+`f2b21ba9-3d27-4e26-a930-529ba7af8ad3-841a184c-b0ad-45fd-a4ac-13e8bc556633.png`
+and `f2b21ba9-3d27-4e26-a930-529ba7af8ad3-2b2dec5c-d486-41ba-bdd8-956006566c52.png`
+(same attachment directory). They show WinBrian's restart prompt and 2-second
+reply after a native-resume continuity row, followed by Brian's 12:44 and 12:49
+questions and replies. The agent's context-tool report says both senders address
+one instance `3fd564fbd175efd6`, native session prefix `eb056e30`, generation 2;
+the UI on Mac shows Can control. This supports reciprocal cross-account use of
+the conversation. Exact current host/process still needs independent runtime
+evidence; agent-authored metadata summaries are not that proof.
+
+User expectation affirmed: when the Windows execution is alive, Mac is another
+client to it; it need not start a local copy. Command routing pins provider,
+instance/session and generation; model processing stays with the addressed
+provider. Only explicit relocation/reconstruction changes execution location.
+UX gaps: no obvious host/account/model indication; people picker mixes many
+agents into a human-invite task; sender identity becomes a 25-second/$0.16
+investigation with raw keys and senderRole:null instead of useful supplied
+account context. Display names may be advisory, but authenticated signer and
+accepted session grant should be available without asking a model to infer them.
+The later question's answer correctly distinguishes Brian from WinBrian rather
+than claiming the accounts are the same person.
+
+People-picker screenshot supplied by Brian:
+`/Users/brian/.t3/userdata/attachments/f2b21ba9-3d27-4e26-a930-529ba7af8ad3-6c20d4f3-4337-418f-aa88-ee2161bf2d19.png`.
+Roster shows WinBrian Owner, unresolved `3fd564fb...7a68` Collaborator, and Brian
+Collaborator. Invite's "Search people" list contains repeated Builder, Builder 2,
+Designer entries with initials avatars and no visible agent/owner/host distinction.
+Same names are not proof of duplicate identities; never deduplicate by name alone.
+UX: filter people/agents explicitly, prioritize relevant people for inviting a
+teammate, distinguish same-named agents with owner/project context, and label
+provider/system participants accurately rather than presenting an unexplained
+key as a person. Preserve actual grant identity and agent-invite capability.
+
+Next manual acceptance sequence: Windows agent inventory/setup (account-owned
+versus shared identities and actual installed/authenticated runtime), create or
+configure one clearly named test agent only if needed, inspect project role
+source/revision and assignment separately from account permission, launch using
+that agent and verify effective role/runtime, then compare shared role visibility
+and version on Mac. Native host identity and fresh-account onboarding remain
+open. Existing direct-runtime session success is not proof of managed-agent
+configuration or shared role adoption. Verify Windows app build before treating
+missing new Roles UI as an implementation regression; source checkout SHA in
+an agent reply is not the app build.
+
+Redaction source review: readable text plus the badge is the intentional
+originating computer's local-vault presentation (RedactedPill.tsx:173,183).
+Native session_provider/commands.rs:446–459 checks the local provider identity
+and session vault, not current viewer identity. Another computer's provider
+should resolve nothing. The cropped screenshot alone proves no disclosure;
+the "Only you see this" tooltip should describe the computer-local record more
+precisely. Existing mock browser coverage exercises local/foreign/missing-vault
+and credential cases (coding-session-elision-screenshots.spec.ts:329–407), not
+live Windows proof. Operator framing supplies the signed pubkey but no profile
+label (provider lib.rs:7001–7062, session.rs:418–438); a different account key
+is expected. Advisory profile context could reduce raw-key confusion without
+asserting that account authentication establishes the person's real identity.
+
 ## September 9 handover integration — candidate under review
 
 ### Corrective integration and remaining timing cases
+
+Full root desktop smoke on the 5083b6f92 source baseline has now completed:
+**1116 passed, 165 failed, 1 skipped**, 1282 cases, 1.6 hours, retries disabled,
+exit 1. All 18 targeted handover/Pulse/cold-start cases passed inside this run.
+Failures span 49 specs, including unread/activity, messaging, project workflows,
+mission and observation surfaces; no baseline comparison proves inheritance.
+Evidence: `../review-2026-09-08-release-candidate/handover-full-smoke.log`,
+`handover-full-smoke-summary.json`, `handover-full-smoke-errors.json`, and the
+preserved `handover-full-smoke-artifacts/`. No source fixes or retries were
+performed by the runner. Port 4177 and root dist are released. This broader
+suite is failed, regardless of the targeted green cases below.
+
+Fable's third round at e85a53da2 (ca27037b6, 64293bdea, 93d21ec74,
+5cc28a1bc, e85a53da2) remains unintegrated. Root provider closure review confirms
+retry quiescence, second-read admission code and created_by attribution fixes.
+It still finds same-body claimant transfers remove in-flight bookkeeping without
+removing the old operator's actor-queued command; only a changed body shuts the
+actor down. The unstarted refusal also promises "never ran" while its test
+permits a raced prompt. Both are sent to Fable for bounded correction. The
+claimed between-two-reads regression inserts the takeover before invoking create;
+the originally requested startup barrier is still required for that branch.
+No new general audit is assigned. Fable reports compositions 13/14 12/12 with
+the desktop-save hint race exercised; those successful stories do not exercise
+the remaining same-body queue case.
 
 Fable's corrective commits `bf57249f8`, `cd326af2a`, `531d11e0c`,
 `b5b989b4c` integrated cleanly with signoff as `b2f11c2a3`, `7033986ab`,

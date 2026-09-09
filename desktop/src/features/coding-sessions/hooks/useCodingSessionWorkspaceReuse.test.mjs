@@ -483,3 +483,27 @@ test("the hook keeps no module-level state to leak across communities", async ()
     assert.doesNotMatch(source, pattern, String(pattern));
   }
 });
+
+test("multiple seat workspaces perform no arbitrary directory probe", async () => {
+  const host = recordingDeps({
+    listSeatWorktrees: async () => [
+      row(),
+      row({
+        key: `${SESSION}/builder`,
+        seatLabel: "builder",
+        path: "/src/other-worktree",
+      }),
+    ],
+  });
+  const read = await readCodingSessionWorkspaceReuse(
+    { sessionRef: SESSION, executionProviderPubkey: LOCAL_PROVIDER },
+    host.deps,
+  );
+  assert.equal(read.resolution.availability, "ambiguous");
+  assert.equal(read.resolution.path, null);
+  assert.match(read.resolution.sentence, /Choose a folder/);
+  assert.deepEqual(host.calls.map((call) => call.call).sort(), [
+    "listSeatWorktrees",
+    "providerStatus",
+  ]);
+});

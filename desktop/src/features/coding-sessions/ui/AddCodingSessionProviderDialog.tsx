@@ -6,9 +6,10 @@ import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/codi
 import { formatCodingSessionExecutionLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { codingSessionSeatStagedFromLine } from "@/features/coding-sessions/lib/codingSessionPackRef";
 import { useCodingSessionSeatDraft } from "@/features/coding-sessions/lib/useCodingSessionSeatDraft";
-import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import {
+  canStartFreshNewCodingSessionCreate,
+  canRetryNewCodingSessionCreate,
   isCodingSessionAuthFailure,
   isCodingSessionWorkdirFailure,
   isNewCodingSessionTargetReady,
@@ -168,6 +169,7 @@ export function AddCodingSessionProviderForm({
     seatPackRef,
     seatPackStaged,
     startFresh,
+    stalled,
     submit,
     transaction,
   } = useNewCodingSessionCreate({
@@ -540,6 +542,15 @@ export function AddCodingSessionProviderForm({
           <>
             <Button
               data-testid="add-coding-session-provider-start-fresh"
+              disabled={
+                !canStartFreshNewCodingSessionCreate({
+                  isPublishing,
+                  lifecycleIsLoading,
+                  lifecycleErrorMessage,
+                  lifecycleState: lifecycle?.state,
+                  publishState: transaction.publishState,
+                })
+              }
               onClick={startFresh}
               type="button"
               variant="ghost"
@@ -551,10 +562,14 @@ export function AddCodingSessionProviderForm({
             <Button
               data-testid="add-coding-session-provider-retry"
               disabled={
-                isPublishing ||
-                lifecycleIsLoading ||
-                lifecycleErrorMessage !== null ||
-                establishedCodingSessionTarget(lifecycle) !== null
+                !canRetryNewCodingSessionCreate({
+                  isPublishing,
+                  lifecycleIsLoading,
+                  lifecycleErrorMessage,
+                  lifecycleState: lifecycle?.state,
+                  publishState: transaction.publishState,
+                  stalled,
+                })
               }
               onClick={retryExact}
               type="button"

@@ -28,6 +28,7 @@ export type NewCodingSessionDialogRoute =
   | {
       kind: "project";
       projectId: string;
+      sourceRepoRef: string | null;
       workspaceReuse: NewCodingSessionWorkspaceReuse | null;
     }
   | {
@@ -57,6 +58,7 @@ export function resolveNewCodingSessionDialogRoute(
     return {
       kind: "project",
       projectId: request.projectId,
+      sourceRepoRef: null,
       workspaceReuse: null,
     };
   }
@@ -65,6 +67,7 @@ export function resolveNewCodingSessionDialogRoute(
       return {
         kind: "project",
         projectId: request.projectId,
+        sourceRepoRef: request.sourceRepoRef ?? null,
         workspaceReuse: request.workspace,
       };
     }
@@ -105,6 +108,7 @@ export function NewCodingSessionDialogHost() {
           onOpenChange={onOpenChange}
           open
           projectId={route.projectId}
+          sourceRepoRef={route.sourceRepoRef}
           workspaceReuse={route.workspaceReuse}
         />
       </React.Suspense>

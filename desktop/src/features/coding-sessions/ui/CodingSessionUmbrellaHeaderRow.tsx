@@ -209,7 +209,11 @@ export function CodingSessionUmbrellaHeaderRow({
           surfaceHost.toggle(id);
         }}
         providerAuthorityPubkey={focusedExecution.signerPubkey}
-        workspaceReuse={{ channelId, sessionRef: umbrella.sessionRef }}
+        workspaceReuse={{
+          channelId,
+          sessionRef: umbrella.sessionRef,
+          sourceRepoRef: focusedExecution.activeGeneration.repoRef ?? null,
+        }}
         sessionTitle={authoritativeTitle}
         sessionClosed={sessionClosed}
         status={umbrellaWorkspaceStatus(umbrella)}

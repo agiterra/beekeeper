@@ -617,8 +617,7 @@ function ReadyCodingSessionWorkspace({
   });
   const narrativeExpanded = surfaceHost.activeTab === null;
 
-  // The project a session belongs to is resolved by the same rule the projects
-  // sidebar files it under, so the crumb and the sidebar always agree.
+  // Use the sidebar's project resolution for the breadcrumb too.
   const { goProject } = useAppNavigation();
   const owningProject = useCodingSessionProject(channelId, session.projectRef);
 
@@ -652,9 +651,7 @@ function ReadyCodingSessionWorkspace({
         <CodingSessionHeader
           channelName={channelName}
           compact={isNarrow}
-          // Without this the popover's founder row would read `unresolved`
-          // directly above the `Founded by <name>` line this same view
-          // renders — one screen, two answers.
+          // Keep the provenance popover consistent with the visible founder.
           founderDetails={
             founderPubkey ? (
               <CodingSessionFounderLine
@@ -712,7 +709,11 @@ function ReadyCodingSessionWorkspace({
           }))}
           taskCount={taskDock.activeModel?.tasks.length ?? 0}
           taskRailOpen={taskDock.open}
-          workspaceReuse={{ channelId, sessionRef }}
+          workspaceReuse={{
+            channelId,
+            sessionRef,
+            sourceRepoRef: session.repoRef ?? null,
+          }}
         />
         <CodingSessionFounderLine
           founderPubkey={founderPubkey}

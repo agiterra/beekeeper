@@ -19,13 +19,18 @@ export type DurableCodingSessionPublishState =
 /**
  * True when the relay never confirmed the signed create: the publish threw or
  * timed out (`ambiguous`), or the record was signed and the app went away
- * before sending it (`prepared`). No provider can have seen such a request,
- * so nothing downstream may describe it as "waiting on the provider".
+ * before sending it (`prepared`). A persisted `publishing` record may survive
+ * a crash or a failed acknowledgement write. Either uncertain state may have
+ * reached the provider; the missing confirmation cannot prove otherwise.
  */
 export function isUnconfirmedCodingSessionPublish(
   publishState: DurableCodingSessionPublishState | null | undefined,
 ): boolean {
-  return publishState === "ambiguous" || publishState === "prepared";
+  return (
+    publishState === "ambiguous" ||
+    publishState === "prepared" ||
+    publishState === "publishing"
+  );
 }
 
 export {
@@ -423,15 +428,7 @@ export function pendingCodingSessionWorkspaceStatus(input: {
     : { kind: "idle", label: "Idle" };
 }
 
-/**
- * Whether "Retry this exact request" is actionable. Extracted so the pending
- * session screen and the create form's edit view can never drift: retry is
- * pointless while a publish or lifecycle read is in flight, once the session
- * resolved, or after a stall on a *confirmed* publish (the relay already holds
- * these exact bytes). An unconfirmed publish is the one case where the relay
- * does not hold them, so there the stall clock must not take retry away — it
- * is exactly the remedy.
- */
+/** Exact replay is useful only when delivery of the signed bytes is uncertain. */
 export function canRetryNewCodingSessionCreate(input: {
   isPublishing: boolean;
   lifecycleIsLoading: boolean;
@@ -440,14 +437,55 @@ export function canRetryNewCodingSessionCreate(input: {
   stalled: boolean;
   publishState?: DurableCodingSessionPublishState | null;
 }): boolean {
-  return !(
-    input.isPublishing ||
-    input.lifecycleIsLoading ||
-    input.lifecycleErrorMessage !== null ||
-    input.lifecycleState === "created" ||
-    input.lifecycleState === "created-with-failed-initial-turn" ||
-    input.lifecycleState === "resumed-without-context" ||
-    (input.stalled && !isUnconfirmedCodingSessionPublish(input.publishState))
+  return (
+    !input.isPublishing &&
+    !input.lifecycleIsLoading &&
+    input.lifecycleErrorMessage === null &&
+    (input.lifecycleState == null || input.lifecycleState === "pending") &&
+    isUnconfirmedCodingSessionPublish(input.publishState)
+  );
+}
+
+/** A terminal failure or a never-published draft can be replaced without duplication. */
+export function canStartFreshNewCodingSessionCreate(input: {
+  isPublishing: boolean;
+  lifecycleIsLoading: boolean;
+  lifecycleErrorMessage: string | null;
+  lifecycleState: string | null | undefined;
+  publishState?: DurableCodingSessionPublishState | null;
+}): boolean {
+  return (
+    !input.isPublishing &&
+    !input.lifecycleIsLoading &&
+    input.lifecycleErrorMessage === null &&
+    (input.lifecycleState === "failed" ||
+      (input.publishState === "prepared" &&
+        (input.lifecycleState == null || input.lifecycleState === "pending")))
+  );
+}
+
+/** A verified terminal directory refusal can be edited into a fresh request. */
+export function canRepairNewCodingSessionWorkdir(input: {
+  isPublishing: boolean;
+  lifecycleIsLoading: boolean;
+  lifecycleErrorMessage: string | null;
+  lifecycleState: string | null | undefined;
+  failureCode: string | undefined;
+}): boolean {
+  return (
+    canStartFreshNewCodingSessionCreate(input) &&
+    isCodingSessionWorkdirFailure(input.failureCode)
+  );
+}
+
+/** Preserve the requested runtime even if it is no longer offered. */
+export function newCodingSessionRecoveryTargetKey(
+  input: DurableCodingSessionCreateTransaction["input"],
+): string {
+  return encodeTargetSelectionKey(
+    input.channelId,
+    input.providerAuthorityPubkey,
+    input.providerInstanceRef,
   );
 }
 

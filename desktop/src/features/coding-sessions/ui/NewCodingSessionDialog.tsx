@@ -1,3 +1,4 @@
+import * as React from "react";
 import {
   NewCodingSessionChannelPicker,
   NewCodingSessionProjectDestination,
@@ -98,21 +99,13 @@ export type NewCodingSessionProjectContext = {
  * project session carries all three — reusing a directory changes where the
  * session *runs*, never which project it belongs to.
  *
- * The `workspaceReuse` prop is root's seam (contract §1) and has not landed
- * in `NewCodingSessionLaunchForm.tsx` yet — a reserved file no lane may edit.
- * Widening the props here rather than at the JSX site keeps the value flowing
- * the moment root lands it, without a `@ts-expect-error` and without this file
- * pretending to know the form's prop bag. Delete the intersection below (and
- * this paragraph) once the prop exists.
  */
 export function newCodingSessionFormProps(input: {
   channelId?: string;
   onDone: () => void;
   projectContext: NewCodingSessionProjectContext | null;
   workspaceReuse: NewCodingSessionWorkspaceReuse | null;
-}): Parameters<typeof NewCodingSessionForm>[0] & {
-  workspaceReuse?: NewCodingSessionWorkspaceReuse | null;
-} {
+}): Parameters<typeof NewCodingSessionForm>[0] {
   return {
     channelId: input.channelId,
     onDone: input.onDone,
@@ -299,6 +292,8 @@ export function NewCodingSessionDialog({
    */
   workspaceReuse?: NewCodingSessionWorkspaceReuse | null;
 }) {
+  const [reuseActive, setReuseActive] = React.useState(true);
+  const displayedWorkspace = reuseActive ? workspaceReuse : null;
   const formProps = newCodingSessionFormProps({
     channelId,
     onDone: () => onOpenChange(false),
@@ -313,15 +308,21 @@ export function NewCodingSessionDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            {newCodingSessionDialogTitle({ projectContext, workspaceReuse })}
+            {newCodingSessionDialogTitle({
+              projectContext,
+              workspaceReuse: displayedWorkspace,
+            })}
           </DialogTitle>
           <DialogDescription className="sr-only">
             Describe the goal and destination. Saved setup starts the session;
             optional advanced settings are available when needed.
           </DialogDescription>
         </DialogHeader>
-        {newCodingSessionWorkspaceDisclosure(workspaceReuse)}
-        <NewCodingSessionForm {...formProps} />
+        {newCodingSessionWorkspaceDisclosure(displayedWorkspace)}
+        <NewCodingSessionForm
+          {...formProps}
+          onWorkspaceReuseActiveChange={setReuseActive}
+        />
       </DialogContent>
     </Dialog>
   );

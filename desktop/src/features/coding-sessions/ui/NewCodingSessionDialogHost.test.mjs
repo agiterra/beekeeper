@@ -28,6 +28,7 @@ test("a workspace request inside a project keeps the project's dialog", () => {
     {
       kind: "project",
       projectId: "30621:owner:p",
+      sourceRepoRef: null,
       // …and the directory arrives there rather than being dropped at the
       // fork.
       workspaceReuse: WORKSPACE,
@@ -68,7 +69,12 @@ test("an ordinary project request carries no workspace", () => {
       kind: "project",
       projectId: "30621:owner:p",
     }),
-    { kind: "project", projectId: "30621:owner:p", workspaceReuse: null },
+    {
+      kind: "project",
+      projectId: "30621:owner:p",
+      sourceRepoRef: null,
+      workspaceReuse: null,
+    },
   );
 });
 

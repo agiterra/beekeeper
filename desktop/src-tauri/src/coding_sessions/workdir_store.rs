@@ -356,8 +356,9 @@ impl CodingSessionWorkdirStore {
     }
 
     /// Stage a create's one-shot hint and, when the create is project-scoped
-    /// and the project has no directory of its own yet, make this directory
-    /// the project's default too.
+    /// and the project has no directory of its own yet, remember its checkout.
+    /// `remember_path` separates that checkout from an execution worktree;
+    /// omitted callers retain the legacy behavior of remembering `path`.
     ///
     /// A hint dies with its receipt, so before this a project's directory
     /// existed only in the desktop's project settings — which nothing
@@ -372,6 +373,7 @@ impl CodingSessionWorkdirStore {
         command_id: &str,
         project_ref: Option<&str>,
         path: PathBuf,
+        remember_path: Option<PathBuf>,
     ) {
         let project_ref = project_ref.map(str::trim).filter(|key| !key.is_empty());
         if let Some(project_ref) = project_ref {
@@ -379,7 +381,7 @@ impl CodingSessionWorkdirStore {
                 self.set(
                     CodingSessionWorkdirScope::Project,
                     project_ref,
-                    path.clone(),
+                    remember_path.unwrap_or_else(|| path.clone()),
                 );
             }
         }
@@ -864,8 +866,8 @@ pub fn record_coding_session_workdir_use(
 
 /// Stage the directory a specific create command should run in.
 ///
-/// With `project_ref`, the same directory also becomes the project's default
-/// when it has none yet — see
+/// With `project_ref`, `remember_path` (or `path` when omitted) becomes the
+/// project's default when it has none yet — see
 /// [`CodingSessionWorkdirStore::stage_hint_for_project`].
 #[tauri::command]
 pub fn stage_coding_session_create_hint(
@@ -874,6 +876,7 @@ pub fn stage_coding_session_create_hint(
     command_id: String,
     path: String,
     project_ref: Option<String>,
+    remember_path: Option<String>,
 ) -> Result<CodingSessionWorkdirStore, String> {
     let command_id = command_id.trim().to_string();
     if command_id.is_empty() {
@@ -883,8 +886,15 @@ pub fn stage_coding_session_create_hint(
     if !path.is_absolute() {
         return Err("a coding-session working directory must be an absolute path".to_string());
     }
+    let remember_path = remember_path.map(|path| PathBuf::from(path.trim()));
+    if remember_path
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err("a remembered project directory must be an absolute path".to_string());
+    }
     mutate(&app, &state, |store| {
-        store.stage_hint_for_project(&command_id, project_ref.as_deref(), path)
+        store.stage_hint_for_project(&command_id, project_ref.as_deref(), path, remember_path)
     })
 }
 

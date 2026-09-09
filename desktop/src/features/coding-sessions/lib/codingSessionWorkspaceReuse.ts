@@ -26,6 +26,8 @@ export type WorkspaceReuseAvailability =
   | "missing"
   /** This computer recorded no directory for this session. */
   | "unrecorded"
+  /** Several seat directories exist; the session alone cannot select one. */
+  | "ambiguous"
   /** The session's execution runs on a provider this computer does not hold. */
   | "elsewhere";
 
@@ -51,6 +53,8 @@ export const WORKSPACE_REUSE_SENTENCES = {
   /** Reuses the wording `describeWorkdirProblem` already shows for a gone path. */
   missing: "No such directory on this computer.",
   unrecorded: "This computer recorded no directory for this session.",
+  ambiguous:
+    "This session has multiple recorded workspaces. Choose a folder in the draft.",
   elsewhere:
     "This session's execution runs on a provider this computer does not hold.",
   /**
@@ -71,14 +75,21 @@ function joinSentences(...parts: readonly (string | null)[]): string {
   return parts.filter((part): part is string => part !== null).join(" ");
 }
 
-/**
- * The row this session's workspace is read from.
- *
- * A session can have several seats and so several recorded trees. Preferring
- * a tree that still exists — and otherwise the first the host listed — keeps
- * the answer deterministic for the same read, which matters because the menu
- * re-resolves on every open.
- */
+/** A session with distinct seat directories has no single workspace to reuse. */
+export function hasAmbiguousWorkspaceRows(
+  rows: readonly SeatWorktreeRow[],
+  sessionRef: string,
+): boolean {
+  return (
+    new Set(
+      rows
+        .filter((row) => row.sessionRef === sessionRef && row.path.length > 0)
+        .map((row) => row.path),
+    ).size > 1
+  );
+}
+
+/** After ambiguity is rejected, prefer a present record of the one directory. */
 function selectRow(
   rows: readonly SeatWorktreeRow[],
   sessionRef: string,
@@ -125,6 +136,16 @@ export function resolveWorkspaceReuse(input: {
     input.executionIsLocal === null
       ? WORKSPACE_REUSE_SENTENCES.executionUnknown
       : null;
+  if (hasAmbiguousWorkspaceRows(input.rows, input.sessionRef)) {
+    return {
+      availability: "ambiguous",
+      path: null,
+      branch: null,
+      branchSource: null,
+      alsoHere: [],
+      sentence: WORKSPACE_REUSE_SENTENCES.ambiguous,
+    };
+  }
   const row = selectRow(input.rows, input.sessionRef);
 
   // No row wins over everything else, including a foreign execution: this
@@ -285,24 +306,16 @@ export function resolveWorkspaceDraftBranch(input: {
   return { missing: false, branch: recorded, branchSource: recordedSource };
 }
 
-/**
- * Whether the launcher can actually honour a seeded workspace yet.
- *
- * `false` until **all three** of root's changes land in the reserved files
- * (`CONTEXTUAL_SESSIONS_IMPL.md` §1):
- *
- * 1. `NewCodingSessionForm` accepts a `workspaceReuse` prop;
- * 2. its two state initializers read it —
- *    `useState(workspaceReuse?.path ?? "")` for the directory and
- *    `useState(workspaceReuse === null)` for the worktree toggle;
- * 3. `rememberWorkspace` is threaded to the create, so a one-off directory
- *    neither enters the MRU nor becomes a project's first default.
- *
- * Until then the form still starts empty with "Use a worktree" ticked, so a
- * disclosure above it would state one folder over a field about to use a
- * different one — a draft that lies about what pressing Start will do, which
- * is worse than an unseeded draft. **Flipping this without those three is not
- * a cosmetic change; it publishes that lie.** The prop is passed to the form
- * regardless: harmless today, correct the moment the seam lands.
- */
-export const WORKSPACE_REUSE_SEAM_LANDED = false;
+/** The launcher seeds the resolved path and suppresses default/MRU updates. */
+export const WORKSPACE_REUSE_SEAM_LANDED = true;
+
+/** Keep a contextual start bound to its source repository, never a project default. */
+export function workspaceReuseRepoRef(input: {
+  contextual: boolean;
+  sourceRepoRef?: string | null;
+  projectRepoRef: string | null;
+}): string | null {
+  return input.contextual
+    ? input.sourceRepoRef?.trim() || null
+    : input.projectRepoRef;
+}

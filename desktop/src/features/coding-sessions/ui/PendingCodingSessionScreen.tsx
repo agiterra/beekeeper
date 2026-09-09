@@ -11,6 +11,8 @@ import {
 import type { DurableCodingSessionCreateTransaction } from "../lib/durableCodingSessionCreate";
 import {
   canRetryNewCodingSessionCreate,
+  canStartFreshNewCodingSessionCreate,
+  canRepairNewCodingSessionWorkdir,
   isCodingSessionAuthFailure,
   isCodingSessionWorkdirFailure,
   newCodingSessionStatusMessage,
@@ -95,7 +97,7 @@ export function PendingCodingSessionScreen({
   retryExact: () => void;
   startFresh: () => void;
   beginLoginWatch: (runtime: string) => void;
-  /** Return to the form with the transaction retained (workdir remediation). */
+  /** Restore a terminally refused request as an editable draft. */
   onEditRequest: () => void;
 }) {
   const gutter = useCodingSessionColumnGutter();
@@ -216,6 +218,15 @@ export function PendingCodingSessionScreen({
             {isCodingSessionWorkdirFailure(failureCode) ? (
               <Button
                 data-testid="pending-coding-session-fix-workdir"
+                disabled={
+                  !canRepairNewCodingSessionWorkdir({
+                    isPublishing,
+                    lifecycleIsLoading,
+                    lifecycleErrorMessage,
+                    lifecycleState: lifecycle?.state,
+                    failureCode,
+                  })
+                }
                 onClick={onEditRequest}
                 type="button"
                 variant="outline"
@@ -228,9 +239,22 @@ export function PendingCodingSessionScreen({
               data-testid="pending-coding-session-start-fresh"
               onClick={startFresh}
               type="button"
-              // Once a wait has stalled, "Start fresh" is the only real
-              // escape — promote it from ghost so it reads as the action.
-              variant={stalled ? "outline" : "ghost"}
+              disabled={
+                !canStartFreshNewCodingSessionCreate({
+                  isPublishing,
+                  lifecycleIsLoading,
+                  lifecycleErrorMessage,
+                  lifecycleState: lifecycle?.state,
+                  publishState: transaction.publishState,
+                })
+              }
+              title={
+                lifecycle?.state === "failed" ||
+                transaction.publishState === "prepared"
+                  ? undefined
+                  : "The outcome is not yet known. Keep this request until its provider answers."
+              }
+              variant="ghost"
             >
               Start fresh
             </Button>

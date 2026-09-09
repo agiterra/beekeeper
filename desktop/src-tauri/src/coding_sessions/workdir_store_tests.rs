@@ -490,7 +490,12 @@ fn a_prune_is_recorded_with_the_sentence_that_admitted_it() {
 fn a_project_scoped_hint_becomes_the_project_default_when_it_has_none() {
     let mut store = CodingSessionWorkdirStore::default();
     let project = "30621:11868153aa:test-proj";
-    store.stage_hint_for_project("csl-1", Some(project), PathBuf::from("/src/test-proj"));
+    store.stage_hint_for_project(
+        "csl-1",
+        Some(project),
+        PathBuf::from("/src/test-proj"),
+        None,
+    );
     assert_eq!(store.pending["csl-1"], PathBuf::from("/src/test-proj"));
     assert_eq!(
         store.by_project[project].path,
@@ -498,7 +503,12 @@ fn a_project_scoped_hint_becomes_the_project_default_when_it_has_none() {
     );
 
     // A later create in another tree keeps the recorded default: settings win.
-    store.stage_hint_for_project("csl-2", Some(project), PathBuf::from("/src/elsewhere"));
+    store.stage_hint_for_project(
+        "csl-2",
+        Some(project),
+        PathBuf::from("/src/elsewhere"),
+        None,
+    );
     assert_eq!(store.pending["csl-2"], PathBuf::from("/src/elsewhere"));
     assert_eq!(
         store.by_project[project].path,
@@ -506,8 +516,71 @@ fn a_project_scoped_hint_becomes_the_project_default_when_it_has_none() {
     );
 
     // No project, or a blank one: a one-shot hint and nothing more.
-    store.stage_hint_for_project("csl-3", None, PathBuf::from("/src/standalone"));
-    store.stage_hint_for_project("csl-4", Some("  "), PathBuf::from("/src/standalone"));
+    store.stage_hint_for_project("csl-3", None, PathBuf::from("/src/standalone"), None);
+    store.stage_hint_for_project("csl-4", Some("  "), PathBuf::from("/src/standalone"), None);
     assert_eq!(store.by_project.len(), 1);
     assert_eq!(store.pending.len(), 4);
+}
+
+#[test]
+fn a_generated_worktree_hint_remembers_the_checkout_for_later_project_creates() {
+    let mut store = CodingSessionWorkdirStore::default();
+    let checkout = PathBuf::from("/src/beekeeper");
+    let worktree = PathBuf::from("/src/beekeeper-wt-trashme");
+    store.stage_hint_for_project(
+        "worktree-create",
+        Some(PROJECT_REF),
+        worktree.clone(),
+        Some(checkout.clone()),
+    );
+
+    // The exact command runs in its worktree, while a later phone/project
+    // create with no command hint resolves to the canonical checkout.
+    let view = store.projects_view();
+    assert_eq!(view.pending["worktree-create"], worktree);
+    assert_eq!(view.projects[PROJECT_REF], checkout);
+    store.clear_hint("worktree-create");
+    let reloaded: CodingSessionWorkdirStore =
+        serde_json::from_str(&serde_json::to_string(&store).expect("serialize")).expect("reload");
+    assert!(reloaded.projects_view().pending.is_empty());
+    assert_eq!(reloaded.projects_view().projects[PROJECT_REF], checkout);
+}
+
+#[test]
+fn a_canonical_hint_does_not_replace_an_existing_project_choice() {
+    let mut store = store_with_choices();
+    let original = store.by_project[PROJECT_REF].clone();
+    store.stage_hint_for_project(
+        "new-create",
+        Some(PROJECT_REF),
+        PathBuf::from("/src/another-worktree"),
+        Some(PathBuf::from("/src/another-checkout")),
+    );
+    assert_eq!(store.by_project[PROJECT_REF], original);
+    assert_eq!(
+        store.projects_view().pending["new-create"],
+        PathBuf::from("/src/another-worktree")
+    );
+}
+
+#[test]
+fn an_explicit_workspace_without_project_ref_never_sets_a_project_default() {
+    let mut store = CodingSessionWorkdirStore::default();
+    for (command, project_ref) in [("reuse", None), ("blank", Some("  "))] {
+        store.stage_hint_for_project(
+            command,
+            project_ref,
+            PathBuf::from("/src/shared-worktree"),
+            Some(PathBuf::from("/src/checkout")),
+        );
+    }
+    let view = store.projects_view();
+    assert!(view.projects.is_empty());
+    assert!(view.channels.is_empty());
+    assert_eq!(view.pending.len(), 2);
+    assert_eq!(view.pending["reuse"], PathBuf::from("/src/shared-worktree"));
+    assert!(
+        store.mru.is_empty(),
+        "staging must not implicitly populate recents"
+    );
 }

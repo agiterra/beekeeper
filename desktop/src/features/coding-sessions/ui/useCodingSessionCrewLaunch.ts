@@ -196,6 +196,8 @@ export function useCodingSessionCrewLaunch(input: {
    * `publishSeatCreate`.
    */
   workdir: string | null;
+  /** Contextual starts keep their workspace choice out of saved defaults. */
+  rememberWorkspace?: boolean;
   title: string | null;
   /**
    * The session policy this launch publishes, or null when it sets none.
@@ -353,7 +355,9 @@ export function useCodingSessionCrewLaunch(input: {
               // What a person returns to is the checkout, never the worktree
               // that was made from it — otherwise the next session prefills a
               // worktree and then cuts a worktree of a worktree.
-              await deps.recordWorkdirUse(current.workdir ?? seatWorkdir);
+              if (current.rememberWorkspace !== false) {
+                await deps.recordWorkdirUse(current.workdir ?? seatWorkdir);
+              }
             }
             await publishSeatedCodingSessionCreate({
               channelId,

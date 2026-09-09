@@ -246,7 +246,7 @@ test("a session's own second seat is never listed as somebody else here", () => 
   assert.deepEqual(resolution.alsoHere, []);
 });
 
-test("a tree that still exists is preferred over one that does not", () => {
+test("multiple recorded workspaces require a choice even when one is gone", () => {
   const resolution = resolveWorkspaceReuse({
     sessionRef: SESSION,
     rows: [
@@ -261,8 +261,9 @@ test("a tree that still exists is preferred over one that does not", () => {
     executionIsLocal: true,
   });
 
-  assert.equal(resolution.availability, "available");
-  assert.equal(resolution.path, "/Users/x/Code/repo-wt-a");
+  assert.equal(resolution.availability, "ambiguous");
+  assert.equal(resolution.path, null);
+  assert.match(resolution.sentence, /multiple recorded workspaces/);
 });
 
 test("a row with an empty path is not a workspace", () => {

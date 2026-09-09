@@ -62,6 +62,10 @@ export function useNewCodingSessionLaunchSubmit(input: {
    * failure: the history is what you have launched, not what you have typed.
    */
   rememberPrompt: (prompt: string) => void;
+  /** A contextual workspace is a one-off choice, never a new project default. */
+  rememberWorkspace?: boolean;
+  /** Repository binding is only known for the original contextual source folder. */
+  workspaceSourcePath?: string | null;
   selectedTarget: NewCodingSessionTarget | null;
   setIsPreparingChannel: (value: boolean) => void;
   setLaunchError: (value: string | null) => void;
@@ -89,6 +93,8 @@ export function useNewCodingSessionLaunchSubmit(input: {
     projectContext,
     refreshRuntimeTarget,
     rememberPrompt,
+    rememberWorkspace = true,
+    workspaceSourcePath = null,
     selectedTarget,
     setIsPreparingChannel,
     setLaunchError,
@@ -117,6 +123,10 @@ export function useNewCodingSessionLaunchSubmit(input: {
   // `await`, so a re-entrant call in the same tick or the next is a no-op
   // regardless of what the hook's own state has had time to render.
   const submittingRef = React.useRef(false);
+  const repoRef =
+    workspaceSourcePath !== null && workdir.trim() !== workspaceSourcePath
+      ? null
+      : (projectContext?.repoRef ?? null);
   return React.useCallback(() => {
     if (!canLaunch || !selectedTarget || submittingRef.current) return;
     submittingRef.current = true;
@@ -177,10 +187,11 @@ export function useNewCodingSessionLaunchSubmit(input: {
             initialTurn: goal.trim().length > 0 ? goal : null,
             workdir: effectiveWorkdir.length > 0 ? effectiveWorkdir : null,
             rememberWorkdir: checkout.length > 0 ? checkout : null,
+            rememberWorkspace,
             projectRef: projectContext?.projectRef ?? null,
             // LANE-L20 (finding 38): named whenever the launch resolved one —
             // the checkout's own repo, or the project's only repository.
-            repoRef: projectContext?.repoRef ?? null,
+            repoRef,
             seat: null,
             seatLabel: null,
           });
@@ -228,7 +239,7 @@ export function useNewCodingSessionLaunchSubmit(input: {
               primaryPersonaId: lead.actor,
               projectRef: projectContext?.projectRef ?? null,
               // LANE-L20 (finding 38): named whenever the launch resolved one.
-              repoRef: projectContext?.repoRef ?? null,
+              repoRef,
               provider: {
                 allowedModels: fresh.provider.allowedModels,
                 instanceRef: fresh.provider.providerInstanceRef,
@@ -301,6 +312,8 @@ export function useNewCodingSessionLaunchSubmit(input: {
     publishedModel,
     refreshRuntimeTarget,
     rememberPrompt,
+    rememberWorkspace,
+    repoRef,
     selectedTarget,
     setIsPreparingChannel,
     setLaunchError,

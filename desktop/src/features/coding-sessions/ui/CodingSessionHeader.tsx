@@ -170,7 +170,11 @@ type CodingSessionHeaderProps = {
    * execution's provider, which is the comparison that tells a foreign
    * execution from one whose location is simply unknown.
    */
-  workspaceReuse?: { channelId: string; sessionRef: string | null } | null;
+  workspaceReuse?: {
+    channelId: string;
+    sessionRef: string | null;
+    sourceRepoRef?: string | null;
+  } | null;
   /**
    * Opens the session People surface (roster + invite/share). Absent when
    * the session has no authority chain to share (no genesis).
@@ -268,6 +272,7 @@ export function CodingSessionHeader({
   // menu open by the same hook the sidebar row's item uses, so a session
   // cannot read two ways at once. The hook itself reads nothing until asked.
   const newSessionHere = useNewSessionInWorkspaceAction({
+    sourceRepoRef: workspaceReuse?.sourceRepoRef ?? null,
     channelId: workspaceReuse?.channelId ?? null,
     executionProviderPubkey: providerAuthorityPubkey,
     sessionRef: workspaceReuse?.sessionRef ?? null,
