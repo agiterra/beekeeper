@@ -5,6 +5,99 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+## September 9 People integration review
+
+Opus candidate `e222b137e`, `a715e0915`, and `ed3cf6acd` integrated as
+`1c9eaacf7`, `900ab545e`, and `1ae970c21`. Recipient filtering separates
+People/Agents/All without asserting that an unclassified key is a person;
+provider/seat evidence and capability explanations are visible in the roster.
+No grant/revoke builder or authority-fold rule changed. Provider classification
+uses a peek of existing verified ingress, adding no query or subscription.
+
+Root review found and corrected three presentation defects:
+- A nonempty filtered page with 49 agents and one person could not scroll and
+  offered no Load more. The bounded button now appears whenever another page
+  exists; a mixed-page browser regression checks exactly one additional fetch.
+- Pending invitations displayed effective capabilities before acceptance.
+  Their sentence now says requested access is unconfirmed, without claiming
+  the key has no other access.
+- Channel-wide provider observations claimed association with this session.
+  Copy now says observed in this channel; exact session association is not
+  inferred from a shared transport channel.
+
+Root also integrated the isolated live-broadcast readiness test repair and
+its held-subscription catch-up case. This changes test synchronization only;
+active-channel startup latency remains open. The repository duplicate-read
+candidate stays isolated: its broader spec still has eight failures, so the
+runtime diagnostic is not represented as a completed fix.
+
+Mission timing diagnosis also reproduces the original failure on current
+source. Create/receipt history waits for live admission before resolving scope;
+Mission then waits for another live fence before its HTTP history. Unchanged
+runs eventually report the correct Mission state at 16.123s and 20.629s, beyond
+the original five-second assertion. `mission-smoke-diagnosis/timing-summary.json`
+records zero available read slots and a roughly five-second queued Mission REQ.
+No latency fix is claimed: parallel cold history needs post-fence catch-up and
+race coverage before integration. The restart/verdict portion was not reached.
+
+The Dashboard directory's installed-only default is a confirmed setup trap
+(`AgentsView.tsx:53`). Root sent Opus a separate bounded follow-up to default
+that filter off, retain explicit local filtering and prove relay-known does
+not imply installed, running or controllable. Windows remains unavailable.
+The first combined run passed 9098 desktop tests and 15 of 16 browser cases.
+The failing case caught the new footer overlapping Invite by 36px after
+selection. Root changed selection to close the directory; further typing
+reopens it. The grant test now clicks Invite directly with no Escape workaround,
+and an additional case preserves multiple-recipient selection with no writes.
+The corrected browser run is tracked in `people-picker-close-browser.log`.
+Final People browser run: **15/15 passed**, zero retries, in
+`people-picker-close-browser.log`; five hash-distinct captures preserved in
+`people-integrated-screenshots/`. Both live/catch-up cases passed in
+`people-integrated-browser.log`. Full desktop suite was 9098/9098 before the
+final close-on-selection correction; the normal pre-push floor reruns it on
+the committed tree. Final TypeScript/E2E build, static checks and size ratchet
+passed (`people-picker-close-build.log`, `people-integrated-check.log`,
+`people-integrated-size.log`). Browser evidence is mock Chromium, not native
+Windows or Tauri acceptance. No app installation or production deployment.
+Publishing this reviewed integration continues on the existing candidate branch;
+`main` remains blocked by the broader smoke failures.
+
+## September 9 checkpoint published; Windows testing deferred
+
+Completed checkpoint `368f715f150dfa4b005fd3c22e61537cede212e5` is published
+on `work/team-role-evidence-astra`, verified with live `git ls-remote` on both
+the canonical relay and GitHub mirror. It contains 62 commits beyond `main`.
+Both remote `main` refs remain `9eb64eecf0d67fe43f95b708775f685f4b76c070`;
+this is a shared candidate branch, not a main landing, deployment or app install.
+Evidence: `../review-2026-09-08-release-candidate/publish-checkpoint.log`
+(normal pre-push checks passed, then HTTP401) and
+`publish-checkpoint-buffered.log` (normal checks passed again, topic push
+accepted with a one-command 64MiB HTTP post buffer; no hooks skipped).
+
+Brian no longer has the Windows machine available. Native agent setup and
+project-role comparison remain deferred; local work continues. Opus owns
+People/participant clarity on its isolated branch. Root's smoke diagnoses are
+current-source evidence, not an inherited-failure claim:
+
+- `smoke-live-composer-diagnostic.jsonl`: generic mock subscription readiness
+  can refer to an unrelated subscription. Cold history/composer appeared at
+  1.47s, the authoritative channel window at 10.53s; events emitted afterward
+  enter the live overlay, and earlier events are recovered by catch-up. This
+  establishes a test readiness defect and a real apparent-readiness latency,
+  not permanent message loss. Isolated test repair in
+  `review-smoke-readiness-astra` passes both live/catch-up cases; not integrated.
+- `repo-create-diagnosis/natural-completion.json`: repository creation clears
+  naturally at 9.492s after click, beyond the existing six-second assertion.
+  The exact duplicate-name WebSocket read waited about five seconds behind
+  admission. A diagnostic using the existing HTTP batch path for only that
+  exact read completed within the original assertion. A minimal source/test
+  candidate is being validated in `review-repo-create-admission-astra`.
+
+The broad 165-failure run remains an open release gate. These bounded diagnoses
+and candidates do not clear the remaining tests. Evidence filenames above are
+under the same release-candidate directory. New smoke/People work is separate
+from the published checkpoint.
+
 ## September 9 afternoon — contextual starts and handover integrated
 
 Root integrated Fable/Opus handover follow-ups through `69a2697a7` as
