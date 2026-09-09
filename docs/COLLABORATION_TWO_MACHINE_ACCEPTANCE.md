@@ -84,6 +84,103 @@ Repeat with identical path names in separate repositories and with a partial
 read. Neither case may be reported as a proven shared-file conflict. Opening
 evidence or seeing an overlap must not send a turn or create an approval queue.
 
+## 6. Handover — continuing an absent participant's work
+
+The mechanisms are in `docs/HANDOVER_IMPL.md`. The automated composition is
+`just test-handover` (`scripts/handover-acceptance.sh`): it runs two providers
+as two processes on one host, against a stub ACP adapter. That is what it can
+prove. This section is the part it cannot — two machines, two people, two
+clocks, and a real agent — so run it here rather than reading the script's PASS
+lines as cross-machine evidence.
+
+Use A = Brian's Mac and B = the Windows machine signed into hive, on a
+deliberately chosen test project and channel, with a relay-hosted repository
+both can push to (`bee git setup`; `bee git status` says whether NIP-98
+credentials are wired). Record both installed builds and the relay build
+before starting. Use an isolated provider on A: several steps kill it.
+
+**6.1 Found and grant.** On A, start a session in the test project and send it
+one turn. From A, grant B `collaborator` on that session. Expected: B can see
+the session, and the grant is visible on the accepted chain
+(`bee sessions roster`), not merely in a UI. Record the session reference, the
+genesis id, and the exact target of A's execution.
+
+**6.2 Checkpoint.** On A's checkout, leave the work genuinely unfinished: a
+commit, a staged file, an unstaged edit, an untracked file, and a binary file.
+Run `bee sessions handover checkpoint` with a real `--task`, `--next` and at
+least one `--unresolved`. Expected: the wip ref lands on the relay (the
+printed sha appears in the repository's kind:30618 ref state), the checkpoint
+reports `preserved: all`, and every artifact line names something you can
+fetch. Add a file larger than 256 KiB and checkpoint again: expected
+`preserved: partial` with that path named under `missing`. **A checkpoint that
+says `all` while a path is missing is a defect, not a rounding error** — the
+whole point of the field is that the next participant can trust it.
+
+**6.3 A goes away.** Force-quit A's provider (do not close the session
+cleanly). Wait for the session's execution to stop reading `live` — the
+relay serves lease state from a snapshot with a three-minute TTL, so B will
+see `live` for a while after A's machine is gone, and acting before it lapses
+tests nothing.
+
+**6.4 B continues.** On B, in a fresh checkout of the same repository, run
+`bee sessions handover continue --cwd <checkout>`. Pass **no** mode flag: the
+point is that the default picks reconstruction because nothing is reachable.
+Expected: the claim is accepted (one relay receipt naming B as claimant and
+B's provider as the body); B's checkout lands on a `handover/…` branch at the
+checkpoint's head with the staged, unstaged, untracked and binary bytes back;
+a new execution joins the *same* session reference on B's provider; and its
+first turn carries the checkpoint's task and next action. Open the file with
+the binary content and confirm the bytes, not the file name.
+
+Then work in it. The reconstruction is a **new execution** — the original
+agent's native context stayed on A's disk — so read the first agent reply for
+whether the checkpoint was actually enough to carry on from. That judgement is
+the part no harness makes.
+
+**6.5 A comes back.** Restart A's provider. Expected: A's session shows as
+disconnected **and says who took it over**, in the same view, without a second
+lookup. A turn A queued while its provider was down, and a fresh turn A sends
+now, are both refused `HANDOVER_FENCED` with B named. A sibling execution of
+the same session — one the handover never mentioned — is fenced too: v1 hands
+over the whole session, and the surfaces should say so rather than leaving A
+to discover it by being refused.
+
+**6.6 Racing claims.** With both providers up, have A and B claim the same
+session at the same moment. Expected: exactly one accepted claim, and the
+loser is told who won by name. A second accepted claim, or a loser told only
+"failed", is a finding.
+
+**6.7 Revoke and regrant.** From A, revoke B's grant. Expected: the session
+reads voided — not "back to normal". Regrant B the same tier. Expected: still
+voided, and a real turn from B to the execution it built is still refused. A
+regrant must never silently restore a claim. A fresh takeover by A then lifts
+the fence for A and keeps it up for B.
+
+**6.8 Retirement.** Delete the session from A. Expected: B's provider, on
+restart, publishes nothing for its execution and answers `SESSION_RETIRED`;
+A's already-running provider answers the same without a restart; and the
+handover view says deleted, offering nothing. Nothing is republished to make
+a deleted session resumable.
+
+**6.9 The native leg.** With A's provider alive and B holding a grant, run
+`bee sessions handover continue --native` from B. Expected: B's next action
+runs on A's own execution, in A's own context, and the record says
+`native-resume` — never `reconstructed`. A's own turn is then fenced until A
+takes the session back.
+
+**6.10 Native Windows — DEFERRED.** Everything above assumes B's provider runs
+where its checkout is. A native Windows provider (paths, credential helper,
+git line endings on the reconstructed patch) is **not accepted** and is not
+claimed to work; run 6.4 from Windows only to record what happens, and file
+what you find. Do not mark this section passed on a WSL or mock-UI run —
+`docs/HANDOVER_IMPL.md` §9 lists it as deferred and it stays deferred until
+somebody has done it on the metal.
+
+Record, for every step: the event ids (checkpoint, claim receipt,
+continuation), the exact targets before and after, the branch and sha B's
+checkout landed on, and the refusal codes you saw with your own eyes. A UI
+that renders a fence is not evidence that a provider enforced one.
+
 ## Report the result
 
 For each case record: build/relay versions, test accounts and project, steps,

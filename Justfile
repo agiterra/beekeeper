@@ -575,6 +575,29 @@ test-ci-continuation: _ensure-services
     cargo build -p buzz-cli --bin bee -p buzz-relay --bin buzz-relay -p buzz-session-provider --bin buzz-session-provider
     cargo test -p buzz-session-provider --test ci_continuation_composition -- --ignored --test-threads=1
 
+# Absent-participant handover (docs/HANDOVER_IMPL.md §6): composes the real
+# buzz-relay binary (its own scratch database, dropped on exit; Redis logical
+# DB 14, never DB 0 or the dev database), the built `bee` CLI, and **two**
+# real buzz-session-provider processes with distinct keys, state dirs and
+# working directories (fake ACP adapter scripts standing in for the model — no
+# network model call), against a relay-hosted git repository pushed to and
+# fetched from over the relay's own smart-HTTP transport with NIP-98
+# credentials. Proves checkpoint/claim/continue end to end: the fence on a
+# returning provider and on its sibling executions, racing claims, a voided
+# claim that a regrant does not restore, replay, a missing artifact, an
+# interrupted continuation, retirement, and the native leg.
+#
+# `git-credential-nostr` is built too: without it the checkpoint's wip-ref
+# push has no way to authenticate to the relay. See
+# scripts/handover-acceptance.sh for what each step proves and what it does
+# not (no real model, one host rather than two machines, no seated restore,
+# no Windows).
+#
+# Absent-participant handover composition: two providers, one relay-hosted repo
+test-handover: _ensure-services
+    cargo build -p buzz-cli --bin bee -p buzz-relay --bin buzz-relay -p buzz-session-provider --bin buzz-session-provider -p git-credential-nostr --bin git-credential-nostr
+    ./scripts/handover-acceptance.sh
+
 # Run unit tests only (no infra needed)
 test-unit:
     #!/usr/bin/env bash
