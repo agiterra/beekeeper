@@ -769,3 +769,134 @@ fn a_handover_branch_that_moved_on_is_refused_rather_than_discarded() {
         "and the branch is exactly where it was"
     );
 }
+
+#[test]
+fn a_hostile_artifact_ref_is_refused_before_git_is_ever_invoked() {
+    // Kind 44247 validates an artifact's `ref` for text bounds only — the
+    // relay adjudicates structure, not meaning — so a checkpoint published by
+    // somebody else's machine can carry any string here. `git fetch <remote>
+    // <src>:<dst>` **writes `<dst>` locally**, during the fetch, before any
+    // sha check could refuse it.
+    let repo = Repo::new();
+    let before_main = git(&["rev-parse", "main"], &repo.path).trim().to_owned();
+    // A remote that resolves, so nothing is refused for the wrong reason.
+    git(
+        &["remote", "add", "src", repo.path.to_str().expect("utf8")],
+        &repo.path,
+    );
+
+    let hostile = [
+        // The one that matters: a forced write onto the caller's own main.
+        "+refs/heads/wip/x:refs/heads/main",
+        // The same write without the force.
+        "refs/heads/wip/x:refs/heads/main",
+        // Revision syntax that resolves to somebody else's commit.
+        "refs/heads/wip/x^{commit}",
+        "refs/heads/wip/x~3",
+        // Glob syntax, which would fetch more than the record names.
+        "refs/heads/wip/*",
+        // Not a branch ref at all.
+        "--upload-pack=touch /tmp/pwned",
+    ];
+    for spelling in hostile {
+        let error = fetch_and_checkout(
+            &repo.path,
+            "src",
+            spelling,
+            &repo.head(),
+            "handover/1f2e3d4c",
+        )
+        .expect_err("must refuse {spelling}");
+        assert!(
+            error.contains("refusing to fetch") && error.contains("plain"),
+            "{spelling:?} must be refused by name: {error}"
+        );
+        assert_eq!(
+            git(&["rev-parse", "main"], &repo.path).trim(),
+            before_main,
+            "local main must be untouched after refusing {spelling:?}"
+        );
+    }
+
+    // And the shape that is allowed still is.
+    assert!(safe_wip_ref("refs/heads/wip/owner/1f2e3d4c").is_ok());
+    assert!(safe_wip_ref("refs/heads/wip/a.b_c-d/9").is_ok());
+    for bad in [
+        "refs/heads/",
+        "refs/tags/v1",
+        "refs/heads/a//b",
+        "refs/heads/a/",
+        "refs/heads/../x",
+    ] {
+        assert!(safe_wip_ref(bad).is_err(), "{bad:?} must be refused");
+    }
+}
+
+#[test]
+fn a_hostile_remote_name_is_refused_too() {
+    // Resolved from git config rather than from a checkpoint, but it lands in
+    // the same argv position, and a value beginning `-` reads as a flag.
+    for bad in ["--upload-pack=touch /tmp/pwned", "-o", "orig in", "a:b", ""] {
+        assert!(
+            safe_remote_name(bad).is_err(),
+            "{bad:?} must be refused as a remote name"
+        );
+    }
+    assert!(safe_remote_name("origin").is_ok());
+    assert!(safe_remote_name("hive.agiterra.org").is_ok());
+}
+
+#[test]
+fn the_fetch_refspec_names_no_destination() {
+    // The positive half of the guard: even a well-formed ref is fetched with
+    // an empty destination, so the objects land and no local ref moves.
+    let origin = Repo::new();
+    origin.write("tracked.txt", "one\nshared\n");
+    git(&["add", "-A"], &origin.path);
+    git(&["commit", "--quiet", "-m", "wip"], &origin.path);
+    let sha = origin.head();
+    git(
+        &["update-ref", "refs/heads/wip/owner/1f2e3d4c", &sha],
+        &origin.path,
+    );
+
+    let target = Repo::new();
+    let before_main = git(&["rev-parse", "main"], &target.path).trim().to_owned();
+    git(
+        &["remote", "add", "src", origin.path.to_str().expect("utf8")],
+        &target.path,
+    );
+    fetch_and_checkout(
+        &target.path,
+        "src",
+        "refs/heads/wip/owner/1f2e3d4c",
+        &sha,
+        "handover/1f2e3d4c",
+    )
+    .expect("fetch and checkout");
+
+    assert_eq!(
+        git(&["rev-parse", "main"], &target.path).trim(),
+        before_main,
+        "the fetch moved no local branch of its own"
+    );
+    // `rev-parse --verify` exits non-zero on a missing ref, so this asks
+    // without the asserting helper.
+    let local_copy = Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/wip/owner/1f2e3d4c",
+        ])
+        .current_dir(&target.path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("run git");
+    assert!(
+        !local_copy.status.success(),
+        "and wrote no local copy of the source ref either"
+    );
+    assert_eq!(target.head(), sha, "only the handover branch was placed");
+}

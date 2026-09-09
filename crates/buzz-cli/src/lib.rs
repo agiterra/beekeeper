@@ -3936,6 +3936,12 @@ pub struct HandoverContinueArgs {
     /// when omitted; never a hard-coded name.
     #[arg(long)]
     pub remote: Option<String>,
+    /// The provider's projects file, which is where its working directory is
+    /// resolved from. Defaults to $BUZZ_CSP_PROJECTS_FILE. A reconstruction
+    /// into --cwd binds the create's commandId to that directory here, because
+    /// a create carries no directory field of its own.
+    #[arg(long = "projects-file")]
+    pub projects_file: Option<PathBuf>,
     /// One sentence to put on the continuation record.
     #[arg(long)]
     pub note: Option<String>,

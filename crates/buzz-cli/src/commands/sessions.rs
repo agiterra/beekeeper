@@ -76,6 +76,7 @@ pub mod explain;
 // topic so no file passes 1,000 lines: the four verbs, the git half, and the
 // rendering.
 pub mod handover;
+pub mod handover_blob;
 pub(crate) mod handover_checkpoint;
 pub(crate) mod handover_claim;
 pub(crate) mod handover_continue;

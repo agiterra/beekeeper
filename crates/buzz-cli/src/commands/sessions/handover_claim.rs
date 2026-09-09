@@ -42,7 +42,10 @@ use crate::validate::{sdk_err, validate_lower_hex64};
 use crate::HandoverClaimArgs;
 
 use super::crew::short_pubkey;
-use super::handover::{load_handover_state, HandoverState};
+use super::handover::{
+    body_liveness_of, fetch_executions, live_target_on, load_handover_state, next_action_line,
+    BodyLiveness, HandoverState, CLAIM_MOVES_THE_FENCE,
+};
 use super::handover_render::{VerificationNotes, WHOLE_SESSION_DISCLOSURE};
 use super::operations_authority::fetch_trusted_relay_self;
 
@@ -150,8 +153,59 @@ pub(super) async fn cmd_claim(
 
     let mut notes = VerificationNotes::default();
     let outcome = claim_session(client, &state, &body_pubkey, wait_secs, &mut notes).await?;
-    report_claim(&outcome, &notes, args.json);
+
+    // The claim moved the fence. Whether anything is *running* on the body it
+    // moved to is a separate fact, read separately, and printed as its own
+    // line — the composition run had a successful takeback followed by
+    // `turn_dropped/NO_LIVE_EXECUTION`, because the two had been conflated.
+    let (liveness, live_target) =
+        read_body_liveness(client, &state.channel, &state.session_ref, &body_pubkey).await;
+    notes.verified(CLAIM_MOVES_THE_FENCE.to_owned());
+    match liveness {
+        BodyLiveness::Unknown => notes.not_verified(format!(
+            "the execution liveness of body {} could not be read, so this run does not know \
+             whether anything is running there",
+            short_pubkey(&body_pubkey)
+        )),
+        BodyLiveness::Live | BodyLiveness::NotLive => notes.verified(format!(
+            "body {} reads {} from the relay's kind-24223 lease snapshot",
+            short_pubkey(&body_pubkey),
+            liveness.word()
+        )),
+    }
+    notes.not_verified(
+        "this command sent no turn and no resume: claiming a session steers nothing".to_owned(),
+    );
+
+    let next_action = next_action_line(
+        liveness,
+        &body_pubkey,
+        &state.channel,
+        &state.session_ref,
+        live_target.as_deref(),
+    );
+    report_claim(&outcome, &next_action, &notes, args.json);
     Ok(())
+}
+
+/// Read the claimed body's execution liveness, the way `continue` reads it.
+///
+/// A failed read answers [`BodyLiveness::Unknown`] rather than `NotLive`: "the
+/// relay did not answer" and "nothing is running there" send a person to two
+/// different places, and only one of them is true at a time.
+async fn read_body_liveness(
+    client: &BuzzClient,
+    channel: &str,
+    session_ref: &str,
+    body_pubkey: &str,
+) -> (BodyLiveness, Option<String>) {
+    match fetch_executions(client, channel, session_ref).await {
+        Ok(rows) => (
+            body_liveness_of(&rows, body_pubkey),
+            live_target_on(&rows, body_pubkey),
+        ),
+        Err(_) => (BodyLiveness::Unknown, None),
+    }
 }
 
 /// Refuse the wait ceiling rather than silently clamping it.
@@ -493,7 +547,12 @@ pub(super) fn find_claim_receipt(
 }
 
 /// Print what the claim did.
-fn report_claim(outcome: &ClaimOutcome, notes: &VerificationNotes, as_json: bool) {
+fn report_claim(
+    outcome: &ClaimOutcome,
+    next_action: &str,
+    notes: &VerificationNotes,
+    as_json: bool,
+) {
     if as_json {
         println!(
             "{}",
@@ -507,6 +566,8 @@ fn report_claim(outcome: &ClaimOutcome, notes: &VerificationNotes, as_json: bool
                     .clone()
                     .map_or(Value::Null, Value::from),
                 "scope": WHOLE_SESSION_DISCLOSURE,
+                "fence": CLAIM_MOVES_THE_FENCE,
+                "nextAction": next_action,
                 "notes": notes.to_json(),
             })
         );

@@ -522,7 +522,23 @@ pub fn fetch_and_checkout(
     sha: &str,
     branch: &str,
 ) -> Result<(), String> {
-    run_git(cwd, &["fetch", "--no-write-fetch-head", remote, ref_name])?;
+    // Both untrusted: the ref comes out of somebody else's signed checkpoint
+    // and the remote out of git config, and both reach a subprocess argv.
+    let ref_name = safe_wip_ref(ref_name)?;
+    let remote = safe_remote_name(remote)?;
+    // A **destination-free** refspec, `<src>:`. `git fetch <remote> <src>:<dst>`
+    // writes `<dst>` in this repository, so the empty destination is what makes
+    // the fetch a read: the objects land, FETCH_HEAD is suppressed, and no
+    // local ref moves.
+    run_git(
+        cwd,
+        &[
+            "fetch",
+            "--no-write-fetch-head",
+            &remote,
+            &format!("{ref_name}:"),
+        ],
+    )?;
     let resolved = run_git(
         cwd,
         &["rev-parse", "--verify", &format!("{sha}^{{commit}}")],
@@ -538,6 +554,79 @@ pub fn fetch_and_checkout(
     }
     refuse_unreachable_branch(cwd, branch, &resolved)?;
     run_git(cwd, &["checkout", "-B", branch, &resolved]).map(|_| ())
+}
+
+/// Characters a ref this command fetches may never contain.
+///
+/// `:` is the one that matters. `git fetch <remote> <src>:<dst>` **writes
+/// `<dst>` in this repository**, so a checkpoint whose artifact named
+/// `+refs/heads/wip/x:refs/heads/main` would rewrite the caller's own `main` —
+/// and it would do it during the fetch, before the sha check below could
+/// refuse anything. `+` forces that write past a non-fast-forward. The rest
+/// (`~ ^ ? * [ \`) are revision or glob syntax `git check-ref-format` refuses
+/// anyway.
+///
+/// Kind 44247 validates artifact refs for **length and text only** — the relay
+/// adjudicates structure, not meaning — so this is where the shape is
+/// enforced, exactly as `desktop/src-tauri/src/commands/handover.rs` enforces
+/// it for the same value arriving the same way.
+const REFUSED_REF_CHARACTERS: [char; 8] = [':', '+', '~', '^', '?', '*', '[', '\\'];
+
+/// A wip ref and nothing else: `refs/heads/<name>`, conservatively spelled.
+///
+/// Deliberately narrower than git's own rules. The only shape this command has
+/// any business fetching is the branch ref a seat hook pushes.
+fn safe_wip_ref(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    let name = trimmed.strip_prefix("refs/heads/").unwrap_or("");
+    if name.is_empty()
+        || trimmed.contains("..")
+        || trimmed.ends_with('/')
+        || trimmed.contains("//")
+        || trimmed.chars().any(|character| {
+            character.is_whitespace()
+                || character.is_control()
+                || REFUSED_REF_CHARACTERS.contains(&character)
+        })
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._/-".contains(character))
+    {
+        return Err(format!(
+            "refusing to fetch {value:?}: a checkpoint artifact's ref must be a plain \
+             refs/heads/… branch ref, and a ref carrying a destination (`src:dst`) would write a \
+             local branch during the fetch, before any check here could refuse it"
+        ));
+    }
+    Ok(trimmed.to_owned())
+}
+
+/// A remote name, under the same rules minus the `refs/heads/` prefix.
+///
+/// Resolved from git config rather than from a checkpoint, but it lands in the
+/// same argv position and a config value beginning `-` would be read as a flag.
+fn safe_remote_name(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('-')
+        || trimmed.contains("..")
+        || trimmed.ends_with('/')
+        || trimmed.contains("//")
+        || trimmed.chars().any(|character| {
+            character.is_whitespace()
+                || character.is_control()
+                || REFUSED_REF_CHARACTERS.contains(&character)
+        })
+        || !trimmed
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._/-".contains(character))
+    {
+        return Err(format!(
+            "refusing to fetch from remote {value:?}: a remote name must be a plain \
+             alphanumeric name"
+        ));
+    }
+    Ok(trimmed.to_owned())
 }
 
 /// Refuse to move `branch` onto `target` when that would discard commits.

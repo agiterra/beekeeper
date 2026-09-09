@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use buzz_core::coding_session_command::CodingSessionTarget;
+use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
 use buzz_core::coding_session_handover::{
     CodingSessionHandoverArtifactKind, CodingSessionHandoverCheckpoint,
 };
@@ -40,6 +40,7 @@ use crate::validate::sdk_err;
 
 use super::crew::short_pubkey;
 use super::handover::HandoverState;
+use super::handover_blob::fetch_verified_blob;
 use super::handover_git::{apply_patch, fetch_and_checkout, resolve_push_remote};
 use super::handover_render::{render_initial_turn, VerificationNotes, RECONSTRUCTION_LIMIT};
 
@@ -140,7 +141,11 @@ pub(super) async fn recover_checkout(
             ),
             CodingSessionHandoverArtifactKind::Blob => (
                 format!("blob {}", artifact.hash.as_deref().unwrap_or("<unknown>")),
-                fetch_blob(client, artifact.hash.as_deref()).await,
+                // Verified before the caller is handed anything it could
+                // apply: a blob is addressed by a hash and a byte count the
+                // author stated, and nothing in the fetch proves the served
+                // body matches either.
+                fetch_verified_blob(client, artifact.hash.as_deref(), artifact.bytes).await,
             ),
         };
         if !base.may_apply_overlays() {
@@ -324,17 +329,6 @@ async fn fetch_patch_event(
         })
 }
 
-/// Read one Blossom blob back off the relay as patch text.
-async fn fetch_blob(client: &BuzzClient, hash: Option<&str>) -> Result<String, CliError> {
-    let hash = hash.ok_or_else(|| CliError::Other("a blob artifact named no hash".to_owned()))?;
-    let bytes = client.download_media(hash).await?;
-    String::from_utf8(bytes.to_vec()).map_err(|error| {
-        CliError::Other(format!(
-            "blob {hash} is not valid UTF-8 patch text: {error}"
-        ))
-    })
-}
-
 /// Publish the `session.create` that joins this umbrella, and wait for it.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn create_execution(
@@ -342,6 +336,8 @@ pub(super) async fn create_execution(
     state: &HandoverState,
     provider_authority: &str,
     provider_instance: Option<&str>,
+    projects_file: Option<&Path>,
+    recovered_cwd: Option<&Path>,
     checkpoint: Option<&CodingSessionHandoverCheckpoint>,
     checkpoint_ref: Option<&str>,
     author: &str,
@@ -380,6 +376,29 @@ pub(super) async fn create_execution(
             routing: None,
         },
     };
+    // The binding, before the create is published: the provider re-reads this
+    // file on every lifecycle command and `resolve` consults
+    // `pending[commandId]` **first**
+    // (`crates/buzz-session-provider/src/commands.rs`,
+    // `ProjectsFile::resolve`), so the entry has to be there when the command
+    // arrives.
+    if let (Some(path), Some(cwd)) = (projects_file, recovered_cwd) {
+        let binding = bind_pending_directory(path, &command_id, cwd)?;
+        notes.verified(format!(
+            "bound this create's commandId to {} in {}, which is what the provider resolves its \
+             working directory from",
+            binding.directory.display(),
+            binding.path.display()
+        ));
+        notes.not_verified(BINDING_IS_HOST_LOCAL.to_owned());
+    } else if recovered_cwd.is_some() {
+        notes.not_verified(
+            "no projects file was bound, so where the new execution runs is whatever its \
+             provider already had mapped — not necessarily the recovered checkout"
+                .to_owned(),
+        );
+    }
+
     let channel_uuid = Uuid::parse_str(&state.channel)
         .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
     let builder =
@@ -474,4 +493,241 @@ pub(super) fn create_answer(
         }
     }
     None
+}
+
+// ── binding the create to the recovered checkout ─────────────────────────
+
+/// The provider's host-local map from session coordinates to directories.
+///
+/// **This is the seam this command cannot reach over the wire.** A
+/// `session.create` names a `sessionRef`, a `repoRef` and a provider — it does
+/// not name a directory, and there is no field for one. The provider resolves
+/// the working directory from its own `BUZZ_CSP_PROJECTS_FILE`
+/// (`crates/buzz-session-provider/src/commands.rs`, `ProjectsFile::resolve`),
+/// consulting `pending[commandId]` **first**, then the project, then the
+/// channel. So a reconstruction that fetched a wip ref into `--cwd` and then
+/// published a create would have the model open the *project's* old folder
+/// while the continuation said "recovered" — the artifacts in one directory,
+/// the agent in another.
+///
+/// Writing the pending entry is therefore part of reconstructing, and the fact
+/// that it lives in a host file rather than on the wire is disclosed every
+/// time rather than assumed.
+///
+/// Read and written as a JSON `Value` rather than through a typed struct on
+/// purpose: this process must not drop a key a newer provider understands and
+/// this build does not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProjectsBinding {
+    /// Where the file is.
+    pub(super) path: PathBuf,
+    /// The absolute directory bound to the create.
+    pub(super) directory: PathBuf,
+}
+
+/// The environment variable the provider is launched with, and the one this
+/// command defaults `--projects-file` to.
+pub(super) const PROJECTS_FILE_ENV: &str = "BUZZ_CSP_PROJECTS_FILE";
+
+/// The remedy sentence a caller with no projects file is given.
+pub(super) fn projects_file_remedy(cwd: &Path) -> String {
+    format!(
+        "the provider resolves its working directory from its projects file, not from this \
+         command; pass --projects-file <the provider's {PROJECTS_FILE_ENV}> (desktop: \
+         <state-dir>/projects.json) or configure the project's directory to {}",
+        cwd.display()
+    )
+}
+
+/// Resolve the projects file to bind through, or refuse with the remedy.
+///
+/// Refused **before** anything is claimed: a claim moves the fence for
+/// everybody, and taking a session over only to discover the new execution
+/// cannot be pointed at the recovered work is a worse place to stop than not
+/// starting.
+pub(super) fn resolve_projects_file(
+    explicit: Option<&Path>,
+    cwd: &Path,
+) -> Result<PathBuf, CliError> {
+    if let Some(path) = explicit {
+        return Ok(path.to_path_buf());
+    }
+    match std::env::var(PROJECTS_FILE_ENV) {
+        Ok(value) if !value.trim().is_empty() => Ok(PathBuf::from(value)),
+        _ => Err(CliError::Usage(projects_file_remedy(cwd))),
+    }
+}
+
+/// Bind `command_id` to `directory` in the provider's projects file.
+///
+/// Read-modify-write, atomic at the rename: the provider re-reads this file on
+/// every lifecycle command, so a half-written file is one it would read as
+/// empty and answer `PROJECT_CWD_UNRESOLVED` to. The temporary file is created
+/// in the same directory so the rename cannot cross a filesystem.
+///
+/// # Errors
+/// A malformed existing file is **refused rather than replaced**: the provider
+/// reads an unparseable projects file as empty, so rewriting it here would
+/// quietly discard whatever mapping its owner had.
+pub(super) fn bind_pending_directory(
+    path: &Path,
+    command_id: &str,
+    directory: &Path,
+) -> Result<ProjectsBinding, CliError> {
+    let directory = directory.canonicalize().map_err(|error| {
+        CliError::Usage(format!(
+            "the recovered checkout {} cannot be resolved to an absolute path ({error}), and the \
+             provider ignores a relative working directory",
+            directory.display()
+        ))
+    })?;
+
+    let mut document: Value = match std::fs::read_to_string(path) {
+        Ok(body) if body.trim().is_empty() => json!({}),
+        Ok(body) => serde_json::from_str(&body).map_err(|error| {
+            CliError::Usage(format!(
+                "the projects file {} does not parse ({error}). The provider reads an unparseable \
+                 projects file as empty, so this command will not rewrite it and lose whatever \
+                 mapping it holds — fix the file, then re-run.",
+                path.display()
+            ))
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => {
+            return Err(CliError::Usage(format!(
+                "the projects file {} cannot be read: {error}",
+                path.display()
+            )))
+        }
+    };
+    let object = document.as_object_mut().ok_or_else(|| {
+        CliError::Usage(format!(
+            "the projects file {} is not a JSON object",
+            path.display()
+        ))
+    })?;
+    // `version` only when the file had none: an existing value is the owner's.
+    object.entry("version").or_insert_with(|| json!(1));
+    let pending = object
+        .entry("pending")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| {
+            CliError::Usage(format!(
+                "the projects file {} has a `pending` that is not an object",
+                path.display()
+            ))
+        })?;
+    pending.insert(
+        command_id.to_owned(),
+        json!(directory.to_string_lossy().into_owned()),
+    );
+
+    let body = serde_json::to_string_pretty(&document)
+        .map_err(|error| CliError::Other(format!("projects file serialization failed: {error}")))?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|error| {
+        CliError::Usage(format!(
+            "cannot create {} for the projects file: {error}",
+            parent.display()
+        ))
+    })?;
+    let temporary = parent.join(format!(".buzz-projects-{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&temporary, format!("{body}\n")).map_err(|error| {
+        CliError::Usage(format!("cannot write {}: {error}", temporary.display()))
+    })?;
+    std::fs::rename(&temporary, path).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        CliError::Usage(format!(
+            "cannot replace {} with the updated projects file: {error}",
+            path.display()
+        ))
+    })?;
+
+    Ok(ProjectsBinding {
+        path: path.to_path_buf(),
+        directory,
+    })
+}
+
+/// The sentence every reconstruction prints about where the binding lives.
+pub(super) const BINDING_IS_HOST_LOCAL: &str =
+    "the working directory is bound in the provider's own projects file on this machine, never on \
+     the wire: a create names a session and a provider, and has no field for a directory";
+
+/// Check that the new execution is actually running in the recovered checkout.
+///
+/// The create's receipt says an execution exists; it does not say **where**.
+/// The provider's first 44223 metadata carries the worktree it probed —
+/// `branch` and `observedCommit` — and those are the only evidence this
+/// command can offer that the binding took. The patch is applied uncommitted,
+/// so `HEAD` is still the checkpoint's `headSha`.
+///
+/// Returns the `missing` line to record, or `None` when the execution is where
+/// it should be.
+pub(super) fn workdir_mismatch_line(
+    branch: Option<&str>,
+    observed_commit: Option<&str>,
+    expected_branch: &str,
+    expected_head: Option<&str>,
+) -> Option<String> {
+    let branch_matches = branch == Some(expected_branch);
+    let head_matches = match (observed_commit, expected_head) {
+        // No head to compare against is not a mismatch; it is one fewer fact.
+        (_, None) => true,
+        (Some(observed), Some(expected)) => observed.eq_ignore_ascii_case(expected),
+        (None, Some(_)) => false,
+    };
+    if branch_matches && head_matches {
+        return None;
+    }
+    Some(format!(
+        "the execution reports branch {} at {}, not the recovered checkout — it is running \
+         somewhere else",
+        branch.unwrap_or("<none>"),
+        observed_commit.unwrap_or("<none>")
+    ))
+}
+
+/// Wait, bounded, for the new execution's first metadata and check where it is.
+pub(super) async fn verify_execution_workdir(
+    client: &BuzzClient,
+    channel: &str,
+    target: &CodingSessionTarget,
+    expected_branch: &str,
+    expected_head: Option<&str>,
+    since: i64,
+    wait_secs: u64,
+) -> Option<String> {
+    let target_key = coding_session_target_key(target);
+    let deadline = std::time::Instant::now() + Duration::from_secs(wait_secs);
+    let filter = json!({
+        "kinds": [buzz_core::kind::KIND_CODING_SESSION_METADATA],
+        "#h": [channel],
+        "since": since,
+    });
+    loop {
+        if let Ok(events) = client.query_all(filter.clone()).await {
+            let (records, _) = super::decode_metadata(&events);
+            if let Some(record) = records
+                .iter()
+                .filter(|record| record.target_key == target_key)
+                .min_by_key(|record| record.created_at)
+            {
+                return workdir_mismatch_line(
+                    record.metadata.branch.as_deref(),
+                    record.metadata.observed_commit.as_deref(),
+                    expected_branch,
+                    expected_head,
+                );
+            }
+        }
+        if std::time::Instant::now() + RECEIPT_POLL >= deadline {
+            return Some(format!(
+                "the new execution published no metadata within {wait_secs}s, so this run cannot \
+                 say whether it is running in the recovered checkout"
+            ));
+        }
+        tokio::time::sleep(RECEIPT_POLL).await;
+    }
 }

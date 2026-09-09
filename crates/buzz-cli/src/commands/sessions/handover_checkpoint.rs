@@ -50,6 +50,7 @@ use crate::HandoverCheckpointArgs;
 use super::handover::{
     build_handover_event, classify_own_write, load_handover_state, OwnWriteOutcome,
 };
+use super::handover_blob::PATCH_BLOB_MIME;
 use super::handover_claim::refuse_retired;
 use super::handover_git::{
     capture_working_tree, push_wip_ref, read_revision, resolve_push_remote, CapturedTree,
@@ -63,9 +64,6 @@ use super::handover_render::{artifact_line, VerificationNotes, WHOLE_SESSION_DIS
 /// the session already: `wip/owner/<session8>` is unique to one umbrella, and
 /// only somebody with standing on that umbrella writes one.
 const OWNER_SEGMENT: &str = "owner";
-
-/// The MIME a captured patch travels under when it goes to Blossom.
-const PATCH_MIME: &str = "text/x-patch";
 
 /// Bytes reserved for the event envelope when deciding patch event vs blob.
 ///
@@ -368,7 +366,7 @@ fn push_head(
 }
 
 /// Publish the captured patch as a NIP-34 patch event, or as a Blossom blob.
-async fn carry_patch(
+pub(super) async fn carry_patch(
     client: &BuzzClient,
     captured: &CapturedTree,
     repo_ref: &str,
@@ -403,7 +401,7 @@ async fn carry_patch(
         ));
     }
     let descriptor = client
-        .upload_blob_bytes(captured.patch.clone().into_bytes(), PATCH_MIME)
+        .upload_blob_bytes(captured.patch.clone().into_bytes(), PATCH_BLOB_MIME)
         .await
         .map_err(|error| {
             format!("it exceeds the relay's {limit}-byte event budget and the blob upload failed: {error}")

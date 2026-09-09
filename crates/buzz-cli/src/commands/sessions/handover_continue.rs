@@ -63,7 +63,9 @@ use super::handover::{
 use super::handover_claim::{
     bounded_wait, claim_session, refuse_retired, refuse_unverifiable_genesis, resolve_body,
 };
-use super::handover_reconstruct::{create_execution, recover_checkout};
+use super::handover_reconstruct::{
+    create_execution, recover_checkout, resolve_projects_file, verify_execution_workdir,
+};
 use super::handover_render::{VerificationNotes, WHOLE_SESSION_DISCLOSURE};
 
 /// How often a receipt wait re-asks the relay.
@@ -237,6 +239,19 @@ pub(super) async fn cmd_continue(
     let (plan, why) = decide_plan(args.native, args.reconstruct, reachable, caller_has_grant)?;
     notes.verified(format!("chose {} because {why}", plan_word(plan)));
 
+    // Resolved **before** the claim. A claim moves the fence for everybody, and
+    // taking a session over only to find the new execution cannot be pointed
+    // at the recovered work is a worse place to stop than not starting. Only a
+    // reconstruction into a checkout needs it: with no --cwd nothing was
+    // recovered locally, and the continuation says so rather than binding a
+    // directory that holds nothing.
+    let projects_file = match (plan, args.cwd.as_deref()) {
+        (ContinuationPlan::Reconstruct, Some(cwd)) => {
+            Some(resolve_projects_file(args.projects_file.as_deref(), cwd)?)
+        }
+        _ => None,
+    };
+
     // ── 3. claim ─────────────────────────────────────────────────────────
     let body_pubkey = match plan {
         ContinuationPlan::Native => match args.body.as_deref() {
@@ -323,6 +338,9 @@ pub(super) async fn cmd_continue(
         }
         ContinuationPlan::Reconstruct => {
             let body = checkpoint.as_ref().map(|entry| &entry.body);
+            // Taken before the create so metadata published in the same second
+            // cannot fall outside the proof's window.
+            let created_since = chrono::Utc::now().timestamp() - 1;
             let recovery = recover_checkout(
                 client,
                 args.cwd.as_deref(),
@@ -338,6 +356,8 @@ pub(super) async fn cmd_continue(
                 &state,
                 &body_pubkey,
                 args.provider_instance.as_deref(),
+                projects_file.as_deref(),
+                args.cwd.as_deref(),
                 body,
                 checkpoint.as_ref().map(|entry| entry.event_id.as_str()),
                 checkpoint
@@ -347,11 +367,44 @@ pub(super) async fn cmd_continue(
                 &mut notes,
             )
             .await?;
+
+            // The create's receipt says an execution exists; it does not say
+            // **where**. The provider's own first metadata carries the
+            // worktree it probed, and that is the only evidence this command
+            // can offer that the binding took. The patch is applied
+            // uncommitted, so HEAD is still the checkpoint's headSha.
+            let mut missing = recovery.missing;
+            if args.cwd.is_some() {
+                let expected_branch = format!(
+                    "handover/{}",
+                    state.session_ref.chars().take(8).collect::<String>()
+                );
+                let expected_head = body.and_then(|body| body.revision.head_sha.as_deref());
+                if let Some(line) = verify_execution_workdir(
+                    client,
+                    &state.channel,
+                    &created,
+                    &expected_branch,
+                    expected_head,
+                    created_since,
+                    wait_secs,
+                )
+                .await
+                {
+                    notes.not_verified(line.clone());
+                    missing.push(line);
+                } else {
+                    notes.verified(format!(
+                        "the new execution's first metadata reports branch {expected_branch} at \
+                         the checkpoint's head, so it is running in the recovered checkout"
+                    ));
+                }
+            }
             (
                 CodingSessionHandoverMode::Reconstructed,
                 created,
                 recovery.recovered,
-                recovery.missing,
+                missing,
             )
         }
     };

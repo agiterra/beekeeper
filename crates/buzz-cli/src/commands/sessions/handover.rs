@@ -529,6 +529,100 @@ pub(super) async fn fetch_executions(
     Ok(rows)
 }
 
+/// What the claimed body's own executions say about themselves.
+///
+/// Three answers, kept apart on purpose. A claim receipt says the **fence
+/// moved** — it never says an execution resumed, and the composition run
+/// showed exactly what conflating the two costs: a successful takeback
+/// printed success, and the claimant's next turn came back
+/// `turn_dropped/NO_LIVE_EXECUTION` because the body they had just claimed
+/// was a machine that was no longer running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BodyLiveness {
+    /// A live kind-24223 lease answers for an execution on this body.
+    Live,
+    /// No execution on this body has a live lease — including the case where
+    /// this body has no executions at all, which is the same answer to the
+    /// only question being asked.
+    NotLive,
+    /// The liveness read did not complete, so neither of the above is known.
+    Unknown,
+}
+
+impl BodyLiveness {
+    /// The one word `status` prints beside the claimed body.
+    pub(super) const fn word(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::NotLive => "not live",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Fold this umbrella's executions into one answer about one body.
+///
+/// Pure so the wording below can be tested against every branch without a
+/// relay. `Unknown` is never produced here — a caller whose read failed
+/// supplies it, because "the read failed" is a fact about the read and not
+/// about the body.
+pub(super) fn body_liveness_of(rows: &[ExecutionRow], body_pubkey: &str) -> BodyLiveness {
+    let live = rows
+        .iter()
+        .any(|row| row.execution.signer == body_pubkey && is_reachable(row));
+    if live {
+        BodyLiveness::Live
+    } else {
+        BodyLiveness::NotLive
+    }
+}
+
+/// The invariant every takeback prints, whatever the liveness turns out to be.
+pub(super) const CLAIM_MOVES_THE_FENCE: &str =
+    "a claim receipt means the fence moved, never that an execution resumed";
+
+/// How to reach the work now, in the vocabulary these commands already use.
+///
+/// The re-address form is `bee sessions send --readdress <commandId>`, exactly
+/// as `sessions send --help` documents it. The reconnect form is **not** a
+/// `bee` subcommand and this refuses to invent one: there is no
+/// `bee sessions resume`, and the sentence `plan_readdress` already prints for
+/// the same situation says "resume it (desktop, or a 44221 session.resume)".
+/// That is repeated here verbatim rather than paraphrased.
+pub(super) fn next_action_line(
+    liveness: BodyLiveness,
+    body_pubkey: &str,
+    channel: &str,
+    session_ref: &str,
+    live_target: Option<&str>,
+) -> String {
+    let body = short_pubkey(body_pubkey);
+    match liveness {
+        BodyLiveness::Live => format!(
+            "the execution on {body} is live: steer it with `bee sessions send --channel \
+             {channel} --session-ref {session_ref} --to {}`",
+            live_target.unwrap_or("<cs-target>")
+        ),
+        BodyLiveness::NotLive => format!(
+            "no live execution on {body}: resume it (desktop, or a 44221 session.resume) or \
+             re-address an owed turn with `bee sessions send --channel {channel} --readdress \
+             <commandId>`"
+        ),
+        BodyLiveness::Unknown => format!(
+            "the liveness read for {body} failed, so whether an execution is live there is \
+             unknown: resume it (desktop, or a 44221 session.resume) or re-address an owed turn \
+             with `bee sessions send --channel {channel} --readdress <commandId>`"
+        ),
+    }
+}
+
+/// The `cs-target` of a live execution on `body_pubkey`, for the steer line.
+pub(super) fn live_target_on(rows: &[ExecutionRow], body_pubkey: &str) -> Option<String> {
+    rows.iter()
+        .find(|row| row.execution.signer == body_pubkey && is_reachable(row))
+        .map(|row| row.execution.target_key.clone())
+}
+
 /// Whether a candidate execution is reachable: a live kind-24223 lease answers
 /// for its **current generation**.
 ///
@@ -638,7 +732,7 @@ pub(super) async fn cmd_status(
     );
     println!("scope: {WHOLE_SESSION_DISCLOSURE}");
     println!("{}", state.existence_line());
-    print_claim(&state);
+    print_claim(&state, &executions);
     print_latest_checkpoint(&state);
     print_continuations(&state);
     print_executions(&executions);
@@ -653,7 +747,7 @@ pub(super) async fn cmd_status(
 }
 
 /// Print the claim, keeping `NoClaim` and `Voided` apart.
-fn print_claim(state: &HandoverState) {
+fn print_claim(state: &HandoverState, executions: &[ExecutionRow]) {
     match state.claim() {
         ClaimState::NoClaim => println!(
             "claim: none — no handover has ever happened on this session, so the ordinary rules \
@@ -664,14 +758,20 @@ fn print_claim(state: &HandoverState) {
                 .fold
                 .claim_since
                 .map_or_else(|| "unknown".to_owned(), |at| at.to_string());
+            // The body's own liveness beside the claim, because a claim that
+            // moved the fence onto a machine that is not running is the
+            // difference between "B holds this" and "B can act on this".
+            let liveness = body_liveness_of(executions, &claim.body_pubkey);
             println!(
-                "claim: active — {} holds this whole session on body {} (link {}, seq {}, since \
-                 unix {since})",
+                "claim: active — {} holds this whole session on body {} ({}) (link {}, seq {}, \
+                 since unix {since})",
                 short_pubkey(&claim.claimant),
                 short_pubkey(&claim.body_pubkey),
+                liveness.word(),
                 claim.accepted_event_id,
                 claim.seq,
             );
+            println!("  {CLAIM_MOVES_THE_FENCE}");
         }
         ClaimState::Voided {
             last, voided_by, ..
@@ -835,3 +935,9 @@ mod wire_tests;
 #[cfg(test)]
 #[path = "handover_record_tests.rs"]
 mod record_tests;
+
+// And what a takeback says to do next, which is a fact about the body rather
+// than about the chain or the record.
+#[cfg(test)]
+#[path = "handover_takeback_tests.rs"]
+mod takeback_tests;
