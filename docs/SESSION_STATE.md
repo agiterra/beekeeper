@@ -7,6 +7,62 @@ disagrees with an older document about *current state*, this one wins.
 
 ## September 9 handover integration — candidate under review
 
+### Corrective integration and remaining timing cases
+
+Fable's corrective commits `bf57249f8`, `cd326af2a`, `531d11e0c`,
+`b5b989b4c` integrated cleanly with signoff as `b2f11c2a3`, `7033986ab`,
+`42e56d552`, `5083b6f92`. Independent root validation on that tree passed
+the real-relay/two-provider composition **12/12 in 243 seconds**, desktop
+**8919/8919**, check, TypeScript, E2E build, and targeted browser **18/18**
+with retries disabled and eight distinct screenshots. Evidence:
+`../review-2026-09-08-release-candidate/handover-corrected-*.log` and
+`handover-corrected-screenshots/`. Both providers still run on one host with
+stub adapters; native Windows and real seated cross-machine recovery remain
+unproven. Nothing from this corrective integration is installed or published.
+
+The original findings below are historical: normal-path checkout binding,
+artifact-ref validation, blob verification, remote selection, recovery prompt,
+takeback wording, complete chain reads, fresh-create fencing, direct live-turn
+cancellation and retired outbox purging are now implemented and independently
+reviewed. Five narrower timing cases remain on this tree:
+
+- Desktop `codingSessionHandoverPublish.ts:680` clears the command folder hint
+  on an unknown publication/await outcome, although a durable create may arrive
+  later. Keep it until confirmed settlement.
+- CLI `handover_reconstruct.rs:585` writes generated `projects.json`, while
+  native `workdir_store.rs:477` and `:726` regenerate it from another canonical
+  store. An unrelated desktop save can erase the binding before admission.
+- Provider `lib.rs:5458` can verify a takeover on retry without the cancellation
+  performed by the direct receipt handler at `:4825`.
+- Provider `lib.rs:2999` learns authority again after adapter startup but its
+  direct initial-turn dispatch at `:3055` does not check that result.
+- Provider `lib.rs:4879` requires `open_turn` to cancel, missing admitted work
+  between mailbox delivery/in-flight registration and `TurnStarted` handling.
+
+Fable acknowledged three follow-up lanes in the shared Desktop mailbox:
+unknown-outcome hint preservation, a durable command-hint source preserved
+across desktop rematerialization, and provider quiescence on every verified
+claim-progress path. Each has a regression reproducing the timing interval.
+Root released Redis database 14 after its composition exited successfully;
+worktrees and Cargo targets remain separate. Candidate acceptance awaits these
+specific corrections, not an additional general review gate.
+
+Root's scoped-deletion decision: retirement acceptance does not imply complete
+removal of coordination history. Policy (44245), observation (44246), and
+checkpoint/continuation (44247) records are omitted by both deletion clients
+(`deleteCodingSession.ts:24`, CLI `sessions.rs:1205`) and the relay's scoped-kind
+allowlist (`side_effects.rs:727`). Their contents remain readable to authorized
+queries after retirement, including checkpoint task text and artifact references.
+The handover fold explicitly permits retained history while disabling recovery
+(`coding_session_handover_fold.rs:38`). This is a separate deletion-completeness
+follow-up, not a reason to hold the verified retirement behavior. Repair all
+three consumers together: require the same channel, session d-tag, and exact
+genesis via `csp-genesis`, `csob-genesis`, or `csh-genesis` respectively. Generic
+d-tag matching alone must not authorize removal of a different genesis's rows.
+Acceptance must include foreign-channel and same-session/wrong-genesis cases.
+
+### Original candidate and review history
+
 Fable's five signed commits `101cab4c0`, `8cb84ce23`, `11ad61380`, `c8a0d2088`,
 `cd383db3f` were cherry-picked with signoff onto root `1264758be`, ending at
 `eb6c5aa55`. Integration was clean and preserves both root project-creation and
